@@ -1876,6 +1876,7 @@ private extension CatbirdApp {
   /// - create-conversation?targetDID=... - Create/join a conversation with the target user
   /// - send-message?text=...&conversationId=... - Send a message to a conversation
   /// - dump-state - Write MLS state dump to app container
+  /// - block?did=... - Block a DID and leave shared MLS conversations
   func handleE2ECommand(url: URL) async {
     let e2eLogger = Logger(subsystem: "blue.catbird.e2e", category: "Commands")
     
@@ -1937,6 +1938,9 @@ private extension CatbirdApp {
       
     case "sync":
       await handleSync(params: params, manager: manager, logger: e2eLogger)
+
+    case "block":
+      await handleBlock(params: params, manager: manager, logger: e2eLogger)
 
     case "add-member":
       await handleAddMember(params: params, manager: manager, logger: e2eLogger)
@@ -2061,7 +2065,55 @@ private extension CatbirdApp {
       await writeE2EResult(command: "login", success: false, error: error.localizedDescription)
     }
   }
-  
+
+  @MainActor
+  private func handleBlock(params: [String: String], manager: AppStateManager, logger e2eLogger: Logger) async {
+    guard manager.isE2EMode else {
+      e2eLogger.error("[E2E-BLOCK] Rejected block command outside E2E mode")
+      await writeE2EResult(command: "block", success: false, error: "E2E mode disabled")
+      return
+    }
+
+    guard let rawDID = params["did"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+          !rawDID.isEmpty else {
+      e2eLogger.error("[E2E-BLOCK] block requires did parameter")
+      await writeE2EResult(command: "block", success: false, error: "Missing did")
+      return
+    }
+
+    do {
+      _ = try DID(didString: rawDID)
+    } catch {
+      e2eLogger.error("[E2E-BLOCK] Invalid DID: \(rawDID)")
+      await writeE2EResult(command: "block", success: false, error: "Invalid did")
+      return
+    }
+
+    guard let appState = manager.lifecycle.appState else {
+      e2eLogger.error("[E2E-BLOCK] Not authenticated")
+      await writeE2EResult(command: "block", success: false, error: "Not authenticated")
+      return
+    }
+
+    guard await appState.getMLSConversationManager() != nil,
+          let coordinator = appState.mlsBlockCoordinator else {
+      e2eLogger.error("[E2E-BLOCK] MLS not initialized")
+      await writeE2EResult(command: "block", success: false, error: "MLS not initialized")
+      return
+    }
+
+    do {
+      e2eLogger.info("[E2E-BLOCK] Blocking \(rawDID)")
+      try await coordinator.block(did: rawDID)
+      await writeE2EResult(command: "block", success: true, data: [
+        "did": rawDID
+      ])
+    } catch {
+      e2eLogger.error("[E2E-BLOCK] Failed: \(error.localizedDescription)")
+      await writeE2EResult(command: "block", success: false, error: error.localizedDescription)
+    }
+  }
+
   private func handleCreateConversation(params: [String: String], manager: AppStateManager, logger e2eLogger: Logger) async {
     guard let targetDID = params["targetDID"] else {
       e2eLogger.error("[E2E] create-conversation requires targetDID parameter")

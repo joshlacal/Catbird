@@ -145,6 +145,26 @@ final class FeedManager {
         did: String,
         cursor: String?
     ) async throws -> ([AppBskyFeedDefs.FeedViewPost], String?) {
+        let currentUserDID = try? await client.getDid()
+        guard currentUserDID == did else {
+            let result = try await ActorLikesRecordFetcher.fetchLikedPosts(
+                client: client,
+                actorDID: did,
+                cursor: cursor,
+                limit: 50
+            )
+            let feedPosts = result.posts.map {
+                AppBskyFeedDefs.FeedViewPost(
+                    post: $0,
+                    reply: nil,
+                    reason: nil,
+                    feedContext: nil,
+                    reqId: nil
+                )
+            }
+            return (feedPosts, result.cursor)
+        }
+
         let params = AppBskyFeedGetActorLikes.Parameters(
             actor: try ATIdentifier(string: did),
             limit: 50,

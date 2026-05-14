@@ -1139,6 +1139,15 @@ struct MLSConversationListView: View {
                 )
             }
 
+            // Pull the per-DID MlsContext so the sync DB closure below can
+            // decrypt `payloadEncrypted` rows in-memory.
+            let previewMlsContext: MlsContext?
+            do {
+                previewMlsContext = try await CatbirdMLSCore.MLSCoreContext.shared.getContext(for: userDID)
+            } catch {
+                previewMlsContext = nil
+            }
+
             // Fetch last message preview and latest activity timestamp per conversation
             // Single DB read for both preview text and sort timestamps
             let (lastMessages, latestActivityByConvo) = try await MLSGRDBManager.shared.read(for: userDID) { db -> ([String: (senderDID: String, text: String)], [String: Date]) in
@@ -1159,16 +1168,23 @@ struct MLSConversationListView: View {
                     }
 
                     for message in recentMessages {
+                        let messagePayload: MLSMessagePayload?
+                        if let ctx = previewMlsContext {
+                            messagePayload = message.decryptedPayload(context: ctx)
+                        } else {
+                            messagePayload = message.parsedPayload
+                        }
+
                         // Skip placeholder error messages (failed decryptions, self-sent errors)
                         if message.processingError != nil {
-                            let text = message.parsedPayload?.text ?? ""
+                            let text = messagePayload?.text ?? ""
                             if text.isEmpty || text.contains("Message unavailable")
                                 || text.contains("Decryption Failed") || text.contains("Self-sent message") {
                                 continue
                             }
                         }
 
-                        if let payload = message.parsedPayload {
+                        if let payload = messagePayload {
                             switch payload.messageType {
                             case .text, .system, nil:
                                 if let plaintext = payload.text, !plaintext.isEmpty {

@@ -38,6 +38,7 @@ struct LikesView: View {
                 List {
                     ForEach(likes, id: \.actor.did) { like in
                         ProfileRowView(profile: like.actor, path: $path)
+                            .mainContentFrame()
                             .alignmentGuide(.listRowSeparatorLeading) { _ in 0}
                             .alignmentGuide(.listRowSeparatorTrailing) { d in d.width}
                             .listRowSeparator(.visible)

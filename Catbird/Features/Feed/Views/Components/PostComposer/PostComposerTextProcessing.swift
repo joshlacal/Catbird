@@ -24,13 +24,13 @@ extension PostComposerViewModel {
     }
     
     private func performUpdatePostContent() {
-        logger.info("PostComposerTextProcessing: updatePostContent start - length: \(self.postText.count), cursor: \(self.cursorPosition)")
+        logger.trace("PostComposerTextProcessing: updatePostContent start - length: \(self.postText.count), cursor: \(self.cursorPosition)")
         suggestedLanguage = detectLanguage()
-        logger.debug("PostComposerTextProcessing: Detected language: \(self.suggestedLanguage?.lang.minimalIdentifier ?? "none")")
+        logger.trace("PostComposerTextProcessing: Detected language: \(self.suggestedLanguage?.lang.minimalIdentifier ?? "none")")
 
         // Parse the text content to get URLs and update mentions
         let (_, _, parsedFacets, urls, _) = PostParser.parsePostContent(postText, resolvedProfiles: resolvedProfiles)
-        logger.info("PostComposerTextProcessing: Parser results - facets: \(parsedFacets.count), URLs: \(urls.count), manualLinkFacets: \(self.manualLinkFacets.count)")
+        logger.trace("PostComposerTextProcessing: Parser results - facets: \(parsedFacets.count), URLs: \(urls.count), manualLinkFacets: \(self.manualLinkFacets.count)")
 
         // Merge in any manually created link facets (from the UIKit editor) so that:
         // - inline links with custom display text stay visually highlighted
@@ -38,7 +38,7 @@ extension PostComposerViewModel {
         var displayFacets = parsedFacets
         if !manualLinkFacets.isEmpty {
             displayFacets.append(contentsOf: manualLinkFacets)
-            logger.debug("PostComposerTextProcessing: Merged manual link facets - total display facets: \(displayFacets.count)")
+            logger.trace("PostComposerTextProcessing: Merged manual link facets - total display facets: \(displayFacets.count)")
         }
 
         // Update attributed text with highlighting using existing RichText implementation
@@ -53,8 +53,6 @@ extension PostComposerViewModel {
     }
     
     func updateFromAttributedText(_ nsAttributedText: NSAttributedString, cursorPosition: Int = 0) {
-        let counts = summarizeNS(nsAttributedText)
-        logger.info("PostComposerTextProcessing: updateFromAttributedText - length: \(nsAttributedText.string.count), runs: \(counts.runs), linkRuns: \(counts.linkRuns), cursor: \(cursorPosition)")
         // Extract plain text from attributed text
         let newText = nsAttributedText.string
         
@@ -63,7 +61,7 @@ extension PostComposerViewModel {
         
         // Only update if text actually changed to avoid infinite loops
         if newText != postText && !isUpdatingText {
-            logger.debug("PostComposerTextProcessing: Text changed, updating - old length: \(self.postText.count), new length: \(newText.count)")
+            logger.trace("PostComposerTextProcessing: Text changed, updating - old length: \(self.postText.count), new length: \(newText.count)")
             isUpdatingText = true
             
             postText = newText
@@ -88,7 +86,7 @@ extension PostComposerViewModel {
     
     @available(iOS 26.0, macOS 15.0, *)
     func updateFromAttributedString(_ attributedString: AttributedString) {
-        logger.debug("RT: updateFromAttributedString len=\(String(attributedString.characters).count)")
+        logger.trace("RT: updateFromAttributedString len=\(String(attributedString.characters).count)")
         // Extract plain text from attributed string
         let newText = String(attributedString.characters)
         
@@ -105,7 +103,7 @@ extension PostComposerViewModel {
             // Extract any existing facets from the AttributedString using Petrel's infrastructure
             do {
                 if let facets = try attributedString.toFacets() {
-                    logger.debug("RT: toFacets -> count=\(facets.count)")
+                    logger.trace("RT: toFacets -> count=\(facets.count)")
                     // Update content using existing facets
                     updateWithExistingFacets(facets)
                 } else {
@@ -123,7 +121,7 @@ extension PostComposerViewModel {
     }
     
     private func updateWithExistingFacets(_ facets: [AppBskyRichtextFacet]) {
-        logger.debug("RT: updateWithExistingFacets count=\(facets.count)")
+        logger.trace("RT: updateWithExistingFacets count=\(facets.count)")
         // Update attributed text with existing facets using Petrel's infrastructure
         let mockPost = AppBskyFeedPost(text: postText, entities: nil, facets: facets, reply: nil, embed: nil, langs: nil, labels: nil, tags: nil, createdAt: ATProtocolDate(date: Date()))
         
@@ -170,7 +168,7 @@ extension PostComposerViewModel {
     
     /// Update the attributed text with real-time highlighting using Petrel's infrastructure
     private func updateAttributedText(facets: [AppBskyRichtextFacet]) {
-        logger.debug("RT: updateAttributedText facets=\(facets.count)")
+        logger.trace("RT: updateAttributedText facets=\(facets.count)")
         // Use Petrel's built-in facetsAsAttributedString method for consistent formatting
         let mockPost = AppBskyFeedPost(text: postText, entities: nil, facets: facets, reply: nil, embed: nil, langs: nil, labels: nil, tags: nil, createdAt: ATProtocolDate(date: Date()))
         let styledAttributedText = mockPost.facetsAsAttributedString
@@ -186,7 +184,7 @@ extension PostComposerViewModel {
             #else
             mutableAttrString.addAttribute(.backgroundColor, value: NSColor.systemRed.withAlphaComponent(0.3), range: overflowRange)
             #endif
-            logger.info("PostComposerTextProcessing: Applied red background to overflow text - range: \(overflowRange)")
+            logger.trace("PostComposerTextProcessing: Applied red background to overflow text - range: \(overflowRange)")
         }
         
         // Update both AttributedString (iOS 26+) and NSAttributedString (legacy)
@@ -264,7 +262,7 @@ extension PostComposerViewModel {
     }
     
     private func handleDetectedURLsOptimized(_ urls: [String]) {
-        logger.debug("RT: handleDetectedURLsOptimized count=\(urls.count)")
+        logger.trace("RT: handleDetectedURLsOptimized count=\(urls.count)")
 
         // Track which URLs were removed (for manual deletion detection)
         let previousURLs = Set(detectedURLs)
@@ -483,7 +481,7 @@ extension PostComposerViewModel {
             return
         }
 
-        logger.info("PostComposerTextProcessing: Detected mention query: '\(currentMention)'")
+        logger.trace("PostComposerTextProcessing: Detected mention query: '\(currentMention)'")
         // Kick off a fresh search task
         mentionSearchTask = Task { [weak self] in
             await self?.searchProfiles(query: currentMention)

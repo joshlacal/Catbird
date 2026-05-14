@@ -6,102 +6,82 @@ import SwiftCBOR
 @Suite("MSTTraverser Tests")
 struct MSTTraverserTests {
 
-  // MARK: - MST Node Decoding
+  // MARK: - Public Repository Walking
 
-  @Test("decodeMSTNode parses a simple node with one entry")
-  func testDecodeSingleEntry() throws {
-    // Build MST node: {l: nil, e: [{p: 0, k: <bytes>, v: <CID>, t: nil}]}
-    let recordCID = makeCID(digest: 0xAA)
-    let keySuffix = Data("app.bsky.feed.post/abc123".utf8)
+  @Test("walkRepository traverses a single MST entry")
+  func testWalkSingleEntry() throws {
+    let recordCBOR = try DAGCBOR.encodeValue(["$type": "app.bsky.feed.post", "text": "hello"] as [String: Any])
+    let recordCID = CID.fromDAGCBOR(recordCBOR)
 
-    let nodeCBOR = buildMSTNodeCBOR(leftSubtree: nil, entries: [
-      (prefixLen: 0, keySuffix: keySuffix, valueCID: recordCID, rightSubtree: nil),
+    let rootNodeCBOR = buildMSTNodeCBOR(leftSubtree: nil, entries: [
+      (prefixLen: 0, keySuffix: Data("app.bsky.feed.post/abc123".utf8), valueCID: recordCID, rightSubtree: nil),
+    ])
+    let rootNodeCID = CID.fromDAGCBOR(rootNodeCBOR)
+
+    let commitCBOR = buildCommitCBOR(dataCID: rootNodeCID)
+    let commitCID = CID.fromDAGCBOR(commitCBOR)
+
+    let carData = try buildCAR(root: commitCID, blocks: [
+      (commitCID, commitCBOR),
+      (rootNodeCID, rootNodeCBOR),
+      (recordCID, recordCBOR),
     ])
 
-    let reader = try makeReaderWithBlocks([:])
-    let traverser = MSTTraverser(reader: reader)
-    let node = try traverser.decodeMSTNode(data: nodeCBOR)
+    let reader = try CARReader(fileURL: writeTempFile(carData))
 
-    #expect(node.leftSubtree == nil)
-    #expect(node.entries.count == 1)
-    #expect(node.entries[0].prefixLen == 0)
-    #expect(node.entries[0].keySuffix == keySuffix)
-    #expect(node.entries[0].valueCID == recordCID)
-    #expect(node.entries[0].rightSubtree == nil)
+    let traverser = MSTTraverser(reader: reader)
+    var results: [(String, CID)] = []
+    try traverser.walkRepository(commitCID: commitCID) { path, cid in
+      results.append((path, cid))
+    }
+
+    #expect(results.count == 1)
+    #expect(results[0].0 == "app.bsky.feed.post/abc123")
+    #expect(results[0].1 == recordCID)
   }
 
-  @Test("decodeMSTNode parses a node with left subtree")
-  func testDecodeWithLeftSubtree() throws {
-    let leftCID = makeCID(digest: 0xBB)
-    let recordCID = makeCID(digest: 0xCC)
-    let keySuffix = Data("app.bsky.feed.post/xyz".utf8)
+  @Test("walkRepository reconstructs prefix-compressed keys")
+  func testWalkReconstructsPrefixCompressedKeys() throws {
+    let record1CBOR = try DAGCBOR.encodeValue(["$type": "app.bsky.feed.post", "text": "first"] as [String: Any])
+    let record1CID = CID.fromDAGCBOR(record1CBOR)
 
-    let nodeCBOR = buildMSTNodeCBOR(leftSubtree: leftCID, entries: [
-      (prefixLen: 0, keySuffix: keySuffix, valueCID: recordCID, rightSubtree: nil),
+    let record2CBOR = try DAGCBOR.encodeValue(["$type": "app.bsky.feed.post", "text": "second"] as [String: Any])
+    let record2CID = CID.fromDAGCBOR(record2CBOR)
+
+    let record3CBOR = try DAGCBOR.encodeValue(["$type": "app.bsky.feed.post", "text": "third"] as [String: Any])
+    let record3CID = CID.fromDAGCBOR(record3CBOR)
+
+    let rootNodeCBOR = buildMSTNodeCBOR(leftSubtree: nil, entries: [
+      (prefixLen: 0, keySuffix: Data("app.bsky.feed.post/aaa".utf8), valueCID: record1CID, rightSubtree: nil),
+      (prefixLen: 19, keySuffix: Data("bbb".utf8), valueCID: record2CID, rightSubtree: nil),
+      (prefixLen: 19, keySuffix: Data("ccc".utf8), valueCID: record3CID, rightSubtree: nil),
+    ])
+    let rootNodeCID = CID.fromDAGCBOR(rootNodeCBOR)
+
+    let commitCBOR = buildCommitCBOR(dataCID: rootNodeCID)
+    let commitCID = CID.fromDAGCBOR(commitCBOR)
+
+    let carData = try buildCAR(root: commitCID, blocks: [
+      (commitCID, commitCBOR),
+      (rootNodeCID, rootNodeCBOR),
+      (record1CID, record1CBOR),
+      (record2CID, record2CBOR),
+      (record3CID, record3CBOR),
     ])
 
-    let reader = try makeReaderWithBlocks([:])
+    let reader = try CARReader(fileURL: writeTempFile(carData))
+
     let traverser = MSTTraverser(reader: reader)
-    let node = try traverser.decodeMSTNode(data: nodeCBOR)
+    var paths: [String] = []
+    try traverser.walkRepository(commitCID: commitCID) { path, _ in
+      paths.append(path)
+    }
 
-    #expect(node.leftSubtree == leftCID)
-    #expect(node.entries.count == 1)
-  }
-
-  // MARK: - Key Reconstruction
-
-  @Test("reconstructKeys with no prefix compression")
-  func testReconstructKeysNoCompression() throws {
-    let reader = try makeReaderWithBlocks([:])
-    let traverser = MSTTraverser(reader: reader)
-
-    let entries: [MSTTraverser.MSTEntry] = [
-      .init(prefixLen: 0, keySuffix: Data("app.bsky.feed.post/aaa".utf8), valueCID: makeCID(digest: 0x01), rightSubtree: nil),
-      .init(prefixLen: 0, keySuffix: Data("app.bsky.graph.follow/bbb".utf8), valueCID: makeCID(digest: 0x02), rightSubtree: nil),
-    ]
-
-    let keys = traverser.reconstructKeys(entries: entries)
-
-    #expect(keys.count == 2)
-    #expect(keys[0] == "app.bsky.feed.post/aaa")
-    #expect(keys[1] == "app.bsky.graph.follow/bbb")
-  }
-
-  @Test("reconstructKeys with prefix compression")
-  func testReconstructKeysWithCompression() throws {
-    let reader = try makeReaderWithBlocks([:])
-    let traverser = MSTTraverser(reader: reader)
-
-    // First key: "app.bsky.feed.post/aaa"
-    // Second key shares first 19 bytes ("app.bsky.feed.post/") + "bbb"
-    let entries: [MSTTraverser.MSTEntry] = [
-      .init(prefixLen: 0, keySuffix: Data("app.bsky.feed.post/aaa".utf8), valueCID: makeCID(digest: 0x01), rightSubtree: nil),
-      .init(prefixLen: 19, keySuffix: Data("bbb".utf8), valueCID: makeCID(digest: 0x02), rightSubtree: nil),
-    ]
-
-    let keys = traverser.reconstructKeys(entries: entries)
-
-    #expect(keys.count == 2)
-    #expect(keys[0] == "app.bsky.feed.post/aaa")
-    #expect(keys[1] == "app.bsky.feed.post/bbb")
-  }
-
-  @Test("reconstructKeys handles multi-level prefix compression")
-  func testReconstructKeysMultiLevel() throws {
-    let reader = try makeReaderWithBlocks([:])
-    let traverser = MSTTraverser(reader: reader)
-
-    let entries: [MSTTraverser.MSTEntry] = [
-      .init(prefixLen: 0, keySuffix: Data("app.bsky.feed.post/aaa".utf8), valueCID: makeCID(digest: 0x01), rightSubtree: nil),
-      .init(prefixLen: 19, keySuffix: Data("bbb".utf8), valueCID: makeCID(digest: 0x02), rightSubtree: nil),
-      .init(prefixLen: 19, keySuffix: Data("ccc".utf8), valueCID: makeCID(digest: 0x03), rightSubtree: nil),
-    ]
-
-    let keys = traverser.reconstructKeys(entries: entries)
-
-    #expect(keys[0] == "app.bsky.feed.post/aaa")
-    #expect(keys[1] == "app.bsky.feed.post/bbb")
-    #expect(keys[2] == "app.bsky.feed.post/ccc")
+    #expect(paths == [
+      "app.bsky.feed.post/aaa",
+      "app.bsky.feed.post/bbb",
+      "app.bsky.feed.post/ccc",
+    ])
   }
 
   // MARK: - Full Walk
@@ -137,7 +117,6 @@ struct MSTTraverserTests {
 
     let url = writeTempFile(carData)
     let reader = try CARReader(fileURL: url)
-    try reader.indexAllBlocks()
 
     let traverser = MSTTraverser(reader: reader)
     var results: [(String, CID)] = []
@@ -190,7 +169,6 @@ struct MSTTraverserTests {
 
     let url = writeTempFile(carData)
     let reader = try CARReader(fileURL: url)
-    try reader.indexAllBlocks()
 
     let traverser = MSTTraverser(reader: reader)
     var results: [(String, CID)] = []
@@ -228,9 +206,7 @@ struct MSTTraverserTests {
 
     let carData = try buildCAR(root: dummyCID, blocks: allBlocks)
     let url = writeTempFile(carData)
-    let reader = try CARReader(fileURL: url)
-    try reader.indexAllBlocks()
-    return reader
+    return try CARReader(fileURL: url)
   }
 
   /// Build a commit block CBOR: {did: "did:test", data: <Tag42 CID>, rev: "test", version: 3}

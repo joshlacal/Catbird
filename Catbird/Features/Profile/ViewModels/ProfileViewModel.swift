@@ -264,7 +264,7 @@ import AppKit
     _isLoadingLikes = true
 
     do {
-      if userDID == currentUserDID {
+      if isCurrentUser {
         let params = AppBskyFeedGetActorLikes.Parameters(
           actor: try ATIdentifier(string: profile.did.didString()),
           limit: 20,
@@ -286,85 +286,20 @@ import AppKit
           logger.warning("PDS returned 400 for getActorLikes, likes may not be available")
         }
       } else {
-        // Fetch other user's likes directly from their PDS
-        let pdsURL = try await client.resolveDIDToPDSURL(did: profile.did.didString())
-        let endpoint = "com.atproto.repo.listRecords"
-        var url = pdsURL.appendingPathComponent("xrpc").appendingPathComponent(endpoint)
+        let result = try await ActorLikesRecordFetcher.fetchLikedPosts(
+          client: client,
+          actorDID: profile.did.didString(),
+          cursor: likesCursor,
+          limit: 25
+        )
 
-        // Create parameters including cursor for pagination
-        var queryItems = [
-          URLQueryItem(name: "repo", value: userDID),
-          URLQueryItem(name: "collection", value: "app.bsky.feed.like"),
-          URLQueryItem(name: "limit", value: "25"),
-        ]
-
-        // Add cursor if we're paginating
-        if let cursor = likesCursor {
-          queryItems.append(URLQueryItem(name: "cursor", value: cursor))
-        }
-
-        // Add query parameters to URL
-        var components = URLComponents(url: url, resolvingAgainstBaseURL: true)
-        components?.queryItems = queryItems
-        url = components?.url ?? url
-
-        // Create and send request
-        var urlRequest = URLRequest(url: url)
-        urlRequest.httpMethod = "GET"
-        urlRequest.allHTTPHeaderFields = ["Accept": "application/json"]
-
-        let (data, response) = try await URLSession.shared.data(for: urlRequest)
-
-        // Decode response
-        let decoder = JSONDecoder()
-        guard let decodedData = try? decoder.decode(ComAtprotoRepoListRecords.Output.self, from: data),
-              let httpResponse = response as? HTTPURLResponse,
-              httpResponse.statusCode == 200
-        else {
-          throw NetworkError.connectionFailed
-        }
-
-        // Extract post URIs from like records
-        var postURIs: [ATProtocolURI] = []
-        for record in decodedData.records {
-          if case let .knownType(likeRecord) = record.value,
-             let like = likeRecord as? AppBskyFeedLike
-          {
-            postURIs.append(like.subject.uri)
+        await MainActor.run {
+          if self.likesCursor == nil {
+            self._otherUserLikes = result.posts
+          } else {
+            self._otherUserLikes.append(contentsOf: result.posts)
           }
-        }
-
-        if !postURIs.isEmpty {
-          let maxURIsPerRequest = 25
-          let chunks = stride(from: 0, to: postURIs.count, by: maxURIsPerRequest).map {
-            Array(postURIs[$0..<min($0 + maxURIsPerRequest, postURIs.count)])
-          }
-
-          var fetchedPosts: [AppBskyFeedDefs.PostView] = []
-
-          // Process each chunk
-          for chunk in chunks {
-            let (_, postsOutput) = try await client.app.bsky.feed.getPosts(
-              input: AppBskyFeedGetPosts.Parameters(uris: chunk)
-            )
-
-            if let posts = postsOutput?.posts {
-              fetchedPosts.append(contentsOf: posts)
-            }
-          }
-
-          // Update UI on main thread
-          let likedPosts = fetchedPosts
-          await MainActor.run {
-            if self.likesCursor == nil {
-              self._otherUserLikes = likedPosts
-            } else {
-              self._otherUserLikes.append(contentsOf: likedPosts)
-            }
-
-            // Store cursor for next pagination
-            self.likesCursor = decodedData.cursor
-          }
+          self.likesCursor = result.cursor
         }
       }
 

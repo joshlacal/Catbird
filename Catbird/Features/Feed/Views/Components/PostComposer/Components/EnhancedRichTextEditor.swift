@@ -456,7 +456,7 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
       // This is essential for proper Chinese/Japanese/Korean/etc. input method support.
       // Modifying attributedText during composition forces premature character confirmation.
       if textView.markedTextRange != nil {
-        rtLogger.debug("IME active - skipping all updates to preserve composition")
+        rtLogger.trace("IME active - skipping all updates to preserve composition")
         updatePlaceholder(parent.placeholder, in: textView)
         return
       }
@@ -464,10 +464,6 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
       // Store current state without modifying textView
       let previousSelectedRange = textView.selectedRange
       guard let currentText = textView.attributedText else { return }
-      
-      // Debug summary
-      let counts = summarizeNS(currentText)
-      rtLogger.debug("Legacy change: len=\(textView.text.count), runs=\(counts.runs), linkRuns=\(counts.linkRuns)")
 
       // Update parent binding WITHOUT modifying textView
       parent.attributedText = currentText
@@ -546,18 +542,8 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
     }
     
     func textViewDidChangeSelection(_ textView: UITextView) {
-      // Handle text selection changes
-      let selectedRange = textView.selectedRange
-      logger.debug("📝 Text selection changed: \(selectedRange)")
-      
       // The UIEditMenuInteraction will handle showing the menu automatically
       // when appropriate (e.g., after a long press or double-tap selection)
-      if selectedRange.length > 0 {
-        logger.debug("📝 Text is selected, length: \(selectedRange.length)")
-        // Text is selected - menu will appear on appropriate gesture
-      } else {
-        logger.debug("📝 No text selected")
-      }
     }
     
     func textViewDidEndEditing(_ textView: UITextView) {

@@ -58,12 +58,35 @@ extension PostComposerViewUIKit {
           .layoutPriority(1)  // Higher priority to ensure visibility
           .zIndex(1)
       }
+
+      submitValidationMessageView(vm: vm)
     }
     .padding(.horizontal, 16)
     .onAppear {
         
         pcMetadataLogger.debug("PostComposerMetadata: Rendering metadata - parent: \(vm.parentPost != nil), quoted: \(vm.quotedPost != nil), embedURL: \(vm.selectedEmbedURL != nil)")
         
+    }
+  }
+
+  @ViewBuilder
+  func submitValidationMessageView(vm: PostComposerViewModel) -> some View {
+    let validation = vm.submitValidationState
+    if validation.shouldShowInlineMessage, let message = validation.message {
+      HStack(spacing: 8) {
+        Image(systemName: "exclamationmark.circle.fill")
+          .font(.system(size: 12, weight: .semibold))
+        Text(message)
+          .font(.system(size: 12, weight: .medium))
+          .fixedSize(horizontal: false, vertical: true)
+        Spacer(minLength: 0)
+      }
+      .foregroundColor(.red)
+      .padding(.horizontal, 10)
+      .padding(.vertical, 7)
+      .background(Color.red.opacity(0.08))
+      .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+      .accessibilityElement(children: .combine)
     }
   }
   

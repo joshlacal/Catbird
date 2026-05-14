@@ -255,8 +255,25 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
     var oldestDisplayEpoch = Int.max
     var oldestDisplaySeq = Int.max
 
+    // Pull the per-DID MlsContext once so we can decrypt
+    // `payloadEncrypted` rows in-memory without an FFI lookup per row.
+    let mlsContext: MlsContext?
+    do {
+      mlsContext = try await CatbirdMLSCore.MLSCoreContext.shared.getContext(for: currentUserDID)
+    } catch {
+      logger.error(
+        "Failed to obtain MLS context for payload decryption: \(error.localizedDescription)")
+      mlsContext = nil
+    }
+
     for model in models {
-      guard let payload = model.parsedPayload, !model.payloadExpired else {
+      let payloadOpt: MLSMessagePayload?
+      if let ctx = mlsContext {
+        payloadOpt = model.decryptedPayload(context: ctx)
+      } else {
+        payloadOpt = model.parsedPayload
+      }
+      guard let payload = payloadOpt, !model.payloadExpired else {
         continue
       }
 
@@ -832,8 +849,23 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
       var adapters: [MLSMessageAdapter] = []
       var unknownDIDs: Set<String> = []
 
+      let mlsContext: MlsContext?
+      do {
+        mlsContext = try await CatbirdMLSCore.MLSCoreContext.shared.getContext(for: currentUserDID)
+      } catch {
+        logger.error(
+          "Failed to obtain MLS context for older-page decryption: \(error.localizedDescription)")
+        mlsContext = nil
+      }
+
       for model in olderModels {
-        guard let payload = model.parsedPayload, !model.payloadExpired else {
+        let payloadOpt: MLSMessagePayload?
+        if let ctx = mlsContext {
+          payloadOpt = model.decryptedPayload(context: ctx)
+        } else {
+          payloadOpt = model.parsedPayload
+        }
+        guard let payload = payloadOpt, !model.payloadExpired else {
           continue
         }
 

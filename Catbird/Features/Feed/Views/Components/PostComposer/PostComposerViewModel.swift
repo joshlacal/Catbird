@@ -192,11 +192,11 @@ final class PostComposerViewModel {
   }
   
   var remainingCharacters: Int {
-    return 300 - postText.count
+    return maxCharacterCount - postText.count
   }
   
   var isOverCharacterLimit: Bool {
-    return postText.count > 300
+    return postText.count > maxCharacterCount
   }
   
   // MARK: - Initialization

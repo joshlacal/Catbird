@@ -14,9 +14,7 @@ extension PostComposerViewUIKit {
   
   func cancelAction(vm: PostComposerViewModel) {
     pcActionsLogger.info("PostComposerActions: Cancel tapped")
-    let hasContent = !vm.postText.isEmpty || !vm.mediaItems.isEmpty || vm.videoItem != nil
-    pcActionsLogger.debug("PostComposerActions: Has content: \(hasContent) - text: \(!vm.postText.isEmpty), media: \(!vm.mediaItems.isEmpty), video: \(vm.videoItem != nil)")
-    if hasContent {
+    if vm.hasContent {
       pcActionsLogger.info("PostComposerActions: Showing dismiss alert due to content")
       showingDismissAlert = true
     } else {
@@ -28,8 +26,9 @@ extension PostComposerViewUIKit {
   }
   
   func submitAction(vm: PostComposerViewModel) {
-    guard canSubmit(vm: vm) else { 
-      pcActionsLogger.warning("PostComposerActions: Submit blocked - canSubmit returned false")
+    let validation = vm.submitValidationState
+    guard validation.canSubmit else {
+      pcActionsLogger.warning("PostComposerActions: Submit blocked - \(validation.message ?? "unknown validation failure")")
       return 
     }
     pcActionsLogger.info("PostComposerActions: Submit initiated - isThreadMode: \(vm.isThreadMode), text length: \(vm.postText.count), media: \(vm.mediaItems.count), video: \(vm.videoItem != nil), gif: \(vm.selectedGif != nil)")
@@ -61,11 +60,7 @@ extension PostComposerViewUIKit {
   }
   
   func canSubmit(vm: PostComposerViewModel) -> Bool {
-    let text = vm.postText.trimmingCharacters(in: .whitespacesAndNewlines)
-    let hasMedia = !vm.mediaItems.isEmpty || vm.videoItem != nil || vm.selectedGif != nil
-    let result = !text.isEmpty || hasMedia
-    pcActionsLogger.debug("PostComposerActions: canSubmit check - text: \(!text.isEmpty), media: \(hasMedia), result: \(result)")
-    return result
+    return vm.submitValidationState.canSubmit
   }
   
   func insertEmoji(_ emoji: String, vm: PostComposerViewModel) {

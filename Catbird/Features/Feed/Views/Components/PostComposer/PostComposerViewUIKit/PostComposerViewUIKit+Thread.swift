@@ -10,7 +10,7 @@ import os
 private let pcThreadLogger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "Catbird", category: "PostComposerThread")
 
 extension PostComposerViewUIKit {
-  
+
   @ViewBuilder
   func threadEntriesSection(vm: PostComposerViewModel) -> some View {
     if vm.isThreadMode && vm.threadEntries.count > 1 {
@@ -53,7 +53,7 @@ extension PostComposerViewUIKit {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Switch account")
-                
+
                 if index < vm.threadEntries.count - 1 {
                   Rectangle()
                     .fill(Color.systemGray4)
@@ -61,17 +61,17 @@ extension PostComposerViewUIKit {
                     .frame(maxHeight: .infinity)
                 }
               }
-              
+
               if index == vm.currentThreadIndex {
                 activeThreadEntry(vm: vm)
               } else {
                 inactiveThreadEntry(entry: entry, vm: vm)
               }
-              
+
               if vm.threadEntries.count > 1 {
-                Button(action: { 
+                Button(action: {
                   pcThreadLogger.info("PostComposerThread: Removing thread entry at index \(index)")
-                  vm.removeThreadEntry(at: index) 
+                  vm.removeThreadEntry(at: index)
                 }) {
                   Image(systemName: "xmark.circle.fill")
                     .appFont(size: 20)
@@ -92,15 +92,16 @@ extension PostComposerViewUIKit {
                 vm.loadEntryState()
               }
             }
-            
+
             if index == vm.currentThreadIndex {
+              mentionSuggestionsSection(vm: vm)
               activeEntryMediaSection(vm: vm)
               activeEntryMetadataSection(vm: vm)
             } else {
               inactiveEntryMediaSection(entry: entry)
               inactiveEntryMetadataSection(entry: entry, vm: vm)
             }
-            
+
             if index < vm.threadEntries.count - 1 {
               Divider()
                 .padding(.leading, 88)
@@ -115,7 +116,7 @@ extension PostComposerViewUIKit {
       }
     }
   }
-  
+
   @ViewBuilder
   private func activeThreadEntry(vm: PostComposerViewModel) -> some View {
       RichEditorContainer(
@@ -133,11 +134,10 @@ extension PostComposerViewUIKit {
           }
         #endif
       },
-      onGenmojiDetected: { emojis in 
+      onGenmojiDetected: { emojis in
         pcThreadLogger.info("PostComposerThread: Genmoji detected in thread entry: \(emojis)")
       },
       onTextChanged: { attrString, cursorPos in
-        pcThreadLogger.debug("PostComposerThread: Active thread entry text changed - length: \(attrString.length), cursor: \(cursorPos)")
         vm.updateFromAttributedText(attrString, cursorPosition: cursorPos)
         vm.updateManualLinkFacets(from: linkFacets)
       },
@@ -153,9 +153,9 @@ extension PostComposerViewUIKit {
       onPhotosAction: { photoPickerVisible = true },
       onVideoAction: { videoPickerVisible = true },
       onAudioAction: { showingAudioRecorder = true },
-      onGifAction: { vm.showingGifPicker = true },
-      onLabelsAction: { vm.showLabelSelector = true },
-      onThreadgateAction: { vm.showThreadgateOptions = true },
+      onGifAction: { showingGifPicker = true },
+      onLabelsAction: { showingLabelSelector = true },
+      onThreadgateAction: { showingThreadgate = true },
       onLanguageAction: { showingLanguagePicker = true },
       onThreadAction: {
         if vm.isThreadMode {
@@ -169,7 +169,6 @@ extension PostComposerViewUIKit {
           withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
             vm.enterThreadMode()
             vm.addNewThreadEntry()
-            activeEditorFocusID = UUID()
             activeEditorFocusID = UUID()
           }
         }
@@ -195,7 +194,7 @@ extension PostComposerViewUIKit {
 
     }
   }
-  
+
   @ViewBuilder
   private func inactiveThreadEntry(entry: ThreadEntry, vm: PostComposerViewModel) -> some View {
     VStack(alignment: .leading, spacing: 8) {
@@ -204,7 +203,7 @@ extension PostComposerViewUIKit {
           .appFont(AppTextRole.subheadline)
           .fontWeight(.semibold)
       }
-      
+
       Text(entry.text.isEmpty ? "Write post…" : entry.text)
         .appFont(AppTextRole.body)
         .foregroundColor(entry.text.isEmpty ? .secondary : .primary)
@@ -215,12 +214,12 @@ extension PostComposerViewUIKit {
     .padding(.vertical, 12)
     .frame(maxWidth: .infinity, alignment: .topLeading)
   }
-  
+
   @ViewBuilder
   private func activeEntryMediaSection(vm: PostComposerViewModel) -> some View {
     Group {
       if let gif = vm.selectedGif {
-        selectedGifView(gif)
+        selectedGifView(gif, vm: vm)
       } else if let videoItem = vm.videoItem, let image = videoItem.image {
         HStack(spacing: 12) {
           image
@@ -230,7 +229,7 @@ extension PostComposerViewUIKit {
             .cornerRadius(10)
             .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.systemGray5, lineWidth: 1))
           Spacer()
-          Button("Remove") { vm.videoItem = nil }
+          Button("Remove") { vm.removeMediaItem(withId: videoItem.id) }
         }
         .padding(.horizontal)
         .padding(.vertical, 8)
@@ -296,7 +295,7 @@ extension PostComposerViewUIKit {
       }
     }
   }
-  
+
   @ViewBuilder
   private func inactiveEntryMediaSection(entry: ThreadEntry) -> some View {
     Group {
@@ -334,68 +333,27 @@ extension PostComposerViewUIKit {
       }
     }
   }
-  
+
   @ViewBuilder
   private func activeEntryMetadataSection(vm: PostComposerViewModel) -> some View {
     // Outline hashtags, languages, and character counter in horizontal layout
-    HStack(alignment: .top, spacing: 12) {
-      // Leading: hashtags and languages stacked vertically
-      VStack(alignment: .leading, spacing: 4) {
-        // Compact inline outline hashtags - always show with add button
-        HStack(spacing: 8) {
-          Image(systemName: "number")
-            .font(.system(size: 12))
-            .foregroundColor(.secondary)
-          
-          ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-              ForEach(vm.outlineTags, id: \.self) { tag in
-                HStack(spacing: 4) {
-                  Text("#\(tag)")
-                    .font(.system(size: 11, weight: .medium))
-                  Button(action: { vm.outlineTags.removeAll { $0 == tag } }) {
-                    Image(systemName: "xmark.circle.fill")
-                      .font(.system(size: 10))
-                      .foregroundColor(.secondary)
-                  }
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(Color.secondary.opacity(0.1))
-                .foregroundColor(.secondary)
-                .cornerRadius(6)
-              }
-              
-              if vm.outlineTags.count < 10 {
-                Button(action: {
-                  pcThreadLogger.info("PostComposerThread: Add tag button tapped in active entry")
-                  showingOutlineTagsEditor = true
-                }) {
-                  Image(systemName: "plus.circle")
-                    .font(.system(size: 12))
-                    .foregroundColor(.secondary)
-                }
-              }
-            }
-            .padding(.horizontal, 1)
-          }
-        }
-        .padding(.vertical, 4)
-        
-        // Compact inline language chips
-        if !vm.selectedLanguages.isEmpty {
+    VStack(alignment: .leading, spacing: 8) {
+      HStack(alignment: .top, spacing: 12) {
+        // Leading: hashtags and languages stacked vertically
+        VStack(alignment: .leading, spacing: 4) {
+          // Compact inline outline hashtags - always show with add button
           HStack(spacing: 8) {
-            Image(systemName: "globe")
+            Image(systemName: "number")
               .font(.system(size: 12))
               .foregroundColor(.secondary)
-            
+
             ScrollView(.horizontal, showsIndicators: false) {
               HStack(spacing: 6) {
-                ForEach(vm.selectedLanguages, id: \.self) { lang in
+                ForEach(vm.outlineTags, id: \.self) { tag in
                   HStack(spacing: 4) {
-                    Text(Locale.current.localizedString(forLanguageCode: lang.lang.languageCode?.identifier ?? "") ?? lang.lang.minimalIdentifier)
+                    Text("#\(tag)")
                       .font(.system(size: 11, weight: .medium))
-                    Button(action: { vm.toggleLanguage(lang) }) {
+                    Button(action: { vm.outlineTags.removeAll { $0 == tag } }) {
                       Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 10))
                         .foregroundColor(.secondary)
@@ -407,23 +365,68 @@ extension PostComposerViewUIKit {
                   .foregroundColor(.secondary)
                   .cornerRadius(6)
                 }
+
+                if vm.outlineTags.count < 10 {
+                  Button(action: {
+                    pcThreadLogger.info("PostComposerThread: Add tag button tapped in active entry")
+                    showingOutlineTagsEditor = true
+                  }) {
+                    Image(systemName: "plus.circle")
+                      .font(.system(size: 12))
+                      .foregroundColor(.secondary)
+                  }
+                }
               }
+              .padding(.horizontal, 1)
             }
           }
           .padding(.vertical, 4)
+
+          // Compact inline language chips
+          if !vm.selectedLanguages.isEmpty {
+            HStack(spacing: 8) {
+              Image(systemName: "globe")
+                .font(.system(size: 12))
+                .foregroundColor(.secondary)
+
+              ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                  ForEach(vm.selectedLanguages, id: \.self) { lang in
+                    HStack(spacing: 4) {
+                      Text(Locale.current.localizedString(forLanguageCode: lang.lang.languageCode?.identifier ?? "") ?? lang.lang.minimalIdentifier)
+                        .font(.system(size: 11, weight: .medium))
+                      Button(action: { vm.toggleLanguage(lang) }) {
+                        Image(systemName: "xmark.circle.fill")
+                          .font(.system(size: 10))
+                          .foregroundColor(.secondary)
+                      }
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.secondary.opacity(0.1))
+                    .foregroundColor(.secondary)
+                    .cornerRadius(6)
+                  }
+                }
+              }
+            }
+            .padding(.vertical, 4)
+          }
         }
+        .layoutPriority(-1)  // Lower priority so character counter gets space
+
+        Spacer(minLength: 8)
+
+        // Trailing: character counter
+        CharacterLimitIndicatorWrapper(currentCount: vm.postText.count)
+          .layoutPriority(1)  // Higher priority to ensure visibility
       }
-      .layoutPriority(-1)  // Lower priority so character counter gets space
-      
-      Spacer(minLength: 8)
-      
-      // Trailing: character counter
-      CharacterLimitIndicatorWrapper(currentCount: vm.postText.count)
-        .layoutPriority(1)  // Higher priority to ensure visibility
+
+      submitValidationMessageView(vm: vm)
     }
     .padding(.horizontal, 16)
   }
-  
+
   @ViewBuilder
   private func inactiveEntryMetadataSection(entry: ThreadEntry, vm: PostComposerViewModel) -> some View {
     // Horizontal layout matching activeEntryMetadataSection
@@ -435,7 +438,7 @@ extension PostComposerViewUIKit {
           Image(systemName: "number")
             .font(.system(size: 12))
             .foregroundColor(.secondary)
-          
+
           ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
               ForEach(entry.outlineTags, id: \.self) { tag in
@@ -447,7 +450,7 @@ extension PostComposerViewUIKit {
                   .foregroundColor(.secondary)
                   .cornerRadius(6)
               }
-              
+
               if entry.outlineTags.isEmpty {
                 Text("No tags")
                   .font(.system(size: 11))
@@ -458,14 +461,14 @@ extension PostComposerViewUIKit {
           }
         }
         .padding(.vertical, 4)
-        
+
         // Compact inline language chips
         if !entry.selectedLanguages.isEmpty {
           HStack(spacing: 8) {
             Image(systemName: "globe")
               .font(.system(size: 12))
               .foregroundColor(.secondary)
-            
+
             ScrollView(.horizontal, showsIndicators: false) {
               HStack(spacing: 6) {
                 ForEach(entry.selectedLanguages, id: \.self) { lang in
@@ -484,9 +487,9 @@ extension PostComposerViewUIKit {
         }
       }
       .layoutPriority(-1)  // Lower priority so character counter gets space
-      
+
       Spacer(minLength: 8)
-      
+
       // Trailing: character counter for this entry
       CharacterLimitIndicatorWrapper(currentCount: entry.text.count)
         .layoutPriority(1)  // Higher priority to ensure visibility

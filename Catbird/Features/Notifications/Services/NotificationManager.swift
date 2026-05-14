@@ -1888,10 +1888,19 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
 
         if let message {
           let sender: String? = (!message.senderID.isEmpty && message.senderID != "unknown") ? message.senderID : nil
+
+          // Resolve the per-DID MlsContext so we can decrypt `payloadEncrypted` rows.
+          let messageMlsContext = try? await CatbirdMLSCore.MLSCoreContext.shared.getContext(
+            for: recipientDid)
+          let decryptedPayload: CatbirdMLSCore.MLSMessagePayload? = messageMlsContext.flatMap {
+            message.decryptedPayload(context: $0)
+          }
+
+          if let plaintext = decryptedPayload?.text { return (plaintext, sender) }
           if let plaintext = message.plaintext { return (plaintext, sender) }
 
           // Control messages (reactions/readReceipts/etc) often have nil plaintext; derive from payload.
-          if let payload = message.parsedPayload {
+          if let payload = decryptedPayload ?? message.parsedPayload {
             switch payload.messageType {
             case .text:
               if let text = payload.text { return (text, sender) }
@@ -1948,7 +1957,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
         if let message = messageById ?? messageByOrder {
           let source = (messageById != nil) ? "message_id" : "epoch/seq"
           let payloadState: String
-          if message.payloadJSON != nil {
+          if message.payloadEncrypted != nil || message.payloadJSON != nil {
             payloadState = "present"
           } else if message.payloadExpired {
             payloadState = "expired"
@@ -2529,8 +2538,11 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
                 // No advisory lock needed - SQLite WAL handles concurrent access
                 // Cross-process coordination uses MLSNotificationCoordinator.
 
+                let mlsContext = try await CatbirdMLSCore.MLSCoreContext.shared.getContext(
+                  for: recipientDid)
                 try await CatbirdMLSCore.MLSGRDBManager.shared.write(for: recipientDid) { db in
                   try CatbirdMLSCore.MLSStorageHelpers.savePayloadSync(
+                    context: mlsContext,
                     in: db,
                     messageID: message.id,
                     conversationID: convoId,
@@ -2622,6 +2634,11 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
               // No advisory lock needed - SQLite WAL handles concurrent access
               // Cross-process coordination uses MLSNotificationCoordinator.
 
+              // Pre-fetch the MlsContext outside the sync write closure so we
+              // can decrypt `payloadEncrypted` rows in-memory inside it.
+              let recoveryMlsContext = try? await CatbirdMLSCore.MLSCoreContext.shared.getContext(
+                for: recipientDid)
+
               try await CatbirdMLSCore.MLSGRDBManager.shared.write(for: recipientDid) {
                 [self] db in
                 // Fetch cached message to get senderID
@@ -2629,8 +2646,16 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
                   let senderDid = cached.senderID
 
                   // Validate senderID not empty/unknown (Fix for reaction overwrite)
-                  if !senderDid.isEmpty && senderDid != "unknown", let json = cached.payloadJSON,
-                    let payload = try? CatbirdMLSCore.MLSMessagePayload.decodeFromJSON(json),
+                  let cachedPayload: CatbirdMLSCore.MLSMessagePayload?
+                  if let ctx = recoveryMlsContext {
+                    cachedPayload = cached.decryptedPayload(context: ctx)
+                  } else if let json = cached.payloadJSON {
+                    cachedPayload = try? CatbirdMLSCore.MLSMessagePayload.decodeFromJSON(json)
+                  } else {
+                    cachedPayload = nil
+                  }
+                  if !senderDid.isEmpty && senderDid != "unknown",
+                    let payload = cachedPayload,
                     payload.messageType == .reaction,
                     let reaction = payload.reaction
                   {

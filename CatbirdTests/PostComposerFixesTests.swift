@@ -194,3 +194,91 @@ func testThreadEntryManagement() async throws {
         #expect(viewModel.postText == "Second thread post")
     }
 }
+
+@Test("UIKit composer submit validation matches shared validation")
+func testUIKitComposerSubmitValidationMatchesSharedValidation() async throws {
+    let appState = AppState()
+    let view = PostComposerViewUIKit(appState: appState)
+    let viewModel = PostComposerViewModel(appState: appState)
+
+    await MainActor.run {
+        viewModel.postText = String(repeating: "a", count: 301)
+        #expect(viewModel.isPostButtonDisabled)
+        #expect(view.canSubmit(vm: viewModel) == false)
+
+        viewModel.postText = "Video still preparing"
+        var videoItem = PostComposerViewModel.MediaItem()
+        videoItem.isLoading = true
+        viewModel.videoItem = videoItem
+        #expect(viewModel.isPostButtonDisabled)
+        #expect(view.canSubmit(vm: viewModel) == false)
+
+        viewModel.videoItem = nil
+        viewModel.videoUploadBlockedReason = "Email confirmation required"
+        #expect(viewModel.isPostButtonDisabled)
+        #expect(view.canSubmit(vm: viewModel) == false)
+
+        viewModel.videoUploadBlockedReason = nil
+        viewModel.postText = "Ready to post"
+        #expect(viewModel.isPostButtonDisabled == false)
+        #expect(view.canSubmit(vm: viewModel))
+    }
+}
+
+@Test("PostComposer submit validation exposes blocking reasons")
+func testSubmitValidationReasons() async throws {
+    let appState = AppState()
+    let viewModel = PostComposerViewModel(appState: appState)
+
+    await MainActor.run {
+        #expect(viewModel.submitValidationState.reason == .emptyContent)
+
+        viewModel.postText = String(repeating: "a", count: 301)
+        #expect(viewModel.submitValidationState.reason == .overCharacterLimit(current: 301, max: 300))
+        #expect(viewModel.submitValidationState.shouldShowInlineMessage)
+
+        viewModel.postText = "Preparing video"
+        var videoItem = PostComposerViewModel.MediaItem()
+        videoItem.isLoading = true
+        viewModel.videoItem = videoItem
+        #expect(viewModel.submitValidationState.reason == .videoPreparing)
+
+        viewModel.videoItem = nil
+        viewModel.videoUploadBlockedReason = "Email confirmation required"
+        #expect(viewModel.submitValidationState.reason == .videoBlocked("Email confirmation required"))
+
+        viewModel.videoUploadBlockedReason = nil
+        viewModel.postText = ""
+        var imageItem = PostComposerViewModel.MediaItem()
+        imageItem.isLoading = false
+        viewModel.mediaItems = [imageItem]
+        #expect(viewModel.submitValidationState.canSubmit)
+    }
+}
+
+@Test("PostComposer media removal uses stable item identifiers")
+func testMediaRemovalUsesStableIdentifiers() async throws {
+    let appState = AppState()
+    let viewModel = PostComposerViewModel(appState: appState)
+
+    await MainActor.run {
+        var first = PostComposerViewModel.MediaItem()
+        first.isLoading = false
+        var second = PostComposerViewModel.MediaItem()
+        second.isLoading = false
+
+        viewModel.mediaItems = [first, second]
+        viewModel.removeMediaItem(withId: first.id)
+
+        #expect(viewModel.mediaItems.map(\.id) == [second.id])
+
+        viewModel.enterThreadMode()
+        viewModel.mediaItems = [second]
+        viewModel.selectedGif = nil
+        viewModel.updateCurrentThreadEntry()
+        viewModel.removeMediaItem(withId: second.id)
+
+        #expect(viewModel.mediaItems.isEmpty)
+        #expect(viewModel.threadEntries[viewModel.currentThreadIndex].mediaItems.isEmpty)
+    }
+}

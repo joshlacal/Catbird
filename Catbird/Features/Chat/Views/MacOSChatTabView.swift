@@ -168,6 +168,15 @@ struct MacOSChatContentView: View {
         try MLSStorageHelpers.getUnreadCountsForAllConversationsSync(from: db, currentUserDID: userDID)
       }
 
+      // Pull the per-DID MlsContext so the sync DB closure below can
+      // decrypt `payloadEncrypted` rows in-memory.
+      let previewMlsContext: MlsContext?
+      do {
+        previewMlsContext = try await CatbirdMLSCore.MLSCoreContext.shared.getContext(for: userDID)
+      } catch {
+        previewMlsContext = nil
+      }
+
       let (lastMessages, latestActivityByConvo) = try await MLSGRDBManager.shared.read(for: userDID) { db -> ([String: MLSLastMessagePreview], [String: Date]) in
         var previews: [String: MLSLastMessagePreview] = [:]
         var latestActivity: [String: Date] = [:]
@@ -185,14 +194,20 @@ struct MacOSChatContentView: View {
           }
 
           for message in recentMessages {
+            let messagePayload: MLSMessagePayload?
+            if let ctx = previewMlsContext {
+              messagePayload = message.decryptedPayload(context: ctx)
+            } else {
+              messagePayload = message.parsedPayload
+            }
             if message.processingError != nil {
-              let text = message.parsedPayload?.text ?? ""
+              let text = messagePayload?.text ?? ""
               if text.isEmpty || text.contains("Message unavailable")
                 || text.contains("Decryption Failed") || text.contains("Self-sent message") {
                 continue
               }
             }
-            if let payload = message.parsedPayload {
+            if let payload = messagePayload {
               switch payload.messageType {
               case .text, .system, nil:
                 if let plaintext = payload.text, !plaintext.isEmpty {

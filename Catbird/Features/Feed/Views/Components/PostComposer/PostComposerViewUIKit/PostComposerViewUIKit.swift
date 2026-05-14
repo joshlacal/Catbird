@@ -91,25 +91,10 @@ struct PostComposerViewUIKit: View {
       if let vm = viewModel {
         GeometryReader { proxy in
           navigationContainer(vm: vm)
-            .onChange(of: vm.mentionSuggestions.count) {
-              pcUIKitLogger.debug("PostComposerViewUIKit: Mention suggestions count changed to \(vm.mentionSuggestions.count)")
-              updateMentionOverlay(vm: vm, proxy: proxy)
-            }
-            .onChange(of: vm.mentionSuggestions.map { $0.did.didString() }) {
-              pcUIKitLogger.debug("PostComposerViewUIKit: Mention suggestions content changed")
-              updateMentionOverlay(vm: vm, proxy: proxy)
-            }
-            .onChange(of: vm.postText) { 
-              pcUIKitLogger.debug("PostComposerViewUIKit: Post text changed, length: \(vm.postText.count)")
-              updateMentionOverlay(vm: vm, proxy: proxy)
-            }
             .onAppear {
-                pcUIKitLogger.debug("PostComposerViewUIKit: Rendering with viewModel")
-
               pcUIKitLogger.info("PostComposerViewUIKit: View appeared")
               updateMentionOverlay(vm: vm, proxy: proxy)
             }
-            .overlay(mentionOverlayView(vm: vm, proxy: proxy))
         }
       } else {
           ProgressView().progressViewStyle(.circular)
@@ -175,7 +160,7 @@ struct PostComposerViewUIKit: View {
           // Leading: X button with confirmation dialog
           ToolbarItem(placement: .cancellationAction) {
             Button(action: { 
-              if !vm.postText.isEmpty || !vm.mediaItems.isEmpty || vm.videoItem != nil {
+              if vm.hasContent {
                 showingDismissAlert = true
               } else {
                 dismissReason = .discard
@@ -285,7 +270,7 @@ struct PostComposerViewUIKit: View {
         .toolbar {
           ToolbarItem(placement: .cancellationAction) {
             Button("Cancel") {
-              if !vm.postText.isEmpty || !vm.mediaItems.isEmpty {
+              if vm.hasContent {
                 showingDismissAlert = true
               } else {
                 dismissReason = .discard
@@ -347,6 +332,7 @@ struct PostComposerViewUIKit: View {
           // In thread mode, the active editor is rendered inside threadEntriesSection.
           if !vm.isThreadMode {
             composerEditorSection(vm: vm)
+            mentionSuggestionsSection(vm: vm)
             mediaAttachmentsSection(vm: vm)
             metadataSection(vm: vm)
           }
@@ -400,14 +386,8 @@ struct PostComposerViewUIKit: View {
       
       RichEditorContainer(
         attributedText: Binding(
-          get: { 
-            pcUIKitLogger.trace("PostComposerViewUIKit: Getting richAttributedText, length: \(vm.richAttributedText.length)")
-            return vm.richAttributedText 
-          },
-          set: { 
-            pcUIKitLogger.debug("PostComposerViewUIKit: Setting richAttributedText, length: \(($0 as NSAttributedString).length)")
-            vm.richAttributedText = $0 
-          }
+          get: { vm.richAttributedText },
+          set: { vm.richAttributedText = $0 }
         ),
         linkFacets: $linkFacets,
         pendingSelectionRange: $pendingSelectionRange,
@@ -424,7 +404,6 @@ struct PostComposerViewUIKit: View {
           pcUIKitLogger.info("PostComposerViewUIKit: Detected genmoji: \(emojis)")
         },
         onTextChanged: { attrString, cursorPos in
-          pcUIKitLogger.debug("PostComposerViewUIKit: Text changed - length: \(attrString.length), cursor: \(cursorPos), linkFacets: \(linkFacets.count)")
           vm.updateFromAttributedText(attrString, cursorPosition: cursorPos)
           vm.updateManualLinkFacets(from: linkFacets)
         },
@@ -487,7 +466,7 @@ struct PostComposerViewUIKit: View {
           pcUIKitLogger.info("PostComposerViewUIKit: Link action triggered")
           showingLinkCreation = true 
         },
-        allowTenor: true,
+        allowTenor: appState.appSettings.allowTenor,
         onTextViewCreated: { textView in
           pcUIKitLogger.debug("PostComposerViewUIKit: Text view created")
           #if os(iOS)
@@ -520,17 +499,7 @@ struct PostComposerViewUIKit: View {
     }
   }
   
-    func hasContent(vm: PostComposerViewModel) -> Bool {
-    let hasText = !vm.postText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    let hasMedia = !vm.mediaItems.isEmpty
-    let hasVideo = vm.videoItem != nil
-    let hasGif = vm.selectedGif != nil
-    let result = hasText || hasMedia || hasVideo || hasGif
-    
-    if result {
-      pcUIKitLogger.trace("PostComposerViewUIKit: Has content - text: \(hasText), media: \(hasMedia), video: \(hasVideo), gif: \(hasGif)")
-    }
-    
-    return result
+  func hasContent(vm: PostComposerViewModel) -> Bool {
+    return vm.hasContent
   }
 }

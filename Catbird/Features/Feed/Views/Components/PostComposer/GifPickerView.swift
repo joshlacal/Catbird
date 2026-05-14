@@ -4,7 +4,9 @@ import Petrel
 import AVFoundation
 import AVKit
 
-// MARK: - Tenor API Models
+// MARK: - GIF API Models
+// JSON shape is the Tenor v2 schema; Klipy mirrors it as a drop-in replacement.
+// The catbird.blue Caddy proxy routes /klipy/v2/* to api.klipy.com with the API key injected server-side.
 
 struct TenorSearchResponse: Codable {
     let results: [TenorGif]
@@ -142,14 +144,37 @@ struct GifPickerView: View {
             .cornerRadius(10)
             .padding(.horizontal, 16)
             .padding(.top, 8)
-            
+
+            klipyAttributionRow
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+
             Rectangle()
                 .fill(Color(platformColor: .platformSystemGray4))
                 .frame(height: 0.5)
-                .padding(.top, 16)
+                .padding(.top, 12)
         }
     }
-    
+
+    // MARK: - Klipy Attribution
+    // Required by Klipy partner terms — accompanies the search bar.
+
+    private var klipyAttributionRow: some View {
+        HStack(spacing: 4) {
+            Spacer()
+            Text("GIFs by")
+                .appFont(AppTextRole.caption2)
+                .foregroundColor(.secondary)
+            Link(destination: URL(string: "https://klipy.com")!) {
+                Text("KLIPY")
+                    .appFont(AppTextRole.caption2)
+                    .fontWeight(.semibold)
+                    .foregroundColor(.secondary)
+            }
+            .accessibilityLabel("GIFs powered by Klipy. Opens klipy.com")
+        }
+    }
+
     // MARK: - Categories Section
     
     private var categoriesSection: some View {
@@ -284,7 +309,7 @@ struct GifPickerView: View {
     
     private func loadCategories() async {
         do {
-            let url = URL(string: "https://catbird.blue/tenor/v2/categories")!
+            let url = URL(string: "https://catbird.blue/klipy/v2/categories")!
             let (data, _) = try await URLSession.shared.data(from: url)
             let response = try JSONDecoder().decode(TenorCategoriesResponse.self, from: data)
             
@@ -301,7 +326,7 @@ struct GifPickerView: View {
         
         do {
             let encodedQuery = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-            let url = URL(string: "https://catbird.blue/tenor/v2/autocomplete?q=\(encodedQuery)&limit=8")!
+            let url = URL(string: "https://catbird.blue/klipy/v2/autocomplete?q=\(encodedQuery)&limit=8")!
             let (data, response) = try await URLSession.shared.data(from: url)
             
             // Check for HTTP errors
@@ -352,7 +377,7 @@ struct GifPickerView: View {
         
         do {
             let encodedQuery = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-            let url = URL(string: "https://catbird.blue/tenor/v2/search?q=\(encodedQuery)&limit=20")!
+            let url = URL(string: "https://catbird.blue/klipy/v2/search?q=\(encodedQuery)&limit=20")!
             let (data, _) = try await URLSession.shared.data(from: url)
             let response = try JSONDecoder().decode(TenorSearchResponse.self, from: data)
             
@@ -381,7 +406,7 @@ struct GifPickerView: View {
         
         do {
             let encodedQuery = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-            let url = URL(string: "https://catbird.blue/tenor/v2/search?q=\(encodedQuery)&limit=20&pos=\(cursor)")!
+            let url = URL(string: "https://catbird.blue/klipy/v2/search?q=\(encodedQuery)&limit=20&pos=\(cursor)")!
             let (data, _) = try await URLSession.shared.data(from: url)
             let response = try JSONDecoder().decode(TenorSearchResponse.self, from: data)
             
@@ -497,7 +522,7 @@ struct CategoryCardView: View {
         
         do {
             let encodedQuery = category.searchterm.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-            let url = URL(string: "https://catbird.blue/tenor/v2/search?q=\(encodedQuery)&limit=1")!
+            let url = URL(string: "https://catbird.blue/klipy/v2/search?q=\(encodedQuery)&limit=1")!
             let (data, _) = try await URLSession.shared.data(from: url)
             let response = try JSONDecoder().decode(TenorSearchResponse.self, from: data)
             

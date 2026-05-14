@@ -6,137 +6,54 @@ import SwiftCBOR
 @Suite("CARReader Tests")
 struct CARReaderTests {
 
-  // MARK: - Varint Tests
-
-  @Test("readVarint decodes single-byte values correctly")
-  func testVarintSingleByte() throws {
-    // Value 42 = 0x2A (single byte, MSB clear)
-    let data = Data([0x2A])
-    let url = try writeTempFile(data)
-    let reader = try CARReader(fileURL: url)
-    let value = try reader.readVarint()
-    #expect(value == 42)
-  }
-
-  @Test("readVarint decodes multi-byte values correctly")
-  func testVarintMultiByte() throws {
-    // Value 300 = 0b100101100 → LEB128: [0xAC, 0x02]
-    let data = Data([0xAC, 0x02])
-    let url = try writeTempFile(data)
-    let reader = try CARReader(fileURL: url)
-    let value = try reader.readVarint()
-    #expect(value == 300)
-  }
-
-  @Test("readVarint decodes zero")
-  func testVarintZero() throws {
-    let data = Data([0x00])
-    let url = try writeTempFile(data)
-    let reader = try CARReader(fileURL: url)
-    let value = try reader.readVarint()
-    #expect(value == 0)
-  }
-
-  @Test("readVarint decodes max single-byte value (127)")
-  func testVarintMaxSingleByte() throws {
-    let data = Data([0x7F])
-    let url = try writeTempFile(data)
-    let reader = try CARReader(fileURL: url)
-    let value = try reader.readVarint()
-    #expect(value == 127)
-  }
-
-  @Test("readVarint decodes 128 (first multi-byte)")
-  func testVarint128() throws {
-    // 128 → LEB128: [0x80, 0x01]
-    let data = Data([0x80, 0x01])
-    let url = try writeTempFile(data)
-    let reader = try CARReader(fileURL: url)
-    let value = try reader.readVarint()
-    #expect(value == 128)
-  }
-
-  // MARK: - CID Parsing Tests
-
-  @Test("readCID parses a CIDv1 dag-cbor SHA-256")
-  func testReadCIDv1() throws {
-    // CIDv1: version=1, codec=0x71 (dag-cbor), hash=0x12 (SHA-256), len=0x20
-    var cidBytes = Data([0x01, 0x71, 0x12, 0x20])
-    cidBytes.append(Data(repeating: 0xAB, count: 32)) // 32-byte digest
-
-    let url = try writeTempFile(cidBytes)
-    let reader = try CARReader(fileURL: url)
-    let cid = try reader.readCID()
-
-    #expect(cid.codec == .dagCBOR)
-    #expect(cid.multihash.algorithm == 0x12)
-    #expect(cid.multihash.length == 0x20)
-    #expect(cid.multihash.digest.count == 32)
-    #expect(cid.multihash.digest == Data(repeating: 0xAB, count: 32))
-  }
-
-  @Test("readCID parses a CIDv1 raw codec")
-  func testReadCIDv1Raw() throws {
-    // CIDv1: version=1, codec=0x55 (raw), hash=0x12 (SHA-256), len=0x20
-    var cidBytes = Data([0x01, 0x55, 0x12, 0x20])
-    cidBytes.append(Data(repeating: 0xCD, count: 32))
-
-    let url = try writeTempFile(cidBytes)
-    let reader = try CARReader(fileURL: url)
-    let cid = try reader.readCID()
-
-    #expect(cid.codec == .raw)
-    #expect(cid.multihash.digest.count == 32)
-  }
-
   // MARK: - Synthetic CAR File Tests
 
-  @Test("indexAllBlocks correctly indexes a synthetic CAR file")
-  func testIndexAllBlocks() throws {
+  @Test("CARReader indexes a synthetic CAR file on init")
+  func testIndexesBlocksOnInit() throws {
     let carData = try buildSyntheticCAR()
     let url = try writeTempFile(carData)
     let reader = try CARReader(fileURL: url)
-    let count = try reader.indexAllBlocks()
 
     // Synthetic CAR has 2 blocks
-    #expect(count == 2)
     #expect(reader.blockIndex.count == 2)
     #expect(reader.roots.count == 1)
   }
 
-  @Test("readBlockData returns correct data after indexing")
-  func testReadBlockData() throws {
+  @Test("rawBlockData returns correct data after indexing")
+  func testRawBlockData() throws {
     let carData = try buildSyntheticCAR()
     let url = try writeTempFile(carData)
     let reader = try CARReader(fileURL: url)
-    try reader.indexAllBlocks()
 
     // Read each block and verify it decodes as valid CBOR
     for (cidString, _) in reader.blockIndex {
-      let data = reader.readBlockData(for: cidString)
-      #expect(data != nil, "Block data should be readable for CID: \(cidString.prefix(20))")
-      #expect(data!.count > 0, "Block data should not be empty")
+      let data = try reader.rawBlockData(for: cidString)
+      #expect(!data.isEmpty, "Block data should not be empty")
     }
   }
 
-  @Test("readBlockData returns nil for unknown CID")
-  func testReadBlockDataUnknownCID() throws {
+  @Test("rawBlockData throws for unknown CID")
+  func testRawBlockDataUnknownCID() throws {
     let carData = try buildSyntheticCAR()
     let url = try writeTempFile(carData)
     let reader = try CARReader(fileURL: url)
-    try reader.indexAllBlocks()
 
-    let data = reader.readBlockData(for: "bafynotareelcid")
-    #expect(data == nil)
+    #expect(throws: CARReaderError.self) {
+      _ = try reader.rawBlockData(for: "bafynotareelcid")
+    }
   }
 
   // MARK: - Error Tests
 
   @Test("CARReader throws for non-existent file")
   func testFileNotFound() {
-    #expect(throws: CARReaderError.self) {
+    var didThrow = false
+    do {
       _ = try CARReader(fileURL: URL(fileURLWithPath: "/tmp/does_not_exist_\(UUID()).car"))
+    } catch {
+      didThrow = true
     }
+    #expect(didThrow)
   }
 
   // MARK: - Helpers

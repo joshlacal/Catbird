@@ -2294,12 +2294,31 @@ struct MLSConversationDetailView: View {
       // Convert MLSMessageModel to Message objects for display
       var cachedMessages: [Message] = []
 
+      // Pull the per-DID MlsContext once so we can decrypt
+      // `payloadEncrypted` rows in-memory without an FFI lookup per row.
+      let phase0MlsContext: MlsContext?
+      do {
+        phase0MlsContext = try await CatbirdMLSCore.MLSCoreContext.shared.getContext(
+          for: currentUserDID)
+      } catch {
+        logger.error(
+          "Phase 0 failed to obtain MLS context for payload decryption: \(error.localizedDescription)"
+        )
+        phase0MlsContext = nil
+      }
+
       for model in cachedModels {
         // Note: We don't filter by message_type here because the database query
         // doesn't include that field. Control/commit payloads are stored but skipped
         // below because we only display .text messages.
 
-        guard let payload = model.parsedPayload, !model.payloadExpired else {
+        let payloadOpt: MLSMessagePayload?
+        if let ctx = phase0MlsContext {
+          payloadOpt = model.decryptedPayload(context: ctx)
+        } else {
+          payloadOpt = model.parsedPayload
+        }
+        guard let payload = payloadOpt, !model.payloadExpired else {
           // Skip messages without payload or with expired payload
           // This includes messages that failed to decrypt due to forward secrecy
           logger.debug(
@@ -2511,8 +2530,26 @@ struct MLSConversationDetailView: View {
       var olderMessages: [Message] = []
       var orderUpdates: [String: MessageOrderKey] = [:]
 
+      // Pull the per-DID MlsContext once to decrypt `payloadEncrypted` rows.
+      let olderMlsContext: MlsContext?
+      do {
+        olderMlsContext = try await CatbirdMLSCore.MLSCoreContext.shared.getContext(
+          for: currentUserDID)
+      } catch {
+        logger.error(
+          "Older-page failed to obtain MLS context for payload decryption: \(error.localizedDescription)"
+        )
+        olderMlsContext = nil
+      }
+
       for model in olderModels {
-        guard let payload = model.parsedPayload, !model.payloadExpired else {
+        let payloadOpt: MLSMessagePayload?
+        if let ctx = olderMlsContext {
+          payloadOpt = model.decryptedPayload(context: ctx)
+        } else {
+          payloadOpt = model.parsedPayload
+        }
+        guard let payload = payloadOpt, !model.payloadExpired else {
           logger.debug("Skipping older message \(model.messageID): no payload or expired")
           continue
         }
@@ -3226,12 +3263,15 @@ struct MLSConversationDetailView: View {
         // Now save the payload (can't decrypt own messages in MLS, so we cache on send)
         do {
           let payload = CatbirdMLSCore.MLSMessagePayload.text(trimmed, embed: embed)
+          let ownerDID = appState.userDID ?? senderDID
+          let mlsContext = try await CatbirdMLSCore.MLSCoreContext.shared.getContext(for: ownerDID)
           try await storage.savePayloadForMessage(
+            context: mlsContext,
             messageID: messageId,
             conversationID: conversationId,
             payload: payload,
             senderID: senderDID,  // ← Sender DID (who sent the message)
-            currentUserDID: appState.userDID ?? senderDID,  // ← Current user's DID (owner of this storage context)
+            currentUserDID: ownerDID,  // ← Current user's DID (owner of this storage context)
             epoch: epoch,  // ✅ Use real epoch from server
             sequenceNumber: seq,  // ✅ Use real sequence number from server
             timestamp: receivedAt.date,  // ✅ Use server timestamp
@@ -3513,14 +3553,16 @@ struct MLSConversationDetailView: View {
       let result:
         (senderDID: String, displayText: String, embed: MLSEmbedData?, isControlMessage: Bool) =
           try await Task.detached(priority: .userInitiated) {
+            let mlsContext = try await CatbirdMLSCore.MLSCoreContext.shared.getContext(
+              for: currentUserDID)
             if let storedSender = try? await storageRef.fetchSenderForMessage(
               messageId, currentUserDID: currentUserDID, database: database),
               let storedPlaintext = try? await storageRef.fetchPlaintextForMessage(
-                messageId, currentUserDID: currentUserDID, database: database)
+                context: mlsContext, messageId, currentUserDID: currentUserDID, database: database)
             {
               // Already decrypted and cached - parse to extract display text
               let embed = try? await storageRef.fetchEmbedForMessage(
-                messageId, currentUserDID: currentUserDID, database: database)
+                context: mlsContext, messageId, currentUserDID: currentUserDID, database: database)
 
               // Parse the plaintext to check if it's a control message
               if let parsed = MLSConversationDetailView.parseDisplayText(from: storedPlaintext) {
@@ -3767,15 +3809,12 @@ struct MLSConversationDetailView: View {
   /// didn't make this request ourselves, we export and upload fresh GroupInfo.
   @MainActor
   private func handleGroupInfoRefreshRequested(
-    _ event: BlueCatbirdMlsChatSubscribeEvents.InfoEvent
+    _ event: BlueCatbirdMlsChatSubscribeEvents.GroupInfoRefreshRequestedEvent
   ) async {
-    guard let convoId = event.convoId else {
-      logger.warning("⚠️ [GroupInfoRefresh] Missing convoId in InfoEvent")
-      return
-    }
+    let convoId = event.convoId
 
     guard let requestedBy = event.requestedBy else {
-      logger.warning("⚠️ [GroupInfoRefresh] Missing requestedBy in InfoEvent")
+      logger.warning("⚠️ [GroupInfoRefresh] Missing requestedBy in GroupInfoRefreshRequestedEvent")
       return
     }
 
@@ -3812,15 +3851,12 @@ struct MLSConversationDetailView: View {
   /// active members to re-add them. If we're an active member, we re-add the user.
   @MainActor
   private func handleReadditionRequested(
-    _ event: BlueCatbirdMlsChatSubscribeEvents.InfoEvent
+    _ event: BlueCatbirdMlsChatSubscribeEvents.ReadditionRequestedEvent
   ) async {
-    guard let convoId = event.convoId else {
-      logger.warning("⚠️ [Readdition] Missing convoId in InfoEvent")
-      return
-    }
+    let convoId = event.convoId
 
     guard let requestedBy = event.requestedBy else {
-      logger.warning("⚠️ [Readdition] Missing requestedBy in InfoEvent")
+      logger.warning("⚠️ [Readdition] Missing requestedBy in ReadditionRequestedEvent")
       return
     }
 

@@ -2271,9 +2271,8 @@ final class AppState {
             },
             onGroupInfoRefreshRequested: { [weak self] event in
               guard let self else { return }
-              if let convoId = event.convoId,
-                let manager = await self.getMLSConversationManager() {
-                await manager.handleGroupInfoRefreshRequest(convoId: convoId)
+              if let manager = await self.getMLSConversationManager() {
+                await manager.handleGroupInfoRefreshRequest(convoId: event.convoId)
               }
             },
             onMembershipChanged: { [weak self] convoId, did, action in

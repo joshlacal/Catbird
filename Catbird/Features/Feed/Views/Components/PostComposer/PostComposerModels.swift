@@ -63,6 +63,47 @@ struct ThreadEntry: Identifiable, Hashable {
     var quotedPost: AppBskyFeedDefs.PostView?
 }
 
+// MARK: - Submit Validation
+
+struct PostComposerSubmitValidationState: Equatable {
+    enum Reason: Equatable {
+        case emptyContent
+        case overCharacterLimit(current: Int, max: Int)
+        case posting
+        case videoPreparing
+        case videoBlocked(String)
+    }
+
+    let canSubmit: Bool
+    let reason: Reason?
+
+    var message: String? {
+        switch reason {
+        case .emptyContent:
+            return "Add text or media before posting."
+        case .overCharacterLimit(let current, let max):
+            return "\(current - max) characters over the limit."
+        case .posting:
+            return "Posting..."
+        case .videoPreparing:
+            return "Video is still preparing."
+        case .videoBlocked(let reason):
+            return reason
+        case nil:
+            return nil
+        }
+    }
+
+    var shouldShowInlineMessage: Bool {
+        switch reason {
+        case .overCharacterLimit, .videoPreparing, .videoBlocked:
+            return true
+        case .emptyContent, .posting, nil:
+            return false
+        }
+    }
+}
+
 // MARK: - Platform Compatibility
 
 #if os(iOS)
