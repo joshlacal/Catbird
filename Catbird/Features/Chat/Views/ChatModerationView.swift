@@ -238,6 +238,17 @@ struct MessageContextView: View {
                   .appFont(AppTextRole.caption)
                   .foregroundColor(.secondary)
               }
+            case .chatBskyConvoDefsSystemMessageView(let systemMessage):
+              HStack {
+                Image(systemName: "info.circle")
+                  .foregroundColor(.secondary)
+                Text("System message")
+                  .italic()
+                Spacer()
+                Text(systemMessage.sentAt.date.formatted(date: .abbreviated, time: .shortened))
+                  .appFont(AppTextRole.caption)
+                  .foregroundColor(.secondary)
+              }
             case .unexpected:
               Text("Unknown message type")
                 .foregroundColor(.secondary)

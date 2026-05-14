@@ -341,6 +341,16 @@ struct MessagePreviewView: View {
             .italic()
         }
         
+      case .chatBskyConvoDefsSystemMessageView:
+        HStack {
+          Image(systemName: "info.circle")
+            .foregroundColor(.secondary)
+          Text("System message")
+            .appFont(AppTextRole.caption)
+            .foregroundColor(.secondary)
+            .italic()
+        }
+
       case .unexpected:
         Text("Unsupported message type")
           .appFont(AppTextRole.caption)

@@ -395,8 +395,9 @@ struct ConversationInvitationView: View {
         lastMessage: nil,
         lastReaction: nil,
         muted: false,
-        status: "accepted",
-        unreadCount: 5
+        status: .accepted,
+        unreadCount: 5,
+        kind: nil
       )
   
       ConversationManagementView(conversation: mockConversation)

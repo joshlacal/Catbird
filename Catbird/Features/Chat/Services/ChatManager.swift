@@ -533,6 +533,9 @@ final class ChatManager: StateInvalidationSubscriber {
         case .chatBskyConvoDefsDeletedMessageView:
           // Skip deleted messages
           continue
+        case .chatBskyConvoDefsSystemMessageView:
+          // System messages are not stored in the plain user-message map.
+          continue
         case .unexpected(let data):
           logger.warning(
             "Unexpected message type encountered in \(convoId): \(String(describing: data))")
@@ -1394,9 +1397,11 @@ final class ChatManager: StateInvalidationSubscriber {
                     associated: profile.associated,
                     viewer: profile.viewer,
                     labels: profile.labels,
+                    createdAt: profile.createdAt,
                     chatDisabled: profile.associated?.chat?.allowIncoming == "none"
                         || (profile.associated?.chat?.allowIncoming == "following" && profile.viewer?.followedBy == nil),
-                    verification: profile.verification
+                    verification: profile.verification,
+                    kind: nil
                 )
           }
         self.logger.debug("Typeahead search returned \(filteredResults.count) contacts for query: \(query)")
@@ -1766,8 +1771,8 @@ final class ChatManager: StateInvalidationSubscriber {
   /// Updates the message requests and accepted conversations lists based on status
   @MainActor
   private func updateConversationsByStatus() {
-    messageRequests = conversations.filter { $0.status == "request" }
-    acceptedConversations = conversations.filter { $0.status == "accepted" || $0.status == nil }
+    messageRequests = conversations.filter { $0.status?.rawValue == "request" }
+    acceptedConversations = conversations.filter { $0.status?.rawValue == "accepted" || $0.status == nil }
     
       logger.debug("Updated conversation lists: \(self.messageRequests.count) requests, \(self.acceptedConversations.count) accepted")
   }

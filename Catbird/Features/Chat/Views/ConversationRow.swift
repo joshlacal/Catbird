@@ -118,6 +118,8 @@ struct ConversationRow: View {
       // or you might want to show when it was deleted if available.
       // For now, returning nil.
       return nil
+    case .chatBskyConvoDefsSystemMessageView(let systemMessage):
+      return systemMessage.sentAt.date
     case .unexpected:
       return nil
     }
@@ -178,6 +180,11 @@ struct LastMessagePreview: View {
           .lineLimit(2)
       case .chatBskyConvoDefsDeletedMessageView:
         Text("Message deleted")
+          .designFootnote()
+          .foregroundColor(.secondary)
+          .italic()
+      case .chatBskyConvoDefsSystemMessageView:
+        Text("System message")
           .designFootnote()
           .foregroundColor(.secondary)
           .italic()

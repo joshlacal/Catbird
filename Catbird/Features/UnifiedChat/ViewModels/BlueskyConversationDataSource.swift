@@ -124,8 +124,10 @@ final class BlueskyConversationDataSource: UnifiedChatDataSource {
           associated: member.associated,
           viewer: nil,
           labels: nil,
+          createdAt: member.createdAt,
           chatDisabled: nil,
-          verification: nil
+          verification: nil,
+          kind: nil
         )
       }
       return profiles
