@@ -237,6 +237,7 @@ struct SideDrawer<Content: View, DrawerContent: View>: View {
           .frame(width: adaptiveDrawerWidth)
           .modifier(DrawerGlassBackground())
           .frame(maxHeight: .infinity)
+          .hoverEffect(.lift)
           .offset(x: drawerOffset)
           .accessibilityAction(named: "Close Feeds Menu") {
             withAnimation {
@@ -244,6 +245,12 @@ struct SideDrawer<Content: View, DrawerContent: View>: View {
             }
           }
           .accessibilityAddTraits(isOpen ? .isModal : [])
+      }
+      .accessibilityAction(named: "Open Feeds Menu") {
+        guard !isOpen, canOpen else { return }
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+          isDrawerOpen = true
+        }
       }
       .animation(isDragging ? nil : .spring(response: 0.35, dampingFraction: 0.85), value: isOpen)
       .gesture(
