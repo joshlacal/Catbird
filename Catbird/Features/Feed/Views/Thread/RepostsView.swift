@@ -7,17 +7,21 @@
 
 import SwiftUI
 import Petrel
-import NukeUI
 
 struct RepostsView: View {
     let postUri: String
     @Binding var path: NavigationPath
     @Environment(AppState.self) private var appState
+    @Environment(\.horizontalSizeClass) private var hSizeClass
     @State private var reposts: [AppBskyActorDefs.ProfileView] = []
     @State private var loading: Bool = true
     @State private var error: Error?
     @State private var cursor: String?
-    
+
+    private var contentMaxWidth: CGFloat {
+        hSizeClass == .compact ? .infinity : 600
+    }
+
     var body: some View {
         VStack {
             if loading && reposts.isEmpty {
@@ -35,21 +39,23 @@ struct RepostsView: View {
                     ForEach(reposts, id: \.did) { profile in
                         ProfileRowView(profile: profile, path: $path)
                             .mainContentFrame()
-                            .alignmentGuide(.listRowSeparatorLeading) { _ in 0}
-                            .alignmentGuide(.listRowSeparatorTrailing) { d in d.width}
+                            .alignmentGuide(.listRowSeparatorLeading) { _ in 0 }
+                            .alignmentGuide(.listRowSeparatorTrailing) { d in d.width }
                             .listRowSeparator(.visible)
                             .listRowInsets(EdgeInsets())
-
                     }
-                    
+
                     if let cursor = cursor {
                         ProgressView()
                             .onAppear {
                                 Task { await loadMoreReposts() }
                             }
+                            .listRowSeparator(.hidden)
                     }
                 }
                 .listStyle(.plain)
+                .frame(maxWidth: contentMaxWidth)
+                .frame(maxWidth: .infinity, alignment: .center)
             }
         }
         .navigationTitle("Reposts")
