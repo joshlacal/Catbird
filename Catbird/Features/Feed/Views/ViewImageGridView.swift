@@ -1223,7 +1223,7 @@ struct ZoomableImageWrapper: UIViewControllerRepresentable {
   let image: AppBskyEmbedImages.ViewImage
   @Binding var liveTextEnabled: Bool
   var liveTextSupported: Bool
-  
+
   func makeUIViewController(context: Context) -> ZoomableImageViewController {
     ZoomableImageViewController(
       image: image,
@@ -1231,7 +1231,7 @@ struct ZoomableImageWrapper: UIViewControllerRepresentable {
       liveTextSupported: liveTextSupported
     )
   }
-  
+
   func updateUIViewController(_ uiViewController: ZoomableImageViewController, context: Context) {
     uiViewController.updateLiveText(enabled: liveTextEnabled)
   }
@@ -1240,27 +1240,32 @@ struct ZoomableImageWrapper: UIViewControllerRepresentable {
 class ZoomableImageViewController: UIViewController, UIScrollViewDelegate {
   private let scrollView = UIScrollView()
   private let imageView = UIImageView()
+  private let activityIndicator = UIActivityIndicatorView(style: .medium)
   private let accessibilityAltText: String
   private let liveTextSupported: Bool
   private var imageAnalysisInteraction: ImageAnalysisInteraction?
+  private var spinnerWorkItem: DispatchWorkItem?
+  private var didReceiveFullsize = false
 
-  // Source for the image: either a URL to load or a UIImage already in memory
+  private static let viewerLogger = Logger(subsystem: "blue.catbird", category: "ZoomableImageViewer")
+
   private let imageSource: ImageSource
 
   enum ImageSource {
-    case url(URL)
+    /// Full-size URL with an optional thumbnail shown as a placeholder while the full size loads.
+    case url(fullsize: URL, thumbnail: URL?)
     case loaded(UIImage)
   }
 
-  /// Initialize with an AT Protocol image (loads from URL).
   init(image: AppBskyEmbedImages.ViewImage, liveTextEnabled: Bool, liveTextSupported: Bool) {
-    self.imageSource = .url(ImageLoadingManager.cdnURL(URL(string: image.fullsize.uriString()) ?? URL(string: "about:blank")!))
+    let fullsize = ImageLoadingManager.cdnURL(URL(string: image.fullsize.uriString()) ?? URL(string: "about:blank")!)
+    let thumbnail = URL(string: image.thumb.uriString()).map { ImageLoadingManager.cdnURL($0) }
+    self.imageSource = .url(fullsize: fullsize, thumbnail: thumbnail)
     self.accessibilityAltText = image.alt
     self.liveTextSupported = liveTextSupported
     super.init(nibName: nil, bundle: nil)
   }
 
-  /// Initialize with a UIImage already in memory (e.g. decrypted MLS image).
   init(uiImage: UIImage, altText: String?, liveTextSupported: Bool) {
     self.imageSource = .loaded(uiImage)
     self.accessibilityAltText = altText ?? "Image"
@@ -1272,10 +1277,15 @@ class ZoomableImageViewController: UIViewController, UIScrollViewDelegate {
     fatalError("init(coder:) has not been implemented")
   }
 
+  deinit {
+    spinnerWorkItem?.cancel()
+  }
+
   override func viewDidLoad() {
     super.viewDidLoad()
     setupScrollView()
     setupImageView()
+    setupActivityIndicator()
     loadImage()
 
     if liveTextSupported {
@@ -1325,6 +1335,18 @@ class ZoomableImageViewController: UIViewController, UIScrollViewDelegate {
     imageView.accessibilityTraits = .image
   }
 
+  private func setupActivityIndicator() {
+    activityIndicator.color = .white
+    activityIndicator.hidesWhenStopped = true
+    activityIndicator.translatesAutoresizingMaskIntoConstraints = false
+    view.addSubview(activityIndicator)
+
+    NSLayoutConstraint.activate([
+      activityIndicator.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+      activityIndicator.centerYAnchor.constraint(equalTo: view.centerYAnchor)
+    ])
+  }
+
   private func setupLiveText() {
     let interaction = ImageAnalysisInteraction()
     imageView.addInteraction(interaction)
@@ -1340,20 +1362,75 @@ class ZoomableImageViewController: UIViewController, UIScrollViewDelegate {
         analyzeImage(uiImage, interaction: interaction)
       }
 
-    case .url(let url):
-      Task {
-        do {
-          let loadedImage = try await ImagePipeline.shared.image(for: url)
+    case .url(let fullsize, let thumbnail):
+      let pipeline = ImageLoadingManager.shared.pipeline
+
+      if let thumbnail, let cachedThumb = pipeline.cache[ImageRequest(url: thumbnail)] {
+        imageView.image = cachedThumb.image
+      }
+
+      scheduleSpinner()
+
+      if let thumbnail, imageView.image == nil {
+        Task { [weak self] in
+          guard let image = try? await pipeline.image(for: thumbnail) else { return }
           await MainActor.run {
-            imageView.image = loadedImage
-            if liveTextSupported, let interaction = imageAnalysisInteraction {
-              analyzeImage(loadedImage, interaction: interaction)
-            }
+            guard let self, !self.didReceiveFullsize else { return }
+            self.imageView.image = image
           }
-        } catch {
-          logger.error("Failed to load image: \(error)")
         }
       }
+
+      Task { [weak self] in
+        do {
+          let loadedImage = try await pipeline.image(for: fullsize)
+          await MainActor.run {
+            guard let self else { return }
+            self.didReceiveFullsize = true
+            self.cancelSpinner()
+            self.setFullsizeImage(loadedImage)
+          }
+        } catch {
+          await MainActor.run {
+            guard let self else { return }
+            self.cancelSpinner()
+          }
+          Self.viewerLogger.error("Failed to load fullsize image: \(error.localizedDescription)")
+        }
+      }
+    }
+  }
+
+  private func scheduleSpinner() {
+    let work = DispatchWorkItem { [weak self] in
+      guard let self, !self.didReceiveFullsize else { return }
+      self.activityIndicator.startAnimating()
+    }
+    spinnerWorkItem = work
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: work)
+  }
+
+  private func cancelSpinner() {
+    spinnerWorkItem?.cancel()
+    spinnerWorkItem = nil
+    activityIndicator.stopAnimating()
+  }
+
+  private func setFullsizeImage(_ image: UIImage) {
+    let hadPlaceholder = imageView.image != nil
+    if hadPlaceholder {
+      UIView.transition(
+        with: imageView,
+        duration: 0.2,
+        options: [.transitionCrossDissolve, .allowUserInteraction],
+        animations: { [imageView] in imageView.image = image },
+        completion: nil
+      )
+    } else {
+      imageView.image = image
+    }
+    if liveTextSupported, let interaction = imageAnalysisInteraction {
+      analyzeImage(image, interaction: interaction)
     }
   }
 
