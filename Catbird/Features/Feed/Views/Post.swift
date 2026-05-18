@@ -91,6 +91,9 @@ struct Post: View, Equatable {
     }
     
     private var shouldShowTranslationButton: Bool {
+        guard !post.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return false
+        }
         let targetBase = targetLanguage.baseLanguageCode?.lowercased() ?? "en"
         // Show the button if any source language's base code differs from the target
         return sourceLanguages.contains { ($0.baseLanguageCode?.lowercased() ?? "") != targetBase }
