@@ -10,6 +10,27 @@ import UIKit
 import UniformTypeIdentifiers
 import Nuke
 
+// MARK: - Feed Layout Mode
+
+enum FeedsLayoutMode: String, CaseIterable {
+  case grid
+  case list
+
+  var toggleSymbol: String {
+    switch self {
+    case .grid: return "list.bullet"
+    case .list: return "square.grid.2x2"
+    }
+  }
+
+  var accessibilityLabel: String {
+    switch self {
+    case .grid: return "Switch to list view"
+    case .list: return "Switch to grid view"
+    }
+  }
+}
+
 // MARK: - FeedsStartPage
 struct FeedsStartPage: View {
   // Environment and State properties
@@ -17,6 +38,15 @@ struct FeedsStartPage: View {
   @Environment(\.modelContext) private var modelContext
   @Environment(\.horizontalSizeClass) private var sizeClass
   @Environment(\.colorScheme) private var colorScheme
+  #if os(iOS)
+  @Environment(\.inSideDrawer) private var inSideDrawer
+  #else
+  private var inSideDrawer: Bool { false }
+  #endif
+  @AppStorage("feedsStartPage.layoutMode") private var layoutModeRaw: String = FeedsLayoutMode.grid.rawValue
+  private var layoutMode: FeedsLayoutMode {
+    FeedsLayoutMode(rawValue: layoutModeRaw) ?? .grid
+  }
   @State private var isEditingFeeds = false
   @Binding var isDrawerOpen: Bool
   @State private var viewModel: FeedsStartPageViewModel
@@ -119,12 +149,12 @@ struct FeedsStartPage: View {
   }
   private var gridSpacing: CGFloat {
     switch screenWidth {
-    case ..<375: return 4
-    case ..<768: return 6
-    case ..<1024: return 8
-    case ..<1200: return 10
-    case ..<1600: return 12
-    default: return 14  // Very large displays
+    case ..<375: return 8
+    case ..<768: return 10
+    case ..<1024: return 12
+    case ..<1200: return 14
+    case ..<1600: return 16
+    default: return 18  // Very large displays
     }
   }
   private var horizontalPadding: CGFloat {
@@ -322,8 +352,8 @@ struct FeedsStartPage: View {
       Spacer()
     }
     .frame(maxWidth: .infinity, alignment: .leading)
-    .padding(.top, 8)
-    .padding(.bottom, 4)
+    .padding(.top, 16)
+    .padding(.bottom, 10)
   }
 
   @ViewBuilder
@@ -560,7 +590,15 @@ struct FeedsStartPage: View {
 
   @ViewBuilder
   private func gridSection(for feeds: [String], category: String) -> some View {
+    if layoutMode == .list {
+      listSection(for: feeds, category: category)
+    } else {
+      gridLayoutSection(for: feeds, category: category)
+    }
+  }
 
+  @ViewBuilder
+  private func gridLayoutSection(for feeds: [String], category: String) -> some View {
     LazyVGrid(
       columns: Array(repeating: GridItem(.flexible(), spacing: gridSpacing), count: columns),
       spacing: gridSpacing
@@ -581,6 +619,206 @@ struct FeedsStartPage: View {
     .padding(.bottom, 8)
     .accessibilityElement(children: .contain)
     .accessibilityLabel("\(category.capitalized) feeds grid")
+  }
+
+  @ViewBuilder
+  private func listSection(for feeds: [String], category: String) -> some View {
+    VStack(spacing: 4) {
+      ForEach(feeds.dropFirst(), id: \.self) { feed in
+        if SystemFeedTypes.isTimelineFeed(feed) {
+          listRow(
+            feedURI: feed,
+            category: category,
+            title: "Timeline",
+            iconView: AnyView(timelineListIcon())
+          )
+        } else if let uri = try? ATProtocolURI(uriString: feed) {
+          let title: String = {
+            if uri.uriString().contains("/app.bsky.graph.list/") {
+              return viewModel.listDetails[uri]?.name ?? viewModel.extractTitle(from: uri)
+            }
+            return viewModel.feedGenerators[uri]?.displayName ?? viewModel.extractTitle(from: uri)
+          }()
+          let subtitle: String? = {
+            if uri.uriString().contains("/app.bsky.graph.list/") {
+              return viewModel.listDetails[uri]?.description
+            }
+            return viewModel.feedGenerators[uri]?.description
+          }()
+          listRow(
+            feedURI: feed,
+            category: category,
+            title: title,
+            subtitle: subtitle,
+            iconView: AnyView(feedListIcon(for: uri))
+          )
+        }
+      }
+    }
+    .animation(.spring(duration: 0.4), value: feeds)
+    .padding(.bottom, 8)
+    .accessibilityElement(children: .contain)
+    .accessibilityLabel("\(category.capitalized) feeds list")
+  }
+
+  private static let listRowIconSize: CGFloat = 40
+
+  @ViewBuilder
+  private func timelineListIcon() -> some View {
+    ZStack {
+      LinearGradient(
+        gradient: Gradient(colors: [Color.blue.opacity(0.8), Color.blue.opacity(0.6)]),
+        startPoint: .topLeading,
+        endPoint: .bottomTrailing
+      )
+      Image(systemName: "clock")
+        .appFont(size: 18)
+        .foregroundColor(.white)
+    }
+    .frame(width: Self.listRowIconSize, height: Self.listRowIconSize)
+    .clipShape(RoundedRectangle(cornerRadius: 8))
+  }
+
+  @ViewBuilder
+  private func feedListIcon(for uri: ATProtocolURI) -> some View {
+    Group {
+      if uri.uriString().contains("/app.bsky.graph.list/"), let list = viewModel.listDetails[uri] {
+        LazyImage(
+          request: avatarImageRequest(from: list.avatar?.uriString(), sizeInPoints: Self.listRowIconSize)
+        ) { state in
+          if let image = state.image {
+            image.resizable().aspectRatio(contentMode: .fill)
+          } else {
+            feedPlaceholder(for: list.name)
+          }
+        }
+      } else if let generator = viewModel.feedGenerators[uri] {
+        LazyImage(
+          request: avatarImageRequest(from: generator.avatar?.uriString(), sizeInPoints: Self.listRowIconSize)
+        ) { state in
+          if let image = state.image {
+            image.resizable().aspectRatio(contentMode: .fill)
+          } else {
+            feedPlaceholder(for: generator.displayName)
+          }
+        }
+      } else {
+        feedPlaceholder(for: viewModel.extractTitle(from: uri))
+      }
+    }
+    .frame(width: Self.listRowIconSize, height: Self.listRowIconSize)
+    .clipShape(RoundedRectangle(cornerRadius: 8))
+  }
+
+  @ViewBuilder
+  private func listRow(
+    feedURI: String,
+    category: String,
+    title: String,
+    subtitle: String? = nil,
+    iconView: AnyView
+  ) -> some View {
+    Button {
+      guard !isEditingFeeds else { return }
+      #if os(iOS)
+      impact.impactOccurred()
+      #endif
+
+      if SystemFeedTypes.isTimelineFeed(feedURI) {
+        selectedFeed = .timeline
+        currentFeedName = "Timeline"
+      } else if let uri = try? ATProtocolURI(uriString: feedURI) {
+        let uriString = uri.uriString()
+        if uriString.contains("/app.bsky.graph.list/") {
+          selectedFeed = .list(uri)
+        } else {
+          selectedFeed = .feed(uri)
+        }
+        currentFeedName = title
+      }
+      isDrawerOpen = false
+    } label: {
+      HStack(spacing: 12) {
+        iconView
+
+        VStack(alignment: .leading, spacing: 2) {
+          Text(title)
+            .appFont(AppTextRole.body)
+            .foregroundStyle(.primary)
+            .lineLimit(1)
+            .truncationMode(.tail)
+          if let subtitle, !subtitle.isEmpty {
+            Text(subtitle)
+              .appFont(AppTextRole.caption)
+              .foregroundStyle(.secondary)
+              .lineLimit(1)
+              .truncationMode(.tail)
+          }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+
+        if isEditingFeeds {
+          Button {
+            Task { await viewModel.removeFeed(feedURI) }
+          } label: {
+            Image(systemName: "minus.circle.fill")
+              .appFont(size: 20)
+              .foregroundColor(.red)
+          }
+          .buttonStyle(PlainButtonStyle())
+          .accessibilityLabel("Remove feed")
+        } else {
+          Image(systemName: "chevron.right")
+            .appFont(AppTextRole.caption)
+            .foregroundStyle(.tertiary)
+        }
+      }
+      .padding(.vertical, 8)
+      .padding(.horizontal, 10)
+      .background(
+        RoundedRectangle(cornerRadius: 12)
+          .fill(
+            dropTargetItem == feedURI
+              ? Color.accentColor.opacity(0.12)
+              : (isSelected(feedURI: feedURI) ? Color.accentColor.opacity(0.08) : Color.clear)
+          )
+          .overlay(
+            RoundedRectangle(cornerRadius: 12)
+              .stroke(
+                isSelected(feedURI: feedURI) ? Color.accentColor.opacity(0.4) : Color.clear,
+                lineWidth: 1
+              )
+          )
+      )
+      .contentShape(.dragPreview, RoundedRectangle(cornerRadius: 12))
+      .contentShape(Rectangle())
+    }
+    .buttonStyle(PlainButtonStyle())
+    .onDrag {
+      draggedFeedItem = feedURI
+      isDragging = true
+      draggedItemCategory = category
+      return NSItemProvider(object: feedURI as NSString)
+    }
+    .onDrop(
+      of: [UTType.plainText.identifier],
+      delegate: FeedDropDelegate(
+        item: feedURI,
+        items: category == "pinned" ? viewModel.cachedPinnedFeeds : viewModel.cachedSavedFeeds,
+        category: category,
+        viewModel: viewModel,
+        draggedItem: $draggedFeedItem,
+        isDragging: $isDragging,
+        draggedItemCategory: $draggedItemCategory,
+        dropTargetItem: $dropTargetItem,
+        resetDragState: resetDragState,
+        appSettings: appState.appSettings
+      )
+    )
+    .opacity(draggedFeedItem == feedURI && isDragging ? 0.4 : 1.0)
+    .accessibility(label: Text(title))
+    .accessibility(hint: Text(isEditingFeeds ? "Editing — tap minus to remove" : "Double tap to open this feed"))
+    .accessibilityAddTraits(.isButton)
   }
 
   @ViewBuilder
@@ -1076,6 +1314,24 @@ struct FeedsStartPage: View {
                   .accessibilityLabel(isSearchBarVisible ? "Hide Search" : "Search Feeds")
                   .accessibilityAddTraits(.isButton)
 
+                  // Layout-mode toggle (grid <-> list). Persisted via @AppStorage.
+                  Button {
+                      #if os(iOS)
+                      impact.impactOccurred()
+                      #endif
+                      withAnimation(.easeInOut(duration: 0.25)) {
+                          layoutModeRaw = (layoutMode == .grid ? FeedsLayoutMode.list : FeedsLayoutMode.grid).rawValue
+                      }
+                  } label: {
+                      Image(systemName: layoutMode.toggleSymbol)
+                          .appFont(size: 16)
+                          .contentTransition(.symbolEffect(.replace))
+                          .foregroundStyle(Color.accentColor)
+                  }
+                  .tint(.accentColor.opacity(0.8))
+                  .accessibilityLabel(layoutMode.accessibilityLabel)
+                  .accessibilityAddTraits(.isButton)
+
                   if isEditingFeeds {
                       Button {
                           withAnimation(.easeInOut(duration: 0.2)) {
@@ -1149,11 +1405,16 @@ struct FeedsStartPage: View {
               Spacer(minLength: 200)
           }
           .animation(.easeInOut(duration: 0.3), value: isEditingFeeds)
+          .animation(.easeInOut(duration: 0.25), value: layoutMode)
       }
       .padding(.horizontal, horizontalPadding)
       .padding(.vertical, max(20, horizontalPadding * 0.75))
       .frame(maxWidth: .infinity)
-      .background(Color(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme)))
+      .background(
+        inSideDrawer
+          ? Color.clear
+          : Color(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))
+      )
   }
 
   // MARK: - Overlays
@@ -1304,7 +1565,7 @@ extension View {
         currentUserDID: String?
     ) -> some View {
         self
-            .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
+            .modifier(DrawerAwareThemedBackground(themeManager: appState.themeManager, appSettings: appState.appSettings))
             .configuredToolbar(
                 appState: appState,
                 isDrawerOpen: isDrawerOpen,
@@ -1326,6 +1587,26 @@ extension View {
                 errorAlertMessage: errorAlertMessage,
                 showErrorAlert: showErrorAlert
             )
+    }
+}
+
+// Skips the opaque themed background when the start page is rendered inside
+// the side drawer overlay, so the drawer's Liquid Glass / material is visible.
+private struct DrawerAwareThemedBackground: ViewModifier {
+    let themeManager: ThemeManager
+    let appSettings: AppSettings
+    #if os(iOS)
+    @Environment(\.inSideDrawer) private var inSideDrawer
+    #else
+    private let inSideDrawer = false
+    #endif
+
+    func body(content: Content) -> some View {
+        if inSideDrawer {
+            content
+        } else {
+            content.themedPrimaryBackground(themeManager, appSettings: appSettings)
+        }
     }
 }
 
