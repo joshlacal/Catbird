@@ -927,23 +927,25 @@ extension PostComposerViewModel {
         logger.debug("mediumgif: \(gif.media_formats.mediumgif?.url ?? "nil")")
         logger.debug("tinygif: \(gif.media_formats.tinygif?.url ?? "nil")")
         logger.debug("nanogif: \(gif.media_formats.nanogif?.url ?? "nil")")
+        logger.debug("mp4: \(gif.media_formats.mp4?.url ?? "nil")")
+        logger.debug("loopedmp4: \(gif.media_formats.loopedmp4?.url ?? "nil")")
 
+        // Prefer the looped MP4 / MP4 URL when the picker source exposes one
+        // (Klipy does; legacy Tenor responses may not). Klipy's .gif and .mp4
+        // filenames aren't derivable from one another, so the renderer can't
+        // recover the MP4 from a stored .gif URI — pick the playable URL at
+        // post-time instead. Falls back to the gif URL (existing Tenor path)
+        // when no MP4 format is available.
         let gifURL: String
-        if let gifFormat = gif.media_formats.gif {
+        if let mp4Format = gif.media_formats.loopedmp4 ?? gif.media_formats.mp4 {
+            gifURL = appendDimsIfMissing(to: mp4Format.url, dims: mp4Format.dims)
+            logger.debug("🔬 Selected MP4 URL for embed: \(gifURL)")
+        } else if let gifFormat = gif.media_formats.gif {
             // Add size parameters to match Bluesky app format
             let baseURL = gifFormat.url
-            logger.debug("🔬 Tenor GIF baseURL: \(baseURL)")
-            logger.debug("🔬 Tenor GIF dims: \(gifFormat.dims)")
-            logger.debug("🔬 baseURL contains '?': \(baseURL.contains("?"))")
-            if !baseURL.contains("?") && gifFormat.dims.count >= 2 {
-                let width = gifFormat.dims[0]
-                let height = gifFormat.dims[1]
-                gifURL = "\(baseURL)?hh=\(height)&ww=\(width)"
-                logger.debug("🔬 Constructed gifURL with params: \(gifURL)")
-            } else {
-                gifURL = baseURL
-                logger.debug("🔬 Using baseURL without params (contains?: \(baseURL.contains("?")), dims count: \(gifFormat.dims.count))")
-            }
+            logger.debug("🔬 GIF baseURL: \(baseURL)")
+            logger.debug("🔬 GIF dims: \(gifFormat.dims)")
+            gifURL = appendDimsIfMissing(to: baseURL, dims: gifFormat.dims)
         } else if let mediumGif = gif.media_formats.mediumgif {
             gifURL = mediumGif.url
         } else if let tinyGif = gif.media_formats.tinygif {
@@ -978,6 +980,11 @@ extension PostComposerViewModel {
         )
 
         return .appBskyEmbedExternal(AppBskyEmbedExternal(external: external))
+    }
+
+    private func appendDimsIfMissing(to baseURL: String, dims: [Int]) -> String {
+        guard !baseURL.contains("?"), dims.count >= 2 else { return baseURL }
+        return "\(baseURL)?hh=\(dims[1])&ww=\(dims[0])"
     }
 
     private func createQuoteEmbed(_ quotedPost: AppBskyFeedDefs.PostView) -> AppBskyFeedPost.AppBskyFeedPostEmbedUnion? {
