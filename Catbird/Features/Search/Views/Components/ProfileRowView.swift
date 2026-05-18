@@ -20,108 +20,36 @@ struct ProfileRowView: View {
         Button(action: {
             path.append(NavigationDestination.profile(profile.did.didString()))
         }) {
-            HStack(alignment: .top, spacing: 12) {
+            HStack(alignment: .top, spacing: DesignTokens.Spacing.base) {
                 // Profile avatar
                 AsyncProfileImage(
                     url: profile.finalAvatarURL(),
-                    size: 44,
+                    size: DesignTokens.Size.avatarLG,
                     labels: extractLabels(from: profile)
                 )
-                
+
                 // Profile info
-                VStack(alignment: .leading, spacing: 4) {
-                    if profile.displayName?.isEmpty ?? true {
-                        // Display handle if no display name
-                        HStack(spacing: 4) {
-                            
-                        Text("@\(profile.handle)")
-                            .appFont(AppTextRole.headline)
-                            .lineLimit(1)
-                        
-                        if let pronouns = profile.pronouns, !pronouns.isEmpty {
-                            Text("\(pronouns)")
-                                .appFont(AppTextRole.subheadline)
-                                .foregroundColor(.secondary)
-                                .opacity(0.9)
-                                .textScale(.secondary)
-                                .padding(.vertical, 2)
-                                .padding(.horizontal, 4)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 12)
-                                        .fill(Color.secondary.opacity(0.1))
-                                )
-                        }
-                    }
-                        } else {
-                            // Display display name if available
-                            HStack(spacing: 4) {
-                                Text(profile.displayName ?? profile.handle.description)
-                                    .appFont(AppTextRole.headline)
-
-                                if profile.verification?.verifiedStatus == "valid" {
-                                    Image(systemName: "checkmark.seal.fill")
-                                        .foregroundStyle(.blue)
-                                        .font(.caption)
-                                }
-                                
-                                if let pronouns = profile.pronouns, !pronouns.isEmpty {
-                                    Text("\(pronouns)")
-                                        .appFont(AppTextRole.subheadline)
-                                        .foregroundColor(.secondary)
-                                        .opacity(0.9)
-                                        .textScale(.secondary)
-                                        .padding(.vertical, 2)
-                                        .padding(.horizontal, 4)
-                                        .background(
-                                            RoundedRectangle(cornerRadius: 12)
-                                                .fill(Color.secondary.opacity(0.1))
-                                        )
-                                }
-
-                            }
-                        }
-                                            
-                    HStack {
-                        Text("@\(profile.handle)")
-                            .appFont(AppTextRole.subheadline)
-                            .foregroundColor(.secondary)
-
-                        // Handle "Follows you" badge if available
-                        if let profileView = profile as? AppBskyActorDefs.ProfileView,
-                           let viewer = profileView.viewer, viewer.followedBy != nil {
-                            FollowsBadgeView()
-                        } else if let profileViewBasic = profile as? AppBskyActorDefs.ProfileViewBasic,
-                                  let viewer = profileViewBasic.viewer, viewer.followedBy != nil {
-                            FollowsBadgeView()
-                        }
-
-                    }
-
-                    // Description (only available in ProfileView)
-                    if let profileView = profile as? AppBskyActorDefs.ProfileView,
-                       let description = profileView.description, !description.isEmpty {
-                        Text(description)
-                            .multilineTextAlignment(.leading)
-                            .appFont(AppTextRole.caption)
-                            .foregroundColor(.secondary)
-                            .padding(.top, 2)
-                            .lineLimit(3)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
+                VStack(alignment: .leading, spacing: 2) {
+                    nameLine
+                    handleLine
+                    descriptionText
                 }
-                
-                Spacer()
-                
+                .frame(minHeight: DesignTokens.Size.avatarLG, alignment: .top)
+
+                Spacer(minLength: DesignTokens.Spacing.sm)
+
                 // Follow button if logged in and not self
                 if let did = currentUserDid, did != profile.did.didString() {
                     followButton()
+                        .padding(.top, 2)
                 }
             }
             .foregroundColor(.primary)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .padding(.vertical, 8)
-        .padding(.horizontal, 16)
+        .padding(.vertical, DesignTokens.Spacing.base)
+        .padding(.horizontal, DesignTokens.Spacing.lg)
         .task {
             // Fetch the DID asynchronously
             currentUserDid = try? await appState.atProtoClient?.getDid()
@@ -136,6 +64,86 @@ struct ProfileRowView: View {
         }
     }
     
+    // MARK: - Header lines
+
+    @ViewBuilder
+    private var nameLine: some View {
+        HStack(spacing: 4) {
+            Text(primaryName)
+                .appFont(AppTextRole.headline)
+                .fontWeight(.semibold)
+                .lineLimit(1)
+
+            if profile.verification?.verifiedStatus == "valid" {
+                Image(systemName: "checkmark.seal.fill")
+                    .foregroundStyle(.blue)
+                    .font(.subheadline)
+            }
+
+            if let pronouns = profile.pronouns, !pronouns.isEmpty {
+                Text(pronouns)
+                    .appFont(AppTextRole.caption)
+                    .foregroundColor(.secondary)
+                    .textScale(.secondary)
+                    .padding(.vertical, 1)
+                    .padding(.horizontal, 5)
+                    .background(
+                        Capsule()
+                            .fill(Color.secondary.opacity(0.12))
+                    )
+                    .lineLimit(1)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var handleLine: some View {
+        HStack(spacing: 6) {
+            Text("@\(profile.handle)")
+                .appFont(AppTextRole.subheadline)
+                .foregroundColor(.secondary)
+                .lineLimit(1)
+
+            if showsFollowsBadge {
+                FollowsBadgeView()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var descriptionText: some View {
+        if let profileView = profile as? AppBskyActorDefs.ProfileView,
+           let description = profileView.description, !description.isEmpty {
+            Text(description)
+                .multilineTextAlignment(.leading)
+                .appFont(AppTextRole.subheadline)
+                .foregroundColor(.secondary)
+                .padding(.top, 4)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var primaryName: String {
+        let display = profile.displayName ?? ""
+        if display.isEmpty {
+            return "@\(profile.handle)"
+        }
+        return display
+    }
+
+    private var showsFollowsBadge: Bool {
+        if let profileView = profile as? AppBskyActorDefs.ProfileView,
+           let viewer = profileView.viewer, viewer.followedBy != nil {
+            return true
+        }
+        if let profileViewBasic = profile as? AppBskyActorDefs.ProfileViewBasic,
+           let viewer = profileViewBasic.viewer, viewer.followedBy != nil {
+            return true
+        }
+        return false
+    }
+
     // Follow button with appropriate state
     @ViewBuilder
     private func followButton() -> some View {
@@ -168,7 +176,7 @@ struct ProfileRowView: View {
                     }
                 }
             } label: {
-                buttonLabel("Following", color: .accentColor, backgroundColor: .clear, outlined: true)
+                buttonLabel("Following", color: .primary, backgroundColor: Color.secondary.opacity(0.15))
             }
             .buttonStyle(.plain)
             
@@ -212,18 +220,21 @@ struct ProfileRowView: View {
     @ViewBuilder
     private func buttonLabel(_ text: String, color: Color, backgroundColor: Color, outlined: Bool = false) -> some View {
         Text(text)
-            .appFont(AppTextRole.caption)
-            .fontWeight(.medium)
+            .appFont(AppTextRole.subheadline)
+            .fontWeight(.semibold)
             .foregroundColor(color)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
+            .padding(.horizontal, DesignTokens.Spacing.base)
+            .padding(.vertical, 7)
+            .frame(minWidth: 88)
             .background(
                 Capsule()
                     .fill(backgroundColor)
-                    .overlay(
-                        outlined ? Capsule().stroke(Color.accentColor, lineWidth: 1) : nil
-                    )
             )
+            .overlay(
+                Capsule()
+                    .strokeBorder(outlined ? Color.secondary.opacity(0.45) : Color.clear, lineWidth: 1)
+            )
+            .contentShape(Capsule())
     }
     
     private func extractLabels(from profile: ProfileDisplayable) -> [ComAtprotoLabelDefs.Label]? {
