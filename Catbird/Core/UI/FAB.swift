@@ -54,8 +54,16 @@ struct FAB: View {
                     composeButton
                         .clipShape(Circle())
                         .glassEffect(.regular.tint(.accentColor).interactive())
+                        .composerContextMenu(
+                          hasMinimizedComposer: hasMinimizedComposer,
+                          clearDraftAction: clearDraftAction
+                        )
                 } else {
                     composeButton
+                        .composerContextMenu(
+                          hasMinimizedComposer: hasMinimizedComposer,
+                          clearDraftAction: clearDraftAction
+                        )
                 }
             }
             .padding(.horizontal, 16)
@@ -134,13 +142,6 @@ struct FAB: View {
                 .contentShape(Circle())
             }
         }
-        .contextMenu {
-            if hasMinimizedComposer && clearDraftAction != nil {
-                Button("Clear Draft", role: .destructive) {
-                    clearDraftAction?()
-                }
-            }
-        }
     }
 
     // Builds the symbol and, when needed, a small badge anchored to the
@@ -167,6 +168,22 @@ struct FAB: View {
         }
     }
     
+}
+
+private extension View {
+    @ViewBuilder
+    func composerContextMenu(
+        hasMinimizedComposer: Bool,
+        clearDraftAction: (() -> Void)?
+    ) -> some View {
+        if hasMinimizedComposer, let clearDraftAction {
+            self.contextMenu {
+                Button("Clear Draft", role: .destructive, action: clearDraftAction)
+            }
+        } else {
+            self
+        }
+    }
 }
 
 #Preview("FAB") {

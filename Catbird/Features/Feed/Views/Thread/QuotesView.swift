@@ -37,14 +37,19 @@ struct QuotesView: View {
             } else {
                 List {
                     ForEach(quotes, id: \.uri) { post in
-                        PostView(
-                            post: post,
-                            grandparentAuthor: nil,
-                            isParentPost: false,
-                            isSelectable: false,
-                            path: $path,
-                            appState: appState
-                        )
+                        Button {
+                            path.append(NavigationDestination.post(post.uri))
+                        } label: {
+                            PostView(
+                                post: post,
+                                grandparentAuthor: nil,
+                                isParentPost: false,
+                                isSelectable: false,
+                                path: $path,
+                                appState: appState
+                            )
+                        }
+                        .buttonStyle(.plain)
                         .listRowSeparator(.visible)
                         .listRowSeparatorTint(.clear)
                         .listRowInsets(EdgeInsets())

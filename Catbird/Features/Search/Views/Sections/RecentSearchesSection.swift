@@ -16,8 +16,11 @@ struct RecentSearchesSection: View {
   let onClear: () -> Void
 
   @State private var showClearConfirmation = false  // SRCH-008: Confirmation dialog
+  @State private var revealedSearch: String?
   @Environment(AppState.self) private var appState
   @Environment(\.colorScheme) private var colorScheme
+
+  private static let deleteRevealWidth: CGFloat = 80
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
@@ -75,47 +78,88 @@ struct RecentSearchesSection: View {
     } message: {
       Text("This will remove all recent searches from this device.")
     }
+    .onChange(of: searches) { _, newValue in
+      if let current = revealedSearch, !newValue.contains(current) {
+        revealedSearch = nil
+      }
+    }
   }
 
-  // SRCH-008: Individual search row with swipe-to-delete
+  // Individual search row. `.searchSuggestions` does not host us inside a real
+  // SwiftUI List, so SwiftUI's `.swipeActions` modifier falls through to the
+  // enclosing system row and stacks one delete button per recent-search row.
+  // Implement the swipe-to-reveal manually so each delete affects only its row.
   @ViewBuilder
   private func searchRow(_ search: String) -> some View {
-    Button {
-      onSelect(search)
-    } label: {
-      HStack(spacing: 12) {
-        Image(systemName: "magnifyingglass")
-          .appFont(AppTextRole.subheadline)
-          .foregroundColor(.secondary)
-          .frame(width: 20, height: 20)
-
-        Text(search)
-          .appFont(AppTextRole.body)
-          .lineLimit(1)
-          .foregroundColor(
-            Color.dynamicText(appState.themeManager, style: .primary, currentScheme: colorScheme))
-
-        Spacer()
-
-        Image(systemName: "arrow.up.left")
-          .appFont(AppTextRole.caption)
-          .foregroundColor(Color(platformColor: PlatformColor.platformTertiaryLabel))
-      }
-      .padding(.vertical, 12)
-      .padding(.horizontal, 16)
-      .background(Color.systemBackground)
-      .contentShape(Rectangle())
-    }
-    .buttonStyle(.plain)
-    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-      Button(role: .destructive) {
-        withAnimation {
+    let isRevealed = revealedSearch == search
+    ZStack(alignment: .trailing) {
+      // Underlay delete action, revealed by swipe.
+      Button {
+        withAnimation(.easeInOut(duration: 0.2)) {
+          revealedSearch = nil
           onDelete(search)
         }
       } label: {
         Label("Delete", systemImage: "trash")
+          .labelStyle(.iconOnly)
+          .foregroundStyle(.white)
+          .frame(width: Self.deleteRevealWidth)
+          .frame(maxHeight: .infinity)
+          .background(Color.red)
       }
+      .buttonStyle(.plain)
+      .accessibilityLabel("Delete \(search)")
+      .opacity(isRevealed ? 1 : 0)
+
+      Button {
+        if isRevealed {
+          withAnimation(.easeInOut(duration: 0.2)) { revealedSearch = nil }
+        } else {
+          onSelect(search)
+        }
+      } label: {
+        HStack(spacing: 12) {
+          Image(systemName: "magnifyingglass")
+            .appFont(AppTextRole.subheadline)
+            .foregroundColor(.secondary)
+            .frame(width: 20, height: 20)
+
+          Text(search)
+            .appFont(AppTextRole.body)
+            .lineLimit(1)
+            .foregroundColor(
+              Color.dynamicText(appState.themeManager, style: .primary, currentScheme: colorScheme))
+
+          Spacer()
+
+          Image(systemName: "arrow.up.left")
+            .appFont(AppTextRole.caption)
+            .foregroundColor(Color(platformColor: PlatformColor.platformTertiaryLabel))
+        }
+        .padding(.vertical, 12)
+        .padding(.horizontal, 16)
+        .background(Color.systemBackground)
+        .contentShape(Rectangle())
+      }
+      .buttonStyle(.plain)
+      .offset(x: isRevealed ? -Self.deleteRevealWidth : 0)
+      .simultaneousGesture(
+        DragGesture(minimumDistance: 12)
+          .onEnded { value in
+            let horizontal = value.translation.width
+            let vertical = value.translation.height
+            guard abs(horizontal) > abs(vertical) else { return }
+            withAnimation(.easeInOut(duration: 0.2)) {
+              if horizontal < -40 {
+                revealedSearch = search
+              } else if horizontal > 40 {
+                revealedSearch = nil
+              }
+            }
+          }
+      )
     }
+    .clipped()
 
     if search != searches.prefix(10).last {
       Divider()
