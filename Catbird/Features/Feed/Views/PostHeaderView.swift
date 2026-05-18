@@ -13,7 +13,21 @@ struct PostHeaderView: View {
     let handle: String
     let timeAgo: Date
     var pronouns: String? = nil
-    var isVerified: Bool = false
+    var verificationKind: VerificationBadgeKind? = nil
+
+    init(
+        displayName: String,
+        handle: String,
+        timeAgo: Date,
+        pronouns: String? = nil,
+        verificationKind: VerificationBadgeKind? = nil
+    ) {
+        self.displayName = displayName
+        self.handle = handle
+        self.timeAgo = timeAgo
+        self.pronouns = pronouns
+        self.verificationKind = verificationKind
+    }
     
     // Constants for layout
     private let profileImageSize: CGFloat = 40
@@ -32,9 +46,8 @@ struct PostHeaderView: View {
                             .lineLimit(1)
                             .truncationMode(.tail)
 
-                        if isVerified {
-                            Image(systemName: "checkmark.seal.fill")
-                                .foregroundStyle(.blue)
+                        if let verificationKind {
+                            VerificationBadgeView(kind: verificationKind)
                                 .font(.caption)
                         }
                         
