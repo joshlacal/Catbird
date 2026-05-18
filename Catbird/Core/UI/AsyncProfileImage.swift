@@ -3,6 +3,16 @@ import NukeUI
 import Nuke
 import Petrel
 
+private extension Image {
+    init(platformImage: PlatformImage) {
+        #if canImport(UIKit)
+        self.init(uiImage: platformImage)
+        #else
+        self.init(nsImage: platformImage)
+        #endif
+    }
+}
+
 enum AvatarModerationState {
     case show      // Show avatar normally
     case blur      // Show avatar blurred (tap to reveal)
@@ -14,17 +24,28 @@ struct AsyncProfileImage: View {
     let size: CGFloat
     let labels: [ComAtprotoLabelDefs.Label]?
     private let imageRequest: ImageRequest?
-    
+    private let cachedImage: PlatformImage?
+
     @Environment(AppState.self) private var appState
-    
+
     init(url: URL?, size: CGFloat, labels: [ComAtprotoLabelDefs.Label]? = nil) {
         self.url = url
         self.size = size
         self.labels = labels
-        self.imageRequest = Self.resizedRequest(for: url, sizeInPoints: size)
+        let request = Self.resizedRequest(for: url, sizeInPoints: size)
+        self.imageRequest = request
+        // Synchronous memory-cache probe: if the resized avatar is already in
+        // the in-memory cache, paint it in init so the first frame is the
+        // final image — no placeholder → fade transition for cache hits.
+        if let request {
+            self.cachedImage = ImageLoadingManager.shared.pipeline.cache[request]?.image
+        } else {
+            self.cachedImage = nil
+        }
     }
-    
-    // Build a Nuke request that decodes at the exact pixel size to avoid large decode/scale costs
+
+    // Build a Nuke request that decodes at the exact pixel size to avoid large decode/scale costs.
+    // Routes through ImageLoadingManager.cdnURL so Bluesky CDN avatars use JXL.
     private static func resizedRequest(for url: URL?, sizeInPoints: CGFloat) -> ImageRequest? {
         guard let url = url else { return nil }
         let scale = PlatformScreenInfo.scale
@@ -33,7 +54,7 @@ struct AsyncProfileImage: View {
         let processors: [any ImageProcessing] = [
             ImageProcessors.Resize(size: pixelSize, unit: .pixels, contentMode: .aspectFill)
         ]
-        return ImageRequest(url: url, processors: processors)
+        return ImageRequest(url: ImageLoadingManager.cdnURL(url), processors: processors, priority: .high)
     }
     
     private func getAvatarModerationState(_ labels: [ComAtprotoLabelDefs.Label]?) -> AvatarModerationState {
@@ -107,7 +128,7 @@ struct AsyncProfileImage: View {
     
     var body: some View {
         let moderationState = getAvatarModerationState(labels)
-        
+
         Group {
             if moderationState == .hide {
                 Circle()
@@ -119,49 +140,44 @@ struct AsyncProfileImage: View {
                             .foregroundColor(.secondary.opacity(0.5))
                             .frame(width: size * 0.5, height: size * 0.5)
                     }
+            } else if let cached = cachedImage {
+                Image(platformImage: cached)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .blur(radius: moderationState == .blur ? 20 : 0)
             } else if let request = imageRequest {
                 LazyImage(request: request) { state in
                     if let image = state.image {
                         image
                             .resizable()
                             .aspectRatio(contentMode: .fill)
-                    } else if state.isLoading {
-                        Circle()
-                            .fill(Color.gray.opacity(0.2))
-                            .overlay {
-                                ProgressView()
-                                    .progressViewStyle(.circular)
-                                    .scaleEffect(0.7)
-                            }
+                            .transition(.opacity.animation(.easeOut(duration: 0.18)))
                     } else {
-                        Circle()
-                            .fill(Color.gray.opacity(0.2))
-                            .overlay {
-                                Image(systemName: "person.crop.circle.fill")
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fill)
-                                    .foregroundColor(.accentColor.opacity(0.5))
-                                    .padding(size * 0.08)
-                            }
+                        placeholder
                     }
                 }
                 .pipeline(ImageLoadingManager.shared.pipeline)
                 .priority(.high)
                 .blur(radius: moderationState == .blur ? 20 : 0)
             } else {
-                Circle()
-                    .fill(Color.gray.opacity(0.2))
-                    .overlay {
-                        Image(systemName: "person.crop.circle.fill")
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                            .foregroundColor(.accentColor.opacity(0.5))
-                            .padding(size * 0.08)
-                    }
+                placeholder
             }
         }
         .frame(width: size, height: size)
         .clipShape(Circle())
+    }
+
+    @ViewBuilder
+    private var placeholder: some View {
+        Circle()
+            .fill(Color.gray.opacity(0.2))
+            .overlay {
+                Image(systemName: "person.crop.circle.fill")
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .foregroundColor(.accentColor.opacity(0.5))
+                    .padding(size * 0.08)
+            }
     }
 }
 

@@ -43,7 +43,7 @@ struct RecentProfilesSection: View {
                                 )
                                 .shadow(color: colorScheme == .dark ? .white.opacity(0.2) : .black.opacity(0.2), radius: 3)
                                 .padding(6)
-                                
+
                                 // Display name or handle
                                 Text(profile.displayName ?? "@\(profile.handle)")
                                     .appFont(AppTextRole.caption)
@@ -59,7 +59,7 @@ struct RecentProfilesSection: View {
                 }
                 .scrollContentBackground(.hidden)
             }
-            .contentMargins(.horizontal, 16)
+            .contentMargins(.horizontal, 0, for: .scrollContent)
         }
     }
 }

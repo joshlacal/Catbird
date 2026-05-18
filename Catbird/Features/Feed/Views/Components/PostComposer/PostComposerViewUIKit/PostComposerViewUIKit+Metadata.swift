@@ -75,9 +75,11 @@ extension PostComposerViewUIKit {
     if validation.shouldShowInlineMessage, let message = validation.message {
       HStack(spacing: 8) {
         Image(systemName: "exclamationmark.circle.fill")
-          .font(.system(size: 12, weight: .semibold))
+          .appFont(AppTextRole.caption)
+          .fontWeight(.semibold)
         Text(message)
-          .font(.system(size: 12, weight: .medium))
+          .appFont(AppTextRole.caption)
+          .fontWeight(.medium)
           .fixedSize(horizontal: false, vertical: true)
         Spacer(minLength: 0)
       }
@@ -89,25 +91,30 @@ extension PostComposerViewUIKit {
       .accessibilityElement(children: .combine)
     }
   }
-  
+
   @ViewBuilder
   private func replyContextView(parent: AppBskyFeedDefs.PostView) -> some View {
     HStack(spacing: 8) {
       Image(systemName: "arrowshape.turn.up.left")
         .foregroundColor(.secondary)
-        .font(.system(size: 14))
-      
+        .appFont(AppTextRole.subheadline)
+
       Text("Replying to")
         .appFont(AppTextRole.caption)
         .foregroundColor(.secondary)
-      
+
       Text("@\(parent.author.handle.description)")
         .appFont(AppTextRole.caption)
         .fontWeight(.semibold)
         .foregroundColor(.accentColor)
-      
-      Spacer()
+        .lineLimit(1)
+
+      Spacer(minLength: 0)
     }
+    .padding(.horizontal, 12)
+    .padding(.vertical, 8)
+    .background(Color.secondary.opacity(0.08))
+    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
   }
   
   // MARK: - Compact Outline Tags View
@@ -239,13 +246,14 @@ extension PostComposerViewUIKit {
   @ViewBuilder
   private func quotedPostView(quoted: AppBskyFeedDefs.PostView, vm: PostComposerViewModel) -> some View {
     VStack(alignment: .leading, spacing: 8) {
-      HStack {
+      HStack(spacing: 8) {
         Image(systemName: "quote.bubble")
           .foregroundColor(.secondary)
+          .appFont(AppTextRole.subheadline)
         Text("Quoting post")
           .appFont(AppTextRole.caption)
           .foregroundColor(.secondary)
-        Spacer()
+        Spacer(minLength: 0)
         Button(action: {
           pcMetadataLogger.info("PostComposerMetadata: Removing quoted post")
           vm.quotedPost = nil
@@ -255,15 +263,19 @@ extension PostComposerViewUIKit {
         }) {
           Image(systemName: "xmark.circle.fill")
             .foregroundColor(.secondary)
+            .appFont(AppTextRole.body)
+            .padding(4)
+            .contentShape(Rectangle())
         }
         .buttonStyle(PlainButtonStyle())
+        .accessibilityLabel("Remove quoted post")
       }
-      
+
       VStack(alignment: .leading, spacing: 4) {
         Text("@\(quoted.author.handle.description)")
           .appFont(AppTextRole.caption)
           .fontWeight(.semibold)
-        
+
         if case .knownType(let record) = quoted.record,
            let post = record as? AppBskyFeedPost {
           Text(post.text)
@@ -274,8 +286,8 @@ extension PostComposerViewUIKit {
       }
     }
     .padding(12)
-    .background(Color.systemGray6)
-    .cornerRadius(12)
+    .background(Color.secondary.opacity(0.08))
+    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
   }
   // Note: legacy inline link card view replaced by ComposeURLCardView.
 }

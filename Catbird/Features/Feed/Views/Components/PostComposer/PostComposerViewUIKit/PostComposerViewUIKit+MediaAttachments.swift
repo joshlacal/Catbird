@@ -94,7 +94,7 @@ extension PostComposerViewUIKit {
         .padding(8)
       }
     }
-    .padding(.horizontal)
+    .padding(.horizontal, 16)
     .padding(.vertical, 8)
   }
 }
