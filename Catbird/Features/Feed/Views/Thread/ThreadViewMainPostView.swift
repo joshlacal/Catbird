@@ -103,9 +103,8 @@ struct ThreadViewMainPostView: View, Equatable {
                                             .transaction { $0.animation = nil }
                                             .contentTransition(.identity)
 
-                                        if post.author.verification?.verifiedStatus == "valid" || post.author.did.isEqual(to: try! DID(didString: "did:plc:vc7f4oafdgxsihk4cry2xpze")){
-                                            Image(systemName: "checkmark.seal.fill")
-                                                .foregroundStyle(.blue)
+                                        if let badgeKind = VerificationBadge.kind(for: post.author.verification, did: post.author.did) {
+                                            VerificationBadgeView(kind: badgeKind)
                                                 .font(.caption)
                                         }
                                         

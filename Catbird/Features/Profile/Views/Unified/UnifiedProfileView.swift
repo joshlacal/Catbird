@@ -1215,6 +1215,7 @@ struct ProfileHeader: View {
     @State private var isActivitySubscriptionLoading = false
     @State private var activitySubscriptionError: String?
     @State private var isShowingProfileImageViewer = false
+    @State private var verificationInfoKind: VerificationBadgeKind?
     @Namespace private var imageTransition
     
     private let avatarSize: CGFloat = 80
@@ -1261,6 +1262,13 @@ struct ProfileHeader: View {
             }
         }
 #endif
+        .sheet(item: $verificationInfoKind) { kind in
+            VerificationInfoSheet(
+                kind: kind,
+                displayName: profile.displayName ?? profile.handle.description,
+                verifications: profile.verification?.verifications ?? []
+            )
+        }
         .onAppear {
             // Initialize local follow state based on profile
             localIsFollowing = profile.viewer?.following != nil
@@ -1615,11 +1623,11 @@ struct ProfileHeader: View {
                         .fixedSize(horizontal: false, vertical: true)
 
                     
-                    if profile.verification?.verifiedStatus == "valid"   || profile.did.isEqual(to: try! DID(didString: "did:plc:vc7f4oafdgxsihk4cry2xpze")){
-                        Image(systemName: "checkmark.seal.fill")
-                            .foregroundStyle(.blue)
-                            .enhancedAppHeadline()
-                            .accessibilityLabel("Verified")
+                    if let badgeKind = VerificationBadge.kind(for: profile.verification, did: profile.did) {
+                        VerificationBadgeView(kind: badgeKind) {
+                            verificationInfoKind = badgeKind
+                        }
+                        .enhancedAppHeadline()
                     }
                     
                     if let pronouns = profile.pronouns, !pronouns.isEmpty {

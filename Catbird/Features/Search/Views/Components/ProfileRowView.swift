@@ -58,9 +58,8 @@ struct ProfileRowView: View {
                                 Text(profile.displayName ?? profile.handle.description)
                                     .appFont(AppTextRole.headline)
 
-                                if profile.verification?.verifiedStatus == "valid" {
-                                    Image(systemName: "checkmark.seal.fill")
-                                        .foregroundStyle(.blue)
+                                if let badgeKind = VerificationBadge.kind(for: profile.verification, did: profile.did) {
+                                    VerificationBadgeView(kind: badgeKind)
                                         .font(.caption)
                                 }
                                 
