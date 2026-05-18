@@ -8,6 +8,8 @@ struct VerificationInfoSheet: View {
 
   @Environment(\.dismiss) private var dismiss
   @Environment(\.openURL) private var openURL
+  @Environment(AppState.self) private var appState
+  @State private var resolvedHandles: [String: String] = [:]
 
   private static let learnMoreURL = URL(string: "https://bsky.social/about/support/verification")!
 
@@ -113,12 +115,14 @@ struct VerificationInfoSheet: View {
   }
 
   private func verificationRow(_ entry: AppBskyActorDefs.VerificationView) -> some View {
-    HStack(alignment: .top, spacing: 10) {
+    let did = entry.issuer.didString()
+    let handle = resolvedHandles[did]
+    return HStack(alignment: .top, spacing: 10) {
       Image(systemName: "checkmark.circle.fill")
         .foregroundStyle(.blue)
         .appFont(AppTextRole.body)
       VStack(alignment: .leading, spacing: 2) {
-        Text(entry.issuer.didString())
+        Text(handle.map { "@\($0)" } ?? truncated(did))
           .appFont(AppTextRole.subheadline)
           .lineLimit(1)
           .truncationMode(.middle)
@@ -126,6 +130,33 @@ struct VerificationInfoSheet: View {
           .appFont(AppTextRole.caption)
           .foregroundStyle(.secondary)
       }
+    }
+    .task(id: did) {
+      await resolveHandle(forDID: did)
+    }
+  }
+
+  private func truncated(_ did: String) -> String {
+    guard did.count > 20 else { return did }
+    let prefix = did.prefix(12)
+    let suffix = did.suffix(6)
+    return "\(prefix)…\(suffix)"
+  }
+
+  private func resolveHandle(forDID did: String) async {
+    if resolvedHandles[did] != nil { return }
+    guard let client = appState.atProtoClient else { return }
+    guard let identifier = try? ATIdentifier(string: did) else { return }
+    guard let params = try? AppBskyActorGetProfile.Parameters(actor: identifier) else { return }
+    do {
+      let (code, profile) = try await client.app.bsky.actor.getProfile(input: params)
+      guard code == 200, let profile else { return }
+      let handle = profile.handle.description
+      await MainActor.run {
+        resolvedHandles[did] = handle
+      }
+    } catch {
+      // Resolution failure is non-fatal; keep showing the truncated DID.
     }
   }
 
@@ -145,21 +176,25 @@ struct VerificationInfoSheet: View {
 }
 
 #Preview("Regular") {
-  Color.clear.sheet(isPresented: .constant(true)) {
-    VerificationInfoSheet(
-      kind: .regular,
-      displayName: "Bluesky",
-      verifications: []
-    )
-  }
+  Color.clear
+    .sheet(isPresented: .constant(true)) {
+      VerificationInfoSheet(
+        kind: .regular,
+        displayName: "Bluesky",
+        verifications: []
+      )
+    }
+    .previewWithMockEnvironment()
 }
 
 #Preview("Trusted Verifier") {
-  Color.clear.sheet(isPresented: .constant(true)) {
-    VerificationInfoSheet(
-      kind: .trustedVerifier,
-      displayName: "Bluesky",
-      verifications: []
-    )
-  }
+  Color.clear
+    .sheet(isPresented: .constant(true)) {
+      VerificationInfoSheet(
+        kind: .trustedVerifier,
+        displayName: "Bluesky",
+        verifications: []
+      )
+    }
+    .previewWithMockEnvironment()
 }
