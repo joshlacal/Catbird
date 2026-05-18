@@ -78,6 +78,11 @@ struct RecentSearchesSection: View {
     } message: {
       Text("This will remove all recent searches from this device.")
     }
+    .onChange(of: searches) { _, newValue in
+      if let current = revealedSearch, !newValue.contains(current) {
+        revealedSearch = nil
+      }
+    }
   }
 
   // Individual search row. `.searchSuggestions` does not host us inside a real
