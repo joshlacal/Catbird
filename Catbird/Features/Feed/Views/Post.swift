@@ -245,7 +245,7 @@ struct Post: View, Equatable {
         if showTranslation, let translated = translatedText {
             return AttributedString(translated)
         }
-        return post.facetsAsAttributedString
+        return post.facetsAsAttributedString.applyingPostBodyLinkAccent()
     }
 
     // Extract complex animation value to prevent type checker explosion

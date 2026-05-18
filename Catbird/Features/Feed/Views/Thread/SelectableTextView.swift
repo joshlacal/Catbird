@@ -226,6 +226,9 @@ struct SelectableTextView: UIViewRepresentable {
     let effectiveColorScheme = appState.themeManager.effectiveColorScheme(for: colorScheme)
     uiView.textColor = UIColor(Color.dynamicText(appState.themeManager, style: .primary, currentScheme: effectiveColorScheme))
     uiView.tintColor = UIColor(.accentColor)
+    // UITextView paints `.link` runs using linkTextAttributes, ignoring the
+    // foregroundColor on the attributed string. Pin it to the text-safe accent.
+    uiView.linkTextAttributes = [.foregroundColor: UIColor(Color("AccentTextColor"))]
     
     // Update coordinator with current environment values
     context.coordinator.appState = appState
