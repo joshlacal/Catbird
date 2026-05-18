@@ -17,6 +17,11 @@ struct FeedsStartPage: View {
   @Environment(\.modelContext) private var modelContext
   @Environment(\.horizontalSizeClass) private var sizeClass
   @Environment(\.colorScheme) private var colorScheme
+  #if os(iOS)
+  @Environment(\.inSideDrawer) private var inSideDrawer
+  #else
+  private var inSideDrawer: Bool { false }
+  #endif
   @State private var isEditingFeeds = false
   @Binding var isDrawerOpen: Bool
   @State private var viewModel: FeedsStartPageViewModel
@@ -1153,7 +1158,11 @@ struct FeedsStartPage: View {
       .padding(.horizontal, horizontalPadding)
       .padding(.vertical, max(20, horizontalPadding * 0.75))
       .frame(maxWidth: .infinity)
-      .background(Color(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme)))
+      .background(
+        inSideDrawer
+          ? Color.clear
+          : Color(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))
+      )
   }
 
   // MARK: - Overlays
@@ -1304,7 +1313,7 @@ extension View {
         currentUserDID: String?
     ) -> some View {
         self
-            .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
+            .modifier(DrawerAwareThemedBackground(themeManager: appState.themeManager, appSettings: appState.appSettings))
             .configuredToolbar(
                 appState: appState,
                 isDrawerOpen: isDrawerOpen,
@@ -1326,6 +1335,26 @@ extension View {
                 errorAlertMessage: errorAlertMessage,
                 showErrorAlert: showErrorAlert
             )
+    }
+}
+
+// Skips the opaque themed background when the start page is rendered inside
+// the side drawer overlay, so the drawer's Liquid Glass / material is visible.
+private struct DrawerAwareThemedBackground: ViewModifier {
+    let themeManager: ThemeManager
+    let appSettings: AppSettings
+    #if os(iOS)
+    @Environment(\.inSideDrawer) private var inSideDrawer
+    #else
+    private let inSideDrawer = false
+    #endif
+
+    func body(content: Content) -> some View {
+        if inSideDrawer {
+            content
+        } else {
+            content.themedPrimaryBackground(themeManager, appSettings: appSettings)
+        }
     }
 }
 

@@ -22,14 +22,11 @@ class DrawerPanGestureRecognizer: UIPanGestureRecognizer {
     allowedScrollTypesMask = .all
   }
 
-  // Override the gesture recognizer's behavior
   override func shouldRequireFailure(of otherGestureRecognizer: UIGestureRecognizer) -> Bool {
-    // Let VoiceOver gestures take precedence
     if UIAccessibility.isVoiceOverRunning {
       return true
     }
 
-    // Original logic
     if let view = self.view,
       let coordinator = coordinator,
       !coordinator.canRecognizeGesture(in: view) {
@@ -37,26 +34,24 @@ class DrawerPanGestureRecognizer: UIPanGestureRecognizer {
     }
     return false
   }
-  
-  // Override touch handling to check swipe direction
+
+  // Cancel the gesture when the user is swiping in the "wrong" direction so
+  // horizontal swipe actions on feed cells (like / reply) keep working. This
+  // mirror logic is load-bearing — do not remove without re-validating that
+  // post-row swipe actions still trigger.
   override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
     super.touchesMoved(touches, with: event)
-    
-    // Get the translation to determine swipe direction
+
     guard let view = self.view else { return }
     let translation = self.translation(in: view)
-    
-    // If the drawer is closed and user is swiping left-to-right (translation.x < 0),
-    // cancel this gesture to let swipe actions take priority
+
     if let coordinator = coordinator, !coordinator.isDrawerOpen() {
-      if translation.x < -10 { // Small threshold to determine direction
+      if translation.x < -10 {
         self.state = .cancelled
         return
       }
     }
-    
-    // If drawer is open and user is swiping right (translation.x > 0) significantly,
-    // cancel to avoid interfering
+
     if let coordinator = coordinator, coordinator.isDrawerOpen() {
       if translation.x > 10 {
         self.state = .cancelled
@@ -116,7 +111,6 @@ struct DrawerPanGesture: UIGestureRecognizerRepresentable {
     }
 
     @objc func handlePan(_ gesture: UIPanGestureRecognizer) {
-      // Only handle the gesture if we can open
       guard canOpen() else { return }
 
       switch gesture.state {
@@ -134,6 +128,10 @@ struct DrawerPanGesture: UIGestureRecognizerRepresentable {
   }
 }
 
+/// Overlay-style side drawer. The root content stays anchored at its natural
+/// position; only the drawer slides in from the leading edge over it, like the
+/// iOS notification shade but horizontal. A scrim fades in with drawer progress
+/// to dim the content below.
 struct SideDrawer<Content: View, DrawerContent: View>: View {
   let content: Content
   let drawer: DrawerContent
@@ -141,23 +139,19 @@ struct SideDrawer<Content: View, DrawerContent: View>: View {
   @Binding private var selectedTab: Int
   @Binding private var isDrawerOpen: Bool
   @Binding private var isRootView: Bool
+
+  // Live drag translation while the user is dragging. Positive values move the
+  // drawer toward open from whatever its current resting state is.
   @State private var dragOffset: CGFloat = 0
-  @State private var bounceOffset: CGFloat = 0
-  
+  @State private var isDragging: Bool = false
+
   // Notch-based haptic feedback (fires on state transitions, not continuous)
   @State private var dragNotch: Int = 0
 
-  // Device detection
   private let isIPad = PlatformDeviceInfo.isIPad
 
-  // Responsive customizable properties
-  private var bounceAmount: CGFloat { isIPad ? 0 : 0 }
-  private var springStiffness: Double { isIPad ? 180 : 150 }
-  private var springDamping: Double { isIPad ? 25 : 20 }
   private var dragThreshold: CGFloat { isIPad ? 0.2 : 0.3 }
   private var velocityThreshold: CGFloat { isIPad ? 150 : 100 }
-
-
 
   init(
     selectedTab: Binding<Int>,
@@ -171,7 +165,6 @@ struct SideDrawer<Content: View, DrawerContent: View>: View {
     self._isRootView = isRootView
     self._isDrawerOpen = isDrawerOpen
 
-    // Calculate adaptive drawer width if not provided
     if let customWidth = drawerWidth {
       self.drawerWidth = customWidth
     } else {
@@ -192,67 +185,59 @@ struct SideDrawer<Content: View, DrawerContent: View>: View {
   }
 
   private var canOpen: Bool {
-    // Only check if we can open if on home tab and root view
     selectedTab == 0 && isRootView
+  }
+
+  /// Progress of the drawer from closed (0) to fully open (1), accounting for
+  /// the live drag translation.
+  private func drawerProgress(width: CGFloat) -> CGFloat {
+    let base: CGFloat = isOpen ? width : 0
+    let raw = base + dragOffset
+    return min(max(raw / width, 0), 1)
   }
 
   var body: some View {
     GeometryReader { geometry in
       let adaptiveDrawerWidth = min(self.drawerWidth, geometry.size.width * 0.8)
-      // Cache effectiveOffset calculation once per render for performance
-      let currentOffset = effectiveOffset(drawerWidth: adaptiveDrawerWidth)
-      let scrimOpacity = min(0.3, currentOffset / adaptiveDrawerWidth * 0.3)
+      let progress = drawerProgress(width: adaptiveDrawerWidth)
+      let drawerOffset = -adaptiveDrawerWidth * (1 - progress)
+      let scrimOpacity = progress * 0.3
 
       ZStack(alignment: .leading) {
+        // Root content stays anchored — no .offset, no transform. Only the
+        // drawer and scrim move. This is the core fix for the multi-track
+        // animation jank from the previous implementation.
         content
-          .offset(x: max(0, currentOffset + bounceOffset))
-          .animation(
-            .interpolatingSpring(stiffness: springStiffness, damping: springDamping),
-            value: isOpen
-          )
-          .accessibilityAction(named: "Open Feeds Menu") {
-            if !isDrawerOpen && canOpen {
-              withAnimation {
-                isDrawerOpen = true
-              }
+
+        // Scrim. Always present so its opacity animates smoothly; hit testing
+        // is only enabled when there is something to tap-to-close.
+        Color.black
+          .opacity(scrimOpacity)
+          .ignoresSafeArea(.all)
+          .allowsHitTesting(scrimOpacity > 0.01)
+          .onTapGesture {
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+              isDrawerOpen = false
             }
           }
-
-        if isOpen {
-          Color.black
-            .opacity(scrimOpacity)
-            .ignoresSafeArea(.all)
-            .onTapGesture {
-              withAnimation(.spring(response: 0.3, dampingFraction: 0.9)) {
-                isDrawerOpen = false
-              }
+          .accessibilityAction(named: "Close Feeds Menu") {
+            withAnimation {
+              isDrawerOpen = false
             }
-            .accessibilityAction(named: "Close Feeds Menu") {
-              withAnimation {
-                isDrawerOpen = false
-              }
-            }
-            .accessibilityLabel("Close drawer background")
-            .accessibilityAddTraits(.isButton)
-        } else if currentOffset > 0 {
-          Color.black
-            .opacity(scrimOpacity)
-            .ignoresSafeArea(.all)
-            .allowsHitTesting(false)
-        }
+          }
+          .accessibilityLabel(scrimOpacity > 0.01 ? "Close drawer background" : "")
+          .accessibilityAddTraits(scrimOpacity > 0.01 ? .isButton : [])
 
+        // Drawer slides in from the leading edge as a Liquid Glass shade on
+        // iOS 26+, with an ultraThinMaterial fallback for iOS 18-25. The
+        // inSideDrawer environment value lets the drawer's child content know
+        // to skip its own opaque background so the glass is visible.
         drawer
+          .environment(\.inSideDrawer, true)
           .frame(width: adaptiveDrawerWidth)
-          .offset(
-            x: min(
-              0,
-              currentOffset - adaptiveDrawerWidth + bounceOffset
-            )
-          )
-          .animation(
-            .interpolatingSpring(stiffness: springStiffness, damping: springDamping),
-            value: isOpen
-          )
+          .modifier(DrawerGlassBackground())
+          .frame(maxHeight: .infinity)
+          .offset(x: drawerOffset)
           .accessibilityAction(named: "Close Feeds Menu") {
             withAnimation {
               isDrawerOpen = false
@@ -260,6 +245,7 @@ struct SideDrawer<Content: View, DrawerContent: View>: View {
           }
           .accessibilityAddTraits(isOpen ? .isModal : [])
       }
+      .animation(isDragging ? nil : .spring(response: 0.35, dampingFraction: 0.85), value: isOpen)
       .gesture(
         DrawerPanGesture(
           onChanged: { translation in
@@ -267,6 +253,7 @@ struct SideDrawer<Content: View, DrawerContent: View>: View {
               return
             }
 
+            isDragging = true
             if isDrawerOpen {
               dragOffset = min(0, translation)
             } else {
@@ -286,7 +273,7 @@ struct SideDrawer<Content: View, DrawerContent: View>: View {
             if isDrawerOpen {
               shouldOpen =
                 !(translation < -adaptiveDrawerWidth * dragThreshold
-                || velocity < -velocityThreshold)
+                  || velocity < -velocityThreshold)
             } else {
               shouldOpen =
                 canOpen
@@ -294,21 +281,8 @@ struct SideDrawer<Content: View, DrawerContent: View>: View {
                   || velocity > velocityThreshold)
             }
 
-            if shouldOpen != isDrawerOpen {
-              let velocityFactor = min(abs(velocity) / 1000, 1.0)
-              withAnimation(.spring(response: 0.3, dampingFraction: 0.99)) {
-                bounceOffset =
-                  shouldOpen ? bounceAmount * velocityFactor : -bounceAmount * velocityFactor
-              }
-
-              DispatchQueue.main.asyncAfter(deadline: .now() + 0.99) {
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
-                  bounceOffset = 0
-                }
-              }
-            }
-
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.99)) {
+            isDragging = false
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
               isDrawerOpen = shouldOpen
               dragOffset = 0
             }
@@ -318,37 +292,61 @@ struct SideDrawer<Content: View, DrawerContent: View>: View {
         )
       )
       .onAppear {
-        // Reset notch on appear
         dragNotch = 0
       }
       .onChange(of: isOpen) { _, newValue in
         if !newValue {
           dragOffset = 0
-          bounceOffset = 0
           dragNotch = 0
         } else {
-          DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+          DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
             UIAccessibility.post(notification: .screenChanged, argument: nil)
           }
         }
-        
-        // Save drawer state to UserDefaults for state restoration
+
         let defaults = UserDefaults(suiteName: "group.blue.catbird.shared") ?? UserDefaults.standard
         defaults.set(newValue, forKey: "drawer_was_open")
       }
-      .hoverEffect(.lift)
       .sensoryFeedback(.selection, trigger: dragNotch)
       .sensoryFeedback(.impact(weight: .medium), trigger: isOpen)
       .accessibilityElement(children: .contain)
     }
   }
+}
 
-  private func effectiveOffset(drawerWidth: CGFloat) -> CGFloat {
-    if isOpen {
-      return drawerWidth + dragOffset
+/// Glass material for the drawer surface. Uses `.glassEffect()` on iOS 26+ for
+/// true Liquid Glass; falls back to `.ultraThinMaterial` on earlier OS versions.
+/// Kept outside `GlassEffectContainer` on purpose — the FAB owns its own
+/// container for the compose matched-geometry transition and we don't want the
+/// drawer to morph with it.
+private struct DrawerGlassBackground: ViewModifier {
+  func body(content: Content) -> some View {
+    if #available(iOS 26.0, *) {
+      content
+        .background {
+          Rectangle()
+            .glassEffect(.regular, in: Rectangle())
+        }
     } else {
-      return dragOffset
+      content
+        .background(.ultraThinMaterial)
     }
   }
 }
 #endif
+
+// MARK: - Environment Key
+
+private struct InSideDrawerKey: EnvironmentKey {
+  static let defaultValue: Bool = false
+}
+
+extension EnvironmentValues {
+  /// True when a view is being rendered inside the side drawer's overlay
+  /// surface. Child views can use this to opt out of their own opaque
+  /// backgrounds so the drawer's Liquid Glass / material remains visible.
+  var inSideDrawer: Bool {
+    get { self[InSideDrawerKey.self] }
+    set { self[InSideDrawerKey.self] = newValue }
+  }
+}
