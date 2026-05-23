@@ -15,6 +15,9 @@ struct FAB: View {
     let clearDraftAction: (() -> Void)?
     @Environment(\.colorScheme) var colorScheme
     @Environment(\.toastManager) private var toastManager
+    // When the user enables Reduce Transparency, the translucent Liquid Glass
+    // material is swapped for an opaque accent fill so the white glyph stays legible.
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     // Namespace for matched zoom transitions to the composer (provided by ContentView)
     @Environment(\.composerTransitionNamespace) private var composerNamespace
 
@@ -45,25 +48,33 @@ struct FAB: View {
                         feedsButton
                             .clipShape(Circle())
                             .glassEffect()
+                            .accessibilityLabel("Feeds")
+                            .accessibilityHint("Browse and switch feeds")
                     } else {
                         feedsButton
+                            .accessibilityLabel("Feeds")
+                            .accessibilityHint("Browse and switch feeds")
                     }
                 }
                 Spacer()
                 if #available(iOS 26.0, macOS 26.0, *) {
                     composeButton
                         .clipShape(Circle())
-                        .glassEffect(.clear.tint(.accentColor).interactive())
+                        .composeGlass(reduceTransparency: reduceTransparency)
                         .composerContextMenu(
                           hasMinimizedComposer: hasMinimizedComposer,
                           clearDraftAction: clearDraftAction
                         )
+                        .accessibilityLabel(composeAccessibilityLabel)
+                        .accessibilityHint(composeAccessibilityHint)
                 } else {
                     composeButton
                         .composerContextMenu(
                           hasMinimizedComposer: hasMinimizedComposer,
                           clearDraftAction: clearDraftAction
                         )
+                        .accessibilityLabel(composeAccessibilityLabel)
+                        .accessibilityHint(composeAccessibilityHint)
                 }
             }
             .padding(.horizontal, 16)
@@ -164,10 +175,43 @@ struct FAB: View {
                     // Nudge inward slightly to sit over the symbol's corner
                     .offset(x: -1.5, y: 1.5)
                     .allowsHitTesting(false)
+                    // Decorative: the draft state is announced via the button's
+                    // accessibility label, so the dot itself is hidden from VoiceOver.
+                    .accessibilityHidden(true)
             }
         }
     }
-    
+
+    // MARK: - Accessibility
+
+    private var composeAccessibilityLabel: String {
+        hasMinimizedComposer ? "Resume draft" : "Compose post"
+    }
+
+    private var composeAccessibilityHint: String {
+        hasMinimizedComposer
+            ? "Opens the post composer with your saved draft"
+            : "Opens the post composer"
+    }
+
+}
+
+@available(iOS 26.0, macOS 26.0, *)
+private extension View {
+    /// Applies the compose FAB's Liquid Glass styling.
+    ///
+    /// The accent-tinted `.clear` glass keeps the button subtle over the feed
+    /// while letting content show through. When Reduce Transparency is enabled,
+    /// it falls back to the opaque `.regular` material so the white glyph never
+    /// loses contrast against bright content scrolling underneath.
+    @ViewBuilder
+    func composeGlass(reduceTransparency: Bool) -> some View {
+        if reduceTransparency {
+            self.glassEffect(.regular.tint(.accentColor).interactive())
+        } else {
+            self.glassEffect(.clear.tint(.accentColor).interactive())
+        }
+    }
 }
 
 private extension View {

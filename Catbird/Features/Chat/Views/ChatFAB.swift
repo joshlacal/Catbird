@@ -12,6 +12,9 @@ import SwiftUI
 struct ChatFAB: View {
   let newMessageAction: () -> Void
   @Environment(\.composerTransitionNamespace) private var composerNamespace
+  // Swap the translucent glass for an opaque accent fill when Reduce
+  // Transparency is on, keeping the white glyph legible over the list.
+  @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
   private let circleSize: CGFloat = 62
 
@@ -19,9 +22,13 @@ struct ChatFAB: View {
     if #available(iOS 26.0, *) {
       newMessageButton
         .clipShape(Circle())
-        .glassEffect(.clear.tint(.accentColor).interactive())
+        .chatComposeGlass(reduceTransparency: reduceTransparency)
+        .accessibilityLabel("New message")
+        .accessibilityHint("Starts a new conversation")
     } else {
       newMessageButton
+        .accessibilityLabel("New message")
+        .accessibilityHint("Starts a new conversation")
     }
   }
 
@@ -38,6 +45,20 @@ struct ChatFAB: View {
       .contentShape(Circle())
     }
     .composerMatchedSource(namespace: composerNamespace)
+  }
+}
+
+@available(iOS 26.0, *)
+private extension View {
+  /// Mirrors the home compose FAB's glass styling so the two primary action
+  /// buttons stay visually consistent, including the Reduce Transparency fallback.
+  @ViewBuilder
+  func chatComposeGlass(reduceTransparency: Bool) -> some View {
+    if reduceTransparency {
+      self.glassEffect(.regular.tint(.accentColor).interactive())
+    } else {
+      self.glassEffect(.clear.tint(.accentColor).interactive())
+    }
   }
 }
 
