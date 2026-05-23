@@ -86,6 +86,8 @@ extension ChatManager {
                 // Add to the beginning of the list
                 conversations.insert(convo, at: 0)
             }
+            updateConversationsByStatus()
+            onUnreadCountChanged?()
             
             logger.debug("Successfully got or created conversation with ID: \(convo.id)")
             

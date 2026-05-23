@@ -273,10 +273,9 @@ final class AuthenticationManager: AuthProgressDelegate {
     isHandlingAuthExpiration = true
 
     if let did {
-      let storedHandle = getStoredHandle(for: did)
-      expiredAccountInfo = AccountInfo(did: did, handle: storedHandle, isActive: false)
+      expiredAccountInfo = makeExpiredAccountInfo(for: did)
       logger.info(
-        "Stored expired account info for automatic re-authentication: \(storedHandle ?? did)")
+        "Stored expired account info for automatic re-authentication: \(self.expiredAccountInfo?.loginHandle ?? did)")
     }
 
     Task {
@@ -341,10 +340,13 @@ final class AuthenticationManager: AuthProgressDelegate {
   /// Start OAuth flow for the expired account (if available)
   @MainActor
   func startOAuthFlowForExpiredAccount() async throws -> URL? {
-    guard let expiredAccount = expiredAccountInfo,
-      let handle = expiredAccount.handle
-    else {
+    guard let expiredAccount = expiredAccountInfo else {
       logger.warning("No expired account information available for automatic re-authentication")
+      return nil
+    }
+
+    guard let handle = expiredAccount.loginHandle else {
+      logger.warning("Expired account has no user-facing handle for automatic re-authentication")
       return nil
     }
 
@@ -650,10 +652,9 @@ final class AuthenticationManager: AuthProgressDelegate {
       return
     }
 
-    let storedHandle = getStoredHandle(for: did)
-    expiredAccountInfo = AccountInfo(did: did, handle: storedHandle, isActive: false)
+    expiredAccountInfo = makeExpiredAccountInfo(for: did)
     logger.info(
-      "Prepared expiredAccountInfo for DID=\(did) handle=\(storedHandle ?? "nil") to trigger re-auth"
+      "Prepared expiredAccountInfo for DID=\(did) handle=\(self.expiredAccountInfo?.loginHandle ?? "nil") to trigger re-auth"
     )
 
     // Keep the account list fresh for Account Switcher fallback
@@ -670,8 +671,7 @@ final class AuthenticationManager: AuthProgressDelegate {
     guard !did.isEmpty else {
       // Prefer the currently-active lifecycle DID if Petrel can no longer resolve identity.
       if let activeDID = AppStateManager.shared.lifecycle.userDID, !activeDID.isEmpty {
-        let storedHandle = getStoredHandle(for: activeDID)
-        expiredAccountInfo = AccountInfo(did: activeDID, handle: storedHandle, isActive: false)
+        expiredAccountInfo = makeExpiredAccountInfo(for: activeDID)
         logger.warning(
           "Session expired for DID=\(activeDID); reason=\(reason ?? "unknown"). Prompting re-auth (lifecycle fallback)."
         )
@@ -683,8 +683,7 @@ final class AuthenticationManager: AuthProgressDelegate {
       return
     }
 
-    let storedHandle = getStoredHandle(for: did)
-    expiredAccountInfo = AccountInfo(did: did, handle: storedHandle, isActive: false)
+    expiredAccountInfo = makeExpiredAccountInfo(for: did)
     logger.warning(
       "Session expired for DID=\(did); reason=\(reason ?? "unknown"). Prompting re-auth.")
   }
@@ -1279,6 +1278,21 @@ final class AuthenticationManager: AuthProgressDelegate {
 
     var id: String { did }
 
+    var loginHandle: String? {
+      Self.loginHandleCandidate(handle) ?? Self.loginHandleCandidate(cachedHandle)
+    }
+
+    static func loginHandleCandidate(_ value: String?) -> String? {
+      guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+        !trimmed.isEmpty,
+        !trimmed.lowercased().hasPrefix("did:")
+      else {
+        return nil
+      }
+
+      return trimmed
+    }
+
     static func == (lhs: AccountInfo, rhs: AccountInfo) -> Bool {
       lhs.did == rhs.did
     }
@@ -1288,8 +1302,13 @@ final class AuthenticationManager: AuthProgressDelegate {
 
   /// Store handle for a specific DID
   private func storeHandle(_ handle: String, for did: String) {
+    guard let loginHandle = AccountInfo.loginHandleCandidate(handle) else {
+      logger.warning("Ignoring DID-looking or empty handle for DID: \(did)")
+      return
+    }
+
     var handles = getStoredHandles()
-    handles[did] = handle
+    handles[did] = loginHandle
 
     if let data = try? JSONEncoder().encode(handles) {
       UserDefaults.standard.set(data, forKey: handleStorageKey)
@@ -1299,7 +1318,7 @@ final class AuthenticationManager: AuthProgressDelegate {
   /// Get stored handle for a specific DID
   private func getStoredHandle(for did: String) -> String? {
     let handles = getStoredHandles()
-    return handles[did]
+    return AccountInfo.loginHandleCandidate(handles[did])
   }
 
   /// Get all stored handles
@@ -1309,7 +1328,7 @@ final class AuthenticationManager: AuthProgressDelegate {
     else {
       return [:]
     }
-    return handles
+    return handles.compactMapValues { AccountInfo.loginHandleCandidate($0) }
   }
 
   /// Remove stored handle for a specific DID
@@ -1356,7 +1375,7 @@ final class AuthenticationManager: AuthProgressDelegate {
   func cacheProfileData(for did: String, handle: String?, displayName: String?, avatarURL: URL?) {
     let key = "cached_profile_\(did)"
     let profileData: [String: String?] = [
-      "handle": handle,
+      "handle": AccountInfo.loginHandleCandidate(handle),
       "displayName": displayName,
       "avatarURL": avatarURL?.absoluteString,
     ]
@@ -1386,9 +1405,21 @@ final class AuthenticationManager: AuthProgressDelegate {
       }
 
     return (
-      handle: profileData["handle"] as? String,
+      handle: AccountInfo.loginHandleCandidate(profileData["handle"] as? String),
       displayName: profileData["displayName"] as? String,
       avatarURL: avatarURL
+    )
+  }
+
+  private func makeExpiredAccountInfo(for did: String, isActive: Bool = false) -> AccountInfo {
+    let cachedProfile = getCachedProfileData(for: did)
+    return AccountInfo(
+      did: did,
+      handle: getStoredHandle(for: did),
+      isActive: isActive,
+      cachedHandle: cachedProfile?.handle,
+      cachedDisplayName: cachedProfile?.displayName,
+      cachedAvatarURL: cachedProfile?.avatarURL
     )
   }
 
@@ -1759,10 +1790,9 @@ final class AuthenticationManager: AuthProgressDelegate {
       let hasValidSession = await client.hasValidSession()
       if !hasValidSession {
         logger.warning("⚠️ [AUTHMAN-SWITCH] Account has no valid session - triggering re-auth flow")
-        let storedHandle = getStoredHandle(for: targetDID)
-        expiredAccountInfo = AccountInfo(did: targetDID, handle: storedHandle, isActive: false)
+        expiredAccountInfo = makeExpiredAccountInfo(for: targetDID)
         logger.info(
-          "🔄 [AUTHMAN-SWITCH] Set expiredAccountInfo for DID=\(targetDID) handle=\(storedHandle ?? "nil") to trigger re-auth"
+          "🔄 [AUTHMAN-SWITCH] Set expiredAccountInfo for DID=\(targetDID) handle=\(self.expiredAccountInfo?.loginHandle ?? "nil") to trigger re-auth"
         )
         isSwitchingAccount = false
         updateState(.unauthenticated)
@@ -1805,10 +1835,9 @@ final class AuthenticationManager: AuthProgressDelegate {
 
       // Set expired account info so LoginView/AccountSwitcherView can trigger re-authentication
       // This allows automatic re-auth flow when switching to an account with expired tokens
-      let storedHandle = getStoredHandle(for: targetDID)
-      expiredAccountInfo = AccountInfo(did: targetDID, handle: storedHandle, isActive: false)
+      expiredAccountInfo = makeExpiredAccountInfo(for: targetDID)
       logger.info(
-        "🔄 [AUTHMAN-SWITCH] Set expiredAccountInfo for DID=\(targetDID) handle=\(storedHandle ?? "nil") to enable re-authentication"
+        "🔄 [AUTHMAN-SWITCH] Set expiredAccountInfo for DID=\(targetDID) handle=\(self.expiredAccountInfo?.loginHandle ?? "nil") to enable re-authentication"
       )
 
       // Set state to unauthenticated so the auth UI can handle re-auth
@@ -2098,9 +2127,8 @@ extension AuthenticationManager: AuthFailureDelegate {
     isHandlingAuthExpiration = true
 
     // Prime re-auth for the specified DID
-    let storedHandle = getStoredHandle(for: did)
     if expiredAccountInfo == nil {
-      expiredAccountInfo = AccountInfo(did: did, handle: storedHandle, isActive: false)
+      expiredAccountInfo = makeExpiredAccountInfo(for: did)
     }
 
     if isRetryable {

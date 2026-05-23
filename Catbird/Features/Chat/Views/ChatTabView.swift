@@ -50,6 +50,7 @@ struct ChatTabView: View {
   @State private var coordinator = UnifiedChatCoordinator()
   @State private var mlsPollingTask: Task<Void, Never>?
   @State private var mlsPollCycleCount: Int = 0
+  @State private var coordinatorAccountDID: String?
   // Eager-fetch coalescing: prevents redundant batches when mount + scene-active fire close together
   @State private var lastEagerRefreshAt: Date?
   fileprivate let logger = Logger(subsystem: "blue.catbird", category: "ChatUI")
@@ -115,7 +116,12 @@ struct ChatTabView: View {
       }
     }
     .onChange(of: appState.chatManager.acceptedConversations) { _, newValue in
+      resetUnifiedListForCurrentAccountIfNeeded()
+      guard coordinatorAccountDID == appState.userDID else { return }
       coordinator.blueskyConversations = newValue
+    }
+    .onChange(of: appState.userDID) { _, _ in
+      handleAccountContextChanged()
     }
     .onChange(of: appState.navigationManager.targetConversationId) { _, newValue in
       if let convoId = newValue, convoId != selectedConvoId {
@@ -167,6 +173,7 @@ struct ChatTabView: View {
       } else {
         ForEach(coordinator.conversations) { item in
           unifiedRow(for: item)
+            .id("\(appState.userDID):\(item.id)")
         }
 
         if shouldShowPagination {
@@ -314,6 +321,7 @@ struct ChatTabView: View {
       Section("Conversations") {
         ForEach(appState.chatManager.filteredConversations) { convo in
           ConversationRow(convo: convo, currentUserDID: appState.userDID)
+            .id("\(appState.userDID):search:\(convo.id)")
             .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
             .modifier(ConditionalSwipeActions(conversation: convo, enabled: true))
             .contextMenu {
@@ -381,6 +389,8 @@ struct ChatTabView: View {
   // MARK: - Event Handlers
 
   private func handleOnAppear() {
+    resetUnifiedListForCurrentAccountIfNeeded()
+
     // Bluesky DMs
     Task {
       if appState.chatManager.acceptedConversations.isEmpty && !appState.chatManager.loadingConversations {
@@ -429,6 +439,32 @@ struct ChatTabView: View {
 
   private func handleOnDisappear() {
     stopMLSPolling()
+  }
+
+  @MainActor
+  private func resetUnifiedListForCurrentAccountIfNeeded() {
+    let currentUserDID = appState.userDID
+    guard coordinatorAccountDID != currentUserDID else { return }
+
+    coordinatorAccountDID = currentUserDID
+    selectedConvoId = nil
+    searchText = ""
+    lastEagerRefreshAt = nil
+    coordinator.reset()
+    coordinator.mlsEnabled = mlsChatEnabledForCurrentAccount
+    coordinator.blueskyConversations = appState.chatManager.acceptedConversations
+  }
+
+  private func handleAccountContextChanged() {
+    stopMLSPolling()
+    Task { @MainActor in
+      resetUnifiedListForCurrentAccountIfNeeded()
+      await appState.chatManager.loadConversations(refresh: true)
+      if mlsChatEnabledForCurrentAccount {
+        await loadMLSConversations()
+        startMLSPolling()
+      }
+    }
   }
 
   private func handleScenePhaseChange(from oldPhase: ScenePhase, to newPhase: ScenePhase) {
@@ -492,6 +528,8 @@ struct ChatTabView: View {
 
   @MainActor
   private func loadMLSConversations() async {
+    resetUnifiedListForCurrentAccountIfNeeded()
+
     guard mlsChatEnabledForCurrentAccount else {
       coordinator.mlsEnabled = false
       return
@@ -579,6 +617,11 @@ struct ChatTabView: View {
         return lhsDate > rhsDate
       }
 
+      guard coordinatorAccountDID == userDID else {
+        logger.debug("Discarding MLS list load for stale account \(userDID)")
+        return
+      }
+
       // Build participants from DB-cached profiles
       var participants: [String: [MLSParticipantViewModel]] = [:]
       var dbProfiles: [MLSProfileEnricher.ProfileData] = []
@@ -629,6 +672,8 @@ struct ChatTabView: View {
   }
 
   private func enrichMLSParticipantsFromNetwork(membersByConvoID: [String: [MLSMemberModel]], userDID: String) async {
+    guard coordinatorAccountDID == userDID else { return }
+
     var allDIDs = Set<String>()
     for (_, members) in membersByConvoID {
       for member in members { allDIDs.insert(member.did) }
@@ -639,6 +684,7 @@ struct ChatTabView: View {
       for: Array(allDIDs), using: client, currentUserDID: userDID
     )
     guard !profilesByDID.isEmpty else { return }
+    guard coordinatorAccountDID == userDID else { return }
 
     var enrichedParticipants: [String: [MLSParticipantViewModel]] = [:]
     for (convoID, members) in membersByConvoID {

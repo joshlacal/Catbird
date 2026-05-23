@@ -11,6 +11,7 @@ import SwiftUI
 struct QuotesView: View {
     let postUri: String
     @Environment(AppState.self) private var appState
+    @Environment(\.colorScheme) private var colorScheme
     @Environment(\.horizontalSizeClass) private var hSizeClass
     @State private var quotes: [AppBskyFeedDefs.PostView] = []
 
@@ -48,10 +49,21 @@ struct QuotesView: View {
                                 path: $path,
                                 appState: appState
                             )
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
+                        .contentShape(Rectangle())
                         .listRowSeparator(.visible)
-                        .listRowSeparatorTint(.clear)
+                        .listRowSeparatorTint(Color.separator)
+                        .alignmentGuide(.listRowSeparatorLeading) { _ in 0 }
+                        .alignmentGuide(.listRowSeparatorTrailing) { d in d.width }
+                        .listRowBackground(
+                            Color.primaryBackground(
+                                themeManager: appState.themeManager,
+                                currentScheme: colorScheme
+                            )
+                        )
                         .listRowInsets(EdgeInsets())
                     }
 
@@ -61,9 +73,21 @@ struct QuotesView: View {
                                 Task { await loadMoreQuotes() }
                             }
                             .listRowSeparator(.hidden)
+                            .listRowBackground(
+                                Color.primaryBackground(
+                                    themeManager: appState.themeManager,
+                                    currentScheme: colorScheme
+                                )
+                            )
                     }
                 }
                 .listStyle(.plain)
+                .background(
+                    Color.primaryBackground(
+                        themeManager: appState.themeManager,
+                        currentScheme: colorScheme
+                    )
+                )
                 .frame(maxWidth: contentMaxWidth)
                 .frame(maxWidth: .infinity, alignment: .center)
             }

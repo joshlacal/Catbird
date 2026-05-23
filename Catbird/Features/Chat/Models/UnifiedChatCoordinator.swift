@@ -23,6 +23,13 @@ final class UnifiedChatCoordinator {
     didSet { recompute() }
   }
 
+  func reset() {
+    blueskyConversations = []
+    mlsState = .init()
+    mlsEnabled = false
+    conversations = []
+  }
+
   private func recompute() {
     let bsky = blueskyConversations.map { UnifiedConversation.bluesky($0) }
 

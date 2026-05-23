@@ -177,6 +177,8 @@ struct MacOSUnifiedConversationRow: View {
       return msg.text
     case .chatBskyConvoDefsDeletedMessageView:
       return "Message deleted"
+    case .chatBskyConvoDefsSystemMessageView:
+      return "System message"
     case .unexpected:
       return ""
     }

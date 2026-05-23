@@ -21,6 +21,7 @@ struct MacOSMLSConversationView: View {
   @State private var emojiPickerMessageID: String?
   @State private var showingGroupInfo = false
   @State private var isInitialized = false
+  @State private var conversationModel: MLSConversationModel?
 
   private let logger = Logger(subsystem: "blue.catbird", category: "MacOSMLSConvo")
 
@@ -72,6 +73,7 @@ struct MacOSMLSConversationView: View {
       if let viewModel {
         MacOSGroupInfoInspector(
           viewModel: viewModel,
+          conversationModel: conversationModel,
           conversationId: conversationId
         )
         .inspectorColumnWidth(min: 220, ideal: 280, max: 360)
@@ -119,18 +121,36 @@ struct MacOSMLSConversationView: View {
       appState: appState
     )
 
+    await loadConversationMetadata(manager: manager)
+
     Task.detached(priority: .userInitiated) { [newViewModel] in
       await newViewModel.loadConversation()
+    }
+  }
+
+  @MainActor
+  private func loadConversationMetadata(manager: MLSConversationManager) async {
+    do {
+      conversationModel = try await manager.storage.fetchConversation(
+        conversationID: conversationId,
+        currentUserDID: appState.userDID,
+        database: manager.database
+      )
+    } catch {
+      logger.error("Failed to load local conversation metadata: \(error.localizedDescription)")
     }
   }
 
   // MARK: - Title
 
   private var conversationTitle: String {
-    if let conversation = viewModel?.conversation {
-      return conversation.metadata?.name ?? "Group Chat"
+    if let title = conversationModel?.title, !title.isEmpty {
+      return title
     }
-    return "Encrypted Chat"
+    if let conversation = viewModel?.conversation, conversation.members.count <= 2 {
+      return "Secure Chat"
+    }
+    return "Group Chat"
   }
 }
 
@@ -141,6 +161,7 @@ struct MacOSMLSConversationView: View {
 struct MacOSGroupInfoInspector: View {
   @Environment(AppState.self) private var appState
   let viewModel: MLSConversationDetailViewModel
+  let conversationModel: MLSConversationModel?
   let conversationId: String
 
   var body: some View {
@@ -163,10 +184,17 @@ struct MacOSGroupInfoInspector: View {
   @ViewBuilder
   private func groupInfoSection(_ conversation: BlueCatbirdMlsChatDefs.ConvoView) -> some View {
     Section("Group") {
-      LabeledContent("Name", value: conversation.metadata?.name ?? "Unnamed Group")
+      LabeledContent("Name", value: groupName(for: conversation))
       LabeledContent("Members", value: "\(conversation.members.count)")
       LabeledContent("Epoch", value: "\(conversation.epoch)")
     }
+  }
+
+  private func groupName(for conversation: BlueCatbirdMlsChatDefs.ConvoView) -> String {
+    if let title = conversationModel?.title, !title.isEmpty {
+      return title
+    }
+    return conversation.members.count <= 2 ? "Secure Chat" : "Group Chat"
   }
 
   @ViewBuilder

@@ -250,7 +250,7 @@ struct LoginView: View {
                             }
 
                             Text(appStateManager.authentication.expiredAccountInfo != nil ?
-                                 "Your session for \(appStateManager.authentication.expiredAccountInfo?.handle ?? "this account") has expired." :
+                                 "Your session for \(appStateManager.authentication.expiredAccountInfo?.loginHandle ?? "this account") has expired." :
                                  errorMessage)
                                 .appFont(AppTextRole.callout)
                                 .foregroundStyle(.secondary)
@@ -417,13 +417,14 @@ struct LoginView: View {
                !isLoggingIn,
                !isAddingNewAccount,
                !appStateManager.authentication.state.isAuthenticating {
-                logger.info("Expired account detected, automatically starting re-authentication")
-                
-                // Prefill handle field with the stored handle (not DID) for better iOS autofill matching
-                if let storedHandle = expiredAccount.handle, !storedHandle.isEmpty {
-                    handle = storedHandle
+                guard let loginHandle = expiredAccount.loginHandle else {
+                    logger.warning("Expired account has no saved handle; waiting for manual username entry")
+                    focusedField = .username
+                    return
                 }
                 
+                logger.info("Expired account detected, automatically starting re-authentication")
+                handle = loginHandle
                 hasStartedReAuthentication = true
                 await startReAuthenticationForExpiredAccount(expiredAccount)
             }
@@ -441,13 +442,14 @@ struct LoginView: View {
                 return
             }
             
-            logger.info("Expired account info changed (DID: \(newDID)), automatically starting re-authentication")
-            
-            // Prefill handle field with the stored handle (not DID) for better iOS autofill matching
-            if let storedHandle = expiredAccount.handle, !storedHandle.isEmpty {
-                handle = storedHandle
+            guard let loginHandle = expiredAccount.loginHandle else {
+                logger.warning("Expired account info changed for DID \(newDID), but no saved handle is available")
+                focusedField = .username
+                return
             }
             
+            logger.info("Expired account info changed (DID: \(newDID)), automatically starting re-authentication")
+            handle = loginHandle
             hasStartedReAuthentication = true
             Task {
                 await startReAuthenticationForExpiredAccount(expiredAccount)
@@ -1216,7 +1218,17 @@ struct LoginView: View {
     }
     
     private func startReAuthenticationForExpiredAccount(_ expiredAccount: AuthenticationManager.AccountInfo) async {
-        logger.info("Starting re-authentication for expired account: \(expiredAccount.handle ?? expiredAccount.did)")
+        guard expiredAccount.loginHandle != nil else {
+            logger.warning("Cannot automatically re-authenticate expired account without a saved handle")
+            focusedField = .username
+            hasStartedReAuthentication = false
+            isLoggingIn = false
+            loginProgress = .idle
+            showTimeoutCountdown = false
+            return
+        }
+
+        logger.info("Starting re-authentication for expired account: \(expiredAccount.loginHandle ?? expiredAccount.did)")
 
         // Cancel any existing authentication task
         authenticationTask?.cancel()

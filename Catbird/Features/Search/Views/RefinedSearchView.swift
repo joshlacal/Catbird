@@ -483,6 +483,9 @@ struct RefinedSearchView: View {
                     }
                 )
                 .padding(.bottom, 12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .listRowInsets(EdgeInsets())
+                .listRowBackground(Color.clear)
             }
             
             // Recent searches
@@ -502,6 +505,9 @@ struct RefinedSearchView: View {
                         viewModel.clearRecentSearches()
                     }
                 )
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .listRowInsets(EdgeInsets())
+                .listRowBackground(Color.clear)
             }
         }
     }
@@ -686,4 +692,3 @@ struct RefinedSearchView: View {
         RefinedSearchView(appState: appState, selectedTab: selectedTab, lastTappedTab: .constant(1))
   }
 }
-

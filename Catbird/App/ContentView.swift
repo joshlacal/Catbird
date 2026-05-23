@@ -1,6 +1,9 @@
 import OSLog
 import Petrel
 import SwiftUI
+#if os(iOS)
+import UIKit
+#endif
 
 struct ContentView: View {
   @Environment(AppState.self) private var appState
@@ -538,6 +541,7 @@ struct MainContentView: View {
                 currentFeedName: $currentFeedName,
                 isDrawerOpen: $isDrawerOpen
               )
+              .containerBackground(.clear, for: .navigation)
               .navigationDestination(for: NavigationDestination.self) { destination in
                 NavigationHandler.viewForDestination(
                   destination,
@@ -577,6 +581,7 @@ struct MainContentView: View {
                   }
               }
           }
+          .drawerNavigationGlassChrome()
       }
       .platformIgnoresSafeArea()
       .scrollDismissesKeyboard(.interactively)
@@ -828,6 +833,21 @@ extension View {
     #endif
   }
 }
+
+#if os(iOS)
+private extension View {
+  /// Hides the navigation bar and bottom bar materials for the drawer's
+  /// `NavigationStack`, so the underlying `DrawerGlassSurface` shows through.
+  /// The drawer's content uses `.containerBackground(.clear, for: .navigation)`
+  /// (applied to `FeedsStartPage` inside the stack) to clear the navigation
+  /// container's content-area background.
+  func drawerNavigationGlassChrome() -> some View {
+    self
+      .toolbarBackground(.hidden, for: .navigationBar)
+      .toolbarBackground(.hidden, for: .bottomBar)
+  }
+}
+#endif
 
 // MARK: - ContentViewModifiers
 

@@ -105,6 +105,18 @@ private actor PostCacheActor {
   }
 }
 
+private actor FollowRecordCreatedAtCacheActor {
+  private var cache: [ATProtocolURI: Date] = [:]
+
+  func get(_ uri: ATProtocolURI) -> Date? {
+    cache[uri]
+  }
+
+  func set(_ uri: ATProtocolURI, createdAt: Date) {
+    cache[uri] = createdAt
+  }
+}
+
 // MARK: - ViewModel
 
 @Observable final class NotificationsViewModel {
@@ -156,6 +168,7 @@ private actor PostCacheActor {
 
   // Thread-safe post cache using actor
   private let postCache = PostCacheActor()
+  private let followRecordCreatedAtCache = FollowRecordCreatedAtCacheActor()
 
   private let client: ATProtoClient?
   private let logger = Logger(subsystem: "blue.catbird", category: "NotificationsViewModel")
@@ -425,13 +438,18 @@ private actor PostCacheActor {
 
     // Fetch parent posts for replies
     let fetchedParentPosts = await fetchPosts(uris: Array(parentUrisToFetch))
+    let viewerFollowCreatedAtByURI = await fetchViewerFollowCreatedAtByURI(for: notifications)
 
     // For groupable notification types (like, repost, follow), group by type and subject
     // For non-groupable types (reply, quote, mention), keep them separate
     var notificationGroups: [String: [AppBskyNotificationListNotifications.Notification]] = [:]
 
     for notification in notifications {
-      let type = mapReasonToNotificationType(notification.reason, notification: notification)
+      let type = mapReasonToNotificationType(
+        notification.reason,
+        notification: notification,
+        viewerFollowCreatedAtByURI: viewerFollowCreatedAtByURI
+      )
 
       // Only group notification types that are groupable
       if let type = type, type.isGroupable {
@@ -470,7 +488,11 @@ private actor PostCacheActor {
       }
 
       let typeStr = firstNotification.reason
-        guard let type = mapReasonToNotificationType(typeStr, notification: firstNotification) else {
+      guard let type = mapReasonToNotificationType(
+        typeStr,
+        notification: firstNotification,
+        viewerFollowCreatedAtByURI: viewerFollowCreatedAtByURI
+      ) else {
         continue
       }
 
@@ -539,17 +561,33 @@ private actor PostCacheActor {
     }
   }
 
+  static func classifyFollowNotification(
+    inboundFollowCreatedAt: Date?,
+    viewerFollowCreatedAt: Date?
+  ) -> NotificationType {
+    guard let inboundFollowCreatedAt, let viewerFollowCreatedAt else {
+      return .follow
+    }
+
+    return viewerFollowCreatedAt < inboundFollowCreatedAt ? .followBack : .follow
+  }
+
   /// Maps API reason strings to our NotificationType enum
-  private func mapReasonToNotificationType(_ reason: String, notification: AppBskyNotificationListNotifications.Notification) -> NotificationType? {
+  private func mapReasonToNotificationType(
+    _ reason: String,
+    notification: AppBskyNotificationListNotifications.Notification,
+    viewerFollowCreatedAtByURI: [ATProtocolURI: Date]
+  ) -> NotificationType? {
     switch reason {
     case "like": return .like
     case "repost": return .repost
     case "follow":
-      // Check if this is a follow-back (they followed you, and you follow them)
-        if notification.author.viewer?.following != nil {
-        return .followBack
-      }
-      return .follow
+      return Self.classifyFollowNotification(
+        inboundFollowCreatedAt: Self.followRecordCreatedAt(in: notification),
+        viewerFollowCreatedAt: notification.author.viewer?.following.flatMap {
+          viewerFollowCreatedAtByURI[$0]
+        }
+      )
     case "mention": return .mention
     case "reply": return .reply
     case "quote": return .quote
@@ -557,8 +595,84 @@ private actor PostCacheActor {
     case "repost-via-repost": return .repostViaRepost
     case "subscribed-post": return .activitySubscription
     default: return nil
+    }
   }
-}
+
+  private static func followRecordCreatedAt(
+    in notification: AppBskyNotificationListNotifications.Notification
+  ) -> Date? {
+    guard case .knownType(let record) = notification.record,
+          let follow = record as? AppBskyGraphFollow else {
+      return nil
+    }
+
+    return follow.createdAt.date
+  }
+
+  private func fetchViewerFollowCreatedAtByURI(
+    for notifications: [AppBskyNotificationListNotifications.Notification]
+  ) async -> [ATProtocolURI: Date] {
+    guard let client = client else { return [:] }
+
+    let followRecordURIs = Set(notifications.compactMap { notification -> ATProtocolURI? in
+      guard notification.reason == "follow",
+            Self.followRecordCreatedAt(in: notification) != nil else {
+        return nil
+      }
+      return notification.author.viewer?.following
+    })
+
+    guard !followRecordURIs.isEmpty else {
+      return [:]
+    }
+
+    var createdAtByURI: [ATProtocolURI: Date] = [:]
+
+    for uri in followRecordURIs {
+      if let cachedDate = await followRecordCreatedAtCache.get(uri) {
+        createdAtByURI[uri] = cachedDate
+        continue
+      }
+
+      guard let recordKey = uri.recordKey else {
+        logger.warning("Skipping viewer follow record without rkey: \(uri.uriString())")
+        continue
+      }
+
+      do {
+        let params = ComAtprotoRepoGetRecord.Parameters(
+          repo: try ATIdentifier(string: uri.authority),
+          collection: try NSID(nsidString: "app.bsky.graph.follow"),
+          rkey: try RecordKey(keyString: recordKey)
+        )
+
+        let (responseCode, output) = try await client.com.atproto.repo.getRecord(input: params)
+
+        guard (200...299).contains(responseCode), let output = output else {
+          logger.warning(
+            "Failed to fetch viewer follow record \(uri.uriString()); response=\(responseCode)"
+          )
+          continue
+        }
+
+        guard case .knownType(let record) = output.value,
+              let followRecord = record as? AppBskyGraphFollow else {
+          logger.warning("Viewer follow record was not app.bsky.graph.follow: \(uri.uriString())")
+          continue
+        }
+
+        let createdAt = followRecord.createdAt.date
+        await followRecordCreatedAtCache.set(uri, createdAt: createdAt)
+        createdAtByURI[uri] = createdAt
+      } catch {
+        logger.warning(
+          "Error fetching viewer follow record \(uri.uriString()): \(error.localizedDescription)"
+        )
+      }
+    }
+
+    return createdAtByURI
+  }
 
   /// Fetches multiple posts by their URIs, using cache when possible and batching requests in groups of 25
   private func fetchPosts(uris: [ATProtocolURI]) async -> [ATProtocolURI: AppBskyFeedDefs.PostView] {

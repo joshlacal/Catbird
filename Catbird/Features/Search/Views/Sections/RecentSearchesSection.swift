@@ -46,7 +46,8 @@ struct RecentSearchesSection: View {
         }
         .disabled(searches.isEmpty)
       }
-      .padding(0)
+      .padding(.horizontal, 16)
+      .padding(.bottom, 8)
 
       // SRCH-008: List-based layout with swipe-to-delete
       if !searches.isEmpty {
@@ -55,15 +56,13 @@ struct RecentSearchesSection: View {
             searchRow(search)
           }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.systemBackground)
-        .cornerRadius(12)
-        .shadow(color: Color.black.opacity(0.05), radius: 4, y: 2)
-        .padding(.horizontal)
       } else {
         emptyStateView
-          .padding(.horizontal)
       }
     }
+    .frame(maxWidth: .infinity, alignment: .leading)
     .confirmationDialog(
       "Clear Recent Searches",
       isPresented: $showClearConfirmation,
@@ -163,7 +162,6 @@ struct RecentSearchesSection: View {
 
     if search != searches.prefix(10).last {
       Divider()
-        .padding(.leading, 48)
     }
   }
 
@@ -187,12 +185,8 @@ struct RecentSearchesSection: View {
       Spacer()
     }
     .padding(16)
+    .frame(maxWidth: .infinity, alignment: .leading)
     .background(Color.systemBackground)
-    .cornerRadius(12)
-    .overlay(
-      RoundedRectangle(cornerRadius: 12)
-        .strokeBorder(Color.separator.opacity(0.5), lineWidth: 1)
-    )
   }
 }
 
@@ -229,4 +223,3 @@ extension View {
       .padding()
   }
 }
-

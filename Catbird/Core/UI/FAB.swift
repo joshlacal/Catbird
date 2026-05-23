@@ -53,7 +53,7 @@ struct FAB: View {
                 if #available(iOS 26.0, macOS 26.0, *) {
                     composeButton
                         .clipShape(Circle())
-                        .glassEffect(.regular.tint(.accentColor).interactive())
+                        .glassEffect(.clear.tint(.accentColor).interactive())
                         .composerContextMenu(
                           hasMinimizedComposer: hasMinimizedComposer,
                           clearDraftAction: clearDraftAction

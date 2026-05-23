@@ -19,7 +19,7 @@ struct ChatFAB: View {
     if #available(iOS 26.0, *) {
       newMessageButton
         .clipShape(Circle())
-        .glassEffect(.regular.tint(.accentColor).interactive())
+        .glassEffect(.clear.tint(.accentColor).interactive())
     } else {
       newMessageButton
     }

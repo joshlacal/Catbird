@@ -1100,11 +1100,15 @@ struct FeedsStartPage: View {
       
       ScrollView {
         VStack(spacing: 0) {
-          // Banner header using Apple's flexible header system
+          // Banner header using Apple's flexible header system. When the page
+          // renders inside the side drawer, inset the banner and clip it to a
+          // `ConcentricRectangle` so its corners stay concentric with the
+          // drawer's rounded trailing corners.
           bannerHeaderView()
             .flexibleHeaderContent()
-            .background(Color.accentColor.opacity(0.05))
-          
+            .modifier(DrawerBannerInset())
+            .background(inSideDrawer ? Color.clear : Color.accentColor.opacity(0.05))
+
           // Main content below the banner
           feedsContent()
             .frame(maxWidth: contentWidth)
@@ -1116,6 +1120,7 @@ struct FeedsStartPage: View {
       .frame(maxWidth: drawerWidth)
       .clipped()
       .ignoresSafeArea(edges: [.top, .bottom])
+      .modifier(DrawerAwareScrollBackground())
       .refreshable {
         await handleRefresh()
       }
@@ -1421,7 +1426,9 @@ struct FeedsStartPage: View {
   @ViewBuilder
   private func loadingOverlay() -> some View {
     if viewModel.isLoading {
-      Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme)
+      (inSideDrawer
+        ? Color.clear
+        : Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))
         .ignoresSafeArea()
         .overlay {
           ProgressView("Loading feeds...")
@@ -1434,7 +1441,9 @@ struct FeedsStartPage: View {
   @ViewBuilder
   private func initializationOverlay() -> some View {
     if !isInitialized {
-      Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme)
+      (inSideDrawer
+        ? Color.clear
+        : Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))
         .ignoresSafeArea()
         .overlay {
           ProgressView("Loading your feeds...")
@@ -1452,10 +1461,16 @@ struct FeedsStartPage: View {
       if let bannerURL = profile?.banner?.url {
         LazyImage(url: bannerURL) { state in
           if let image = state.image {
+            // `aspectRatio(.fill)` lets the image overflow horizontally to
+            // cover its frame's height. Pin the rendered image to the parent
+            // frame and clip inside the LazyImage so the overflow is cropped
+            // before it can escape into the surrounding layout.
             image
               .resizable()
               .aspectRatio(contentMode: .fill)
+              .frame(maxWidth: .infinity, maxHeight: .infinity)
               .overlay(Color.black.opacity(0.15).blendMode(.overlay))
+              .clipped()
           } else if state.error != nil {
             fallbackGradientBanner
           } else {
@@ -1606,6 +1621,64 @@ private struct DrawerAwareThemedBackground: ViewModifier {
             content
         } else {
             content.themedPrimaryBackground(themeManager, appSettings: appSettings)
+        }
+    }
+}
+
+private struct DrawerAwareScrollBackground: ViewModifier {
+    #if os(iOS)
+    @Environment(\.inSideDrawer) private var inSideDrawer
+    #else
+    private let inSideDrawer = false
+    #endif
+
+    func body(content: Content) -> some View {
+        if inSideDrawer {
+            content
+                .scrollContentBackground(.hidden)
+                .background(Color.clear)
+        } else {
+            content
+        }
+    }
+}
+
+/// Insets the banner header inside the drawer and clips it to a shape that
+/// stays concentric with the drawer's rounded trailing corners. The drawer
+/// publishes its outer shape via `containerShape(_:)`, so a
+/// `ConcentricRectangle` here automatically resolves its corner radii against
+/// it. `isUniform: true` keeps the banner's four corners visually balanced
+/// even though the drawer's leading corners are square and trailing corners
+/// are rounded.
+private struct DrawerBannerInset: ViewModifier {
+    #if os(iOS)
+    @Environment(\.inSideDrawer) private var inSideDrawer
+    #else
+    private let inSideDrawer = false
+    #endif
+
+    func body(content: Content) -> some View {
+        if inSideDrawer {
+            #if os(iOS)
+            if #available(iOS 26.0, *) {
+                content
+                    .clipShape(ConcentricRectangle(
+                        corners: .concentric(minimum: 16),
+                        isUniform: true
+                    ))
+                    .padding(.horizontal, SideDrawerConstants.drawerInnerInset)
+                    .padding(.top, SideDrawerConstants.drawerInnerInset)
+            } else {
+                content
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .padding(.horizontal, SideDrawerConstants.drawerInnerInset)
+                    .padding(.top, SideDrawerConstants.drawerInnerInset)
+            }
+            #else
+            content
+            #endif
+        } else {
+            content
         }
     }
 }

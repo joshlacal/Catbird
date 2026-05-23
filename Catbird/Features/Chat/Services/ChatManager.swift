@@ -1770,7 +1770,7 @@ final class ChatManager: StateInvalidationSubscriber {
   
   /// Updates the message requests and accepted conversations lists based on status
   @MainActor
-  private func updateConversationsByStatus() {
+  func updateConversationsByStatus() {
     messageRequests = conversations.filter { $0.status?.rawValue == "request" }
     acceptedConversations = conversations.filter { $0.status?.rawValue == "accepted" || $0.status == nil }
     

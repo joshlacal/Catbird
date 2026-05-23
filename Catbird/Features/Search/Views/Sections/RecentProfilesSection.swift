@@ -27,7 +27,7 @@ struct RecentProfilesSection: View {
                     .appFont(AppTextRole.subheadline)
                     .foregroundColor(.accentColor)
             }
-            .padding(.horizontal)
+            .padding(.horizontal, 16)
             
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(alignment: .top, spacing: 0) {
@@ -60,7 +60,9 @@ struct RecentProfilesSection: View {
                 .scrollContentBackground(.hidden)
             }
             .contentMargins(.horizontal, 0, for: .scrollContent)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

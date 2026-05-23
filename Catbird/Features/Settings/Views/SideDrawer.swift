@@ -145,9 +145,6 @@ struct SideDrawer<Content: View, DrawerContent: View>: View {
   @State private var dragOffset: CGFloat = 0
   @State private var isDragging: Bool = false
 
-  // Notch-based haptic feedback (fires on state transitions, not continuous)
-  @State private var dragNotch: Int = 0
-
   private let isIPad = PlatformDeviceInfo.isIPad
 
   private var dragThreshold: CGFloat { isIPad ? 0.2 : 0.3 }
@@ -213,7 +210,6 @@ struct SideDrawer<Content: View, DrawerContent: View>: View {
         // is only enabled when there is something to tap-to-close.
         Color.black
           .opacity(scrimOpacity)
-          .ignoresSafeArea(.all)
           .allowsHitTesting(scrimOpacity > 0.01)
           .onTapGesture {
             withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
@@ -228,15 +224,19 @@ struct SideDrawer<Content: View, DrawerContent: View>: View {
           .accessibilityLabel(scrimOpacity > 0.01 ? "Close drawer background" : "")
           .accessibilityAddTraits(scrimOpacity > 0.01 ? .isButton : [])
 
-        // Drawer slides in from the leading edge as a Liquid Glass shade on
-        // iOS 26+, with an ultraThinMaterial fallback for iOS 18-25. The
-        // inSideDrawer environment value lets the drawer's child content know
-        // to skip its own opaque background so the glass is visible.
-        drawer
-          .environment(\.inSideDrawer, true)
+        // Square-edged drawer slides in from the leading edge over a dedicated
+        // Liquid Glass surface.
+        ZStack {
+          DrawerGlassSurface()
+
+          drawer
+            .environment(\.inSideDrawer, true)
+            .background(Color.clear)
+        }
           .frame(width: adaptiveDrawerWidth)
-          .modifier(DrawerGlassBackground())
-          .frame(maxHeight: .infinity)
+          .frame(maxHeight: .infinity, alignment: .top)
+          .containerShape(Rectangle())
+          .clipShape(Rectangle())
           .hoverEffect(.lift)
           .offset(x: drawerOffset)
           .accessibilityAction(named: "Close Feeds Menu") {
@@ -266,14 +266,6 @@ struct SideDrawer<Content: View, DrawerContent: View>: View {
             } else {
               dragOffset = max(0, translation)
             }
-
-            // Notch-based haptic: only fires when crossing a threshold
-            let step: CGFloat = 80
-            let progress = abs(translation)
-            let notch = Int(progress / step)
-            if notch != dragNotch {
-              dragNotch = notch
-            }
           },
           onEnded: { translation, velocity in
             let shouldOpen: Bool
@@ -298,13 +290,9 @@ struct SideDrawer<Content: View, DrawerContent: View>: View {
           isDrawerOpen: { isOpen }
         )
       )
-      .onAppear {
-        dragNotch = 0
-      }
       .onChange(of: isOpen) { _, newValue in
         if !newValue {
           dragOffset = 0
-          dragNotch = 0
         } else {
           DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
             UIAccessibility.post(notification: .screenChanged, argument: nil)
@@ -314,10 +302,13 @@ struct SideDrawer<Content: View, DrawerContent: View>: View {
         let defaults = UserDefaults(suiteName: "group.blue.catbird.shared") ?? UserDefaults.standard
         defaults.set(newValue, forKey: "drawer_was_open")
       }
-      .sensoryFeedback(.selection, trigger: dragNotch)
       .sensoryFeedback(.impact(weight: .medium), trigger: isOpen)
       .accessibilityElement(children: .contain)
     }
+    // Ignoring the safe area lets the drawer extend to the device's true bezel
+    // edge. Children that already manage their own safe area (NavigationStack,
+    // TabView, etc.) are unaffected.
+    .ignoresSafeArea()
   }
 }
 
@@ -326,19 +317,25 @@ struct SideDrawer<Content: View, DrawerContent: View>: View {
 /// Kept outside `GlassEffectContainer` on purpose — the FAB owns its own
 /// container for the compose matched-geometry transition and we don't want the
 /// drawer to morph with it.
-private struct DrawerGlassBackground: ViewModifier {
-  func body(content: Content) -> some View {
+private struct DrawerGlassSurface: View {
+  var body: some View {
+    #if os(iOS)
     if #available(iOS 26.0, *) {
-      content
-        .background {
-          Rectangle()
-            .glassEffect(.regular, in: Rectangle())
-        }
+      Color.clear
+        .glassEffect(.clear.interactive(), in: Rectangle())
     } else {
-      content
-        .background(.ultraThinMaterial)
+      Rectangle()
+        .fill(.ultraThinMaterial)
     }
+    #else
+    Rectangle()
+      .fill(.ultraThinMaterial)
+    #endif
   }
+}
+
+enum SideDrawerConstants {
+  static let drawerInnerInset: CGFloat = 12
 }
 #endif
 

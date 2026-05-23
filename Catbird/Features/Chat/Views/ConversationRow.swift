@@ -7,12 +7,8 @@ struct ConversationRow: View {
   let convo: ChatBskyConvoDefs.ConvoView
   let currentUserDID: String  // Current user's DID to identify the other member
 
-  // Use @State for properties loaded asynchronously
-  @State private var avatarImage: Image?  // Managed by ProfileAvatarView now
-  @State private var displayName: String = ""
-  @State private var handle: String = ""
-
   @Environment(AppState.self) private var appState
+
   // Determine the other member involved in the conversation
   private var otherMember: ChatBskyActorDefs.ProfileViewBasic? {
     // Handle edge case where currentUserDID might be empty
@@ -24,10 +20,38 @@ struct ConversationRow: View {
     // Find the first member whose DID does not match the current user's DID
     return convo.members.first(where: { $0.did.didString() != currentUserDID })
   }
+
+  private var displayName: String {
+    guard let profile = otherMember else {
+      return "Unknown User"
+    }
+
+    if profile.handle.description == "missing.invalid" {
+      return "Deleted Account"
+    }
+
+    return profile.displayName ?? ""
+  }
+
+  private var handle: String {
+    guard let profile = otherMember else {
+      return ""
+    }
+
+    if profile.handle.description == "missing.invalid" {
+      return ""
+    }
+
+    return "@\(profile.handle.description)"
+  }
+
+  private var displayLabel: String {
+    displayName.isEmpty ? handle : displayName
+  }
   
   // Accessibility description for screen readers
   private var accessibilityDescription: String {
-    let userName = displayName.isEmpty ? handle : displayName
+    let userName = displayLabel
     let unreadText = convo.unreadCount > 0 ? ", \(convo.unreadCount) unread message\(convo.unreadCount == 1 ? "" : "s")" : ""
     
     var messageText = "No messages yet"
@@ -42,11 +66,11 @@ struct ConversationRow: View {
   var body: some View {
     HStack(spacing: DesignTokens.Spacing.base) {
       ChatProfileAvatarView(profile: otherMember, size: DesignTokens.Size.avatarLG)
-        .accessibilityLabel("\(displayName.isEmpty ? handle : displayName) profile picture")
+        .accessibilityLabel("\(displayLabel) profile picture")
 
       VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
         HStack(spacing: DesignTokens.Spacing.xs) {
-          Text(displayName.isEmpty ? handle : displayName)
+          Text(displayLabel)
             .designCallout()
             .fontWeight(convo.unreadCount > 0 ? .semibold : .regular)
             .foregroundColor(.primary)
@@ -100,10 +124,6 @@ struct ConversationRow: View {
     .accessibilityAddTraits(.isButton)
     .accessibilityHint("Double tap to open conversation")
     .spacingSM(.vertical)
-    .onAppear {
-      // Load profile details when the row appears
-      loadProfileDetails()
-    }
     // Consider adding context menu for mute/leave actions
   }
 
@@ -122,24 +142,6 @@ struct ConversationRow: View {
       return systemMessage.sentAt.date
     case .unexpected:
       return nil
-    }
-  }
-
-  // Load display name and handle from the other member's profile
-  private func loadProfileDetails() {
-    guard let profile = otherMember else {
-      displayName = "Unknown User"
-      handle = ""
-      return
-    }
-
-    // Check if the account has been deleted (Bluesky uses "missing.invalid" for deleted accounts)
-    if profile.handle.description == "missing.invalid" {
-      displayName = "Deleted Account"
-      handle = ""
-    } else {
-      displayName = profile.displayName ?? ""  // Use empty string if nil
-      handle = "@\(profile.handle.description)"
     }
   }
 

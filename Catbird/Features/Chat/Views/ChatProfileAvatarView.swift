@@ -13,6 +13,7 @@ struct ChatProfileAvatarView: View {
 
   var body: some View {
     let avatarURL = profile?.finalAvatarURL()
+    let profileKey = "\(profile?.did.didString() ?? "nil"):\(avatarURL?.absoluteString ?? "nil")"
 
     LazyImage(url: avatarURL) { state in
       if let image = state.image {
@@ -38,6 +39,7 @@ struct ChatProfileAvatarView: View {
     }
     .frame(width: size, height: size)
     .clipShape(Circle())
+    .id(profileKey)
     // Add a subtle border/overlay if desired
     .overlay(Circle().stroke(Color.gray.opacity(0.1), lineWidth: 1))
   }
