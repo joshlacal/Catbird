@@ -215,6 +215,15 @@ struct MainContentView: View {
     appState.navigationManager
   }
 
+  // Whether the drawer's native toolbar chrome (close button + bottom-bar
+  // shortcuts) should be visible. The ToolbarItems themselves stay resident in
+  // the view tree at all times; this only gates their opacity / hit-testing /
+  // accessibility so the bar can fade with the drawer instead of being
+  // structurally inserted and removed (which caused flicker).
+  private var drawerChromeVisible: Bool {
+    isDrawerOpen && selectedTab == 0
+  }
+
   // macOS computed properties removed — MacOSMainView now handles sidebar navigation
   
   // MARK: - Per-Account Feed Memory
@@ -550,34 +559,51 @@ struct MainContentView: View {
                   selectedTab: $selectedTab
                 )
               }
-              .toolbar { // Native toolbar items shown while drawer is open (iOS)
-                  if isDrawerOpen && selectedTab == 0 {
-                      ToolbarItem(placement: .topBarTrailing) {
-                          Button { isDrawerOpen = false } label: { Image(systemName: "xmark") }
-                              .accessibilityLabel("Close Feeds Menu")
-                      }
-                      ToolbarItem(placement: .bottomBar) {
-                          Button {
-                              let did = appState.userDID
-                              appState.navigationManager.navigate(to: .profile(did))
-                              isDrawerOpen = false
-                          } label: { Label("Profile", systemImage: "person") }
-                              .accessibilityLabel("Profile")
-                      }
-                      ToolbarItem(placement: .bottomBar) {
-                          Button {
-                              appState.navigationManager.navigate(to: .bookmarks)
-                              isDrawerOpen = false
-                          } label: { Label("Bookmarks", systemImage: "bookmark") }
-                              .accessibilityLabel("Bookmarks")
-                      }
-                      ToolbarItem(placement: .bottomBar) {
-                          Button {
-                              appState.navigationManager.navigate(to: .listManager)
-                              isDrawerOpen = false
-                          } label: { Label("My Lists", systemImage: "list.bullet") }
-                              .accessibilityLabel("My Lists")
-                      }
+              // Native toolbar items for the drawer. These are ALWAYS present in
+              // the view tree — visibility is driven by opacity / hit-testing /
+              // accessibility, never by conditional structural insertion. Toggling
+              // ToolbarItem membership on `isDrawerOpen` made SwiftUI tear down and
+              // rebuild the NavigationStack's bars as the drawer animated open/closed,
+              // which produced the toolbar flicker. Keeping them resident and fading
+              // them lets the bar animate smoothly with the drawer slide.
+              .toolbar {
+                  ToolbarItem(placement: .topBarTrailing) {
+                      Button { isDrawerOpen = false } label: { Image(systemName: "xmark") }
+                          .opacity(drawerChromeVisible ? 1 : 0)
+                          .allowsHitTesting(drawerChromeVisible)
+                          .accessibilityHidden(!drawerChromeVisible)
+                          .accessibilityLabel("Close Feeds Menu")
+                  }
+                  ToolbarItem(placement: .bottomBar) {
+                      Button {
+                          let did = appState.userDID
+                          appState.navigationManager.navigate(to: .profile(did))
+                          isDrawerOpen = false
+                      } label: { Label("Profile", systemImage: "person") }
+                          .opacity(drawerChromeVisible ? 1 : 0)
+                          .allowsHitTesting(drawerChromeVisible)
+                          .accessibilityHidden(!drawerChromeVisible)
+                          .accessibilityLabel("Profile")
+                  }
+                  ToolbarItem(placement: .bottomBar) {
+                      Button {
+                          appState.navigationManager.navigate(to: .bookmarks)
+                          isDrawerOpen = false
+                      } label: { Label("Bookmarks", systemImage: "bookmark") }
+                          .opacity(drawerChromeVisible ? 1 : 0)
+                          .allowsHitTesting(drawerChromeVisible)
+                          .accessibilityHidden(!drawerChromeVisible)
+                          .accessibilityLabel("Bookmarks")
+                  }
+                  ToolbarItem(placement: .bottomBar) {
+                      Button {
+                          appState.navigationManager.navigate(to: .listManager)
+                          isDrawerOpen = false
+                      } label: { Label("My Lists", systemImage: "list.bullet") }
+                          .opacity(drawerChromeVisible ? 1 : 0)
+                          .allowsHitTesting(drawerChromeVisible)
+                          .accessibilityHidden(!drawerChromeVisible)
+                          .accessibilityLabel("My Lists")
                   }
               }
           }
