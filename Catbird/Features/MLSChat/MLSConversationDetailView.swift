@@ -118,6 +118,10 @@ struct MLSConversationDetailView: View {
   @State private var hasStartedSubscription = false
   @State private var sendError: String?
   @State private var showingSendError = false
+  #if DEBUG
+  // sprint/messaging instrumentation (Task #1): temporary MLS diagnostics panel.
+  @State private var showingMLSDiagnostics = false
+  #endif
   @State private var pipelineError: String?
   @State private var showingLeaveConfirmation = false
   @State private var showingGroupDetail = false
@@ -876,6 +880,23 @@ struct MLSConversationDetailView: View {
       .sheet(isPresented: $showingReportSpamSheet) {
         reportSpamSheet
       }
+      #if DEBUG
+      .sheet(isPresented: $showingMLSDiagnostics) {
+        // sprint/messaging instrumentation (Task #1): temporary, debug-only.
+        MLSDiagnosticsPanel(
+          conversationId: conversationId,
+          managerProvider: { await appState.getMLSConversationManager() },
+          pendingOutboundCount: messages.reduce(into: 0) { count, message in
+            switch message.status {
+            case .sending, .failed:
+              count += 1
+            default:
+              break
+            }
+          }
+        )
+      }
+      #endif
       .alert("Send Failed", isPresented: $showingSendError) {
         Button("OK", role: .cancel) {}
       } message: {
@@ -1194,6 +1215,19 @@ struct MLSConversationDetailView: View {
           .accessibilityLabel("Conversation details")
       }
     }
+
+    #if DEBUG
+    // sprint/messaging instrumentation (Task #1): temporary entry point to the MLS
+    // diagnostics panel. Debug builds only; remove with the rest of the instrumentation.
+    ToolbarItem(placement: .primaryAction) {
+      Button {
+        showingMLSDiagnostics = true
+      } label: {
+        Image(systemName: "stethoscope")
+          .accessibilityLabel("MLS diagnostics (debug)")
+      }
+    }
+    #endif
   }
 
   // MARK: - Admin Status
@@ -3325,12 +3359,51 @@ struct MLSConversationDetailView: View {
       ensureProfileLoaded(for: senderDID)
       refreshOrderMetadata(for: messageId)
     } catch {
+      // sprint/messaging instrumentation (Task #1): capture the MLS state surrounding a send
+      // failure instead of only `localizedDescription`. The HTTP status + epoch context is what
+      // distinguishes a 409 epoch mismatch (recoverable) from a missing-conversation / rejoin
+      // failure, and is exactly what was missing when triaging cross-platform DM breakage.
+      let diag = await sendFailureDiagnostics(senderDID: senderDID, error: error)
       await MainActor.run {
-        logger.error("Failed to send message: \(error.localizedDescription)")
+        logger.error(
+          "❌ [SEND-FAIL] \(diag) recovery=\(String(describing: self.recoveryState)) err=\(String(reflecting: type(of: error))): \(error.localizedDescription)"
+        )
         sendError = "Failed to send message: \(error.localizedDescription)"
         showingSendError = true
       }
     }
+  }
+
+  /// Builds a one-line diagnostic string describing the MLS state at the moment of a send
+  /// failure: HTTP status (if the error is an `MLSAPIError`), the server-view epoch, group ID
+  /// prefix, and reset generation of the target conversation.
+  ///
+  /// TEMPORARY — sprint/messaging investigation (Task #1). Read-only; no state mutation.
+  private func sendFailureDiagnostics(senderDID: String, error: Error) async -> String {
+    var parts: [String] = ["convo=\(conversationId.prefix(12))"]
+
+    if let apiError = error as? MLSAPIError, case let .httpError(statusCode, _) = apiError {
+      parts.append("http=\(statusCode)")
+    }
+
+    // Short timeout: this runs on the send-failure path, so the diagnostic lookup must never
+    // add the default 30s manager-acquisition wait to the error the user sees.
+    if let manager = await appState.getMLSConversationManager(timeout: 1.0),
+      let convo = manager.conversations[conversationId] {
+      parts.append("serverEpoch=\(convo.epoch)")
+      parts.append("group=\(convo.groupId.prefix(12))")
+      if let resetGen = convo.resetGeneration {
+        parts.append("resetGen=\(resetGen)")
+      }
+      if let groupIdData = Data(hexEncoded: convo.groupId) {
+        let ffiEpoch = (try? await manager.mlsClient.getEpoch(for: senderDID, groupId: groupIdData)).map(String.init) ?? "n/a"
+        parts.append("ffiEpoch=\(ffiEpoch)")
+      }
+    } else {
+      parts.append("convoKnownLocally=false")
+    }
+
+    return parts.joined(separator: " ")
   }
 
   // MARK: - Chat Request Actions
