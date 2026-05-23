@@ -54,6 +54,12 @@ struct MacOSUnifiedConversationRow: View {
             .font(.body)
             .fontWeight(convo.unreadCount > 0 ? .semibold : .regular)
             .lineLimit(1)
+            .truncationMode(.tail)
+
+          if let badgeKind = verifiedBadgeKind(for: otherMembers) {
+            VerificationBadgeView(kind: badgeKind)
+              .font(.caption)
+          }
 
           Spacer()
 
@@ -169,6 +175,15 @@ struct MacOSUnifiedConversationRow: View {
     }
     let names = members.prefix(3).map { $0.displayName ?? $0.handle.description }
     return names.joined(separator: ", ")
+  }
+
+  /// Verified badge for a 1:1 conversation only. A multi-member name is a
+  /// joined list, where a single checkmark would be ambiguous.
+  private func verifiedBadgeKind(
+    for members: [ChatBskyActorDefs.ProfileViewBasic]
+  ) -> VerificationBadgeKind? {
+    guard members.count == 1, let member = members.first else { return nil }
+    return VerificationBadge.kind(for: member.verification, did: member.did)
   }
 
   private func lastMessageText(_ message: ChatBskyConvoDefs.ConvoViewLastMessageUnion) -> String {

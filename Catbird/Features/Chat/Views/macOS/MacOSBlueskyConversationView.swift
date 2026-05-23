@@ -49,6 +49,10 @@ struct MacOSBlueskyConversationView: View {
           Text(conversationTitle)
             .font(.headline)
             .lineLimit(1)
+          if let badgeKind = conversationBadgeKind {
+            VerificationBadgeView(kind: badgeKind)
+              .font(.caption)
+          }
           Image(systemName: "bubble.left.and.bubble.right")
             .font(.system(size: 10))
             .foregroundStyle(.secondary)
@@ -113,6 +117,16 @@ struct MacOSBlueskyConversationView: View {
       return first.displayName ?? first.handle.description
     }
     return "Messages"
+  }
+
+  /// Verified badge for a 1:1 conversation header only (single other member).
+  private var conversationBadgeKind: VerificationBadgeKind? {
+    guard let convo = chatManager.conversations.first(where: { $0.id == convoId }) else {
+      return nil
+    }
+    let otherMembers = convo.members.filter { $0.did.description != appState.userDID }
+    guard otherMembers.count == 1, let first = otherMembers.first else { return nil }
+    return VerificationBadge.kind(for: first.verification, did: first.did)
   }
 }
 #endif

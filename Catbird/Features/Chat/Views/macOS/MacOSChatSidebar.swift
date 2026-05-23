@@ -92,9 +92,19 @@ struct MacOSChatSidebar: View {
             HStack(spacing: 8) {
               ChatProfileAvatarView(profile: profile, size: 32)
               VStack(alignment: .leading, spacing: 2) {
-                Text(profile.displayName ?? profile.handle.description)
-                  .font(.body)
-                  .lineLimit(1)
+                HStack(spacing: 4) {
+                  Text(profile.displayName ?? profile.handle.description)
+                    .font(.body)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                  if let badgeKind = VerificationBadge.kind(
+                    for: profile.verification,
+                    did: profile.did
+                  ) {
+                    VerificationBadgeView(kind: badgeKind)
+                      .font(.caption)
+                  }
+                }
                 Text("@\(profile.handle.description)")
                   .font(.caption)
                   .foregroundStyle(.secondary)
