@@ -89,12 +89,14 @@ struct SuggestedProfilesSection: View {
                             .foregroundColor(Color.dynamicText(appState.themeManager, style: .primary, currentScheme: colorScheme))
                             .lineLimit(1)
                             .truncationMode(.tail)
-                        
-//                        if let verification = profile.verification, verification.verifiedStatus {
-//                            Image(systemName: "checkmark.seal.fill")
-//                                .font(.system(size: 14))
-//                                .foregroundColor(.accentColor)
-//                        }
+
+                        if let badgeKind = VerificationBadge.kind(
+                            for: profile.verification,
+                            did: profile.did
+                        ) {
+                            VerificationBadgeView(kind: badgeKind)
+                                .font(.callout)
+                        }
                     }
                     
                     Text("@\(profile.handle)")

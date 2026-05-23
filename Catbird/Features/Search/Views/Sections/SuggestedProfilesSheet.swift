@@ -99,6 +99,14 @@ struct SuggestedProfilesSheet: View {
                             .foregroundColor(Color.dynamicText(appState.themeManager, style: .primary, currentScheme: colorScheme))
                             .lineLimit(1)
                             .truncationMode(.tail)
+
+                        if let badgeKind = VerificationBadge.kind(
+                            for: profile.verification,
+                            did: profile.did
+                        ) {
+                            VerificationBadgeView(kind: badgeKind)
+                                .font(.callout)
+                        }
                     }
                     
                     Text("@\(profile.handle)")

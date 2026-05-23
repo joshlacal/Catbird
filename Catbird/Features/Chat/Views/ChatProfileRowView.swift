@@ -26,9 +26,20 @@ struct ChatProfileRowView: View {
                 )
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(profile.displayName ?? "")
-                        .appFont(AppTextRole.headline)
-                        .lineLimit(1)
+                    HStack(spacing: 4) {
+                        Text(profile.displayName ?? "")
+                            .appFont(AppTextRole.headline)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+
+                        if let badgeKind = VerificationBadge.kind(
+                            for: profile.verification,
+                            did: profile.did
+                        ) {
+                            VerificationBadgeView(kind: badgeKind)
+                                .font(.caption)
+                        }
+                    }
 
                     HStack(spacing: 4) {
                         Text("@\(profile.handle.description)")

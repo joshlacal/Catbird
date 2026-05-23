@@ -77,6 +77,15 @@ struct ConversationRow: View {
             .lineLimit(1)
             .accessibilityAddTraits(.isHeader)
 
+          if let otherMember,
+             let badgeKind = VerificationBadge.kind(
+              for: otherMember.verification,
+              did: otherMember.did
+             ) {
+            VerificationBadgeView(kind: badgeKind)
+              .font(.caption)
+          }
+
           Image(systemName: "bubble.left.and.bubble.right")
             .font(.system(size: 12))
             .foregroundStyle(.secondary)

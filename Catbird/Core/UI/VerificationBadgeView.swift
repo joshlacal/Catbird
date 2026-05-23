@@ -6,6 +6,24 @@ enum VerificationBadgeKind: Identifiable {
   case trustedVerifier
 
   var id: Self { self }
+
+  /// SF Symbol name for this badge. Single source of truth shared by
+  /// `VerificationBadgeView` (view path) and `VerificationBadge.inlineText`
+  /// (composed-`Text` path) so the two never drift.
+  var symbolName: String {
+    switch self {
+    case .regular: return "checkmark.circle.fill"
+    case .trustedVerifier: return "checkmark.seal.fill"
+    }
+  }
+
+  /// VoiceOver label for this badge.
+  var accessibilityLabel: String {
+    switch self {
+    case .regular: return "Verified account"
+    case .trustedVerifier: return "Trusted verifier"
+    }
+  }
 }
 
 enum VerificationBadge {
@@ -22,6 +40,22 @@ enum VerificationBadge {
       return .regular
     }
     return nil
+  }
+
+  /// Badge as a composed `Text` segment for inline contexts where a SwiftUI
+  /// view can't be embedded (e.g. an `AttributedString`-style sentence built by
+  /// concatenating `Text`). Returns `nil` when the actor is not verified.
+  ///
+  /// The caller is responsible for surfacing the badge to VoiceOver — a bare
+  /// `Text(Image(systemName:))` does NOT narrate as "Verified account". Use
+  /// `kind(for:did:)?.accessibilityLabel` when composing the container's
+  /// `.accessibilityLabel`.
+  static func inlineText(
+    for state: AppBskyActorDefs.VerificationState?,
+    did: DID
+  ) -> Text? {
+    guard let kind = kind(for: state, did: did) else { return nil }
+    return Text(Image(systemName: kind.symbolName)).foregroundColor(.blue)
   }
 }
 
@@ -58,26 +92,12 @@ struct VerificationBadgeView: View {
         icon
       }
     }
-    .accessibilityLabel(accessibilityLabel)
+    .accessibilityLabel(kind.accessibilityLabel)
   }
 
   private var icon: some View {
-    Image(systemName: symbolName)
+    Image(systemName: kind.symbolName)
       .foregroundStyle(.blue)
-  }
-
-  private var symbolName: String {
-    switch kind {
-    case .regular: return "checkmark.circle.fill"
-    case .trustedVerifier: return "checkmark.seal.fill"
-    }
-  }
-
-  private var accessibilityLabel: String {
-    switch kind {
-    case .regular: return "Verified account"
-    case .trustedVerifier: return "Trusted verifier"
-    }
   }
 }
 

@@ -18,8 +18,8 @@ struct RepostHeaderView: View {
                 .foregroundColor(.secondary)
                 .appFont(AppTextRole.subheadline)
             
-            Text("reposted by \(reposter.displayName ?? reposter.handle.description)")
-                                .appFont(AppTextRole.body)
+            repostedByText
+                .appFont(AppTextRole.body)
                 .textScale(.secondary)
                 .foregroundColor(.secondary)
                 .lineLimit(1)
@@ -27,12 +27,34 @@ struct RepostHeaderView: View {
                 .allowsTightening(true)
                 .offset(y: -2)
                 .fixedSize(horizontal: false, vertical: true)
+                .accessibilityLabel(repostedByAccessibilityLabel)
 
         }
         .onTapGesture {
             path.append(NavigationDestination.profile(reposter.did.didString()))
         }
         .padding(.leading, 3)
+    }
+
+    private var reposterName: String {
+        reposter.displayName ?? reposter.handle.description
+    }
+
+    /// "reposted by <name> [badge]" as composed `Text` so the inline verified
+    /// badge keeps the surrounding typography and truncation.
+    private var repostedByText: Text {
+        let base = Text("reposted by \(reposterName)")
+        if let badge = VerificationBadge.inlineText(for: reposter.verification, did: reposter.did) {
+            return base + Text(verbatim: " ") + badge
+        }
+        return base
+    }
+
+    private var repostedByAccessibilityLabel: String {
+        if let kind = VerificationBadge.kind(for: reposter.verification, did: reposter.did) {
+            return "reposted by \(reposterName), \(kind.accessibilityLabel)"
+        }
+        return "reposted by \(reposterName)"
     }
 }
 

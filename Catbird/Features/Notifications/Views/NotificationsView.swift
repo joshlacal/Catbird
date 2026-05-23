@@ -464,9 +464,21 @@ struct NotificationCard: View {
             .clipShape(Circle())
 
             VStack(alignment: .leading, spacing: 2) {
-              Text(notification.author.displayName ?? notification.author.handle.description)
-                .fontWeight(.semibold)
-                .themedText(appState.themeManager, style: .primary, appSettings: appState.appSettings)
+              HStack(spacing: 4) {
+                Text(notification.author.displayName ?? notification.author.handle.description)
+                  .fontWeight(.semibold)
+                  .themedText(appState.themeManager, style: .primary, appSettings: appState.appSettings)
+                  .lineLimit(1)
+                  .truncationMode(.tail)
+
+                if let badgeKind = VerificationBadge.kind(
+                  for: notification.author.verification,
+                  did: notification.author.did
+                ) {
+                  VerificationBadgeView(kind: badgeKind)
+                    .font(.caption)
+                }
+              }
 
               Text("@\(notification.author.handle)")
                 .appSubheadline()
@@ -568,10 +580,11 @@ struct NotificationCard: View {
 
         }
 
-        Text(notificationText)
+        notificationText
           .lineLimit(nil)
           .fixedSize(horizontal: false, vertical: true)
           .padding(.top, 4)
+          .accessibilityLabel(notificationAccessibilityLabel)
 
         if shouldShowPostPreview {
           postPreview
@@ -583,109 +596,78 @@ struct NotificationCard: View {
     .contentShape(Rectangle())
   }
 
-  private var notificationText: AttributedString {
+  /// The verb phrase that follows the (first) author's name, e.g. " liked your post".
+  /// Kept separate from the composed `Text` so the verified badge can be inserted
+  /// between the bold author name and this phrase.
+  private var notificationVerbPhrase: String {
     let count = group.notifications.count
-    let firstAuthor = group.notifications.first?.author
+    let others = count - 1
+    let othersSuffix = " and \(others) other\(count > 2 ? "s" : "")"
 
-    let authorDisplayName: String
-    if let displayName = firstAuthor?.displayName, !displayName.isEmpty {
-      authorDisplayName = displayName
-    } else if let handle = firstAuthor?.handle {
-      authorDisplayName = "@" + handle.description
-    } else {
-      authorDisplayName = "Someone"
-    }
-
-    var attributedText = AttributedString()
-    var authorPart = AttributedString(authorDisplayName)
-    // Use FontManager to get properly scaled body font with bold weight
-    authorPart.font = appState.fontManager.fontForTextRole(.body).bold()
-
-    attributedText.append(authorPart)
-
-    // Get base body font from FontManager for consistency
-    let bodyFont = appState.fontManager.fontForTextRole(.body)
-    
     switch (group.type, count) {
-    case (.like, 1):
-      var text = AttributedString(" liked your post")
-      text.font = bodyFont
-      attributedText.append(text)
-    case (.like, _):
-      var text = AttributedString(" and \(count - 1) other\(count > 2 ? "s" : "") liked your post")
-      text.font = bodyFont
-      attributedText.append(text)
-    case (.repost, 1):
-      var text = AttributedString(" reposted your post")
-      text.font = bodyFont
-      attributedText.append(text)
-    case (.repost, _):
-      var text = AttributedString(" and \(count - 1) other\(count > 2 ? "s" : "") reposted your post")
-      text.font = bodyFont
-      attributedText.append(text)
-    case (.likeViaRepost, 1):
-      var text = AttributedString(" liked your repost")
-      text.font = bodyFont
-      attributedText.append(text)
-    case (.likeViaRepost, _):
-      var text = AttributedString(" and \(count - 1) other\(count > 2 ? "s" : "") liked your repost")
-      text.font = bodyFont
-      attributedText.append(text)
-    case (.repostViaRepost, 1):
-      var text = AttributedString(" reposted your repost")
-      text.font = bodyFont
-      attributedText.append(text)
-    case (.repostViaRepost, _):
-      var text = AttributedString(" and \(count - 1) other\(count > 2 ? "s" : "") reposted your repost")
-      text.font = bodyFont
-      attributedText.append(text)
-    case (.follow, 1):
-      var text = AttributedString(" followed you")
-      text.font = bodyFont
-      attributedText.append(text)
-    case (.follow, _):
-      var text = AttributedString(" and \(count - 1) other\(count > 2 ? "s" : "") followed you")
-      text.font = bodyFont
-      attributedText.append(text)
-    case (.followBack, 1):
-      var text = AttributedString(" followed you back")
-      text.font = bodyFont
-      attributedText.append(text)
-    case (.followBack, _):
-      var text = AttributedString(" and \(count - 1) other\(count > 2 ? "s" : "") followed you back")
-      text.font = bodyFont
-      attributedText.append(text)
-    case (.mention, 1):
-      var text = AttributedString(" mentioned you in a post")
-      text.font = bodyFont
-      attributedText.append(text)
-    case (.mention, _):
-      var text = AttributedString(" and \(count - 1) other\(count > 2 ? "s" : "") mentioned you")
-      text.font = bodyFont
-      attributedText.append(text)
-    case (.reply, 1):
-      var text = AttributedString(" replied to your post")
-      text.font = bodyFont
-      attributedText.append(text)
-    case (.reply, _):
-      var text = AttributedString(" and \(count - 1) other\(count > 2 ? "s" : "") replied")
-      text.font = bodyFont
-      attributedText.append(text)
-    case (.quote, 1):
-      var text = AttributedString(" quoted your post")
-      text.font = bodyFont
-      attributedText.append(text)
-    case (.quote, _):
-      var text = AttributedString(" and \(count - 1) other\(count > 2 ? "s" : "") quoted")
-      text.font = bodyFont
-      attributedText.append(text)
-    case (.activitySubscription, _):
-      var text = AttributedString(" shared a new post")
-      text.font = bodyFont
-      attributedText.append(text)
+    case (.like, 1): return " liked your post"
+    case (.like, _): return "\(othersSuffix) liked your post"
+    case (.repost, 1): return " reposted your post"
+    case (.repost, _): return "\(othersSuffix) reposted your post"
+    case (.likeViaRepost, 1): return " liked your repost"
+    case (.likeViaRepost, _): return "\(othersSuffix) liked your repost"
+    case (.repostViaRepost, 1): return " reposted your repost"
+    case (.repostViaRepost, _): return "\(othersSuffix) reposted your repost"
+    case (.follow, 1): return " followed you"
+    case (.follow, _): return "\(othersSuffix) followed you"
+    case (.followBack, 1): return " followed you back"
+    case (.followBack, _): return "\(othersSuffix) followed you back"
+    case (.mention, 1): return " mentioned you in a post"
+    case (.mention, _): return "\(othersSuffix) mentioned you"
+    case (.reply, 1): return " replied to your post"
+    case (.reply, _): return "\(othersSuffix) replied"
+    case (.quote, 1): return " quoted your post"
+    case (.quote, _): return "\(othersSuffix) quoted"
+    case (.activitySubscription, _): return " shared a new post"
+    }
+  }
+
+  /// First author's display name (falls back to @handle, then "Someone").
+  private var notificationAuthorName: String {
+    let firstAuthor = group.notifications.first?.author
+    if let displayName = firstAuthor?.displayName, !displayName.isEmpty {
+      return displayName
+    } else if let handle = firstAuthor?.handle {
+      return "@" + handle.description
+    }
+    return "Someone"
+  }
+
+  /// Composed `Text` for the notification sentence: bold author name, an optional
+  /// inline verified badge, then the verb phrase. Built with `Text` concatenation
+  /// (not `AttributedString`) so the SwiftUI badge image can be embedded inline
+  /// while preserving FontManager typography, baseline, and line wrapping.
+  private var notificationText: Text {
+    let firstAuthor = group.notifications.first?.author
+    let bodyFont = appState.fontManager.fontForTextRole(.body)
+    let authorName = notificationAuthorName
+
+    var sentence = Text(authorName).font(bodyFont.bold())
+
+    if let author = firstAuthor,
+       let badge = VerificationBadge.inlineText(for: author.verification, did: author.did) {
+      sentence = sentence + Text(verbatim: " ") + badge
     }
 
-    return attributedText
+    sentence = sentence + Text(notificationVerbPhrase).font(bodyFont)
+    return sentence
+  }
+
+  /// VoiceOver-friendly version of the notification sentence. `Text(Image:)` does
+  /// not narrate the badge, so we splice the badge's spoken label in explicitly.
+  private var notificationAccessibilityLabel: String {
+    let firstAuthor = group.notifications.first?.author
+    var label = notificationAuthorName
+    if let author = firstAuthor,
+       let kind = VerificationBadge.kind(for: author.verification, did: author.did) {
+      label += ", \(kind.accessibilityLabel),"
+    }
+    return label + notificationVerbPhrase
   }
 
   private var shouldShowPostPreview: Bool {
