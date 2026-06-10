@@ -104,8 +104,8 @@ struct BlueskyMessageAdapter: UnifiedChatMessage {
 
   static func == (lhs: BlueskyMessageAdapter, rhs: BlueskyMessageAdapter) -> Bool {
     lhs.id == rhs.id &&
-    lhs.text == rhs.text &&
-    lhs.reactions == rhs.reactions
+      lhs.text == rhs.text &&
+      lhs.reactions == rhs.reactions
   }
 
   // MARK: - Embed Conversion
@@ -114,6 +114,8 @@ struct BlueskyMessageAdapter: UnifiedChatMessage {
     switch embedUnion {
     case .appBskyEmbedRecordView(let recordView):
       return convertRecord(recordView.record)
+    case .chatBskyEmbedJoinLinkView:
+      return nil
     case .unexpected:
       return nil
     }

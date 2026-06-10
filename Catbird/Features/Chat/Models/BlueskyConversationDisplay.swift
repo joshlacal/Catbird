@@ -1,0 +1,109 @@
+import Foundation
+import Petrel
+
+extension ChatBskyConvoDefs.ConvoView {
+  var groupMetadata: ChatBskyConvoDefs.GroupConvo? {
+    guard let kind else { return nil }
+
+    switch kind {
+    case .chatBskyConvoDefsGroupConvo(let group):
+      return group
+    case .chatBskyConvoDefsDirectConvo, .unexpected:
+      return nil
+    }
+  }
+
+  var isGroupConversation: Bool {
+    groupMetadata != nil || members.count > 2
+  }
+
+  var isLockedForSending: Bool {
+    guard let lockStatus = groupMetadata?.lockStatus else { return false }
+    return lockStatus.rawValue != ChatBskyConvoDefs.ConvoLockStatus.unlocked.rawValue
+  }
+
+  func displayMembersExcludingCurrentUser(currentUserDID: String) -> [ChatBskyActorDefs.ProfileViewBasic] {
+    guard !currentUserDID.isEmpty else { return members }
+    return members.filter { $0.did.didString() != currentUserDID }
+  }
+
+  func directDisplayMember(currentUserDID: String) -> ChatBskyActorDefs.ProfileViewBasic? {
+    if !currentUserDID.isEmpty,
+       let member = members.first(where: { $0.did.didString() != currentUserDID }) {
+      return member
+    }
+
+    return members.first
+  }
+
+  func displayTitle(currentUserDID: String) -> String {
+    if let groupMetadata {
+      let groupName = groupMetadata.name.trimmingCharacters(in: .whitespacesAndNewlines)
+      return groupName.isEmpty ? "Group Chat" : groupName
+    }
+
+    if isGroupConversation {
+      let names = displayMembersExcludingCurrentUser(currentUserDID: currentUserDID)
+        .map { $0.chatDisplayName }
+        .filter { !$0.isEmpty }
+
+      guard !names.isEmpty else { return "Group Chat" }
+
+      if names.count <= 2 {
+        return names.joined(separator: ", ")
+      }
+
+      return "\(names.prefix(2).joined(separator: ", ")) and \(names.count - 2) other\(names.count == 3 ? "" : "s")"
+    }
+
+    guard let member = directDisplayMember(currentUserDID: currentUserDID) else {
+      return "Chat"
+    }
+
+    if member.isDeletedBlueskyChatAccount {
+      return "Deleted Account"
+    }
+
+    return member.chatDisplayName.isEmpty ? "Chat" : member.chatDisplayName
+  }
+
+  func displaySubtitle(currentUserDID: String) -> String? {
+    if let groupMetadata {
+      let count = groupMetadata.memberCount
+      return "\(count) member\(count == 1 ? "" : "s")"
+    }
+
+    if isGroupConversation {
+      let count = members.count
+      return "\(count) member\(count == 1 ? "" : "s")"
+    }
+
+    guard let member = directDisplayMember(currentUserDID: currentUserDID),
+          !member.isDeletedBlueskyChatAccount else {
+      return nil
+    }
+
+    guard let displayName = member.displayName?.trimmingCharacters(in: .whitespacesAndNewlines),
+          !displayName.isEmpty else {
+      return nil
+    }
+
+    return "@\(member.handle.description)"
+  }
+}
+
+extension ChatBskyActorDefs.ProfileViewBasic {
+  var isDeletedBlueskyChatAccount: Bool {
+    handle.description == "missing.invalid"
+  }
+
+  var chatDisplayName: String {
+    if let displayName = displayName?.trimmingCharacters(in: .whitespacesAndNewlines),
+       !displayName.isEmpty {
+      return displayName
+    }
+
+    guard !isDeletedBlueskyChatAccount else { return "Deleted Account" }
+    return "@\(handle.description)"
+  }
+}

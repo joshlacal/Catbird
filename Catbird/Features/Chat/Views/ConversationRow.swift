@@ -9,64 +9,28 @@ struct ConversationRow: View {
 
   @Environment(AppState.self) private var appState
 
-  // Determine the other member involved in the conversation
-  private var otherMember: ChatBskyActorDefs.ProfileViewBasic? {
-    // Handle edge case where currentUserDID might be empty
-    guard !currentUserDID.isEmpty else {
-      // If we don't have the current user's DID, return the first member as a fallback
-      return convo.members.first
-    }
-
-    // Find the first member whose DID does not match the current user's DID
-    return convo.members.first(where: { $0.did.didString() != currentUserDID })
-  }
-
-  private var displayName: String {
-    guard let profile = otherMember else {
-      return "Unknown User"
-    }
-
-    if profile.handle.description == "missing.invalid" {
-      return "Deleted Account"
-    }
-
-    return profile.displayName ?? ""
-  }
-
-  private var handle: String {
-    guard let profile = otherMember else {
-      return ""
-    }
-
-    if profile.handle.description == "missing.invalid" {
-      return ""
-    }
-
-    return "@\(profile.handle.description)"
-  }
-
   private var displayLabel: String {
-    displayName.isEmpty ? handle : displayName
+    convo.displayTitle(currentUserDID: currentUserDID)
+  }
+
+  private var subtitleLabel: String? {
+    convo.displaySubtitle(currentUserDID: currentUserDID)
   }
   
   // Accessibility description for screen readers
   private var accessibilityDescription: String {
-    let userName = displayLabel
     let unreadText = convo.unreadCount > 0 ? ", \(convo.unreadCount) unread message\(convo.unreadCount == 1 ? "" : "s")" : ""
+    let conversationKind = convo.isGroupConversation ? "Group chat" : "Conversation with"
     
-    var messageText = "No messages yet"
-    if let lastMessage = convo.lastMessage {
-      // Extract last message text for accessibility
-      messageText = "Has messages"
-    }
+    let messageText = convo.lastMessage == nil ? "No messages yet" : "Has messages"
     
-    return "Conversation with \(userName)\(unreadText). \(messageText)"
+    return "\(conversationKind) \(displayLabel)\(unreadText). \(messageText)"
   }
 
   var body: some View {
     HStack(spacing: DesignTokens.Spacing.base) {
-      ChatProfileAvatarView(profile: otherMember, size: DesignTokens.Size.avatarLG)
-        .accessibilityLabel("\(displayLabel) profile picture")
+      avatarView
+        .accessibilityLabel(convo.isGroupConversation ? "\(displayLabel) group picture" : "\(displayLabel) profile picture")
 
       VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
         HStack(spacing: DesignTokens.Spacing.xs) {
@@ -77,16 +41,17 @@ struct ConversationRow: View {
             .lineLimit(1)
             .accessibilityAddTraits(.isHeader)
 
-          if let otherMember,
+          if let directMember = convo.directDisplayMember(currentUserDID: currentUserDID),
+             !convo.isGroupConversation,
              let badgeKind = VerificationBadge.kind(
-              for: otherMember.verification,
-              did: otherMember.did
+              for: directMember.verification,
+              did: directMember.did
              ) {
             VerificationBadgeView(kind: badgeKind)
               .font(.caption)
           }
 
-          Image(systemName: "bubble.left.and.bubble.right")
+          Image(systemName: convo.isGroupConversation ? "person.3.fill" : "bubble.left.and.bubble.right")
             .font(.system(size: 12))
             .foregroundStyle(.secondary)
             .accessibilityHidden(true)
@@ -118,13 +83,39 @@ struct ConversationRow: View {
 
         // Last message preview
         if let lastMessage = convo.lastMessage {
-          LastMessagePreview(lastMessage: lastMessage)
-            .accessibilityLabel("Last message")
+          HStack(spacing: DesignTokens.Spacing.xs) {
+            if let subtitleLabel {
+              Text(subtitleLabel)
+                .designFootnote()
+                .foregroundColor(.secondary)
+                .lineLimit(1)
+
+              Text("-")
+                .designFootnote()
+                .foregroundColor(.secondary)
+            }
+
+            LastMessagePreview(lastMessage: lastMessage)
+              .accessibilityLabel("Last message")
+          }
         } else {
-          Text("No messages yet")
-            .designFootnote()
-            .foregroundColor(.secondary)
-            .accessibilityLabel("No messages in this conversation yet")
+          HStack(spacing: DesignTokens.Spacing.xs) {
+            if let subtitleLabel {
+              Text(subtitleLabel)
+                .designFootnote()
+                .foregroundColor(.secondary)
+                .lineLimit(1)
+
+              Text("-")
+                .designFootnote()
+                .foregroundColor(.secondary)
+            }
+
+            Text("No messages yet")
+              .designFootnote()
+              .foregroundColor(.secondary)
+              .accessibilityLabel("No messages in this conversation yet")
+          }
         }
       }
     }
@@ -136,13 +127,33 @@ struct ConversationRow: View {
     // Consider adding context menu for mute/leave actions
   }
 
+  @ViewBuilder
+  private var avatarView: some View {
+    if convo.isGroupConversation {
+      ZStack {
+        Circle()
+          .fill(Color.accentColor.opacity(0.14))
+        Image(systemName: "person.3.fill")
+          .font(.system(size: DesignTokens.Size.avatarLG * 0.38, weight: .semibold))
+          .foregroundStyle(Color.accentColor)
+      }
+      .frame(width: DesignTokens.Size.avatarLG, height: DesignTokens.Size.avatarLG)
+      .overlay(Circle().stroke(Color.gray.opacity(0.1), lineWidth: 1))
+    } else {
+      ChatProfileAvatarView(
+        profile: convo.directDisplayMember(currentUserDID: currentUserDID),
+        size: DesignTokens.Size.avatarLG
+      )
+    }
+  }
+
   // Helper to extract date from the last message union type
   private func lastMessageDate(_ lastMessage: ChatBskyConvoDefs.ConvoViewLastMessageUnion?) -> Date? {
     guard let message = lastMessage else { return nil }
     switch message {
     case .chatBskyConvoDefsMessageView(let msg):
       return msg.sentAt.date
-    case .chatBskyConvoDefsDeletedMessageView(let deletedMsg):
+    case .chatBskyConvoDefsDeletedMessageView:
       // Deleted messages might not have a useful timestamp for display,
       // or you might want to show when it was deleted if available.
       // For now, returning nil.

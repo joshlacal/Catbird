@@ -27,6 +27,7 @@ struct NewConversationView: View {
 
   enum ConversationMode: String, CaseIterable {
     case bluesky = "Bluesky DM"
+    case blueskyGroup = "Bluesky Group"
     case catbirdGroup = "Catbird Group"
   }
 
@@ -43,6 +44,9 @@ struct NewConversationView: View {
   private var navigationTitle: String {
     switch (mode, step) {
     case (.bluesky, _): return "New Message"
+    case (.blueskyGroup, .selectContacts): return "Add Participants"
+    case (.blueskyGroup, .configureGroup): return "Group Details"
+    case (.blueskyGroup, .creating): return "Creating Group"
     case (.catbirdGroup, .selectContacts): return mlsEnabled ? "Add Participants" : "Catbird Groups"
     case (.catbirdGroup, .configureGroup): return "Group Details"
     case (.catbirdGroup, .creating): return "Creating Group"
@@ -132,6 +136,33 @@ struct NewConversationView: View {
         onSingleSelect: startBlueskyConversation
       )
 
+    case (.blueskyGroup, .selectContacts):
+      ContactSearchList(
+        selectionMode: .multi,
+        showMLSStatus: false,
+        selectedDIDs: $selectedDIDs,
+        selectionOrder: $selectionOrder,
+        selectedProfiles: $selectedProfiles
+      )
+      .safeAreaInset(edge: .bottom) {
+        selectionActionBar
+      }
+
+    case (.blueskyGroup, .configureGroup):
+      GroupConfigView(
+        groupName: $groupName,
+        participants: orderedSelectedParticipants,
+        kind: .bluesky,
+        onEditSelection: {
+          withAnimation(.spring(response: 0.25)) {
+            step = .selectContacts
+          }
+        }
+      )
+
+    case (.blueskyGroup, .creating):
+      Color.clear
+
     case (.catbirdGroup, .selectContacts) where mlsEnabled:
       ContactSearchList(
         selectionMode: .multi,
@@ -151,6 +182,7 @@ struct NewConversationView: View {
       GroupConfigView(
         groupName: $groupName,
         participants: orderedSelectedParticipants,
+        kind: .mls,
         onEditSelection: {
           withAnimation(.spring(response: 0.25)) {
             step = .selectContacts
@@ -167,6 +199,8 @@ struct NewConversationView: View {
 
   @ViewBuilder
   private var selectionActionBar: some View {
+    let isBlueskyGroup = mode == .blueskyGroup
+
     VStack(spacing: DesignTokens.Spacing.sm) {
       HStack {
         if !selectedDIDs.isEmpty {
@@ -182,7 +216,7 @@ struct NewConversationView: View {
       }
 
       Button {
-        if selectedDIDs.count == 1 {
+        if !isBlueskyGroup && selectedDIDs.count == 1 {
           Task { await handleDirectMLSMessage() }
         } else {
           withAnimation(.spring(response: 0.25)) {
@@ -213,6 +247,20 @@ struct NewConversationView: View {
   @ViewBuilder
   private var confirmationButton: some View {
     switch (mode, step) {
+    case (.blueskyGroup, .selectContacts):
+      Button("Next") {
+        withAnimation(.spring(response: 0.25)) {
+          step = .configureGroup
+        }
+      }
+      .disabled(selectedDIDs.isEmpty)
+      .fontWeight(.semibold)
+    case (.blueskyGroup, .configureGroup):
+      Button("Create") {
+        Task { await createBlueskyGroup() }
+      }
+      .disabled(isCreating || groupName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+      .fontWeight(.semibold)
     case (.catbirdGroup, .selectContacts) where mlsEnabled:
       Button("Next") {
         if selectedDIDs.count == 1 {
@@ -240,6 +288,8 @@ struct NewConversationView: View {
 
   @ViewBuilder
   private var creationOverlay: some View {
+    let isBlueskyGroup = mode == .blueskyGroup
+
     ZStack {
       Color.black.opacity(0.4)
         .ignoresSafeArea()
@@ -247,16 +297,16 @@ struct NewConversationView: View {
       VStack(spacing: DesignTokens.Spacing.lg) {
         ZStack {
           Circle()
-            .fill(Color.green.opacity(0.2))
+            .fill((isBlueskyGroup ? Color.accentColor : Color.green).opacity(0.2))
             .frame(width: 80, height: 80)
-          Image(systemName: "lock.shield.fill")
+          Image(systemName: isBlueskyGroup ? "person.3.fill" : "lock.shield.fill")
             .font(.system(size: 36))
-            .foregroundColor(.green)
+            .foregroundColor(isBlueskyGroup ? .accentColor : .green)
             .symbolEffect(.pulse)
         }
 
         VStack(spacing: DesignTokens.Spacing.sm) {
-          Text("Creating Secure Group")
+          Text(isBlueskyGroup ? "Creating Group Chat" : "Creating Secure Group")
             .font(.title3)
             .fontWeight(.semibold)
             .foregroundColor(.white)
@@ -274,6 +324,48 @@ struct NewConversationView: View {
       .background(.ultraThinMaterial)
       .cornerRadius(DesignTokens.Size.radiusLG)
       .shadow(radius: 20)
+    }
+  }
+
+  // MARK: - Bluesky Group Creation
+
+  @MainActor
+  private func createBlueskyGroup() async {
+    guard !selectedDIDs.isEmpty else {
+      errorMessage = "Select at least one person"
+      showingError = true
+      return
+    }
+
+    let trimmedName = groupName.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmedName.isEmpty else {
+      errorMessage = "Enter a group name"
+      showingError = true
+      return
+    }
+
+    isCreating = true
+    step = .creating
+    creationProgress = "Creating Bluesky group chat..."
+
+    if let convoId = await appState.chatManager.startGroupConversation(
+      memberDIDs: Array(selectedDIDs),
+      name: trimmedName
+    ) {
+      logger.info("Successfully created Bluesky group conversation")
+      isCreating = false
+      dismiss()
+      #if os(iOS)
+      appState.navigationManager.navigate(to: .conversation(convoId), in: 4)
+      #else
+      appState.navigationManager.targetConversationId = convoId
+      #endif
+    } else {
+      logger.error("Failed to create Bluesky group conversation")
+      errorMessage = "Failed to create group chat. Please try again."
+      showingError = true
+      step = .configureGroup
+      isCreating = false
     }
   }
 

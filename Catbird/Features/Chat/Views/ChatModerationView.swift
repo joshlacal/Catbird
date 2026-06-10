@@ -8,7 +8,7 @@ struct ChatModerationView: View {
   @State private var selectedTab = 0
   @State private var hasAdminAccess = false
   @State private var isCheckingAccess = true
-  
+
   var body: some View {
     Group {
       if isCheckingAccess {
@@ -26,14 +26,14 @@ struct ChatModerationView: View {
               Text("User Stats")
             }
             .tag(0)
-          
+
           MessageContextView()
             .tabItem {
               Image(systemName: "message.circle")
               Text("Message Context")
             }
             .tag(1)
-          
+
           AccessControlView()
             .tabItem {
               Image(systemName: "key")
@@ -56,11 +56,11 @@ struct ChatModerationView: View {
     }
     .navigationTitle("Moderation Tools")
     #if os(iOS)
-    .toolbarTitleDisplayMode(.inline)
+      .toolbarTitleDisplayMode(.inline)
     #endif
-    .task {
-      await checkAdminAccess()
-    }
+      .task {
+        await checkAdminAccess()
+      }
   }
 
   private func checkAdminAccess() async {
@@ -88,19 +88,19 @@ struct ActorMetadataView: View {
   @State private var metadata: ChatBskyModerationGetActorMetadata.Output?
   @State private var isLoading = false
   @State private var errorMessage: String?
-  
+
   private let logger = Logger(subsystem: "blue.catbird", category: "ActorMetadataView")
-  
+
   var body: some View {
     Form {
       Section {
         TextField("User DID or Handle", text: $userDID)
           .textFieldStyle(.roundedBorder)
-          #if os(iOS)
+        #if os(iOS)
           .autocapitalization(.none)
-          #endif
+        #endif
           .autocorrectionDisabled(true)
-        
+
         Button {
           fetchMetadata()
         } label: {
@@ -118,19 +118,19 @@ struct ActorMetadataView: View {
       } footer: {
         Text("Enter a user's DID (did:plc:...) or handle (@username) to view their chat usage statistics.")
       }
-      
+
       if let metadata = metadata {
         Section("Usage Statistics") {
           StatRow(title: "Messages Sent (24h)", value: "\(metadata.day.messagesSent)")
           StatRow(title: "Messages Received (24h)", value: "\(metadata.day.messagesReceived)")
           StatRow(title: "Conversations (24h)", value: "\(metadata.day.convos)")
           StatRow(title: "Conversations Started (24h)", value: "\(metadata.day.convosStarted)")
-          
+
           StatRow(title: "Messages Sent (30d)", value: "\(metadata.month.messagesSent)")
           StatRow(title: "Messages Received (30d)", value: "\(metadata.month.messagesReceived)")
           StatRow(title: "Conversations (30d)", value: "\(metadata.month.convos)")
           StatRow(title: "Conversations Started (30d)", value: "\(metadata.month.convosStarted)")
-          
+
           StatRow(title: "Total Messages Sent", value: "\(metadata.all.messagesSent)")
           StatRow(title: "Total Messages Received", value: "\(metadata.all.messagesReceived)")
           StatRow(title: "Total Conversations", value: "\(metadata.all.convos)")
@@ -146,7 +146,7 @@ struct ActorMetadataView: View {
       Text(errorMessage ?? "An unknown error occurred")
     }
   }
-  
+
   private func fetchMetadata() {
     Task {
       isLoading = true
@@ -175,27 +175,27 @@ struct MessageContextView: View {
   @State private var context: ChatBskyModerationGetMessageContext.Output?
   @State private var isLoading = false
   @State private var errorMessage: String?
-  
+
   var body: some View {
     Form {
       Section {
         TextField("Conversation ID", text: $conversationId)
           .textFieldStyle(.roundedBorder)
-          #if os(iOS)
+        #if os(iOS)
           .autocapitalization(.none)
-          #endif
+        #endif
           .autocorrectionDisabled(true)
-        
+
         TextField("Message ID", text: $messageId)
           .textFieldStyle(.roundedBorder)
-          #if os(iOS)
+        #if os(iOS)
           .autocapitalization(.none)
-          #endif
+        #endif
           .autocorrectionDisabled(true)
-        
-        Stepper("Messages before: \(beforeCount)", value: $beforeCount, in: 0...20)
-        Stepper("Messages after: \(afterCount)", value: $afterCount, in: 0...20)
-        
+
+        Stepper("Messages before: \(beforeCount)", value: $beforeCount, in: 0 ... 20)
+        Stepper("Messages after: \(afterCount)", value: $afterCount, in: 0 ... 20)
+
         Button {
           fetchContext()
         } label: {
@@ -213,12 +213,12 @@ struct MessageContextView: View {
       } footer: {
         Text("Get messages before and after a specific message for moderation review.")
       }
-      
+
       if let context = context {
         Section("Message Context") {
           Text("Found \(context.messages.count) messages in context")
             .foregroundColor(.secondary)
-          
+
           // Display messages in context
           ForEach(Array(context.messages.enumerated()), id: \.offset) { _, messageUnion in
             switch messageUnion {
@@ -227,17 +227,6 @@ struct MessageContextView: View {
                 messageView: messageView,
                 isTargetMessage: messageView.id == messageId
               )
-            case .chatBskyConvoDefsDeletedMessageView(let deletedView):
-              HStack {
-                Image(systemName: "trash")
-                  .foregroundColor(.red)
-                Text("Deleted message")
-                  .italic()
-                Spacer()
-                Text(deletedView.sentAt.date.formatted(date: .abbreviated, time: .shortened))
-                  .appFont(AppTextRole.caption)
-                  .foregroundColor(.secondary)
-              }
             case .chatBskyConvoDefsSystemMessageView(let systemMessage):
               HStack {
                 Image(systemName: "info.circle")
@@ -266,7 +255,7 @@ struct MessageContextView: View {
       Text(errorMessage ?? "An unknown error occurred")
     }
   }
-  
+
   private func fetchContext() {
     Task {
       isLoading = true
@@ -299,25 +288,25 @@ struct AccessControlView: View {
   @State private var isUpdating = false
   @State private var errorMessage: String?
   @State private var successMessage: String?
-  
+
   var body: some View {
     Form {
       Section {
         TextField("User DID or Handle", text: $userDID)
           .textFieldStyle(.roundedBorder)
-          #if os(iOS)
+        #if os(iOS)
           .autocapitalization(.none)
-          #endif
+        #endif
           .autocorrectionDisabled(true)
-        
+
         Toggle("Allow Chat Access", isOn: $allowAccess)
-        
+
         TextField("Reference (optional)", text: $reference)
           .textFieldStyle(.roundedBorder)
-          #if os(iOS)
+        #if os(iOS)
           .autocapitalization(.none)
-          #endif
-        
+        #endif
+
         Button {
           updateAccess()
         } label: {
@@ -351,7 +340,7 @@ struct AccessControlView: View {
       Text(errorMessage ?? "An unknown error occurred")
     }
   }
-  
+
   private func updateAccess() {
     Task {
       isUpdating = true
@@ -380,7 +369,7 @@ struct AccessControlView: View {
 struct StatRow: View {
   let title: String
   let value: String
-  
+
   var body: some View {
     HStack {
       Text(title)
@@ -398,7 +387,7 @@ struct MessageContextRow: View {
   let messageView: ChatBskyConvoDefs.MessageView
   let isTargetMessage: Bool
   @State private var senderHandle: String = ""
-  
+
   var body: some View {
     VStack(alignment: .leading, spacing: 4) {
       HStack {
@@ -406,7 +395,7 @@ struct MessageContextRow: View {
           .appFont(AppTextRole.caption)
           .fontWeight(.medium)
           .foregroundColor(isTargetMessage ? .white : .primary)
-        
+
         if isTargetMessage {
           Text("TARGET")
             .appFont(AppTextRole.caption2)
@@ -416,16 +405,16 @@ struct MessageContextRow: View {
             .foregroundColor(.white)
             .clipShape(Capsule())
         }
-        
+
         Spacer()
-        
+
         Text(messageView.sentAt.date.formatted(date: .abbreviated, time: .shortened))
           .appFont(AppTextRole.caption)
           .foregroundColor(isTargetMessage ? .white : .secondary)
       }
-      
+
       Text(messageView.text)
-                        .appFont(AppTextRole.body)
+        .appFont(AppTextRole.body)
         .foregroundColor(isTargetMessage ? .white : .primary)
     }
     .padding()
@@ -435,14 +424,14 @@ struct MessageContextRow: View {
       await resolveHandle()
     }
   }
-  
+
   private func resolveHandle() async {
     // Try to resolve the DID to a handle using the chat manager
     do {
       if let client = appState.atProtoClient {
-          let params = AppBskyActorGetProfile.Parameters(actor: try ATIdentifier(string: messageView.sender.did.didString()))
+        let params = AppBskyActorGetProfile.Parameters(actor: try ATIdentifier(string: messageView.sender.did.didString()))
         let (_, profile) = try await client.app.bsky.actor.getProfile(input: params)
-          senderHandle = profile?.handle.description ?? messageView.sender.did.didString()
+        senderHandle = profile?.handle.description ?? messageView.sender.did.didString()
       }
     } catch {
       // If resolution fails, keep using the DID
@@ -454,8 +443,8 @@ struct MessageContextRow: View {
 #Preview {
   AsyncPreviewContent { appState in
     NavigationStack {
-        ChatModerationView()
-          .environment(AppStateManager.shared)
-      }
+      ChatModerationView()
+        .environment(AppStateManager.shared)
+    }
   }
 }

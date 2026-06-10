@@ -72,7 +72,7 @@ struct ConversationView: View {
           Text(conversationTitle)
             .font(.headline)
             .lineLimit(1)
-          Image(systemName: "bubble.left.and.bubble.right")
+          Image(systemName: conversationIconName)
             .font(.system(size: 10))
             .foregroundStyle(.secondary)
         }
@@ -151,7 +151,9 @@ struct ConversationView: View {
       }
       .safeAreaInset(edge: .bottom) {
         if chatNavigationPath.wrappedValue.isEmpty {
-          if isOtherMemberDeleted {
+          if isConversationLocked {
+            lockedConversationBanner
+          } else if isOtherMemberDeleted {
             deletedAccountBanner
           } else {
             blueskyInputBar(dataSource: dataSource)
@@ -203,6 +205,21 @@ struct ConversationView: View {
       .padding(.vertical, 16)
       .background(Color(.systemBackground))
   }
+
+    // MARK: - Locked Conversation Banner
+
+    private var lockedConversationBanner: some View {
+      HStack(spacing: 8) {
+        Image(systemName: "lock.fill")
+          .foregroundStyle(.secondary)
+        Text("This group chat is locked")
+          .font(.subheadline)
+          .foregroundStyle(.secondary)
+      }
+      .frame(maxWidth: .infinity)
+      .padding(.vertical, 16)
+      .background(Color(.systemBackground))
+    }
   
   // MARK: - Message Actions
   
@@ -220,11 +237,23 @@ struct ConversationView: View {
       guard let convo = chatManager.conversations.first(where: { $0.id == convoId }) else {
         return false
       }
+      guard !convo.isGroupConversation else { return false }
       let clientDid = appState.userDID
       if let otherMember = convo.members.first(where: { $0.did.didString() != clientDid }) {
         return otherMember.handle.description == "missing.invalid"
       }
       return false
+    }
+
+    private var isConversationLocked: Bool {
+      chatManager.conversations.first(where: { $0.id == convoId })?.isLockedForSending ?? false
+    }
+
+    private var conversationIconName: String {
+      guard let convo = chatManager.conversations.first(where: { $0.id == convoId }) else {
+        return "bubble.left.and.bubble.right"
+      }
+      return convo.isGroupConversation ? "person.3.fill" : "bubble.left.and.bubble.right"
     }
 
   // Compute conversation title based on the other member
@@ -233,17 +262,7 @@ struct ConversationView: View {
       return "Chat"
     }
 
-    let clientDid = appState.userDID
-
-    if let otherMember = convo.members.first(where: { $0.did.didString() != clientDid }) {
-        // Show "Deleted Account" for deleted users
-        if otherMember.handle.description == "missing.invalid" {
-          return "Deleted Account"
-        }
-      return otherMember.displayName ?? "@\(otherMember.handle.description)"
-    }
-
-    return convo.members.first?.displayName ?? "Chat"
+    return convo.displayTitle(currentUserDID: appState.userDID)
   }
 }
 
