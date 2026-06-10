@@ -474,7 +474,12 @@ struct BackupManagerTests {
       BackupRecord.self,
       BackupConfiguration.self,
     ])
-    let config = ModelConfiguration(isStoredInMemoryOnly: true)
+    let config = ModelConfiguration(
+      "BackupManagerTests-InMemory",
+      schema: schema,
+      isStoredInMemoryOnly: true,
+      cloudKitDatabase: .none
+    )
     return try ModelContainer(for: schema, configurations: [config])
   }
 }

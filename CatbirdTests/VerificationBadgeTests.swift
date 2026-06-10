@@ -1,4 +1,4 @@
-import Catbird
+@testable import Catbird
 import Petrel
 import Testing
 
