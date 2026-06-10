@@ -835,7 +835,10 @@ struct UnifiedProfileView: View {
             image
               .resizable()
               .scaledToFill() // Fill width, crop vertically if needed
-              .overlay(Color.black.opacity(0.15).blendMode(.overlay))
+              .overlay {
+                Color(white: 0, opacity: 0.15)
+                  .blendMode(SwiftUI.BlendMode.overlay)
+              }
           } else if state.error != nil {
             Rectangle().fill(Color.accentColor.opacity(0.25))
           } else {

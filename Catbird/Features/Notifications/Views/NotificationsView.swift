@@ -257,6 +257,7 @@ struct NotificationsView: View {
           let group = item.element
           NotificationCard(
             group: group,
+            isActiveTab: selectedTab == 2,
             onTap: { destination in
               navigationPath.wrappedValue.append(destination)
             }, path: navigationPath
@@ -311,6 +312,7 @@ struct NotificationsView: View {
           let group = item.element
           NotificationCard(
             group: group,
+            isActiveTab: selectedTab == 2,
             onTap: { destination in
               navigationPath.wrappedValue.append(destination)
             }, path: navigationPath
@@ -390,6 +392,7 @@ struct NotificationsView: View {
 
 struct NotificationCard: View {
   let group: GroupedNotification
+  let isActiveTab: Bool
   let onTap: (NavigationDestination) -> Void
   @Binding var path: NavigationPath
   @Environment(AppState.self) private var appState: AppState
@@ -552,7 +555,7 @@ struct NotificationCard: View {
 
   private var standardNotificationView: some View {
     HStack(alignment: .top, spacing: 12) {
-      NotificationIcon(type: group.type)
+      NotificationIcon(type: group.type, isActiveTab: isActiveTab)
         .frame(width: 50, alignment: .trailing)
 
       VStack(alignment: .leading, spacing: 4) {
@@ -884,12 +887,22 @@ struct NotificationCard: View {
 
 struct NotificationIcon: View {
   let type: NotificationType
+  let isActiveTab: Bool
 
   var body: some View {
-    Image(systemName: type.icon)
-      .foregroundColor(type.color)
-      .appFont(size: 28)
-      .frame(width: 44, height: 44, alignment: .trailing)
+    Group {
+      if isActiveTab {
+        Image(systemName: type.icon)
+          .foregroundColor(type.color)
+          .appFont(size: 28)
+          .id(type)
+      } else {
+        Color.clear
+      }
+    }
+    .frame(width: 44, height: 44, alignment: .trailing)
+    .contentShape(Rectangle())
+    .accessibilityHidden(!isActiveTab)
   }
 }
 

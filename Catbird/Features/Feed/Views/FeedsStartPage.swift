@@ -93,6 +93,18 @@ struct FeedsStartPage: View {
   // Logging
   private let logger = Logger(subsystem: "blue.catbird", category: "FeedsStartPage")
 
+  private var drawerPrimaryTextColor: Color {
+    .primary
+  }
+
+  private var drawerSecondaryTextColor: Color {
+    .secondary
+  }
+
+  private var drawerTertiaryTextColor: Color {
+    .secondary
+  }
+
   // MARK: - Layout Calculations
   private var safeAreaTop: CGFloat {
 #if os(iOS)
@@ -129,6 +141,10 @@ struct FeedsStartPage: View {
     
     // Ensure banner doesn't take up more than 25% of screen height
     return min(baseHeight, screenHeight * 0.25)
+  }
+
+  private var drawerProfilePanelHeight: CGFloat {
+    bannerHeight
   }
   
   // Responsive avatar size
@@ -323,23 +339,23 @@ struct FeedsStartPage: View {
   @ViewBuilder
   private func sectionHeader(_ title: String) -> some View {
     HStack {
-        if title == "Pinned" {
-          Image(systemName: "pin.fill")
-                .font(
-                  Font.customSystemFont(
-                    size: 21, weight: .bold, width: 120, opticalSize: true, design: .default,
-                    relativeTo: .title3)
-                )
-                .foregroundColor(.primary)
-        } else if title == "Saved" {
-          Image(systemName: "bookmark.fill")
-                .font(
-                  Font.customSystemFont(
-                    size: 21, weight: .bold, width: 120, opticalSize: true, design: .default,
-                    relativeTo: .title3)
-                )
-                .foregroundColor(.primary)
-        }
+      if title == "Pinned" {
+        Image(systemName: "pin.fill")
+          .font(
+            Font.customSystemFont(
+              size: 21, weight: .bold, width: 120, opticalSize: true, design: .default,
+              relativeTo: .title3)
+          )
+          .foregroundColor(drawerPrimaryTextColor)
+      } else if title == "Saved" {
+        Image(systemName: "bookmark.fill")
+          .font(
+            Font.customSystemFont(
+              size: 21, weight: .bold, width: 120, opticalSize: true, design: .default,
+              relativeTo: .title3)
+          )
+          .foregroundColor(drawerPrimaryTextColor)
+      }
 
       Text(title)
         .font(
@@ -347,7 +363,7 @@ struct FeedsStartPage: View {
             size: 21, weight: .bold, width: 120, opticalSize: true, design: .default,
             relativeTo: .title3)
         )
-        .foregroundColor(.primary)
+        .foregroundColor(drawerPrimaryTextColor)
 
       Spacer()
     }
@@ -360,12 +376,12 @@ struct FeedsStartPage: View {
   private func searchBar() -> some View {
     HStack(spacing: 12) {
       Image(systemName: "magnifyingglass")
-        .foregroundColor(.secondary)
+        .foregroundColor(drawerSecondaryTextColor)
         .appFont(size: 16)
 
       TextField("Search your feeds...", text: $searchText)
         .appFont(size: 16)
-        .foregroundColor(.primary)
+        .foregroundColor(drawerPrimaryTextColor)
         .onChange(of: searchText) { _, _ in
           Task { await updateFilteredFeeds() }
         }
@@ -378,7 +394,7 @@ struct FeedsStartPage: View {
           }
         } label: {
           Image(systemName: "xmark.circle.fill")
-            .foregroundColor(.secondary)
+            .foregroundColor(drawerSecondaryTextColor)
             .appFont(size: 16)
         }
         .transition(.scale.combined(with: .opacity))
@@ -402,6 +418,7 @@ struct FeedsStartPage: View {
         Image(systemName: "plus.circle.fill")
         Text("Add New Feed")
       }
+      .foregroundStyle(drawerPrimaryTextColor)
       .padding(.vertical, 12)
       .padding(.horizontal, 16)
       .frame(maxWidth: .infinity)
@@ -451,7 +468,7 @@ struct FeedsStartPage: View {
             Text(defaultFeedName)
               .padding(.leading, 6)
               .appFont(AppTextRole.headline)
-              .foregroundStyle(.primary)
+              .foregroundStyle(drawerPrimaryTextColor)
               .multilineTextAlignment(.leading)
               .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
 
@@ -459,7 +476,7 @@ struct FeedsStartPage: View {
 
             Image(systemName: "chevron.right")
               .appFont(AppTextRole.caption)
-              .foregroundColor(.secondary)
+              .foregroundColor(drawerSecondaryTextColor)
           }
         }
         .padding(12)
@@ -744,13 +761,13 @@ struct FeedsStartPage: View {
         VStack(alignment: .leading, spacing: 2) {
           Text(title)
             .appFont(AppTextRole.body)
-            .foregroundStyle(.primary)
+            .foregroundStyle(drawerPrimaryTextColor)
             .lineLimit(1)
             .truncationMode(.tail)
           if let subtitle, !subtitle.isEmpty {
             Text(subtitle)
               .appFont(AppTextRole.caption)
-              .foregroundStyle(.secondary)
+              .foregroundStyle(drawerSecondaryTextColor)
               .lineLimit(1)
               .truncationMode(.tail)
           }
@@ -770,7 +787,7 @@ struct FeedsStartPage: View {
         } else {
           Image(systemName: "chevron.right")
             .appFont(AppTextRole.caption)
-            .foregroundStyle(.tertiary)
+            .foregroundStyle(drawerTertiaryTextColor)
         }
       }
       .padding(.vertical, 8)
@@ -872,13 +889,13 @@ struct FeedsStartPage: View {
         .clipShape(RoundedRectangle(cornerRadius: 12))
 
         // Feed/List name
-          Text(
-            uri.uriString().contains("/app.bsky.graph.list/")
-              ? (viewModel.listDetails[uri]?.name ?? viewModel.extractTitle(from: uri))
-              : (viewModel.feedGenerators[uri]?.displayName ?? viewModel.extractTitle(from: uri))
-          )
+        Text(
+          uri.uriString().contains("/app.bsky.graph.list/")
+            ? (viewModel.listDetails[uri]?.name ?? viewModel.extractTitle(from: uri))
+            : (viewModel.feedGenerators[uri]?.displayName ?? viewModel.extractTitle(from: uri))
+        )
           .appFont(AppTextRole.caption2)
-          .foregroundStyle(.primary)
+          .foregroundStyle(drawerPrimaryTextColor)
           .padding(.top, 4)
           .lineLimit(2)
           .frame(minHeight: 28, alignment: .top)
@@ -995,7 +1012,7 @@ struct FeedsStartPage: View {
         // Feed name
         Text("Timeline")
           .appFont(AppTextRole.caption2)
-          .foregroundStyle(.primary)
+          .foregroundStyle(drawerPrimaryTextColor)
           .padding(.top, 4)
           .lineLimit(2)
           .frame(minHeight: 28, alignment: .top)
@@ -1097,7 +1114,27 @@ struct FeedsStartPage: View {
     GeometryReader { geometry in
       let availableWidth = geometry.size.width
       let contentWidth = min(availableWidth, drawerWidth)
-      
+
+      #if os(iOS)
+      if inSideDrawer {
+        drawerSplitContent(containerSize: geometry.size, contentWidth: contentWidth)
+      } else {
+        standardContent(contentWidth: contentWidth)
+      }
+      #else
+      standardContent(contentWidth: contentWidth)
+      #endif
+    }
+    .frame(maxWidth: drawerWidth)
+    .overlay {
+      // Full-screen loading/initialization overlays
+      loadingOverlay()
+      initializationOverlay()
+    }
+  }
+
+  @ViewBuilder
+  private func standardContent(contentWidth: CGFloat) -> some View {
       ScrollView {
         VStack(spacing: 0) {
           // Banner header using Apple's flexible header system. When the page
@@ -1124,14 +1161,50 @@ struct FeedsStartPage: View {
       .refreshable {
         await handleRefresh()
       }
-    }
-    .frame(maxWidth: drawerWidth)
-    .overlay {
-      // Full-screen loading/initialization overlays
-      loadingOverlay()
-      initializationOverlay()
-    }
   }
+
+  #if os(iOS)
+  @ViewBuilder
+  private func drawerSplitContent(containerSize: CGSize, contentWidth: CGFloat) -> some View {
+    let container = CGRect(origin: .zero, size: containerSize)
+    let frames = ConcentricDrawerSectionLayoutMetrics
+      .sideDrawer(headerHeight: drawerProfilePanelHeight)
+      .sectionFrames(in: container)
+
+    ZStack(alignment: .topLeading) {
+      splitDrawerPanel(frame: frames.header) {
+        bannerHeaderView()
+          .frame(width: frames.header.width, height: frames.header.height)
+      }
+
+      splitDrawerPanel(frame: frames.feeds) {
+        ScrollView {
+          feedsContent()
+            .frame(maxWidth: frames.feeds.width)
+        }
+        .scrollContentBackground(.hidden)
+        .background(Color.clear)
+        .refreshable {
+          await handleRefresh()
+        }
+      }
+    }
+    .frame(width: contentWidth, height: containerSize.height, alignment: .topLeading)
+    .clipped()
+  }
+
+  @ViewBuilder
+  private func splitDrawerPanel<PanelContent: View>(
+    frame: CGRect,
+    @ViewBuilder content: () -> PanelContent
+  ) -> some View {
+    ConcentricLiquidGlassPanel {
+      content()
+    }
+    .frame(width: frame.width, height: frame.height)
+    .position(x: frame.midX, y: frame.midY)
+  }
+  #endif
   
   private func handleRefresh() async {
     await viewModel.fetchFeedGenerators()
@@ -1301,6 +1374,7 @@ struct FeedsStartPage: View {
                           size: 24, weight: .bold, width: 120, opticalSize: true, design: .default,
                           relativeTo: .title)
                   )
+                  .foregroundStyle(drawerPrimaryTextColor)
                   .frame(maxWidth: .infinity, alignment: .leading)
               Spacer()
 
@@ -1469,7 +1543,10 @@ struct FeedsStartPage: View {
               .resizable()
               .aspectRatio(contentMode: .fill)
               .frame(maxWidth: .infinity, maxHeight: .infinity)
-              .overlay(Color.black.opacity(0.15).blendMode(.overlay))
+              .overlay {
+                Color(white: 0, opacity: 0.15)
+                  .blendMode(SwiftUI.BlendMode.overlay)
+              }
               .clipped()
           } else if state.error != nil {
             fallbackGradientBanner

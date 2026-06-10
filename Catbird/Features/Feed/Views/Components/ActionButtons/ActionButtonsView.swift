@@ -20,7 +20,6 @@ import UIKit
   var repostCount: Int
   var replyCount: Int
   var animateLike: Bool = false
-  var animateRepost: Bool = false  // Keep separate for distinct animations
 
   init(post: AppBskyFeedDefs.PostView) {
     self.isLiked = post.viewer?.like != nil
@@ -60,7 +59,6 @@ struct ActionButtonsView: View {
 
   // View model for handling actions
   @State private var viewModel: ActionButtonViewModel
-  @State private var showRepostOptions: Bool = false
   @State private var showingPostComposer: Bool = false
   // Per-post matched transition namespace for reply → composer zoom
   @Namespace private var replyTransition
@@ -136,23 +134,8 @@ struct ActionButtonsView: View {
       #endif
       Spacer()
 
-      // Repost Button (includes quote option)
-      InteractionButton(
-        iconName: "arrow.2.squarepath",
-        count: isBig ? nil : interactionState.repostCount,
-        isActive: interactionState.isReposted,
-        animateActivation: interactionState.animateRepost,  // Use state property
-        animateScale: initialLoadComplete,
-        isFirstAppear: isFirstAppear,
-        color: interactionState.isReposted ? .green : .secondary,
-        isBig: isBig
-      ) {
-        showRepostOptions = true
-        // Trigger repost animation if needed (logic might go in RepostOptionsView or viewModel)
-        // interactionState.animateRepost = true // Example trigger point
-      }
+      repostMenu
       .accessibilityIdentifier("repostButton")
-      .accessibilityLabel(interactionState.isReposted ? "Remove Repost. Repost count: \(interactionState.repostCount)" : "Repost or Quote Post. Repost count: \(interactionState.repostCount)")
 
       Spacer()
 
@@ -241,12 +224,6 @@ struct ActionButtonsView: View {
       updateTask?.cancel()
       updateTask = nil
     }
-    .sheet(isPresented: $showRepostOptions) {
-      RepostOptionsView(post: post, viewModel: viewModel)
-        #if os(iOS)
-        .presentationDetents([.fraction(1 / 4)])
-        #endif
-    }
     .sheet(isPresented: $showingPostComposer) {
       Group {
         PostComposerViewUIKit(
@@ -271,6 +248,62 @@ struct ActionButtonsView: View {
     .id(appState.userDID)
   }
 
+  private var repostMenu: some View {
+    Menu {
+      Button {
+        handleRepostToggle()
+      } label: {
+        Label(repostActionTitle, systemImage: "arrow.2.squarepath")
+      }
+
+      Button {
+        handleQuotePost()
+      } label: {
+        Label("Quote Post", systemImage: "quote.bubble")
+      }
+      .disabled(post.viewer?.embeddingDisabled ?? false)
+    } label: {
+      HStack(spacing: 4) {
+        Image(systemName: "arrow.2.squarepath")
+          .appFont(Font.TextStyle.callout)
+          .fontWeight(isBig ? .medium : .semibold)
+          .imageScale(isBig ? .large : .medium)
+
+        if !isBig, interactionState.repostCount > 0 {
+          Text(interactionState.repostCount.formatted)
+            .appFont(Font.TextStyle.caption)
+            .monospacedDigit()
+            .fontWeight(.bold)
+            .lineLimit(1)
+            .fixedSize()
+            .layoutPriority(1)
+        }
+      }
+      .foregroundStyle(interactionState.isReposted ? .green : .secondary)
+      .frame(minWidth: repostMenuMinWidth, minHeight: isBig ? 40 : 32, alignment: .leading)
+      .contentShape(Rectangle())
+      .accessibilityLabel(repostAccessibilityLabel)
+      .accessibilityAddTraits(.isButton)
+    }
+  }
+
+  private var repostActionTitle: String {
+    interactionState.isReposted ? "Remove Repost" : "Repost"
+  }
+
+  private var repostAccessibilityLabel: String {
+    interactionState.isReposted
+      ? "Remove Repost. Repost count: \(interactionState.repostCount)"
+      : "Repost or Quote Post. Repost count: \(interactionState.repostCount)"
+  }
+
+  private var repostMenuMinWidth: CGFloat {
+    if isBig {
+      return 48
+    }
+    return interactionState.repostCount > 0 ? 46 : 36
+  }
+
   // MARK: - Reply Handling
   
   private func handleReplyTap() {
@@ -288,6 +321,24 @@ struct ActionButtonsView: View {
     
     showingPostComposer = true
   }
+
+  private func handleRepostToggle() {
+#if os(iOS)
+    feedbackGenerator.impactOccurred()
+#endif
+
+    Task {
+      do {
+        try await viewModel.toggleRepost()
+      } catch {
+        logger.debug("Error toggling repost: \(error)")
+      }
+    }
+  }
+
+  private func handleQuotePost() {
+    appState.presentPostComposer(quotedPost: post)
+  }
   
   // MARK: - State Management
   private func refreshState() async {
@@ -295,6 +346,49 @@ struct ActionButtonsView: View {
     await MainActor.run {
       interactionState.update(from: mergedPost)
     }
+  }
+}
+
+struct InteractionButtonLabel: View {
+  let iconName: String
+  let count: Int?
+  var animateActivation: Bool = false
+  var isFirstAppear: Bool = false
+  let color: Color
+  let isBig: Bool
+
+  private static let smallWidths: [Bool: CGFloat] = [true: 46, false: 36]
+  private static let bigWidths: [Bool: CGFloat] = [true: 58, false: 48]
+
+  private var buttonMinWidth: CGFloat {
+    let widths = isBig ? InteractionButtonLabel.bigWidths : InteractionButtonLabel.smallWidths
+    let hasVisibleCount = count != nil && count! > 0
+    return widths[hasVisibleCount]!
+  }
+
+  var body: some View {
+    HStack(spacing: 4) {
+      Image(systemName: iconName)
+        .appFont(Font.TextStyle.callout)
+        .fontWeight(isBig ? .medium : .semibold)
+        .contentTransition(isFirstAppear ? .identity : .symbolEffect(.replace))
+        .imageScale(isBig ? .large : .medium)
+        .symbolEffect(.bounce, options: .speed(1.5), value: animateActivation)
+
+      if let count = count, count > 0 {
+        Text(count.formatted)
+          .appFont(Font.TextStyle.caption)
+          .monospacedDigit()
+          .fontWeight(.bold)
+          .contentTransition(.numericText(countsDown: false))
+          .lineLimit(1)
+          .fixedSize()
+          .layoutPriority(1)
+      }
+    }
+    .foregroundStyle(color)
+    .frame(minWidth: buttonMinWidth, minHeight: isBig ? 40 : 32, alignment: .leading)
+    .contentShape(Rectangle())
   }
 }
 
@@ -312,43 +406,16 @@ struct InteractionButton: View {
   @Environment(AppState.self) private var appState
   @Environment(\.fontManager) private var fontManager
 
-  // Pre-calculated widths for efficiency
-  private static let smallWidths: [Bool: CGFloat] = [true: 46, false: 36]  // true: has count > 0, false: no count or count == 0
-  private static let bigWidths: [Bool: CGFloat] = [true: 58, false: 48]  // true: has count > 0, false: no count or count == 0
-
-  // Calculate min width based on pre-calculated values
-  private var buttonMinWidth: CGFloat {
-    let widths = isBig ? InteractionButton.bigWidths : InteractionButton.smallWidths
-    let hasVisibleCount = count != nil && count! > 0
-    return widths[hasVisibleCount]!
-  }
-
   var body: some View {
     Button(action: action) {
-      HStack(spacing: 4) {
-        Image(systemName: iconName)
-              .appFont(Font.TextStyle.callout)
-              .fontWeight(isBig ? .medium : .semibold)
-          // Use identity transition on first appear to prevent initial animation
-          .contentTransition(isFirstAppear ? .identity : .symbolEffect(.replace))
-          .imageScale(isBig ? .large : .medium)
-          // Trigger bounce only when animateActivation becomes true
-          .symbolEffect(.bounce, options: .speed(1.5), value: animateActivation)
-
-        if let count = count, count > 0 {
-          Text(count.formatted)
-                .appFont(Font.TextStyle.caption)
-            .monospacedDigit()
-            .fontWeight(.bold)
-            .contentTransition(.numericText(countsDown: false))
-            .lineLimit(1)
-            .fixedSize()
-            .layoutPriority(1)
-        }
-      }
-      .foregroundStyle(color)
-      .frame(minWidth: buttonMinWidth, minHeight: isBig ? 40 : 32, alignment: .leading)
-      .contentShape(Rectangle())
+      InteractionButtonLabel(
+        iconName: iconName,
+        count: count,
+        animateActivation: animateActivation,
+        isFirstAppear: isFirstAppear,
+        color: color,
+        isBig: isBig
+      )
     }
     .buttonStyle(.plain)
     // Apply scale effect animation only when animateScale is true

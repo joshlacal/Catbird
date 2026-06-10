@@ -1236,6 +1236,21 @@ private extension CatbirdApp {
       details: "\(String(describing: oldPhase)) → \(String(describing: newPhase))",
       process: "app"
     )
+
+    #if os(iOS)
+      if newPhase == .inactive || newPhase == .background {
+        MLSGRDBManager.setPeriodicCheckpointingSuspended(
+          true,
+          reason: "scenePhase \(String(describing: oldPhase)) → \(String(describing: newPhase))"
+        )
+      } else if newPhase == .active {
+        MLSGRDBManager.setPeriodicCheckpointingSuspended(
+          false,
+          reason: "scenePhase \(String(describing: oldPhase)) → active"
+        )
+      }
+    #endif
+
     // ═══════════════════════════════════════════════════════════════════════════
     // CRITICAL FIX (0xdead10cc): Cancel MLS tasks BEFORE GRDB suspension
     // ═══════════════════════════════════════════════════════════════════════════

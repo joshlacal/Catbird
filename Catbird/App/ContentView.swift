@@ -346,7 +346,7 @@ struct MainContentView: View {
                 .accessibilityIdentifier("tab_home")
 
                 // Search Tab
-                Tab(value: 1, role: .search) {
+                Tab("Search", systemImage: "magnifyingglass", value: 1) {
                   RefinedSearchView(
                     appState: appState,
                     selectedTab: $selectedTab,

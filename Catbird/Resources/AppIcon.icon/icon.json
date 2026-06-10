@@ -78,6 +78,11 @@
           10
         ]
       },
+      "refractivity" : {
+        "depth" : 0.6721484375,
+        "enabled" : false,
+        "strength" : -0.5942578125
+      },
       "shadow-specializations" : [
         {
           "value" : {

@@ -197,46 +197,39 @@ struct SideDrawer<Content: View, DrawerContent: View>: View {
     GeometryReader { geometry in
       let adaptiveDrawerWidth = min(self.drawerWidth, geometry.size.width * 0.8)
       let progress = drawerProgress(width: adaptiveDrawerWidth)
+      let backdropMetrics = ConcentricDrawerBackdropMetrics()
       let drawerOffset = -adaptiveDrawerWidth * (1 - progress)
-      let scrimOpacity = progress * 0.3
+      let materialOpacity = backdropMetrics.materialOpacity(for: progress)
+      let scrimOpacity = backdropMetrics.scrimOpacity(for: progress)
+      let blurRadius = backdropMetrics.blurRadius(for: progress)
 
       ZStack(alignment: .leading) {
         // Root content stays anchored — no .offset, no transform. Only the
-        // drawer and scrim move. This is the core fix for the multi-track
-        // animation jank from the previous implementation.
-        content
+        // drawer and optional backdrop move. Avoid applying a zero-radius blur
+        // modifier because the drawer often sits above feed/media-heavy content.
+        DrawerBackdropContent(blurRadius: blurRadius) {
+          content
+        }
 
-        // Scrim. Always present so its opacity animates smoothly; hit testing
-        // is only enabled when there is something to tap-to-close.
-        Color.black
-          .opacity(scrimOpacity)
-          .allowsHitTesting(scrimOpacity > 0.01)
-          .onTapGesture {
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-              isDrawerOpen = false
-            }
+        DrawerDismissBackdrop(
+          progress: progress,
+          materialOpacity: materialOpacity,
+          scrimOpacity: scrimOpacity
+        ) {
+          withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+            isDrawerOpen = false
           }
-          .accessibilityAction(named: "Close Feeds Menu") {
-            withAnimation {
-              isDrawerOpen = false
-            }
-          }
-          .accessibilityLabel(scrimOpacity > 0.01 ? "Close drawer background" : "")
-          .accessibilityAddTraits(scrimOpacity > 0.01 ? .isButton : [])
+        }
 
-        // Square-edged drawer slides in from the leading edge over a dedicated
-        // Liquid Glass surface.
-        ZStack {
-          DrawerGlassSurface()
-
+        // The drawer frame owns the slide gesture and bounds. FeedsStartPage
+        // owns the separate concentric glass panels inside that frame.
+        ConcentricLiquidGlassDrawer(surfaceStyle: .clear) {
           drawer
             .environment(\.inSideDrawer, true)
             .background(Color.clear)
         }
           .frame(width: adaptiveDrawerWidth)
           .frame(maxHeight: .infinity, alignment: .top)
-          .containerShape(Rectangle())
-          .clipShape(Rectangle())
           .hoverEffect(.lift)
           .offset(x: drawerOffset)
           .accessibilityAction(named: "Close Feeds Menu") {
@@ -312,25 +305,66 @@ struct SideDrawer<Content: View, DrawerContent: View>: View {
   }
 }
 
-/// Glass material for the drawer surface. Uses `.glassEffect()` on iOS 26+ for
-/// true Liquid Glass; falls back to `.ultraThinMaterial` on earlier OS versions.
-/// Kept outside `GlassEffectContainer` on purpose — the FAB owns its own
-/// container for the compose matched-geometry transition and we don't want the
-/// drawer to morph with it.
-private struct DrawerGlassSurface: View {
+private struct DrawerBackdropContent<Content: View>: View {
+  let blurRadius: CGFloat
+  let content: Content
+
+  init(blurRadius: CGFloat, @ViewBuilder content: () -> Content) {
+    self.blurRadius = blurRadius
+    self.content = content()
+  }
+
+  @ViewBuilder
   var body: some View {
-    #if os(iOS)
-    if #available(iOS 26.0, *) {
-      Color.clear
-        .glassEffect(.clear.interactive(), in: Rectangle())
+    if blurRadius > 0 {
+      content.blur(radius: blurRadius)
     } else {
-      Rectangle()
-        .fill(.ultraThinMaterial)
+      content
     }
-    #else
-    Rectangle()
-      .fill(.ultraThinMaterial)
-    #endif
+  }
+}
+
+private struct DrawerDismissBackdrop: View {
+  let progress: CGFloat
+  let materialOpacity: CGFloat
+  let scrimOpacity: CGFloat
+  let close: () -> Void
+
+  var body: some View {
+    ZStack {
+      if materialOpacity > 0 {
+        Rectangle()
+          .fill(.ultraThinMaterial)
+          .opacity(materialOpacity)
+      }
+
+      Color.black
+        .opacity(scrimOpacity)
+    }
+      .contentShape(Rectangle())
+      .allowsHitTesting(progress > 0.01)
+      .onTapGesture(perform: close)
+      .accessibilityAction(named: "Close Feeds Menu", close)
+      .accessibilityLabel(progress > 0.01 ? "Close drawer background" : "")
+      .accessibilityAddTraits(progress > 0.01 ? .isButton : [])
+  }
+}
+
+struct ConcentricDrawerBackdropMetrics: Equatable, Sendable {
+  var maximumMaterialOpacity: CGFloat = 0.62
+  var maximumScrimOpacity: CGFloat = 0
+  var maximumBlurRadius: CGFloat = 0
+
+  func materialOpacity(for progress: CGFloat) -> CGFloat {
+    progress * maximumMaterialOpacity
+  }
+
+  func scrimOpacity(for progress: CGFloat) -> CGFloat {
+    progress * maximumScrimOpacity
+  }
+
+  func blurRadius(for progress: CGFloat) -> CGFloat {
+    progress * maximumBlurRadius
   }
 }
 
@@ -353,4 +387,61 @@ extension EnvironmentValues {
     get { self[InSideDrawerKey.self] }
     set { self[InSideDrawerKey.self] = newValue }
   }
+}
+
+#Preview {
+  @Previewable @State var selectedTab = 0
+  @Previewable @State var isRootView = true
+  @Previewable @State var isDrawerOpen = true
+
+  SideDrawer(
+    selectedTab: $selectedTab,
+    isRootView: $isRootView,
+    isDrawerOpen: $isDrawerOpen
+  ) {
+    ZStack {
+      LinearGradient(
+        colors: [.blue.opacity(0.25), .mint.opacity(0.2)],
+        startPoint: .topLeading,
+        endPoint: .bottomTrailing
+      )
+
+      VStack(spacing: 16) {
+        Text("Timeline")
+          .font(.largeTitle.weight(.bold))
+
+        Text("Main content stays anchored while the drawer slides over it.")
+          .font(.body)
+          .multilineTextAlignment(.center)
+          .foregroundStyle(.secondary)
+          .padding(.horizontal)
+
+        Button(isDrawerOpen ? "Close Drawer" : "Open Drawer") {
+          withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+            isDrawerOpen.toggle()
+          }
+        }
+        .buttonStyle(.borderedProminent)
+      }
+      .padding()
+    }
+  } drawer: {
+    VStack(alignment: .leading, spacing: 16) {
+      Text("Feeds")
+        .font(.title2.weight(.semibold))
+
+      Divider()
+
+      Label("Following", systemImage: "person.2.fill")
+      Label("Discover", systemImage: "sparkles")
+      Label("Lists", systemImage: "list.bullet")
+      Label("Bookmarks", systemImage: "bookmark.fill")
+
+      Spacer()
+    }
+    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    .padding(24)
+    .ignoresSafeArea()
+  }
+  .ignoresSafeArea()
 }
