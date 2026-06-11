@@ -8,6 +8,7 @@
 import XCTest
 import Combine
 import Petrel
+import PetrelCatbird
 @testable import Catbird
 
 @MainActor

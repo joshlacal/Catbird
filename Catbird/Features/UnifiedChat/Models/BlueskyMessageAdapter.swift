@@ -114,10 +114,34 @@ struct BlueskyMessageAdapter: UnifiedChatMessage {
     switch embedUnion {
     case .appBskyEmbedRecordView(let recordView):
       return convertRecord(recordView.record)
-    case .chatBskyEmbedJoinLinkView:
-      return nil
+    case .chatBskyEmbedJoinLinkView(let joinLinkView):
+      return convertJoinLink(joinLinkView.joinLinkPreview)
     case .unexpected:
       return nil
+    }
+  }
+
+  private func convertJoinLink(
+    _ preview: ChatBskyEmbedJoinLink.ViewJoinLinkPreviewUnion
+  ) -> UnifiedEmbed {
+    switch preview {
+    case .chatBskyGroupDefsJoinLinkPreviewView(let view):
+      return .groupInvite(
+        .preview(
+          name: view.name,
+          memberCount: view.memberCount,
+          memberLimit: view.memberLimit,
+          code: view.code
+        )
+      )
+    case .chatBskyGroupDefsDisabledJoinLinkPreviewView(let view):
+      return .groupInvite(.unavailable(code: view.code))
+    case .chatBskyGroupDefsInvalidJoinLinkPreviewView(let view):
+      return .groupInvite(.unavailable(code: view.code))
+    case .unexpected:
+      // Open union with unstable schemas: treat unknown members as unavailable
+      // rather than dropping the embed (isKnownJoinLinkPreview pattern).
+      return .groupInvite(.unavailable(code: nil))
     }
   }
 

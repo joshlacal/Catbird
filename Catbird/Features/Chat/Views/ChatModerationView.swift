@@ -2,23 +2,18 @@ import OSLog
 import Petrel
 import SwiftUI
 
-/// Moderation tools for chat administrators
+/// Internal tools over `chat.bsky.moderation.*`. Those endpoints require chat-service
+/// admin (service-auth) credentials that no ordinary Catbird user session holds, and the
+/// app tracks no Bluesky moderation role — so the tools are compiled into debug builds
+/// only rather than gated on a runtime role check.
 struct ChatModerationView: View {
-  @Environment(AppState.self) private var appState
-  @State private var selectedTab = 0
-  @State private var hasAdminAccess = false
-  @State private var isCheckingAccess = true
+  #if DEBUG
+    @State private var selectedTab = 0
+  #endif
 
   var body: some View {
     Group {
-      if isCheckingAccess {
-        VStack(spacing: 12) {
-          ProgressView()
-          Text("Verifying admin access…")
-            .font(.caption)
-            .foregroundColor(.secondary)
-        }
-      } else if hasAdminAccess {
+      #if DEBUG
         TabView(selection: $selectedTab) {
           ActorMetadataView()
             .tabItem {
@@ -41,43 +36,23 @@ struct ChatModerationView: View {
             }
             .tag(2)
         }
-      } else {
+      #else
         VStack(spacing: 12) {
           Image(systemName: "lock.shield")
             .font(.largeTitle)
             .foregroundColor(.secondary)
-          Text("Admin tools are limited to conversation admins.")
+          Text("Moderation tools require chat service admin access and are not available in this build.")
             .font(.callout)
             .multilineTextAlignment(.center)
             .foregroundColor(.secondary)
         }
         .padding()
-      }
+      #endif
     }
     .navigationTitle("Moderation Tools")
     #if os(iOS)
       .toolbarTitleDisplayMode(.inline)
     #endif
-      .task {
-        await checkAdminAccess()
-      }
-  }
-
-  private func checkAdminAccess() async {
-    guard let conversationManager = await appState.getMLSConversationManager() else {
-      await MainActor.run {
-        hasAdminAccess = false
-        isCheckingAccess = false
-      }
-      return
-    }
-
-    let isAdmin = await conversationManager.isCurrentUserAdminInAnyConversation()
-
-    await MainActor.run {
-      hasAdminAccess = isAdmin
-      isCheckingAccess = false
-    }
   }
 }
 

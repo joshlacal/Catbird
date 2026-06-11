@@ -9,6 +9,7 @@
 import Testing
 import Foundation
 import Petrel
+import PetrelCatbird
 @testable import Catbird
 
 /// Test suite for MLS moderation and admin API endpoints

@@ -18,7 +18,14 @@ extension URLCardResponse {
       uri: uri ?? URI(""),
       title: self.title,
       description: self.description,
-      thumb: URI(self.image)
+      thumb: URI(self.image),
+      createdAt: nil,
+      updatedAt: nil,
+      readingTime: nil,
+      labels: nil,
+      source: nil,
+      associatedRefs: nil,
+      associatedProfiles: nil
     )
   }
 }

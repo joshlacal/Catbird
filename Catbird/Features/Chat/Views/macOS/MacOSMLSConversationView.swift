@@ -3,6 +3,7 @@ import CatbirdMLSCore
 import GRDB
 import OSLog
 import Petrel
+import PetrelCatbird
 import SwiftUI
 
 // MARK: - macOS MLS Conversation Detail

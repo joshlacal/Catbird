@@ -4,6 +4,7 @@ import CatbirdMLSCore
 import Foundation
 import OSLog
 import Petrel
+import PetrelCatbird
 
 private let mlsVoiceSenderLogger = Logger(subsystem: "blue.catbird", category: "MLSVoiceSender")
 
@@ -135,7 +136,7 @@ final class MLSVoiceSender {
     do {
       let prepared = preview.preparedData
 
-      let (responseCode, output) = try await client.blue.catbird.mlschat.uploadBlob(
+      let (responseCode, output) = try await client.blue.catbird.mlsChat.uploadBlob(
         data: prepared.encryptedBlob,
         mimeType: "application/octet-stream",
         stripMetadata: false,

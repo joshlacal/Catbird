@@ -9,6 +9,7 @@
 import XCTest
 import GRDB
 import Petrel
+import PetrelCatbird
 import CatbirdMLSCore
 @testable import Catbird
 

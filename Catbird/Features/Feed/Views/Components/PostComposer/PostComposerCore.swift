@@ -976,7 +976,8 @@ extension PostComposerViewModel {
             uri: URI(uriString: gifURL),
             title: title.isEmpty ? "GIF" : title,
             description: description,
-            thumb: thumbBlob
+            thumb: thumbBlob,
+            associatedRefs: nil
         )
 
         return .appBskyEmbedExternal(AppBskyEmbedExternal(external: external))
@@ -1008,7 +1009,8 @@ extension PostComposerViewModel {
             uri: URI(uriString: cacheKey),
             title: urlCard.title,
             description: urlCard.description,
-            thumb: thumbBlob
+            thumb: thumbBlob,
+            associatedRefs: nil
         )
 
         // Start async thumbnail upload if image is available and not cached
@@ -1038,7 +1040,8 @@ extension PostComposerViewModel {
             uri: URI(uriString: cacheKey),
             title: urlCard.title,
             description: urlCard.description,
-            thumb: thumbBlob
+            thumb: thumbBlob,
+            associatedRefs: nil
         )
 
         return .appBskyEmbedExternal(AppBskyEmbedExternal(external: external))

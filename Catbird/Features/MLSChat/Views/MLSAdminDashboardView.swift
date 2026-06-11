@@ -8,6 +8,7 @@ import CatbirdMLSCore
 
 import SwiftUI
 import Petrel
+import PetrelCatbird
 import OSLog
 
 @available(iOS 26.0, macOS 26.0, *)

@@ -8,6 +8,7 @@ import CatbirdMLSCore
 
 import Foundation
 import Petrel
+import PetrelCatbird
 
 /// Represents a user's presence in an MLS conversation, grouping all their devices together
 struct MLSGroupedMember: Identifiable, Equatable {

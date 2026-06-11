@@ -1,6 +1,7 @@
 import Foundation
 import OSLog
 import Petrel
+import PetrelCatbird
 
 /// Sends a heartbeat POST to Nest every 60 seconds while any chat view is visible.
 ///

@@ -4,6 +4,7 @@ import UIKit
 import Foundation
 import OSLog
 import Petrel
+import PetrelCatbird
 import SwiftUI
 
 // PostEmbedData is now defined in UnifiedChat/Models/UnifiedEmbed.swift
@@ -51,10 +52,19 @@ final class ChatManager: StateInvalidationSubscriber {
   private let activeConversationPollInterval: TimeInterval = 5.0  // 5 seconds when viewing a conversation
   private let activeListPollInterval: TimeInterval = 30.0  // 30 seconds when viewing conversation list
   private let backgroundPollInterval: TimeInterval = 120.0  // 2 minutes when backgrounded
-  private let inactivePollInterval: TimeInterval = 180.0  // 3 minutes when inactive
-  
+  private let maxPollBackoffInterval: TimeInterval = 300.0  // 5 minute cap after repeated rate limits
+
+  // Rate-limit backoff: each HTTP 429 doubles the affected poll interval (capped
+  // above); the next clean success returns the loop to its normal cadence
+  private var conversationsPollBackoff: TimeInterval = 0
+  private var messagePollBackoffs: [String: TimeInterval] = [:]
+
   // Callback for when unread count changes
   var onUnreadCountChanged: (() -> Void)?
+
+  // Fired after every conversations poll tick, so AppState can refresh adjacent
+  // state (unread badge, MLS list) off the single list poller
+  var onConversationsPolled: (() -> Void)?
 
   // Track last seen message for each conversation to detect new messages
   private var lastSeenMessages: [String: String] = [:]  // [convoId: messageId]
@@ -237,6 +247,8 @@ final class ChatManager: StateInvalidationSubscriber {
     originalMessagesMap = [:]
     conversationsCursor = nil
     messagesCursors = [:]
+    conversationsPollBackoff = 0
+    messagePollBackoffs = [:]
     lastSeenMessages = [:]
     loadingConversations = false
     loadingMessages = [:]
@@ -293,6 +305,9 @@ final class ChatManager: StateInvalidationSubscriber {
          let (responseCode, response) = try await client.chat.bsky.convo.listConvos(input: params)
  
       guard responseCode >= 200 && responseCode < 300 else {
+        if responseCode == 429 {
+          increaseConversationsPollBackoff()
+        }
         setNetworkError(code: responseCode, context: "loadConversations")
         loadingConversations = false
         return
@@ -316,7 +331,8 @@ final class ChatManager: StateInvalidationSubscriber {
       }
 
       conversationsCursor = convosData.cursor
-      
+      conversationsPollBackoff = 0
+
       // Update filtered lists based on status
       updateConversationsByStatus()
 
@@ -331,6 +347,9 @@ final class ChatManager: StateInvalidationSubscriber {
       await checkForNewMessages()
 
     } catch {
+      if isRateLimitError(error) {
+        increaseConversationsPollBackoff()
+      }
       logger.error("Error loading conversations: \(error.localizedDescription)")
       setErrorState(error)
     }
@@ -413,6 +432,7 @@ final class ChatManager: StateInvalidationSubscriber {
         let payload = ChatNotificationPayload(
           messageID: messageID,
           conversationID: conversation.id,
+          recipientDid: currentUserDID,
           senderDisplayName: senderDisplayName,
           senderHandle: senderHandle,
           conversationTitle: conversationTitle,
@@ -510,6 +530,9 @@ final class ChatManager: StateInvalidationSubscriber {
       let (responseCode, response) = try await client.chat.bsky.convo.getMessages(input: params)
  
       guard responseCode >= 200 && responseCode < 300 else {
+        if responseCode == 429 {
+          increaseMessagePollBackoff(for: convoId)
+        }
         setNetworkError(code: responseCode, context: "loadMessages(\(convoId))")
         loadingMessages[convoId] = false
         return
@@ -556,6 +579,7 @@ final class ChatManager: StateInvalidationSubscriber {
       }
 
       messagesCursors[convoId] = messagesData.cursor
+      messagePollBackoffs[convoId] = nil
 
       logger.debug(
         "Loaded \(messageCount) messages for conversation \(convoId). New cursor: \(messagesData.cursor ?? "nil")"
@@ -565,6 +589,9 @@ final class ChatManager: StateInvalidationSubscriber {
       await markConversationAsRead(convoId: convoId)
 
     } catch {
+      if isRateLimitError(error) {
+        increaseMessagePollBackoff(for: convoId)
+      }
       logger.error("Error loading messages for \(convoId): \(error.localizedDescription)")
       setErrorState(error)
     }
@@ -572,26 +599,43 @@ final class ChatManager: StateInvalidationSubscriber {
     loadingMessages[convoId] = false
   }
 
+  /// Outcome of a `leaveConversation` call, so call sites can branch on the
+  /// owner-must-lock case (chat.bsky.convo.leaveConvo `OwnerCannotLeave`).
+  enum LeaveConversationResult: Equatable {
+    case success
+    /// The current user owns this group; the server requires locking it before leaving.
+    case ownerMustLockFirst
+    case failure
+  }
+
   @MainActor
-  func leaveConversation(convoId: String) async {
+  @discardableResult
+  func leaveConversation(convoId: String) async -> LeaveConversationResult {
     guard let client = client else {
       logger.error("Cannot leave conversation \(convoId): client is nil")
       errorState = .noClient
-      return
+      return .failure
     }
 
-    // Implement leave functionality here
-    // 1. Create ChatBskyConvoLeave.Input
-    // 2. Call client.chat.bsky.convo.leave
-    // 3. Check responseCode
-    // 4. If success, remove conversation from local state
     let leaveInput = ChatBskyConvoLeaveConvo.Input(convoId: convoId)
      do {
       let (responseCode, _) = try await client.chat.bsky.convo.leaveConvo(input: leaveInput)
- 
+
       guard responseCode >= 200 && responseCode < 300 else {
-        setNetworkError(code: responseCode, context: "leaveConversation(\(convoId))")
-        return
+        // Lexicon-defined errors arrive as HTTP 400 (the generated wrapper drops
+        // the error body); for a group the current user owns, the 400 here is
+        // `OwnerCannotLeave` — the owner must lock the group before leaving.
+        if responseCode == 400, await isCurrentUserGroupOwner(convoId: convoId) {
+          logger.info("Leave blocked for owned group \(convoId); lock required before leaving")
+          errorState = .ownerCannotLeave
+          return .ownerMustLockFirst
+        }
+        setInteractiveNetworkError(
+          code: responseCode,
+          context: "leaveConversation(\(convoId))",
+          operation: "leave this conversation"
+        )
+        return .failure
       }
 
       // Remove conversation from local state
@@ -600,11 +644,67 @@ final class ChatManager: StateInvalidationSubscriber {
         originalMessagesMap[convoId] = nil  // Clear original messages for this convo
         logger.debug("Left conversation \(convoId) successfully.")
       }
+      return .success
 
     } catch {
       logger.error("Error leaving conversation \(convoId): \(error.localizedDescription)")
       setErrorState(error)
+      return .failure
     }
+  }
+
+  @MainActor
+  @discardableResult
+  func lockConversation(convoId: String) async -> Bool {
+    guard let client = client else {
+      logger.error("Cannot lock conversation \(convoId): client is nil")
+      errorState = .noClient
+      return false
+    }
+
+    let lockInput = ChatBskyConvoLockConvo.Input(convoId: convoId)
+     do {
+      let (responseCode, response) = try await client.chat.bsky.convo.lockConvo(input: lockInput)
+
+      guard responseCode >= 200 && responseCode < 300 else {
+        // `ConvoLocked` (already locked) also arrives as HTTP 400; treat an
+        // already-locked group as success so lock-then-leave stays idempotent.
+        if responseCode == 400,
+           conversations.first(where: { $0.id == convoId })?.isLockedForSending == true {
+          logger.debug("Conversation \(convoId) is already locked")
+          return true
+        }
+        setInteractiveNetworkError(
+          code: responseCode,
+          context: "lockConversation(\(convoId))",
+          operation: "lock this group"
+        )
+        return false
+      }
+
+      // The response carries the updated ConvoView (lockStatus flipped)
+      if let updatedConvo = response?.convo,
+         let index = conversations.firstIndex(where: { $0.id == updatedConvo.id }) {
+        conversations[index] = updatedConvo
+      }
+      logger.debug("Conversation \(convoId) locked successfully.")
+      return true
+
+    } catch {
+      logger.error("Error locking conversation \(convoId): \(error.localizedDescription)")
+      setErrorState(error)
+      return false
+    }
+  }
+
+  /// Owner leave path (social-app `leaveAndLockConvo`): the server rejects
+  /// `leaveConvo` for group owners with `OwnerCannotLeave`, so lock the group
+  /// first, then leave.
+  @MainActor
+  @discardableResult
+  func lockAndLeaveConversation(convoId: String) async -> Bool {
+    guard await lockConversation(convoId: convoId) else { return false }
+    return await leaveConversation(convoId: convoId) == .success
   }
 
   @MainActor
@@ -849,9 +949,24 @@ final class ChatManager: StateInvalidationSubscriber {
       logger.debug("Sending message to conversation \(convoId)\(embed != nil ? " with embed" : "")")
    
       let (responseCode, response) = try await client.chat.bsky.convo.sendMessage(input: input)
- 
-      guard responseCode >= 200 && responseCode < 300, let messageView = response else {
-        setNetworkError(code: responseCode, context: "sendMessage((convoId))")
+
+      guard responseCode >= 200 && responseCode < 300 else {
+        // `ConvoLocked` / `ConvoLockedByModeration` are the lexicon 400s for group
+        // sends; the error body is dropped by the generated wrapper, so map from
+        // the conversation kind.
+        let typedError: ChatError? =
+          conversation(withID: convoId)?.isGroupConversation == true ? .conversationLocked : nil
+        setInteractiveNetworkError(
+          code: responseCode,
+          context: "sendMessage(\(convoId))",
+          typedError: typedError,
+          operation: "send this message"
+        )
+        return false
+      }
+
+      guard let messageView = response else {
+        setEmptyResponseError(context: "sendMessage(\(convoId))")
         return false
       }
 
@@ -1092,9 +1207,16 @@ final class ChatManager: StateInvalidationSubscriber {
     let input = ChatBskyConvoDeleteMessageForSelf.Input(convoId: convoId, messageId: messageId)
      do {
       let (responseCode, _) = try await client.chat.bsky.convo.deleteMessageForSelf(input: input)
- 
+
       guard responseCode >= 200 && responseCode < 300 else {
-        setNetworkError(code: responseCode, context: "deleteMessageForSelf((messageId))")
+        // `MessageDeleteNotAllowed` is the lexicon 400 for this endpoint
+        // (e.g. system messages can't be deleted).
+        setInteractiveNetworkError(
+          code: responseCode,
+          context: "deleteMessageForSelf(\(messageId))",
+          typedError: .messageDeleteNotAllowed,
+          operation: "delete this message"
+        )
         return false
       }
 
@@ -1234,7 +1356,16 @@ final class ChatManager: StateInvalidationSubscriber {
       let input = ChatBskyConvoAddReaction.Input(
         convoId: convoId, messageId: messageId, value: emoji)
          let (responseCode, response) = try await client.chat.bsky.convo.addReaction(input: input)
-       guard responseCode >= 200 && responseCode < 300, let updated = response?.message else {
+       guard responseCode >= 200 && responseCode < 300 else {
+        setInteractiveNetworkError(
+          code: responseCode,
+          context: "addReaction(\(messageId))",
+          typedError: await addReactionTypedError(convoId: convoId, messageId: messageId),
+          operation: "add this reaction"
+        )
+        return false
+      }
+      guard let updated = response?.message else {
         return false
       }
       await updateMessageInLocalState(updated)
@@ -1256,7 +1387,21 @@ final class ChatManager: StateInvalidationSubscriber {
       let input = ChatBskyConvoRemoveReaction.Input(
         convoId: convoId, messageId: messageId, value: emoji)
          let (responseCode, response) = try await client.chat.bsky.convo.removeReaction(input: input)
-       guard responseCode >= 200 && responseCode < 300, let updated = response?.message else {
+       guard responseCode >= 200 && responseCode < 300 else {
+        // Locked convos block reaction changes; otherwise `ReactionNotAllowed`
+        // is the lexicon 400 for removeReaction.
+        let typedError: ChatError =
+          conversation(withID: convoId)?.isLockedForSending == true
+            ? .conversationLocked : .reactionNotAllowed
+        setInteractiveNetworkError(
+          code: responseCode,
+          context: "removeReaction(\(messageId))",
+          typedError: typedError,
+          operation: "remove this reaction"
+        )
+        return false
+      }
+      guard let updated = response?.message else {
         return false
       }
       await updateMessageInLocalState(updated)
@@ -1891,16 +2036,18 @@ final class ChatManager: StateInvalidationSubscriber {
       guard let self = self else { return }
       
       while !Task.isCancelled {
-        let interval = self.isAppActive ? self.activeListPollInterval : self.backgroundPollInterval
-        
+        let baseInterval = self.isAppActive ? self.activeListPollInterval : self.backgroundPollInterval
+        let interval = max(baseInterval, self.conversationsPollBackoff)
+
         do {
           try await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
         } catch {
           break
         }
-        
+
         if !Task.isCancelled {
           await self.loadConversations(refresh: true)
+          self.onConversationsPolled?()
         }
       }
     }
@@ -1923,14 +2070,15 @@ final class ChatManager: StateInvalidationSubscriber {
       guard let self = self else { return }
       
       while !Task.isCancelled {
-        let interval = self.isAppActive ? self.activeConversationPollInterval : self.backgroundPollInterval
-        
+        let baseInterval = self.isAppActive ? self.activeConversationPollInterval : self.backgroundPollInterval
+        let interval = max(baseInterval, self.messagePollBackoffs[convoId] ?? 0)
+
         do {
           try await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
         } catch {
           break
         }
-        
+
         if !Task.isCancelled {
           await self.loadMessages(convoId: convoId, refresh: true)
         }
@@ -1944,6 +2092,7 @@ final class ChatManager: StateInvalidationSubscriber {
   func stopMessagePolling(for convoId: String) {
     messagePollingTasks[convoId]?.cancel()
     messagePollingTasks[convoId] = nil
+    messagePollBackoffs[convoId] = nil
     logger.debug("Stopped message polling for conversation \(convoId)")
   }
   
@@ -1954,8 +2103,35 @@ final class ChatManager: StateInvalidationSubscriber {
     for convoId in messagePollingTasks.keys {
       stopMessagePolling(for: convoId)
     }
-    
+
     logger.debug("Stopped all polling tasks")
+  }
+
+  // MARK: - Rate-Limit Backoff
+
+  /// Whether a thrown Petrel error is rate-limit-shaped (HTTP 429).
+  private func isRateLimitError(_ error: Error) -> Bool {
+    if case let Petrel.NetworkError.responseError(statusCode) = error, statusCode == 429 {
+      return true
+    }
+    return false
+  }
+
+  /// Doubles the conversations poll interval after a rate limit, up to the cap.
+  private func increaseConversationsPollBackoff() {
+    let current = max(conversationsPollBackoff, activeListPollInterval)
+    conversationsPollBackoff = min(current * 2, maxPollBackoffInterval)
+    logger.warning(
+      "Rate limited (429) on listConvos, backing conversations polling off to \(self.conversationsPollBackoff)s")
+  }
+
+  /// Doubles the message poll interval for a conversation after a rate limit, up to the cap.
+  private func increaseMessagePollBackoff(for convoId: String) {
+    let current = max(messagePollBackoffs[convoId] ?? 0, activeConversationPollInterval)
+    let backoff = min(current * 2, maxPollBackoffInterval)
+    messagePollBackoffs[convoId] = backoff
+    logger.warning(
+      "Rate limited (429) on getMessages for \(convoId), backing message polling off to \(backoff)s")
   }
 
   // MARK: - Supporting Types
@@ -1993,6 +2169,15 @@ final class ChatManager: StateInvalidationSubscriber {
     case networkError(code: Int)
     case emptyResponse
     case generalError(Error)
+    case ownerCannotLeave
+    case conversationLocked
+    case messageDeleteNotAllowed
+    case reactionNotAllowed
+    case reactionLimitReached
+    /// Generic user-readable failure for an interactive operation that doesn't
+    /// map to a lexicon-defined error. `operation` is a verb phrase, e.g.
+    /// "send this message".
+    case operationFailed(operation: String)
 
     var errorDescription: String? {
       switch self {
@@ -2006,6 +2191,27 @@ final class ChatManager: StateInvalidationSubscriber {
           "Received an empty response from the server.", comment: "Chat error")
       case .generalError(let error):
         return error.localizedDescription
+      case .ownerCannotLeave:
+        return NSLocalizedString(
+          "You own this group, so you need to lock it before you can leave.",
+          comment: "Chat error")
+      case .conversationLocked:
+        return NSLocalizedString(
+          "This conversation is locked. New messages and reactions are disabled.",
+          comment: "Chat error")
+      case .messageDeleteNotAllowed:
+        return NSLocalizedString("This message can't be deleted.", comment: "Chat error")
+      case .reactionNotAllowed:
+        return NSLocalizedString(
+          "Reactions aren't allowed on this message.", comment: "Chat error")
+      case .reactionLimitReached:
+        return NSLocalizedString(
+          "You've reached the maximum number of reactions for this message.",
+          comment: "Chat error")
+      case .operationFailed(let operation):
+        return String(
+          format: NSLocalizedString("Couldn't %@. Please try again.", comment: "Chat error"),
+          operation)
       }
     }
 
@@ -2021,6 +2227,14 @@ final class ChatManager: StateInvalidationSubscriber {
       case (.generalError(let lError), .generalError(let rError)):
         // Comparing underlying errors can be tricky, often comparing descriptions is sufficient for UI
         return lError.localizedDescription == rError.localizedDescription
+      case (.ownerCannotLeave, .ownerCannotLeave),
+           (.conversationLocked, .conversationLocked),
+           (.messageDeleteNotAllowed, .messageDeleteNotAllowed),
+           (.reactionNotAllowed, .reactionNotAllowed),
+           (.reactionLimitReached, .reactionLimitReached):
+        return true
+      case (.operationFailed(let lOperation), .operationFailed(let rOperation)):
+        return lOperation == rOperation
       default:
         return false
       }
@@ -2085,6 +2299,71 @@ final class ChatManager: StateInvalidationSubscriber {
     // Don't set errorState for transient errors during background polling
   }
   
+  /// Error surfacing for user-initiated operations (leave, lock, send, delete,
+  /// reactions). Unlike `setNetworkError` — used by poll loops, which stay
+  /// silent for non-auth codes — interactive failures always surface to the
+  /// user. Lexicon-defined errors arrive as HTTP 400, whose body Petrel's
+  /// generated wrappers drop, so callers pass the typed error they can infer
+  /// from operation context and local conversation state; everything else
+  /// falls back to a generic user-readable failure message.
+  @MainActor
+  private func setInteractiveNetworkError(
+    code: Int, context: String, typedError: ChatError? = nil, operation: String
+  ) {
+    if code == 401 || code == 403 {
+      logger.error("\(context): Authentication error (HTTP \(code))")
+      errorState = .networkError(code: code)
+      return
+    }
+
+    if code == 400, let typedError {
+      logger.error("\(context): \(String(describing: typedError)) (HTTP 400)")
+      errorState = typedError
+      return
+    }
+
+    logger.error("\(context): HTTP \(code)")
+    errorState = .operationFailed(operation: operation)
+  }
+
+  /// Looks up a conversation in local state by id.
+  @MainActor
+  private func conversation(withID convoId: String) -> ChatBskyConvoDefs.ConvoView? {
+    conversations.first(where: { $0.id == convoId })
+  }
+
+  /// Whether the current user is the owner of the given group conversation,
+  /// based on locally-loaded member roles.
+  @MainActor
+  private func isCurrentUserGroupOwner(convoId: String) async -> Bool {
+    guard let convo = conversation(withID: convoId) else { return false }
+    let currentUserDID: String?
+    if let activeClientDid {
+      currentUserDID = activeClientDid
+    } else {
+      currentUserDID = try? await client?.getDid()
+    }
+    guard let currentUserDID else { return false }
+    return convo.isOwnedGroupConversation(currentUserDID: currentUserDID)
+  }
+
+  /// Best-available mapping for a failed addReaction (the XRPC error name is
+  /// not exposed by the generated wrapper): a locked convo blocks reactions
+  /// outright; otherwise, if the user already has reactions on this message,
+  /// the add-only `ReactionLimitReached` is the plausible cause — a blanket
+  /// `ReactionNotAllowed` would have rejected their earlier reactions too.
+  @MainActor
+  private func addReactionTypedError(convoId: String, messageId: String) async -> ChatError {
+    if conversation(withID: convoId)?.isLockedForSending == true {
+      return .conversationLocked
+    }
+    let currentUserDid = try? await client?.getDid()
+    let existingReactions = originalMessagesMap[convoId]?[messageId]?.reactions?.filter {
+      $0.sender.did.didString() == currentUserDid
+    } ?? []
+    return existingReactions.isEmpty ? .reactionNotAllowed : .reactionLimitReached
+  }
+
   /// Helper method to safely set error state for empty responses during polling
   private func setEmptyResponseError(context: String) {
     // Empty responses during polling are transient - server may be temporarily overloaded

@@ -54,4 +54,15 @@ enum UnifiedConversation: Identifiable {
     if case .mls = self { return true }
     return false
   }
+
+  /// Classifies a conversation id by shape, for deep links that arrive before the
+  /// coordinator has merged its lists. MLS ids are hex-encoded MLS group ids
+  /// (even-length, 32+ chars) or server-issued UUIDs; Bluesky convo ids are
+  /// 13-character TIDs. Anything not unmistakably MLS-shaped routes to Bluesky,
+  /// matching the pre-existing fallback behavior for Bluesky deep links.
+  static func idLooksLikeMLSConversation(_ id: String) -> Bool {
+    if UUID(uuidString: id) != nil { return true }
+    guard id.count >= 32, id.count.isMultiple(of: 2) else { return false }
+    return id.allSatisfy { $0.isHexDigit }
+  }
 }

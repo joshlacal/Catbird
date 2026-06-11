@@ -3,6 +3,7 @@ import CatbirdMLS
 import CatbirdMLSCore
 import OSLog
 import Petrel
+import PetrelCatbird
 import SwiftUI
 
 private let voicePlayerLogger = Logger(subsystem: "blue.catbird", category: "VoicePlayer")
@@ -130,7 +131,7 @@ struct VoiceMessagePlayerView: View {
     voicePlayerLogger.info("[play] fetching blob \(audioData.blobId)")
     let encryptedData: Data
     do {
-      let (code, response) = try await appState.client.blue.catbird.mlschat.getBlob(
+      let (code, response) = try await appState.client.blue.catbird.mlsChat.getBlob(
         input: .init(blobId: audioData.blobId)
       )
       guard (200..<300).contains(code), let output = response else {

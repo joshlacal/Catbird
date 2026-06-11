@@ -98,7 +98,14 @@ struct ConversationContextMenu: View {
   let conversation: ChatBskyConvoDefs.ConvoView
   @State private var showingSettings = false
   @State private var showingDeleteAlert = false
-  
+  @State private var showingOwnerLeaveAlert = false
+
+  /// Group owners can't leave until the group is locked (`OwnerCannotLeave`),
+  /// so they get the lock-then-leave confirmation instead.
+  private var isOwnedGroup: Bool {
+    conversation.isOwnedGroupConversation(currentUserDID: appState.userDID)
+  }
+
   var body: some View {
     Group {
       Button {
@@ -129,9 +136,13 @@ struct ConversationContextMenu: View {
       }
       
       Button(role: .destructive) {
-        showingDeleteAlert = true
+        if isOwnedGroup {
+          showingOwnerLeaveAlert = true
+        } else {
+          showingDeleteAlert = true
+        }
       } label: {
-        Label("Leave Conversation", systemImage: "trash")
+        Label(isOwnedGroup ? "Lock & Leave Group" : "Leave Conversation", systemImage: "trash")
       }
     }
     .sheet(isPresented: $showingSettings) {
@@ -146,6 +157,16 @@ struct ConversationContextMenu: View {
       }
     } message: {
       Text("Are you sure you want to leave this conversation?")
+    }
+    .alert("Lock & Leave Group", isPresented: $showingOwnerLeaveAlert) {
+      Button("Cancel", role: .cancel) { }
+      Button("Lock & Leave", role: .destructive) {
+        Task {
+          await appState.chatManager.lockAndLeaveConversation(convoId: conversation.id)
+        }
+      }
+    } message: {
+      Text("As the owner, you must lock this group before leaving. Your messages will be deleted for you, but not for the other participants.")
     }
   }
 }

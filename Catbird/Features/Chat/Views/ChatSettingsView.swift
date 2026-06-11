@@ -19,8 +19,6 @@ struct ChatSettingsView: View {
   @State private var isLoadingOptInStatus = true  // Start as true to prevent onChange during init
   @State private var isTogglingOptIn = false
   @State private var hasLoadedInitialState = false  // Track if we've completed initial load
-  @State private var hasAdminAccess = false
-  @State private var isCheckingAdminAccess = true
 
   private let logger = Logger(subsystem: "blue.catbird", category: "ChatSettingsView")
   
@@ -110,14 +108,9 @@ struct ChatSettingsView: View {
           }
           .disabled(isExporting)
 
-          if isCheckingAdminAccess {
-            HStack {
-              ProgressView()
-                .scaleEffect(0.8)
-              Text("Checking admin access…")
-                .foregroundColor(.secondary)
-            }
-          } else if hasAdminAccess {
+          // chat.bsky.moderation.* requires chat-service admin auth no user session has;
+          // the entry point exists for internal debug builds only.
+          #if DEBUG
             NavigationLink {
               ChatModerationView()
             } label: {
@@ -127,21 +120,13 @@ struct ChatSettingsView: View {
                 Text("Moderation Tools")
               }
             }
-          } else {
-            HStack {
-              Image(systemName: "lock.fill")
-                .foregroundColor(.secondary)
-              VStack(alignment: .leading, spacing: 2) {
-                Text("Moderation Tools")
-                  .foregroundColor(.secondary)
-                Text("Visible only to conversation admins")
-                  .font(.caption)
-                  .foregroundColor(.secondary)
-              }
-            }
-          }
+          #endif
         } header: {
-          Text("Data & Moderation")
+          #if DEBUG
+            Text("Data & Moderation")
+          #else
+            Text("Data")
+          #endif
         }
         
         Section {
@@ -205,7 +190,6 @@ struct ChatSettingsView: View {
       }
       .task {
         await loadOptInStatus()
-        await refreshAdminAccess()
       }
       .onAppear {
         // Refresh opt-in status when returning from MLSChatSettingsView (user may have opted out)
@@ -304,27 +288,6 @@ struct ChatSettingsView: View {
     }
   }
 
-  private func refreshAdminAccess() async {
-    await MainActor.run {
-      isCheckingAdminAccess = true
-    }
-
-    guard let conversationManager = await appState.getMLSConversationManager() else {
-      await MainActor.run {
-        hasAdminAccess = false
-        isCheckingAdminAccess = false
-      }
-      return
-    }
-
-    let isAdmin = await conversationManager.isCurrentUserAdminInAnyConversation()
-
-    await MainActor.run {
-      hasAdminAccess = isAdmin
-      isCheckingAdminAccess = false
-    }
-  }
-  
   private func markAllConversationsAsRead() {
     Task {
       isMarkingAllRead = true

@@ -8,6 +8,7 @@ import CatbirdMLSCore
 
 import Foundation
 import Petrel
+import PetrelCatbird
 
 // MARK: - View Models
 

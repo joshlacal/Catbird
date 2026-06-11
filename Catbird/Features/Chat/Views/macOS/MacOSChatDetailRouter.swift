@@ -45,9 +45,15 @@ struct MacOSChatDetailRouter: View {
           .id(convoId)
       }
     } else if let convoId = selectedConvoId {
-      // Deep-link before coordinator has loaded — assume Bluesky DM
-      MacOSBlueskyConversationView(convoId: convoId)
-        .id(convoId)
+      // Deep-link before coordinator has loaded — route by id shape so MLS
+      // deep links don't open the Bluesky detail view
+      if UnifiedConversation.idLooksLikeMLSConversation(convoId) {
+        MacOSMLSConversationView(conversationId: convoId)
+          .id(convoId)
+      } else {
+        MacOSBlueskyConversationView(convoId: convoId)
+          .id(convoId)
+      }
     } else {
       EmptyConversationView()
     }

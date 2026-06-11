@@ -2,6 +2,7 @@ import CatbirdMLSCore
 import NukeUI
 import OSLog
 import Petrel
+import PetrelCatbird
 import SwiftUI
 
 /// Search and add members to an MLS group conversation.
@@ -248,7 +249,7 @@ struct MLSAddMemberView: View {
       if dids.count >= 2 {
         let params = BlueCatbirdMlsChatCheckBlocks.Input(dids: dids)
         let (_, output) = try await conversationManager.apiClient.client
-          .blue.catbird.mlschat.checkBlocks(input: params)
+          .blue.catbird.mlsChat.checkBlocks(input: params)
         if let output, !output.blocks.isEmpty {
           blockWarningMessage = "You can't add @\(participant.handle): a block relationship exists between this user and someone already in the conversation."
           showBlockWarning = true

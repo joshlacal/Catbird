@@ -10,11 +10,18 @@ struct ConversationManagementView: View {
   let conversation: ChatBskyConvoDefs.ConvoView
   
   @State private var showingLeaveAlert = false
+  @State private var showingOwnerLeaveAlert = false
   @State private var isProcessing = false
   @State private var errorMessage: String?
-  
+
   private let logger = Logger(subsystem: "blue.catbird", category: "ConversationManagementView")
-  
+
+  /// Group owners can't leave until the group is locked (`OwnerCannotLeave`),
+  /// so they get the lock-then-leave confirmation instead.
+  private var isOwnedGroup: Bool {
+    conversation.isOwnedGroupConversation(currentUserDID: appState.userDID)
+  }
+
   var body: some View {
     NavigationStack {
       List {
@@ -68,19 +75,27 @@ struct ConversationManagementView: View {
         // Danger zone
         Section {
           Button {
-            showingLeaveAlert = true
+            if isOwnedGroup {
+              showingOwnerLeaveAlert = true
+            } else {
+              showingLeaveAlert = true
+            }
           } label: {
             HStack {
               Image(systemName: "rectangle.portrait.and.arrow.right")
                 .foregroundColor(.red)
-              Text("Leave Conversation")
+              Text(isOwnedGroup ? "Lock & Leave Group" : "Leave Conversation")
             }
           }
           .disabled(isProcessing)
         } header: {
           Text("Danger Zone")
         } footer: {
-          Text("Leaving this conversation will remove it from your chat list. You won't receive new messages unless someone starts a new conversation with you.")
+          if isOwnedGroup {
+            Text("As the owner, you must lock this group before leaving. Locking stops all new messages and reactions for every member.")
+          } else {
+            Text("Leaving this conversation will remove it from your chat list. You won't receive new messages unless someone starts a new conversation with you.")
+          }
         }
       }
       .navigationTitle("Conversation Settings")
@@ -108,6 +123,14 @@ struct ConversationManagementView: View {
         }
       } message: {
         Text("Are you sure you want to leave this conversation? You will no longer receive messages from this conversation.")
+      }
+      .alert("Lock & Leave Group", isPresented: $showingOwnerLeaveAlert) {
+        Button("Cancel", role: .cancel) { }
+        Button("Lock & Leave", role: .destructive) {
+          lockAndLeaveConversation()
+        }
+      } message: {
+        Text("As the owner, you must lock this group before leaving. Your messages will be deleted for you, but not for the other participants.")
       }
       .alert("Error", isPresented: .constant(errorMessage != nil)) {
         Button("OK") {
@@ -155,10 +178,44 @@ struct ConversationManagementView: View {
   private func leaveConversation() {
     Task {
       isProcessing = true
-      await appState.chatManager.leaveConversation(convoId: conversation.id)
+      let result = await appState.chatManager.leaveConversation(convoId: conversation.id)
       await MainActor.run {
         isProcessing = false
-        dismiss()
+        switch result {
+        case .success:
+          dismiss()
+        case .ownerMustLockFirst:
+          // Stale role data led us down the plain-leave path; recover by
+          // offering the lock-then-leave confirmation directly. Clear the
+          // global error so the in-sheet confirmation is the only prompt.
+          appState.chatManager.errorState = nil
+          showingOwnerLeaveAlert = true
+        case .failure:
+          // Show the failure in-sheet; the global alert can't present over
+          // this sheet, so move the message here instead.
+          errorMessage = appState.chatManager.errorState?.localizedDescription
+            ?? "Couldn't leave this conversation. Please try again."
+          appState.chatManager.errorState = nil
+        }
+      }
+    }
+  }
+
+  private func lockAndLeaveConversation() {
+    Task {
+      isProcessing = true
+      let success = await appState.chatManager.lockAndLeaveConversation(convoId: conversation.id)
+      await MainActor.run {
+        isProcessing = false
+        if success {
+          dismiss()
+        } else {
+          // Show the failure in-sheet; the global alert can't present over
+          // this sheet, so move the message here instead.
+          errorMessage = appState.chatManager.errorState?.localizedDescription
+            ?? "Couldn't lock and leave this group. Please try again."
+          appState.chatManager.errorState = nil
+        }
       }
     }
   }

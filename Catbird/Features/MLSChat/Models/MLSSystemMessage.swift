@@ -8,6 +8,7 @@ import CatbirdMLSCore
 
 import Foundation
 import Petrel
+import PetrelCatbird
 
 /// Type of system message for MLS conversation events
 enum SystemMessageType: String, Codable, Sendable {

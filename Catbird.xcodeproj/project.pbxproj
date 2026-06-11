@@ -11,6 +11,8 @@
 		210BF26B2F841D6400C27A4B /* CatbirdMLSCore in Frameworks */ = {isa = PBXBuildFile; productRef = 210BF26A2F841D6400C27A4B /* CatbirdMLSCore */; };
 		210BF26E2F841D7700C27A4B /* Petrel in Frameworks */ = {isa = PBXBuildFile; productRef = 210BF26D2F841D7700C27A4B /* Petrel */; };
 		210BF2702F841DBA00C27A4B /* CatbirdMLSCore in Frameworks */ = {isa = PBXBuildFile; productRef = 210BF26F2F841DBA00C27A4B /* CatbirdMLSCore */; };
+		21D00DF32F841D7700C27A4B /* PetrelCatbird in Frameworks */ = {isa = PBXBuildFile; productRef = 21D00DF22F841D7700C27A4B /* PetrelCatbird */; };
+		21D00DF52F841D7700C27A4B /* PetrelCatbird in Frameworks */ = {isa = PBXBuildFile; productRef = 21D00DF42F841D7700C27A4B /* PetrelCatbird */; };
 		21196F592DC25F5B00662CC3 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 21196F102DC1115900662CC3 /* WidgetKit.framework */; };
 		21196F5A2DC25F5B00662CC3 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 21196F122DC1115900662CC3 /* SwiftUI.framework */; };
 		211DC2F82EA803CB00608AF4 /* Petrel in Frameworks */ = {isa = PBXBuildFile; productRef = 211DC2F72EA803CB00608AF4 /* Petrel */; };
@@ -337,6 +339,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				210BF2702F841DBA00C27A4B /* CatbirdMLSCore in Frameworks */,
+				21D00DF52F841D7700C27A4B /* PetrelCatbird in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -355,6 +358,7 @@
 				21094CF42EBD09010084BFBD /* GRDB in Frameworks */,
 				21EBFE032EB53AB300E707B6 /* Petrel in Frameworks */,
 				210BF26E2F841D7700C27A4B /* Petrel in Frameworks */,
+				21D00DF32F841D7700C27A4B /* PetrelCatbird in Frameworks */,
 				212E946D2D6183D600D3E1DD /* NukeUI in Frameworks */,
 				215ADE7F2E847268003F0DA4 /* Sentry-Dynamic in Frameworks */,
 				219DA5B92EED838E00F717FA /* EmojiKit in Frameworks */,
@@ -475,6 +479,7 @@
 			name = NotificationServiceExtension;
 			packageProductDependencies = (
 				210BF26F2F841DBA00C27A4B /* CatbirdMLSCore */,
+				21D00DF42F841D7700C27A4B /* PetrelCatbird */,
 			);
 			productName = NotificationServiceExtension;
 			productReference = 212D4B3F2ED1FE730036E016 /* NotificationServiceExtension.appex */;
@@ -521,6 +526,7 @@
 				219DA5B82EED838E00F717FA /* EmojiKit */,
 				210BF26A2F841D6400C27A4B /* CatbirdMLSCore */,
 				210BF26D2F841D7700C27A4B /* Petrel */,
+				21D00DF22F841D7700C27A4B /* PetrelCatbird */,
 				21BAB3502F9775AF00C94C69 /* CatbirdBrand */,
 			);
 			productName = Catbird;
@@ -664,6 +670,7 @@
 				219DA5B72EED838E00F717FA /* XCRemoteSwiftPackageReference "EmojiKit" */,
 				210BF2692F841D6400C27A4B /* XCLocalSwiftPackageReference "../CatbirdMLSCore" */,
 				210BF26C2F841D7700C27A4B /* XCLocalSwiftPackageReference "../Petrel" */,
+				21D00DF12F841D7700C27A4B /* XCLocalSwiftPackageReference "../PetrelCatbird" */,
 				21BAB34F2F9775AF00C94C69 /* XCLocalSwiftPackageReference "../CatbirdBrand" */,
 			);
 			preferredProjectObjectVersion = 77;
@@ -1647,6 +1654,10 @@
 			isa = XCLocalSwiftPackageReference;
 			relativePath = ../Petrel;
 		};
+		21D00DF12F841D7700C27A4B /* XCLocalSwiftPackageReference "../PetrelCatbird" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../PetrelCatbird;
+		};
 		21BAB34F2F9775AF00C94C69 /* XCLocalSwiftPackageReference "../CatbirdBrand" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = ../CatbirdBrand;
@@ -1789,6 +1800,16 @@
 		21BAB3502F9775AF00C94C69 /* CatbirdBrand */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = CatbirdBrand;
+		};
+		21D00DF22F841D7700C27A4B /* PetrelCatbird */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 21D00DF12F841D7700C27A4B /* XCLocalSwiftPackageReference "../PetrelCatbird" */;
+			productName = PetrelCatbird;
+		};
+		21D00DF42F841D7700C27A4B /* PetrelCatbird */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 21D00DF12F841D7700C27A4B /* XCLocalSwiftPackageReference "../PetrelCatbird" */;
+			productName = PetrelCatbird;
 		};
 		21E108292D70BE6F0030A71C /* OrderedCollections */ = {
 			isa = XCSwiftPackageProductDependency;

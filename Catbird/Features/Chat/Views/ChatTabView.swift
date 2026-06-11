@@ -289,8 +289,14 @@ struct ChatTabView: View {
         }
       } else if let convoId = selectedConvoId {
         // Conversation selected but not yet in coordinator (e.g. deep-link before data loads)
-        ConversationView(convoId: convoId)
-          .id(convoId)
+        // — route by id shape so MLS deep links don't open the Bluesky detail view
+        if UnifiedConversation.idLooksLikeMLSConversation(convoId) {
+          MLSConversationDetailView(conversationId: convoId)
+            .id(convoId)
+        } else {
+          ConversationView(convoId: convoId)
+            .id(convoId)
+        }
       } else {
         EmptyConversationView()
       }
@@ -893,13 +899,20 @@ private struct ConditionalSwipeActions: ViewModifier {
   let conversation: ChatBskyConvoDefs.ConvoView
   let enabled: Bool
   @Environment(AppState.self) private var appState
+  @State private var showingOwnerLeaveAlert = false
 
   func body(content: Content) -> some View {
     if enabled {
       content
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
           Button(role: .destructive) {
-            Task { await appState.chatManager.leaveConversation(convoId: conversation.id) }
+            // Group owners can't leave until the group is locked
+            // (`OwnerCannotLeave`) — confirm the lock-then-leave path instead.
+            if conversation.isOwnedGroupConversation(currentUserDID: appState.userDID) {
+              showingOwnerLeaveAlert = true
+            } else {
+              Task { await appState.chatManager.leaveConversation(convoId: conversation.id) }
+            }
           } label: {
             Label("Delete", systemImage: "trash")
           }
@@ -914,6 +927,14 @@ private struct ConditionalSwipeActions: ViewModifier {
             Label(conversation.muted ? "Unmute" : "Mute", systemImage: conversation.muted ? "bell" : "bell.slash")
           }
           .tint(conversation.muted ? .blue : .orange)
+        }
+        .alert("Lock & Leave Group", isPresented: $showingOwnerLeaveAlert) {
+          Button("Cancel", role: .cancel) { }
+          Button("Lock & Leave", role: .destructive) {
+            Task { await appState.chatManager.lockAndLeaveConversation(convoId: conversation.id) }
+          }
+        } message: {
+          Text("As the owner, you must lock this group before leaving. Your messages will be deleted for you, but not for the other participants.")
         }
     } else {
       content

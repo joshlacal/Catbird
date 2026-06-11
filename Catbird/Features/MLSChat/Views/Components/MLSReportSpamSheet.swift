@@ -8,6 +8,7 @@ import CatbirdMLSCore
 
 import SwiftUI
 import Petrel
+import PetrelCatbird
 import OSLog
 
 @Observable
@@ -58,7 +59,7 @@ final class MLSReportSpamViewModel {
         reason: reason?.isEmpty == true ? nil : reason
       )
 
-      let (responseCode, _) = try await apiClient.client.blue.catbird.mlschat.reportSpam(
+      let (responseCode, _) = try await apiClient.client.blue.catbird.mlsChat.reportSpam(
         input: input
       )
 

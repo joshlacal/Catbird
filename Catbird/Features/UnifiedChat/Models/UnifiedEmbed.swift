@@ -11,6 +11,17 @@ enum UnifiedEmbed: Hashable, Sendable {
   case tile(TileEmbedData)
   case image(ImageEmbedData)
   case audio(AudioEmbedData)
+  case groupInvite(GroupInviteEmbedData)
+}
+
+// MARK: - GroupInviteEmbedData
+
+/// Join-link invite preview from `chat.bsky.embed.joinLink#view` (3-way open union).
+/// Disabled, invalid, and unknown union members all collapse to `.unavailable` —
+/// the schemas are unstable upstream, so an unknown `$type` must never render as a valid invite.
+enum GroupInviteEmbedData: Hashable, Sendable {
+  case preview(name: String, memberCount: Int, memberLimit: Int, code: String)
+  case unavailable(code: String?)
 }
 
 // MARK: - BlueskyRecordEmbedData

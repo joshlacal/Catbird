@@ -1,6 +1,7 @@
 import CatbirdMLSCore
 import Foundation
 import Petrel
+import PetrelCatbird
 
 struct MLSMessageDisplayOrderKey: Comparable, Sendable {
   let epoch: Int

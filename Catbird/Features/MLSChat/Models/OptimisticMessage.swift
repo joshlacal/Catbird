@@ -1,5 +1,6 @@
 import Foundation
 import Petrel
+import PetrelCatbird
 import CatbirdMLSCore
 
 /// Optimistic message shown immediately before server confirmation

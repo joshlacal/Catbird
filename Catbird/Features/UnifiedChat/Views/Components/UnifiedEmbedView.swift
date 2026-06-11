@@ -46,6 +46,59 @@ struct UnifiedEmbedView: View {
 
     case .audio(let audioData):
       audioEmbed(audioData)
+
+    case .groupInvite(let invite):
+      groupInviteEmbed(invite)
+    }
+  }
+
+  // MARK: - Group Invite Embed
+
+  /// Placeholder card for join-link invites — joining via link is not supported yet,
+  /// so the card carries no join action; copying the link is the only affordance.
+  @ViewBuilder
+  private func groupInviteEmbed(_ invite: GroupInviteEmbedData) -> some View {
+    switch invite {
+    case .preview(let name, let memberCount, let memberLimit, let code):
+      VStack(alignment: .leading, spacing: 4) {
+        HStack(spacing: 8) {
+          Image(systemName: "person.2.fill")
+            .foregroundStyle(.secondary)
+          Text(name)
+            .font(.caption)
+            .fontWeight(.medium)
+            .foregroundStyle(.primary)
+            .lineLimit(2)
+            .multilineTextAlignment(.leading)
+        }
+
+        Text("Group invite · \(memberCount) of \(memberLimit) members")
+          .font(.caption2)
+          .foregroundStyle(.secondary)
+          .lineLimit(1)
+      }
+      .padding(10)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .embedCardStyle(colorScheme: colorScheme)
+      .contextMenu {
+        Button {
+          PlatformApplication.copyToClipboard("https://bsky.app/chat/\(code)")
+        } label: {
+          Label("Copy Invite Link", systemImage: "doc.on.doc")
+        }
+      }
+
+    case .unavailable:
+      HStack(spacing: 8) {
+        Image(systemName: "person.2.slash")
+          .foregroundStyle(.secondary)
+        Text("This invite is no longer available")
+          .font(.caption2)
+          .foregroundStyle(.secondary)
+      }
+      .padding(10)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .embedCardStyle(colorScheme: colorScheme)
     }
   }
 
@@ -688,6 +741,18 @@ extension View {
           uri: "at://did:plc:123/app.bsky.feed.post/abc",
           cid: "bafyreib..."
         )),
+      navigationPath: .constant(NavigationPath())
+    )
+
+    UnifiedEmbedView(
+      embed: .groupInvite(
+        .preview(name: "Bird Watchers", memberCount: 12, memberLimit: 50, code: "abc123")
+      ),
+      navigationPath: .constant(NavigationPath())
+    )
+
+    UnifiedEmbedView(
+      embed: .groupInvite(.unavailable(code: "abc123")),
       navigationPath: .constant(NavigationPath())
     )
   }

@@ -9,6 +9,7 @@ import CoreText
 import GRDB
 import OSLog
 import Petrel
+import PetrelCatbird
 import Security
 import SwiftData
 import SwiftUI
@@ -354,6 +355,10 @@ struct CatbirdApp: App {
   // MARK: - Initialization
   init() {
     logger.info("🚀 CatbirdApp initializing")
+
+    // Register blue.catbird.* / place.stream.* lexicon types with Petrel's decoder registry
+    // before any responses containing custom types are decoded.
+    PetrelCatbirdLexicons.register()
 
     // Signal-style: TRUNCATE checkpoint at launch to clear any leftover WAL from previous session.
     // If the previous session was terminated before budget checkpoints ran, WAL could be large.
@@ -2855,7 +2860,7 @@ private extension CatbirdApp {
         ?? "unknown"
 
       let stats = try await conversationManager.apiClient.getKeyPackageStats()
-      let (statusCode, listOutput) = try await conversationManager.apiClient.client.blue.catbird.mlschat.listDevices(
+      let (statusCode, listOutput) = try await conversationManager.apiClient.client.blue.catbird.mlsChat.listDevices(
         input: BlueCatbirdMlsChatListDevices.Parameters()
       )
       guard statusCode == 200, let listOutput else {

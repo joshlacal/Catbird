@@ -1,6 +1,7 @@
 import CatbirdMLSCore
 import Foundation
 import Petrel
+import PetrelCatbird
 
   /// Represents a decrypted MLS message with sender information
   /// This pairs the encrypted MessageView from the server with decrypted payload and sender

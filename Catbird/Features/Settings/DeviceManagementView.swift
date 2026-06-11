@@ -1,5 +1,6 @@
 import SwiftUI
 import Petrel
+import PetrelCatbird
 import OSLog
 import CatbirdMLSCore
 
@@ -220,7 +221,7 @@ final class DeviceManagementViewModel {
 
         do {
             logger.info("Loading devices...")
-            let (_, output) = try await client.blue.catbird.mlschat.listDevices(input: .init())
+            let (_, output) = try await client.blue.catbird.mlsChat.listDevices(input: .init())
             devices = output?.devices ?? []
             logger.info("Loaded \(self.devices.count) devices")
         } catch {
@@ -242,7 +243,7 @@ final class DeviceManagementViewModel {
             logger.info("Deleting device: \(device.deviceId)")
 
             let input = BlueCatbirdMlsChatRemoveDevice.Input(deviceId: device.deviceId)
-            let (_, output) = try await client.blue.catbird.mlschat.removeDevice(input: input)
+            let (_, output) = try await client.blue.catbird.mlsChat.removeDevice(input: input)
 
             let deleted = output?.deleted ?? false
             logger.info("Device deleted: \(deleted)")

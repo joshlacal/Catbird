@@ -1,6 +1,7 @@
 import CatbirdMLSCore
 import OSLog
 import Petrel
+import PetrelCatbird
 import SensitiveContentAnalysis
 import SwiftUI
 
@@ -344,7 +345,7 @@ struct MLSImageView: View {
 
     do {
       // Download encrypted blob via generated Petrel endpoint
-      let (responseCode, output) = try await appState.client.blue.catbird.mlschat.getBlob(
+      let (responseCode, output) = try await appState.client.blue.catbird.mlsChat.getBlob(
         input: .init(blobId: imageEmbed.blobId)
       )
 

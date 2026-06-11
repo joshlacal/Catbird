@@ -26,6 +26,8 @@ struct NotificationWidgetData: Codable {
 struct ChatNotificationPayload {
   let messageID: String
   let conversationID: String
+  /// DID of the account the message was delivered to, so a tap can switch to it first
+  let recipientDid: String
   let senderDisplayName: String
   let senderHandle: String
   let conversationTitle: String
@@ -1102,6 +1104,7 @@ final class NotificationManager: NSObject {
     content.userInfo = [
       "type": "chat",
       "conversationID": payload.conversationID,
+      "recipientDid": payload.recipientDid,
       "messageID": payload.messageID,
       "senderHandle": payload.senderHandle,
     ]
@@ -3483,6 +3486,32 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
       return
     }
 
+    // Handle chat notifications that identify the conversation by ID instead of URI:
+    // NSE `chat_message` pushes carry `convoId`, local polling notifications carry
+    // `conversationID`. Payloads with `uri`/`did` keys keep the generic path below.
+    if let convoId = Self.chatConversationID(fromUserInfo: userInfo) {
+      let recipientDid =
+        (userInfo["recipientDid"] as? String) ?? resolveRecipientDID(from: userInfo)
+
+      Task {
+        // Switch to correct account if needed
+        if let did = recipientDid {
+          await ensureActiveAccount(for: did)
+        }
+
+        notificationLogger.info(
+          "Chat notification tapped - navigating to conversation: \(convoId)")
+        #if os(iOS)
+        await handleChatNotificationNavigation(convoId)
+        #endif
+
+        await MainActor.run {
+          completionHandler()
+        }
+      }
+      return
+    }
+
     if targetDid != nil || (uriString != nil && typeString != nil) {
       Task {
         if let did = targetDid {
@@ -3498,6 +3527,19 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
     }
 
     completionHandler()
+  }
+
+  /// Extract the conversation ID from a chat notification payload, or nil when the
+  /// payload is not chat-shaped or already satisfies the generic `uri`/`did` routing
+  /// guard (those payloads must keep their existing path).
+  nonisolated static func chatConversationID(fromUserInfo userInfo: [AnyHashable: Any]) -> String? {
+    guard (userInfo["did"] as? String) == nil, (userInfo["uri"] as? String) == nil else {
+      return nil
+    }
+    guard let type = userInfo["type"] as? String, type == "chat" || type == "chat_message" else {
+      return nil
+    }
+    return (userInfo["convoId"] as? String) ?? (userInfo["conversationID"] as? String)
   }
 
   // MARK: - Notification Navigation Handling

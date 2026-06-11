@@ -3,6 +3,7 @@ import Foundation
 import Observation
 import OSLog
 import Petrel
+import PetrelCatbird
 
 @Observable
 final class StreamplaceService {

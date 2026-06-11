@@ -10,6 +10,7 @@ import Testing
 import Foundation
 import GRDB
 import Petrel
+import PetrelCatbird
 @testable import Catbird
 
 /// Integration test suite for MLS moderation workflows

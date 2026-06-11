@@ -3,6 +3,7 @@ import CryptoKit
 import Foundation
 import OSLog
 import Petrel
+import PetrelCatbird
 import SwiftUI
 
 import PhotosUI
@@ -127,7 +128,7 @@ import UIKit
 
         let encrypted = try BlobCrypto.encrypt(plaintext: finalData)
 
-        let (responseCode, output) = try await client.blue.catbird.mlschat.uploadBlob(
+        let (responseCode, output) = try await client.blue.catbird.mlsChat.uploadBlob(
           data: encrypted.ciphertext,
           mimeType: "application/octet-stream",
           stripMetadata: false, params:

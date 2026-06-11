@@ -2,6 +2,7 @@ import CatbirdMLSCore
 import GRDB
 import OSLog
 import Petrel
+import PetrelCatbird
 import PhotosUI
 import SwiftUI
 

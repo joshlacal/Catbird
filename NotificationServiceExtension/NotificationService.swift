@@ -3,6 +3,7 @@ import CryptoKit
 import Foundation
 import GRDB
 import Petrel
+import PetrelCatbird
 import UserNotifications
 import os.log
 
@@ -22,6 +23,10 @@ class NotificationService: UNNotificationServiceExtension {
   private var isObservingAppStop = false
 
   // MARK: - Profile Cache (shared via App Group UserDefaults)
+
+  /// One-time registration of blue.catbird.* / place.stream.* lexicon types with
+  /// Petrel's decoder registry (NSE runs in a separate process from the main app).
+  private static let lexiconRegistration: Void = PetrelCatbirdLexicons.register()
 
   /// App Group suite name for shared storage
   private static let appGroupSuite = "group.blue.catbird.shared"
@@ -92,6 +97,9 @@ class NotificationService: UNNotificationServiceExtension {
     _ request: UNNotificationRequest,
     withContentHandler contentHandler: @escaping (UNNotificationContent) -> Void
   ) {
+    // Ensure custom lexicon types are registered before any decoding
+    _ = Self.lexiconRegistration
+
     // Reset suspension flag from previous notification's cleanup (NSE process reuse)
     MLSCoreContext.clearSuspensionFlag()
 
@@ -1274,7 +1282,7 @@ class NotificationService: UNNotificationServiceExtension {
     client: ATProtoClient
   ) async throws -> Data {
     let input = BlueCatbirdMlsChatGetGroupState.Parameters(convoId: convoId, include: "welcome")
-    let (responseCode, output) = try await client.blue.catbird.mlschat.getGroupState(input: input)
+    let (responseCode, output) = try await client.blue.catbird.mlsChat.getGroupState(input: input)
 
     guard responseCode == 200, let output = output else {
       throw NSEWelcomeError.httpError(statusCode: responseCode)
@@ -1297,7 +1305,7 @@ class NotificationService: UNNotificationServiceExtension {
     )
 
     do {
-      let (responseCode, _) = try await client.blue.catbird.mlschat.commitGroupChange(input: input)
+      let (responseCode, _) = try await client.blue.catbird.mlsChat.commitGroupChange(input: input)
       if responseCode == 200 {
         logger.info("✅ [NSE] Confirmed Welcome processing with server")
       } else {
@@ -1708,11 +1716,16 @@ class NotificationService: UNNotificationServiceExtension {
       content.threadIdentifier = "chat:\(convoId)"
     }
 
-    // Tap navigation info
+    // Tap navigation info. recipientDid lets the main app switch to the target
+    // account before navigating (mirrors the MLS path); omitted when unresolvable
+    // so old payloads keep their existing tap behavior.
     var updatedUserInfo = content.userInfo
     updatedUserInfo["type"] = "chat_message"
     if let convoId { updatedUserInfo["convoId"] = convoId }
     if let senderDid { updatedUserInfo["senderDid"] = senderDid }
+    if let recipientDid = resolveChatRecipientDID(from: userInfo) {
+      updatedUserInfo["recipientDid"] = recipientDid
+    }
     content.userInfo = updatedUserInfo
 
     content.categoryIdentifier = "CHAT_MESSAGE"
@@ -1728,6 +1741,29 @@ class NotificationService: UNNotificationServiceExtension {
       "✅ [NSE] chat_message notification enriched - title: \(content.title), body length: \(content.body.count)"
     )
     contentHandler(content)
+  }
+
+  /// Resolves the target account DID for a `chat_message` push so the main app can
+  /// switch to it on tap. Only definitive sources are honored — explicit payload
+  /// fields or the `recipient_account` hash — never a guessed local account, since a
+  /// wrong DID here would switch the user to the wrong account.
+  private func resolveChatRecipientDID(from userInfo: [AnyHashable: Any]) -> String? {
+    if let did = userInfo["recipientDid"] as? String {
+      return did
+    }
+    if let did = userInfo["recipient_did"] as? String {
+      return did
+    }
+    if let hash = userInfo["recipient_account"] as? String {
+      if let defaults = UserDefaults(suiteName: Self.appGroupSuite),
+        let knownDids = defaults.stringArray(forKey: "knownAccountDIDs"),
+        let match = knownDids.first(where: { self.hashForAccountMatching($0) == hash })
+      {
+        return match
+      }
+      return resolveRecipientDID(fromHash: hash)
+    }
+    return nil
   }
 
   /// Resolves any locally stored account DID for creating a standalone client.

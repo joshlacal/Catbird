@@ -12,6 +12,7 @@ import CatbirdMLSCore
 
 import SwiftUI
 import Petrel
+import PetrelCatbird
 import OSLog
 
 struct MLSMemberActionsSheet: View {

@@ -22,6 +22,25 @@ extension ChatBskyConvoDefs.ConvoView {
     return lockStatus.rawValue != ChatBskyConvoDefs.ConvoLockStatus.unlocked.rawValue
   }
 
+  /// The current user's group member role, when this is a group conversation
+  /// and the roster includes them.
+  func currentUserMemberRole(currentUserDID: String) -> ChatBskyActorDefs.MemberRole? {
+    guard !currentUserDID.isEmpty,
+          let member = members.first(where: { $0.did.didString() == currentUserDID }),
+          case .chatBskyActorDefsGroupConvoMember(let groupMember) = member.kind else {
+      return nil
+    }
+    return groupMember.role
+  }
+
+  /// Whether the current user owns this group conversation. Owners must lock
+  /// the group before leaving (`OwnerCannotLeave` on chat.bsky.convo.leaveConvo).
+  func isOwnedGroupConversation(currentUserDID: String) -> Bool {
+    guard groupMetadata != nil else { return false }
+    return currentUserMemberRole(currentUserDID: currentUserDID)?.rawValue
+      == ChatBskyActorDefs.MemberRole.owner.rawValue
+  }
+
   func displayMembersExcludingCurrentUser(currentUserDID: String) -> [ChatBskyActorDefs.ProfileViewBasic] {
     guard !currentUserDID.isEmpty else { return members }
     return members.filter { $0.did.didString() != currentUserDID }

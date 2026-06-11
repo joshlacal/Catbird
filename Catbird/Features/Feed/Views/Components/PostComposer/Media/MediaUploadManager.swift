@@ -92,7 +92,7 @@ final class MediaUploadManager {
     logger.debug("DEBUG: Using DID: \(didValue)")
 
     let serviceParams = ComAtprotoServerGetServiceAuth.Parameters(
-      aud: try DID(didString: "did:web:video.bsky.app"),
+      aud: "did:web:video.bsky.app",
       exp: Int(Date().timeIntervalSince1970) + 30 * 60,  // 30 minutes
       lxm: try NSID(nsidString: "app.bsky.video.getUploadLimits")
     )
@@ -128,7 +128,7 @@ final class MediaUploadManager {
     let now = Int(Date().timeIntervalSince1970)
     let expUnix = now + 5 * 60  // 5 minutes
     let serviceParams = ComAtprotoServerGetServiceAuth.Parameters(
-      aud: try DID(didString: "did:web:video.bsky.app"),
+      aud: "did:web:video.bsky.app",
       exp: expUnix,
       lxm: try NSID(nsidString: lxm)
     )
@@ -165,7 +165,7 @@ final class MediaUploadManager {
       throw VideoUploadError.authenticationFailed
     }
 
-    let aud = try DID(didString: "did:web:\(host)")
+    let aud = "did:web:\(host)"
     let now = Int(Date().timeIntervalSince1970)
     let expUnix = now + 5 * 60  // 5 minutes
     let serviceParams = ComAtprotoServerGetServiceAuth.Parameters(

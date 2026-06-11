@@ -1,6 +1,7 @@
 import XCTest
 import CryptoKit
 import Petrel
+import PetrelCatbird
 @testable import Catbird
 
 /// Comprehensive unit tests for MLSConversationManager

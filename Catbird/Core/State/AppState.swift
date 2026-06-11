@@ -395,7 +395,6 @@ final class AppState {
   // For task cancellation when needed
   @ObservationIgnored private var authStateObservationTask: Task<Void, Never>?
   @ObservationIgnored private var backgroundPollingTask: Task<Void, Never>?
-  @ObservationIgnored private var chatPollingTimer: Timer?
 
   // MARK: - Initialization
 
@@ -651,8 +650,7 @@ final class AppState {
     backgroundPollingTask?.cancel()
     backgroundPollingTask = nil
 
-    chatPollingTimer?.invalidate()
-    chatPollingTimer = nil
+    chatManager.stopConversationsPolling()
 
     // CRITICAL FIX: Properly shutdown MLS managers to prevent database exhaustion
     // and race conditions during account switching
@@ -2642,7 +2640,16 @@ final class AppState {
         }
       }
 
-      // Keep chat polling alive even when the chat tab isn't visible
+      // Keep chat polling alive even when the chat tab isn't visible.
+      // ChatManager owns the single listConvos poll loop (with rate-limit
+      // backoff); each tick drives the unread badge and MLS list refresh here.
+      chatManager.onConversationsPolled = { [weak self] in
+        Task { @MainActor [weak self] in
+          guard let self = self, case .authenticated = self.authState else { return }
+          self.updateChatUnreadCount()
+          await self.loadMLSConversations()
+        }
+      }
       chatManager.startConversationsPolling()
 
       // Update chat unread count initially
@@ -2653,21 +2660,6 @@ final class AppState {
       // Load MLS conversations initially
       Task { @MainActor in
         await loadMLSConversations()
-      }
-
-      // Set up periodic polling for chat messages (since they don't come through push notifications)
-      chatPollingTimer?.invalidate()
-      chatPollingTimer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { [weak self] _ in
-        Task { @MainActor [weak self] in
-          guard let self = self, case .authenticated = self.authState else { return }
-
-          // Load conversations to check for new messages and update unread counts
-          await self.chatManager.loadConversations(refresh: true)
-          self.updateChatUnreadCount()
-
-          // Also reload MLS conversations
-          await self.loadMLSConversations()
-        }
       }
 
     // Also update when app comes to foreground
