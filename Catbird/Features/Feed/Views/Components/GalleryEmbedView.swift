@@ -196,38 +196,89 @@ struct GalleryEmbedView: View {
   private func viewerContent(
     images: [AppBskyEmbedImages.ViewImage], initialImage: AppBskyEmbedImages.ViewImage
   ) -> some View {
+    // Derive the start index from the presented item itself: the cover content
+    // is built with view closures captured from the pre-tap render, so reading
+    // currentIndex here races the @State write from the tap handler and the
+    // viewer can open on the wrong page (header/alt showing item 1).
+    let startIndex = images.firstIndex { $0.id == initialImage.id } ?? 0
+    GalleryViewerHost(
+      images: images,
+      initialIndex: startIndex,
+      namespace: imageTransition,
+      onIndexChange: { newIndex in
+        currentIndex = newIndex
+        lastViewedIndex = newIndex
+        activeTransitionID = images[safe: newIndex]?.id
+      },
+      onDismiss: {
+        DispatchQueue.main.async {
+          selectedImage = nil
+        }
+      }
+    )
+    .onAppear {
+      activeTransitionID = initialImage.id
+    }
+  }
+}
+
+/// Hosts EnhancedImageViewer with its own page index seeded at presentation,
+/// so the open page does not depend on parent @State writes propagating into
+/// the cover's captured closures.
+private struct GalleryViewerHost: View {
+  let images: [AppBskyEmbedImages.ViewImage]
+  let initialIndex: Int
+  let namespace: Namespace.ID
+  let onIndexChange: (Int) -> Void
+  let onDismiss: () -> Void
+
+  @State private var index: Int
+  @State private var isPresented = true
+
+  init(
+    images: [AppBskyEmbedImages.ViewImage],
+    initialIndex: Int,
+    namespace: Namespace.ID,
+    onIndexChange: @escaping (Int) -> Void,
+    onDismiss: @escaping () -> Void
+  ) {
+    self.images = images
+    self.initialIndex = initialIndex
+    self.namespace = namespace
+    self.onIndexChange = onIndexChange
+    self.onDismiss = onDismiss
+    self._index = State(initialValue: initialIndex)
+  }
+
+  var body: some View {
     NavigationStack {
       EnhancedImageViewer(
         images: images,
-        initialImageId: initialImage.id,
+        initialImageId: images[safe: initialIndex]?.id ?? "",
         currentIndex: Binding(
-          get: { currentIndex },
+          get: { index },
           set: { newIndex in
-            currentIndex = newIndex
-            lastViewedIndex = newIndex
-            activeTransitionID = images[safe: newIndex]?.id
+            index = newIndex
+            onIndexChange(newIndex)
           }
         ),
         isPresented: Binding(
-          get: { selectedImage != nil },
+          get: { isPresented },
           set: { newValue in
             if !newValue {
-              activeTransitionID = images[safe: lastViewedIndex]?.id
-              DispatchQueue.main.async {
-                selectedImage = nil
-              }
+              isPresented = false
+              onDismiss()
             }
           }
         ),
-        namespace: imageTransition
+        namespace: namespace
       )
     }
 #if os(iOS)
     .ignoresSafeArea()
-    .navigationTransition(.zoom(sourceID: activeTransitionID ?? initialImage.id, in: imageTransition))
+    .navigationTransition(
+      .zoom(sourceID: images[safe: index]?.id ?? "", in: namespace)
+    )
 #endif
-    .onAppear {
-      activeTransitionID = initialImage.id
-    }
   }
 }
