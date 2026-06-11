@@ -354,11 +354,11 @@ actor FeedTuner {
         
         if let embed = item.post.embed {
           switch embed {
-          case .appBskyEmbedImagesView, .appBskyEmbedVideoView:
+          case .appBskyEmbedImagesView, .appBskyEmbedGalleryView, .appBskyEmbedVideoView:
             hasMedia = true
           case .appBskyEmbedRecordWithMediaView(let recordWithMedia):
             switch recordWithMedia.media {
-            case .appBskyEmbedImagesView, .appBskyEmbedVideoView:
+            case .appBskyEmbedImagesView, .appBskyEmbedGalleryView, .appBskyEmbedVideoView:
               hasMedia = true
             default:
               break

@@ -610,6 +610,19 @@ import SwiftUI
             )
           }
           images = mappedImages.isEmpty ? nil : mappedImages
+        case .appBskyEmbedGalleryView(let galleryView):
+          let mappedImages = galleryView.items.compactMap { item -> MLSPostImage? in
+            guard case .appBskyEmbedGalleryViewImage(let image) = item,
+                  let fullsize = image.fullsize.url, let thumb = image.thumbnail.url else {
+              return nil
+            }
+            return MLSPostImage(
+              thumb: thumb,
+              fullsize: fullsize,
+              alt: image.alt
+            )
+          }
+          images = mappedImages.isEmpty ? nil : mappedImages
         default:
           break
         }

@@ -447,7 +447,11 @@ final class PostManager {
         // For video embeds, create a basic view
         // Note: Full video details would need to be fetched
         postViewEmbed = nil
-        
+
+      case .appBskyEmbedGallery:
+        // Gallery authoring isn't supported by the composer; let the real post load
+        postViewEmbed = nil
+
       case .unexpected:
         postViewEmbed = nil
       }

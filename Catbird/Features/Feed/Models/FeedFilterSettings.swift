@@ -197,12 +197,12 @@ struct FeedFilter: Identifiable, Hashable {
           // Check the main post's embed
           if let embed = post.post.embed {
             switch embed {
-            case .appBskyEmbedImagesView, .appBskyEmbedVideoView:
+            case .appBskyEmbedImagesView, .appBskyEmbedGalleryView, .appBskyEmbedVideoView:
               return true
             case .appBskyEmbedRecordWithMediaView(let recordWithMedia):
               // Quote post with media - check the media part
               switch recordWithMedia.media {
-              case .appBskyEmbedImagesView, .appBskyEmbedVideoView:
+              case .appBskyEmbedImagesView, .appBskyEmbedGalleryView, .appBskyEmbedVideoView:
                 return true
               default:
                 return false

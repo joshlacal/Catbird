@@ -264,6 +264,25 @@ actor FeedPrefetchingManager {
               await manager.startPrefetching(urls: imageURLs)
             }
 
+          case .appBskyEmbedGalleryView(let galleryView):
+            // Prefetch gallery thumbnails with deduplication
+            let imageURLs = galleryView.items.compactMap { item -> URL? in
+              guard case .appBskyEmbedGalleryViewImage(let image) = item else { return nil }
+              return URL(string: image.thumbnail.uriString())
+            }.filter { url in
+              !prefetchedAssets.contains(url.absoluteString)
+            }
+
+            if !imageURLs.isEmpty {
+              // Mark as prefetched
+              for url in imageURLs {
+                prefetchedAssets.insert(url.absoluteString)
+              }
+
+              let manager = ImageLoadingManager.shared
+              await manager.startPrefetching(urls: imageURLs)
+            }
+
           case .appBskyEmbedExternalView(let externalView):
             // Prefetch external thumbnail if available
             if let thumbURL = externalView.external.thumb.flatMap({ URL(string: $0.uriString()) }),
@@ -336,6 +355,25 @@ actor FeedPrefetchingManager {
           prefetchedAssets.insert(url.absoluteString)
         }
         
+        let manager = ImageLoadingManager.shared
+        await manager.startPrefetching(urls: imageURLs)
+      }
+
+    case .appBskyEmbedGalleryView(let galleryView):
+      // Prefetch gallery thumbnails with deduplication
+      let imageURLs = galleryView.items.compactMap { item -> URL? in
+        guard case .appBskyEmbedGalleryViewImage(let image) = item else { return nil }
+        return URL(string: image.thumbnail.uriString())
+      }.filter { url in
+        !prefetchedAssets.contains(url.absoluteString)
+      }
+
+      if !imageURLs.isEmpty {
+        // Mark as prefetched
+        for url in imageURLs {
+          prefetchedAssets.insert(url.absoluteString)
+        }
+
         let manager = ImageLoadingManager.shared
         await manager.startPrefetching(urls: imageURLs)
       }

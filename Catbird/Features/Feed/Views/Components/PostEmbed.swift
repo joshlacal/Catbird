@@ -34,7 +34,10 @@ struct PostEmbed: View {
             switch embed {
             case .appBskyEmbedImagesView(let imagesView):
                 imageEmbed(imagesView)
-                
+
+            case .appBskyEmbedGalleryView(let galleryView):
+                galleryEmbed(galleryView)
+
             case .appBskyEmbedExternalView(let externalView):
                 externalEmbed(externalView)
                 
@@ -65,6 +68,20 @@ struct PostEmbed: View {
         ) {
             ViewImageGridView(
                 viewImages: imagesView.images,
+                shouldBlur: false // We're handling blur at the ContentLabelManager level now
+            )
+        }
+        .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
+    }
+
+    @ViewBuilder
+    private func galleryEmbed(_ galleryView: AppBskyEmbedGallery.View) -> some View {
+        ContentLabelManager(
+            labels: labels,
+            contentType: "image"
+        ) {
+            GalleryEmbedView(
+                gallery: galleryView,
                 shouldBlur: false // We're handling blur at the ContentLabelManager level now
             )
         }
@@ -116,6 +133,18 @@ struct PostEmbed: View {
                 ) {
                     ViewImageGridView(
                         viewImages: imagesView.images,
+                        shouldBlur: false // We're handling blur at the ContentLabelManager level now
+                    )
+                }
+                .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
+
+            case .appBskyEmbedGalleryView(let galleryView):
+                ContentLabelManager(
+                    labels: labels,
+                    contentType: "image"
+                ) {
+                    GalleryEmbedView(
+                        gallery: galleryView,
                         shouldBlur: false // We're handling blur at the ContentLabelManager level now
                     )
                 }

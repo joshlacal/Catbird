@@ -185,7 +185,20 @@ struct RecordEmbedView: View {
                     }
                     .clipShape(RoundedRectangle(cornerRadius: 10))
                     .padding(.top, 6)
-                    
+
+                case .appBskyEmbedGalleryView(let galleryView):
+                    ContentLabelManager(
+                        labels: post.labels, // Use the embedded post's labels, not parent
+                        contentType: "image"
+                    ) {
+                        GalleryEmbedView(
+                            gallery: galleryView,
+                            shouldBlur: false // ContentLabelManager handles blurring
+                        )
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .padding(.top, 6)
+
                 case .appBskyEmbedExternalView(let external):
                     ContentLabelManager(
                         labels: post.labels, // Use the embedded post's labels, not parent
@@ -295,7 +308,20 @@ struct RecordEmbedView: View {
                             }
                             .clipShape(RoundedRectangle(cornerRadius: 10))
                             .padding(.top, 6)
-                            
+
+                        case .appBskyEmbedGalleryView(let galleryView):
+                            ContentLabelManager(
+                                labels: post.labels, // Use the embedded post's labels, not parent
+                                contentType: "image"
+                            ) {
+                                GalleryEmbedView(
+                                    gallery: galleryView,
+                                    shouldBlur: false // ContentLabelManager handles blurring
+                                )
+                            }
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                            .padding(.top, 6)
+
                         case .appBskyEmbedExternalView(let externalView):
                             ContentLabelManager(
                                 labels: post.labels, // Use the embedded post's labels, not parent

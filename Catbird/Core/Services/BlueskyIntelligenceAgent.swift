@@ -532,6 +532,17 @@ private enum ToolFormatter {
                     } else {
                         sanitized = "[image post]"
                     }
+                case .appBskyEmbedGalleryView(let galleryView):
+                    let galleryAltTexts = galleryView.items.compactMap { item -> String? in
+                        guard case .appBskyEmbedGalleryViewImage(let image) = item,
+                              !image.alt.isEmpty else { return nil }
+                        return image.alt
+                    }
+                    if !galleryAltTexts.isEmpty {
+                        sanitized = "[gallery: \(galleryAltTexts.joined(separator: "; "))]"
+                    } else {
+                        sanitized = "[gallery: \(galleryView.items.count) photos]"
+                    }
                 case .appBskyEmbedVideoView(let videoView):
                     if let alt = videoView.alt, !alt.isEmpty {
                         sanitized = "[video: \(alt)]"

@@ -80,6 +80,11 @@ final class FeedWidgetDataProvider {
     switch embed {
     case .appBskyEmbedImagesView(let imagesView):
       return imagesView.images.map { $0.thumb.uriString() }
+    case .appBskyEmbedGalleryView(let galleryView):
+      return galleryView.items.compactMap { item in
+        guard case .appBskyEmbedGalleryViewImage(let image) = item else { return nil }
+        return image.thumbnail.uriString()
+      }
     case .appBskyEmbedRecordWithMediaView(let recordWithMediaView):
       if case .appBskyEmbedImagesView(let imagesView) = recordWithMediaView.media {
         return imagesView.images.map { $0.thumb.uriString() }
@@ -308,6 +313,11 @@ final class FeedWidgetDataProvider {
       // Prefer full size for better quality in widgets
       return imagesView.images.compactMap { image in
         // Use fullsize if available, fallback to thumb
+        return image.fullsize.uriString()
+      }
+    case .appBskyEmbedGalleryView(let galleryView):
+      return galleryView.items.compactMap { item in
+        guard case .appBskyEmbedGalleryViewImage(let image) = item else { return nil }
         return image.fullsize.uriString()
       }
     case .appBskyEmbedRecordWithMediaView(let recordWithMediaView):

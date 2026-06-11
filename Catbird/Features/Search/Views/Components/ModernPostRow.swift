@@ -65,6 +65,15 @@ struct PostEmbedPreview: View {
                         Image(systemName: "photo")
                             .foregroundColor(.secondary)
                     )
+
+            case .appBskyEmbedGalleryView:
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.gray.opacity(0.2))
+                    .frame(height: 120)
+                    .overlay(
+                        Image(systemName: "photo.stack")
+                            .foregroundColor(.secondary)
+                    )
                 
             case .appBskyEmbedExternalView:
                 RoundedRectangle(cornerRadius: 8)

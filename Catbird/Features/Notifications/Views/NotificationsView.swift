@@ -808,6 +808,21 @@ struct NotificationCard: View {
         }
       }
       
+    case .appBskyEmbedGalleryView(let gallery):
+      // Handle gallery images
+      let galleryImages = gallery.items.compactMap { item -> AppBskyEmbedGallery.ViewImage? in
+        if case .appBskyEmbedGalleryViewImage(let image) = item { return image } else { return nil }
+      }
+      for image in galleryImages {
+        if let thumbURL = URL(string: image.thumbnail.uriString()) {
+          thumbnails.append(MediaThumbnailInfo(
+            url: thumbURL,
+            mediaType: .image,
+            totalCount: galleryImages.count
+          ))
+        }
+      }
+
     case .appBskyEmbedVideoView(let video):
       // Handle video thumbnail
       if let thumbnailURI = video.thumbnail,
@@ -847,6 +862,20 @@ struct NotificationCard: View {
           }
         }
         
+      case .appBskyEmbedGalleryView(let gallery):
+        let galleryImages = gallery.items.compactMap { item -> AppBskyEmbedGallery.ViewImage? in
+          if case .appBskyEmbedGalleryViewImage(let image) = item { return image } else { return nil }
+        }
+        for image in galleryImages {
+          if let thumbURL = URL(string: image.thumbnail.uriString()) {
+            thumbnails.append(MediaThumbnailInfo(
+              url: thumbURL,
+              mediaType: .image,
+              totalCount: galleryImages.count
+            ))
+          }
+        }
+
       case .appBskyEmbedVideoView(let video):
         if let thumbnailURI = video.thumbnail,
            let thumbURL = URL(string: thumbnailURI.uriString()) {

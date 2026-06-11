@@ -47,7 +47,19 @@ struct RecordWithMediaView: View {
                 )
             }
             .clipShape(RoundedRectangle(cornerRadius: 10))
-            
+
+        case .appBskyEmbedGalleryView(let galleryView):
+            ContentLabelManager(
+                labels: labels,
+                contentType: "image"
+            ) {
+                GalleryEmbedView(
+                    gallery: galleryView,
+                    shouldBlur: false // ContentLabelManager handles blur decisions
+                )
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+
         case .appBskyEmbedExternalView(let externalView):
             ContentLabelManager(
                 labels: labels,

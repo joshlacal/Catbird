@@ -468,7 +468,10 @@ class PostHeightCalculator {
         switch embed {
         case .appBskyEmbedImagesView(let imagesView):
             return calculateImageEmbedHeight(for: imagesView)
-            
+
+        case .appBskyEmbedGalleryView(let galleryView):
+            return calculateGalleryEmbedHeight(for: galleryView)
+
         case .appBskyEmbedExternalView(let externalView):
             return calculateExternalEmbedHeight(for: externalView)
             
@@ -515,6 +518,32 @@ class PostHeightCalculator {
         }
     }
     
+    private func calculateGalleryEmbedHeight(for galleryView: AppBskyEmbedGallery.View) -> CGFloat {
+        let galleryImages = galleryView.items.compactMap { item -> AppBskyEmbedGallery.ViewImage? in
+            if case .appBskyEmbedGalleryViewImage(let image) = item { return image } else { return nil }
+        }
+
+        if galleryImages.isEmpty {
+            return 0
+        }
+
+        // 1-4 items render via the standard image grid; reuse its height logic
+        if galleryImages.count <= 4 {
+            let mappedImages = galleryImages.map {
+                AppBskyEmbedImages.ViewImage(
+                    thumb: $0.thumbnail,
+                    fullsize: $0.fullsize,
+                    alt: $0.alt,
+                    aspectRatio: $0.aspectRatio
+                )
+            }
+            return calculateImageEmbedHeight(for: AppBskyEmbedImages.View(images: mappedImages))
+        }
+
+        // 5+ items render as a fixed-height horizontal carousel
+        return GalleryEmbedView.compactCarouselHeight + 8
+    }
+
     private func calculateExternalEmbedHeight(for externalView: AppBskyEmbedExternal.View) -> CGFloat {
         // Base height for the card
         var height = config.externalEmbedHeight
@@ -582,7 +611,10 @@ class PostHeightCalculator {
         switch recordWithMediaView.media {
         case .appBskyEmbedImagesView(let imagesView):
             mediaHeight = calculateImageEmbedHeight(for: imagesView)
-            
+
+        case .appBskyEmbedGalleryView(let galleryView):
+            mediaHeight = calculateGalleryEmbedHeight(for: galleryView)
+
         case .appBskyEmbedExternalView(let externalView):
             mediaHeight = calculateExternalEmbedHeight(for: externalView)
             

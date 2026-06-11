@@ -564,6 +564,8 @@ private struct RecordEmbedContainer: View {
     switch embed {
     case .appBskyEmbedImagesView(let imageView):
       return [.appBskyEmbedImagesView(imageView)]
+    case .appBskyEmbedGalleryView(let galleryView):
+      return [.appBskyEmbedGalleryView(galleryView)]
     case .appBskyEmbedExternalView(let externalView):
       return [.appBskyEmbedExternalView(externalView)]
     case .appBskyEmbedRecordView(let recordView):

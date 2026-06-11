@@ -538,7 +538,7 @@ import AppKit
           let postsWithMedia = feed.filter { post in
             if let embed = post.post.embed {
               switch embed {
-              case .appBskyEmbedImagesView, .appBskyEmbedVideoView, .appBskyEmbedExternalView:
+              case .appBskyEmbedImagesView, .appBskyEmbedGalleryView, .appBskyEmbedVideoView, .appBskyEmbedExternalView:
                 return true
               case .appBskyEmbedRecordWithMediaView:
                 return true
