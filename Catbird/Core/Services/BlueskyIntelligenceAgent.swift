@@ -569,6 +569,17 @@ private enum ToolFormatter {
                         if let alt = videoView.alt, !alt.isEmpty {
                             mediaDesc = "[post with video: \(alt)]"
                         }
+                    case .appBskyEmbedGalleryView(let galleryView):
+                        let altTexts = galleryView.items.compactMap { item -> String? in
+                            guard case .appBskyEmbedGalleryViewImage(let image) = item,
+                                  !image.alt.isEmpty else { return nil }
+                            return image.alt
+                        }
+                        if !altTexts.isEmpty {
+                            mediaDesc = "[post with gallery: \(altTexts.joined(separator: "; "))]"
+                        } else {
+                            mediaDesc = "[post with gallery: \(galleryView.items.count) photos]"
+                        }
                     default:
                         break
                     }

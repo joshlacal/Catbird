@@ -3631,10 +3631,28 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
             imagesToPrefetch.append(fullsizeUrl)
           }
         }
+      case .appBskyEmbedGalleryView(let galleryView):
+        for item in galleryView.items {
+          guard case .appBskyEmbedGalleryViewImage(let image) = item else { continue }
+          if let thumbUrl = URL(string: image.thumbnail.uriString()) {
+            imagesToPrefetch.append(thumbUrl)
+          }
+          if let fullsizeUrl = URL(string: image.fullsize.uriString()) {
+            imagesToPrefetch.append(fullsizeUrl)
+          }
+        }
       case .appBskyEmbedRecordWithMediaView(let recordWithMediaView):
         if case .appBskyEmbedImagesView(let imagesView) = recordWithMediaView.media {
           for image in imagesView.images {
             if let thumbUrl = URL(string: image.thumb.uriString()) {
+              imagesToPrefetch.append(thumbUrl)
+            }
+          }
+        }
+        if case .appBskyEmbedGalleryView(let galleryView) = recordWithMediaView.media {
+          for item in galleryView.items {
+            guard case .appBskyEmbedGalleryViewImage(let image) = item else { continue }
+            if let thumbUrl = URL(string: image.thumbnail.uriString()) {
               imagesToPrefetch.append(thumbUrl)
             }
           }

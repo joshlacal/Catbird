@@ -208,13 +208,22 @@ private struct PostPickerRow: View {
       Spacer()
 
       // Indicator that post has images
-      if let embed = post.embed, case .appBskyEmbedImagesView = embed {
+      if let embed = post.embed, hasImages(embed) {
         Image(systemName: "photo")
           .font(.system(size: 20))
           .foregroundColor(.secondary)
       }
     }
     .padding(.vertical, DesignTokens.Spacing.xs)
+  }
+
+  private func hasImages(_ embed: AppBskyFeedDefs.PostViewEmbedUnion) -> Bool {
+    switch embed {
+    case .appBskyEmbedImagesView, .appBskyEmbedGalleryView:
+      return true
+    default:
+      return false
+    }
   }
 }
 

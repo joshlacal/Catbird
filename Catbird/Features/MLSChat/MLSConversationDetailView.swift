@@ -403,6 +403,15 @@ struct MLSConversationDetailView: View {
             return MLSPostImage(thumb: thumb, fullsize: fullsize, alt: img.alt)
           }
           images = mapped.isEmpty ? nil : mapped
+        } else if case .appBskyEmbedGalleryView(let galleryView) = post.embed {
+          let mapped = galleryView.items.compactMap { item -> MLSPostImage? in
+            guard case .appBskyEmbedGalleryViewImage(let image) = item,
+                  let fullsize = image.fullsize.url, let thumb = image.thumbnail.url else {
+              return nil
+            }
+            return MLSPostImage(thumb: thumb, fullsize: fullsize, alt: image.alt)
+          }
+          images = mapped.isEmpty ? nil : mapped
         }
         unifiedDataSource?.attachedEmbed = .post(MLSPostEmbed(
           uri: post.uri.uriString(),

@@ -43,7 +43,10 @@ class PostHeightCalculator {
         
         // Video player dimensions
         let videoControlsHeight: CGFloat
-        
+
+        // Gallery carousel height (size-class dependent, captured at config creation)
+        let galleryCarouselHeight: CGFloat
+
         @MainActor
         static let standard = Config(
             maxWidth: min(600, PlatformScreenInfo.width) - 9,
@@ -67,8 +70,12 @@ class PostHeightCalculator {
             avatarContainerWidth: 54,
             
             actionButtonsHeight: 36,
-            
-            videoControlsHeight: 40
+
+            videoControlsHeight: 40,
+
+            galleryCarouselHeight: PlatformScreenInfo.isRegularWidth
+                ? GalleryEmbedView.regularCarouselHeight
+                : GalleryEmbedView.compactCarouselHeight
         )
     }
     
@@ -540,8 +547,9 @@ class PostHeightCalculator {
             return calculateImageEmbedHeight(for: AppBskyEmbedImages.View(images: mappedImages))
         }
 
-        // 5+ items render as a fixed-height horizontal carousel
-        return GalleryEmbedView.compactCarouselHeight + 8
+        // 5+ items render as a fixed-height horizontal carousel; match the
+        // size-class-dependent height GalleryEmbedView actually renders
+        return config.galleryCarouselHeight + 8
     }
 
     private func calculateExternalEmbedHeight(for externalView: AppBskyEmbedExternal.View) -> CGFloat {

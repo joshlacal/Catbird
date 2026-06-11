@@ -89,6 +89,12 @@ final class FeedWidgetDataProvider {
       if case .appBskyEmbedImagesView(let imagesView) = recordWithMediaView.media {
         return imagesView.images.map { $0.thumb.uriString() }
       }
+      if case .appBskyEmbedGalleryView(let galleryView) = recordWithMediaView.media {
+        return galleryView.items.compactMap { item in
+          guard case .appBskyEmbedGalleryViewImage(let image) = item else { return nil }
+          return image.thumbnail.uriString()
+        }
+      }
       return []
     default:
       return []
@@ -323,6 +329,12 @@ final class FeedWidgetDataProvider {
     case .appBskyEmbedRecordWithMediaView(let recordWithMediaView):
       if case .appBskyEmbedImagesView(let imagesView) = recordWithMediaView.media {
         return imagesView.images.compactMap { image in
+          return image.fullsize.uriString()
+        }
+      }
+      if case .appBskyEmbedGalleryView(let galleryView) = recordWithMediaView.media {
+        return galleryView.items.compactMap { item in
+          guard case .appBskyEmbedGalleryViewImage(let image) = item else { return nil }
           return image.fullsize.uriString()
         }
       }

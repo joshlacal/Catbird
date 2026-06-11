@@ -317,7 +317,23 @@ actor FeedPrefetchingManager {
                 for url in imageURLs {
                   prefetchedAssets.insert(url.absoluteString)
                 }
-                
+
+                let manager = ImageLoadingManager.shared
+                await manager.startPrefetching(urls: imageURLs)
+              }
+            case .appBskyEmbedGalleryView(let galleryView):
+              let imageURLs = galleryView.items.compactMap { item -> URL? in
+                guard case .appBskyEmbedGalleryViewImage(let image) = item else { return nil }
+                return URL(string: image.thumbnail.uriString())
+              }.filter { url in
+                !prefetchedAssets.contains(url.absoluteString)
+              }
+
+              if !imageURLs.isEmpty {
+                for url in imageURLs {
+                  prefetchedAssets.insert(url.absoluteString)
+                }
+
                 let manager = ImageLoadingManager.shared
                 await manager.startPrefetching(urls: imageURLs)
               }
@@ -412,7 +428,23 @@ actor FeedPrefetchingManager {
           for url in imageURLs {
             prefetchedAssets.insert(url.absoluteString)
           }
-          
+
+          let manager = ImageLoadingManager.shared
+          await manager.startPrefetching(urls: imageURLs)
+        }
+      case .appBskyEmbedGalleryView(let galleryView):
+        let imageURLs = galleryView.items.compactMap { item -> URL? in
+          guard case .appBskyEmbedGalleryViewImage(let image) = item else { return nil }
+          return URL(string: image.thumbnail.uriString())
+        }.filter { url in
+          !prefetchedAssets.contains(url.absoluteString)
+        }
+
+        if !imageURLs.isEmpty {
+          for url in imageURLs {
+            prefetchedAssets.insert(url.absoluteString)
+          }
+
           let manager = ImageLoadingManager.shared
           await manager.startPrefetching(urls: imageURLs)
         }
