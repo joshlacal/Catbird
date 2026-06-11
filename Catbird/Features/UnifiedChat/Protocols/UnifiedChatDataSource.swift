@@ -24,12 +24,16 @@ protocol UnifiedChatDataSource: Observable, AnyObject {
   func toggleReaction(messageID: String, emoji: String)
   func addReaction(messageID: String, emoji: String)
   func deleteMessage(messageID: String) async
+  /// Retry a previously failed outgoing send (WS-6.5). Data sources without
+  /// pending-send support treat this as a no-op.
+  func retryFailedSend(pendingID: String) async
 }
 
 extension UnifiedChatDataSource {
   var showsTypingIndicator: Bool { false }
   var typingParticipantAvatarURL: URL? { nil }
   var scrollToBottomTrigger: Int { 0 }
+  func retryFailedSend(pendingID: String) async {}
 }
 
 // MARK: - UnifiedChatDataSourceEvent

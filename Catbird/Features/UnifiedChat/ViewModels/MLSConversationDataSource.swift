@@ -5,6 +5,28 @@ import SwiftUI
 import CatbirdMLSCore
 import GRDB
 
+/// A locally-originated outgoing message that has no server row yet.
+/// Lives only in memory: `.sending` while the send pipeline runs, `.failed`
+/// once the pipeline gives up (WS-6.5). Confirmed messages arrive through the
+/// GRDB observation and replace the pending entry via `completePendingSend`.
+struct PendingMLSSend: Identifiable, Equatable, Sendable {
+  let id: String
+  let text: String
+  let embed: MLSEmbedData?
+  let createdAt: Date
+  var state: MessageSendState
+
+  static let idPrefix = "pending:"
+
+  init(text: String, embed: MLSEmbedData?, state: MessageSendState = .sending) {
+    self.id = Self.idPrefix + UUID().uuidString
+    self.text = text
+    self.embed = embed
+    self.createdAt = Date()
+    self.state = state
+  }
+}
+
 /// Data source that provides MLS messages for the unified chat UI
 /// Pulls messages from MLSStorage and provides them as MLSMessageAdapter objects
 @MainActor
@@ -27,7 +49,31 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
   // Flag to track if initial profiles have been loaded
   private var hasLoadedInitialProfiles: Bool = false
 
-  private(set) var messages: [MLSMessageAdapter] = []
+  /// Server-confirmed messages (rows in `MLSMessageModel`), kept in display order.
+  private var confirmedMessages: [MLSMessageAdapter] = []
+
+  /// Locally-pending / failed outgoing sends not yet (or never) confirmed by
+  /// the server (WS-6.5). Appended after confirmed messages in `messages`.
+  private(set) var pendingSends: [PendingMLSSend] = []
+
+  /// The unified list the collection view renders: confirmed messages plus
+  /// pending/failed local sends (always newest, so appended at the end).
+  var messages: [MLSMessageAdapter] {
+    guard !pendingSends.isEmpty else { return confirmedMessages }
+    return confirmedMessages + pendingAdapters()
+  }
+
+  /// Resolved recovery state for this conversation (spec §8.1), observed from
+  /// the persisted GRDB columns and overlaid with the recovery manager's
+  /// transient state. Drives send-blocking UX (WS-6.5).
+  private(set) var conversationRecoveryState: ConversationRecoveryState = .healthy
+
+  /// Whether outgoing sends should be blocked right now (visible state, not a
+  /// swallowed error — the composer disables and a banner explains why).
+  var isSendBlockedByRecovery: Bool {
+    conversationRecoveryState.blocksSending
+  }
+
   private(set) var isLoading: Bool = false
   private(set) var hasMoreMessages: Bool = true
   private(set) var error: Error?
@@ -42,6 +88,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
   private var localReactions: [String: [MLSMessageReaction]] = [:]
   private var reactionReloadTask: Task<Void, Never>?
   private var messageObservation: AnyDatabaseCancellable?
+  private var conversationObservation: AnyDatabaseCancellable?
   private weak var observedDatabase: DatabasePool?
   private var typingParticipants: [String: Date] = [:]
   private var typingCleanupTask: Task<Void, Never>?
@@ -141,6 +188,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
         }
       }
     )
+    startObservingConversationRecovery(database: database)
     observedDatabase = database
   }
 
@@ -176,7 +224,134 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
   func stopObserving() {
     messageObservation?.cancel()
     messageObservation = nil
+    conversationObservation?.cancel()
+    conversationObservation = nil
     observedDatabase = nil
+  }
+
+  // MARK: - Pending Sends (WS-6.5)
+
+  /// Builds display adapters for the locally-pending/failed sends.
+  private func pendingAdapters() -> [MLSMessageAdapter] {
+    let profile = profileCache[MLSProfileEnricher.canonicalDID(currentUserDID)]
+    return pendingSends.map { pending in
+      MLSMessageAdapter(
+        id: pending.id,
+        convoID: conversationId,
+        text: pending.text,
+        senderDID: currentUserDID,
+        currentUserDID: currentUserDID,
+        sentAt: pending.createdAt,
+        senderProfile: profile.map {
+          .init(displayName: $0.displayName, avatarURL: $0.avatarURL, handle: $0.handle)
+        },
+        reactions: [],
+        embed: pending.embed,
+        sendState: pending.state
+      )
+    }
+  }
+
+  /// Registers an optimistic outgoing message before the send pipeline runs.
+  /// Returns the pending ID used to complete or fail the entry later.
+  @discardableResult
+  func beginPendingSend(text: String, embed: MLSEmbedData?) -> String {
+    let pending = PendingMLSSend(text: text, embed: embed)
+    pendingSends.append(pending)
+    scrollToBottomTrigger += 1
+    return pending.id
+  }
+
+  /// Removes a pending entry after the server confirmed the send. The
+  /// confirmed message arrives through the GRDB observation.
+  func completePendingSend(id: String) {
+    pendingSends.removeAll { $0.id == id }
+  }
+
+  /// Marks a pending entry as terminally failed so the UI renders a failed
+  /// indicator with a retry affordance instead of an eternally pending state.
+  func failPendingSend(id: String, reason: String) {
+    guard let index = pendingSends.firstIndex(where: { $0.id == id }) else { return }
+    pendingSends[index].state = .failed(reason)
+    logger.warning(
+      "Send failed for pending message \(id.prefix(24)): \(reason, privacy: .public)")
+  }
+
+  /// Removes and returns a *failed* pending entry so its content can be
+  /// re-submitted through the send pipeline. Returns `nil` if the entry is
+  /// missing or not in a failed state (a retry of an in-flight send is a no-op).
+  func takeFailedPendingSend(id: String) -> PendingMLSSend? {
+    guard let index = pendingSends.firstIndex(where: { $0.id == id }),
+      case .failed = pendingSends[index].state
+    else { return nil }
+    return pendingSends.remove(at: index)
+  }
+
+  // MARK: - Recovery State (WS-6.5)
+
+  /// Observe the conversation row so persisted recovery flags
+  /// (`needsRejoin` / `needsReset` / `isUnrecoverable`) drive the
+  /// send-blocking state as soon as they change.
+  private func startObservingConversationRecovery(database: DatabasePool) {
+    conversationObservation?.cancel()
+
+    let convoId = conversationId
+    let userDID = currentUserDID
+
+    let observation = ValueObservation.tracking { db in
+      try MLSConversationModel
+        .filter(MLSConversationModel.Columns.conversationID == convoId)
+        .filter(MLSConversationModel.Columns.currentUserDID == userDID)
+        .fetchOne(db)
+    }
+
+    conversationObservation = observation.start(
+      in: database,
+      scheduling: .immediate,
+      onError: { [weak self] error in
+        self?.logger.error(
+          "Conversation recovery observation error: \(error.localizedDescription)")
+      },
+      onChange: { [weak self] model in
+        Task { @MainActor [weak self] in
+          await self?.resolveRecoveryState(model: model)
+        }
+      }
+    )
+  }
+
+  /// Overlay the recovery manager's transient state (`.recovering`, …) on top
+  /// of the persisted model state to produce the resolved spec §8.1 state.
+  private func resolveRecoveryState(model: MLSConversationModel?) async {
+    var resolved = model?.persistedRecoveryState ?? .healthy
+
+    if let appState,
+      let manager = await appState.getMLSConversationManager(timeout: 2.0),
+      let userDid = manager.userDid,
+      let recovery = await manager.mlsClient.recovery(for: userDid)
+    {
+      resolved = await recovery.recoveryState(for: conversationId, model: model)
+    }
+
+    if conversationRecoveryState != resolved {
+      logger.info(
+        "Recovery state for \(self.conversationId.prefix(16)) → \(resolved.rawValue, privacy: .public) (sends \(resolved.blocksSending ? "blocked" : "allowed", privacy: .public))"
+      )
+      conversationRecoveryState = resolved
+    }
+  }
+
+  /// Re-resolve the recovery state on demand (view appear, app foreground,
+  /// after a send failure). Transient recovery states don't touch the DB, so
+  /// the row observation alone can miss them.
+  func refreshRecoveryState() async {
+    guard let appState, let database = appState.mlsDatabase else { return }
+    let model = try? await MLSStorage.shared.fetchConversation(
+      conversationID: conversationId,
+      currentUserDID: currentUserDID,
+      database: database
+    )
+    await resolveRecoveryState(model: model)
   }
 
   /// Core conversion logic: turns raw `MLSMessageModel` rows into
@@ -383,8 +558,8 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
 
     // Clear typing indicators for senders who just sent a message
     // Also detect new incoming messages for haptic feedback
-    let existingIDs = Set(messages.map { $0.id })
-    let maxExistingTimestamp = messages.map { $0.sentAt }.max() ?? .distantPast
+    let existingIDs = Set(confirmedMessages.map { $0.id })
+    let maxExistingTimestamp = confirmedMessages.map { $0.sentAt }.max() ?? .distantPast
     var hasNewIncomingMessage = false
     for adapter in adapters where !existingIDs.contains(adapter.id) {
       clearTypingForSender(adapter.senderID)
@@ -396,7 +571,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
       PlatformHaptics.light()
     }
 
-    self.messages = adapters
+    self.confirmedMessages = adapters
     hasReceivedInitialMessages = true
     self.hasMoreMessages = models.count >= 50
     applyRemoteReadCutoffToLoadedMessages()
@@ -490,7 +665,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
     guard let cutoff = remoteReadCutoff else { return }
 
     var didUpdate = false
-    messages = messages.map { adapter in
+    confirmedMessages = confirmedMessages.map { adapter in
       guard adapter.isFromCurrentUser else { return adapter }
       let shouldBeRead = isReadByRemoteParticipant(
         epoch: adapter.mlsEpoch,
@@ -525,7 +700,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
       logger.debug("Preloaded \(profiles.count) profiles for conversation \(self.conversationId)")
 
       // If messages are already loaded, rebuild them with the new profile data
-      if profilesChanged && !messages.isEmpty {
+      if profilesChanged && !confirmedMessages.isEmpty {
         rebuildMessagesWithProfiles()
       }
     }
@@ -533,7 +708,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
 
   /// Rebuild all messages with current profile cache data
   private func rebuildMessagesWithProfiles() {
-    messages = messages.map { adapter in
+    confirmedMessages = confirmedMessages.map { adapter in
       let canonicalSenderDID = MLSProfileEnricher.canonicalDID(adapter.senderID)
 
       // Try profile cache first, then member cache
@@ -574,7 +749,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
         validationFailureReason: adapter.validationFailureReason
       )
     }
-    logger.debug("Rebuilt \(self.messages.count) messages with updated profile data")
+    logger.debug("Rebuilt \(self.confirmedMessages.count) messages with updated profile data")
   }
 
   private func adoptOrphanedReactionsIfNeeded(
@@ -668,7 +843,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
   }
 
   private func rebuildMessagesWithReactions() {
-    messages = messages.map { adapter in
+    confirmedMessages = confirmedMessages.map { adapter in
       // SAFETY: Don't attach reactions to undecryptable/error messages
       let reactionsToShow =
         adapter.isDecryptedAndValid
@@ -831,7 +1006,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
       )
 
       var messageCoordinatesByID: [String: (epoch: Int64, sequenceNumber: Int64)] = [:]
-      for adapter in messages {
+      for adapter in confirmedMessages {
         if let epoch = adapter.mlsEpoch, let sequenceNumber = adapter.mlsSequence {
           messageCoordinatesByID[adapter.id] = (Int64(epoch), Int64(sequenceNumber))
         }
@@ -964,10 +1139,10 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
       }
 
       // Prepend older messages, deduplicating against existing
-      let existingIDs = Set(messages.map { $0.id })
+      let existingIDs = Set(confirmedMessages.map { $0.id })
       let uniqueAdapters = adapters.filter { !existingIDs.contains($0.id) }
-      self.messages = uniqueAdapters + self.messages
-      sortMessagesInDisplayOrder(&self.messages)
+      self.confirmedMessages = uniqueAdapters + self.confirmedMessages
+      sortMessagesInDisplayOrder(&self.confirmedMessages)
       applyRemoteReadCutoffToLoadedMessages()
       // Stop paginating if no displayable messages were found (all errors/placeholders)
       self.hasMoreMessages = olderModels.count >= 50 && !adapters.isEmpty
@@ -1088,21 +1263,50 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
 
     stopLocalTypingIndicatorIfNeeded()
 
+    let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    let embed = attachedEmbed
+
+    // Clear draft immediately for better UX. The content survives in the
+    // pending-send overlay (WS-6.5), so failures stay visible and retryable.
+    draftText = ""
+    attachedEmbed = nil
+
+    await submitMessage(text: trimmedText, embed: embed)
+  }
+
+  /// Retry a failed pending send through the same pipeline (WS-6.5).
+  func retryFailedSend(pendingID: String) async {
+    guard let pending = takeFailedPendingSend(id: pendingID) else { return }
+    await submitMessage(text: pending.text, embed: pending.embed)
+  }
+
+  /// Shared send pipeline for new sends and retries: optimistic pending entry,
+  /// recovery-blocking, and failed-state fallback (WS-6.5).
+  private func submitMessage(text trimmedText: String, embed: MLSEmbedData?) async {
+    // WS-6.5: block sends while the conversation is in active recovery —
+    // queue the message as a visible failed entry (retryable) instead of
+    // letting it fail opaquely against a stale group.
+    if isSendBlockedByRecovery {
+      let pendingId = beginPendingSend(text: trimmedText, embed: embed)
+      failPendingSend(
+        id: pendingId,
+        reason: "Sending is paused while this conversation's secure session is restored."
+      )
+      return
+    }
+
+    // WS-6.5: optimistic pending entry with failed-state fallback.
+    let pendingId = beginPendingSend(text: trimmedText, embed: embed)
+
     guard let appState = appState,
       let manager = await appState.getMLSConversationManager()
     else {
+      failPendingSend(id: pendingId, reason: "MLS service not available")
       error = NSError(
         domain: "MLS", code: -1,
         userInfo: [NSLocalizedDescriptionKey: "MLS service not available"])
       return
     }
-
-    let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
-    let embed = attachedEmbed
-
-    // Clear draft immediately for better UX
-    draftText = ""
-    attachedEmbed = nil
 
     do {
       let (messageId, receivedAt, seq, epoch) = try await manager.sendMessage(
@@ -1110,6 +1314,8 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
         plaintext: trimmedText,
         embed: embed
       )
+
+      completePendingSend(id: pendingId)
 
       // Create adapter for the sent message
       let profile = profileCache[MLSProfileEnricher.canonicalDID(currentUserDID)]
@@ -1130,19 +1336,23 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
         sequence: Int(seq)
       )
 
-      if let existingIndex = messages.firstIndex(where: { $0.id == messageId }) {
-        messages[existingIndex] = adapter
+      if let existingIndex = confirmedMessages.firstIndex(where: { $0.id == messageId }) {
+        confirmedMessages[existingIndex] = adapter
       } else {
-        messages.append(adapter)
+        confirmedMessages.append(adapter)
       }
-      sortMessagesInDisplayOrder(&messages)
+      sortMessagesInDisplayOrder(&confirmedMessages)
       scrollToBottomTrigger += 1
 
       logger.info("Sent MLS message: \(messageId)")
 
     } catch {
       self.error = error
+      // WS-6.5: keep the message visible in a failed state with retry instead
+      // of dropping it.
+      failPendingSend(id: pendingId, reason: error.localizedDescription)
       logger.error("Failed to send MLS message: \(error.localizedDescription)")
+      await refreshRecoveryState()
     }
   }
 
@@ -1192,8 +1402,8 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
         }
 
         // Update the message adapter's reactions
-        if let index = messages.firstIndex(where: { $0.id == messageID }) {
-          let oldAdapter = messages[index]
+        if let index = confirmedMessages.firstIndex(where: { $0.id == messageID }) {
+          let oldAdapter = confirmedMessages[index]
           let newAdapter = MLSMessageAdapter(
             id: oldAdapter.id,
             convoID: oldAdapter.mlsConversationID,
@@ -1211,7 +1421,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
             processingAttempts: oldAdapter.processingAttempts,
             validationFailureReason: oldAdapter.validationFailureReason
           )
-          messages[index] = newAdapter
+          confirmedMessages[index] = newAdapter
         }
 
       } catch {
@@ -1260,8 +1470,8 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
         localReactions[messageID] = updated
 
         // Update the message adapter's reactions
-        if let index = messages.firstIndex(where: { $0.id == messageID }) {
-          let oldAdapter = messages[index]
+        if let index = confirmedMessages.firstIndex(where: { $0.id == messageID }) {
+          let oldAdapter = confirmedMessages[index]
           let newAdapter = MLSMessageAdapter(
             id: oldAdapter.id,
             convoID: oldAdapter.mlsConversationID,
@@ -1279,7 +1489,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
             processingAttempts: oldAdapter.processingAttempts,
             validationFailureReason: oldAdapter.validationFailureReason
           )
-          messages[index] = newAdapter
+          confirmedMessages[index] = newAdapter
         }
 
       } catch {
@@ -1327,14 +1537,14 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
 
     // SAFETY: Only update UI if parent message exists AND is decrypted/valid
     // Reactions for undecryptable placeholders are cached but not displayed
-    guard let index = messages.firstIndex(where: { $0.id == messageID }) else {
+    guard let index = confirmedMessages.firstIndex(where: { $0.id == messageID }) else {
       logger.debug(
         "⚠️ [REACTION-SAFETY] Reaction cached but no message adapter found: \(messageID.prefix(16))"
       )
       return
     }
 
-    let oldAdapter = messages[index]
+    let oldAdapter = confirmedMessages[index]
     guard oldAdapter.isDecryptedAndValid else {
       logger.warning(
         "⚠️ [REACTION-SAFETY] Suppressing reaction display for undecryptable message: \(messageID.prefix(16))"
@@ -1359,7 +1569,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
       processingAttempts: oldAdapter.processingAttempts,
       validationFailureReason: oldAdapter.validationFailureReason
     )
-    messages[index] = newAdapter
+    confirmedMessages[index] = newAdapter
   }
 
   /// Apply an incoming read receipt to update message send states.
@@ -1370,7 +1580,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
     guard normalizedReaderDID != currentUserDID else { return }
 
     guard
-      let targetMessage = messages.first(where: { $0.id == readUpToMessageID }),
+      let targetMessage = confirmedMessages.first(where: { $0.id == readUpToMessageID }),
       let epoch = targetMessage.mlsEpoch,
       let sequenceNumber = targetMessage.mlsSequence
     else {
@@ -1395,7 +1605,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
     guard normalizedReaderDID != currentUserDID else { return }
 
     var latestCurrentUserCursor: (epoch: Int64, sequenceNumber: Int64)?
-    for adapter in messages where adapter.isFromCurrentUser {
+    for adapter in confirmedMessages where adapter.isFromCurrentUser {
       guard let epoch = adapter.mlsEpoch, let sequenceNumber = adapter.mlsSequence else { continue }
       let candidate = (epoch: Int64(epoch), sequenceNumber: Int64(sequenceNumber))
       if shouldAdvanceRemoteReadCutoff(existing: latestCurrentUserCursor, candidate: candidate) {
@@ -1471,7 +1681,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
     }
 
     // Rebuild messages with updated profiles
-    messages = messages.map { adapter in
+    confirmedMessages = confirmedMessages.map { adapter in
       let canonicalSenderDID = MLSProfileEnricher.canonicalDID(adapter.senderID)
       guard let profile = profileCache[canonicalSenderDID] else { return adapter }
       return MLSMessageAdapter(

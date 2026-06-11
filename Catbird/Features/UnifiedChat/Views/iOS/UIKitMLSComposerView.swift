@@ -68,6 +68,15 @@ final class UIKitMLSComposerView: UIView, UITextViewDelegate {
     didSet { placeholderLabel.text = placeholderText }
   }
 
+  /// When true the send button is disabled and send taps are ignored without
+  /// clearing the draft (WS-6.5: sends blocked during conversation recovery).
+  var isSendBlocked: Bool = false {
+    didSet {
+      guard oldValue != isSendBlocked else { return }
+      updateSendButtonState()
+    }
+  }
+
   private(set) var mode: ComposerMode = .compose
 
   var embedPreviewImage: UIImage? {
@@ -820,6 +829,8 @@ final class UIKitMLSComposerView: UIView, UITextViewDelegate {
   }
 
   @objc private func sendTapped() {
+    // WS-6.5: ignore taps while sends are blocked so the draft is preserved.
+    guard !isSendBlocked else { return }
     let trimmed = textView.text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty || hasEmbed else { return }
     let message = textView.text ?? ""
@@ -986,7 +997,7 @@ final class UIKitMLSComposerView: UIView, UITextViewDelegate {
 
   private func updateSendButtonState() {
     let hasText = !(textView.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    let canSend = hasText || hasEmbed
+    let canSend = (hasText || hasEmbed) && !isSendBlocked
     sendButton.isEnabled = canSend
     sendButton.alpha = canSend ? 1.0 : 0.5
 

@@ -6,6 +6,9 @@ import UIKit
 /// Pass `nil` to omit the composer (e.g. for ConversationView, UnifiedChatView).
 struct InlineComposerConfig {
   var placeholderText: String = "Message"
+  /// When true the send button is disabled and taps are ignored, leaving the
+  /// draft intact (WS-6.5: sends blocked during conversation recovery).
+  var isSendBlocked: Bool = false
   var onSend: (String) -> Void
   var onAttachTapped: () -> Void
   var onTypingChanged: ((Bool) -> Void)?
@@ -36,6 +39,7 @@ struct ChatCollectionViewBridge<DataSource: UnifiedChatDataSource>: UIViewContro
   @Binding var navigationPath: NavigationPath
   var onMessageLongPress: ((DataSource.Message) -> Void)?
   var onRequestEmojiPicker: ((String) -> Void)?
+  var onRetryMessage: ((String) -> Void)?
   var composerConfig: InlineComposerConfig?
 
   func makeUIViewController(context: Context) -> ChatCollectionViewController<DataSource> {
@@ -46,6 +50,7 @@ struct ChatCollectionViewBridge<DataSource: UnifiedChatDataSource>: UIViewContro
     )
     controller.onMessageLongPress = onMessageLongPress
     controller.onRequestEmojiPicker = onRequestEmojiPicker
+    controller.onRetryMessage = onRetryMessage
     if let config = composerConfig {
       controller.installComposer(config: config)
     }
@@ -60,6 +65,7 @@ struct ChatCollectionViewBridge<DataSource: UnifiedChatDataSource>: UIViewContro
     controller.updateAppState(appState)
     controller.onMessageLongPress = onMessageLongPress
     controller.onRequestEmojiPicker = onRequestEmojiPicker
+    controller.onRetryMessage = onRetryMessage
     if let config = composerConfig {
       controller.updateComposerCallbacks(config: config)
       controller.updateComposerEmbedState(hasEmbed: config.hasEmbed, previewImage: config.embedPreviewImage)

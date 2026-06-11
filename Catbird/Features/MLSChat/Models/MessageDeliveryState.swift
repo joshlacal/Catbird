@@ -20,6 +20,20 @@ public enum MessageDeliveryState: Equatable {
   case deliveredAll
   /// At least one read receipt received (requires opt-in).
   case read
+  /// The send pipeline gave up on this message (network/server/recovery
+  /// failure after the package's retry semantics). Never derived from ack
+  /// signals — `compute` cannot produce it. Set directly by the send
+  /// pipeline so the UI can render a failed indicator with a retry
+  /// affordance instead of an eternally pending state (WS-6.5).
+  case failed(reason: String)
+}
+
+public extension MessageDeliveryState {
+  /// True when the message terminally failed to send.
+  var isFailed: Bool {
+    if case .failed = self { return true }
+    return false
+  }
 }
 
 public extension MessageDeliveryState {

@@ -84,4 +84,34 @@ struct MessageDeliveryStateTests {
     )
     #expect(state == .deliveredPartial(count: 1, total: 2))
   }
+
+  // MARK: - .failed (WS-6.5)
+
+  @Test func failedIsNeverDerivedFromAckSignals() {
+    // compute() derives from ack signals only; .failed is set by the send
+    // pipeline. Exhaustively confirm no signal combination yields .failed.
+    for isSent in [true, false] {
+      for hasReadReceipt in [true, false] {
+        for readReceiptsEnabled in [true, false] {
+          let state = MessageDeliveryState.compute(
+            isSent: isSent,
+            acks: [ack(senderDID: "did:plc:alice")],
+            hasReadReceipt: hasReadReceipt,
+            memberCount: 2,
+            readReceiptsEnabled: readReceiptsEnabled
+          )
+          #expect(!state.isFailed)
+        }
+      }
+    }
+  }
+
+  @Test func failedCarriesReasonAndIsEquatable() {
+    let state = MessageDeliveryState.failed(reason: "network down")
+    #expect(state.isFailed)
+    #expect(state == .failed(reason: "network down"))
+    #expect(state != .failed(reason: "other"))
+    #expect(MessageDeliveryState.sending.isFailed == false)
+    #expect(MessageDeliveryState.sent.isFailed == false)
+  }
 }
