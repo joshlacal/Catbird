@@ -478,8 +478,7 @@ extension PostComposerViewModel {
                     }
                 } else if !entry.mediaItems.isEmpty {
                     if let imagesEmbed = try await createImagesEmbedForEntry(entry),
-                       case .appBskyEmbedImages(let images) = imagesEmbed {
-                        let media = AppBskyEmbedRecordWithMedia.AppBskyEmbedRecordWithMediaMediaUnion.appBskyEmbedImages(images)
+                       let media = Self.recordWithMediaUnion(from: imagesEmbed) {
                         embed = .appBskyEmbedRecordWithMedia(AppBskyEmbedRecordWithMedia(record: record, media: media))
                     }
                 } else if let videoItem = entry.videoItem {
@@ -580,6 +579,21 @@ extension PostComposerViewModel {
         return embed
     }
 
+    /// Maps the embed produced by createImagesEmbed (images for <=4 photos,
+    /// gallery for 5+) onto the recordWithMedia media union for quote posts.
+    static func recordWithMediaUnion(
+        from embed: AppBskyFeedPost.AppBskyFeedPostEmbedUnion
+    ) -> AppBskyEmbedRecordWithMedia.AppBskyEmbedRecordWithMediaMediaUnion? {
+        switch embed {
+        case .appBskyEmbedImages(let images):
+            return .appBskyEmbedImages(images)
+        case .appBskyEmbedGallery(let gallery):
+            return .appBskyEmbedGallery(gallery)
+        default:
+            return nil
+        }
+    }
+
     // MARK: - Post Creation
 
     func createPost() async throws {
@@ -622,8 +636,7 @@ extension PostComposerViewModel {
             } else if !mediaItems.isEmpty {
                 logger.debug("Creating recordWithMedia embed (quote + \(self.mediaItems.count) images)")
                 if let imagesEmbed = try await createImagesEmbed(),
-                   case .appBskyEmbedImages(let images) = imagesEmbed {
-                    let media = AppBskyEmbedRecordWithMedia.AppBskyEmbedRecordWithMediaMediaUnion.appBskyEmbedImages(images)
+                   let media = Self.recordWithMediaUnion(from: imagesEmbed) {
                     embed = .appBskyEmbedRecordWithMedia(AppBskyEmbedRecordWithMedia(record: record, media: media))
                 }
             } else if videoItem != nil {

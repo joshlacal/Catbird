@@ -455,9 +455,30 @@ final class PostManager {
         // Note: Full video details would need to be fetched
         postViewEmbed = nil
 
-      case .appBskyEmbedGallery:
-        // Gallery authoring isn't supported by the composer; let the real post load
-        postViewEmbed = nil
+      case .appBskyEmbedGallery(let gallery):
+        // Convert to view format using the same CDN URL scheme as images
+        let viewItems = try gallery.items.compactMap { item -> AppBskyEmbedGallery.ViewItemsUnion? in
+          guard case .appBskyEmbedGalleryImage(let image) = item else { return nil }
+
+          let cidString = image.image.ref?.cid.string ?? ""
+          let thumbUrlString = "https://cdn.bsky.app/img/feed_thumbnail/plain/\(did)/\(cidString)@jpeg"
+          let fullsizeUrlString = "https://cdn.bsky.app/img/feed_fullsize/plain/\(did)/\(cidString)@jpeg"
+
+          guard let thumbnailURI = try? URI(thumbUrlString),
+                let fullsizeURI = try? URI(fullsizeUrlString) else {
+            throw PostManagerError.invalidImageURI
+          }
+
+          return .appBskyEmbedGalleryViewImage(
+            AppBskyEmbedGallery.ViewImage(
+              thumbnail: thumbnailURI,
+              fullsize: fullsizeURI,
+              alt: image.alt,
+              aspectRatio: image.aspectRatio
+            )
+          )
+        }
+        postViewEmbed = .appBskyEmbedGalleryView(AppBskyEmbedGallery.View(items: viewItems))
 
       case .unexpected:
         postViewEmbed = nil

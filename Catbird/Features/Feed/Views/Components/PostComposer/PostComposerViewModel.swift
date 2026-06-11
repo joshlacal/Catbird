@@ -154,8 +154,12 @@ final class PostComposerViewModel {
   }
   
   // MARK: - Constants
-  
-  let maxImagesAllowed = 4
+
+  let maxImagesAllowed = 10
+  /// Posts with more than this many images promote from app.bsky.embed.images
+  /// to app.bsky.embed.gallery; at or below it the legacy images embed is kept
+  /// so older clients can still render the post.
+  let legacyImagesEmbedMax = 4
   let maxAltTextLength = 1000
   let maxCharacterCount = 300
   

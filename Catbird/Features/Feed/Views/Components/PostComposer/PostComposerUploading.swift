@@ -69,6 +69,26 @@ extension PostComposerViewModel {
             imageEmbeds.append(imageEmbed)
         }
 
+        // More than legacyImagesEmbedMax images promotes to app.bsky.embed.gallery
+        // (matching the official client); otherwise keep the legacy images embed
+        // so older clients can still render the post.
+        if imageEmbeds.count > legacyImagesEmbedMax {
+            logger.info("PostComposerUploading: \(imageEmbeds.count) images — promoting to gallery embed")
+            let galleryItems = imageEmbeds.map { image in
+                AppBskyEmbedGallery.AppBskyEmbedGalleryItemsUnion.appBskyEmbedGalleryImage(
+                    AppBskyEmbedGallery.Image(
+                        image: image.image,
+                        alt: image.alt,
+                        // Gallery items require an aspect ratio; default to square
+                        // when dimensions were unavailable (matches official client)
+                        aspectRatio: image.aspectRatio
+                            ?? AppBskyEmbedDefs.AspectRatio(width: 1, height: 1)
+                    )
+                )
+            }
+            return .appBskyEmbedGallery(AppBskyEmbedGallery(items: galleryItems))
+        }
+
         return .appBskyEmbedImages(AppBskyEmbedImages(images: imageEmbeds))
     }
 
