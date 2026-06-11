@@ -838,6 +838,11 @@ final class AppStateManager {
       defaults?.set(data, forKey: "widgetAccounts")
     }
 
+    // Published for the Notification Service Extension: it matches the
+    // `recipient_account` push-payload hash against these DIDs to target the
+    // right account on notification tap (covers accounts without an MLS DB).
+    defaults?.set(accounts.map { $0.did }, forKey: "knownAccountDIDs")
+
     if let activeDID = lifecycle.userDID {
       defaults?.set(activeDID, forKey: "activeAccountDID")
     } else {

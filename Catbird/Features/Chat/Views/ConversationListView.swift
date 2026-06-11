@@ -189,9 +189,7 @@ struct ConversationListView: View {
     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
       swipeActionsContent(for: convo, showMuteOption: showMuteOption)
     }
-    .contextMenu {
-      ConversationContextMenu(conversation: convo)
-    }
+    .modifier(ConversationContextMenu(conversation: convo))
 //    .listRowBackground(
 //      // Show selection state
 //      selectedConvoId == convo.id

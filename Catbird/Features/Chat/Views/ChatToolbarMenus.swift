@@ -92,8 +92,13 @@ struct ConversationToolbarMenu: View {
   }
 }
 
-/// Context menu for conversation rows
-struct ConversationContextMenu: View {
+/// Context menu plus its confirmation alerts/sheet for conversation rows.
+///
+/// A `ViewModifier` on purpose: SwiftUI tears down `.contextMenu` content the
+/// moment a menu item is tapped, so state and `.alert`/`.sheet` modifiers
+/// living inside the menu content can never present. Attaching them to the
+/// row keeps the presentation state in a hierarchy that survives dismissal.
+struct ConversationContextMenu: ViewModifier {
   @Environment(AppState.self) private var appState
   let conversation: ChatBskyConvoDefs.ConvoView
   @State private var showingSettings = false
@@ -106,68 +111,69 @@ struct ConversationContextMenu: View {
     conversation.isOwnedGroupConversation(currentUserDID: appState.userDID)
   }
 
-  var body: some View {
-    Group {
-      Button {
-        Task {
-          await appState.chatManager.markConversationAsRead(convoId: conversation.id)
+  func body(content: Content) -> some View {
+    content
+      .contextMenu {
+        Button {
+          Task {
+            await appState.chatManager.markConversationAsRead(convoId: conversation.id)
+          }
+        } label: {
+          Label("Mark as Read", systemImage: "envelope.open")
         }
-      } label: {
-        Label("Mark as Read", systemImage: "envelope.open")
-      }
-      .disabled(conversation.unreadCount == 0)
-      
-      Button {
-        if conversation.muted {
-          Task { await appState.chatManager.unmuteConversation(convoId: conversation.id) }
-        } else {
-          Task { await appState.chatManager.muteConversation(convoId: conversation.id) }
+        .disabled(conversation.unreadCount == 0)
+
+        Button {
+          if conversation.muted {
+            Task { await appState.chatManager.unmuteConversation(convoId: conversation.id) }
+          } else {
+            Task { await appState.chatManager.muteConversation(convoId: conversation.id) }
+          }
+        } label: {
+          Label(conversation.muted ? "Unmute" : "Mute", systemImage: conversation.muted ? "bell" : "bell.slash")
         }
-      } label: {
-        Label(conversation.muted ? "Unmute" : "Mute", systemImage: conversation.muted ? "bell" : "bell.slash")
-      }
-      
-      Divider()
-      
-      Button {
-        showingSettings = true
-      } label: {
-        Label("Conversation Info", systemImage: "info.circle")
-      }
-      
-      Button(role: .destructive) {
-        if isOwnedGroup {
-          showingOwnerLeaveAlert = true
-        } else {
-          showingDeleteAlert = true
+
+        Divider()
+
+        Button {
+          showingSettings = true
+        } label: {
+          Label("Conversation Info", systemImage: "info.circle")
         }
-      } label: {
-        Label(isOwnedGroup ? "Lock & Leave Group" : "Leave Conversation", systemImage: "trash")
-      }
-    }
-    .sheet(isPresented: $showingSettings) {
-      ConversationManagementView(conversation: conversation)
-    }
-    .alert("Leave Conversation", isPresented: $showingDeleteAlert) {
-      Button("Cancel", role: .cancel) { }
-      Button("Leave", role: .destructive) {
-        Task {
-          await appState.chatManager.leaveConversation(convoId: conversation.id)
+
+        Button(role: .destructive) {
+          if isOwnedGroup {
+            showingOwnerLeaveAlert = true
+          } else {
+            showingDeleteAlert = true
+          }
+        } label: {
+          Label(isOwnedGroup ? "Lock & Leave Group" : "Leave Conversation", systemImage: "trash")
         }
       }
-    } message: {
-      Text("Are you sure you want to leave this conversation?")
-    }
-    .alert("Lock & Leave Group", isPresented: $showingOwnerLeaveAlert) {
-      Button("Cancel", role: .cancel) { }
-      Button("Lock & Leave", role: .destructive) {
-        Task {
-          await appState.chatManager.lockAndLeaveConversation(convoId: conversation.id)
-        }
+      .sheet(isPresented: $showingSettings) {
+        ConversationManagementView(conversation: conversation)
       }
-    } message: {
-      Text("As the owner, you must lock this group before leaving. Your messages will be deleted for you, but not for the other participants.")
-    }
+      .alert("Leave Conversation", isPresented: $showingDeleteAlert) {
+        Button("Cancel", role: .cancel) { }
+        Button("Leave", role: .destructive) {
+          Task {
+            await appState.chatManager.leaveConversation(convoId: conversation.id)
+          }
+        }
+      } message: {
+        Text("Are you sure you want to leave this conversation?")
+      }
+      .alert("Lock & Leave Group", isPresented: $showingOwnerLeaveAlert) {
+        Button("Cancel", role: .cancel) { }
+        Button("Lock & Leave", role: .destructive) {
+          Task {
+            await appState.chatManager.lockAndLeaveConversation(convoId: conversation.id)
+          }
+        }
+      } message: {
+        Text("As the owner, you must lock this group before leaving. Your messages will be deleted for you, but not for the other participants.")
+      }
   }
 }
 

@@ -240,9 +240,7 @@ struct ChatTabView: View {
       ConversationRow(convo: convo, currentUserDID: appState.userDID)
         .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
         .modifier(ConditionalSwipeActions(conversation: convo, enabled: true))
-        .contextMenu {
-          ConversationContextMenu(conversation: convo)
-        }
+        .modifier(ConversationContextMenu(conversation: convo))
         .tag(item.id)
 
     case .mls(let convo, let participants, let unreadCount, let lastMessage, let memberChange, _):
@@ -330,9 +328,7 @@ struct ChatTabView: View {
             .id("\(appState.userDID):search:\(convo.id)")
             .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
             .modifier(ConditionalSwipeActions(conversation: convo, enabled: true))
-            .contextMenu {
-              ConversationContextMenu(conversation: convo)
-            }
+            .modifier(ConversationContextMenu(conversation: convo))
             .tag(convo.id)
         }
       }

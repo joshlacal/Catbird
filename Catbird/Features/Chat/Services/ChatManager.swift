@@ -305,6 +305,8 @@ final class ChatManager: StateInvalidationSubscriber {
          let (responseCode, response) = try await client.chat.bsky.convo.listConvos(input: params)
  
       guard responseCode >= 200 && responseCode < 300 else {
+        // Insurance only: Petrel throws for non-400 client errors, so a 429
+        // normally arrives on the thrown path (see the catch below).
         if responseCode == 429 {
           increaseConversationsPollBackoff()
         }
@@ -347,8 +349,13 @@ final class ChatManager: StateInvalidationSubscriber {
       await checkForNewMessages()
 
     } catch {
+      // Rate limits surface as thrown errors (Petrel throws for non-400 client
+      // errors); back off silently — a rate-limited background poll must not
+      // alert the user on every tick.
       if isRateLimitError(error) {
         increaseConversationsPollBackoff()
+        loadingConversations = false
+        return
       }
       logger.error("Error loading conversations: \(error.localizedDescription)")
       setErrorState(error)
@@ -530,6 +537,8 @@ final class ChatManager: StateInvalidationSubscriber {
       let (responseCode, response) = try await client.chat.bsky.convo.getMessages(input: params)
  
       guard responseCode >= 200 && responseCode < 300 else {
+        // Insurance only: Petrel throws for non-400 client errors, so a 429
+        // normally arrives on the thrown path (see the catch below).
         if responseCode == 429 {
           increaseMessagePollBackoff(for: convoId)
         }
@@ -589,8 +598,13 @@ final class ChatManager: StateInvalidationSubscriber {
       await markConversationAsRead(convoId: convoId)
 
     } catch {
+      // Rate limits surface as thrown errors (Petrel throws for non-400 client
+      // errors); back off silently — a rate-limited background poll must not
+      // alert the user on every tick.
       if isRateLimitError(error) {
         increaseMessagePollBackoff(for: convoId)
+        loadingMessages[convoId] = false
+        return
       }
       logger.error("Error loading messages for \(convoId): \(error.localizedDescription)")
       setErrorState(error)
@@ -648,18 +662,34 @@ final class ChatManager: StateInvalidationSubscriber {
 
     } catch {
       logger.error("Error leaving conversation \(convoId): \(error.localizedDescription)")
-      setErrorState(error)
+      setInteractiveThrownError(
+        error,
+        context: "leaveConversation(\(convoId))",
+        operation: "leave this conversation"
+      )
       return .failure
     }
   }
 
+  /// Outcome of a `lockConversation` call. The generated wrapper drops the
+  /// XRPC error body, so a 400 can't distinguish `ConvoLocked` (already
+  /// locked) from a genuine rejection; the ambiguous case is reported so the
+  /// lock-and-leave path can fall through to the authoritative leave call.
+  enum LockConversationResult: Equatable {
+    case locked
+    /// HTTP 400 without local state confirming the lock — plausibly
+    /// `ConvoLocked` from a remote lock this client hasn't polled yet.
+    case possiblyAlreadyLocked
+    case failure
+  }
+
   @MainActor
   @discardableResult
-  func lockConversation(convoId: String) async -> Bool {
+  func lockConversation(convoId: String) async -> LockConversationResult {
     guard let client = client else {
       logger.error("Cannot lock conversation \(convoId): client is nil")
       errorState = .noClient
-      return false
+      return .failure
     }
 
     let lockInput = ChatBskyConvoLockConvo.Input(convoId: convoId)
@@ -669,41 +699,52 @@ final class ChatManager: StateInvalidationSubscriber {
       guard responseCode >= 200 && responseCode < 300 else {
         // `ConvoLocked` (already locked) also arrives as HTTP 400; treat an
         // already-locked group as success so lock-then-leave stays idempotent.
-        if responseCode == 400,
-           conversations.first(where: { $0.id == convoId })?.isLockedForSending == true {
-          logger.debug("Conversation \(convoId) is already locked")
-          return true
+        if responseCode == 400 {
+          if conversations.first(where: { $0.id == convoId })?.isLockedForSending == true {
+            logger.debug("Conversation \(convoId) is already locked")
+            return .locked
+          }
+          logger.info(
+            "Lock returned 400 for \(convoId) without a locally-visible lock; possibly locked remotely")
+          return .possiblyAlreadyLocked
         }
         setInteractiveNetworkError(
           code: responseCode,
           context: "lockConversation(\(convoId))",
           operation: "lock this group"
         )
-        return false
+        return .failure
       }
 
       // The response carries the updated ConvoView (lockStatus flipped)
       if let updatedConvo = response?.convo,
          let index = conversations.firstIndex(where: { $0.id == updatedConvo.id }) {
         conversations[index] = updatedConvo
+        updateConversationsByStatus()
       }
       logger.debug("Conversation \(convoId) locked successfully.")
-      return true
+      return .locked
 
     } catch {
       logger.error("Error locking conversation \(convoId): \(error.localizedDescription)")
-      setErrorState(error)
-      return false
+      setInteractiveThrownError(
+        error,
+        context: "lockConversation(\(convoId))",
+        operation: "lock this group"
+      )
+      return .failure
     }
   }
 
   /// Owner leave path (social-app `leaveAndLockConvo`): the server rejects
   /// `leaveConvo` for group owners with `OwnerCannotLeave`, so lock the group
-  /// first, then leave.
+  /// first, then leave. A lock 400 with stale-unlocked local state proceeds to
+  /// the leave anyway — the leave's own result is authoritative, and a genuine
+  /// lock rejection would fail the leave too and surface there.
   @MainActor
   @discardableResult
   func lockAndLeaveConversation(convoId: String) async -> Bool {
-    guard await lockConversation(convoId: convoId) else { return false }
+    guard await lockConversation(convoId: convoId) != .failure else { return false }
     return await leaveConversation(convoId: convoId) == .success
   }
 
@@ -986,7 +1027,11 @@ final class ChatManager: StateInvalidationSubscriber {
 
     } catch {
       logger.error("Error sending message to \(convoId): \(error.localizedDescription)")
-      setErrorState(error)
+      setInteractiveThrownError(
+        error,
+        context: "sendMessage(\(convoId))",
+        operation: "send this message"
+      )
       return false
     }
   }
@@ -1231,7 +1276,11 @@ final class ChatManager: StateInvalidationSubscriber {
 
     } catch {
       logger.error("Error deleting message \(messageId): \(error.localizedDescription)")
-      setErrorState(error)
+      setInteractiveThrownError(
+        error,
+        context: "deleteMessageForSelf(\(messageId))",
+        operation: "delete this message"
+      )
       return false
     }
   }
@@ -1372,10 +1421,11 @@ final class ChatManager: StateInvalidationSubscriber {
       return true
     } catch {
       logger.error("Failed to add reaction: \(error.localizedDescription)")
-      // Only set error state for non-cancellation errors
-      if shouldShowError(error) {
-        setErrorState(error)
-      }
+      setInteractiveThrownError(
+        error,
+        context: "addReaction(\(messageId))",
+        operation: "add this reaction"
+      )
       return false
     }
   }
@@ -1408,10 +1458,11 @@ final class ChatManager: StateInvalidationSubscriber {
       return true
     } catch {
       logger.error("Failed to remove reaction: \(error.localizedDescription)")
-      // Only set error state for non-cancellation errors
-      if shouldShowError(error) {
-        setErrorState(error)
-      }
+      setInteractiveThrownError(
+        error,
+        context: "removeReaction(\(messageId))",
+        operation: "remove this reaction"
+      )
       return false
     }
   }
@@ -2036,8 +2087,14 @@ final class ChatManager: StateInvalidationSubscriber {
       guard let self = self else { return }
       
       while !Task.isCancelled {
-        let baseInterval = self.isAppActive ? self.activeListPollInterval : self.backgroundPollInterval
-        let interval = max(baseInterval, self.conversationsPollBackoff)
+        // Cadence state (backoff, activity flag, callback) is mutated on the
+        // main actor; read and fire it there so this nonisolated loop never
+        // races the @MainActor load methods.
+        let interval = await MainActor.run {
+          let baseInterval =
+            self.isAppActive ? self.activeListPollInterval : self.backgroundPollInterval
+          return max(baseInterval, self.conversationsPollBackoff)
+        }
 
         do {
           try await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
@@ -2047,7 +2104,9 @@ final class ChatManager: StateInvalidationSubscriber {
 
         if !Task.isCancelled {
           await self.loadConversations(refresh: true)
-          self.onConversationsPolled?()
+          await MainActor.run {
+            self.onConversationsPolled?()
+          }
         }
       }
     }
@@ -2070,8 +2129,14 @@ final class ChatManager: StateInvalidationSubscriber {
       guard let self = self else { return }
       
       while !Task.isCancelled {
-        let baseInterval = self.isAppActive ? self.activeConversationPollInterval : self.backgroundPollInterval
-        let interval = max(baseInterval, self.messagePollBackoffs[convoId] ?? 0)
+        // Backoff state is mutated on the main actor (and shared across all
+        // per-conversation loops); read it there to avoid racing the
+        // @MainActor load methods on the dictionary.
+        let interval = await MainActor.run {
+          let baseInterval =
+            self.isAppActive ? self.activeConversationPollInterval : self.backgroundPollInterval
+          return max(baseInterval, self.messagePollBackoffs[convoId] ?? 0)
+        }
 
         do {
           try await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
@@ -2097,7 +2162,7 @@ final class ChatManager: StateInvalidationSubscriber {
   }
   
   /// Stops all polling tasks
-  private func stopAllPolling() {
+  func stopAllPolling() {
     stopConversationsPolling()
     
     for convoId in messagePollingTasks.keys {
@@ -2323,6 +2388,28 @@ final class ChatManager: StateInvalidationSubscriber {
     }
 
     logger.error("\(context): HTTP \(code)")
+    errorState = .operationFailed(operation: operation)
+  }
+
+  /// Thrown-path counterpart to `setInteractiveNetworkError`. Petrel throws
+  /// for every non-400 failure (402–499 as `responseError`, exhausted-retry
+  /// 5xx, unrecoverable 401s as `authenticationRequired`, plus transport
+  /// errors), so user-initiated operations route thrown errors here to keep
+  /// the always-surface contract; only genuine cancellation stays silent.
+  @MainActor
+  private func setInteractiveThrownError(_ error: Error, context: String, operation: String) {
+    if error is CancellationError || (error as? URLError)?.code == .cancelled {
+      logger.debug("\(context): cancelled, not surfacing")
+      return
+    }
+    if case let Petrel.NetworkError.responseError(statusCode) = error {
+      setInteractiveNetworkError(code: statusCode, context: context, operation: operation)
+      return
+    }
+    if case Petrel.NetworkError.authenticationRequired = error {
+      errorState = .networkError(code: 401)
+      return
+    }
     errorState = .operationFailed(operation: operation)
   }
 

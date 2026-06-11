@@ -650,7 +650,10 @@ final class AppState {
     backgroundPollingTask?.cancel()
     backgroundPollingTask = nil
 
-    chatManager.stopConversationsPolling()
+    // Stop the list poller AND every per-conversation message poller; a
+    // surviving message poll loop retains self and keeps polling with the
+    // evicted account's stale client.
+    chatManager.stopAllPolling()
 
     // CRITICAL FIX: Properly shutdown MLS managers to prevent database exhaustion
     // and race conditions during account switching
