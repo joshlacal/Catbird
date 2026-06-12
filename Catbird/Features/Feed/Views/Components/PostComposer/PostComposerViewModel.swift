@@ -251,7 +251,10 @@ func saveDraftIfNeeded() {
     // Save draft
     let draft = saveDraftState()
     appState.composerDraftManager.storeDraft(draft)
-    
+    // Keep the AppView copy fresh while editing a restored saved draft
+    // (debounced; no-op unless draft sync is enabled)
+    appState.composerDraftManager.scheduleWorkingDraftSync(draft)
+
     logger.debug("PostComposerViewModel: Draft saved - text preview: \(self.postText.prefix(50))...")
   }
 

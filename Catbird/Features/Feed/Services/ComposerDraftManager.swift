@@ -36,7 +36,11 @@ final class ComposerDraftManager {
   
   /// DraftPersistence actor for SwiftData operations
   private var draftPersistence: DraftPersistence?
-  
+
+  /// Remote draft sync service (AppView-stored drafts; gated by ExperimentalSettings.draftSyncEnabled)
+  @ObservationIgnored
+  private var draftSyncService: DraftSyncService?
+
   private let draftKey = "composerMinimizedDraft"
   private var hasMigratedLegacyDrafts = false
 
@@ -63,8 +67,12 @@ final class ComposerDraftManager {
   @MainActor
   func setModelContext(_ context: ModelContext) {
     logger.info("🗄️ Setting model context for draft persistence")
-    self.draftPersistence = DraftPersistence(modelContext: context)
-    
+    let persistence = DraftPersistence(modelContext: context)
+    self.draftPersistence = persistence
+    self.draftSyncService = DraftSyncService(persistence: persistence) { [weak self] in
+      self?.appState?.atProtoClient
+    }
+
     // Now that we have persistence, perform migration and load drafts
     Task {
       logger.debug("📂 Starting migration and draft loading tasks")
@@ -106,6 +114,7 @@ final class ComposerDraftManager {
               UserDefaults.standard.removeObject(forKey: self.draftKey)
             }
             await self.loadSavedDrafts()
+            await self.performRemoteSync()
           }
         }
       }
@@ -143,16 +152,19 @@ final class ComposerDraftManager {
     
     Task {
       do {
+        let savedDraftId: UUID
         // If this draft was restored from a saved draft, update it instead of creating a new one
         if let restoredId = restoredSavedDraftId {
           logger.info("♻️ Updating existing saved draft: \(restoredId.uuidString)")
           try await persistence.updateDraft(id: restoredId, draft: draft, accountDID: accountDID)
           logger.info("✅ Successfully updated draft in SwiftData - ID: \(restoredId.uuidString)")
+          savedDraftId = restoredId
         } else {
           let draftId = try await persistence.saveDraft(draft, accountDID: accountDID)
           logger.info("✅ Successfully saved new draft to SwiftData - ID: \(draftId.uuidString)")
+          savedDraftId = draftId
         }
-        
+
         await MainActor.run {
           currentDraft = nil
           restoredSavedDraftId = nil
@@ -164,6 +176,7 @@ final class ComposerDraftManager {
           UserDefaults.standard.removeObject(forKey: key)
         }
         await loadSavedDrafts()
+        scheduleRemotePush(draftId: savedDraftId)
       } catch {
         logger.error("❌ Failed to save draft to SwiftData: \(error.localizedDescription)")
       }
@@ -190,6 +203,7 @@ final class ComposerDraftManager {
         let draftId = try persistence.saveDraft(draft, accountDID: accountDID)
         logger.info("✅ Successfully created saved draft - ID: \(draftId.uuidString)")
         await loadSavedDrafts()
+        scheduleRemotePush(draftId: draftId)
       } catch {
         logger.error("❌ Failed to create saved draft: \(error.localizedDescription)")
       }
@@ -217,6 +231,7 @@ final class ComposerDraftManager {
       logger.info("✅ Successfully created saved draft - ID: \(draftId.uuidString)")
       await loadSavedDrafts()
       logger.info("✅ Draft saved and drafts reloaded - Total drafts: \(self.savedDrafts.count)")
+      scheduleRemotePush(draftId: draftId)
     } catch {
       logger.error("❌ Failed to create saved draft: \(error.localizedDescription)")
     }
@@ -244,21 +259,54 @@ final class ComposerDraftManager {
   /// Delete a saved draft
   func deleteSavedDraft(_ draftId: UUID) {
     logger.info("🗑️ Deleting saved draft - ID: \(draftId.uuidString)")
-    
+
     guard let persistence = draftPersistence else {
       logger.warning("❌ Cannot delete draft - persistence not initialized")
       return
     }
-    
-    Task {
+
+    Task { @MainActor in
+      // Capture remote identity before the local row is deleted so the
+      // deletion can propagate to the AppView
+      let remoteId = try? persistence.remoteId(for: draftId)
       do {
         try await persistence.deleteDraft(id: draftId)
         logger.info("✅ Successfully deleted draft - ID: \(draftId.uuidString)")
+        if let remoteId, let syncService = self.draftSyncService {
+          await syncService.deleteRemoteDraft(remoteId: remoteId)
+        }
         await loadSavedDrafts()
       } catch {
         logger.error("❌ Failed to delete saved draft - ID: \(draftId.uuidString), Error: \(error.localizedDescription)")
       }
     }
+  }
+
+  /// Two-way sync of saved drafts with the AppView, then reload the local
+  /// list. No-op while the draftSyncEnabled feature flag is off.
+  @MainActor
+  func performRemoteSync() async {
+    guard let syncService = draftSyncService, syncService.isEnabled else { return }
+    guard let accountDID = currentAccountDID else { return }
+    await syncService.syncDrafts(accountDID: accountDID)
+    await loadSavedDrafts()
+  }
+
+  /// Debounced remote write-through of the in-memory working draft while
+  /// composing, when the draft was restored from a saved draft.
+  @MainActor
+  func scheduleWorkingDraftSync(_ draft: PostComposerDraft) {
+    guard let syncService = draftSyncService, syncService.isEnabled else { return }
+    guard let restoredId = restoredSavedDraftId, let accountDID = currentAccountDID else { return }
+    syncService.scheduleWorkingDraftPush(draftId: restoredId, draft: draft, accountDID: accountDID)
+  }
+
+  /// Schedule a debounced push of a saved draft to the AppView
+  @MainActor
+  private func scheduleRemotePush(draftId: UUID) {
+    guard let syncService = draftSyncService else { return }
+    guard let accountDID = currentAccountDID else { return }
+    syncService.schedulePush(draftId: draftId, accountDID: accountDID)
   }
   
   /// Reload all saved drafts for current account from SwiftData

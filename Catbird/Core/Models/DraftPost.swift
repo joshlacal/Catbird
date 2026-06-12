@@ -45,7 +45,13 @@ final class DraftPost {
   
   /// Whether draft is a thread
   var isThread: Bool
-  
+
+  /// Server-assigned draft TID when synced to the AppView (nil = never synced)
+  var remoteId: String?
+
+  /// Timestamp of the last successful AppView sync
+  var lastSyncedAt: Date?
+
   init(
     id: UUID = UUID(),
     accountDID: String,
@@ -54,7 +60,9 @@ final class DraftPost {
     hasMedia: Bool,
     isReply: Bool,
     isQuote: Bool,
-    isThread: Bool
+    isThread: Bool,
+    remoteId: String? = nil,
+    lastSyncedAt: Date? = nil
   ) {
     self.id = id
     self.accountDID = accountDID
@@ -66,6 +74,8 @@ final class DraftPost {
     self.isReply = isReply
     self.isQuote = isQuote
     self.isThread = isThread
+    self.remoteId = remoteId
+    self.lastSyncedAt = lastSyncedAt
     
       DraftPost.logger.info("📝 DraftPost initialized - ID: \(id.uuidString), Account: \(accountDID), Preview: '\(previewText.prefix(50))...', HasMedia: \(hasMedia), IsReply: \(isReply), IsQuote: \(isQuote), IsThread: \(isThread)")
   }
@@ -91,6 +101,34 @@ final class DraftPost {
     }
   }
   
+  /// Re-encode the stored draft data and refresh derived metadata (preview, flags)
+  func apply(_ draft: PostComposerDraft) throws {
+    let encoder = JSONEncoder()
+    draftData = try encoder.encode(draft)
+    previewText = DraftPost.previewText(for: draft)
+    hasMedia = !draft.mediaItems.isEmpty || draft.videoItem != nil || draft.selectedGif != nil
+    isReply = draft.parentPostURI != nil || draft.threadEntries.first?.parentPostURI != nil
+    isQuote = draft.quotedPostURI != nil || draft.threadEntries.first?.quotedPostURI != nil
+    isThread = draft.isThreadMode && draft.threadEntries.count > 1
+  }
+
+  /// Generate the list-display preview text for a composer draft
+  static func previewText(for draft: PostComposerDraft) -> String {
+    if !draft.postText.isEmpty {
+      return draft.postText
+    } else if !draft.threadEntries.isEmpty, let firstEntry = draft.threadEntries.first {
+      return firstEntry.text
+    } else if draft.mediaItems.count > 0 {
+      return "Draft with \(draft.mediaItems.count) image(s)"
+    } else if draft.videoItem != nil {
+      return "Draft with video"
+    } else if draft.selectedGif != nil {
+      return "Draft with GIF"
+    } else {
+      return "Empty draft"
+    }
+  }
+
   /// Create a DraftPost from a PostComposerDraft
   static func create(
     from draft: PostComposerDraft,
@@ -98,7 +136,7 @@ final class DraftPost {
     id: UUID = UUID()
   ) throws -> DraftPost {
     logger.info("🏗️ Creating DraftPost - ID: \(id.uuidString), Account: \(accountDID), Post text length: \(draft.postText.count), Media items: \(draft.mediaItems.count), Thread mode: \(draft.isThreadMode)")
-    
+
     let encoder = JSONEncoder()
     let data: Data
     do {
@@ -108,29 +146,15 @@ final class DraftPost {
       logger.error("❌ Failed to encode draft - ID: \(id.uuidString), Error: \(error.localizedDescription)")
       throw error
     }
-    
-    // Generate preview text
-    let previewText: String
-    if !draft.postText.isEmpty {
-      previewText = draft.postText
-    } else if !draft.threadEntries.isEmpty, let firstEntry = draft.threadEntries.first {
-      previewText = firstEntry.text
-    } else if draft.mediaItems.count > 0 {
-      previewText = "Draft with \(draft.mediaItems.count) image(s)"
-    } else if draft.videoItem != nil {
-      previewText = "Draft with video"
-    } else if draft.selectedGif != nil {
-      previewText = "Draft with GIF"
-    } else {
-      previewText = "Empty draft"
-    }
-    
+
+    let previewText = Self.previewText(for: draft)
+
     // Compute metadata flags
     let hasMedia = !draft.mediaItems.isEmpty || draft.videoItem != nil || draft.selectedGif != nil
     let isReply = draft.parentPostURI != nil || draft.threadEntries.first?.parentPostURI != nil
     let isQuote = draft.quotedPostURI != nil || draft.threadEntries.first?.quotedPostURI != nil
     let isThread = draft.isThreadMode && draft.threadEntries.count > 1
-    
+
     logger.debug("📊 Draft metadata computed - Preview: '\(previewText.prefix(30))...', HasMedia: \(hasMedia), IsReply: \(isReply), IsQuote: \(isQuote), IsThread: \(isThread)")
     
     let draftPost = DraftPost(

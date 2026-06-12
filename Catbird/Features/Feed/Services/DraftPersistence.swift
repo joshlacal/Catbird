@@ -94,13 +94,86 @@ final class DraftPersistence {
     
     func fetchDrafts(for accountDID: String) throws -> [DraftPost] {
         logger.debug("📥 fetchDrafts (sync/MainActor) - Account: \(accountDID)")
-        
+
         let modelContext = modelContainer.mainContext
         let predicate = #Predicate<DraftPost> { $0.accountDID == accountDID }
         var descriptor = FetchDescriptor(predicate: predicate)
         descriptor.sortBy = [SortDescriptor(\.modifiedDate, order: .reverse)]
-        
+
         return try modelContext.fetch(descriptor)
+    }
+
+    // MARK: - Remote Sync Support (MainActor, main context)
+
+    /// Fetch a single draft model by local ID
+    func fetchDraftModel(id: UUID) throws -> DraftPost? {
+        let modelContext = modelContainer.mainContext
+        let predicate = #Predicate<DraftPost> { $0.id == id }
+        return try modelContext.fetch(FetchDescriptor(predicate: predicate)).first
+    }
+
+    /// Look up the server-assigned remote ID for a local draft, if any
+    func remoteId(for id: UUID) throws -> String? {
+        try fetchDraftModel(id: id)?.remoteId
+    }
+
+    /// Record a successful push to the AppView without disturbing modifiedDate
+    func markSynced(id: UUID, remoteId: String, at date: Date) throws {
+        guard let model = try fetchDraftModel(id: id) else {
+            throw DraftError.draftNotFound
+        }
+        model.remoteId = remoteId
+        model.lastSyncedAt = date
+        try modelContainer.mainContext.save()
+        logger.debug("🔗 Marked draft \(id.uuidString) synced - remoteId: \(remoteId)")
+    }
+
+    /// Overwrite a local draft with content pulled from the AppView (remote won last-write-wins)
+    func applyRemoteDraft(
+        _ draft: PostComposerDraft,
+        toDraftWithId id: UUID,
+        modifiedDate: Date,
+        syncedAt: Date
+    ) throws {
+        guard let model = try fetchDraftModel(id: id) else {
+            throw DraftError.draftNotFound
+        }
+        try model.apply(draft)
+        model.modifiedDate = modifiedDate
+        model.lastSyncedAt = syncedAt
+        try modelContainer.mainContext.save()
+        logger.info("⬇️ Applied remote draft content to \(id.uuidString)")
+    }
+
+    /// Materialize a remote-only draft locally with its remote identity attached
+    @discardableResult
+    func insertRemoteDraft(
+        _ draft: PostComposerDraft,
+        accountDID: String,
+        remoteId: String,
+        createdDate: Date,
+        modifiedDate: Date,
+        syncedAt: Date
+    ) throws -> UUID {
+        let modelContext = modelContainer.mainContext
+        let model = try DraftPost.create(from: draft, accountDID: accountDID)
+        model.remoteId = remoteId
+        model.createdDate = createdDate
+        model.modifiedDate = modifiedDate
+        model.lastSyncedAt = syncedAt
+        modelContext.insert(model)
+        try modelContext.save()
+        logger.info("⬇️ Materialized remote draft \(remoteId) as local \(model.id.uuidString)")
+        return model.id
+    }
+
+    /// Delete a local draft without remote propagation (used when the remote copy is already gone)
+    func deleteDraftLocally(id: UUID) throws {
+        let modelContext = modelContainer.mainContext
+        guard let model = try fetchDraftModel(id: id) else { return }
+        modelContext.delete(model)
+        try modelContext.save()
+        logger.info("🗑️ Deleted local draft \(id.uuidString) (remote deletion propagated)")
     }
 }
 

@@ -94,6 +94,9 @@ struct DraftsListView: View {
     await MainActor.run {
       isLoading = false
     }
+    // Pull remote drafts after the local list is shown (no-op unless the
+    // draftSyncEnabled feature flag is on); reloads the list when done.
+    await appState.composerDraftManager.performRemoteSync()
   }
   
   private func deleteDraft(_ draft: DraftPostViewModel) {

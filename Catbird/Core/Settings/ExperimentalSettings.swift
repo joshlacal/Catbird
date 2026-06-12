@@ -24,9 +24,24 @@ final class ExperimentalSettings {
     
     /// Storage key prefix for per-account MLS warning acknowledgment
     private static let mlsWarningAcknowledgedKeyPrefix = "blue.catbird.mls.warningAcknowledged."
-    
+
+    /// Storage key for AppView draft sync opt-in
+    private static let draftSyncEnabledKey = "blue.catbird.draftSync.enabled"
+
     private init() {}
-    
+
+    // MARK: - Draft Sync (AppView-stored drafts)
+
+    /// Whether composer drafts are synced to the Bluesky AppView (app.bsky.draft.*).
+    /// Defaults to OFF — ships dark until the AppView endpoints are confirmed live.
+    var draftSyncEnabled: Bool {
+        get { UserDefaults.standard.bool(forKey: Self.draftSyncEnabledKey) }
+        set {
+            UserDefaults.standard.set(newValue, forKey: Self.draftSyncEnabledKey)
+            logger.info("Draft sync \(newValue ? "enabled" : "disabled")")
+        }
+    }
+
     // MARK: - Per-Account MLS Methods
     
     /// Check if MLS chat is enabled for a specific account
