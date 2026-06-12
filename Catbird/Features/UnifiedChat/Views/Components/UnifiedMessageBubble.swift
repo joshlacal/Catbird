@@ -23,7 +23,10 @@ enum UnifiedMessageGrouping {
     in messages: [Message],
     maxGap: TimeInterval = defaultMaxGap
   ) -> UnifiedMessageGroupPosition {
-    guard let index = messages.firstIndex(where: { $0.id == messageID }) else { return .single }
+    // Items are keyed by diffableID (stable across the pending→confirmed send
+    // handover); fall back to the real id for callers that pass it directly.
+    guard let index = messages.firstIndex(where: { $0.diffableID == messageID || $0.id == messageID })
+    else { return .single }
     return groupPosition(for: index, in: messages, maxGap: maxGap)
   }
 

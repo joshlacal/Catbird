@@ -704,9 +704,16 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
   
   private func currentMessageSignaturesByID() -> [String: String] {
     var signatures: [String: String] = [:]
-    signatures.reserveCapacity(dataSource.messages.count)
-    for message in dataSource.messages {
-      signatures[message.diffableID] = signature(for: message)
+    let messages = dataSource.messages
+    signatures.reserveCapacity(messages.count)
+    for (index, message) in messages.enumerated() {
+      // Group position decides the time-underneath row and avatar visibility,
+      // and it changes for NEIGHBORS when a message is appended (the previous
+      // last-in-group loses its timestamp row). Bake it into the signature so
+      // those cells reconfigure the moment their grouping changes, not at some
+      // later unrelated update.
+      let position = UnifiedMessageGrouping.groupPosition(for: index, in: messages)
+      signatures[message.diffableID] = signature(for: message) + "|\(position)"
     }
     return signatures
   }

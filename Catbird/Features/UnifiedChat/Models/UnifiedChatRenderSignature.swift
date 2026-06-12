@@ -8,6 +8,11 @@ enum UnifiedChatRenderSignature {
     let avatarSignature = message.senderAvatarURL?.absoluteString ?? ""
     let embedSignature = message.embed.map { String($0.hashValue) } ?? ""
 
+    // Minute bucket: the bubble renders sentAt with .time (hour:minute), and a
+    // pending send's local timestamp is replaced by the server timestamp on
+    // confirmation — the cell must re-render when the displayed time changes.
+    let minuteSignature = String(Int(message.sentAt.timeIntervalSince1970 / 60))
+
     return [
       message.text,
       reactionsSignature,
@@ -15,6 +20,7 @@ enum UnifiedChatRenderSignature {
       profileSignature,
       avatarSignature,
       embedSignature,
+      minuteSignature,
     ].joined(separator: "|")
   }
 
