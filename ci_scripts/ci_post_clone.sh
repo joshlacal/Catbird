@@ -6,10 +6,8 @@
 # clones only this repository, so this script recreates the sibling layout next
 # to $CI_PRIMARY_REPOSITORY_PATH before SPM dependency resolution runs.
 #
-# Environment (App Store Connect → Xcode Cloud → workflow → Environment):
-#   GITHUB_PAT          REQUIRED for the private repos (PetrelCatbird,
-#                       CatbirdBrand): fine-grained token with contents:read.
-#                       Public repos clone without it.
+# All four sibling repos are public; no auth required. GITHUB_PAT is honored
+# if set (and required only if a repo is flipped private again).
 # Optional per-workflow ref pins (default: main):
 #   PETREL_REF, PETRELCATBIRD_REF, CATBIRDMLSCORE_REF, CATBIRDBRAND_REF
 set -euo pipefail
@@ -34,8 +32,8 @@ clone_sibling() {
 
 clone_sibling Petrel         "${PETREL_REF:-main}"         public
 clone_sibling CatbirdMLSCore "${CATBIRDMLSCORE_REF:-main}" public
-clone_sibling CatbirdBrand   "${CATBIRDBRAND_REF:-main}"   private
-clone_sibling PetrelCatbird  "${PETRELCATBIRD_REF:-main}"  private
+clone_sibling CatbirdBrand   "${CATBIRDBRAND_REF:-main}"   public
+clone_sibling PetrelCatbird  "${PETRELCATBIRD_REF:-main}"  public
 
 # CatbirdMLSCore's binary target (Sources/CatbirdMLSFFI.xcframework) is
 # gitignored; fetch it from the GitHub release (public).
