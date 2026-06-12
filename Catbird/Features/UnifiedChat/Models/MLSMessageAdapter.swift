@@ -64,6 +64,10 @@ struct MLSMessageAdapter: UnifiedChatMessage {
   }
 
   private let metadata: MessageMetadata
+  /// Stable collection-view identity. Equals `id` except for messages that
+  /// confirmed an optimistic pending send, which keep the pending entry's
+  /// identity so the bubble reconfigures in place (no delete+insert flicker).
+  let diffableID: String
   let currentUserDID: String
   let senderProfile: MLSProfileData?
   private let reactionsList: [MLSMessageReaction]
@@ -98,6 +102,7 @@ struct MLSMessageAdapter: UnifiedChatMessage {
       senderDID: senderDID
     )
     self.metadata = metadata
+    self.diffableID = metadata.id
     self.currentUserDID = currentUserDID
     self.senderProfile = senderProfile
     self.reactionsList = reactions
@@ -125,6 +130,7 @@ struct MLSMessageAdapter: UnifiedChatMessage {
       processingAttempts: nil,
       validationFailureReason: nil
     )
+    self.diffableID = message.id
     self.currentUserDID = currentUserDID
     self.senderProfile = senderProfile
     self.reactionsList = reactions
@@ -148,7 +154,8 @@ struct MLSMessageAdapter: UnifiedChatMessage {
     sequence: Int? = nil,
     processingError: String? = nil,
     processingAttempts: Int? = nil,
-    validationFailureReason: String? = nil
+    validationFailureReason: String? = nil,
+    diffableID: String? = nil
   ) {
     self.metadata = MessageMetadata(
       id: id,
@@ -163,6 +170,7 @@ struct MLSMessageAdapter: UnifiedChatMessage {
       processingAttempts: processingAttempts,
       validationFailureReason: validationFailureReason
     )
+    self.diffableID = diffableID ?? id
     self.currentUserDID = currentUserDID
     self.senderProfile = senderProfile
     self.reactionsList = reactions

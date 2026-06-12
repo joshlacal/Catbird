@@ -15,6 +15,11 @@ struct PendingMLSSend: Identifiable, Equatable, Sendable {
   let embed: MLSEmbedData?
   let createdAt: Date
   var state: MessageSendState
+  /// Set when the server confirms this send. The entry stays visible (as a
+  /// sent bubble) until the confirmed row arrives via GRDB observation, then
+  /// the confirmed adapter takes over the SAME diffable identity — no
+  /// delete+insert flicker, no gap frame.
+  var confirmedMessageID: String?
 
   static let idPrefix = "pending:"
 
@@ -55,6 +60,11 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
   /// Locally-pending / failed outgoing sends not yet (or never) confirmed by
   /// the server (WS-6.5). Appended after confirmed messages in `messages`.
   private(set) var pendingSends: [PendingMLSSend] = []
+
+  /// real server message ID → pending entry ID. Confirmed adapters whose ID
+  /// appears here render with the pending entry's diffable identity for the
+  /// rest of the session so the collection view never re-identifies them.
+  private var pendingIDAliases: [String: String] = [:]
 
   /// The unified list the collection view renders: confirmed messages plus
   /// pending/failed local sends (always newest, so appended at the end).
@@ -233,9 +243,15 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
 
   /// Builds display adapters for the locally-pending/failed sends.
   private func pendingAdapters() -> [MLSMessageAdapter] {
+    let confirmedIDs = Set(confirmedMessages.map(\.id))
     let profile = profileCache[MLSProfileEnricher.canonicalDID(currentUserDID)]
-    return pendingSends.map { pending in
-      MLSMessageAdapter(
+    return pendingSends.compactMap { pending in
+      // Confirmed twin already rendered under this entry's identity — the
+      // handover happened; the entry is pruned on the next confirmed rebuild.
+      if let real = pending.confirmedMessageID, confirmedIDs.contains(real) {
+        return nil
+      }
+      return MLSMessageAdapter(
         id: pending.id,
         convoID: conversationId,
         text: pending.text,
@@ -262,10 +278,49 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
     return pending.id
   }
 
-  /// Removes a pending entry after the server confirmed the send. The
-  /// confirmed message arrives through the GRDB observation.
-  func completePendingSend(id: String) {
-    pendingSends.removeAll { $0.id == id }
+  /// Marks a pending entry as server-confirmed. The entry keeps rendering (as
+  /// a sent bubble, same diffable identity) until the confirmed row arrives,
+  /// at which point the confirmed adapter takes over that identity and the
+  /// entry is pruned. This makes the sending→sent transition an in-place
+  /// reconfigure instead of a delete+insert with a gap frame (flicker).
+  func completePendingSend(id: String, realMessageID: String) {
+    guard let index = pendingSends.firstIndex(where: { $0.id == id }) else { return }
+    if confirmedMessages.contains(where: { $0.id == realMessageID }) {
+      // The GRDB observation beat us: the confirmed row is already rendered
+      // under its real identity. Aliasing now would re-identify a rendered
+      // item (flicker) — just drop the optimistic entry.
+      pendingSends.remove(at: index)
+      return
+    }
+    pendingIDAliases[realMessageID] = id
+    pendingSends[index].confirmedMessageID = realMessageID
+    pendingSends[index].state = .sent
+  }
+
+  /// Drops pending entries whose confirmed twin is now in `confirmedMessages`
+  /// (the adapter carries the entry's diffable identity from here on).
+  private func prunePendingSendsSupersededByConfirmed() {
+    guard !pendingSends.isEmpty else { return }
+    let ids = Set(confirmedMessages.map(\.id))
+    pendingSends.removeAll { entry in
+      guard let real = entry.confirmedMessageID else { return false }
+      return ids.contains(real)
+    }
+  }
+
+  /// Test seam: simulates a confirmed row arriving via the GRDB observation
+  /// path (what buildAdapters produces), including handover pruning.
+  func ingestConfirmedMessageForTesting(_ adapter: MLSMessageAdapter) {
+    confirmedMessages.append(adapter)
+    sortMessagesInDisplayOrder(&confirmedMessages)
+    prunePendingSendsSupersededByConfirmed()
+  }
+
+  /// Maps a collection-view identity (possibly a pending alias) back to the
+  /// real server message ID used by reaction/metadata APIs.
+  private func resolveRealMessageID(_ id: String) -> String {
+    guard id.hasPrefix(PendingMLSSend.idPrefix) else { return id }
+    return confirmedMessages.first(where: { $0.diffableID == id })?.id ?? id
   }
 
   /// Marks a pending entry as terminally failed so the UI renders a failed
@@ -538,7 +593,8 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
         sequence: Int(model.sequenceNumber),
         processingError: model.processingError,
         processingAttempts: Int(model.processingAttempts),
-        validationFailureReason: model.validationFailureReason
+        validationFailureReason: model.validationFailureReason,
+        diffableID: pendingIDAliases[model.messageID]
       )
       adapters.append(adapter)
 
@@ -572,6 +628,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
     }
 
     self.confirmedMessages = adapters
+    prunePendingSendsSupersededByConfirmed()
     hasReceivedInitialMessages = true
     self.hasMoreMessages = models.count >= 50
     applyRemoteReadCutoffToLoadedMessages()
@@ -657,7 +714,8 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
       sequence: adapter.mlsSequence,
       processingError: adapter.processingError,
       processingAttempts: adapter.processingAttempts,
-      validationFailureReason: adapter.validationFailureReason
+      validationFailureReason: adapter.validationFailureReason,
+      diffableID: adapter.diffableID
     )
   }
 
@@ -746,7 +804,8 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
         sequence: adapter.mlsSequence,
         processingError: adapter.processingError,
         processingAttempts: adapter.processingAttempts,
-        validationFailureReason: adapter.validationFailureReason
+        validationFailureReason: adapter.validationFailureReason,
+        diffableID: adapter.diffableID
       )
     }
     logger.debug("Rebuilt \(self.confirmedMessages.count) messages with updated profile data")
@@ -864,7 +923,8 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
         sequence: adapter.mlsSequence,
         processingError: adapter.processingError,
         processingAttempts: adapter.processingAttempts,
-        validationFailureReason: adapter.validationFailureReason
+        validationFailureReason: adapter.validationFailureReason,
+        diffableID: adapter.diffableID
       )
     }
   }
@@ -939,7 +999,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
   // MARK: - UnifiedChatDataSource
 
   func message(for id: String) -> MLSMessageAdapter? {
-    messages.first { $0.id == id }
+    messages.first { $0.diffableID == id || $0.id == id }
   }
 
   func loadMessages() async {
@@ -1315,7 +1375,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
         embed: embed
       )
 
-      completePendingSend(id: pendingId)
+      completePendingSend(id: pendingId, realMessageID: messageId)
 
       // Create adapter for the sent message
       let profile = profileCache[MLSProfileEnricher.canonicalDID(currentUserDID)]
@@ -1333,7 +1393,8 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
         embed: embed,
         sendState: .sent,
         epoch: Int(epoch),
-        sequence: Int(seq)
+        sequence: Int(seq),
+        diffableID: pendingIDAliases[messageId]
       )
 
       if let existingIndex = confirmedMessages.firstIndex(where: { $0.id == messageId }) {
@@ -1342,6 +1403,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
         confirmedMessages.append(adapter)
       }
       sortMessagesInDisplayOrder(&confirmedMessages)
+      prunePendingSendsSupersededByConfirmed()
       scrollToBottomTrigger += 1
 
       logger.info("Sent MLS message: \(messageId)")
@@ -1357,6 +1419,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
   }
 
   func toggleReaction(messageID: String, emoji: String) {
+    let messageID = resolveRealMessageID(messageID)
     Task {
       guard let appState = appState,
         let manager = await appState.getMLSConversationManager()
@@ -1433,6 +1496,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
 
   func addReaction(messageID: String, emoji: String) {
     // For MLS, addReaction always adds (doesn't toggle)
+    let messageID = resolveRealMessageID(messageID)
     Task {
       guard let appState = appState,
         let manager = await appState.getMLSConversationManager()
@@ -1700,7 +1764,8 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
         sequence: adapter.mlsSequence,
         processingError: adapter.processingError,
         processingAttempts: adapter.processingAttempts,
-        validationFailureReason: adapter.validationFailureReason
+        validationFailureReason: adapter.validationFailureReason,
+        diffableID: adapter.diffableID
       )
     }
   }

@@ -64,6 +64,13 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
   private var collectionView: UICollectionView!
   private var diffableDataSource: UICollectionViewDiffableDataSource<Section, Item>!
 
+  /// Message item IDs already shown at least once — used to detect genuinely
+  /// new (appended) messages for the one-shot entrance animation.
+  private var knownMessageItemIDs: Set<String> = []
+  /// Message item IDs whose cells should play the entrance animation on next
+  /// display. One-shot; consumed in `willDisplay`.
+  private var entranceAnimationIDs: Set<String> = []
+
   private var navigationPath: Binding<NavigationPath>
   let dataSource: DataSource
   private weak var appState: AppState?
@@ -293,6 +300,10 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
       cell.selectedBackgroundView = nil
       cell.clipsToBounds = false
       cell.contentView.clipsToBounds = false
+      // Reused cells must never inherit a half-finished entrance animation.
+      cell.contentView.layer.removeAllAnimations()
+      cell.contentView.alpha = 1
+      cell.contentView.transform = .identity
 
       cell.contentConfiguration = UIHostingConfiguration {
         UnifiedMessageBubble(
@@ -499,6 +510,23 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
       lastOldestMessageID != nil &&
       currentOldestMessageID != lastOldestMessageID
 
+    // Entrance animation bookkeeping: animate only genuinely-new messages on
+    // live appends — never on the initial population or history prepends, and
+    // never for identity-stable reconfigures (pending→confirmed handover).
+    let messageItemIDs = Set(items.compactMap { item -> String? in
+      if case .message(let id) = item { return id }
+      return nil
+    })
+    if previousItemCount == 0 || didPrependOlderMessages {
+      knownMessageItemIDs = messageItemIDs
+    } else {
+      let appended = messageItemIDs.subtracting(knownMessageItemIDs)
+      if !appended.isEmpty {
+        entranceAnimationIDs.formUnion(appended)
+      }
+      knownMessageItemIDs = messageItemIDs
+    }
+
     var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
     snapshot.appendSections([.messages])
     snapshot.appendItems(items, toSection: .messages)
@@ -678,7 +706,7 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
     var signatures: [String: String] = [:]
     signatures.reserveCapacity(dataSource.messages.count)
     for message in dataSource.messages {
-      signatures[message.id] = signature(for: message)
+      signatures[message.diffableID] = signature(for: message)
     }
     return signatures
   }
@@ -845,8 +873,8 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
     // Messages in chronological order (oldest first, newest last)
     var seenMessageIDs = Set<String>()
     for message in dataSource.messages {
-      guard seenMessageIDs.insert(message.id).inserted else {
-        chatLogger.warning("Duplicate message ID skipped in snapshot: \(message.id)")
+      guard seenMessageIDs.insert(message.diffableID).inserted else {
+        chatLogger.warning("Duplicate message ID skipped in snapshot: \(message.diffableID)")
         continue
       }
       let messageDay = calendar.startOfDay(for: message.sentAt)
@@ -857,7 +885,7 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
       if message.id.hasPrefix("hb-") {
         items.append(.historyBoundary(id: message.id, text: message.text))
       } else {
-        items.append(.message(id: message.id))
+        items.append(.message(id: message.diffableID))
       }
     }
 
@@ -910,6 +938,39 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
         await dataSource.loadMoreMessages()
         await MainActor.run { isLoadingOlderMessages = false }
       }
+    }
+  }
+
+  func collectionView(
+    _ collectionView: UICollectionView,
+    willDisplay cell: UICollectionViewCell,
+    forItemAt indexPath: IndexPath
+  ) {
+    guard
+      let item = diffableDataSource.itemIdentifier(for: indexPath),
+      case .message(let id) = item,
+      entranceAnimationIDs.remove(id) != nil
+    else { return }
+
+    let content = cell.contentView
+    if UIAccessibility.isReduceMotionEnabled {
+      content.alpha = 0
+      UIView.animate(withDuration: 0.22, delay: 0, options: [.allowUserInteraction]) {
+        content.alpha = 1
+      }
+      return
+    }
+    content.alpha = 0
+    content.transform = CGAffineTransform(translationX: 0, y: 14)
+    UIView.animate(
+      withDuration: 0.38,
+      delay: 0,
+      usingSpringWithDamping: 0.84,
+      initialSpringVelocity: 0.4,
+      options: [.allowUserInteraction]
+    ) {
+      content.alpha = 1
+      content.transform = .identity
     }
   }
 

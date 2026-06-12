@@ -42,14 +42,46 @@ struct MLSPendingSendTests {
     #expect(adapter?.sendState == .failed("server unreachable"))
   }
 
-  @Test func completePendingSendRemovesEntry() {
+  @Test func completePendingSendKeepsEntryVisibleAsSentUntilConfirmedArrives() {
     let dataSource = makeDataSource()
     let id = dataSource.beginPendingSend(text: "hello", embed: nil)
 
-    dataSource.completePendingSend(id: id)
+    // Server confirmed, but the confirmed row hasn't landed via observation
+    // yet: the bubble must stay visible (no gap frame) with the clock cleared.
+    dataSource.completePendingSend(id: id, realMessageID: "msg-real-1")
 
+    #expect(dataSource.pendingSends.count == 1)
+    let adapter = dataSource.messages.first { $0.id == id }
+    #expect(adapter != nil)
+    #expect(adapter?.sendState == .sent)
+  }
+
+  @Test func confirmedAdapterTakesOverPendingDiffableIdentity() {
+    let dataSource = makeDataSource()
+    let id = dataSource.beginPendingSend(text: "hello", embed: nil)
+    dataSource.completePendingSend(id: id, realMessageID: "msg-real-2")
+
+    // Simulate the confirmed row arriving (what buildAdapters produces).
+    dataSource.ingestConfirmedMessageForTesting(
+      MLSMessageAdapter(
+        id: "msg-real-2",
+        text: "hello",
+        senderDID: "did:plc:tester",
+        currentUserDID: "did:plc:tester",
+        sentAt: Date(),
+        sendState: .sent,
+        diffableID: id
+      )
+    )
+
+    // Exactly one visible message: same diffable identity, real API identity.
+    let visible = dataSource.messages
+    #expect(visible.count == 1)
+    #expect(visible.first?.diffableID == id)
+    #expect(visible.first?.id == "msg-real-2")
     #expect(dataSource.pendingSends.isEmpty)
-    #expect(dataSource.messages.first { $0.id == id } == nil)
+    // The collection-view identity resolves back to the real message.
+    #expect(dataSource.message(for: id)?.id == "msg-real-2")
   }
 
   @Test func takeFailedPendingSendReturnsContentOnlyWhenFailed() {

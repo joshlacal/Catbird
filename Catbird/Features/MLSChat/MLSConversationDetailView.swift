@@ -3396,7 +3396,7 @@ struct MLSConversationDetailView: View {
         // WS-6.5: send confirmed — drop the optimistic pending entry. The
         // confirmed message arrives via the payload save + GRDB observation.
         if let pendingSendId {
-          unifiedDataSource?.completePendingSend(id: pendingSendId)
+          unifiedDataSource?.completePendingSend(id: pendingSendId, realMessageID: messageId)
         }
 
         let userDID = appState.userDID ?? ""

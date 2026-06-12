@@ -5,6 +5,11 @@ import Foundation
 /// Protocol that unifies Bluesky Chat and MLS Chat messages
 protocol UnifiedChatMessage: Identifiable, Hashable, Sendable {
   var id: String { get }
+  /// Identity used for collection-view diffing. Defaults to `id`. MLS keeps
+  /// one stable item identity across the optimistic-pending → server-confirmed
+  /// handover so the bubble reconfigures in place instead of being deleted and
+  /// re-inserted (which flickers).
+  var diffableID: String { get }
   var text: String { get }
   var attributedText: AttributedString { get }
   var senderID: String { get }
@@ -31,6 +36,8 @@ enum MessageSendState: Hashable, Sendable {
 // MARK: - UnifiedChatMessage Default Rich Text
 
 extension UnifiedChatMessage {
+  var diffableID: String { id }
+
   var attributedText: AttributedString {
     ChatTextRenderer.attributedString(for: text)
   }

@@ -239,7 +239,11 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
             .foregroundStyle(.secondary)
 
           if message.isFromCurrentUser {
+            // Fixed-width slot: the indicator changing (clock → blank → read
+            // checks) must never shift the timestamp row's layout.
             sendStateIndicator
+              .frame(width: 16, alignment: .leading)
+              .animation(.easeInOut(duration: 0.18), value: message.sendState)
           }
         }
       }
