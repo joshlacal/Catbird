@@ -249,6 +249,7 @@ struct ActionButtonsView: View {
   }
 
   private var repostMenu: some View {
+    // Works around iOS 27 b1 ghost-symbol compositing bug (arrow.2.squarepath stays rendered across tab switches): compositingGroup isolates the label, stable id pins the Menu identity — remove when fixed (repro: docs/feedback/repost-ghost-overlay).
     Menu {
       Button {
         handleRepostToggle()
@@ -282,9 +283,11 @@ struct ActionButtonsView: View {
       .foregroundStyle(interactionState.isReposted ? .green : .secondary)
       .frame(minWidth: repostMenuMinWidth, minHeight: isBig ? 40 : 32, alignment: .leading)
       .contentShape(Rectangle())
+      .compositingGroup()
       .accessibilityLabel(repostAccessibilityLabel)
       .accessibilityAddTraits(.isButton)
     }
+    .id("repost-\(post.uri.uriString())")
   }
 
   private var repostActionTitle: String {
