@@ -1239,6 +1239,9 @@ struct ProfileHeader: View {
             // Avatar positioned to overlap the banner above
             if !hideAvatar {
                 avatarView
+                    .overlay(alignment: .bottom) {
+                        liveStatusBadgeOverlay
+                    }
                     .offset(y: -avatarSize / 2)
                     // Use consistent 16pt padding from the content edge
                     .padding(.leading, 16)
@@ -1580,7 +1583,16 @@ struct ProfileHeader: View {
             }
         }
     }
-    
+
+    @ViewBuilder
+    private var liveStatusBadgeOverlay: some View {
+        if let status = profile.status, status.isLiveNow {
+            LiveStatusBadge(embedURL: status.liveEmbedURL)
+                .offset(y: 8)
+                .zIndex(11)
+        }
+    }
+
     private var profileInfoContent: some View {
         VStack(alignment: .leading, spacing: 6) {
             // Top section with edit/follow/subscribe button aligned to trailing edge

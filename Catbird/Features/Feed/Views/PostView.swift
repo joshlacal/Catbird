@@ -909,6 +909,7 @@ struct AuthorAvatarColumn: View {
               .frame(width: Self.avatarSize, height: Self.avatarSize)
               .clipShape(Circle())
               .contentShape(Circle())
+              .overlay(liveStatusRing)
               .onAppear { isAvatarLoaded = true }
           } else if state.isLoading {
             // Use placeholder defined below when loading
@@ -941,6 +942,7 @@ struct AuthorAvatarColumn: View {
       .aspectRatio(1, contentMode: .fit)
       .frame(width: Self.avatarSize, height: Self.avatarSize)
       .foregroundColor(.gray)
+      .overlay(liveStatusRing)
       .onTapGesture {
         path.append(NavigationDestination.profile(author.did.didString()))
       }
@@ -952,6 +954,16 @@ struct AuthorAvatarColumn: View {
       .fill(Color.gray.opacity(0.2))
       .frame(width: Self.avatarSize, height: Self.avatarSize)
       .overlay(ProgressView().scaleEffect(0.8))  // Optional: add a smaller ProgressView
+      .overlay(liveStatusRing)
+  }
+
+  // Red ring shown while the author has an active live status
+  @ViewBuilder
+  private var liveStatusRing: some View {
+    if author.status?.isLiveNow == true {
+      Circle()
+        .strokeBorder(Color.red, lineWidth: 2)
+    }
   }
 
   // Line connecting parent and child posts
