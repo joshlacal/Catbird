@@ -99,19 +99,36 @@ actor MLSBackgroundRefreshManager {
     MLSClient.clearSuspensionFlag(reason: "MLS BGTask \(Self.taskIdentifier)")
     MLSCoreContext.clearSuspensionFlag()
 
-    // RAII background task assertion — auto-released on scope exit
-    let bgTask = CatbirdBackgroundTask(name: "MLS BGTask \(Self.taskIdentifier)")
+    // RAII background task assertion — auto-released on scope exit.
+    // The expiration handler must interrupt in-flight SQLCipher work: Swift Task
+    // cancellation is cooperative and a blocking Rust FFI call never observes it,
+    // so without sqlite3_interrupt the process suspends mid-fsync → 0xdead10cc.
+    let bgTask = CatbirdBackgroundTask(name: "MLS BGTask \(Self.taskIdentifier)") {
+      MLSClient.markSuspensionInProgress(reason: "MLS BGTask assertion expired")
+      MLSCoreContext.markSuspensionInProgress()
+      MLSClient.interruptAllContexts()
+      MLSCoreContext.interruptAllContexts()
+    }
     defer { bgTask.end() }
 
     // While running in background, ensure GRDB connections are resumed for the duration
     // of this task, and re-suspended once it completes to avoid 0xdead10cc termination.
     GRDBSuspensionCoordinator.beginBackgroundWork(reason: "MLS BGTask \(Self.taskIdentifier)")
-    defer {
+
+    // One-shot cleanup: must run BEFORE setTaskCompleted (iOS may suspend the
+    // process immediately after task completion), with the defer as a backstop
+    // for early-exit/throw paths. One-shot because endBackgroundWork is
+    // refcounted — a double call would steal a unit from concurrent work.
+    var cleanedUp = false
+    func closeContextsAndSuspend() {
+      guard !cleanedUp else { return }
+      cleanedUp = true
       // Ensure Rust UniFFI contexts are closed before we re-suspend, or iOS may kill us (0xdead10cc).
       MLSClient.emergencyCloseAllContexts(reason: "MLS BGTask complete")
       MLSCoreContext.emergencyCloseAllContexts()
       GRDBSuspensionCoordinator.endBackgroundWork(reason: "MLS BGTask \(Self.taskIdentifier)")
     }
+    defer { closeContextsAndSuspend() }
 
     let logger = self.logger
     let refreshWork = Task<Bool, Never> { [weak self] in
@@ -144,11 +161,22 @@ actor MLSBackgroundRefreshManager {
     }
 
     task.expirationHandler = {
-      logger.warning("Background task expired before completion; canceling refresh")
+      logger.warning("Background task expired before completion; interrupting MLS FFI and canceling refresh")
+      // Arm the suspension machinery BEFORE the cooperative cancel: the
+      // suspension flag makes runFFI and the Rust check_suspended() bail-outs
+      // reject the rest of the batch, and sqlite3_interrupt aborts the
+      // statement currently holding the SQLCipher file lock. Task.cancel()
+      // alone never reaches a blocking FFI call (0xdead10cc root cause).
+      MLSClient.markSuspensionInProgress(reason: "MLS BGTask expired")
+      MLSCoreContext.markSuspensionInProgress()
+      MLSClient.interruptAllContexts()
+      MLSCoreContext.interruptAllContexts()
       refreshWork.cancel()
     }
 
     let success = await refreshWork.value
+
+    closeContextsAndSuspend()
     task.setTaskCompleted(success: success)
   }
 
