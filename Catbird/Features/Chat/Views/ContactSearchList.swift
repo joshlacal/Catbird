@@ -38,6 +38,7 @@ struct ContactSearchList: View {
   @State private var searchTask: Task<Void, Never>?
   @State private var isStartingConversation = false
   @State private var participantOptInStatus: [String: Bool] = [:]
+  @State private var blueskyChatAvailability: [String: Bool] = [:]
 
   private let logger = Logger(subsystem: "blue.catbird", category: "ContactSearchList")
   private let searchDebounceInterval: Duration = .milliseconds(300)
@@ -176,17 +177,21 @@ struct ContactSearchList: View {
       case .multi:
         ForEach(mlsSearchResults, id: \.id) { participant in
           let isOptedIn = participantOptInStatus[participant.id] ?? false
+          let isAvailable =
+            showMLSStatus ? isOptedIn : (blueskyChatAvailability[participant.id] ?? true)
           ParticipantRow(
             participant: participant,
             isSelected: selectedDIDs.contains(participant.id),
-            isMLSAvailable: showMLSStatus ? isOptedIn : true
+            isMLSAvailable: isAvailable,
+            showsEncryptionBadge: showMLSStatus,
+            unavailableLabel: showMLSStatus ? "Not available" : "Chat restricted"
           ) {
-            if !showMLSStatus || isOptedIn {
+            if isAvailable {
               toggleParticipant(participant)
             }
           }
-          .disabled(showMLSStatus && !isOptedIn)
-          .opacity(showMLSStatus && !isOptedIn ? 0.6 : 1.0)
+          .disabled(!isAvailable)
+          .opacity(isAvailable ? 1.0 : 0.6)
         }
       }
     }
@@ -232,17 +237,26 @@ struct ContactSearchList: View {
               avatarURL: profile.avatar.flatMap { URL(string: $0.uriString()) }
             )
             let isOptedIn = participantOptInStatus[did] ?? false
+            let isAvailable =
+              showMLSStatus
+              ? isOptedIn
+              : blueskyAddable(
+                chatSetting: profile.associated?.chat?.allowIncoming,
+                followedBy: profile.viewer?.followedBy != nil
+              )
             ParticipantRow(
               participant: participant,
               isSelected: selectedDIDs.contains(did),
-              isMLSAvailable: showMLSStatus ? isOptedIn : true
+              isMLSAvailable: isAvailable,
+              showsEncryptionBadge: showMLSStatus,
+              unavailableLabel: showMLSStatus ? "Not available" : "Chat restricted"
             ) {
-              if !showMLSStatus || isOptedIn {
+              if isAvailable {
                 toggleParticipant(participant)
               }
             }
-            .disabled(showMLSStatus && !isOptedIn)
-            .opacity(showMLSStatus && !isOptedIn ? 0.6 : 1.0)
+            .disabled(!isAvailable)
+            .opacity(isAvailable ? 1.0 : 0.6)
             .task {
               if showMLSStatus && participantOptInStatus[did] == nil {
                 await checkMLSOptIn(for: did)
@@ -267,6 +281,20 @@ struct ContactSearchList: View {
         selectionOrder.append(participant.id)
         selectedProfiles[participant.id] = participant
       }
+    }
+  }
+
+  /// Local heuristic mirroring ChatProfileRowView's 1:1 messageability check:
+  /// users whose chat settings exclude the current user can't be added to a
+  /// Bluesky group either (the server would reject them at creation).
+  private func blueskyAddable(chatSetting: String?, followedBy: Bool) -> Bool {
+    switch chatSetting ?? "all" {
+    case "none":
+      return false
+    case "following":
+      return followedBy
+    default:
+      return true
     }
   }
 
@@ -311,6 +339,15 @@ struct ContactSearchList: View {
       }
 
       searchResults = actors
+
+      if !showMLSStatus {
+        for actor in actors {
+          blueskyChatAvailability[actor.did.description] = blueskyAddable(
+            chatSetting: actor.associated?.chat?.allowIncoming,
+            followedBy: actor.viewer?.followedBy != nil
+          )
+        }
+      }
 
       mlsSearchResults = actors.map { actor in
         MLSParticipantViewModel(

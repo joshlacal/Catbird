@@ -69,7 +69,7 @@ struct ChatProfileRowView: View {
                     Image(systemName: "message")
                         .foregroundColor(.accentColor)
                 } else if isMessageable == false {
-                    Image(systemName: "lock.fill")
+                    Image(systemName: "person.crop.circle.badge.xmark")
                         .foregroundColor(.secondary)
                         .appFont(AppTextRole.caption)
                 }

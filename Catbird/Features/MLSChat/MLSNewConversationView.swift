@@ -797,8 +797,10 @@ struct ParticipantRow: View {
     let participant: MLSParticipantViewModel
     let isSelected: Bool
     var isMLSAvailable: Bool = true  // Default to true for backward compatibility
+    var showsEncryptionBadge: Bool = true  // False in Bluesky contexts where MLS status is irrelevant
+    var unavailableLabel: String = "Not available"  // Bluesky contexts pass "Chat restricted"
     let onTap: () -> Void
-    
+
     var body: some View {
         Button(action: onTap) {
             HStack(spacing: DesignTokens.Spacing.base) {
@@ -807,9 +809,9 @@ struct ParticipantRow: View {
                         url: participant.avatarURL,
                         size: DesignTokens.Size.avatarMD
                     )
-                    
+
                     // MLS availability indicator
-                    if isMLSAvailable {
+                    if showsEncryptionBadge && isMLSAvailable {
                         Image(systemName: "lock.shield.fill")
                             .font(.system(size: 12))
                             .foregroundColor(.green)
@@ -843,15 +845,15 @@ struct ParticipantRow: View {
                             .lineLimit(1)
                         
                         if !isMLSAvailable {
-                            Text("• Not available")
+                            Text("• \(unavailableLabel)")
                                 .designCaption()
                                 .foregroundColor(.orange)
                         }
                     }
                 }
-                
+
                 Spacer()
-                
+
                 if isMLSAvailable {
                     Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
                         .font(.system(size: 24))
