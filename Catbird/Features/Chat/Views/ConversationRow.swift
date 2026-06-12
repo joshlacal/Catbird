@@ -16,6 +16,17 @@ struct ConversationRow: View {
   private var subtitleLabel: String? {
     convo.displaySubtitle(currentUserDID: currentUserDID)
   }
+
+  private var groupAvatarParticipants: [MLSParticipantViewModel] {
+    convo.displayMembersExcludingCurrentUser(currentUserDID: currentUserDID).map { member in
+      MLSParticipantViewModel(
+        id: member.did.didString(),
+        handle: member.handle.description,
+        displayName: member.displayName,
+        avatarURL: member.finalAvatarURL()
+      )
+    }
+  }
   
   // Accessibility description for screen readers
   private var accessibilityDescription: String {
@@ -95,8 +106,13 @@ struct ConversationRow: View {
                 .foregroundColor(.secondary)
             }
 
-            LastMessagePreview(lastMessage: lastMessage)
-              .accessibilityLabel("Last message")
+            LastMessagePreview(
+              lastMessage: lastMessage,
+              groupMembers: convo.isGroupConversation
+                ? convo.displayMembersExcludingCurrentUser(currentUserDID: currentUserDID)
+                : []
+            )
+            .accessibilityLabel("Last message")
           }
         } else {
           HStack(spacing: DesignTokens.Spacing.xs) {
@@ -130,15 +146,10 @@ struct ConversationRow: View {
   @ViewBuilder
   private var avatarView: some View {
     if convo.isGroupConversation {
-      ZStack {
-        Circle()
-          .fill(Color.accentColor.opacity(0.14))
-        Image(systemName: "person.3.fill")
-          .font(.system(size: DesignTokens.Size.avatarLG * 0.38, weight: .semibold))
-          .foregroundStyle(Color.accentColor)
-      }
-      .frame(width: DesignTokens.Size.avatarLG, height: DesignTokens.Size.avatarLG)
-      .overlay(Circle().stroke(Color.gray.opacity(0.1), lineWidth: 1))
+      MLSGroupAvatarView(
+        participants: groupAvatarParticipants,
+        size: DesignTokens.Size.avatarLG
+      )
     } else {
       ChatProfileAvatarView(
         profile: convo.directDisplayMember(currentUserDID: currentUserDID),
@@ -191,12 +202,26 @@ struct ConversationRow: View {
 struct LastMessagePreview: View {
   @Environment(AppState.self) private var appState
   let lastMessage: ChatBskyConvoDefs.ConvoViewLastMessageUnion
+  var groupMembers: [ChatBskyActorDefs.ProfileViewBasic] = []
+
+  private func senderPrefix(for messageView: ChatBskyConvoDefs.MessageView) -> String {
+    let senderDID = messageView.sender.did.didString()
+    if senderDID == appState.userDID {
+      return "You: "
+    }
+    guard let sender = groupMembers.first(where: { $0.did.didString() == senderDID }) else {
+      return ""
+    }
+    let name = sender.chatDisplayName
+    let firstName = name.split(separator: " ").first.map(String.init) ?? name
+    return firstName.isEmpty ? "" : "\(firstName): "
+  }
 
   var body: some View {
     Group {
       switch lastMessage {
       case .chatBskyConvoDefsMessageView(let messageView):
-        Text(messageView.sender.did.didString() == appState.userDID ? "You: \(messageView.text)" : messageView.text)
+        Text("\(senderPrefix(for: messageView))\(messageView.text)")
           .designFootnote()
           .foregroundColor(.secondary)
           .lineLimit(2)
