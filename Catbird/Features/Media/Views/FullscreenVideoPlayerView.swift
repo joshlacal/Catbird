@@ -94,6 +94,7 @@ struct AVPlayerViewControllerWrapper: UIViewControllerRepresentable {
         controller.showsPlaybackControls = true
         controller.entersFullScreenWhenPlaybackBegins = true
         controller.updatesNowPlayingInfoCenter = true
+        controller.allowsPictureInPicturePlayback = true
         
         // Start observing system-driven volume/mute changes
         context.coordinator.startObserving(player: player)
@@ -114,6 +115,8 @@ struct AVPlayerViewControllerWrapper: UIViewControllerRepresentable {
         private var isMutedObservation: NSKeyValueObservation?
         private var outputVolumeObservation: NSKeyValueObservation?
         private var loopObservation: NSObjectProtocol?
+        private var isPictureInPictureActive = false
+        private var deferredFullScreenTeardown = false
 
         init(_ parent: AVPlayerViewControllerWrapper) {
             self.parent = parent
@@ -199,9 +202,73 @@ struct AVPlayerViewControllerWrapper: UIViewControllerRepresentable {
             VideoCoordinator.shared.setUnmuted(parent.model.id, unmuted: true)
         }
 
+        // MARK: - Picture in Picture
+
+        func playerViewControllerWillStartPictureInPicture(_ playerViewController: AVPlayerViewController) {
+            isPictureInPictureActive = true
+
+            // PiP requires an active .playback session; muted feed playback
+            // runs ambient, which would prevent the session from starting.
+            let session = AVAudioSession.sharedInstance()
+            if session.category != .playback {
+                try? session.setCategory(
+                    .playback, mode: .moviePlayback,
+                    options: [.mixWithOthers, .allowBluetooth, .allowAirPlay]
+                )
+            }
+            try? session.setActive(true)
+
+            // Delegate callbacks arrive on the main thread
+            MainActor.assumeIsolated {
+                // Retain the controller and this delegate so the PiP session
+                // survives the fullscreen cover (and this representable)
+                // being dismantled.
+                VideoCoordinator.shared.pictureInPictureWillStart(
+                    for: self.parent.model.id, retaining: [playerViewController, self])
+            }
+        }
+
+        func playerViewControllerDidStopPictureInPicture(_ playerViewController: AVPlayerViewController) {
+            pictureInPictureEnded()
+        }
+
+        func playerViewController(
+            _ playerViewController: AVPlayerViewController,
+            failedToStartPictureInPictureWithError error: any Error
+        ) {
+            pictureInPictureEnded()
+        }
+
+        func playerViewController(
+            _ playerViewController: AVPlayerViewController,
+            restoreUserInterfaceForPictureInPictureStopWithCompletionHandler completionHandler: @escaping (Bool) -> Void
+        ) {
+            // The inline feed player shares this AVPlayer, so there is no
+            // separate UI to re-present.
+            completionHandler(true)
+        }
+
+        private func pictureInPictureEnded() {
+            guard isPictureInPictureActive else { return }
+            isPictureInPictureActive = false
+            if deferredFullScreenTeardown {
+                deferredFullScreenTeardown = false
+                stopObserving()
+            }
+            MainActor.assumeIsolated {
+                VideoCoordinator.shared.pictureInPictureDidStop(for: self.parent.model.id)
+            }
+        }
+
         // This is called when the user taps the built-in "Done" button
         func playerViewControllerDidEndFullScreenPresentation(_ playerViewController: AVPlayerViewController) {
-            stopObserving()
+            if isPictureInPictureActive {
+                // PiP keeps using this player and its observers (looping,
+                // mute sync); defer teardown until the session stops.
+                deferredFullScreenTeardown = true
+            } else {
+                stopObserving()
+            }
             parent.onDismiss()
         }
     }

@@ -318,6 +318,11 @@ struct ModernVideoPlayerView: View {
   }
 
   private func cleanupPlayer() {
+    if VideoCoordinator.shared.isPictureInPictureActive(model.id) {
+      logger.debug("📺 PiP active for \(model.id), keeping player alive")
+      VideoCoordinator.shared.updateVisibility(false, for: model.id)
+      return
+    }
 
     if VideoCoordinator.shared.shouldPreserveStream(for: model.id) {
       logger.debug("💾 Preserving video stream for \(model.id) during scroll")
@@ -341,7 +346,10 @@ struct ModernVideoPlayerView: View {
         player.safePlay()
       }
     case .background, .inactive:
-      player?.pause()
+      // Pausing here would end an active PiP session when the app backgrounds
+      if !VideoCoordinator.shared.isPictureInPictureActive(model.id) {
+        player?.pause()
+      }
     @unknown default:
       break
     }

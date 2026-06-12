@@ -49,6 +49,13 @@ final class VideoCoordinator {
   private var markedForCleanup: Set<String> = []
   private let streamPreservationTime: TimeInterval = 30.0  // Keep streams for 30 seconds
 
+  // MARK: - Picture in Picture
+  private var pipActiveVideoIDs: Set<String> = []
+  // Strong references that keep the presenting AVPlayerViewController and its
+  // delegate alive after the fullscreen cover is dismantled, so an active PiP
+  // session (and its delegate callbacks) survives leaving the source view.
+  private var pipRetainedObjects: [String: [AnyObject]] = [:]
+
   // MARK: - Initialization
   private init() {
     setupBackgroundHandling()
@@ -70,6 +77,13 @@ final class VideoCoordinator {
   /// Register a video to be managed by the coordinator
   // Update your register method to use the looping wrapper
   func register(_ model: VideoModel, player: AVPlayer) {
+    // Re-registering while PiP owns the player would force-mute it and stomp
+    // playback state; the existing registration is still valid.
+    if pipActiveVideoIDs.contains(model.id) {
+      logger.debug("📺 Skipping re-register for PiP-active video \(model.id)")
+      return
+    }
+
     logger.debug(
       "📹 Registering video: \(model.id) - type: \(model.type.isGif ? "GIF" : "HLS") - URL: \(model.url.absoluteString)"
     )
@@ -154,6 +168,11 @@ final class VideoCoordinator {
 
   /// Check if a video stream should be preserved during scrolling
   func shouldPreserveStream(for modelId: String) -> Bool {
+    // Never tear down a stream that is actively playing in PiP
+    if pipActiveVideoIDs.contains(modelId) {
+      return true
+    }
+
     // Preserve if video was recently visible
     if let (model, _, _) = activeVideos[modelId] {
       // Always preserve GIFs since they're small and loop
@@ -177,8 +196,10 @@ final class VideoCoordinator {
     Task { @MainActor in
       try? await Task.sleep(nanoseconds: UInt64(streamPreservationTime * 1_000_000_000))
 
-      // Only clean up if still marked and not visible
-      if markedForCleanup.contains(modelId) && !visibleVideoIDs.contains(modelId) {
+      // Only clean up if still marked, not visible, and not playing in PiP
+      if markedForCleanup.contains(modelId) && !visibleVideoIDs.contains(modelId)
+        && !pipActiveVideoIDs.contains(modelId)
+      {
         logger.debug("⏰ Delayed cleanup triggered for \(modelId)")
         forceUnregister(modelId)
       }
@@ -232,9 +253,10 @@ final class VideoCoordinator {
 
     logger.debug("🎬 ForcePlayVideo called for \(modelId)")
 
-    // Pause any currently playing video
+    // Pause any currently playing video (unless it's running in PiP)
     if let currentlyPlaying = currentlyPlayingVideoId,
-      currentlyPlaying != modelId
+      currentlyPlaying != modelId,
+      !pipActiveVideoIDs.contains(currentlyPlaying)
     {
       pauseVideo(currentlyPlaying)
     }
@@ -363,6 +385,10 @@ final class VideoCoordinator {
 
       // Update players based on visibility
       for (id, (model, player, lastPlaybackTime)) in activeVideos {
+        // Leave PiP-owned players alone; AVKit drives their playback and
+        // pausing/downgrading them here would kill the PiP session.
+        if pipActiveVideoIDs.contains(id) { continue }
+
         // Mirror model.isMuted onto the player. Forcing mute here regardless
         // of intent re-silenced unmuted videos on every state change.
         if model.isMuted {
@@ -410,6 +436,7 @@ final class VideoCoordinator {
 
   /// Pause a specific video
   private func pauseVideo(_ modelId: String) {
+    guard !pipActiveVideoIDs.contains(modelId) else { return }
     guard let (model, player, _) = activeVideos[modelId] else { return }
     player.pause()
     model.isPlaying = false
@@ -432,6 +459,12 @@ final class VideoCoordinator {
 
   /// Unregister a video from management
   func unregister(_ modelId: String) {
+    // An active PiP session owns this player; tearing it down (pause +
+    // replaceCurrentItem(nil)) would kill PiP. Teardown re-runs on PiP stop.
+    if pipActiveVideoIDs.contains(modelId) {
+      logger.debug("📺 Deferring unregister for PiP-active video \(modelId)")
+      return
+    }
 
     // Save position to cache before cleanup
     if let (_, player, _) = activeVideos[modelId] {
@@ -559,6 +592,9 @@ final class VideoCoordinator {
   /// Handle transition to background mode
   private func handleBackgroundTransition() {
     for (modelId, (model, player, _)) in activeVideos {
+      // PiP keeps playing in the background; muting or pausing here kills it
+      if pipActiveVideoIDs.contains(modelId) { continue }
+
       // CRITICAL: Ensure videos are muted when going to background
       player.isMuted = true
       player.volume = 0
@@ -634,6 +670,40 @@ final class VideoCoordinator {
         AudioSessionManager.shared.handleVideoMute()
       }
     }
+  }
+
+  // MARK: - Picture in Picture Lifecycle
+
+  /// Whether the given video is currently playing in Picture in Picture
+  func isPictureInPictureActive(_ modelId: String) -> Bool {
+    pipActiveVideoIDs.contains(modelId)
+  }
+
+  /// Mark a video as entering PiP, retaining the objects (player view
+  /// controller + delegate) that must outlive the presenting view for the
+  /// session to keep running and delivering callbacks.
+  func pictureInPictureWillStart(for modelId: String, retaining objects: [AnyObject]) {
+    logger.debug("📺 PiP starting for \(modelId)")
+    pipActiveVideoIDs.insert(modelId)
+    pipRetainedObjects[modelId] = objects
+    markedForCleanup.remove(modelId)
+    preservedStreams.removeValue(forKey: modelId)
+  }
+
+  /// Mark a video as having left PiP and run any teardown that was deferred
+  /// while the session was active.
+  func pictureInPictureDidStop(for modelId: String) {
+    guard pipActiveVideoIDs.contains(modelId) else { return }
+    logger.debug("📺 PiP stopped for \(modelId)")
+    pipActiveVideoIDs.remove(modelId)
+    pipRetainedObjects.removeValue(forKey: modelId)
+
+    // The source view may have gone away while PiP was running; reschedule
+    // the cleanup that was skipped to keep the session alive.
+    if !visibleVideoIDs.contains(modelId) {
+      markForCleanup(modelId)
+    }
+    updatePlaybackStates()
   }
 
 }
