@@ -77,6 +77,8 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
   var onRequestEmojiPicker: ((String) -> Void)? = nil
   var onLongPress: ((CGRect) -> Void)?
   var onReactionLongPress: (() -> Void)? = nil
+  /// Invoked when the user taps the retry affordance on a failed send (WS-6.5).
+  var onRetry: (() -> Void)? = nil
   var showSenderInfo: Bool = true
   var groupPosition: UnifiedMessageGroupPosition = .single
 
@@ -240,6 +242,24 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
             sendStateIndicator
           }
         }
+      }
+
+      // Failed-send retry affordance (WS-6.5): always visible regardless of
+      // grouping so a failed message can never hide its retry control.
+      if message.isFromCurrentUser, case .failed = message.sendState {
+        Button {
+          onRetry?()
+        } label: {
+          HStack(spacing: 4) {
+            Image(systemName: "exclamationmark.circle.fill")
+            Text("Not delivered. Tap to retry.")
+          }
+          .font(.caption)
+          .foregroundStyle(.red)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Message failed to send")
+        .accessibilityHint("Tap to retry sending this message")
       }
     }
   }

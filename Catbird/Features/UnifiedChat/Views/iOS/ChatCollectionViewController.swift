@@ -84,6 +84,7 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
   var onMessageLongPress: ((Message) -> Void)?
   var onReactionTapped: ((String, String) -> Void)? // (messageID, emoji)
   var onRequestEmojiPicker: ((String) -> Void)?
+  var onRetryMessage: ((String) -> Void)? // (messageID) retry a failed send (WS-6.5)
 
   private var hasPerformedInitialScroll = false
   private var lastScrollToBottomTrigger: Int = 0
@@ -320,6 +321,9 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
             Task { @MainActor [weak self] in
               await self?.presentReactionDetailsSheet(messageID: messageID)
             }
+          },
+          onRetry: { [weak self] in
+            self?.onRetryMessage?(messageID)
           },
           groupPosition: UnifiedMessageGrouping.groupPosition(for: messageID, in: self.dataSource.messages)
         )
@@ -574,6 +578,7 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
     let composer = UIKitMLSComposerView()
     composer.delegate = self
     composer.placeholderText = config.placeholderText
+    composer.isSendBlocked = config.isSendBlocked
 
     onComposerSend = config.onSend
     onComposerAttach = config.onAttachTapped
@@ -628,6 +633,7 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
     onComposerVoicePreviewSend = config.onVoicePreviewSend
     onComposerVoicePreviewDiscard = config.onVoicePreviewDiscard
     composerView?.placeholderText = config.placeholderText
+    composerView?.isSendBlocked = config.isSendBlocked
     composerView?.hasEmbed = config.hasEmbed
     composerView?.embedPreviewImage = config.embedPreviewImage
     composerView?.onEmbedRemoved = { [weak self] in self?.onComposerEmbedRemoved?() }

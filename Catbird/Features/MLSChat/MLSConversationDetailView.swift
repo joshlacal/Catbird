@@ -238,7 +238,13 @@ struct MLSConversationDetailView: View {
             emojiPickerMessageID = messageID
             showingEmojiPicker = true
           },
+          onRetryMessage: { messageID in
+            Task { await retryFailedSend(pendingID: messageID) }
+          },
           composerConfig: isPendingRequest ? nil : InlineComposerConfig(
+            placeholderText: dataSource.isSendBlockedByRecovery
+              ? "Sending paused during recovery" : "Message",
+            isSendBlocked: dataSource.isSendBlockedByRecovery,
             onSend: { text in
               let embed = unifiedDataSource?.attachedEmbed
               unifiedDataSource?.attachedEmbed = nil
@@ -352,6 +358,25 @@ struct MLSConversationDetailView: View {
           secureRejoinStatusBanner(status)
             .padding(.horizontal)
             .padding(.top, 8)
+          Spacer()
+        }
+      } else if let dataSource = unifiedDataSource,
+        let notice = SendBlockedNotice.notice(for: dataSource.conversationRecoveryState)
+      {
+        // WS-6.5: sends are blocked while the conversation is in active
+        // recovery/rejoin — surface a visible state instead of a swallowed error.
+        VStack {
+          secureRejoinStatusBanner(
+            RejoinStatusPresentation(
+              title: notice.title,
+              detail: notice.detail,
+              iconName: notice.iconName,
+              showsProgress: notice.showsProgress,
+              showsRetry: false
+            )
+          )
+          .padding(.horizontal)
+          .padding(.top, 8)
           Spacer()
         }
       }
@@ -533,6 +558,14 @@ struct MLSConversationDetailView: View {
   @MainActor
   private func sendVoicePreview() async {
     guard let preview = voicePreview, let sender = voiceSender else { return }
+    // WS-6.5: voice sends bypass the text composer's disabled send button, so
+    // block them here while the conversation is in active recovery.
+    if let dataSource = unifiedDataSource, dataSource.isSendBlockedByRecovery {
+      logger.warning(
+        "⚠️ [SEND-BLOCKED] Voice send rejected during recovery (state: \(dataSource.conversationRecoveryState.rawValue))"
+      )
+      return
+    }
     voiceComposerMode = .compose
     voicePreview = nil
     do {
@@ -855,6 +888,9 @@ struct MLSConversationDetailView: View {
             startMessagePolling()
             hasStartedSubscription = true
           }
+          // WS-6.5: transient recovery states don't touch the DB; re-resolve
+          // the send-blocking state when returning to the foreground.
+          Task { await unifiedDataSource?.refreshRecoveryState() }
         }
       }
       .onReceive(
@@ -3249,6 +3285,25 @@ struct MLSConversationDetailView: View {
       return
     }
 
+    // WS-6.5: backstop for the disabled composer — if a send slips through
+    // while the conversation is in active recovery, queue it as a visible
+    // failed message (with retry) instead of silently dropping the text.
+    if let dataSource = unifiedDataSource, dataSource.isSendBlockedByRecovery {
+      let pendingId = dataSource.beginPendingSend(text: trimmed, embed: embed)
+      dataSource.failPendingSend(
+        id: pendingId,
+        reason: "Sending is paused while this conversation's secure session is restored."
+      )
+      logger.warning(
+        "⚠️ [SEND-BLOCKED] Send rejected during recovery (state: \(dataSource.conversationRecoveryState.rawValue)) for \(conversationId.prefix(16))"
+      )
+      return
+    }
+
+    // WS-6.5: optimistic pending entry so the message is visible immediately
+    // and can transition to a failed-with-retry state if the pipeline fails.
+    let pendingSendId = unifiedDataSource?.beginPendingSend(text: trimmed, embed: embed)
+
     _ = await ensureConversationMetadata()
 
     await MainActor.run {
@@ -3268,6 +3323,12 @@ struct MLSConversationDetailView: View {
       guard let manager = await appState.getMLSConversationManager() else {
         await MainActor.run {
           logger.error("Failed to get MLS conversation manager")
+          if let pendingSendId {
+            unifiedDataSource?.failPendingSend(
+              id: pendingSendId,
+              reason: "MLS service not available. Please try restarting the app."
+            )
+          }
           sendError = "MLS service not available. Please try restarting the app."
           showingSendError = true
         }
@@ -3332,6 +3393,12 @@ struct MLSConversationDetailView: View {
       }
 
       await MainActor.run {
+        // WS-6.5: send confirmed — drop the optimistic pending entry. The
+        // confirmed message arrives via the payload save + GRDB observation.
+        if let pendingSendId {
+          unifiedDataSource?.completePendingSend(id: pendingSendId)
+        }
+
         let userDID = appState.userDID ?? ""
         let newMessage = Message(
           id: messageId,
@@ -3378,10 +3445,34 @@ struct MLSConversationDetailView: View {
         logger.error(
           "❌ [SEND-FAIL] \(diag) recovery=\(String(describing: self.recoveryState)) err=\(String(reflecting: type(of: error))): \(error.localizedDescription)"
         )
-        sendError = "Failed to send message: \(error.localizedDescription)"
-        showingSendError = true
+        // WS-6.5: surface the failure on the message itself (failed indicator
+        // + tap-to-retry) instead of leaving an eternally pending bubble.
+        if let pendingSendId {
+          unifiedDataSource?.failPendingSend(
+            id: pendingSendId,
+            reason: error.localizedDescription
+          )
+        } else {
+          sendError = "Failed to send message: \(error.localizedDescription)"
+          showingSendError = true
+        }
       }
+      // Sends often fail because recovery was flagged mid-send; re-resolve the
+      // blocking state so the composer reflects reality immediately.
+      await unifiedDataSource?.refreshRecoveryState()
     }
+  }
+
+  /// Retries a failed pending send (WS-6.5). Pulls the failed entry's content
+  /// out of the data source and re-runs the full send pipeline; a fresh
+  /// pending entry is created so the message shows as sending again.
+  private func retryFailedSend(pendingID: String) async {
+    guard let pending = unifiedDataSource?.takeFailedPendingSend(id: pendingID) else {
+      logger.debug("Retry ignored for \(pendingID.prefix(24)): not a failed pending send")
+      return
+    }
+    logger.info("🔁 [SEND-RETRY] Retrying failed send \(pendingID.prefix(24))")
+    await sendMLSMessage(text: pending.text, embed: pending.embed)
   }
 
   /// Builds a one-line diagnostic string describing the MLS state at the moment of a send

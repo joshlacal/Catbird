@@ -41,6 +41,9 @@ struct UnifiedChatView<DataSource: UnifiedChatDataSource>: View {
       onRequestEmojiPicker: { messageID in
         emojiPickerMessageID = messageID
         showingEmojiPicker = true
+      },
+      onRetryMessage: { messageID in
+        Task { await dataSource.retryFailedSend(pendingID: messageID) }
       }
     )
     .ignoresSafeArea()

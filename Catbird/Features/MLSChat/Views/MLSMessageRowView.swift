@@ -21,6 +21,7 @@ import SwiftUI
     let currentUserDID: String?
     let participantProfiles: [String: MLSProfileEnricher.ProfileData]
     let deliveryState: MessageDeliveryState?  // nil for incoming messages
+    var onRetry: (() -> Void)? = nil  // retry affordance for .failed sends (WS-6.5)
     let onAddReaction: (String, String) -> Void  // (messageId, emoji)
     let onRemoveReaction: (String, String) -> Void  // (messageId, emoji)
     @Binding var navigationPath: NavigationPath
@@ -161,6 +162,23 @@ import SwiftUI
             Spacer()
             deliveryBadge
           }
+
+          // Failed-send retry affordance (WS-6.5)
+          if deliveryState?.isFailed == true {
+            HStack {
+              Spacer()
+              Button {
+                onRetry?()
+              } label: {
+                Text("Not delivered. Tap to retry.")
+                  .font(.caption)
+                  .foregroundStyle(.red)
+              }
+              .buttonStyle(.plain)
+              .accessibilityLabel("Message failed to send")
+              .accessibilityHint("Tap to retry sending this message")
+            }
+          }
         }
 
         // Reactions display
@@ -262,6 +280,11 @@ import SwiftUI
             Image(systemName: "checkmark.circle.fill")
               .font(.system(size: 10))
               .foregroundStyle(.blue)
+
+          case .failed:
+            Image(systemName: "exclamationmark.circle.fill")
+              .font(.system(size: 10))
+              .foregroundStyle(.red)
           }
         }
         .padding(.trailing, DesignTokens.Spacing.xs)

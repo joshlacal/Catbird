@@ -114,7 +114,7 @@ struct BlueskyMessageAdapter: UnifiedChatMessage {
     switch embedUnion {
     case .appBskyEmbedRecordView(let recordView):
       return convertRecord(recordView.record)
-    case .chatBskyEmbedJoinLinkView(let joinLinkView):
+case .chatBskyEmbedJoinLinkView(let joinLinkView):
       return convertJoinLink(joinLinkView.joinLinkPreview)
     case .unexpected:
       return nil
