@@ -1986,6 +1986,9 @@ private extension CatbirdApp {
     case "keypackage-state":
       await handleKeyPackageState(params: params, manager: manager, logger: e2eLogger)
 
+    case "refresh-key-packages":
+      await handleRefreshKeyPackages(params: params, manager: manager, logger: e2eLogger)
+
     case "request-keypackage-replenish":
       await handleRequestKeyPackageReplenish(params: params, manager: manager, logger: e2eLogger)
 
@@ -2499,14 +2502,11 @@ private extension CatbirdApp {
         limit: 200
       )
 
-      let matching = messages.filter { msg in
-        if let plaintext = msg.plaintext {
-          return plaintext.hasPrefix(contentPrefix)
-        }
-        return false
+      let mlsContext = try await CatbirdMLSCore.MLSCoreContext.shared.getContext(for: userDid)
+      let plaintexts = messages.compactMap { msg in
+        msg.decryptedPayload(context: mlsContext)?.text ?? msg.plaintext
       }
-
-      let matchTexts = matching.compactMap { $0.plaintext }
+      let matching = plaintexts.filter { $0.hasPrefix(contentPrefix) }
 
       e2eLogger.info("[E2E] Found \(matching.count) messages matching prefix '\(contentPrefix)' in \(conversationId)")
       await writeE2EResult(command: "check-message", success: true, data: [
@@ -2514,7 +2514,7 @@ private extension CatbirdApp {
         "contentPrefix": contentPrefix,
         "matchCount": "\(matching.count)",
         "totalMessages": "\(messages.count)",
-        "matches": matchTexts.joined(separator: "|")
+        "matches": matching.joined(separator: "|")
       ])
     } catch {
       e2eLogger.error("[E2E] Failed to check messages: \(error.localizedDescription)")
@@ -2795,6 +2795,47 @@ private extension CatbirdApp {
     } catch {
       e2eLogger.error("[E2E] Cleanup failed: \(error.localizedDescription)")
       await writeE2EResult(command: "cleanup-stale", success: false, error: error.localizedDescription)
+    }
+  }
+
+  /// E2E: publish fresh local key packages for this simulator's active device.
+  private func handleRefreshKeyPackages(params: [String: String], manager: AppStateManager, logger e2eLogger: Logger) async {
+    guard let appState = manager.lifecycle.appState else {
+      e2eLogger.error("[E2E] Not authenticated - cannot refresh key packages")
+      await writeE2EResult(command: "refresh-key-packages", success: false, error: "Not authenticated")
+      return
+    }
+
+    do {
+      guard let conversationManager = await appState.getMLSConversationManager() else {
+        throw NSError(domain: "E2E", code: 1, userInfo: [NSLocalizedDescriptionKey: "MLS not initialized"])
+      }
+
+      let maxGeneratedPackages = params["maxGeneratedPackages"].flatMap(Int.init)
+      e2eLogger.info("[E2E] Refreshing local key packages for active device")
+      try await conversationManager.smartRefreshKeyPackages(maxGeneratedPackages: maxGeneratedPackages)
+
+      let userDid = appState.userDID
+      let stats = try await conversationManager.apiClient.getKeyPackageStats()
+      let currentDeviceId = await conversationManager.mlsClient.getDeviceInfo(for: userDid)?.deviceId ?? "unknown"
+      let (_, listOutput) = try await conversationManager.apiClient.client.blue.catbird.mlsChat.listDevices(
+        input: BlueCatbirdMlsChatListDevices.Parameters()
+      )
+      let currentDevicePackages = listOutput?.devices.first(where: { $0.deviceId == currentDeviceId })?.keyPackageCount ?? -1
+
+      await writeE2EResult(command: "refresh-key-packages", success: true, data: [
+        "userDid": userDid,
+        "currentDeviceId": currentDeviceId,
+        "aggregateAvailable": "\(stats.stats.available)",
+        "currentDeviceAvailable": "\(currentDevicePackages)"
+      ])
+    } catch {
+      e2eLogger.error("[E2E] refresh-key-packages failed: \(error.localizedDescription)")
+      await writeE2EResult(
+        command: "refresh-key-packages",
+        success: false,
+        error: error.localizedDescription
+      )
     }
   }
 

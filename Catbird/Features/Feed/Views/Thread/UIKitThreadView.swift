@@ -132,6 +132,10 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
         
         // Let automatic content inset adjustment handle safe areas since we're edge-to-edge
         collectionView.contentInsetAdjustmentBehavior = .automatic
+        if #available(iOS 26.0, *) {
+            collectionView.topEdgeEffect.style = .soft
+            collectionView.bottomEdgeEffect.style = .soft
+        }
 
         return collectionView
     }()
@@ -1251,28 +1255,23 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
             let mainPostY = attributes.frame.origin.y
             
             let offset: CGFloat
-            // Debug content insets
             let adjustedContentInset = self.collectionView.adjustedContentInset
-            let safeAreaTop = self.view.safeAreaInsets.top
+            let scrollTarget = ThreadMainPostScrollTarget(
+                mainPostY: mainPostY,
+                adjustedTopInset: adjustedContentInset.top,
+                hasParentPosts: hasParentPosts
+            )
             
             self.controllerLogger.debug("🔍 POSITIONING DEBUG:")
             self.controllerLogger.debug("  - adjustedContentInset.top: \(adjustedContentInset.top)")
-            self.controllerLogger.debug("  - safeAreaInsets.top: \(safeAreaTop)")
             self.controllerLogger.debug("  - mainPostY: \(mainPostY)")
             self.controllerLogger.debug("  - hasParentPosts: \(hasParentPosts)")
             
+            offset = scrollTarget.offset
             if hasParentPosts {
-                // Show 10pt of parent content when there are parent posts
-                // Position main post just below navigation bar, with 10pt of parent showing above
-                let partialParentVisibility: CGFloat = 10
-                offset = max(0, mainPostY - safeAreaTop - partialParentVisibility)
                 self.controllerLogger.debug("  - WITH parents offset: \(offset)")
             } else {
-                // When there are no parent posts, the main post is at position 0
-                // We want to scroll to show it just below the navigation bar
-                // Since mainPostY is 0, we use negative offset to let automatic content inset handle positioning
-                offset = -adjustedContentInset.top + 10
-                self.controllerLogger.debug("  - NO parents offset: \(offset) (using negative offset for top positioning)")
+                self.controllerLogger.debug("  - NO parents offset: \(offset)")
             }
             
             // Apply the offset if requested
@@ -1359,20 +1358,13 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
 
             // If position has drifted, correct it again
             let adjustedContentInset = self.collectionView.adjustedContentInset
-            let safeAreaTop = self.view.safeAreaInsets.top
-            
-            let expectedVisibleTop: CGFloat
-            let correctedOffset: CGFloat
-            
-            if hasParentPosts {
-              // For threads with parents, expect main post to be positioned with 10pt of parent visible above nav bar
-              expectedVisibleTop = safeAreaTop + 10
-              correctedOffset = max(0, attrs.frame.origin.y - safeAreaTop - 10)
-            } else {
-              // For top-level posts, expect them 10pt below nav bar
-              expectedVisibleTop = 10
-              correctedOffset = -adjustedContentInset.top + 10
-            }
+            let scrollTarget = ThreadMainPostScrollTarget(
+              mainPostY: attrs.frame.origin.y,
+              adjustedTopInset: adjustedContentInset.top,
+              hasParentPosts: hasParentPosts
+            )
+            let expectedVisibleTop = scrollTarget.expectedVisibleTop
+            let correctedOffset = scrollTarget.offset
             
             if abs(visibleTop - expectedVisibleTop) > 2 {  // Allow 2pt tolerance
               self.controllerLogger.debug("Correcting position drift to: \(correctedOffset)")

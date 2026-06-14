@@ -116,9 +116,10 @@ struct ProfileRowView: View {
             Text(description)
                 .multilineTextAlignment(.leading)
                 .appFont(AppTextRole.subheadline)
+                .fontWeight(.regular)
                 .foregroundColor(.secondary)
                 .padding(.top, 4)
-                .lineLimit(2)
+                .lineLimit(3)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }

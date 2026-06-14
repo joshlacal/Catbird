@@ -45,7 +45,7 @@ struct RepostHeaderView: View {
     private var repostedByText: Text {
         let base = Text("reposted by \(reposterName)")
         if let badge = VerificationBadge.inlineText(for: reposter.verification, did: reposter.did) {
-            return base + Text(verbatim: " ") + badge
+          return base + Text(verbatim: " ") + badge.font(.caption2)
         }
         return base
     }

@@ -187,6 +187,10 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
     collectionView.alwaysBounceVertical = true
     collectionView.showsVerticalScrollIndicator = true
     collectionView.contentInsetAdjustmentBehavior = .automatic
+    if #available(iOS 26.0, *) {
+      collectionView.topEdgeEffect.style = .soft
+      collectionView.bottomEdgeEffect.style = .soft
+    }
 
     // Extra bottom inset so the last message clears the floating composer.
     collectionView.contentInset.bottom = composerInset

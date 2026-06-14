@@ -60,6 +60,7 @@ struct ActionButtonsView: View {
   // View model for handling actions
   @State private var viewModel: ActionButtonViewModel
   @State private var showingPostComposer: Bool = false
+  @State private var showingRepostOptions: Bool = false
   // Per-post matched transition namespace for reply → composer zoom
   @Namespace private var replyTransition
 
@@ -249,7 +250,44 @@ struct ActionButtonsView: View {
   }
 
   private var repostMenu: some View {
-    // Works around iOS 27 b1 ghost-symbol compositing bug (arrow.2.squarepath stays rendered across tab switches): compositingGroup isolates the label, stable id pins the Menu identity — remove when fixed (repro: docs/feedback/repost-ghost-overlay).
+    Group {
+      #if os(iOS)
+      if #available(iOS 27.0, *) {
+        repostDialogButton
+      } else {
+        repostMenuControl
+      }
+      #else
+      repostMenuControl
+      #endif
+    }
+  }
+
+  private var repostDialogButton: some View {
+    Button {
+      showingRepostOptions = true
+    } label: {
+      repostLabel
+    }
+    .buttonStyle(.plain)
+    .confirmationDialog(
+      "Repost",
+      isPresented: $showingRepostOptions,
+      titleVisibility: .hidden
+    ) {
+      Button(repostActionTitle) {
+        handleRepostToggle()
+      }
+      if !(post.viewer?.embeddingDisabled ?? false) {
+        Button("Quote Post") {
+          handleQuotePost()
+        }
+      }
+      Button("Cancel", role: .cancel) {}
+    }
+  }
+
+  private var repostMenuControl: some View {
     Menu {
       Button {
         handleRepostToggle()
@@ -264,30 +302,34 @@ struct ActionButtonsView: View {
       }
       .disabled(post.viewer?.embeddingDisabled ?? false)
     } label: {
-      HStack(spacing: 4) {
-        Image(systemName: "arrow.2.squarepath")
-          .appFont(Font.TextStyle.callout)
-          .fontWeight(isBig ? .medium : .semibold)
-          .imageScale(isBig ? .large : .medium)
-
-        if !isBig, interactionState.repostCount > 0 {
-          Text(interactionState.repostCount.formatted)
-            .appFont(Font.TextStyle.caption)
-            .monospacedDigit()
-            .fontWeight(.bold)
-            .lineLimit(1)
-            .fixedSize()
-            .layoutPriority(1)
-        }
-      }
-      .foregroundStyle(interactionState.isReposted ? .green : .secondary)
-      .frame(minWidth: repostMenuMinWidth, minHeight: isBig ? 40 : 32, alignment: .leading)
-      .contentShape(Rectangle())
-      .compositingGroup()
-      .accessibilityLabel(repostAccessibilityLabel)
-      .accessibilityAddTraits(.isButton)
+      repostLabel
     }
     .id("repost-\(post.uri.uriString())")
+  }
+
+  private var repostLabel: some View {
+    HStack(spacing: 4) {
+      Image(systemName: "arrow.2.squarepath")
+        .appFont(Font.TextStyle.callout)
+        .fontWeight(isBig ? .medium : .semibold)
+        .imageScale(isBig ? .large : .medium)
+
+      if !isBig, interactionState.repostCount > 0 {
+        Text(interactionState.repostCount.formatted)
+          .appFont(Font.TextStyle.caption)
+          .monospacedDigit()
+          .fontWeight(.bold)
+          .lineLimit(1)
+          .fixedSize()
+          .layoutPriority(1)
+      }
+    }
+    .foregroundStyle(interactionState.isReposted ? .green : .secondary)
+    .frame(minWidth: repostMenuMinWidth, minHeight: isBig ? 40 : 32, alignment: .leading)
+    .contentShape(Rectangle())
+    .compositingGroup()
+    .accessibilityLabel(repostAccessibilityLabel)
+    .accessibilityAddTraits(.isButton)
   }
 
   private var repostActionTitle: String {

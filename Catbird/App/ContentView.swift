@@ -17,6 +17,7 @@ struct ContentView: View {
 
   var body: some View {
     mainContent
+      .modifier(SoftScrollEdgeEffectModifier())
   }
 
   @ViewBuilder
@@ -874,6 +875,18 @@ private extension View {
   }
 }
 #endif
+
+// MARK: - Scroll Edge Effect Style
+
+private struct SoftScrollEdgeEffectModifier: ViewModifier {
+  func body(content: Content) -> some View {
+    if #available(iOS 26.0, macOS 26.0, *) {
+      content.scrollEdgeEffectStyle(.soft, for: .all)
+    } else {
+      content
+    }
+  }
+}
 
 // MARK: - ContentViewModifiers
 

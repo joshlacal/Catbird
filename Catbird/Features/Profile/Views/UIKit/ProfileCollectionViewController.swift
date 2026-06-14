@@ -152,6 +152,10 @@ final class ProfileCollectionViewController: UIViewController {
     collectionView.contentInsetAdjustmentBehavior = .never
     collectionView.showsVerticalScrollIndicator = true
     collectionView.refreshControl = makeRefreshControl()
+    if #available(iOS 26.0, *) {
+      collectionView.topEdgeEffect.style = .soft
+      collectionView.bottomEdgeEffect.style = .soft
+    }
 
     view.addSubview(collectionView)
     NSLayoutConstraint.activate([

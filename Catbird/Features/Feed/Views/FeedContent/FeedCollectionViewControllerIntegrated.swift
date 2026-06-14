@@ -339,6 +339,10 @@ import os
       collectionView.alwaysBounceVertical = true
       collectionView.keyboardDismissMode = .onDrag
       collectionView.showsVerticalScrollIndicator = true
+      if #available(iOS 26.0, *) {
+        collectionView.topEdgeEffect.style = .soft
+        collectionView.bottomEdgeEffect.style = .soft
+      }
 
       // Performance optimizations
       collectionView.isPrefetchingEnabled = true
@@ -625,7 +629,10 @@ import os
           capturedPosts.map { ($0.id, $0) },
           uniquingKeysWith: { first, _ in first }
         )
-        let capturedHeaderPresent = headerView != nil
+        let capturedHeaderPresent = FeedDiscoveryHeaderVisibility.shouldShowHeader(
+          headerIsPresent: headerView != nil,
+          postCount: capturedPosts.count
+        )
         let accountID = stateManager.appState.userDID ?? "unknown-account"
         let feedID = stateManager.currentFeedType.identifier
 
