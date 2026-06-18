@@ -70,6 +70,19 @@ struct DeviceManagementView: View {
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                let otherDevices = viewModel.devices.filter { $0.deviceId != viewModel.currentDeviceId }
+                if !otherDevices.isEmpty {
+                    Button(role: .destructive) {
+                        viewModel.showClearAllConfirmation = true
+                    } label: {
+                        Text("Clear All Garbage")
+                            .foregroundStyle(.red)
+                    }
+                }
+            }
+        }
         .task {
             await viewModel.initialize(appState: appState)
             await viewModel.loadDevices()
@@ -83,6 +96,16 @@ struct DeviceManagementView: View {
             }
         } message: { device in
             Text("Are you sure you want to delete '\(device.deviceName)'? This will remove all key packages associated with this device.")
+        }
+        .alert("Clear Garbage Devices", isPresented: $viewModel.showClearAllConfirmation) {
+            Button("Cancel", role: .cancel) {}
+            Button("Clear All", role: .destructive) {
+                Task {
+                    await viewModel.clearAllOtherDevices()
+                }
+            }
+        } message: {
+            Text("Are you sure you want to delete all other device records? This will clear all garbage device registrations.")
         }
         .alert("Error", isPresented: .constant(viewModel.deleteError != nil)) {
             Button("OK") {
@@ -198,6 +221,7 @@ final class DeviceManagementViewModel {
     var error: Error?
     var deleteError: Error?
     var showDeleteConfirmation = false
+    var showClearAllConfirmation = false
     var deviceToDelete: BlueCatbirdMlsChatListDevices.DeviceInfo?
     var currentDeviceId: String?
 
@@ -205,8 +229,36 @@ final class DeviceManagementViewModel {
 
     func initialize(appState: AppState) async {
         self.appState = appState
-        // MLSDeviceManager is created internally by MLSAPIClient
-        // We'll get the device ID from loaded devices instead
+        if let manager = await appState.getMLSConversationManager() {
+            if let info = await manager.mlsClient.getDeviceInfo(for: appState.userDID) {
+                currentDeviceId = info.deviceId
+            }
+        }
+    }
+
+    @MainActor
+    func clearAllOtherDevices() async {
+        guard let client = appState?.client else { return }
+        guard let currentId = currentDeviceId else {
+            logger.error("Cannot clear other devices: current device ID is unknown")
+            return
+        }
+
+        isLoading = true
+
+        let otherDevices = devices.filter { $0.deviceId != currentId }
+        for device in otherDevices {
+            do {
+                logger.info("Deleting garbage device: \(device.deviceId)")
+                let input = BlueCatbirdMlsChatRemoveDevice.Input(deviceId: device.deviceId)
+                _ = try await client.blue.catbird.mlsChat.removeDevice(input: input)
+                devices.removeAll { $0.deviceId == device.deviceId }
+            } catch {
+                logger.error("Failed to delete garbage device \(device.deviceId): \(error.localizedDescription)")
+            }
+        }
+
+        isLoading = false
     }
 
     @MainActor

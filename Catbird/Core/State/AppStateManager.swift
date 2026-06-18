@@ -527,6 +527,17 @@ final class AppStateManager {
       return
     }
 
+    do {
+      try await MLSAccountSwitchSerializer.shared.serialize { [weak self] in
+        guard let self = self else { return }
+        await self.performSwitchAccount(to: userDID, withDraft: draft)
+      }
+    } catch {
+      logger.error("❌ Failed to perform serialized account switch: \(error.localizedDescription)")
+    }
+  }
+
+  private func performSwitchAccount(to userDID: String, withDraft draft: PostComposerDraft? = nil) async {
     logger.info("🔄 Switching to account: \(userDID)")
     
     let previousUserDID = lifecycle.userDID
