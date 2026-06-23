@@ -131,6 +131,34 @@ final class AppState {
         }
     }
 
+    private static func configuredMLSProtocolAuthorityMode() -> MLSProtocolAuthorityMode {
+        let environment = ProcessInfo.processInfo.environment
+        if let value = environment["CATBIRD_MLS_AUTHORITY_MODE"],
+           let mode = MLSProtocolAuthorityMode(rawValue: value)
+        {
+            return mode
+        }
+
+        let arguments = ProcessInfo.processInfo.arguments
+        if let value = arguments.compactMap({ argument -> String? in
+            guard argument.hasPrefix("--mls-authority-mode=") else { return nil }
+            return String(argument.dropFirst("--mls-authority-mode=".count))
+        }).first,
+           let mode = MLSProtocolAuthorityMode(rawValue: value)
+        {
+            return mode
+        }
+
+        if let index = arguments.firstIndex(of: "--mls-authority-mode"),
+           arguments.indices.contains(arguments.index(after: index)),
+           let mode = MLSProtocolAuthorityMode(rawValue: arguments[arguments.index(after: index)])
+        {
+            return mode
+        }
+
+        return .defaultMode
+    }
+
     // MARK: - Core Properties
 
     /// User DID for this AppState instance (one AppState per account)
@@ -1387,7 +1415,8 @@ final class AppState {
                 return nil
             }
 
-            logger.info("MLS: Creating new conversation manager for user: \(userDid)")
+            let authorityMode = Self.configuredMLSProtocolAuthorityMode()
+            logger.info("MLS: Creating new conversation manager for user: \(userDid), authority=\(authorityMode.rawValue, privacy: .public)")
 
             // Create trust checker to determine if incoming conversations are requests
             let trustChecker = FollowingTrustChecker(client: atProtoClient, currentUserDID: userDid)
@@ -1399,7 +1428,8 @@ final class AppState {
                 userDid: userDid,
                 configuration: configuration,
                 atProtoClient: atProtoClient,
-                trustChecker: trustChecker
+                trustChecker: trustChecker,
+                protocolAuthorityMode: authorityMode
             )
 
             // Propagate fresh database pools to AppState after corruption recovery.
