@@ -2645,7 +2645,7 @@ private extension CatbirdApp {
       }
 
       if let recoveryManager = await conversationManager.mlsClient.recovery(for: userDid) {
-        await recoveryManager.clearRejoinTracking(convoId: conversationId)
+        await recoveryManager.clearRejoinTrackingAfterLocalStateLoss(convoId: conversationId)
       }
 
       e2eLogger.info("[E2E-WIPE] Wipe complete for \(conversationId.prefix(16))")
