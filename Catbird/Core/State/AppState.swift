@@ -132,26 +132,34 @@ final class AppState {
     }
 
     private static func configuredMLSProtocolAuthorityMode() -> MLSProtocolAuthorityMode {
-        let environment = ProcessInfo.processInfo.environment
+        configuredMLSProtocolAuthorityMode(
+            environment: ProcessInfo.processInfo.environment,
+            arguments: ProcessInfo.processInfo.arguments
+        )
+    }
+
+    static func configuredMLSProtocolAuthorityMode(
+        environment: [String: String],
+        arguments: [String]
+    ) -> MLSProtocolAuthorityMode {
         if let value = environment["CATBIRD_MLS_AUTHORITY_MODE"],
-           let mode = MLSProtocolAuthorityMode(rawValue: value)
+           let mode = MLSProtocolAuthorityMode(rawRuntimeValue: value)
         {
             return mode
         }
 
-        let arguments = ProcessInfo.processInfo.arguments
         if let value = arguments.compactMap({ argument -> String? in
             guard argument.hasPrefix("--mls-authority-mode=") else { return nil }
             return String(argument.dropFirst("--mls-authority-mode=".count))
         }).first,
-           let mode = MLSProtocolAuthorityMode(rawValue: value)
+           let mode = MLSProtocolAuthorityMode(rawRuntimeValue: value)
         {
             return mode
         }
 
         if let index = arguments.firstIndex(of: "--mls-authority-mode"),
            arguments.indices.contains(arguments.index(after: index)),
-           let mode = MLSProtocolAuthorityMode(rawValue: arguments[arguments.index(after: index)])
+           let mode = MLSProtocolAuthorityMode(rawRuntimeValue: arguments[arguments.index(after: index)])
         {
             return mode
         }
