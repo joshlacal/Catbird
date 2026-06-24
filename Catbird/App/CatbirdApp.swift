@@ -1269,35 +1269,12 @@ private extension CatbirdApp {
     // Using MainActor.assumeIsolated because onChange runs on main thread.
     // ═══════════════════════════════════════════════════════════════════════════
     if newPhase == .inactive || newPhase == .background {
-      #if os(iOS)
-      if let appState = appStateManager.lifecycle.appState {
-        // SYNCHRONOUS cancellation - must happen before GRDB suspension
-        MainActor.assumeIsolated {
-          appState.mlsConversationManager?.suspendMLSOperations()
-        }
-      }
-      #endif
-
       // Block new MLS FFI work immediately while we transition to background.
       // MLSClient delegates UniFFI MlsContext ownership to MLSCoreContext; both
       // gates are set because callers enter through both surfaces.
       MLSClient.markSuspensionInProgress(reason: "scenePhase → \(String(describing: newPhase))")
       MLSCoreContext.markSuspensionInProgress()
-
-      // CRITICAL: Interrupt in-flight SQLCipher operations SYNCHRONOUSLY.
-      // sqlite3_interrupt() is safe from any thread and causes in-flight sqlite3_step
-      // to return SQLITE_INTERRUPT immediately, releasing the Rust Mutex.
-      // This must happen BEFORE the async Task to cover the case where iOS suspends
-      // before the Task is scheduled (proven by crash: 3-second 0xdead10cc).
-      MLSClient.interruptAllContexts()
-      MLSCoreContext.interruptAllContexts()
     }
-
-    // Suspend/resume GRDB early to avoid holding SQLite/SQLCipher locks across suspension (0xdead10cc).
-    GRDBSuspensionCoordinator.setLifecycleSuspended(
-      newPhase != .active,
-      reason: "scenePhase \(String(describing: oldPhase)) → \(String(describing: newPhase))"
-    )
 
     #if os(iOS)
     // CRITICAL FIX: Synchronously acquire background task assertion
@@ -1321,6 +1298,34 @@ private extension CatbirdApp {
       }
     }
     #endif
+
+    if newPhase == .inactive || newPhase == .background {
+      #if os(iOS)
+      if let appState = appStateManager.lifecycle.appState {
+        let manager = appState.mlsConversationManager
+        MainActor.assumeIsolated {
+          manager?.suspendMLSOperations()
+        }
+
+        if manager?.protocolAuthorityMode != .rustFull || manager?.orchestratorRuntime == nil {
+          MLSClient.interruptAllContexts()
+          MLSCoreContext.interruptAllContexts()
+        }
+      } else {
+        MLSClient.interruptAllContexts()
+        MLSCoreContext.interruptAllContexts()
+      }
+      #else
+      MLSClient.interruptAllContexts()
+      MLSCoreContext.interruptAllContexts()
+      #endif
+    }
+
+    // Suspend/resume GRDB early to avoid holding SQLite/SQLCipher locks across suspension (0xdead10cc).
+    GRDBSuspensionCoordinator.setLifecycleSuspended(
+      newPhase != .active,
+      reason: "scenePhase \(String(describing: oldPhase)) → \(String(describing: newPhase))"
+    )
 
     Task { @MainActor in
       #if os(iOS)
