@@ -30,6 +30,34 @@ import FoundationModels
 // App-wide logger
 let logger = Logger(subsystem: "blue.catbird", category: "AppLifecycle")
 
+#if os(iOS)
+/// Force the rustFull runtime closed immediately during background-task expiration.
+/// The invalidation must happen synchronously before the handler returns so iOS
+/// cannot suspend the process with a stale orchestrator runtime still cached.
+private func closeRustRuntimeSynchronousAfterExpiration(
+  appStateManager: AppStateManager,
+  reason: String
+) {
+  let invalidate = {
+    appStateManager.lifecycle.appState?.mlsConversationManager?.markRustRuntimeClosedForSuspend(
+      reason: reason
+    )
+  }
+
+  if Thread.isMainThread {
+    MainActor.assumeIsolated {
+      invalidate()
+    }
+  } else {
+    DispatchQueue.main.sync {
+      MainActor.assumeIsolated {
+        invalidate()
+      }
+    }
+  }
+}
+#endif
+
 // NOTE: ModelContainerState enum moved to AppStateManager.swift to persist across App struct recreations
 
 @main
@@ -1291,11 +1319,10 @@ private extension CatbirdApp {
         MLSCoreContext.interruptAllContexts()
         MLSClient.emergencyCloseAllContexts(reason: "ScenePhaseTransition expired")
         MLSCoreContext.emergencyCloseAllContexts()
-        Task { @MainActor in
-          appStateManager.lifecycle.appState?.mlsConversationManager?.markRustRuntimeClosedForSuspend(
-            reason: "ScenePhaseTransition expired"
-          )
-        }
+        closeRustRuntimeSynchronousAfterExpiration(
+          appStateManager: appStateManager,
+          reason: "ScenePhaseTransition expired"
+        )
         if taskId != .invalid {
           UIApplication.shared.endBackgroundTask(taskId)
           taskId = .invalid
@@ -1376,11 +1403,10 @@ private extension CatbirdApp {
           MLSCoreContext.interruptAllContexts()
           MLSClient.emergencyCloseAllContexts(reason: "MLSSuspensionClose expired")
           MLSCoreContext.emergencyCloseAllContexts()
-          Task { @MainActor in
-            appStateManager.lifecycle.appState?.mlsConversationManager?.markRustRuntimeClosedForSuspend(
-              reason: "MLSSuspensionClose expired"
-            )
-          }
+          closeRustRuntimeSynchronousAfterExpiration(
+            appStateManager: appStateManager,
+            reason: "MLSSuspensionClose expired"
+          )
         }
 
         // Step 1: Close Rust FFI connections — releases WAL locks in App Group
