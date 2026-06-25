@@ -1291,6 +1291,11 @@ private extension CatbirdApp {
         MLSCoreContext.interruptAllContexts()
         MLSClient.emergencyCloseAllContexts(reason: "ScenePhaseTransition expired")
         MLSCoreContext.emergencyCloseAllContexts()
+        Task { @MainActor in
+          appStateManager.lifecycle.appState?.mlsConversationManager?.markRustRuntimeClosedForSuspend(
+            reason: "ScenePhaseTransition expired"
+          )
+        }
         if taskId != .invalid {
           UIApplication.shared.endBackgroundTask(taskId)
           taskId = .invalid
@@ -1371,6 +1376,11 @@ private extension CatbirdApp {
           MLSCoreContext.interruptAllContexts()
           MLSClient.emergencyCloseAllContexts(reason: "MLSSuspensionClose expired")
           MLSCoreContext.emergencyCloseAllContexts()
+          Task { @MainActor in
+            appStateManager.lifecycle.appState?.mlsConversationManager?.markRustRuntimeClosedForSuspend(
+              reason: "MLSSuspensionClose expired"
+            )
+          }
         }
 
         // Step 1: Close Rust FFI connections — releases WAL locks in App Group
