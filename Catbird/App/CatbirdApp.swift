@@ -1303,11 +1303,10 @@ private extension CatbirdApp {
       #if os(iOS)
       if let appState = appStateManager.lifecycle.appState {
         let manager = appState.mlsConversationManager
-        MainActor.assumeIsolated {
-          manager?.suspendMLSOperations()
+        let rustPrepareSucceeded = MainActor.assumeIsolated {
+          manager?.suspendMLSOperations() ?? false
         }
-
-        if manager?.protocolAuthorityMode != .rustFull || manager?.orchestratorRuntime == nil {
+        if !rustPrepareSucceeded {
           MLSClient.interruptAllContexts()
           MLSCoreContext.interruptAllContexts()
         }
