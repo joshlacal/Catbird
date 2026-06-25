@@ -1376,6 +1376,9 @@ private extension CatbirdApp {
         // Step 1: Close Rust FFI connections — releases WAL locks in App Group
         MLSClient.emergencyCloseAllContexts(reason: "scenePhase active→\(String(describing: newPhase))")
         MLSCoreContext.emergencyCloseAllContexts()
+        appStateManager.lifecycle.appState?.mlsConversationManager?.markRustRuntimeClosedForSuspend(
+          reason: "scenePhase active→\(String(describing: newPhase)) emergency close"
+        )
 
         // Step 2: Give GRDB time to complete its auto-suspension (checkpoint + release readers).
         // observesSuspensionNotifications fires on didEnterBackground which may be
