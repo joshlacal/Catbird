@@ -2036,6 +2036,11 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
 
     // Route decryption ownership through the unified policy.
     let isActiveUser = await checkIfActiveUser(recipientDid)
+    let processAuthorityMode = AppState.configuredMLSProtocolAuthorityMode(
+      environment: ProcessInfo.processInfo.environment,
+      arguments: ProcessInfo.processInfo.arguments
+    )
+    let processIsRustFull = processAuthorityMode == .rustFull
     let activeManagerIsRustFull: Bool
     if isActiveUser,
       let conversationManager = await appState?.getMLSConversationManager()
@@ -2044,6 +2049,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
     } else {
       activeManagerIsRustFull = false
     }
+    let lowLevelForegroundMLSDisabled = processIsRustFull || activeManagerIsRustFull
     let executionContext: CatbirdMLSCore.MLSNotificationExecutionContext =
       isActiveUser ? .appForegroundActive : .appForegroundInactive
     let routingDecision = CatbirdMLSCore.MLSNotificationCoordinator.routingDecision(
@@ -2052,7 +2058,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
     )
 
     notificationLogger.info(
-      "🧭 [FG] routing_action=\(routingDecision.action.rawValue), policy_reason=\(routingDecision.reason.rawValue), decryption_owner=\(routingDecision.owner?.rawValue ?? "none"), context=\(executionContext.rawValue)"
+      "🧭 [FG] routing_action=\(routingDecision.action.rawValue), policy_reason=\(routingDecision.reason.rawValue), decryption_owner=\(routingDecision.owner?.rawValue ?? "none"), context=\(executionContext.rawValue), process_authority=\(processAuthorityMode.rawValue), active_manager_rust_full=\(activeManagerIsRustFull)"
     )
 
     switch routingDecision.action {
@@ -2120,9 +2126,9 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
       }
 
       await logCacheMissDetails(context: "active-cache-only-miss")
-      if activeManagerIsRustFull {
+      if lowLevelForegroundMLSDisabled {
         notificationLogger.warning(
-          "⏭️ [FG] rustFull active manager: avoiding direct foreground MLS decrypt/sync/join after cache miss; relying on main sync/cache path"
+          "⏭️ [FG] rustFull authority: avoiding direct foreground MLS decrypt/sync/join after cache miss (process_rust_full=\(processIsRustFull), active_manager_rust_full=\(activeManagerIsRustFull)); relying on main sync/cache path"
         )
         completionHandler([.banner, .sound])
         return
@@ -2132,9 +2138,9 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
       // Fall through to direct decryption instead of showing "Decrypting..." placeholder
 
     case .decrypt:
-      if activeManagerIsRustFull {
+      if lowLevelForegroundMLSDisabled {
         notificationLogger.warning(
-          "⏭️ [FG] rustFull active manager: policy requested direct foreground decrypt, but low-level MLS mutation is disabled"
+          "⏭️ [FG] rustFull authority: policy requested direct foreground decrypt, but low-level MLS mutation is disabled (process_rust_full=\(processIsRustFull), active_manager_rust_full=\(activeManagerIsRustFull))"
         )
         completionHandler([.banner, .sound])
         return
