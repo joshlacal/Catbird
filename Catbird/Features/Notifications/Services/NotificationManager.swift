@@ -2036,6 +2036,14 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
 
     // Route decryption ownership through the unified policy.
     let isActiveUser = await checkIfActiveUser(recipientDid)
+    let activeManagerIsRustFull: Bool
+    if isActiveUser,
+      let conversationManager = await appState?.getMLSConversationManager()
+    {
+      activeManagerIsRustFull = conversationManager.protocolAuthorityMode == .rustFull
+    } else {
+      activeManagerIsRustFull = false
+    }
     let executionContext: CatbirdMLSCore.MLSNotificationExecutionContext =
       isActiveUser ? .appForegroundActive : .appForegroundInactive
     let routingDecision = CatbirdMLSCore.MLSNotificationCoordinator.routingDecision(
@@ -2112,11 +2120,25 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
       }
 
       await logCacheMissDetails(context: "active-cache-only-miss")
+      if activeManagerIsRustFull {
+        notificationLogger.warning(
+          "⏭️ [FG] rustFull active manager: avoiding direct foreground MLS decrypt/sync/join after cache miss; relying on main sync/cache path"
+        )
+        completionHandler([.banner, .sound])
+        return
+      }
       notificationLogger.warning(
         "⚠️ [FG] Cache-only route timed out - falling through to direct decryption")
       // Fall through to direct decryption instead of showing "Decrypting..." placeholder
 
     case .decrypt:
+      if activeManagerIsRustFull {
+        notificationLogger.warning(
+          "⏭️ [FG] rustFull active manager: policy requested direct foreground decrypt, but low-level MLS mutation is disabled"
+        )
+        completionHandler([.banner, .sound])
+        return
+      }
       notificationLogger.info(
         "🔄 [FG] Policy selected direct decrypt route for foreground notification")
     }
