@@ -1110,26 +1110,18 @@ final class AppState {
                 MLSNotificationCoordinator.setShuttingDown(false, userDID: userDID)
             #endif
 
-            // CRITICAL: Validate bundle state after account switch
-            // This catches the desync where local storage shows 0 bundles but server has more
-            let userDid = userDID
+            // CRITICAL: Validate bundle state after account switch through the manager so
+            // rustFull can delegate key-package readiness to Rust instead of low-level Swift APIs.
             do {
-                let bundleCount = try await MLSClient.shared.getKeyPackageBundleCount(for: userDid)
-                logger.info("📊 [Account Switch] Local bundle count: \(bundleCount)")
-
-                if bundleCount == 0 {
-                    logger.warning("⚠️ [Account Switch] No local bundles - triggering reconciliation")
-                    // Reconciliation will attempt non-destructive recovery first
-                    let result = try await MLSClient.shared.reconcileKeyPackagesWithServer(for: userDid)
-                    if result.desyncDetected {
-                        logger.warning("⚠️ [Account Switch] Desync detected and handled - server: \(result.serverAvailable), local: \(result.localBundles)")
-                    } else {
-                        logger.info("✅ [Account Switch] Bundle state reconciled successfully")
-                    }
+                if let manager = mlsConversationManagerStorage {
+                    try await manager.smartRefreshKeyPackages(maxGeneratedPackages: 5)
+                    logger.info("✅ [Account Switch] Key package readiness checked")
+                } else {
+                    logger.warning("⚠️ [Account Switch] No MLS manager available for key package readiness check")
                 }
             } catch {
-                logger.error("⚠️ [Account Switch] Bundle validation failed: \(error.localizedDescription)")
-                // Don't fail - MLS can still work, reconciliation can happen later
+                logger.error("⚠️ [Account Switch] Key package readiness check failed: \(error.localizedDescription)")
+                // Don't fail - MLS can still work, readiness can happen later.
             }
         } catch {
             logger.error("⚠️ MLS: Initialization failed: \(error.localizedDescription)")
@@ -2369,31 +2361,16 @@ final class AppState {
             logger.info("🔔 MLS: Observing for NSE state/handshake notifications")
         #endif
 
-        // ✅ Reconcile key packages with server to detect storage corruption
-        logger.info("MLS: Reconciling key packages with server...")
+        // ✅ Replenish key packages through the manager so authority mode decides Swift vs Rust.
+        logger.info("MLS: Checking key package readiness...")
         do {
-            let reconcileResult = try await MLSClient.shared.reconcileKeyPackagesWithServer(
-                for: userDID
-            )
-            if reconcileResult.desyncDetected {
-                logger.error("⚠️ MLS: Key package desync detected during initialization!")
-                logger.error(
-                    "   Server: \(reconcileResult.serverAvailable) bundles | Local: \(reconcileResult.localBundles) bundles"
-                )
-                logger.error(
-                    "   This may cause NoMatchingKeyPackage errors when processing Welcome messages"
-                )
-                // Note: Detailed recovery instructions are logged by reconcileKeyPackagesWithServer()
-            } else {
-                logger.info(
-                    "✅ MLS: Key packages in sync (server: \(reconcileResult.serverAvailable), local: \(reconcileResult.localBundles))"
-                )
-            }
+            try await manager.smartRefreshKeyPackages(maxGeneratedPackages: 5)
+            logger.info("✅ MLS: Key package readiness checked")
         } catch {
             logger.warning(
-                "⚠️ MLS: Failed to reconcile key packages (continuing anyway): \(error.localizedDescription)"
+                "⚠️ MLS: Failed to check key package readiness (continuing anyway): \(error.localizedDescription)"
             )
-            // Don't fail initialization if reconciliation fails - might be offline
+            // Don't fail initialization if readiness fails - might be offline.
         }
 
         // Load existing conversations (this processes pending Welcome messages)
