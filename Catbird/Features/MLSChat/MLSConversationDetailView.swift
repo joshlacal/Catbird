@@ -3504,7 +3504,17 @@ import SwiftUI
                 if let resetGen = convo.resetGeneration {
                     parts.append("resetGen=\(resetGen)")
                 }
-                if let groupIdData = Data(hexEncoded: convo.groupId) {
+                if manager.protocolAuthorityMode == .rustFull {
+                    let projection = try? await manager.conversationDiagnosticsProjection(
+                        conversationId: conversationId,
+                        ensureReady: false
+                    )
+                    let ffiEpoch = projection?.epoch.map(String.init) ?? "n/a"
+                    parts.append("ffiEpoch=\(ffiEpoch)")
+                    if let recoveryState = projection?.recoveryState {
+                        parts.append("recoveryState=\(recoveryState.rawValue)")
+                    }
+                } else if let groupIdData = Data(hexEncoded: convo.groupId) {
                     let ffiEpoch = (try? await manager.mlsClient.getEpoch(for: senderDID, groupId: groupIdData)).map(String.init) ?? "n/a"
                     parts.append("ffiEpoch=\(ffiEpoch)")
                 }

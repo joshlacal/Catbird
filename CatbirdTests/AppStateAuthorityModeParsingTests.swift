@@ -175,6 +175,28 @@ final class AppStateAuthorityModeParsingTests: XCTestCase {
     )
   }
 
+  func testSendFailureDiagnosticsUsesRustFullProjectionBeforeLowLevelSwiftEpochRead() throws {
+    let source = try String(
+      contentsOf: sourceFileURL(relativePath: "Catbird/Features/MLSChat/MLSConversationDetailView.swift"),
+      encoding: .utf8
+    )
+
+    let body = try XCTUnwrap(
+      extractFunctionBody(signature: "private func sendFailureDiagnostics(", from: source)
+    )
+    let rustFullBranch = try XCTUnwrap(
+      extractConditionalBranchBody(matching: "if manager.protocolAuthorityMode == .rustFull", from: body)
+    )
+
+    XCTAssertTrue(rustFullBranch.contains("conversationDiagnosticsProjection"))
+    XCTAssertTrue(rustFullBranch.contains("ensureReady: false"))
+    XCTAssertFalse(rustFullBranch.contains("manager.mlsClient.getEpoch"))
+    XCTAssertLessThan(
+      try XCTUnwrap(body.range(of: "manager.protocolAuthorityMode == .rustFull")).lowerBound,
+      try XCTUnwrap(body.range(of: "manager.mlsClient.getEpoch")).lowerBound
+    )
+  }
+
   private func sourceFileURL(relativePath: String) -> URL {
     let testsDirectory = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
     let projectRoot = testsDirectory.deletingLastPathComponent()
