@@ -154,7 +154,7 @@ final class AppStateAuthorityModeParsingTests: XCTestCase {
     )
   }
 
-  func testE2EWipeMLSStateRefusesSwiftDeleteGroupInRustFull() throws {
+  func testE2EWipeMLSStateUsesRustDebugWipeInRustFull() throws {
     let source = try String(
       contentsOf: sourceFileURL(relativePath: "Catbird/App/CatbirdApp.swift"),
       encoding: .utf8
@@ -167,7 +167,8 @@ final class AppStateAuthorityModeParsingTests: XCTestCase {
       extractConditionalBranchBody(matching: "if conversationManager.protocolAuthorityMode == .rustFull", from: wipeBody)
     )
 
-    XCTAssertTrue(rustFullBranch.contains("wipe-mls-state is unsupported in rustFull authority"))
+    XCTAssertTrue(rustFullBranch.contains("debugWipeLocalGroupForRecovery"))
+    XCTAssertTrue(rustFullBranch.contains("\"authority\": \"rustFull\""))
     XCTAssertFalse(rustFullBranch.contains("mlsClient.deleteGroup"))
     XCTAssertLessThan(
       try XCTUnwrap(wipeBody.range(of: "conversationManager.protocolAuthorityMode == .rustFull")).lowerBound,

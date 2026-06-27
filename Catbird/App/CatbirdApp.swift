@@ -2657,6 +2657,9 @@ private extension CatbirdApp {
   /// Used by `scripts/e2e_mls_auto_reset_ios.sh` to deterministically push a
   /// client into the `groupMissing`/`needsRejoin` cohort without resorting to
   /// filesystem corruption. Sequence:
+  /// In rustFull authority this delegates to Rust so the same owner that runs
+  /// recovery also performs the fault injection. Legacy modes keep the Swift
+  /// path:
   ///   1. FFI `deleteGroup` to drop OpenMLS state for the convo's groupId.
   ///   2. Evict the in-memory conversation cache + group state.
   ///   3. Set `needsRejoin = 1` in GRDB (clears `isUnrecoverable`/`needsReset`)
@@ -2690,14 +2693,32 @@ private extension CatbirdApp {
     }
 
     if conversationManager.protocolAuthorityMode == .rustFull {
-      e2eLogger.error(
-        "[E2E-WIPE] wipe-mls-state unsupported in rustFull authority; refusing to delete Swift OpenMLS group state"
-      )
-      await writeE2EResult(
-        command: "wipe-mls-state",
-        success: false,
-        error: "wipe-mls-state is unsupported in rustFull authority until Rust exposes a fault-injection hook"
-      )
+      do {
+        guard let result = try await conversationManager.debugWipeLocalGroupForRecovery(
+          conversationId: conversationId
+        ) else {
+          await writeE2EResult(
+            command: "wipe-mls-state",
+            success: false,
+            error: "Rust debug wipe returned no result in rustFull authority"
+          )
+          return
+        }
+
+        e2eLogger.info(
+          "[E2E-WIPE] Rust debug wipe complete for \(conversationId.prefix(16)) deletedLocalGroup=\(result.deletedLocalGroup)"
+        )
+        await writeE2EResult(command: "wipe-mls-state", success: true, data: [
+          "conversationId": result.conversationId,
+          "groupId": result.groupId ?? "",
+          "groupIdPresent": result.groupId == nil ? "false" : "true",
+          "deletedLocalGroup": result.deletedLocalGroup ? "true" : "false",
+          "authority": "rustFull"
+        ])
+      } catch {
+        e2eLogger.error("[E2E-WIPE] Rust debug wipe failed: \(error.localizedDescription)")
+        await writeE2EResult(command: "wipe-mls-state", success: false, error: error.localizedDescription)
+      }
       return
     }
 
