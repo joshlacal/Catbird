@@ -2070,6 +2070,24 @@ private extension CatbirdApp {
       e2eLogger.error("[E2E-REGISTER] optIn result: optedIn=\(optedIn), at=\(optedInAt)")
       try await conversationManager.ensureDeviceRecordPublished()
 
+      if conversationManager.protocolAuthorityMode == .rustFull {
+        if forceReregister {
+          e2eLogger.error(
+            "[E2E-REGISTER] rustFull authority active; ignoring force=true to avoid Swift OpenMLS reregistration"
+          )
+        }
+        e2eLogger.error("[E2E-REGISTER] rustFull authority active; ensuring device through Rust")
+        let deviceInfo = try await conversationManager.registeredDeviceInfoForPushTokenRegistration()
+        try await conversationManager.smartRefreshKeyPackages()
+        await writeE2EResult(command: "register-device", success: true, data: [
+          "status": forceReregister ? "rust_authoritative_registered_force_ignored" : "rust_authoritative_registered",
+          "optedIn": String(optedIn),
+          "deviceId": deviceInfo?.deviceId ?? "unknown",
+          "deviceUUID": deviceInfo?.deviceUUID ?? "unknown"
+        ])
+        return
+      }
+
       // Step 2: Check if already registered to avoid invalidating existing key packages
       if let existingDeviceInfo = await conversationManager.mlsClient.getDeviceInfo(for: appState.userDID), !forceReregister {
         e2eLogger.error("[E2E-REGISTER] Already registered with deviceId: \(existingDeviceInfo.deviceId) - skipping reregistration to preserve key packages")
@@ -2860,7 +2878,13 @@ private extension CatbirdApp {
 
       let userDid = appState.userDID
       let stats = try await conversationManager.apiClient.getKeyPackageStats()
-      let currentDeviceId = await conversationManager.mlsClient.getDeviceInfo(for: userDid)?.deviceId ?? "unknown"
+      let currentDeviceId: String
+      if conversationManager.protocolAuthorityMode == .rustFull {
+        currentDeviceId = try await conversationManager.registeredDeviceInfoForPushTokenRegistration()?.deviceId
+          ?? "unknown"
+      } else {
+        currentDeviceId = await conversationManager.mlsClient.getDeviceInfo(for: userDid)?.deviceId ?? "unknown"
+      }
       let (_, listOutput) = try await conversationManager.apiClient.client.blue.catbird.mlsChat.listDevices(
         input: BlueCatbirdMlsChatListDevices.Parameters()
       )
@@ -2893,6 +2917,18 @@ private extension CatbirdApp {
     do {
       guard let conversationManager = await appState.getMLSConversationManager() else {
         throw NSError(domain: "E2E", code: 1, userInfo: [NSLocalizedDescriptionKey: "MLS not initialized"])
+      }
+
+      if conversationManager.protocolAuthorityMode == .rustFull {
+        e2eLogger.error(
+          "[E2E] drain-key-packages unsupported in rustFull authority; refusing to mutate Swift OpenMLS storage"
+        )
+        await writeE2EResult(
+          command: "drain-key-packages",
+          success: false,
+          error: "drain-key-packages is unsupported in rustFull authority until Rust exposes a drain hook"
+        )
+        return
       }
 
       let userDid = appState.userDID
@@ -2940,8 +2976,14 @@ private extension CatbirdApp {
       }
 
       let userDid = appState.userDID
-      let currentDeviceId = await conversationManager.mlsClient.getDeviceInfo(for: userDid)?.deviceId
-        ?? "unknown"
+      let currentDeviceId: String
+      if conversationManager.protocolAuthorityMode == .rustFull {
+        currentDeviceId = try await conversationManager.registeredDeviceInfoForPushTokenRegistration()?.deviceId
+          ?? "unknown"
+      } else {
+        currentDeviceId = await conversationManager.mlsClient.getDeviceInfo(for: userDid)?.deviceId
+          ?? "unknown"
+      }
 
       let stats = try await conversationManager.apiClient.getKeyPackageStats()
       let (statusCode, listOutput) = try await conversationManager.apiClient.client.blue.catbird.mlsChat.listDevices(
