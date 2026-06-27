@@ -2608,6 +2608,25 @@ private extension CatbirdApp {
       // Sync first to ensure conversation model is up-to-date after add/remove operations
       try? await conversationManager.syncWithServer(fullSync: false)
 
+      if conversationManager.protocolAuthorityMode == .rustFull {
+        let projection = try await conversationManager.conversationDiagnosticsProjection(
+          conversationId: conversationId,
+          ensureReady: true
+        )
+        let epoch = projection.epoch ?? 0
+        e2eLogger.info(
+          "[E2E] Rust epoch projection for \(conversationId): epoch=\(epoch), state=\(projection.recoveryState.rawValue), sendAllowed=\(projection.sendAllowed.map(String.init) ?? "nil")"
+        )
+        await writeE2EResult(command: "get-epoch", success: true, data: [
+          "conversationId": conversationId,
+          "serverEpoch": "\(epoch)",
+          "ffiEpoch": "\(epoch)",
+          "recoveryState": projection.recoveryState.rawValue,
+          "sendAllowed": projection.sendAllowed.map(String.init) ?? "unknown"
+        ])
+        return
+      }
+
       guard let convo = conversationManager.conversations[conversationId] else {
         throw NSError(domain: "E2E", code: 2, userInfo: [NSLocalizedDescriptionKey: "Conversation not found"])
       }
@@ -2670,6 +2689,18 @@ private extension CatbirdApp {
       return
     }
 
+    if conversationManager.protocolAuthorityMode == .rustFull {
+      e2eLogger.error(
+        "[E2E-WIPE] wipe-mls-state unsupported in rustFull authority; refusing to delete Swift OpenMLS group state"
+      )
+      await writeE2EResult(
+        command: "wipe-mls-state",
+        success: false,
+        error: "wipe-mls-state is unsupported in rustFull authority until Rust exposes a fault-injection hook"
+      )
+      return
+    }
+
     do {
       let model = try await conversationManager.storage.fetchConversation(
         conversationID: conversationId,
@@ -2720,6 +2751,25 @@ private extension CatbirdApp {
     }
   }
 
+  private func e2eRecoveryStateNames(_ state: ConversationRecoveryState) -> (stateName: String, externalName: String) {
+    switch state {
+    case .healthy:
+      return ("healthy", "Active")
+    case .epochBehind:
+      return ("epochBehind", "EpochBehind")
+    case .groupMissing:
+      return ("groupMissing", "GroupMissing")
+    case .needsRejoin:
+      return ("needsRejoin", "NeedsRejoin")
+    case .recovering:
+      return ("recovering", "Recovering")
+    case .unrecoverableLocal:
+      return ("unrecoverableLocal", "UnrecoverableLocal")
+    case .resetPending:
+      return ("resetPending", "ResetPending")
+    }
+  }
+
   /// E2E: report MLS recovery state for a conversation.
   ///
   /// Returns the spec §8.1 recovery state (`Active` / `EpochBehind` /
@@ -2758,6 +2808,35 @@ private extension CatbirdApp {
         currentUserDID: userDid,
         database: conversationManager.database
       )
+
+      if conversationManager.protocolAuthorityMode == .rustFull {
+        let projection = try await conversationManager.conversationDiagnosticsProjection(
+          conversationId: conversationId,
+          ensureReady: false
+        )
+
+        let (stateName, externalName) = e2eRecoveryStateNames(projection.recoveryState)
+        let epoch = projection.epoch ?? UInt64(model?.epoch ?? 0)
+        let generation = model?.pendingResetGeneration
+
+        e2eLogger.info(
+          "[E2E-RECOVERY] rustFull \(conversationId.prefix(16)) state=\(externalName) epoch=\(epoch) generation=\(generation.map(String.init) ?? "nil")"
+        )
+
+        var data: [String: String] = [
+          "conversationId": conversationId,
+          "state": externalName,
+          "stateRaw": stateName,
+          "epoch": "\(epoch)",
+          "modelPresent": model == nil ? "false" : "true"
+        ]
+        if let generation {
+          data["resetGeneration"] = "\(generation)"
+        }
+
+        await writeE2EResult(command: "get-recovery-state", success: true, data: data)
+        return
+      }
 
       let state: ConversationRecoveryState
       if let recoveryManager = await conversationManager.mlsClient.recovery(for: userDid) {

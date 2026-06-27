@@ -118,6 +118,63 @@ final class AppStateAuthorityModeParsingTests: XCTestCase {
     XCTAssertFalse(stateRustFullBranch.contains("mlsClient.getDeviceInfo"))
   }
 
+  func testE2EDiagnosticsUseRustFullProjectionBeforeLowLevelSwiftMLS() throws {
+    let source = try String(
+      contentsOf: sourceFileURL(relativePath: "Catbird/App/CatbirdApp.swift"),
+      encoding: .utf8
+    )
+
+    let getEpochBody = try XCTUnwrap(
+      extractFunctionBody(signature: "private func handleGetEpoch(", from: source)
+    )
+    let getEpochRustFullBranch = try XCTUnwrap(
+      extractConditionalBranchBody(matching: "if conversationManager.protocolAuthorityMode == .rustFull", from: getEpochBody)
+    )
+    XCTAssertTrue(getEpochRustFullBranch.contains("conversationDiagnosticsProjection"))
+    XCTAssertTrue(getEpochRustFullBranch.contains("ensureReady: true"))
+    XCTAssertFalse(getEpochRustFullBranch.contains("mlsClient.getEpoch"))
+    XCTAssertLessThan(
+      try XCTUnwrap(getEpochBody.range(of: "conversationManager.protocolAuthorityMode == .rustFull")).lowerBound,
+      try XCTUnwrap(getEpochBody.range(of: "mlsClient.getEpoch")).lowerBound
+    )
+
+    let recoveryBody = try XCTUnwrap(
+      extractFunctionBody(signature: "private func handleGetRecoveryState(", from: source)
+    )
+    let recoveryRustFullBranch = try XCTUnwrap(
+      extractConditionalBranchBody(matching: "if conversationManager.protocolAuthorityMode == .rustFull", from: recoveryBody)
+    )
+    XCTAssertTrue(recoveryRustFullBranch.contains("conversationDiagnosticsProjection"))
+    XCTAssertTrue(recoveryRustFullBranch.contains("ensureReady: false"))
+    XCTAssertFalse(recoveryRustFullBranch.contains("mlsClient.recovery"))
+    XCTAssertFalse(recoveryRustFullBranch.contains("mlsClient.getEpoch"))
+    XCTAssertLessThan(
+      try XCTUnwrap(recoveryBody.range(of: "conversationManager.protocolAuthorityMode == .rustFull")).lowerBound,
+      try XCTUnwrap(recoveryBody.range(of: "mlsClient.recovery")).lowerBound
+    )
+  }
+
+  func testE2EWipeMLSStateRefusesSwiftDeleteGroupInRustFull() throws {
+    let source = try String(
+      contentsOf: sourceFileURL(relativePath: "Catbird/App/CatbirdApp.swift"),
+      encoding: .utf8
+    )
+
+    let wipeBody = try XCTUnwrap(
+      extractFunctionBody(signature: "private func handleWipeMLSState(", from: source)
+    )
+    let rustFullBranch = try XCTUnwrap(
+      extractConditionalBranchBody(matching: "if conversationManager.protocolAuthorityMode == .rustFull", from: wipeBody)
+    )
+
+    XCTAssertTrue(rustFullBranch.contains("wipe-mls-state is unsupported in rustFull authority"))
+    XCTAssertFalse(rustFullBranch.contains("mlsClient.deleteGroup"))
+    XCTAssertLessThan(
+      try XCTUnwrap(wipeBody.range(of: "conversationManager.protocolAuthorityMode == .rustFull")).lowerBound,
+      try XCTUnwrap(wipeBody.range(of: "mlsClient.deleteGroup")).lowerBound
+    )
+  }
+
   private func sourceFileURL(relativePath: String) -> URL {
     let testsDirectory = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
     let projectRoot = testsDirectory.deletingLastPathComponent()
