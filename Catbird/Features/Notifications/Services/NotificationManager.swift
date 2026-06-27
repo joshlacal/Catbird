@@ -1570,30 +1570,29 @@ final class NotificationManager: NSObject {
       let tokenHex = hexString(from: token)
 
       do {
-        // Get the user's DID
-        let did = try await client.getDid()
+        // Validate that the session is authenticated before touching MLS.
+        _ = try await client.getDid()
 
-        // Ensure device is registered with MLS first (Phase 1 & 2)
-        // This creates the device record on the server if it doesn't exist
-        _ = try await MLSClient.shared.ensureDeviceRegistered(userDid: did)
-
-        // Ensure device record is published for this now-registered/opted-in device.
-        // Notification token registration can run before chat UI paths, so this
-        // closes the gap where users become opted-in without device records.
-        if let conversationManager = await appState.getMLSConversationManager() {
-          do {
-            try await conversationManager.ensureDeviceRecordPublished()
-          } catch {
-            notificationLogger.error(
-              "❌ Failed to publish device record during token registration: \(error.localizedDescription)"
-            )
-          }
+        guard let conversationManager = await appState.getMLSConversationManager() else {
+          notificationLogger.warning(
+            "⚠️ Cannot register MLS device token - conversation manager unavailable"
+          )
+          return
         }
 
-        // Get the correct deviceId from the manager (it might differ from IDFV if server assigns it)
-        guard let deviceInfo = await MLSClient.shared.getDeviceInfo(for: did) else {
-          notificationLogger.error("❌ Failed to retrieve device info after registration")
+        guard
+          let deviceInfo = try await conversationManager.registeredDeviceInfoForPushTokenRegistration()
+        else {
+          notificationLogger.error("❌ Failed to retrieve MLS device info for push token registration")
           return
+        }
+
+        do {
+          try await conversationManager.ensureDeviceRecordPublished()
+        } catch {
+          notificationLogger.error(
+            "❌ Failed to publish device record during token registration: \(error.localizedDescription)"
+          )
         }
 
         if let mlsClient = await appState.getMLSAPIClient() {
@@ -1602,7 +1601,7 @@ final class NotificationManager: NSObject {
           let deviceName = UIDevice.current.name
 
           try await mlsClient.registerDeviceToken(
-            deviceId: deviceInfo.deviceId,
+            deviceId: deviceInfo.deviceUUID ?? deviceInfo.deviceId,
             pushToken: tokenHex,
             deviceName: deviceName,
             platform: "ios"
