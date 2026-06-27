@@ -455,7 +455,10 @@ final class AppState {
     init(userDID: String, client: ATProtoClient) {
         self.userDID = userDID
         self.client = client
+        let authorityMode = Self.configuredMLSProtocolAuthorityMode()
+        MLSAuthorityModeSharedState.setCurrentMode(authorityMode)
         logger.info("AppState initializing for account: \(userDID)")
+        logger.info("MLS: Published authority mode for extensions: \(authorityMode.rawValue, privacy: .public)")
         appSettings.configure(accountDID: userDID)
 
         let chatModeKey = AppSettingsModel.scopedKey("chatMode", accountDID: userDID)

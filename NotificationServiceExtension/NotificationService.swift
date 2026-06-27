@@ -241,6 +241,41 @@ class NotificationService: UNNotificationServiceExtension {
       "✅ [NSE] All required fields present - convoId=\(convoId.prefix(16))..., messageId=\(messageId.prefix(16))..., recipientDid=\(recipientDid.prefix(24))..."
     )
 
+    let nseAuthorityMode = MLSAuthorityModeSharedState.currentMode()
+    logger.info("🧭 [NSE] authority_mode=\(nseAuthorityMode.rawValue, privacy: .public)")
+    if nseAuthorityMode == .rustFull {
+      logger.warning(
+        "⏭️ [NSE] rustFull authority: avoiding direct NSE MLS decrypt; using cache-only notification path"
+      )
+      Task { @MainActor in
+        self.activeRecipientDID = recipientDid
+        defer {
+          self.activeRecipientDID = nil
+          self.bestEffortNSECleanup(recipientDid: recipientDid)
+        }
+
+        for attempt in 0..<10 {
+          if await self.deliverCachedNotificationIfAvailable(
+            content: bestAttemptContent,
+            contentHandler: contentHandler,
+            messageId: messageId,
+            convoId: convoId,
+            recipientDid: recipientDid,
+            epoch: epoch,
+            sequenceNumber: sequenceNumber
+          ) {
+            return
+          }
+          if attempt < 9 { try? await Task.sleep(nanoseconds: 200_000_000) }
+        }
+
+        bestAttemptContent.title = "New Message"
+        bestAttemptContent.body = "New Encrypted Message"
+        contentHandler(bestAttemptContent)
+      }
+      return
+    }
+
     let routingDecision = MLSNotificationCoordinator.routingDecision(
       context: .nseBackground,
       recipientUserDID: recipientDid

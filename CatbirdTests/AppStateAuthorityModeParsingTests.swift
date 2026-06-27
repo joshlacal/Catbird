@@ -31,6 +31,19 @@ final class AppStateAuthorityModeParsingTests: XCTestCase {
     XCTAssertEqual(mode, .rustFull)
   }
 
+  func testAppStatePublishesAuthorityModeForExtensions() throws {
+    let source = try String(
+      contentsOf: sourceFileURL(relativePath: "Catbird/Core/State/AppState.swift"),
+      encoding: .utf8
+    )
+    let initBody = try XCTUnwrap(
+      extractFunctionBody(signature: "init(userDID: String, client: ATProtoClient)", from: source)
+    )
+
+    XCTAssertTrue(initBody.contains("MLSAuthorityModeSharedState.setCurrentMode"))
+    XCTAssertTrue(initBody.contains("Self.configuredMLSProtocolAuthorityMode()"))
+  }
+
   func testAppStateRoutesKeyPackageReconciliationThroughConversationManager() throws {
     let source = try String(
       contentsOf: sourceFileURL(relativePath: "Catbird/Core/State/AppState.swift"),
@@ -57,6 +70,31 @@ final class AppStateAuthorityModeParsingTests: XCTestCase {
     XCTAssertTrue(body.contains("deviceInfo.deviceUUID ?? deviceInfo.deviceId"))
     XCTAssertFalse(body.contains("MLSClient.shared.ensureDeviceRegistered"))
     XCTAssertFalse(body.contains("MLSClient.shared.getDeviceInfo"))
+  }
+
+  func testNSEUsesCacheOnlyInRustFullBeforeDirectSwiftMLS() throws {
+    let source = try String(
+      contentsOf: sourceFileURL(relativePath: "NotificationServiceExtension/NotificationService.swift"),
+      encoding: .utf8
+    )
+    let receiveBody = try XCTUnwrap(
+      extractFunctionBody(
+        signature: "override func didReceive(",
+        from: source
+      )
+    )
+    let rustFullBranch = try XCTUnwrap(
+      extractConditionalBranchBody(matching: "if nseAuthorityMode == .rustFull", from: receiveBody)
+    )
+
+    XCTAssertTrue(rustFullBranch.contains("deliverCachedNotificationIfAvailable"))
+    XCTAssertTrue(rustFullBranch.contains("New Encrypted Message"))
+    XCTAssertFalse(rustFullBranch.contains("ensureContext"))
+    XCTAssertFalse(rustFullBranch.contains("decryptForNotification"))
+    XCTAssertLessThan(
+      try XCTUnwrap(receiveBody.range(of: "nseAuthorityMode == .rustFull")).lowerBound,
+      try XCTUnwrap(receiveBody.range(of: "MLSCoreContext.shared.ensureContext")).lowerBound
+    )
   }
 
   func testE2ERegisterDeviceRoutesRustFullThroughManager() throws {
