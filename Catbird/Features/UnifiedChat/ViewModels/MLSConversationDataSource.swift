@@ -375,17 +375,31 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
     )
   }
 
-  /// Overlay the recovery manager's transient state (`.recovering`, …) on top
-  /// of the persisted model state to produce the resolved spec §8.1 state.
+  /// Resolve the spec §8.1 state. In rustFull, Rust owns transient recovery;
+  /// legacy modes still overlay Swift `MLSRecoveryManager` state on DB flags.
   private func resolveRecoveryState(model: MLSConversationModel?) async {
     var resolved = model?.persistedRecoveryState ?? .healthy
 
     if let appState,
-      let manager = await appState.getMLSConversationManager(timeout: 2.0),
-      let userDid = manager.userDid,
-      let recovery = await manager.mlsClient.recovery(for: userDid)
+      let manager = await appState.getMLSConversationManager(timeout: 2.0)
     {
-      resolved = await recovery.recoveryState(for: conversationId, model: model)
+      if manager.protocolAuthorityMode == .rustFull {
+        do {
+          let projection = try await manager.conversationDiagnosticsProjection(
+            conversationId: conversationId,
+            ensureReady: false
+          )
+          resolved = projection.recoveryState
+        } catch {
+          logger.warning(
+            "Rust recovery projection failed for \(self.conversationId.prefix(16)): \(error.localizedDescription, privacy: .public); using persisted state"
+          )
+        }
+      } else if let userDid = manager.userDid,
+        let recovery = await manager.mlsClient.recovery(for: userDid)
+      {
+        resolved = await recovery.recoveryState(for: conversationId, model: model)
+      }
     }
 
     if conversationRecoveryState != resolved {

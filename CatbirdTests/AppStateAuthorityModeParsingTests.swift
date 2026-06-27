@@ -198,6 +198,28 @@ final class AppStateAuthorityModeParsingTests: XCTestCase {
     )
   }
 
+  func testUnifiedMLSRecoveryStateUsesRustFullProjectionBeforeSwiftRecoveryManager() throws {
+    let source = try String(
+      contentsOf: sourceFileURL(relativePath: "Catbird/Features/UnifiedChat/ViewModels/MLSConversationDataSource.swift"),
+      encoding: .utf8
+    )
+
+    let body = try XCTUnwrap(
+      extractFunctionBody(signature: "private func resolveRecoveryState(", from: source)
+    )
+    let rustFullBranch = try XCTUnwrap(
+      extractConditionalBranchBody(matching: "if manager.protocolAuthorityMode == .rustFull", from: body)
+    )
+
+    XCTAssertTrue(rustFullBranch.contains("conversationDiagnosticsProjection"))
+    XCTAssertTrue(rustFullBranch.contains("ensureReady: false"))
+    XCTAssertFalse(rustFullBranch.contains("manager.mlsClient.recovery"))
+    XCTAssertLessThan(
+      try XCTUnwrap(body.range(of: "manager.protocolAuthorityMode == .rustFull")).lowerBound,
+      try XCTUnwrap(body.range(of: "manager.mlsClient.recovery")).lowerBound
+    )
+  }
+
   private func sourceFileURL(relativePath: String) -> URL {
     let testsDirectory = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
     let projectRoot = testsDirectory.deletingLastPathComponent()
