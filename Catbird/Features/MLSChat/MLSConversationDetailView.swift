@@ -4262,15 +4262,14 @@ import SwiftUI
             do {
                 // Step 1: Join via External Commit (atomic rejoin)
                 logger.debug("Joining via External Commit for recovery...")
-                guard let userDid = manager.userDid else {
+                guard manager.userDid != nil else {
                     logger.error("Recovery failed: No user DID available")
                     recoveryState = .failed("Sign in is required to update your secure session.")
                     showingRecoveryError = true
                     return
                 }
 
-                // Use MLSClient to join via External Commit
-                _ = try await manager.mlsClient.joinByExternalCommit(for: userDid, convoId: conversationId)
+                _ = try await manager.joinOrRejoinConversation(conversationId: conversationId)
 
                 logger.info("Successfully rejoined conversation via External Commit")
 

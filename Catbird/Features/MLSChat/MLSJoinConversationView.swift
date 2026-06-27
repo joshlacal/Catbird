@@ -80,7 +80,7 @@ struct MLSJoinConversationView: View {
         errorMessage = nil
         
         guard let manager = await appState.getMLSConversationManager(),
-              let userDid = manager.userDid else {
+              manager.userDid != nil else {
             errorMessage = "MLS service not available"
             showingError = true
             isJoining = false
@@ -90,12 +90,7 @@ struct MLSJoinConversationView: View {
         do {
             logger.info("Joining conversation via External Commit: \(convoId)")
             
-            // Call joinByExternalCommit on MLSClient
-            // Note: We need to access MLSClient directly or via Manager
-            // Manager doesn't expose joinByExternalCommit yet, so we might need to add it there too.
-            // For now, let's assume we can access it via manager.mlsClient
-            
-            _ = try await manager.mlsClient.joinByExternalCommit(for: userDid, convoId: convoId)
+            _ = try await manager.joinOrRejoinConversation(conversationId: convoId)
             
             logger.info("Successfully joined conversation")
             
