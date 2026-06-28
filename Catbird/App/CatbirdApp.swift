@@ -38,20 +38,18 @@ private func closeRustRuntimeSynchronousAfterExpiration(
   appStateManager: AppStateManager,
   reason: String
 ) {
-  let invalidate = {
-    appStateManager.lifecycle.appState?.mlsConversationManager?.markRustRuntimeClosedForSuspend(
-      reason: reason
-    )
-  }
-
   if Thread.isMainThread {
     MainActor.assumeIsolated {
-      invalidate()
+      appStateManager.lifecycle.appState?.mlsConversationManager?.markRustRuntimeClosedForSuspend(
+        reason: reason
+      )
     }
   } else {
     DispatchQueue.main.sync {
       MainActor.assumeIsolated {
-        invalidate()
+        appStateManager.lifecycle.appState?.mlsConversationManager?.markRustRuntimeClosedForSuspend(
+          reason: reason
+        )
       }
     }
   }
@@ -2023,6 +2021,9 @@ private extension CatbirdApp {
     case "cleanup-stale":
       await handleCleanupStale(params: params, manager: manager, logger: e2eLogger)
 
+    case "force-delete-conversation", "force_delete_conversation":
+      await handleForceDeleteConversation(params: params, manager: manager, logger: e2eLogger)
+
     case "drain-key-packages":
       await handleDrainKeyPackages(params: params, manager: manager, logger: e2eLogger)
 
@@ -2957,6 +2958,45 @@ private extension CatbirdApp {
       e2eLogger.error("[E2E] Cleanup failed: \(error.localizedDescription)")
       await writeE2EResult(command: "cleanup-stale", success: false, error: error.localizedDescription)
     }
+  }
+
+  /// E2E: force-delete a single ghost/zombie conversation from local storage.
+  ///
+  /// Unlike `cleanup-stale` (which runs a full sync and only removes conversations
+  /// the server no longer lists), this bypasses all reconciliation safeguards and
+  /// the server entirely — it tears down the local conversation + manifest + MLS
+  /// group even when the underlying MLS group is missing/desynced. Use it to clear
+  /// a conversation the user can neither open nor delete from the UI.
+  ///
+  /// Format: blue.catbird://e2e/force-delete-conversation?convoId=<conversationId>
+  private func handleForceDeleteConversation(params: [String: String], manager: AppStateManager, logger e2eLogger: Logger) async {
+    guard let appState = manager.lifecycle.appState else {
+      e2eLogger.error("[E2E] Not authenticated - cannot force delete")
+      await writeE2EResult(command: "force-delete-conversation", success: false, error: "Not authenticated")
+      return
+    }
+
+    guard let convoId = params["convoId"], !convoId.isEmpty else {
+      e2eLogger.error("[E2E] force-delete-conversation requires convoId parameter")
+      await writeE2EResult(command: "force-delete-conversation", success: false, error: "Missing convoId parameter")
+      return
+    }
+
+    guard let conversationManager = await appState.getMLSConversationManager() else {
+      e2eLogger.error("[E2E] MLS not initialized - cannot force delete")
+      await writeE2EResult(command: "force-delete-conversation", success: false, error: "MLS not initialized")
+      return
+    }
+
+    e2eLogger.info("[E2E] Force-deleting conversation \(convoId, privacy: .public)")
+    await conversationManager.forceDeleteConversation(convoId: convoId)
+
+    let remaining = conversationManager.conversations.count
+    e2eLogger.info("[E2E] Force delete complete - \(remaining) conversations remain")
+    await writeE2EResult(command: "force-delete-conversation", success: true, data: [
+      "deletedConvoId": convoId,
+      "remainingConversations": "\(remaining)"
+    ])
   }
 
   /// E2E: publish fresh local key packages for this simulator's active device.
