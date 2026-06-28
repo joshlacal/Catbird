@@ -8,7 +8,7 @@ import Testing
 
 @Suite("Action buttons repost presentation")
 struct ActionButtonsRepostPresentationTests {
-  @Test("Repost actions are presented as a menu, not a sheet")
+  @Test("Repost actions are presented as a menu on every supported OS")
   func repostActionsUseMenuPresentation() throws {
     let sourceURL = URL(fileURLWithPath: #filePath)
       .deletingLastPathComponent()
@@ -19,6 +19,10 @@ struct ActionButtonsRepostPresentationTests {
 
     #expect(source.contains("Menu {"), "Repost actions should be rendered in a SwiftUI Menu.")
     #expect(!source.contains("showRepostOptions"), "The repost options sheet state should be removed.")
+    #expect(!source.contains("showingRepostOptions"), "The repost options dialog state should be removed.")
+    #expect(!source.contains("repostDialogButton"), "The iOS 27 confirmation-dialog workaround should be removed.")
+    #expect(!source.contains("if #available(iOS 27.0, *)"), "iOS 27 should use the same Menu path again.")
+    #expect(!source.contains(".confirmationDialog("), "Repost options should not use confirmationDialog.")
     #expect(!source.contains("RepostOptionsView(post: post, viewModel: viewModel)"))
 
     guard let repostMenuRange = source.range(of: "private var repostMenu: some View"),

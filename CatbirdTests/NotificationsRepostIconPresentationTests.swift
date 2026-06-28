@@ -8,8 +8,8 @@ import Testing
 
 @Suite("Notifications repost icon presentation")
 struct NotificationsRepostIconPresentationTests {
-  @Test("Notification icons leave the render tree when the tab is inactive")
-  func notificationIconsAreRemovedWhileTabIsInactive() throws {
+  @Test("Notification icons remain stable across tab selection changes")
+  func notificationIconsRemainStableAcrossTabSelectionChanges() throws {
     let sourceURL = URL(fileURLWithPath: #filePath)
       .deletingLastPathComponent()
       .deletingLastPathComponent()
@@ -17,8 +17,8 @@ struct NotificationsRepostIconPresentationTests {
     let source = try String(contentsOf: sourceURL, encoding: .utf8)
 
     #expect(
-      source.contains("NotificationIcon(type: group.type, isActiveTab: isActiveTab)"),
-      "Notification cards should pass tab visibility down to the SF Symbol layer."
+      source.contains("NotificationIcon(type: group.type)"),
+      "Notification cards should render the icon without binding it to root tab visibility."
     )
 
     guard let iconRange = source.range(of: "struct NotificationIcon: View"),
@@ -30,20 +30,20 @@ struct NotificationsRepostIconPresentationTests {
 
     let iconSource = String(source[iconRange.lowerBound..<mediaRange.lowerBound])
     #expect(
-      iconSource.contains("let isActiveTab: Bool"),
-      "NotificationIcon should know whether its tab is active."
+      !iconSource.contains("let isActiveTab: Bool"),
+      "NotificationIcon should not mutate its render tree during TabView selection changes."
     )
     #expect(
-      iconSource.contains("if isActiveTab"),
-      "The SF Symbol should only exist while the Notifications tab is active."
+      !iconSource.contains("if isActiveTab"),
+      "Avoid swapping the SF Symbol for a placeholder during the outgoing tab transition."
     )
     #expect(
-      iconSource.contains("Color.clear"),
-      "Inactive notification rows should preserve layout without keeping an SF Symbol layer alive."
+      !iconSource.contains("Color.clear"),
+      "Avoid replacing the icon with Color.clear while List cells are being hidden by TabView."
     )
     #expect(
-      iconSource.contains(".id(type)"),
-      "The active SF Symbol should have per-notification-type identity."
+      iconSource.contains("Image(systemName: type.icon)"),
+      "The notification type should map directly to a stable SF Symbol image."
     )
   }
 }

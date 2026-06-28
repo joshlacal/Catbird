@@ -389,6 +389,7 @@ extension EnvironmentValues {
   }
 }
 
+#if os(iOS)
 #Preview {
   @Previewable @State var selectedTab = 0
   @Previewable @State var isRootView = true
@@ -445,3 +446,4 @@ extension EnvironmentValues {
   }
   .ignoresSafeArea()
 }
+#endif

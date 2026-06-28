@@ -60,7 +60,6 @@ struct ActionButtonsView: View {
   // View model for handling actions
   @State private var viewModel: ActionButtonViewModel
   @State private var showingPostComposer: Bool = false
-  @State private var showingRepostOptions: Bool = false
   // Per-post matched transition namespace for reply → composer zoom
   @Namespace private var replyTransition
 
@@ -250,44 +249,6 @@ struct ActionButtonsView: View {
   }
 
   private var repostMenu: some View {
-    Group {
-      #if os(iOS)
-      if #available(iOS 27.0, *) {
-        repostDialogButton
-      } else {
-        repostMenuControl
-      }
-      #else
-      repostMenuControl
-      #endif
-    }
-  }
-
-  private var repostDialogButton: some View {
-    Button {
-      showingRepostOptions = true
-    } label: {
-      repostLabel
-    }
-    .buttonStyle(.plain)
-    .confirmationDialog(
-      "Repost",
-      isPresented: $showingRepostOptions,
-      titleVisibility: .hidden
-    ) {
-      Button(repostActionTitle) {
-        handleRepostToggle()
-      }
-      if !(post.viewer?.embeddingDisabled ?? false) {
-        Button("Quote Post") {
-          handleQuotePost()
-        }
-      }
-      Button("Cancel", role: .cancel) {}
-    }
-  }
-
-  private var repostMenuControl: some View {
     Menu {
       Button {
         handleRepostToggle()
