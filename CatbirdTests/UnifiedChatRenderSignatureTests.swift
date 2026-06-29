@@ -82,8 +82,14 @@ struct UnifiedChatRenderSignatureTests {
         #expect(signatureOther != signatureCurrent)
     }
 
-    @Test("MLS display ordering does not sink missing metadata to the end")
-    func testMLSDisplayOrderingFallsBackWithoutSinkingMessage() {
+    @Test("MLS display ordering places not-yet-sequenced messages after confirmed ones")
+    func testMLSDisplayOrderingSinksUnsequencedAfterConfirmed() {
+        // A message with no server sequence (optimistic local send, or a row whose
+        // seq has not loaded) sorts AFTER confirmed/sequenced messages. The server
+        // sequence is the sole authority; interleaving un-sequenced messages by
+        // timestamp (the previous behaviour) makes the comparator intransitive and
+        // corrupts the whole sort. A genuinely seq-less remote row appears at the
+        // bottom transiently and jumps to position once its seq loads + re-sort runs.
         let remoteWithoutOrdering = MLSMessageAdapter(
             id: "remote-missing-order",
             convoID: "convo-1",
@@ -106,9 +112,61 @@ struct UnifiedChatRenderSignatureTests {
             sequence: 12
         )
 
-        let sorted = [laterOrderedMessage, remoteWithoutOrdering].sorted(by: MLSMessageAdapter.sortsInDisplayOrder)
+        let sorted = [remoteWithoutOrdering, laterOrderedMessage].sorted(by: MLSMessageAdapter.sortsInDisplayOrder)
 
-        #expect(sorted.map(\.id) == ["remote-missing-order", "ordered-later"])
+        #expect(sorted.map(\.id) == ["ordered-later", "remote-missing-order"])
+    }
+
+    @Test("MLS display ordering is a strict weak ordering (transitive) across seq + time")
+    func testMLSDisplayOrderingIsTransitive() {
+        // Regression for the intransitive comparator that produced visibly
+        // out-of-order chat. Server-sequence order and wall-clock order disagree
+        // here, and one message is an un-sequenced optimistic send (seq=0) — the
+        // exact shape that made the old comparator cycle (A<B by seq, B<C by time,
+        // C<A by time) and corrupted Array.sort.
+        let a = MLSMessageAdapter(
+            id: "a-seq5",
+            convoID: "convo-1",
+            text: "seq 5, sent t=100",
+            senderDID: "did:plc:alice",
+            currentUserDID: "did:plc:me",
+            sentAt: Date(timeIntervalSince1970: 100),
+            epoch: 7,
+            sequence: 5
+        )
+        let b = MLSMessageAdapter(
+            id: "b-seq10",
+            convoID: "convo-1",
+            text: "seq 10, sent t=50 (clock skew)",
+            senderDID: "did:plc:bob",
+            currentUserDID: "did:plc:me",
+            sentAt: Date(timeIntervalSince1970: 50),
+            epoch: 7,
+            sequence: 10
+        )
+        let c = MLSMessageAdapter(
+            id: "c-optimistic",
+            convoID: "convo-1",
+            text: "optimistic local send, no server seq yet",
+            senderDID: "did:plc:me",
+            currentUserDID: "did:plc:me",
+            sentAt: Date(timeIntervalSince1970: 75),
+            epoch: nil,
+            sequence: nil
+        )
+
+        // Canonical order: sequenced by seq (a=5 before b=10), un-sequenced last (c).
+        let expected = ["a-seq5", "b-seq10", "c-optimistic"]
+
+        // Every input permutation must yield the SAME order — the defining
+        // property of a strict weak ordering that the old comparator lacked.
+        let permutations: [[MLSMessageAdapter]] = [
+            [a, b, c], [a, c, b], [b, a, c], [b, c, a], [c, a, b], [c, b, a],
+        ]
+        for permutation in permutations {
+            let sorted = permutation.sorted(by: MLSMessageAdapter.sortsInDisplayOrder)
+            #expect(sorted.map(\.id) == expected)
+        }
     }
 
     @Test("MLS display ordering keeps confirmed epoch and sequence authoritative")

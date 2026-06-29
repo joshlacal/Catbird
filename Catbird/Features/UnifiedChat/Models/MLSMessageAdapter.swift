@@ -10,21 +10,33 @@ struct MLSMessageDisplayOrderKey: Comparable, Sendable {
   let messageID: String
 
   static func < (lhs: MLSMessageDisplayOrderKey, rhs: MLSMessageDisplayOrderKey) -> Bool {
-    let lhsHasServerSequence = lhs.sequence > 0
-    let rhsHasServerSequence = rhs.sequence > 0
+    // The server `sequence` is the canonical, conversation-global delivery
+    // order for MLS messages and is the SOLE ordering authority. epoch is not
+    // used: sequence is already globally monotonic across epochs.
+    //
+    // This comparator must be a strict weak ordering — Array.sort produces
+    // undefined, visibly out-of-order results otherwise. The previous version
+    // compared some pairs by `sequence` and others by `sentAt`; because server-
+    // sequence order and wall-clock order can disagree (optimistic local sends
+    // with seq=0, redelivered past-epoch messages, sender clock skew), that mix
+    // was INTRANSITIVE (A<B by seq, B<C by time, C<A by time) and corrupted the
+    // whole sort.
+    let lhsHasSeq = lhs.sequence > 0
+    let rhsHasSeq = rhs.sequence > 0
 
-    if lhsHasServerSequence && rhsHasServerSequence && lhs.sequence != rhs.sequence {
-      return lhs.sequence < rhs.sequence
+    // Both confirmed: server sequence wins, full stop.
+    if lhsHasSeq && rhsHasSeq {
+      if lhs.sequence != rhs.sequence { return lhs.sequence < rhs.sequence }
+      return lhs.messageID < rhs.messageID
     }
-    if lhs.sentAt != rhs.sentAt {
-      return lhs.sentAt < rhs.sentAt
+    // Exactly one confirmed: the sequenced (delivered) message always precedes a
+    // not-yet-sequenced one (an optimistic local send, or a row whose seq has
+    // not loaded yet — both are the newest content and belong at the bottom).
+    if lhsHasSeq != rhsHasSeq {
+      return lhsHasSeq
     }
-    if lhsHasServerSequence != rhsHasServerSequence {
-      return lhsHasServerSequence
-    }
-    if lhs.epoch != rhs.epoch {
-      return lhs.epoch < rhs.epoch
-    }
+    // Neither sequenced yet: fall back to send time, then id for stability.
+    if lhs.sentAt != rhs.sentAt { return lhs.sentAt < rhs.sentAt }
     return lhs.messageID < rhs.messageID
   }
 }

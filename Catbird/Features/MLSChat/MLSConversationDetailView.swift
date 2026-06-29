@@ -182,22 +182,30 @@ import SwiftUI
             let timestamp: Date
 
             static func < (lhs: MessageOrderKey, rhs: MessageOrderKey) -> Bool {
-                let lhsHasServerSequence = lhs.sequence > 0
-                let rhsHasServerSequence = rhs.sequence > 0
+                // Server `sequence` is the canonical conversation-global delivery
+                // order and the sole ordering authority (it is monotonic across
+                // epochs). This MUST be a strict weak ordering — the previous
+                // version compared some pairs by `sequence` and others by
+                // `timestamp`, which is intransitive when those orders disagree
+                // (optimistic seq=0 sends, redelivered past-epoch messages, clock
+                // skew) and made `messages.sort` emit undefined, out-of-order
+                // results. Mirrors MLSMessageDisplayOrderKey.
+                let lhsHasSeq = lhs.sequence > 0
+                let rhsHasSeq = rhs.sequence > 0
 
-                if lhsHasServerSequence && rhsHasServerSequence && lhs.sequence != rhs.sequence {
-                    return lhs.sequence < rhs.sequence
-                }
-                if lhs.timestamp != rhs.timestamp {
+                // Both confirmed: server sequence wins.
+                if lhsHasSeq && rhsHasSeq {
+                    if lhs.sequence != rhs.sequence { return lhs.sequence < rhs.sequence }
                     return lhs.timestamp < rhs.timestamp
                 }
-                if lhsHasServerSequence != rhsHasServerSequence {
-                    return lhsHasServerSequence
+                // Exactly one confirmed: the sequenced message precedes a
+                // not-yet-sequenced one (optimistic local send / unloaded seq).
+                if lhsHasSeq != rhsHasSeq {
+                    return lhsHasSeq
                 }
-                if lhs.epoch != rhs.epoch {
-                    return lhs.epoch < rhs.epoch
-                }
-                return lhs.sequence < rhs.sequence
+                // Neither sequenced yet: order by send time, then epoch.
+                if lhs.timestamp != rhs.timestamp { return lhs.timestamp < rhs.timestamp }
+                return lhs.epoch < rhs.epoch
             }
         }
 
