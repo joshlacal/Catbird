@@ -1027,14 +1027,24 @@ struct MLSConversationListView: View {
             return false
         }
 
-        conversations = snapshot.conversations
-        conversationParticipants = snapshot.conversationParticipants
-        conversationUnreadCounts = snapshot.conversationUnreadCounts
-        conversationLastMessages = snapshot.conversationLastMessages
-        conversationLatestActivity = snapshot.conversationLatestActivity
-        recentMemberChanges = snapshot.recentMemberChanges
-        pendingChatRequestCount = snapshot.pendingChatRequestCount
-        keyPackageStatus = snapshot.keyPackageStatus
+        // Dedupe (List ForEach requires unique ids) and restore without animation:
+        // a cached snapshot restored while a fresh load is in flight, or during an
+        // account switch, must not drive an animated cross-dataset List diff —
+        // that is what trips "Invalid Number Of Items In Section".
+        var seenConvoIDs = Set<String>()
+        let dedupedConversations = snapshot.conversations.filter { seenConvoIDs.insert($0.conversationID).inserted }
+        var txn = Transaction()
+        txn.disablesAnimations = true
+        withTransaction(txn) {
+            conversations = dedupedConversations
+            conversationParticipants = snapshot.conversationParticipants
+            conversationUnreadCounts = snapshot.conversationUnreadCounts
+            conversationLastMessages = snapshot.conversationLastMessages
+            conversationLatestActivity = snapshot.conversationLatestActivity
+            recentMemberChanges = snapshot.recentMemberChanges
+            pendingChatRequestCount = snapshot.pendingChatRequestCount
+            keyPackageStatus = snapshot.keyPackageStatus
+        }
 
         if let cachedSelection = snapshot.selectedConversationId,
            snapshot.conversations.contains(where: { $0.conversationID == cachedSelection }) {
@@ -1216,9 +1226,16 @@ struct MLSConversationListView: View {
                     let rhsDate = latestActivityByConvo[rhs.conversationID] ?? rhs.createdAt
                     return lhsDate > rhsDate
                 }
+                // Deduplicate by conversationID. `conversations` backs a SwiftUI
+                // `List { ForEach }` keyed on MLSConversationModel.id (== conversationID);
+                // any duplicate id makes UICollectionView assert with
+                // "Invalid Number Of Items In Section". The table PKs conversationID so
+                // this is normally a no-op, but the list must be guaranteed unique here.
+                var seenConvoIDs = Set<String>()
+                let dedupedConversations = sortedConversations.filter { seenConvoIDs.insert($0.conversationID).inserted }
 
                 // Only update state if data actually changed to avoid SwiftUI flickering
-                let convoIDs = sortedConversations.map(\.conversationID)
+                let convoIDs = dedupedConversations.map(\.conversationID)
                 let existingIDs = conversations.map(\.conversationID)
                 let countsChanged = unreadCounts != conversationUnreadCounts
                 let activityChanged = latestActivityByConvo != conversationLatestActivity
@@ -1226,10 +1243,19 @@ struct MLSConversationListView: View {
                     || lastMessages.contains { key, val in conversationLastMessages[key]?.text != val.text || conversationLastMessages[key]?.senderDID != val.senderDID }
 
                 if convoIDs != existingIDs || countsChanged || messagesChanged || activityChanged {
-                    conversations = sortedConversations
-                    conversationUnreadCounts = unreadCounts
-                    conversationLastMessages = lastMessages
-                    conversationLatestActivity = latestActivityByConvo
+                    // Apply the bulk swap without animation. When this async refresh
+                    // (or an account switch swapping one user's conversations for
+                    // another's) lands mid-List-animation, SwiftUI's diffable batch
+                    // update can assert on an inconsistent item count; a non-animated
+                    // reload sidesteps the animated cross-dataset diff.
+                    var txn = Transaction()
+                    txn.disablesAnimations = true
+                    withTransaction(txn) {
+                        conversations = dedupedConversations
+                        conversationUnreadCounts = unreadCounts
+                        conversationLastMessages = lastMessages
+                        conversationLatestActivity = latestActivityByConvo
+                    }
                     cacheCurrentSnapshot()
                 }
 
