@@ -1,5 +1,5 @@
 {
-  "originHash" : "ba16c91c70cfe38134f1cd6615b9e69ffd6e3e2cae2bfe3269b9b460262fc851",
+  "originHash" : "420f675b3c7b5bb99a336996512c73bdba6ec5eef5eeb074b66537ce609cdf13",
   "pins" : [
     {
       "identity" : "cryptoswift",
@@ -132,8 +132,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-certificates.git",
       "state" : {
-        "revision" : "5aa1c0d1bc204908df47c2075bdbb39573d05e8d",
-        "version" : "1.19.0"
+        "revision" : "eaa10d47d19919979dd8df22ff4fd6349b1108d4",
+        "version" : "1.19.2"
       }
     },
     {
@@ -168,8 +168,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-system",
       "state" : {
-        "revision" : "7c6ad0fc39d0763e0b699210e4124afd5041c5df",
-        "version" : "1.6.4"
+        "revision" : "7502b711c92a17741fa625d722b0ccbd595d8ed1",
+        "version" : "1.7.2"
       }
     },
     {
