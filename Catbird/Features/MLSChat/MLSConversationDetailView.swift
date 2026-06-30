@@ -2788,7 +2788,12 @@ import SwiftUI
                 await appState.mlsProfileEnricher.seedFromDatabase(Array(dbProfiles.values))
 
                 guard !dids.isEmpty else {
-                    logger.info("Conversation \(conversationId) has no active members to enrich")
+                    // The persisted member table is empty — this is a freshly-joined
+                    // conversation whose roster is only written on the next getConvos
+                    // sync. Fall back to the authoritative MLS group roster so the
+                    // participants render immediately instead of showing 0 members.
+                    logger.info("Conversation \(conversationId) has no persisted members; falling back to MLS roster")
+                    await loadParticipantsFromMLSRoster(currentUserDID: currentUserDID)
                     return
                 }
 
@@ -2815,6 +2820,88 @@ import SwiftUI
                 )
             } catch {
                 logger.error("Failed to load participant profiles: \(error.localizedDescription)")
+            }
+        }
+
+        /// Fallback member source for a freshly-joined conversation whose persisted
+        /// member table hasn't been populated yet (the roster is only written on the
+        /// next `getConvos` sync). Reads the authoritative MLS group roster via FFI,
+        /// renders those participants, and enriches their profiles immediately so the
+        /// detail view doesn't show "0 members" until a sync lands. Guarded against
+        /// account switches like the rest of the load path.
+        private func loadParticipantsFromMLSRoster(currentUserDID: String) async {
+            guard let conversationManager = viewModel?.conversationManager,
+                  let groupIdHex = conversationManager.conversations[conversationId]?.groupId,
+                  let groupIdData = Data(hexEncoded: groupIdHex)
+            else {
+                logger.info("Roster fallback skipped: no local MLS group for \(conversationId)")
+                return
+            }
+
+            do {
+                let expectedGen = MLSCoordinationAwareTask.captureGeneration()
+                try MLSCoordinationAwareTask.validateGeneration(expectedGen)
+
+                let debugInfo = try await conversationManager.mlsClient.debugGroupMembers(
+                    for: currentUserDID,
+                    groupId: groupIdData
+                )
+
+                try MLSCoordinationAwareTask.validateGeneration(expectedGen)
+
+                // Map roster leaves → canonical DIDs (a credential identity may carry a
+                // `#device` suffix); de-dup per DID, keeping one leaf per member.
+                var seen = Set<String>()
+                var rosterMembers: [MLSMemberModel] = []
+                for leaf in debugInfo.members {
+                    guard let raw = String(data: leaf.credentialIdentity, encoding: .utf8) else { continue }
+                    let did = MLSProfileEnricher.canonicalDID(raw)
+                    guard !did.isEmpty, seen.insert(did).inserted else { continue }
+                    rosterMembers.append(
+                        MLSMemberModel(
+                            memberID: "\(conversationId):\(did)",
+                            conversationID: conversationId,
+                            currentUserDID: currentUserDID,
+                            did: did,
+                            leafIndex: Int(leaf.leafIndex),
+                            credentialData: leaf.credentialIdentity
+                        )
+                    )
+                }
+
+                guard !rosterMembers.isEmpty else {
+                    logger.info("Roster fallback: MLS group for \(conversationId) reported no members")
+                    return
+                }
+
+                await MainActor.run {
+                    // Only adopt the roster while the persisted table is still empty, so
+                    // a concurrent sync that wrote real member rows always wins.
+                    if members.isEmpty {
+                        members = rosterMembers
+                    }
+                }
+
+                logger.info("Roster fallback: rendered \(rosterMembers.count) member(s) from MLS group state for \(conversationId)")
+
+                guard let client = appState.atProtoClient else { return }
+
+                let profiles = await appState.mlsProfileEnricher.ensureProfiles(
+                    for: rosterMembers.map(\.did),
+                    using: client,
+                    currentUserDID: appState.userDID
+                )
+
+                try MLSCoordinationAwareTask.validateGeneration(expectedGen)
+
+                await MainActor.run {
+                    mergeParticipantProfiles(with: profiles)
+                    unifiedDataSource?.preloadProfiles(profiles)
+                }
+            } catch is MLSCoordinationAwareTask.GenerationStaleError {
+                logger.info("Roster fallback cancelled (account switch) for \(conversationId)")
+            } catch {
+                logger.warning("Roster fallback failed for \(conversationId): \(error.localizedDescription)")
             }
         }
 
