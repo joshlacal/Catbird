@@ -1315,7 +1315,7 @@ struct FeedsStartPage: View {
         VStack(alignment: .leading, spacing: 2) {
           if let displayName = profile?.displayName, !displayName.isEmpty {
             Text(displayName)
-              .font(.system(size: responsiveTextSize(base: 16, min: 14, max: 18), weight: .bold))
+              .appFont(AppTextRole.headline)
               .foregroundStyle(.white)
               .shadow(radius: 2)
               .lineLimit(1)
@@ -1323,7 +1323,7 @@ struct FeedsStartPage: View {
           }
           if let handle = profile?.handle {
             Text("@\(handle.description)")
-              .font(.system(size: responsiveTextSize(base: 14, min: 12, max: 16)))
+              .appFont(AppTextRole.subheadline)
               .foregroundStyle(.white.opacity(0.9))
               .shadow(radius: 2)
               .lineLimit(1)
@@ -1355,13 +1355,6 @@ struct FeedsStartPage: View {
     .accessibilityElement(children: .combine)
     .accessibilityLabel("My Profile")
     .accessibilityHint("Double tap to view your profile. Long press to switch accounts.")
-  }
-  
-  // Helper function for responsive text sizing
-  private func responsiveTextSize(base: CGFloat, min: CGFloat, max: CGFloat) -> CGFloat {
-    let scaleFactor = drawerWidth / 375.0  // Base on iPhone standard width
-    let scaledSize = base * scaleFactor
-    return Swift.max(min, Swift.min(scaledSize, max))
   }
 
   @ViewBuilder
