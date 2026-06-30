@@ -568,18 +568,17 @@ struct MLSGroupDetailView: View {
 
       localAvatarData = jpegData
 
-      try await conversationManager.database.write { db in
-        try db.execute(
-          sql: """
-            UPDATE MLSConversationModel
-            SET avatarImageData = ?, updatedAt = ?
-            WHERE conversationID = ? AND currentUserDID = ?
-            """,
-          arguments: [jpegData, Date(), conversationId, currentUserDID]
-        )
-      }
+      // Propagate the avatar into the encrypted group metadata so every member
+      // (not just this device) sees it. This re-wraps the metadata blob with a
+      // fresh avatar_blob_locator, encrypts + uploads the avatar blob, commits,
+      // and persists `avatarImageData` on the local row. Previously this only
+      // wrote the image to the local DB, so joiners never received it.
+      try await conversationManager.updateGroupMetadata(
+        conversationId: conversationId,
+        avatarData: jpegData
+      )
 
-      logger.info("Group avatar updated locally (\(jpegData.count) bytes)")
+      logger.info("Group avatar updated and propagated (\(jpegData.count) bytes)")
     } catch {
       logger.error("Failed to process avatar: \(error.localizedDescription)")
       errorMessage = "Failed to update group photo."
@@ -595,12 +594,12 @@ struct MLSGroupDetailView: View {
     defer { isSaving = false }
 
     do {
-      try await conversationManager.updateGroupMetadataEncrypted(
+      // Rename via the rustFull-capable path. It preserves the existing avatar
+      // (the metadata commit replaces the whole blob, so the current
+      // avatarImageData is re-supplied automatically) instead of dropping it.
+      try await conversationManager.updateGroupMetadata(
         conversationId: conversationId,
-        title: trimmed,
-        description: nil,
-        avatarBlobLocator: nil,
-        avatarContentType: nil
+        title: trimmed
       )
       logger.info("Group name updated to: \(trimmed)")
     } catch {
