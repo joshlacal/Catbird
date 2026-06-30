@@ -979,7 +979,8 @@ final class ChatManager: StateInvalidationSubscriber {
       let messageInput = ChatBskyConvoDefs.MessageInput(
         text: trimmedText,
         facets: facets.isEmpty ? nil : facets,
-        embed: embed
+        embed: embed,
+        replyTo: nil // TODO: add reply to
       )
 
       let input = ChatBskyConvoSendMessage.Input(
@@ -1193,7 +1194,8 @@ final class ChatManager: StateInvalidationSubscriber {
         let messageInput = ChatBskyConvoDefs.MessageInput(
           text: trimmedText,
           facets: facets.isEmpty ? nil : facets,
-          embed: nil
+          embed: nil,
+          replyTo: nil // TODO: add reply to
         )
         batchItems.append(ChatBskyConvoSendMessageBatch.BatchItem(
           convoId: item.convoId,
