@@ -536,35 +536,43 @@ struct MLSGroupDetailView: View {
         return
       }
 
+      // Downscale to a modest avatar resolution so the ENCRYPTED metadata blob
+      // stays under the server's 1 MB putGroupMetadataBlob limit. A full-res
+      // photo otherwise yields a ~1.3 MB JPEG → HTTP 400 and the avatar never
+      // propagates. Fit within 512px, then JPEG-encode with a quality fallback.
+      let maxSize = 900 * 1024  // headroom under the server's 1 MB blob cap
+      let maxDimension: CGFloat = 512
+      let sourceSize = platformImage.size
+      let fitScale = min(1, maxDimension / max(sourceSize.width, sourceSize.height))
+      let avatarSource: PlatformImage = {
+        guard fitScale < 1 else { return platformImage }
+        let target = CGSize(
+          width: sourceSize.width * fitScale, height: sourceSize.height * fitScale)
+        return platformImage.resized(to: target) ?? platformImage
+      }()
+
       #if os(iOS)
-      guard var jpegData = platformImage.jpegData(compressionQuality: 0.8) else {
+      guard var jpegData = avatarSource.jpegData(compressionQuality: 0.7) else {
         errorMessage = "Could not compress image."
         return
       }
-
-      let maxSize = 1024 * 1024
-      if jpegData.count > maxSize {
-        guard let smaller = platformImage.jpegData(compressionQuality: 0.5) else {
-          errorMessage = "Image too large."
-          return
-        }
+      if jpegData.count > maxSize, let smaller = avatarSource.jpegData(compressionQuality: 0.4) {
         jpegData = smaller
       }
       #else
-      guard var jpegData = platformImage.jpegImageData(compressionQuality: 0.8) else {
+      guard var jpegData = avatarSource.jpegImageData(compressionQuality: 0.7) else {
         errorMessage = "Could not compress image."
         return
       }
-
-      let maxSize = 1024 * 1024
-      if jpegData.count > maxSize {
-        guard let smaller = platformImage.jpegImageData(compressionQuality: 0.5) else {
-          errorMessage = "Image too large."
-          return
-        }
+      if jpegData.count > maxSize, let smaller = avatarSource.jpegImageData(compressionQuality: 0.4) {
         jpegData = smaller
       }
       #endif
+
+      guard jpegData.count <= maxSize else {
+        errorMessage = "Image too large — please choose a smaller photo."
+        return
+      }
 
       localAvatarData = jpegData
 
