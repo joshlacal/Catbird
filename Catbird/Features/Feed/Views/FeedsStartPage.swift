@@ -336,6 +336,13 @@ struct FeedsStartPage: View {
   }
 
   // MARK: - UI Components
+  /// Expands a control's hit area to Apple's 44×44pt minimum (HIG: Controls).
+  private func hitTarget44<V: View>(_ content: V) -> some View {
+    content
+      .frame(minWidth: 44, minHeight: 44)
+      .contentShape(Rectangle())
+  }
+
   @ViewBuilder
   private func sectionHeader(_ title: String) -> some View {
     HStack {
@@ -778,9 +785,11 @@ struct FeedsStartPage: View {
           Button {
             Task { await viewModel.removeFeed(feedURI) }
           } label: {
-            Image(systemName: "minus.circle.fill")
-              .appFont(size: 20)
-              .foregroundColor(.red)
+            hitTarget44(
+              Image(systemName: "minus.circle.fill")
+                .appFont(size: 20)
+                .foregroundColor(.red)
+            )
           }
           .buttonStyle(PlainButtonStyle())
           .accessibilityLabel("Remove feed")
@@ -938,10 +947,12 @@ struct FeedsStartPage: View {
               Button {
                 Task { await viewModel.removeFeed(feedURI) }
               } label: {
-                Image(systemName: "minus.circle.fill")
-                  .appFont(size: 20)
-                  .foregroundColor(.red)
-                  .background(Circle().fill(Color.white))
+                hitTarget44(
+                  Image(systemName: "minus.circle.fill")
+                    .appFont(size: 20)
+                    .foregroundColor(.red)
+                    .background(Circle().fill(Color.white))
+                )
               }
               .offset(x: -5, y: 5)
             }
@@ -1378,9 +1389,11 @@ struct FeedsStartPage: View {
                           isSearchBarVisible.toggle()
                       }
                   } label: {
-                      Image(systemName: isSearchBarVisible ? "xmark" : "magnifyingglass")
+                      hitTarget44(
+                        Image(systemName: isSearchBarVisible ? "xmark" : "magnifyingglass")
                           .appFont(size: 16)
                           .foregroundStyle(Color.accentColor)
+                      )
                   }
                   .tint(.accentColor.opacity(0.8))
                   .accessibilityLabel(isSearchBarVisible ? "Hide Search" : "Search Feeds")
@@ -1395,10 +1408,12 @@ struct FeedsStartPage: View {
                           layoutModeRaw = (layoutMode == .grid ? FeedsLayoutMode.list : FeedsLayoutMode.grid).rawValue
                       }
                   } label: {
-                      Image(systemName: layoutMode.toggleSymbol)
+                      hitTarget44(
+                        Image(systemName: layoutMode.toggleSymbol)
                           .appFont(size: 16)
                           .contentTransition(.symbolEffect(.replace))
                           .foregroundStyle(Color.accentColor)
+                      )
                   }
                   .tint(.accentColor.opacity(0.8))
                   .accessibilityLabel(layoutMode.accessibilityLabel)
@@ -1410,8 +1425,10 @@ struct FeedsStartPage: View {
                               isEditingFeeds = false
                           }
                       } label: {
-                          Image(systemName: "checkmark")
+                          hitTarget44(
+                            Image(systemName: "checkmark")
                               .appFont(size: 16)
+                          )
                       }
                       .tint(.accentColor.opacity(0.8))
                       .accessibilityLabel("Done Editing")
@@ -1422,8 +1439,10 @@ struct FeedsStartPage: View {
                               isEditingFeeds = true
                           }
                       } label: {
-                          Image(systemName: "pencil")
+                          hitTarget44(
+                            Image(systemName: "pencil")
                               .appFont(size: 16)
+                          )
                       }
                       .tint(.accentColor.opacity(0.8))
                       .accessibility(label: Text("Edit Feeds"))
