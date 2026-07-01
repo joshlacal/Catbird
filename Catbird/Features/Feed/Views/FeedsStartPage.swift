@@ -345,8 +345,8 @@ struct FeedsStartPage: View {
       Spacer()
     }
     .frame(maxWidth: .infinity, alignment: .leading)
-    .padding(.top, 16)
-    .padding(.bottom, 10)
+    .padding(.top, DesignTokens.Spacing.lg)     // 15
+    .padding(.bottom, DesignTokens.Spacing.md)  // 9
   }
 
   @ViewBuilder
@@ -1293,7 +1293,7 @@ struct FeedsStartPage: View {
         .frame(width: avatarSize, height: avatarSize)
         
         // Display Name and Handle - responsive text sizing
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {  // 3
           if let displayName = profile?.displayName, !displayName.isEmpty {
             Text(displayName)
               .appFont(AppTextRole.headline)
@@ -1422,8 +1422,8 @@ struct FeedsStartPage: View {
               }
 
           }
-          .padding(.top, 24) // Add top padding to separate from banner
-          .padding(.bottom, 24)
+          .padding(.top, DesignTokens.Spacing.section)     // 24
+          .padding(.bottom, DesignTokens.Spacing.section)  // 24
           .animation(.easeInOut(duration: 0.2), value: isEditingFeeds)
 
           // Search bar
@@ -1463,13 +1463,13 @@ struct FeedsStartPage: View {
               }
 
               // Extra space at bottom
-              Spacer(minLength: 200)
+              Spacer(minLength: DesignTokens.Spacing.section * 4)  // 96
           }
           .animation(.easeInOut(duration: 0.3), value: isEditingFeeds)
           .animation(.easeInOut(duration: 0.25), value: layoutMode)
       }
       .padding(.horizontal, horizontalPadding)
-      .padding(.vertical, max(20, horizontalPadding * 0.75))
+      .padding(.vertical, DesignTokens.Spacing.xl)  // 18
       .frame(maxWidth: .infinity)
       .background(
         inSideDrawer
