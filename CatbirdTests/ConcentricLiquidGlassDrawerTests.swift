@@ -55,13 +55,14 @@ struct ConcentricLiquidGlassDrawerTests {
     #expect(frames.feeds == CGRect(x: 10, y: 170, width: 300, height: 540))
   }
 
-  @Test("backdrop tuning uses material blur without blurring root content")
-  func backdropTuningUsesMaterialBlurWithoutBlurringRootContent() {
+  @Test("backdrop tuning scrubs a real backdrop blur with a light scrim")
+  func backdropTuningScrubsBackdropBlurWithLightScrim() {
     let metrics = ConcentricDrawerBackdropMetrics()
 
-    #expect(metrics.materialOpacity(for: 1) == 0.62)
-    #expect(metrics.scrimOpacity(for: 1) == 0)
-    #expect(metrics.blurRadius(for: 1) == 0)
+    #expect(metrics.blurFraction(for: 0) == 0)
+    #expect(metrics.blurFraction(for: 0.5) == 0.5)
+    #expect(metrics.blurFraction(for: 1) == 1.0)
+    #expect(metrics.scrimOpacity(for: 1) == 0.1)
   }
 
   @Test("readability tuning lets system glass carry the surface")

@@ -162,16 +162,9 @@ struct SideDrawer<Content: View, DrawerContent: View>: View {
     self._isRootView = isRootView
     self._isDrawerOpen = isDrawerOpen
 
-    if let customWidth = drawerWidth {
-      self.drawerWidth = customWidth
-    } else {
-      let isIPad = PlatformDeviceInfo.isIPad
-      if isIPad {
-        self.drawerWidth = min(320, PlatformScreenInfo.width * 0.4)
-      } else {
-        self.drawerWidth = min(PlatformScreenInfo.width * 0.7, 375)
-      }
-    }
+    // Single source of truth for drawer width — full-bleed on phones, a fixed
+    // panel on wider displays (see PlatformScreenInfo.responsiveDrawerWidth).
+    self.drawerWidth = drawerWidth ?? PlatformScreenInfo.responsiveDrawerWidth
 
     self.content = content()
     self.drawer = drawer()
@@ -195,26 +188,19 @@ struct SideDrawer<Content: View, DrawerContent: View>: View {
 
   var body: some View {
     GeometryReader { geometry in
-      let adaptiveDrawerWidth = min(self.drawerWidth, geometry.size.width * 0.8)
+      let adaptiveDrawerWidth = min(self.drawerWidth, geometry.size.width)
       let progress = drawerProgress(width: adaptiveDrawerWidth)
-      let backdropMetrics = ConcentricDrawerBackdropMetrics()
       let drawerOffset = -adaptiveDrawerWidth * (1 - progress)
-      let materialOpacity = backdropMetrics.materialOpacity(for: progress)
-      let scrimOpacity = backdropMetrics.scrimOpacity(for: progress)
-      let blurRadius = backdropMetrics.blurRadius(for: progress)
 
       ZStack(alignment: .leading) {
-        // Root content stays anchored — no .offset, no transform. Only the
-        // drawer and optional backdrop move. Avoid applying a zero-radius blur
-        // modifier because the drawer often sits above feed/media-heavy content.
-        DrawerBackdropContent(blurRadius: blurRadius) {
-          content
-        }
+        // Root content stays anchored and is never re-rendered for the drawer:
+        // the backdrop below applies a real UIKit backdrop blur over it instead
+        // of a SwiftUI .blur, which re-rasterizes the whole feed every frame.
+        content
 
         DrawerDismissBackdrop(
           progress: progress,
-          materialOpacity: materialOpacity,
-          scrimOpacity: scrimOpacity
+          metrics: ConcentricDrawerBackdropMetrics()
         ) {
           withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
             isDrawerOpen = false
@@ -305,41 +291,26 @@ struct SideDrawer<Content: View, DrawerContent: View>: View {
   }
 }
 
-private struct DrawerBackdropContent<Content: View>: View {
-  let blurRadius: CGFloat
-  let content: Content
-
-  init(blurRadius: CGFloat, @ViewBuilder content: () -> Content) {
-    self.blurRadius = blurRadius
-    self.content = content()
-  }
-
-  @ViewBuilder
-  var body: some View {
-    if blurRadius > 0 {
-      content.blur(radius: blurRadius)
-    } else {
-      content
-    }
-  }
-}
-
-private struct DrawerDismissBackdrop: View {
-  let progress: CGFloat
-  let materialOpacity: CGFloat
-  let scrimOpacity: CGFloat
+/// Full-screen backdrop between the root content and the drawer: a real
+/// backdrop blur plus a light scrim, both scaled by drawer progress.
+/// `Animatable` so the open/close spring scrubs the blur frame-by-frame
+/// instead of snapping to the final radius.
+private struct DrawerDismissBackdrop: View, Animatable {
+  var progress: CGFloat
+  let metrics: ConcentricDrawerBackdropMetrics
   let close: () -> Void
+
+  var animatableData: CGFloat {
+    get { progress }
+    set { progress = newValue }
+  }
 
   var body: some View {
     ZStack {
-      if materialOpacity > 0 {
-        Rectangle()
-          .fill(.ultraThinMaterial)
-          .opacity(materialOpacity)
-      }
+      ProgressiveBlurView(fraction: metrics.blurFraction(for: progress))
 
       Color.black
-        .opacity(scrimOpacity)
+        .opacity(metrics.scrimOpacity(for: progress))
     }
       .contentShape(Rectangle())
       .allowsHitTesting(progress > 0.01)
@@ -350,21 +321,115 @@ private struct DrawerDismissBackdrop: View {
   }
 }
 
+/// Tuning for the drawer's dismiss backdrop. The blur is expressed as a
+/// fraction of a full `UIBlurEffect` (0–1) scrubbed via a paused
+/// `UIViewPropertyAnimator` — the same technique Control Center uses — so the
+/// root content never re-renders while the drawer animates.
 struct ConcentricDrawerBackdropMetrics: Equatable, Sendable {
-  var maximumMaterialOpacity: CGFloat = 0.62
-  var maximumScrimOpacity: CGFloat = 0
-  var maximumBlurRadius: CGFloat = 0
+  var maximumBlurFraction: CGFloat = 1.0
+  var maximumScrimOpacity: CGFloat = 0.1
 
-  func materialOpacity(for progress: CGFloat) -> CGFloat {
-    progress * maximumMaterialOpacity
+  func blurFraction(for progress: CGFloat) -> CGFloat {
+    progress * maximumBlurFraction
   }
 
   func scrimOpacity(for progress: CGFloat) -> CGFloat {
     progress * maximumScrimOpacity
   }
+}
 
-  func blurRadius(for progress: CGFloat) -> CGFloat {
-    progress * maximumBlurRadius
+/// Hosts a `UIVisualEffectView` whose blur is scrubbed by pausing a
+/// `UIViewPropertyAnimator` mid-flight. The effect view samples layers already
+/// composited behind it, so varying the blur costs one backdrop pass on the
+/// GPU — no SwiftUI re-render of the content beneath.
+private struct ProgressiveBlurView: UIViewRepresentable {
+  var fraction: CGFloat
+
+  func makeUIView(context: Context) -> ProgressiveBlurUIView {
+    ProgressiveBlurUIView()
+  }
+
+  func updateUIView(_ uiView: ProgressiveBlurUIView, context: Context) {
+    uiView.fraction = fraction
+  }
+}
+
+final class ProgressiveBlurUIView: UIView {
+  private let effectView = UIVisualEffectView(effect: nil)
+  private var animator: UIViewPropertyAnimator?
+
+  var fraction: CGFloat = 0 {
+    didSet { applyFraction() }
+  }
+
+  override init(frame: CGRect) {
+    super.init(frame: frame)
+    // Touches must fall through to the SwiftUI tap-to-dismiss gesture behind
+    // this view.
+    isUserInteractionEnabled = false
+    effectView.isUserInteractionEnabled = false
+    effectView.frame = bounds
+    effectView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+    addSubview(effectView)
+
+    // Backgrounding the app removes the paused animator's in-flight
+    // animations, which would leave the blur stuck at a stale radius.
+    NotificationCenter.default.addObserver(
+      self,
+      selector: #selector(rebuildAfterForeground),
+      name: UIApplication.didBecomeActiveNotification,
+      object: nil
+    )
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) {
+    fatalError("init(coder:) has not been implemented")
+  }
+
+  override func didMoveToWindow() {
+    super.didMoveToWindow()
+    if window == nil {
+      // A UIViewPropertyAnimator must not be deallocated while active/paused.
+      teardownAnimator()
+    } else {
+      applyFraction()
+    }
+  }
+
+  @objc private func rebuildAfterForeground() {
+    teardownAnimator()
+    applyFraction()
+  }
+
+  private func teardownAnimator() {
+    animator?.stopAnimation(true)
+    animator = nil
+    effectView.effect = nil
+  }
+
+  private func applyFraction() {
+    guard window != nil else { return }
+
+    let clamped = min(max(fraction, 0), 1)
+
+    // Keep the animator alive only while the drawer is actually revealing —
+    // an idle paused animator at fraction 0 still pins UIKit animation state
+    // for the whole app lifetime and breaks across backgrounding.
+    guard clamped > 0 else {
+      teardownAnimator()
+      return
+    }
+
+    if animator == nil {
+      let animator = UIViewPropertyAnimator(duration: 1, curve: .linear) { [effectView] in
+        effectView.effect = UIBlurEffect(style: .regular)
+      }
+      animator.pausesOnCompletion = true
+      self.animator = animator
+    }
+
+    animator?.fractionComplete = clamped
   }
 }
 

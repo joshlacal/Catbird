@@ -16,6 +16,12 @@ struct MLSGroupDetailView: View {
   let currentUserDID: String
   let participants: [MLSParticipantViewModel]
   let participantProfiles: [String: MLSProfileEnricher.ProfileData]
+  /// Called after successfully leaving the conversation, before this sheet dismisses
+  /// itself. The presenting `MLSConversationDetailView` uses this to run the same
+  /// cleanup (remove from AppState, clear nav path, notify the conversation list)
+  /// its own toolbar-leave action already does — without it, this sheet only closed
+  /// itself, leaving the now-invalid conversation still showing underneath.
+  var onLeft: () -> Void = {}
 
   @Environment(\.dismiss) private var dismiss
   @Environment(\.toastManager) private var toastManager
@@ -639,6 +645,11 @@ struct MLSGroupDetailView: View {
     isLeaving = true
     do {
       try await conversationManager.leaveConversation(convoId: conversationId)
+      // Let the presenting screen clear its own state (AppState conversation list,
+      // nav path, "MLSConversationLeft" notification) before we close this sheet —
+      // otherwise the conversation detail screen underneath is left showing the
+      // just-left (now-invalid) conversation instead of popping back to the list.
+      onLeft()
       dismiss()
     } catch {
       logger.error("Failed to leave conversation: \(error.localizedDescription)")

@@ -472,7 +472,7 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
         reconfiguringMessageIDs: changedMessageIDs
       )
     } else if shouldForceScrollToBottom {
-      scrollToBottom(animated: false)
+      scrollToBottom(animated: true)
     }
   }
 
@@ -576,15 +576,17 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
       lastOldestMessageID = currentOldestMessageID
       lastMessageCount = currentMessageCount
     } else {
-      // Apply silently for all other updates. If we're bottom-locked or this was a
-      // true append/explicit bottom request, snap to the bottom in the same layout
-      // pass so observation churn cannot interrupt a visible scroll animation.
+      // Apply without animating differences — diffable animation fights estimated
+      // self-sizing heights. The bottom pin happens after the layout pass as a
+      // retargetable glide, so new messages push the transcript up smoothly instead
+      // of teleporting it; reconfigure-only churn resolves to the same target and
+      // leaves an in-flight glide untouched (see scrollToBottom).
       UIView.performWithoutAnimation {
         diffableDataSource.apply(snapshot, animatingDifferences: false)
         collectionView.layoutIfNeeded()
-        if shouldPinBottomAfterUpdate {
-          scrollToBottom(animated: false)
-        }
+      }
+      if shouldPinBottomAfterUpdate {
+        scrollToBottom(animated: true)
       }
       lastOldestMessageID = currentOldestMessageID
       lastMessageCount = currentMessageCount
@@ -907,22 +909,69 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
     return items
   }
 
-  func scrollToBottom(animated: Bool = true) {
-    guard let dataSource = diffableDataSource else { return }
-    let snapshot = dataSource.snapshot()
-    guard
-      snapshot.numberOfSections > 0,
-      snapshot.numberOfItems(inSection: snapshot.sectionIdentifiers[0]) > 0
-    else { return }
-    let section = snapshot.sectionIdentifiers[0]
-    let items = snapshot.itemIdentifiers(inSection: section)
-    guard let lastItem = items.last else { return }
-    collectionView.layoutIfNeeded()
-    collectionView.scrollToItem(
-      at: dataSource.indexPath(for: lastItem) ?? IndexPath(item: items.count - 1, section: 0),
-      at: .bottom,
-      animated: animated
+  /// Offset that pins the transcript to its bottom edge, clamped for content
+  /// shorter than the viewport.
+  private func bottomContentOffsetY() -> CGFloat {
+    max(
+      collectionView.contentSize.height
+        - collectionView.bounds.height
+        + collectionView.adjustedContentInset.bottom,
+      -collectionView.adjustedContentInset.top
     )
+  }
+
+  func scrollToBottom(animated: Bool = true) {
+    guard
+      diffableDataSource != nil,
+      diffableDataSource.snapshot().numberOfItems > 0,
+      collectionView.bounds.height > 0
+    else { return }
+
+    // Never fight an active touch — bottom pins during interaction are already
+    // excluded in updateSnapshot; this covers the keyboard/composer paths.
+    if animated,
+       collectionView.isTracking || collectionView.isDragging || collectionView.isDecelerating {
+      return
+    }
+
+    // Settle the layout at the bottom first so self-sizing cells there are
+    // measured and the target offset is exact — with estimated heights,
+    // contentSize is approximate until the bottom cells have been created.
+    // Nothing renders mid-transaction, so the temporary offset is invisible.
+    let startOffsetY = collectionView.contentOffset.y
+    var targetY = startOffsetY
+    UIView.performWithoutAnimation {
+      collectionView.layoutIfNeeded()
+      collectionView.contentOffset.y = bottomContentOffsetY()
+      collectionView.layoutIfNeeded()
+      targetY = bottomContentOffsetY()
+      collectionView.contentOffset.y = targetY
+    }
+
+    if !animated || UIAccessibility.isReduceMotionEnabled {
+      return
+    }
+
+    // Already pinned (or an in-flight glide is heading here): leave the model
+    // offset where it is so we don't disturb the running animation.
+    guard abs(targetY - startOffsetY) > 0.5 else { return }
+
+    // Rewind to where the transcript was and glide to the bottom. The spring
+    // matches the cell entrance animation so both read as one motion, and the
+    // additive .beginFromCurrentState animation retargets smoothly when a new
+    // update lands mid-flight instead of snapping.
+    UIView.performWithoutAnimation {
+      collectionView.contentOffset.y = startOffsetY
+    }
+    UIView.animate(
+      withDuration: 0.38,
+      delay: 0,
+      usingSpringWithDamping: 0.84,
+      initialSpringVelocity: 0.4,
+      options: [.beginFromCurrentState, .allowUserInteraction]
+    ) {
+      self.collectionView.contentOffset.y = targetY
+    }
   }
 
   // MARK: - UICollectionViewDelegate

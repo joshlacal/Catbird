@@ -943,28 +943,45 @@ extension PostComposerViewModel {
         logger.debug("mp4: \(gif.media_formats.mp4?.url ?? "nil")")
         logger.debug("loopedmp4: \(gif.media_formats.loopedmp4?.url ?? "nil")")
 
-        // Prefer the looped MP4 / MP4 URL when the picker source exposes one
-        // (Klipy does; legacy Tenor responses may not). Klipy's .gif and .mp4
-        // filenames aren't derivable from one another, so the renderer can't
-        // recover the MP4 from a stored .gif URI — pick the playable URL at
-        // post-time instead. Falls back to the gif URL (existing Tenor path)
-        // when no MP4 format is available.
+        // `external.uri` must always point at the canonical static image asset
+        // (`.gif`), never at an `.mp4`/`.loopedmp4` URL. app.bsky.embed.external has
+        // no video/animated type, and other clients' GIF renderers (e.g. the
+        // official Bluesky app's SDWebImage-based decoder) expect image bytes at
+        // this URI — handing them an MP4 makes decoding silently fail and the
+        // embed spins forever. Klipy's `.gif` and `.mp4` filenames aren't
+        // derivable from one another, so instead of swapping the URI we encode
+        // the video variants as `mp4=`/`webm=` query-param slugs alongside the
+        // existing `hh=`/`ww=` dims — mirroring the official Bluesky composer's
+        // Klipy convention (`parseKlipyGif` in bluesky-social/social-app) so
+        // clients that DO support inline video can still play it, while every
+        // client's image path keeps working. Catbird's own reader
+        // (ExternalEmbedView.setupKlipyMedia) derives the playable MP4 URL from
+        // these slugs.
+        let baseFormat = gif.media_formats.gif ?? gif.media_formats.mediumgif ?? gif.media_formats.tinygif
+
         let gifURL: String
-        if let mp4Format = gif.media_formats.loopedmp4 ?? gif.media_formats.mp4 {
-            gifURL = appendDimsIfMissing(to: mp4Format.url, dims: mp4Format.dims)
-            logger.debug("🔬 Selected MP4 URL for embed: \(gifURL)")
-        } else if let gifFormat = gif.media_formats.gif {
-            // Add size parameters to match Bluesky app format
-            let baseURL = gifFormat.url
-            logger.debug("🔬 GIF baseURL: \(baseURL)")
-            logger.debug("🔬 GIF dims: \(gifFormat.dims)")
-            gifURL = appendDimsIfMissing(to: baseURL, dims: gifFormat.dims)
-        } else if let mediumGif = gif.media_formats.mediumgif {
-            gifURL = mediumGif.url
-        } else if let tinyGif = gif.media_formats.tinygif {
-            gifURL = tinyGif.url
+        if let baseFormat {
+            var queryItems: [String] = []
+            if baseFormat.dims.count >= 2 {
+                queryItems.append("hh=\(baseFormat.dims[1])")
+                queryItems.append("ww=\(baseFormat.dims[0])")
+            }
+            if let mp4Format = gif.media_formats.loopedmp4 ?? gif.media_formats.mp4,
+               let mp4Slug = klipySlug(from: mp4Format.url) {
+                queryItems.append("mp4=\(mp4Slug)")
+            }
+            if let webmFormat = gif.media_formats.webm,
+               let webmSlug = klipySlug(from: webmFormat.url) {
+                queryItems.append("webm=\(webmSlug)")
+            }
+            if baseFormat.url.contains("?") || queryItems.isEmpty {
+                gifURL = baseFormat.url
+            } else {
+                gifURL = "\(baseFormat.url)?\(queryItems.joined(separator: "&"))"
+            }
+            logger.debug("🔬 Selected GIF URL for embed: \(gifURL)")
         } else {
-            // Fallback to the page URL if no media formats available
+            // Fallback to the page URL if no static image format is available
             gifURL = gif.url
         }
 
@@ -996,9 +1013,15 @@ extension PostComposerViewModel {
         return .appBskyEmbedExternal(AppBskyEmbedExternal(external: external))
     }
 
-    private func appendDimsIfMissing(to baseURL: String, dims: [Int]) -> String {
-        guard !baseURL.contains("?"), dims.count >= 2 else { return baseURL }
-        return "\(baseURL)?hh=\(dims[1])&ww=\(dims[0])"
+    /// Klipy media-format URLs share a directory prefix but have unrelated
+    /// per-format filenames (e.g. `.../VBhPiYbU.gif` vs `.../vmABfQaq.mp4`).
+    /// Returns just the filename slug (no extension) so it can be carried as a
+    /// `mp4=`/`webm=` query param on the canonical `.gif` URI and substituted
+    /// back into the path by the reader to reconstruct the playable URL.
+    private func klipySlug(from urlString: String) -> String? {
+        guard let url = URL(string: urlString) else { return nil }
+        let name = url.deletingPathExtension().lastPathComponent
+        return name.isEmpty ? nil : name
     }
 
     private func createQuoteEmbed(_ quotedPost: AppBskyFeedDefs.PostView) -> AppBskyFeedPost.AppBskyFeedPostEmbedUnion? {

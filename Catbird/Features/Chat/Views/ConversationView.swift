@@ -135,7 +135,6 @@ struct ConversationView: View {
         }
       )
       .ignoresSafeArea(.container)
-      .ignoresSafeArea(.keyboard)
       .onChange(of: selectedEmoji) { _, newEmoji in
         guard let messageID = emojiPickerMessageID, !newEmoji.isEmpty else { return }
         dataSource.addReaction(messageID: messageID, emoji: newEmoji)

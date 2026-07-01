@@ -124,6 +124,7 @@ struct MacOSDetailRouter: View {
 
   private var chatDetail: some View {
     MacOSChatContentView()
+      .id(appState.userDID)
   }
 
   // MARK: - Path Management

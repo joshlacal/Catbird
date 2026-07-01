@@ -270,7 +270,7 @@ extension PlatformScreenInfo {
     public static var responsiveDrawerWidth: CGFloat {
         switch width {
         case ..<768: // iPhone Portrait
-            return width * 0.82  // Slightly wider on phones
+            return width  // Full-bleed drawer on phones
         case ..<1024: // iPhone Landscape / Small iPad
             return min(420, width * 0.45)
         case ..<1200: // Standard iPad

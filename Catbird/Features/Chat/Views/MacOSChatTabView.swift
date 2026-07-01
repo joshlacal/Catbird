@@ -38,6 +38,7 @@ struct MacOSChatContentView: View {
   @State private var coordinator = UnifiedChatCoordinator()
   @State private var mlsPollingTask: Task<Void, Never>?
   @State private var mlsPollCycleCount: Int = 0
+  @State private var coordinatorAccountDID: String?
   @State private var showingNewMessageSheet = false
   @State private var isShowingErrorAlert = false
   @State private var lastErrorMessage: String?
@@ -69,7 +70,12 @@ struct MacOSChatContentView: View {
     .onAppear(perform: handleOnAppear)
     .onDisappear(perform: handleOnDisappear)
     .onChange(of: appState.chatManager.acceptedConversations) { _, newValue in
+      resetUnifiedListForCurrentAccountIfNeeded()
+      guard coordinatorAccountDID == appState.userDID else { return }
       coordinator.blueskyConversations = newValue
+    }
+    .onChange(of: appState.userDID) { _, _ in
+      handleAccountContextChanged()
     }
     .onChange(of: appState.navigationManager.targetConversationId) { _, newValue in
       if let convoId = newValue, convoId != selectedConvoId {
@@ -85,6 +91,14 @@ struct MacOSChatContentView: View {
     }
     .onChange(of: appState.chatManager.errorState) { oldError, newError in
       handleErrorStateChange(oldError: oldError, newError: newError)
+    }
+    .onReceive(NotificationCenter.default.publisher(for: Notification.Name("MLSConversationLeft"))) { note in
+      // See ChatTabView's identical handler: MLSConversationDetailView is hosted
+      // inline here too, so its own dismiss() after a Chat-Info-sheet leave is a
+      // no-op — this is what actually clears the detail pane back to empty.
+      if let convoID = note.object as? String, convoID == selectedConvoId {
+        selectedConvoId = nil
+      }
     }
     .alert(isPresented: $isShowingErrorAlert) {
       Alert(
@@ -112,6 +126,8 @@ struct MacOSChatContentView: View {
   // MARK: - Event Handlers
 
   private func handleOnAppear() {
+    resetUnifiedListForCurrentAccountIfNeeded()
+
     // Bluesky DMs
     Task {
       if appState.chatManager.acceptedConversations.isEmpty && !appState.chatManager.loadingConversations {
@@ -133,6 +149,31 @@ struct MacOSChatContentView: View {
     stopMLSPolling()
   }
 
+  @MainActor
+  private func resetUnifiedListForCurrentAccountIfNeeded() {
+    let currentUserDID = appState.userDID
+    guard coordinatorAccountDID != currentUserDID else { return }
+
+    coordinatorAccountDID = currentUserDID
+    selectedConvoId = nil
+    searchText = ""
+    coordinator.reset()
+    coordinator.mlsEnabled = mlsChatEnabledForCurrentAccount
+    coordinator.blueskyConversations = appState.chatManager.acceptedConversations
+  }
+
+  private func handleAccountContextChanged() {
+    stopMLSPolling()
+    Task { @MainActor in
+      resetUnifiedListForCurrentAccountIfNeeded()
+      await appState.chatManager.loadConversations(refresh: true)
+      if mlsChatEnabledForCurrentAccount {
+        await loadMLSConversations()
+        startMLSPolling()
+      }
+    }
+  }
+
   private func handleErrorStateChange(oldError: ChatManager.ChatError?, newError: ChatManager.ChatError?) {
     if let error = newError, !isShowingErrorAlert {
       let errorMessage = error.localizedDescription
@@ -150,6 +191,8 @@ struct MacOSChatContentView: View {
 
   @MainActor
   private func loadMLSConversations() async {
+    resetUnifiedListForCurrentAccountIfNeeded()
+
     guard mlsChatEnabledForCurrentAccount else {
       coordinator.mlsEnabled = false
       return
@@ -237,6 +280,11 @@ struct MacOSChatContentView: View {
         return lhsDate > rhsDate
       }
 
+      guard coordinatorAccountDID == userDID else {
+        logger.debug("Discarding MLS list load for stale account \(userDID)")
+        return
+      }
+
       // Build participants from DB-cached profiles
       var participants: [String: [MLSParticipantViewModel]] = [:]
       var dbProfiles: [MLSProfileEnricher.ProfileData] = []
@@ -287,6 +335,8 @@ struct MacOSChatContentView: View {
   }
 
   private func enrichMLSParticipantsFromNetwork(membersByConvoID: [String: [MLSMemberModel]], userDID: String) async {
+    guard coordinatorAccountDID == userDID else { return }
+
     var allDIDs = Set<String>()
     for (_, members) in membersByConvoID {
       for member in members { allDIDs.insert(member.did) }
@@ -297,6 +347,7 @@ struct MacOSChatContentView: View {
       for: Array(allDIDs), using: client, currentUserDID: userDID
     )
     guard !profilesByDID.isEmpty else { return }
+    guard coordinatorAccountDID == userDID else { return }
 
     var enrichedParticipants: [String: [MLSParticipantViewModel]] = [:]
     for (convoID, members) in membersByConvoID {

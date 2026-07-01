@@ -138,6 +138,16 @@ struct ChatTabView: View {
     .onChange(of: appState.chatManager.errorState) { oldError, newError in
       handleErrorStateChange(oldError: oldError, newError: newError)
     }
+    .onReceive(NotificationCenter.default.publisher(for: Notification.Name("MLSConversationLeft"))) { note in
+      // MLSConversationDetailView/MLSGroupDetailView post this after a successful
+      // leave. Its own `dismiss()` is a no-op here since this view is hosted inline
+      // (driven by `selectedConvoId`), not sheet-presented — without this, leaving
+      // via the Chat Info sheet left the just-left conversation's detail screen
+      // stuck on screen showing a "couldn't load messages" error.
+      if let convoID = note.object as? String, convoID == selectedConvoId {
+        selectedConvoId = nil
+      }
+    }
     .alert(isPresented: $isShowingErrorAlert, content: createErrorAlert)
     .sheet(isPresented: $showingNewMessageSheet) {
       NewConversationView()

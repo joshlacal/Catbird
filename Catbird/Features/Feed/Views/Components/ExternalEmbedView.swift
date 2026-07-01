@@ -28,18 +28,37 @@ struct ExternalEmbedView: View {
     /// Whether this external embed URL is a known GIF host (Tenor/Giphy/Klipy)
     private var isGifURL: Bool {
         guard let url = destinationURL else { return false }
+        return Self.isGifHost(url)
+    }
+
+    private static func isGifHost(_ url: URL) -> Bool {
         let host = url.host ?? ""
         return host == "media.tenor.com"
             || host.contains("giphy.com")
             || host.contains("media.giphy.com")
             || host == "static.klipy.com"
     }
-    
+
     init(external: AppBskyEmbedExternal.ViewExternal, shouldBlur: Bool, postID: String) {
         self.external = external
         self.shouldBlur = shouldBlur
         self._isBlurred = State(initialValue: shouldBlur)
         self.postID = postID
+
+        // Compute the GIF aspect-ratio hint synchronously (from the record's own
+        // hh=/ww= query params, where present) so the very first render already
+        // reserves the correct height. Deriving this reactively in onAppear (the old
+        // behavior) meant the first layout pass always showed the small link-card,
+        // then snapped to a much taller placeholder one frame later once onAppear
+        // fired — the reported overlap-then-jump. Giphy URLs carry no such params,
+        // so they still start at the 1.0 default and refine once the video loads —
+        // a much smaller residual than the old card-to-placeholder swap.
+        let url = external.uri.url ?? URL(string: external.uri.uriString())
+        if let url, Self.isGifHost(url) {
+            self._gifAspectRatio = State(initialValue: Self.tenorAspectRatioHint(from: url) ?? 1.0)
+        } else {
+            self._gifAspectRatio = State(initialValue: 1.0)
+        }
     }
 
     private var destinationURL: URL? {
@@ -74,10 +93,15 @@ struct ExternalEmbedView: View {
             videoPlayerContent(videoModel: videoModel)
         } else if let gifError = gifError {
             gifErrorContent(error: gifError)
-        } else if isLoadingGif {
-            gifLoadingPlaceholder
         } else if let inlineImageURL = inlineImageURL {
             inlineImageContent(url: inlineImageURL)
+        } else if isLoadingGif || isGifURL {
+            // `isGifURL` (unlike `isLoadingGif`) is available on the very first
+            // render, before `onAppear`/`setupVideoIfNeeded` ever runs — this is
+            // what actually prevents the small link-card from ever appearing for a
+            // GIF embed, instead of it flashing in and then snapping to this taller
+            // placeholder one frame later.
+            gifLoadingPlaceholder
         } else if let url = destinationURL,
                   appSettings.useWebViewEmbeds,
                   userTappedToShowEmbed,
@@ -303,7 +327,7 @@ struct ExternalEmbedView: View {
         // Handle Tenor GIFs
         if url.host == "media.tenor.com" {
             // Extract aspect ratio BEFORE setting loading state
-            let hintedAspectRatio = tenorAspectRatioHint(from: url)
+            let hintedAspectRatio = Self.tenorAspectRatioHint(from: url)
             if let hintedAspectRatio {
                 gifAspectRatio = hintedAspectRatio
                 logger.debug("🎬 Extracted aspect ratio from URL params = \(gifAspectRatio)")
@@ -327,7 +351,7 @@ struct ExternalEmbedView: View {
         }
         // Handle Klipy GIFs
         else if url.host == "static.klipy.com" {
-            let hintedAspectRatio = tenorAspectRatioHint(from: url)
+            let hintedAspectRatio = Self.tenorAspectRatioHint(from: url)
             gifAspectRatio = hintedAspectRatio ?? 1.0
             logger.debug("🎬 Detected Klipy media, aspect ratio = \(gifAspectRatio)")
             setupKlipyMedia(from: url, aspectRatio: gifAspectRatio)
@@ -336,7 +360,7 @@ struct ExternalEmbedView: View {
         }
     }
 
-    private func tenorAspectRatioHint(from url: URL) -> CGFloat? {
+    private static func tenorAspectRatioHint(from url: URL) -> CGFloat? {
         guard let widthStr = url.queryParameters?["ww"],
               let heightStr = url.queryParameters?["hh"],
               let width = Double(widthStr),
@@ -430,11 +454,27 @@ struct ExternalEmbedView: View {
     
     /// Klipy's `.gif` and `.mp4` URLs share a path prefix but have unrelated
     /// per-format filenames (unlike Tenor's `AAAAC → AAAPo` swap on a single
-    /// directory ID), so a stored `.gif` URI can't be transformed into an MP4
-    /// at render-time. Our picker now stores the `.mp4` URL when available;
-    /// posts that still land here with a `.gif` URI (legacy / other clients)
-    /// render as a static inline image instead of a link card.
+    /// directory ID). The composer now always stores the canonical `.gif` URI
+    /// (so other clients' image decoders can render it) plus an `mp4=`/`webm=`
+    /// query-param slug carrying the video variant's filename — reconstruct the
+    /// playable video URL by substituting that slug into the same directory.
     private func setupKlipyMedia(from url: URL, aspectRatio: CGFloat) {
+        if let mp4Slug = url.queryParameters?["mp4"], !mp4Slug.isEmpty,
+           let videoURL = klipyVideoURL(from: url, filename: "\(mp4Slug).mp4") {
+            let model = VideoModel(
+                id: "\(postID)-klipy-\(videoURL.absoluteString)",
+                url: videoURL,
+                type: .tenorGif(external.uri),
+                aspectRatio: aspectRatio,
+                thumbnailURL: external.thumb?.url
+            )
+            videoModel = model
+            logger.debug("✅ Created VideoModel for Klipy MP4 (from mp4= slug): \(model.id)")
+            return
+        }
+
+        // Legacy fallback: posts made before the mp4=/webm= slug convention may
+        // have stored the `.mp4` URL directly as external.uri — keep playing those.
         let lastPath = url.lastPathComponent.lowercased()
         if lastPath.hasSuffix(".mp4") || lastPath.hasSuffix(".m4v") {
             let model = VideoModel(
@@ -445,11 +485,18 @@ struct ExternalEmbedView: View {
                 thumbnailURL: external.thumb?.url
             )
             videoModel = model
-            logger.debug("✅ Created VideoModel for Klipy MP4: \(model.id)")
-        } else {
-            inlineImageURL = url
-            logger.debug("🖼️ Klipy URI is not an MP4; falling back to inline static image")
+            logger.debug("✅ Created VideoModel for Klipy MP4 (legacy direct-mp4 URI): \(model.id)")
+            return
         }
+
+        inlineImageURL = url
+        logger.debug("🖼️ Klipy URI has no mp4= slug and is not itself an MP4; falling back to inline static image")
+    }
+
+    /// Rebuilds a same-directory Klipy asset URL by swapping in a different filename
+    /// (e.g. the static `.gif`'s directory + the `mp4=` slug's filename).
+    private func klipyVideoURL(from url: URL, filename: String) -> URL? {
+        url.deletingLastPathComponent().appendingPathComponent(filename)
     }
 
     private func setupGiphyVideo(from url: URL) {

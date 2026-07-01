@@ -304,7 +304,6 @@ import SwiftUI
                         )
                     )
                     .ignoresSafeArea(.container)
-                    .ignoresSafeArea(.keyboard)
                     .onChange(of: selectedEmoji) { _, newEmoji in
                         guard let messageID = emojiPickerMessageID, !newEmoji.isEmpty else { return }
                         dataSource.addReaction(messageID: messageID, emoji: newEmoji)
@@ -1475,7 +1474,11 @@ import SwiftUI
                     conversationManager: conversationManager,
                     currentUserDID: appState.userDID,
                     participants: participantViewModels,
-                    participantProfiles: participantProfiles
+                    participantProfiles: participantProfiles,
+                    onLeft: {
+                        finishLeavingConversationCleanup()
+                        dismiss()
+                    }
                 )
             }
         }
@@ -4231,6 +4234,55 @@ import SwiftUI
             // Refresh member list and count
             await loadMemberCount()
             await checkAdminStatus()
+
+            // loadMemberCount()/checkAdminStatus() only update counters — they never
+            // touch `members`/`participantProfiles`, so a member added mid-session had
+            // no roster entry and no enrichment until they sent a message (or the
+            // conversation was closed/reopened). Refresh the roster here too, and
+            // enrich the newly-joined DID immediately so their avatar/handle resolve
+            // right away instead of showing the "?" placeholder until their first send.
+            await refreshMembersAfterMembershipChange()
+        }
+
+        /// Refreshes `members`/`participantProfiles` from the persisted roster after a
+        /// live membership change, and enriches any newly-visible DIDs. Mirrors the
+        /// refresh `loadParticipantProfiles()` already does at view-open time, but
+        /// scoped to just the roster + missing-profile fetch (not the full initial-load
+        /// path) since this can fire repeatedly during a long-lived conversation.
+        private func refreshMembersAfterMembershipChange() async {
+            guard
+                let currentUserDID = appState.userDID ?? AppStateManager.shared.authentication.state.userDID
+            else {
+                logger.warning("Cannot refresh members after membership change: currentUserDID not available")
+                return
+            }
+
+            guard let database = appState.mlsDatabase else {
+                logger.error("Cannot refresh members after membership change: database not available")
+                return
+            }
+
+            do {
+                let fetchedMembers = try await storage.fetchMembers(
+                    conversationID: conversationId,
+                    currentUserDID: currentUserDID,
+                    database: database
+                )
+                let dids = Set(fetchedMembers.map(\.did))
+
+                await MainActor.run {
+                    members = fetchedMembers
+                    // Prune profiles for members who are no longer in the roster
+                    // (.left/.removed/.kicked) instead of only ever growing this dict.
+                    participantProfiles = participantProfiles.filter { dids.contains($0.key) }
+                }
+
+                // ensureProfilesLoaded only fetches DIDs missing a cached profile, so
+                // this is cheap even though it's called on every roster change.
+                ensureProfilesLoaded(for: Array(dids))
+            } catch {
+                logger.error("Failed to refresh members after membership change: \(error.localizedDescription)")
+            }
         }
 
         /// Handle kicked from conversation events from SSE stream
@@ -4325,17 +4377,7 @@ import SwiftUI
                     try await manager.leaveConversation(convoId: conversationId)
 
                     await MainActor.run {
-                        logger.info("Successfully left conversation: \(conversationId)")
-
-                        // Remove conversation from AppState
-                        appState.mlsConversations.removeAll { $0.id == conversationId }
-
-                        // Clear any stacked navigation and notify list to clear selection
-                        appState.navigationManager.clearPath(for: 4)
-                        NotificationCenter.default.post(
-                            name: Notification.Name("MLSConversationLeft"),
-                            object: conversationId
-                        )
+                        finishLeavingConversationCleanup()
                         dismiss()
                     }
                 } catch {
@@ -4346,6 +4388,22 @@ import SwiftUI
                     }
                 }
             }
+        }
+
+        /// Shared post-leave cleanup: removes the conversation from AppState, clears
+        /// any stacked navigation, and notifies the conversation list to drop its
+        /// selection. Called both from this view's own toolbar-leave action and from
+        /// the Chat Info sheet's Leave button (`MLSGroupDetailView.onLeft`) so neither
+        /// path can leave the app showing a since-left conversation.
+        @MainActor
+        private func finishLeavingConversationCleanup() {
+            logger.info("Successfully left conversation: \(conversationId)")
+            appState.mlsConversations.removeAll { $0.id == conversationId }
+            appState.navigationManager.clearPath(for: 4)
+            NotificationCenter.default.post(
+                name: Notification.Name("MLSConversationLeft"),
+                object: conversationId
+            )
         }
 
         /// Perform key package desync recovery by generating fresh key package and requesting rejoin

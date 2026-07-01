@@ -142,6 +142,18 @@ struct FeedsStartPage: View {
   private var drawerProfilePanelHeight: CGFloat {
     bannerHeight
   }
+
+  // Interior insets for the profile row inside the banner. In the drawer the
+  // banner is clipped by a ~28pt concentric corner, so the avatar and handle
+  // need more clearance than the grid's horizontal padding or they crowd into
+  // the corner curvature and read as cut off.
+  private var bannerContentInset: CGFloat {
+    inSideDrawer ? DesignTokens.Spacing.section : horizontalPadding  // 24
+  }
+
+  private var bannerContentBottomInset: CGFloat {
+    inSideDrawer ? DesignTokens.Spacing.xxl : max(12, bannerHeight * 0.08)  // 21
+  }
   
   // Responsive avatar size
   private var avatarSize: CGFloat {
@@ -166,9 +178,9 @@ struct FeedsStartPage: View {
   }
   private var columns: Int {
     switch drawerWidth {
-    case ..<300: return 2  // Very small screens
-    case ..<380: return 3  // Standard layout
-    case ..<500: return 3  // Still prefer 3 columns for readability
+    case ..<300: return 3  // Very small screens
+    case ..<380: return 4  // Standard layout
+    case ..<500: return 4  // Still prefer 3 columns for readability
     case ..<600: return 4  // Large iPad/Mac - can fit 4 nicely
     default: return 4      // Very large displays
     }
@@ -1123,6 +1135,24 @@ struct FeedsStartPage: View {
       .sideDrawer(headerHeight: drawerProfilePanelHeight)
       .sectionFrames(in: container)
 
+    // One GlassEffectContainer renders both panels' glass in a single pass.
+    // The small spacing keeps the header and feeds panels visually distinct
+    // instead of blending across the 10pt gap between them.
+    Group {
+      if #available(iOS 26.0, *) {
+        GlassEffectContainer(spacing: 4) {
+          splitDrawerPanels(frames: frames)
+        }
+      } else {
+        splitDrawerPanels(frames: frames)
+      }
+    }
+    .frame(width: contentWidth, height: containerSize.height, alignment: .topLeading)
+    .clipped()
+  }
+
+  @ViewBuilder
+  private func splitDrawerPanels(frames: (header: CGRect, feeds: CGRect)) -> some View {
     ZStack(alignment: .topLeading) {
       splitDrawerPanel(frame: frames.header) {
         bannerHeaderView()
@@ -1141,8 +1171,6 @@ struct FeedsStartPage: View {
         }
       }
     }
-    .frame(width: contentWidth, height: containerSize.height, alignment: .topLeading)
-    .clipped()
   }
 
   @ViewBuilder
@@ -1286,8 +1314,8 @@ struct FeedsStartPage: View {
         
         Spacer(minLength: 0)
       }
-      .padding(.horizontal, horizontalPadding)
-      .padding(.bottom, max(12, bannerHeight * 0.08))
+      .padding(.horizontal, bannerContentInset)
+      .padding(.bottom, bannerContentBottomInset)
       .frame(maxWidth: drawerWidth)
     }
     .frame(maxWidth: drawerWidth)

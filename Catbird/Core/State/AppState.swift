@@ -947,6 +947,22 @@ final class AppState {
 
         chatManager.updateAppState(self) // Wire AppState reference to ChatManager
         await chatManager.updateClient(client) // Update ChatManager client
+
+        // `ChatManager.updateClient` only clears + reloads when its own last-known
+        // DID differs from the freshly-fetched one. For a CACHED account being
+        // resumed here, those are always the same DID (it's this account's own
+        // ChatManager instance from its last active session) — so that internal
+        // check is always a no-op in this exact context, and neither of the two
+        // downstream UI triggers cover the gap either: ChatTabView is torn down
+        // and recreated by its `.id(appState.userDID)` fence rather than mutated
+        // in place, so its `.onChange(of: appState.userDID)` refresh never fires;
+        // and its `onAppear` only refreshes when `acceptedConversations.isEmpty`,
+        // which is false here (stale-but-present data from last time). Without an
+        // explicit unconditional refresh, the Messages tab shows whatever was
+        // cached from this account's last active session — stale threads, wrong
+        // avatars, missed messages — until the next background poll tick or a
+        // manual pull-to-refresh.
+        await chatManager.loadConversations(refresh: true)
         updateChatUnreadCount() // Update chat unread count
 
         // Client is non-optional now, so we can use it directly

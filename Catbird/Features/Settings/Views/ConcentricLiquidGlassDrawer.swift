@@ -214,12 +214,16 @@ private struct ConcentricLiquidGlassDrawerPanelIOS26<Content: View>: View {
     ConcentricRectangle(corners: .concentric(minimum: .fixed(28)), isUniform: true)
   }
 
+  // The system glass draws its own rim highlight and depth; layering manual
+  // strokes, tints, or shadows on top reads as a second scrim + outline.
+  //
+  // The glass must be applied as a modifier ON the content (making the content
+  // the glass foreground) — never as a clear-shape ZStack sibling underneath
+  // it. Inside a GlassEffectContainer the glass is hoisted into a shared
+  // rendering pass, and non-glass sibling content overlapping the shape gets
+  // sampled into the backdrop, compositing the glass OVER the panel content.
   var body: some View {
     ZStack {
-      shape
-        .fill(.clear)
-        .glassEffect(.regular.tint(.white.opacity(0.04)), in: shape)
-
       if readabilityMetrics.veilOpacity > 0 {
         shape
           .fill(.black.opacity(readabilityMetrics.veilOpacity))
@@ -228,19 +232,9 @@ private struct ConcentricLiquidGlassDrawerPanelIOS26<Content: View>: View {
 
       content
     }
+      .glassEffect(.regular, in: shape)
       .clipShape(shape)
       .contentShape(shape)
-      .overlay {
-        shape
-          .stroke(.white.opacity(0.58), lineWidth: outlineWidth)
-          .blendMode(.screen)
-      }
-      .overlay {
-        shape
-          .stroke(.black.opacity(0.12), lineWidth: outlineWidth)
-          .blendMode(.multiply)
-      }
-      .shadow(color: .black.opacity(0.10), radius: 16, x: 0, y: 6)
   }
 }
 #endif

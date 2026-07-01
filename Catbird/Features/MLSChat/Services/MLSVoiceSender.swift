@@ -53,7 +53,7 @@ final class MLSVoiceSender {
   // MARK: - Recording
 
   func startRecording() async throws {
-    AudioSessionManager.shared.configureForRecording()
+    await AudioSessionManager.shared.configureForRecording()
 
     let tempDir = FileManager.default.temporaryDirectory
     let url = tempDir.appendingPathComponent("voice_\(UUID().uuidString).wav")
