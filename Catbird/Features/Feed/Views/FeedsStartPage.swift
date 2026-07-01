@@ -127,19 +127,15 @@ struct FeedsStartPage: View {
   
   // Responsive banner height based on screen size and drawer width
   private var bannerHeight: CGFloat {
-    // Scale banner height based on drawer width and available space
-    let baseHeight: CGFloat = {
-      switch screenWidth {
-      case ..<375: return 130   // Compact iPhones
-      case ..<768: return 150   // Standard iPhones
-      case ..<1024: return 170  // iPhone Landscape / Small iPad
-      case ..<1200: return 190  // Standard iPad
-      case ..<1600: return 210  // Large iPad / Small Mac
-      default: return 240       // Very large displays
-      }
-    }()
-    
-    // Ensure banner doesn't take up more than 25% of screen height
+    // Container-driven banner height. Wide drawers (large iPad / Mac, where
+    // drawerWidth reaches 480–600) get a taller banner so the header keeps its
+    // proportions. Never exceed a quarter of the screen height.
+    let baseHeight: CGFloat
+    switch drawerWidth {
+    case ..<360: baseHeight = 150
+    case ..<480: baseHeight = 190
+    default: baseHeight = 220
+    }
     return min(baseHeight, screenHeight * 0.25)
   }
 
@@ -149,39 +145,22 @@ struct FeedsStartPage: View {
   
   // Responsive avatar size
   private var avatarSize: CGFloat {
-    switch screenWidth {
-    case ..<375: return 48   // Smaller for compact screens
-    case ..<768: return 54   // Standard size
-    default: return 64      // Larger for iPads
-    }
+    isNarrowDrawer ? 54 : 64
   }
 
   // Sizing properties
-  private let screenWidth = PlatformScreenInfo.width
   private let screenHeight = PlatformScreenInfo.height
   private let isIPad = PlatformDeviceInfo.isIPad
   private var drawerWidth: CGFloat {
     PlatformScreenInfo.responsiveDrawerWidth
   }
+  // Single threshold for the narrow (phone-width) vs. wide (iPad/Mac) drawer.
+  private var isNarrowDrawer: Bool { drawerWidth < 360 }
   private var gridSpacing: CGFloat {
-    switch screenWidth {
-    case ..<375: return 8
-    case ..<768: return 10
-    case ..<1024: return 12
-    case ..<1200: return 14
-    case ..<1600: return 16
-    default: return 18  // Very large displays
-    }
+    isNarrowDrawer ? DesignTokens.Spacing.sm : DesignTokens.Spacing.base  // 6 / 12
   }
   private var horizontalPadding: CGFloat {
-    switch screenWidth {
-    case ..<375: return 12
-    case ..<768: return 16
-    case ..<1024: return 20
-    case ..<1200: return 24
-    case ..<1600: return 28
-    default: return 32  // Very large displays
-    }
+    isNarrowDrawer ? DesignTokens.Spacing.base : DesignTokens.Spacing.xl  // 12 / 18
   }
   private var columns: Int {
     switch drawerWidth {
@@ -200,18 +179,9 @@ struct FeedsStartPage: View {
     return max(80, min(calculatedWidth, 140))
   }
   private var iconSize: CGFloat {
-    // Base icon size on item width for better proportions - increased from 0.55 to 0.70
+    // Proportional to the computed grid item width, clamped for legibility.
     let baseSize = itemWidth * 0.70
-    
-    switch screenWidth {
-    case ..<320: return max(60, min(baseSize, 70))   // Very small screens - increased minimums
-    case ..<375: return max(65, min(baseSize, 80))   // Small screens
-    case ..<768: return max(70, min(baseSize, 90))   // Standard phones
-    case ..<1024: return max(75, min(baseSize, 100)) // Large phones/small tablets
-    case ..<1200: return max(80, min(baseSize, 110)) // Standard tablets
-    case ..<1600: return max(85, min(baseSize, 120)) // Large tablets
-    default: return max(90, min(baseSize, 130))      // Very large displays
-    }
+    return max(64, min(baseSize, 110))
   }
 
   #if os(iOS)
