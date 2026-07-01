@@ -156,6 +156,8 @@ struct FeedsStartPage: View {
   }
   // Single threshold for the narrow (phone-width) vs. wide (iPad/Mac) drawer.
   private var isNarrowDrawer: Bool { drawerWidth < 360 }
+  // Single source of truth for drawer card corner rounding (HIG: consistent shapes).
+  private let cardCornerRadius: CGFloat = 12
   private var gridSpacing: CGFloat {
     isNarrowDrawer ? DesignTokens.Spacing.sm : DesignTokens.Spacing.base  // 6 / 12
   }
@@ -380,7 +382,7 @@ struct FeedsStartPage: View {
     .padding(.horizontal, 16)
     .padding(.vertical, 10)
     .background(
-      RoundedRectangle(cornerRadius: 12)
+      RoundedRectangle(cornerRadius: cardCornerRadius)
         .fill(.ultraThinMaterial)
     )
     .accessibilityAddTraits(.isSearchField)
@@ -400,7 +402,7 @@ struct FeedsStartPage: View {
       .padding(.horizontal, 16)
       .frame(maxWidth: .infinity)
       .background(
-        RoundedRectangle(cornerRadius: 12)
+        RoundedRectangle(cornerRadius: cardCornerRadius)
           .fill(.ultraThinMaterial)
       )
     }
@@ -458,33 +460,13 @@ struct FeedsStartPage: View {
         }
         .padding(12)
         .background {
-          let isSelected = isDefaultFeedSelected()
-          let gradientColors =
-            isSelected
-            ? [Color.accentColor.opacity(0.15), Color.accentColor.opacity(0.08)]
-            : [Color.accentColor.opacity(0.05), Color.clear]
-          let strokeColor: Color = {
-            if isSelected {
-              return Color.accentColor.opacity(0.6)
-            } else {
-              return Color.separator.opacity(0.5)
-            }
-          }()
-          let strokeWidth: CGFloat = isSelected ? 1.5 : 0.5
-
-          RoundedRectangle(cornerRadius: 14)
+          RoundedRectangle(cornerRadius: cardCornerRadius)
             .fill(.ultraThinMaterial)
             .overlay(
-              LinearGradient(
-                colors: gradientColors,
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
+              selectionBackground(
+                isSelected: isDefaultFeedSelected(),
+                isDropTarget: isDefaultFeedDropTarget
               )
-              .clipShape(RoundedRectangle(cornerRadius: 14))
-            )
-            .overlay(
-              RoundedRectangle(cornerRadius: 14)
-                .stroke(strokeColor, lineWidth: strokeWidth)
             )
         }
       }
@@ -772,19 +754,10 @@ struct FeedsStartPage: View {
       .padding(.vertical, 8)
       .padding(.horizontal, 10)
       .background(
-        RoundedRectangle(cornerRadius: 12)
-          .fill(
-            dropTargetItem == feedURI
-              ? Color.accentColor.opacity(0.12)
-              : (isSelected(feedURI: feedURI) ? Color.accentColor.opacity(0.08) : Color.clear)
-          )
-          .overlay(
-            RoundedRectangle(cornerRadius: 12)
-              .stroke(
-                isSelected(feedURI: feedURI) ? Color.accentColor.opacity(0.4) : Color.clear,
-                lineWidth: 1
-              )
-          )
+        selectionBackground(
+          isSelected: isSelected(feedURI: feedURI),
+          isDropTarget: dropTargetItem == feedURI
+        )
       )
       .contentShape(.dragPreview, RoundedRectangle(cornerRadius: 12))
       .contentShape(Rectangle())
@@ -886,27 +859,16 @@ struct FeedsStartPage: View {
       .frame(width: itemWidth)
       .padding(6)
       .background(
-        RoundedRectangle(cornerRadius: 16)
-          .fill(
-            dropTargetItem == feedURI
-              ? Color.accentColor.opacity(0.1)
-            : (isSelected(feedURI: feedURI) ? Color.accentColor.opacity(0.08) : Color.clear)
-          )
-          .overlay(
-            RoundedRectangle(cornerRadius: 16)
-              .stroke(
-                isSelected(feedURI: feedURI)
-                  ? Color.accentColor.opacity(0.5)
-                  : Color.clear,
-                lineWidth: 1.0
-              )
-          )
+        selectionBackground(
+          isSelected: isSelected(feedURI: feedURI),
+          isDropTarget: dropTargetItem == feedURI
+        )
       )
       .contentShape(.dragPreview, RoundedRectangle(cornerRadius: 12))
 
     }
     .buttonStyle(PlainButtonStyle())
-    
+
 
     .overlay(
       Group {
@@ -1003,21 +965,10 @@ struct FeedsStartPage: View {
       .frame(width: itemWidth)
       .padding(6)
       .background(
-        RoundedRectangle(cornerRadius: 16)
-          .fill(
-            dropTargetItem == feedURI
-              ? Color.accentColor.opacity(0.15)
-              : (isSelected(feedURI: feedURI) ? Color.accentColor.opacity(0.08) : Color.clear)
-          )
-          .overlay(
-            RoundedRectangle(cornerRadius: 16)
-              .stroke(
-                isSelected(feedURI: feedURI)
-                  ? Color.accentColor.opacity(0.5)
-                  : Color.clear,
-                lineWidth: 1.0
-              )
-          )
+        selectionBackground(
+          isSelected: isSelected(feedURI: feedURI),
+          isDropTarget: dropTargetItem == feedURI
+        )
       )
       .contentShape(.dragPreview, RoundedRectangle(cornerRadius: 12))
     }
@@ -1048,6 +999,26 @@ struct FeedsStartPage: View {
     .accessibility(label: Text("Timeline"))
     .accessibility(hint: Text("Double tap to open the Timeline feed"))
     .accessibilityAddTraits(.isButton)
+  }
+
+  /// The background for a selectable feed cell. `isSelected` cells should read
+  /// as clearly chosen in both light and dark mode; unselected cells stay quiet.
+  /// `isDropTarget` briefly highlights a drag-drop target.
+  @ViewBuilder
+  private func selectionBackground(isSelected: Bool, isDropTarget: Bool) -> some View {
+    let shape = RoundedRectangle(cornerRadius: cardCornerRadius, style: .continuous)
+    // Drop target takes precedence over selection (transient, stronger). All
+    // states share one accent fill; only the selected state adds a 1pt stroke.
+    // Opacity-based accent adapts automatically to light and dark mode.
+    let fillOpacity: Double = isDropTarget ? 0.16 : (isSelected ? 0.10 : 0.0)
+    return shape
+      .fill(Color.accentColor.opacity(fillOpacity))
+      .overlay(
+        shape.stroke(
+          isSelected && !isDropTarget ? Color.accentColor.opacity(0.45) : Color.clear,
+          lineWidth: 1
+        )
+      )
   }
 
   @ViewBuilder
