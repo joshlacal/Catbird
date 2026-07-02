@@ -49,6 +49,17 @@ struct FeedsLaunchpadPager<SlotContent: View>: View {
       .scrollTargetBehavior(.paging)
       .scrollPosition(id: $currentPage)
       .scrollIndicators(.hidden)
+      // ScrollView otherwise renders its content on into the neighboring
+      // safe-area strip (converting it to a content inset, the standard
+      // continuous-feed behavior) — so even though `pageHeight` is correct,
+      // the NEXT page's top was still visible under the NavigationStack's
+      // floating bottom-bar toolbar at rest. Pinning to the measured size and
+      // clipping stops rendering at the exact viewport edge; the strip below
+      // shows only the drawer's backdrop, never page content. Clip only the
+      // ScrollView — the page-dot overlay below is layered on afterward, so
+      // it isn't affected.
+      .frame(width: geometry.size.width, height: geometry.size.height)
+      .clipped()
       .overlay(alignment: .trailing) {
         FeedsLaunchpadPageIndicator(pageCount: pages.count, currentPage: $currentPage)
           .padding(.trailing, DesignTokens.Spacing.sm)
