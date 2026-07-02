@@ -1137,6 +1137,16 @@ struct FeedsStartPage: View {
     return iconSize + 6 + 4 + labelHeight + 12
   }
 
+  /// Clearance reserved at the bottom of the launchpad's CONTENT budget (not
+  /// its page/snap geometry) for the home indicator plus the drawer's
+  /// floating bottom-bar toolbar (Profile / Bookmarks / My Lists), which
+  /// ContentView draws above this view. `FeedsLaunchpadPager` ignores the
+  /// safe area so pages can snap flush to the full-bleed container height;
+  /// that means nothing else accounts for this chrome, so row-fit math must
+  /// shrink instead. Pages themselves stay full height — only how many rows
+  /// fit before starting a new page changes.
+  private static let drawerBottomChromeAllowance: CGFloat = 70
+
   private func launchpadMetrics(containerHeight: CGFloat) -> FeedsLaunchpadMetrics {
     FeedsLaunchpadMetrics(
       containerHeight: containerHeight,
@@ -1172,7 +1182,9 @@ struct FeedsStartPage: View {
 
   @ViewBuilder
   private func drawerLaunchpad(containerSize: CGSize, contentWidth: CGFloat) -> some View {
-    let metrics = launchpadMetrics(containerHeight: containerSize.height)
+    let metrics = launchpadMetrics(
+      containerHeight: containerSize.height - Self.drawerBottomChromeAllowance
+    )
     let pages = FeedsLaunchpadLayout.pages(
       pinnedGridFeeds: Array(filteredPinnedFeeds.dropFirst()),
       savedFeeds: filteredSavedFeeds,
@@ -1183,6 +1195,7 @@ struct FeedsStartPage: View {
     FeedsLaunchpadPager(
       pages: pages,
       currentPage: $launchpadPage,
+      pageHeight: containerSize.height,
       verticalPadding: metrics.verticalPadding,
       horizontalPadding: horizontalPadding,
       pageDropDelegate: { _ in nil }  // Task 4 wires drops

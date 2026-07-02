@@ -13,6 +13,13 @@ import UniformTypeIdentifiers
 struct FeedsLaunchpadPager<SlotContent: View>: View {
   let pages: [FeedsLaunchpadPage]
   @Binding var currentPage: Int?
+  /// Exact per-page frame height. This must equal the `containerHeight` the
+  /// caller fed into `FeedsLaunchpadLayout.pages(...)` so the paging snap
+  /// step lands on the same geometry the chunker assumed for row-fitting.
+  /// Passed explicitly (rather than derived from `containerRelativeFrame`)
+  /// because the ScrollView's relative container is its safe-area-adjusted
+  /// viewport, not the full-bleed height the rest of the drawer uses.
+  let pageHeight: CGFloat
   let verticalPadding: CGFloat
   let horizontalPadding: CGFloat
   /// Per-page background drop target (drop on empty space appends to the
@@ -25,12 +32,19 @@ struct FeedsLaunchpadPager<SlotContent: View>: View {
       LazyVStack(spacing: 0) {
         ForEach(pages) { page in
           pageView(page)
-            .containerRelativeFrame(.vertical)
+            .frame(height: pageHeight)
             .id(page.index)
         }
       }
       .scrollTargetLayout()
     }
+    // Without this, the ScrollView insets its content by the safe area
+    // (including the drawer's floating bottom-bar toolbar), so its reported
+    // viewport is shorter than `pageHeight` — pages would then snap short of
+    // full-bleed and drift out of alignment by an accumulating amount each
+    // page. Ignoring it here keeps the viewport == pageHeight == the height
+    // FeedsLaunchpadLayout used to chunk rows, so pages snap flush.
+    .ignoresSafeArea(edges: .vertical)
     .scrollTargetBehavior(.paging)
     .scrollPosition(id: $currentPage)
     .scrollIndicators(.hidden)
