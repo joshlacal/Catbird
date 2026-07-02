@@ -1077,7 +1077,7 @@ struct FeedsStartPage: View {
 
       #if os(iOS)
       if inSideDrawer {
-        drawerContent(containerSize: geometry.size, contentWidth: contentWidth)
+        drawerContent(contentWidth: contentWidth)
       } else {
         standardContent(contentWidth: contentWidth)
       }
@@ -1137,20 +1137,16 @@ struct FeedsStartPage: View {
     return iconSize + 6 + 4 + labelHeight + 12
   }
 
-  /// Clearance reserved at the bottom of the launchpad's CONTENT budget (not
-  /// its page/snap geometry) for the home indicator plus the drawer's
-  /// floating bottom-bar toolbar (Profile / Bookmarks / My Lists), which
-  /// ContentView draws above this view. `FeedsLaunchpadPager` ignores the
-  /// safe area so pages can snap flush to the full-bleed container height;
-  /// that means nothing else accounts for this chrome, so row-fit math must
-  /// shrink instead. Pages themselves stay full height — only how many rows
-  /// fit before starting a new page changes.
-  private static let drawerBottomChromeAllowance: CGFloat = 70
+  /// Vertical padding inside each launchpad page. Shared between
+  /// `launchpadMetrics` (which feeds it to `FeedsLaunchpadLayout.pages` for
+  /// row-fit math) and the `FeedsLaunchpadPager` call site (which applies it
+  /// as real interior padding) so the two can't drift apart.
+  private var launchpadVerticalPadding: CGFloat { DesignTokens.Spacing.base }  // 12
 
   private func launchpadMetrics(containerHeight: CGFloat) -> FeedsLaunchpadMetrics {
     FeedsLaunchpadMetrics(
       containerHeight: containerHeight,
-      verticalPadding: DesignTokens.Spacing.base,  // 12
+      verticalPadding: launchpadVerticalPadding,
       columns: columns,
       cellHeight: launchpadCellHeight,
       rowSpacing: gridSpacing,
@@ -1163,17 +1159,17 @@ struct FeedsStartPage: View {
   }
 
   @ViewBuilder
-  private func drawerContent(containerSize: CGSize, contentWidth: CGFloat) -> some View {
+  private func drawerContent(contentWidth: CGFloat) -> some View {
     // Grid mode pages; list mode and active search fall back to the flat
     // continuous scroll (standardContent already handles clear backgrounds
     // and the banner inset via its inSideDrawer-aware modifiers).
     if layoutMode == .grid && !isSearchActive {
       if #available(iOS 26.0, *) {
         GlassEffectContainer(spacing: 8) {
-          drawerLaunchpad(containerSize: containerSize, contentWidth: contentWidth)
+          drawerLaunchpad(contentWidth: contentWidth)
         }
       } else {
-        drawerLaunchpad(containerSize: containerSize, contentWidth: contentWidth)
+        drawerLaunchpad(contentWidth: contentWidth)
       }
     } else {
       standardContent(contentWidth: contentWidth)
@@ -1181,28 +1177,31 @@ struct FeedsStartPage: View {
   }
 
   @ViewBuilder
-  private func drawerLaunchpad(containerSize: CGSize, contentWidth: CGFloat) -> some View {
-    let metrics = launchpadMetrics(
-      containerHeight: containerSize.height - Self.drawerBottomChromeAllowance
-    )
-    let pages = FeedsLaunchpadLayout.pages(
-      pinnedGridFeeds: Array(filteredPinnedFeeds.dropFirst()),
-      savedFeeds: filteredSavedFeeds,
-      includeAddFeedButton: isEditingFeeds,
-      metrics: metrics
-    )
-
+  private func drawerLaunchpad(contentWidth: CGFloat) -> some View {
+    // No pre-measured height is passed in here on purpose: FeedsLaunchpadPager
+    // measures its own resolved viewport (a normal, safe-area-respecting
+    // descendant of the drawer's NavigationStack, which already excludes the
+    // stack's real toolbar chrome) and uses that single number for chunking,
+    // page framing, and paging snap alike. See FeedsLaunchpadPager's doc
+    // comment on `makePages`.
     FeedsLaunchpadPager(
-      pages: pages,
       currentPage: $launchpadPage,
-      pageHeight: containerSize.height,
-      verticalPadding: metrics.verticalPadding,
+      verticalPadding: launchpadVerticalPadding,
       horizontalPadding: horizontalPadding,
+      makePages: { measuredHeight in
+        FeedsLaunchpadLayout.pages(
+          pinnedGridFeeds: Array(filteredPinnedFeeds.dropFirst()),
+          savedFeeds: filteredSavedFeeds,
+          includeAddFeedButton: isEditingFeeds,
+          metrics: launchpadMetrics(containerHeight: measuredHeight)
+        )
+      },
       pageDropDelegate: { _ in nil }  // Task 4 wires drops
     ) { slot in
       launchpadSlotView(slot)
     }
-    .frame(width: contentWidth, height: containerSize.height)
+    .frame(width: contentWidth)
+    .frame(maxHeight: .infinity)
   }
 
   @ViewBuilder
