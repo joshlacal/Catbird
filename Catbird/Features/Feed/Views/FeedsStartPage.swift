@@ -78,6 +78,7 @@ struct FeedsStartPage: View {
   @State private var draggedItemCategory: String?
   @State private var dropTargetItem: String?
   @State private var isDefaultFeedDropTarget = false
+  @Namespace private var glassNamespace
 
   // Profile state
   @State private var profile: AppBskyActorDefs.ProfileViewDetailed?
@@ -409,10 +410,13 @@ struct FeedsStartPage: View {
       .padding(.vertical, 12)
       .padding(.horizontal, 16)
       .frame(maxWidth: .infinity)
-      .background(
-        RoundedRectangle(cornerRadius: cardCornerRadius)
-          .fill(.ultraThinMaterial)
-      )
+      .background {
+        if !inSideDrawer {
+          RoundedRectangle(cornerRadius: cardCornerRadius)
+            .fill(.ultraThinMaterial)
+        }
+      }
+      .modifier(LaunchpadGlassChip(cornerRadius: cardCornerRadius, isEnabled: inSideDrawer))
     }
     .interactiveGlass()
     .padding(.vertical, 8)
@@ -468,14 +472,23 @@ struct FeedsStartPage: View {
         }
         .padding(12)
         .background {
-          RoundedRectangle(cornerRadius: cardCornerRadius)
-            .fill(.ultraThinMaterial)
-            .overlay(
-              selectionBackground(
-                isSelected: isDefaultFeedSelected(),
-                isDropTarget: isDefaultFeedDropTarget
+          if !inSideDrawer {
+            RoundedRectangle(cornerRadius: cardCornerRadius)
+              .fill(.ultraThinMaterial)
+              .overlay(
+                selectionBackground(
+                  isSelected: isDefaultFeedSelected(),
+                  isDropTarget: isDefaultFeedDropTarget
+                )
               )
-            )
+          }
+        }
+        .modifier(LaunchpadGlassChip(cornerRadius: cardCornerRadius, isEnabled: inSideDrawer))
+        .overlay {
+          if inSideDrawer && isDefaultFeedDropTarget {
+            RoundedRectangle(cornerRadius: cardCornerRadius, style: .continuous)
+              .stroke(Color.accentColor, lineWidth: 2)
+          }
         }
       }
     }
@@ -867,9 +880,22 @@ struct FeedsStartPage: View {
       .frame(width: itemWidth)
       .padding(6)
       .background(
-        selectionBackground(
+        Group {
+          if !inSideDrawer {
+            selectionBackground(
+              isSelected: isSelected(feedURI: feedURI),
+              isDropTarget: dropTargetItem == feedURI
+            )
+          }
+        }
+      )
+      .modifier(
+        LaunchpadSelectionGlass(
           isSelected: isSelected(feedURI: feedURI),
-          isDropTarget: dropTargetItem == feedURI
+          isDropTarget: dropTargetItem == feedURI,
+          cornerRadius: cardCornerRadius,
+          namespace: glassNamespace,
+          isEnabled: inSideDrawer
         )
       )
       .contentShape(.dragPreview, RoundedRectangle(cornerRadius: 12))
@@ -973,9 +999,22 @@ struct FeedsStartPage: View {
       .frame(width: itemWidth)
       .padding(6)
       .background(
-        selectionBackground(
+        Group {
+          if !inSideDrawer {
+            selectionBackground(
+              isSelected: isSelected(feedURI: feedURI),
+              isDropTarget: dropTargetItem == feedURI
+            )
+          }
+        }
+      )
+      .modifier(
+        LaunchpadSelectionGlass(
           isSelected: isSelected(feedURI: feedURI),
-          isDropTarget: dropTargetItem == feedURI
+          isDropTarget: dropTargetItem == feedURI,
+          cornerRadius: cardCornerRadius,
+          namespace: glassNamespace,
+          isEnabled: inSideDrawer
         )
       )
       .contentShape(.dragPreview, RoundedRectangle(cornerRadius: 12))
@@ -1421,6 +1460,7 @@ struct FeedsStartPage: View {
                     .appFont(size: 16)
                     .foregroundStyle(Color.accentColor)
                 )
+                .modifier(LaunchpadGlassCircle(isEnabled: inSideDrawer))
             }
             .tint(.accentColor.opacity(0.8))
             .accessibilityLabel(isSearchBarVisible ? "Hide Search" : "Search Feeds")
@@ -1441,6 +1481,7 @@ struct FeedsStartPage: View {
                     .contentTransition(.symbolEffect(.replace))
                     .foregroundStyle(Color.accentColor)
                 )
+                .modifier(LaunchpadGlassCircle(isEnabled: inSideDrawer))
             }
             .tint(.accentColor.opacity(0.8))
             .accessibilityLabel(layoutMode.accessibilityLabel)
@@ -1456,6 +1497,7 @@ struct FeedsStartPage: View {
                       Image(systemName: "checkmark")
                         .appFont(size: 16)
                     )
+                    .modifier(LaunchpadGlassCircle(isEnabled: inSideDrawer))
                 }
                 .tint(.accentColor.opacity(0.8))
                 .accessibilityLabel("Done Editing")
@@ -1470,6 +1512,7 @@ struct FeedsStartPage: View {
                       Image(systemName: "pencil")
                         .appFont(size: 16)
                     )
+                    .modifier(LaunchpadGlassCircle(isEnabled: inSideDrawer))
                 }
                 .tint(.accentColor.opacity(0.8))
                 .accessibility(label: Text("Edit Feeds"))
