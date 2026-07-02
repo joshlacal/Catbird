@@ -139,10 +139,6 @@ struct FeedsStartPage: View {
     return min(baseHeight, screenHeight * 0.25)
   }
 
-  private var drawerProfilePanelHeight: CGFloat {
-    bannerHeight
-  }
-
   // Interior insets for the profile row inside the banner. In the drawer the
   // banner is clipped by a ~28pt concentric corner, so the avatar and handle
   // need more clearance than the grid's horizontal padding or they crowd into
@@ -1081,7 +1077,7 @@ struct FeedsStartPage: View {
 
       #if os(iOS)
       if inSideDrawer {
-        drawerSplitContent(containerSize: geometry.size, contentWidth: contentWidth)
+        drawerContent(containerSize: geometry.size, contentWidth: contentWidth)
       } else {
         standardContent(contentWidth: contentWidth)
       }
@@ -1127,62 +1123,113 @@ struct FeedsStartPage: View {
       }
   }
 
-  #if os(iOS)
-  @ViewBuilder
-  private func drawerSplitContent(containerSize: CGSize, contentWidth: CGFloat) -> some View {
-    let container = CGRect(origin: .zero, size: containerSize)
-    let frames = ConcentricDrawerSectionLayoutMetrics
-      .sideDrawer(headerHeight: drawerProfilePanelHeight)
-      .sectionFrames(in: container)
+  @State private var launchpadPage: Int?
 
-    // One GlassEffectContainer renders both panels' glass in a single pass.
-    // The small spacing keeps the header and feeds panels visually distinct
-    // instead of blending across the 10pt gap between them.
-    Group {
+  private var isSearchActive: Bool {
+    isSearchBarVisible || !searchText.isEmpty
+  }
+
+  #if os(iOS)
+  private var launchpadCellHeight: CGFloat {
+    // Mirrors the grid cell: icon + 6 (VStack spacing) + 4 (label top pad)
+    // + label block (min 28, Dynamic Type scaled) + 12 (cell padding 6×2).
+    let labelHeight = max(28, UIFontMetrics(forTextStyle: .caption2).scaledValue(for: 28))
+    return iconSize + 6 + 4 + labelHeight + 12
+  }
+
+  private func launchpadMetrics(containerHeight: CGFloat) -> FeedsLaunchpadMetrics {
+    FeedsLaunchpadMetrics(
+      containerHeight: containerHeight,
+      verticalPadding: DesignTokens.Spacing.base,  // 12
+      columns: columns,
+      cellHeight: launchpadCellHeight,
+      rowSpacing: gridSpacing,
+      bannerHeight: bannerHeight,
+      titleRowHeight: 92,
+      addFeedButtonHeight: 60,
+      defaultButtonHeight: iconSize + 40,  // icon + 12×2 inner + 8×2 outer padding
+      sectionHeaderHeight: 48
+    )
+  }
+
+  @ViewBuilder
+  private func drawerContent(containerSize: CGSize, contentWidth: CGFloat) -> some View {
+    // Grid mode pages; list mode and active search fall back to the flat
+    // continuous scroll (standardContent already handles clear backgrounds
+    // and the banner inset via its inSideDrawer-aware modifiers).
+    if layoutMode == .grid && !isSearchActive {
       if #available(iOS 26.0, *) {
-        GlassEffectContainer(spacing: 4) {
-          splitDrawerPanels(frames: frames)
+        GlassEffectContainer(spacing: 8) {
+          drawerLaunchpad(containerSize: containerSize, contentWidth: contentWidth)
         }
       } else {
-        splitDrawerPanels(frames: frames)
+        drawerLaunchpad(containerSize: containerSize, contentWidth: contentWidth)
       }
-    }
-    .frame(width: contentWidth, height: containerSize.height, alignment: .topLeading)
-    .clipped()
-  }
-
-  @ViewBuilder
-  private func splitDrawerPanels(frames: (header: CGRect, feeds: CGRect)) -> some View {
-    ZStack(alignment: .topLeading) {
-      splitDrawerPanel(frame: frames.header) {
-        bannerHeaderView()
-          .frame(width: frames.header.width, height: frames.header.height)
-      }
-
-      splitDrawerPanel(frame: frames.feeds) {
-        ScrollView {
-          feedsContent()
-            .frame(maxWidth: frames.feeds.width)
-        }
-        .scrollContentBackground(.hidden)
-        .background(Color.clear)
-        .refreshable {
-          await handleRefresh()
-        }
-      }
+    } else {
+      standardContent(contentWidth: contentWidth)
     }
   }
 
   @ViewBuilder
-  private func splitDrawerPanel<PanelContent: View>(
-    frame: CGRect,
-    @ViewBuilder content: () -> PanelContent
-  ) -> some View {
-    ConcentricLiquidGlassPanel {
-      content()
+  private func drawerLaunchpad(containerSize: CGSize, contentWidth: CGFloat) -> some View {
+    let metrics = launchpadMetrics(containerHeight: containerSize.height)
+    let pages = FeedsLaunchpadLayout.pages(
+      pinnedGridFeeds: Array(filteredPinnedFeeds.dropFirst()),
+      savedFeeds: filteredSavedFeeds,
+      includeAddFeedButton: isEditingFeeds,
+      metrics: metrics
+    )
+
+    FeedsLaunchpadPager(
+      pages: pages,
+      currentPage: $launchpadPage,
+      verticalPadding: metrics.verticalPadding,
+      horizontalPadding: horizontalPadding,
+      pageDropDelegate: { _ in nil }  // Task 4 wires drops
+    ) { slot in
+      launchpadSlotView(slot)
     }
-    .frame(width: frame.width, height: frame.height)
-    .position(x: frame.midX, y: frame.midY)
+    .frame(width: contentWidth, height: containerSize.height)
+  }
+
+  @ViewBuilder
+  private func launchpadSlotView(_ slot: FeedsLaunchpadSlot) -> some View {
+    switch slot {
+    case .banner:
+      bannerHeaderView()
+        .frame(height: bannerHeight)
+        .modifier(LaunchpadBannerClip())
+        .padding(.bottom, DesignTokens.Spacing.base)
+    case .titleRow:
+      feedsTitleRow
+        .padding(.vertical, DesignTokens.Spacing.lg)  // 15 — budget 92 total
+    case .addFeedButton:
+      addFeedButton()
+    case .defaultButton:
+      bigDefaultFeedButton
+    case .sectionHeader(let section, _):
+      sectionHeader(section == .pinned ? "Pinned" : "Saved")
+    case .feedRow(let section, let feeds):
+      launchpadRow(feeds: feeds, category: section.rawValue)
+    }
+  }
+
+  @ViewBuilder
+  private func launchpadRow(feeds: [String], category: String) -> some View {
+    HStack(alignment: .top, spacing: gridSpacing) {
+      ForEach(feeds, id: \.self) { feed in
+        if SystemFeedTypes.isTimelineFeed(feed) {
+          timelineFeedLink(feedURI: feed, category: category)
+        } else if let uri = try? ATProtocolURI(uriString: feed) {
+          feedLink(for: uri, feedURI: feed, category: category)
+        }
+      }
+      if feeds.count < columns {
+        Spacer(minLength: 0)
+      }
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .padding(.bottom, gridSpacing)
   }
   #endif
   
@@ -1338,92 +1385,97 @@ struct FeedsStartPage: View {
   }
 
   @ViewBuilder
+  private var feedsTitleRow: some View {
+    HStack {
+        Text("Feeds")
+            .font(
+                Font.customSystemFont(
+                    size: 24, weight: .bold, width: 120, opticalSize: true, design: .default,
+                    relativeTo: .title)
+            )
+            .foregroundStyle(drawerPrimaryTextColor)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        Spacer()
+
+        HStack(spacing: 12) {
+            // Search feeds button
+            Button {
+                withAnimation(.easeInOut(duration: 0.3)) {
+                    isSearchBarVisible.toggle()
+                }
+            } label: {
+                hitTarget44(
+                  Image(systemName: isSearchBarVisible ? "xmark" : "magnifyingglass")
+                    .appFont(size: 16)
+                    .foregroundStyle(Color.accentColor)
+                )
+            }
+            .tint(.accentColor.opacity(0.8))
+            .accessibilityLabel(isSearchBarVisible ? "Hide Search" : "Search Feeds")
+            .accessibilityAddTraits(.isButton)
+
+            // Layout-mode toggle (grid <-> list). Persisted via @AppStorage.
+            Button {
+                #if os(iOS)
+                impact.impactOccurred()
+                #endif
+                withAnimation(.easeInOut(duration: 0.25)) {
+                    layoutModeRaw = (layoutMode == .grid ? FeedsLayoutMode.list : FeedsLayoutMode.grid).rawValue
+                }
+            } label: {
+                hitTarget44(
+                  Image(systemName: layoutMode.toggleSymbol)
+                    .appFont(size: 16)
+                    .contentTransition(.symbolEffect(.replace))
+                    .foregroundStyle(Color.accentColor)
+                )
+            }
+            .tint(.accentColor.opacity(0.8))
+            .accessibilityLabel(layoutMode.accessibilityLabel)
+            .accessibilityAddTraits(.isButton)
+
+            if isEditingFeeds {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        isEditingFeeds = false
+                    }
+                } label: {
+                    hitTarget44(
+                      Image(systemName: "checkmark")
+                        .appFont(size: 16)
+                    )
+                }
+                .tint(.accentColor.opacity(0.8))
+                .accessibilityLabel("Done Editing")
+                .accessibilityAddTraits(.isButton)
+            } else {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        isEditingFeeds = true
+                    }
+                } label: {
+                    hitTarget44(
+                      Image(systemName: "pencil")
+                        .appFont(size: 16)
+                    )
+                }
+                .tint(.accentColor.opacity(0.8))
+                .accessibility(label: Text("Edit Feeds"))
+                .accessibility(hint: Text("Double tap to enter edit mode"))
+                .accessibilityAddTraits(.isButton)
+            }
+        }
+
+    }
+    .animation(.easeInOut(duration: 0.2), value: isEditingFeeds)
+  }
+
+  @ViewBuilder
   private func feedsContent() -> some View {
       VStack(spacing: 0) {
-          HStack {
-              Text("Feeds")
-                  .font(
-                      Font.customSystemFont(
-                          size: 24, weight: .bold, width: 120, opticalSize: true, design: .default,
-                          relativeTo: .title)
-                  )
-                  .foregroundStyle(drawerPrimaryTextColor)
-                  .frame(maxWidth: .infinity, alignment: .leading)
-              Spacer()
-
-              HStack(spacing: 12) {
-                  // Search feeds button
-                  Button {
-                      withAnimation(.easeInOut(duration: 0.3)) {
-                          isSearchBarVisible.toggle()
-                      }
-                  } label: {
-                      hitTarget44(
-                        Image(systemName: isSearchBarVisible ? "xmark" : "magnifyingglass")
-                          .appFont(size: 16)
-                          .foregroundStyle(Color.accentColor)
-                      )
-                  }
-                  .tint(.accentColor.opacity(0.8))
-                  .accessibilityLabel(isSearchBarVisible ? "Hide Search" : "Search Feeds")
-                  .accessibilityAddTraits(.isButton)
-
-                  // Layout-mode toggle (grid <-> list). Persisted via @AppStorage.
-                  Button {
-                      #if os(iOS)
-                      impact.impactOccurred()
-                      #endif
-                      withAnimation(.easeInOut(duration: 0.25)) {
-                          layoutModeRaw = (layoutMode == .grid ? FeedsLayoutMode.list : FeedsLayoutMode.grid).rawValue
-                      }
-                  } label: {
-                      hitTarget44(
-                        Image(systemName: layoutMode.toggleSymbol)
-                          .appFont(size: 16)
-                          .contentTransition(.symbolEffect(.replace))
-                          .foregroundStyle(Color.accentColor)
-                      )
-                  }
-                  .tint(.accentColor.opacity(0.8))
-                  .accessibilityLabel(layoutMode.accessibilityLabel)
-                  .accessibilityAddTraits(.isButton)
-
-                  if isEditingFeeds {
-                      Button {
-                          withAnimation(.easeInOut(duration: 0.2)) {
-                              isEditingFeeds = false
-                          }
-                      } label: {
-                          hitTarget44(
-                            Image(systemName: "checkmark")
-                              .appFont(size: 16)
-                          )
-                      }
-                      .tint(.accentColor.opacity(0.8))
-                      .accessibilityLabel("Done Editing")
-                      .accessibilityAddTraits(.isButton)
-                  } else {
-                      Button {
-                          withAnimation(.easeInOut(duration: 0.2)) {
-                              isEditingFeeds = true
-                          }
-                      } label: {
-                          hitTarget44(
-                            Image(systemName: "pencil")
-                              .appFont(size: 16)
-                          )
-                      }
-                      .tint(.accentColor.opacity(0.8))
-                      .accessibility(label: Text("Edit Feeds"))
-                      .accessibility(hint: Text("Double tap to enter edit mode"))
-                      .accessibilityAddTraits(.isButton)
-                  }
-              }
-
-          }
-          .padding(.top, DesignTokens.Spacing.section)     // 24
-          .padding(.bottom, DesignTokens.Spacing.section)  // 24
-          .animation(.easeInOut(duration: 0.2), value: isEditingFeeds)
+          feedsTitleRow
+              .padding(.top, DesignTokens.Spacing.section)     // 24
+              .padding(.bottom, DesignTokens.Spacing.section)  // 24
 
           // Search bar
           if isSearchBarVisible {
@@ -1740,6 +1792,18 @@ private struct DrawerBannerInset: ViewModifier {
         }
     }
 }
+
+#if os(iOS)
+private struct LaunchpadBannerClip: ViewModifier {
+  func body(content: Content) -> some View {
+    if #available(iOS 26.0, *) {
+      content.clipShape(ConcentricRectangle(corners: .concentric(minimum: 16), isUniform: true))
+    } else {
+      content.clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+  }
+}
+#endif
 
 private extension View {
     func configuredToolbar(

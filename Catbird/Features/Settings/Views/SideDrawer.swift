@@ -327,7 +327,7 @@ private struct DrawerDismissBackdrop: View, Animatable {
 /// root content never re-renders while the drawer animates.
 struct ConcentricDrawerBackdropMetrics: Equatable, Sendable {
   var maximumBlurFraction: CGFloat = 1.0
-  var maximumScrimOpacity: CGFloat = 0.1
+  var maximumScrimOpacity: CGFloat = 0.18
 
   func blurFraction(for progress: CGFloat) -> CGFloat {
     progress * maximumBlurFraction
