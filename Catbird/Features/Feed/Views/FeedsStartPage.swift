@@ -1208,15 +1208,19 @@ struct FeedsStartPage: View {
     // continuous scroll (standardContent already handles clear backgrounds
     // and the banner inset via its inSideDrawer-aware modifiers).
     if layoutMode == .grid && !isSearchActive {
-      // The page indicator is a ZStack sibling layered AFTER (never inside)
-      // GlassEffectContainer. A non-glass view living inside that container's
-      // subtree gets sampled into its shared backdrop-rendering pass instead
-      // of drawing as its own opaque layer (see ConcentricLiquidGlassDrawer's
-      // own warning about this) — that silently turned the capsule into an
-      // invisible blur when it lived inside FeedsLaunchpadPager's overlay.
-      // Keeping the indicator a true sibling here, and reporting the page
-      // count out via `onPageCountChange` instead of re-deriving it, avoids
-      // the bug without giving the indicator a glass treatment of its own.
+      // The page indicator AND the edge-flip drop zones are ZStack siblings
+      // layered AFTER (never inside) GlassEffectContainer. A non-glass view
+      // living inside that container's subtree gets sampled into its shared
+      // backdrop-rendering pass instead of drawing/hit-testing as its own
+      // opaque layer (see ConcentricLiquidGlassDrawer's own warning about
+      // this) — that silently turned the capsule into an invisible blur
+      // when the indicator lived inside FeedsLaunchpadPager's overlay, and
+      // would do the same to the edge zones if they were attached to
+      // `drawerLaunchpad`'s own view chain (which is what gets passed INTO
+      // GlassEffectContainer below). Keeping both a true sibling here, and
+      // reporting the page count out via `onPageCountChange` instead of
+      // re-deriving it, avoids the bug without giving either view a glass
+      // treatment of its own.
       ZStack(alignment: .trailing) {
         if #available(iOS 26.0, *) {
           GlassEffectContainer(spacing: 8) {
@@ -1226,8 +1230,23 @@ struct FeedsStartPage: View {
           drawerLaunchpad(contentWidth: contentWidth)
         }
 
+        VStack(spacing: 0) {
+          launchpadEdgeZone(delta: -1)
+          Spacer(minLength: 0)
+          launchpadEdgeZone(delta: 1)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+
         FeedsLaunchpadPageIndicator(pageCount: launchpadPageCount, currentPage: $launchpadPage)
           .padding(.trailing, DesignTokens.Spacing.sm)
+      }
+      .onDisappear {
+        // Defensive teardown: dropExited isn't guaranteed to fire when a
+        // drag session ends outside our control (claimed by another drop
+        // target, app backgrounded, drawer dismissed mid-dwell). Without
+        // this, a repeating dwell Task could keep flipping pages and firing
+        // haptics after the view is gone.
+        edgeFlipCoordinator.cancel()
       }
     } else {
       standardContent(contentWidth: contentWidth)
@@ -1270,20 +1289,17 @@ struct FeedsStartPage: View {
     }
     .frame(width: contentWidth)
     .frame(maxHeight: .infinity)
-    .overlay(alignment: .top) {
-      launchpadEdgeZone(delta: -1)
-    }
-    .overlay(alignment: .bottom) {
-      launchpadEdgeZone(delta: 1)
-    }
   }
 
   /// Invisible drop strip along the drawer's top/bottom edge: while a feed is
   /// being dragged, hovering here dwells and flips `launchpadPage` (repeating
   /// while held), letting a launchpad-style drag reorder cross pages. Mounted
-  /// as a normal overlay on the pager itself (not inside the
-  /// `GlassEffectContainer` — see `drawerContent`'s note on why non-glass
-  /// overlays there get silently sampled into the shared glass backdrop).
+  /// by the caller (`drawerContent`) as a ZStack sibling AFTER — never
+  /// inside — `GlassEffectContainer`, same as `FeedsLaunchpadPageIndicator`:
+  /// attaching this to `drawerLaunchpad`'s own view chain would put it
+  /// inside the container's subtree, where non-glass content silently gets
+  /// sampled into the shared glass backdrop instead of hit-testing/drawing
+  /// as its own opaque layer.
   /// `Color.white.opacity(0.001)` rather than `.clear`: a fully-transparent
   /// color intermittently drops out of hit-testing even with
   /// `.contentShape` (same fix as `FeedsLaunchpadPageIndicator`'s tap

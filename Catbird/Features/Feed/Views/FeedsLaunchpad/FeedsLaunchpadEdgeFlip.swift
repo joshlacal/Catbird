@@ -36,6 +36,10 @@ final class FeedsLaunchpadEdgeFlipCoordinator {
     dwellTask?.cancel()
     dwellTask = nil
   }
+
+  deinit {
+    dwellTask?.cancel()
+  }
 }
 
 @MainActor
@@ -86,10 +90,10 @@ struct FeedsLaunchpadPageDropDelegate: DropDelegate {
   }
 
   func performDrop(info: DropInfo) -> Bool {
+    defer { resetDragState() }
     guard let dragged = draggedItem, let fromCategory = draggedItemCategory else {
       return false
     }
-    defer { resetDragState() }
 
     let generator = UIImpactFeedbackGenerator(style: .medium)
     generator.impactOccurred(intensity: 1.0)
