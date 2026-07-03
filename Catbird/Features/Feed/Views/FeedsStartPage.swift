@@ -1290,13 +1290,25 @@ struct FeedsStartPage: View {
       // via `onPageCountChange` instead of re-deriving it, avoids the bug
       // without giving either view a glass treatment of its own.
       ZStack(alignment: .trailing) {
-        if #available(iOS 26.0, *) {
-          GlassEffectContainer(spacing: 8) {
-            drawerLaunchpad(contentWidth: contentWidth)
-          }
-        } else {
-          drawerLaunchpad(contentWidth: contentWidth)
-        }
+        // `drawerLaunchpad` is intentionally NOT wrapped in a
+        // GlassEffectContainer here. It previously was — one container
+        // spanning the whole paged `ScrollView` — which composited every
+        // glass-tagged view across every page LazyVStack keeps mounted
+        // (including off-screen ones) in a single hoisted render pass that
+        // the pager's own `.clipped()` couldn't reach. That let a
+        // scrolled-away page's glass surface (most visibly the selected-
+        // feed cell) leak through as a floating ghost card + blur on
+        // whichever page was actually on screen (Task 4's originally
+        // reported artifact; root-caused and A/B-confirmed during Task 5:
+        // identical with a per-page-scoped container too, gone entirely
+        // once no container spans the scroll). See `launchpadSlotView`'s
+        // `.titleRow` case for the one glass group that still gets its own
+        // small, slot-scoped container (the header circles benefit from
+        // GlassEffectContainer's shape-blending since they sit close
+        // together) — the default button and the selected-feed cell are
+        // each the only glass shape on their own page and render correctly
+        // standalone.
+        drawerLaunchpad(contentWidth: contentWidth)
 
         VStack(spacing: 0) {
           launchpadEdgeZone(delta: -1)
@@ -1448,8 +1460,31 @@ struct FeedsStartPage: View {
         .modifier(LaunchpadBannerClip())
         .padding(.bottom, DesignTokens.Spacing.base)
     case .titleRow:
-      feedsTitleRow
-        .padding(.vertical, DesignTokens.Spacing.lg)  // 15 — budget 92 total
+      // Scoped to just this slot's three glass circles (search, grid/list
+      // toggle, edit/done) — not the whole scrolling pager. A container
+      // spanning the entire paged ScrollView (the previous architecture)
+      // composited every glass-tagged view across every LazyVStack-mounted
+      // page in one hoisted render pass that the pager's own `.clipped()`
+      // couldn't reach, letting an off-screen page's glass surface (e.g.
+      // the selected-feed cell) surface as a floating ghost + blur on a
+      // different, currently-visible page (root-caused + A/B-confirmed
+      // during Task 5: identical artifact with a per-page-scoped container,
+      // gone once NO container spans the scroll at all). The header
+      // circles are the one glass group on this page that benefits from
+      // GlassEffectContainer's shape-blending when they sit close together;
+      // the default button and the selected-feed cell are each the only
+      // glass shape on their own page, so they don't need a container to
+      // render or blend correctly standalone.
+      Group {
+        if #available(iOS 26.0, *) {
+          GlassEffectContainer(spacing: 8) {
+            feedsTitleRow
+          }
+        } else {
+          feedsTitleRow
+        }
+      }
+      .padding(.vertical, DesignTokens.Spacing.lg)  // 15 — budget 92 total
     case .addFeedButton:
       addFeedButton()
     case .defaultButton:
