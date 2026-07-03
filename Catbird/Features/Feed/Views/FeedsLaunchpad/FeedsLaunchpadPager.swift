@@ -37,6 +37,13 @@ struct FeedsLaunchpadPager<SlotContent: View>: View {
   /// scope on iOS 26+, which silently sampled it into the shared glass
   /// backdrop instead of drawing it as an opaque layer.
   var onPageCountChange: (Int) -> Void = { _ in }
+  /// Reports the measured viewport height (same value fed into `makePages`)
+  /// on first measurement and on every change — e.g. rotation or a Dynamic
+  /// Type size change. The caller uses this to clamp Dynamic-Type-sensitive
+  /// slot heights (like the banner) so a rendered slot never disagrees with
+  /// the height `makePages` chunked against. Additive/no-op by default so
+  /// existing call sites are unaffected.
+  var onPageHeightChange: (CGFloat) -> Void = { _ in }
   @ViewBuilder let slotView: (FeedsLaunchpadSlot) -> SlotContent
 
   var body: some View {
@@ -71,6 +78,9 @@ struct FeedsLaunchpadPager<SlotContent: View>: View {
         if let page = currentPage, page >= newCount {
           currentPage = max(newCount - 1, 0)
         }
+      }
+      .onChange(of: pageHeight, initial: true) { _, newHeight in
+        onPageHeightChange(newHeight)
       }
     }
   }
