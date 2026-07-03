@@ -877,8 +877,8 @@ struct FeedsStartPage: View {
 
         
       }
-      .frame(width: itemWidth)
       .padding(6)
+      .frame(width: itemWidth)
       .background(
         Group {
           if !inSideDrawer {
@@ -996,8 +996,8 @@ struct FeedsStartPage: View {
           .multilineTextAlignment(.center)
           .fixedSize(horizontal: false, vertical: true)
       }
-      .frame(width: itemWidth)
       .padding(6)
+      .frame(width: itemWidth)
       .background(
         Group {
           if !inSideDrawer {
@@ -1163,6 +1163,7 @@ struct FeedsStartPage: View {
   }
 
   @State private var launchpadPage: Int?
+  @State private var launchpadPageCount: Int = 0
 
   private var isSearchActive: Bool {
     isSearchBarVisible || !searchText.isEmpty
@@ -1179,8 +1180,10 @@ struct FeedsStartPage: View {
   /// Vertical padding inside each launchpad page. Shared between
   /// `launchpadMetrics` (which feeds it to `FeedsLaunchpadLayout.pages` for
   /// row-fit math) and the `FeedsLaunchpadPager` call site (which applies it
-  /// as real interior padding) so the two can't drift apart.
-  private var launchpadVerticalPadding: CGFloat { DesignTokens.Spacing.base }  // 12
+  /// as real interior padding) so the two can't drift apart. Applied
+  /// symmetrically top+bottom rather than as a one-sided top constant so the
+  /// chunker and the pager always agree on available page height.
+  private var launchpadVerticalPadding: CGFloat { DesignTokens.Spacing.lg }  // 15
 
   private func launchpadMetrics(containerHeight: CGFloat) -> FeedsLaunchpadMetrics {
     FeedsLaunchpadMetrics(
@@ -1203,12 +1206,26 @@ struct FeedsStartPage: View {
     // continuous scroll (standardContent already handles clear backgrounds
     // and the banner inset via its inSideDrawer-aware modifiers).
     if layoutMode == .grid && !isSearchActive {
-      if #available(iOS 26.0, *) {
-        GlassEffectContainer(spacing: 8) {
+      // The page indicator is a ZStack sibling layered AFTER (never inside)
+      // GlassEffectContainer. A non-glass view living inside that container's
+      // subtree gets sampled into its shared backdrop-rendering pass instead
+      // of drawing as its own opaque layer (see ConcentricLiquidGlassDrawer's
+      // own warning about this) — that silently turned the capsule into an
+      // invisible blur when it lived inside FeedsLaunchpadPager's overlay.
+      // Keeping the indicator a true sibling here, and reporting the page
+      // count out via `onPageCountChange` instead of re-deriving it, avoids
+      // the bug without giving the indicator a glass treatment of its own.
+      ZStack(alignment: .trailing) {
+        if #available(iOS 26.0, *) {
+          GlassEffectContainer(spacing: 8) {
+            drawerLaunchpad(contentWidth: contentWidth)
+          }
+        } else {
           drawerLaunchpad(contentWidth: contentWidth)
         }
-      } else {
-        drawerLaunchpad(contentWidth: contentWidth)
+
+        FeedsLaunchpadPageIndicator(pageCount: launchpadPageCount, currentPage: $launchpadPage)
+          .padding(.trailing, DesignTokens.Spacing.sm)
       }
     } else {
       standardContent(contentWidth: contentWidth)
@@ -1235,7 +1252,8 @@ struct FeedsStartPage: View {
           metrics: launchpadMetrics(containerHeight: measuredHeight)
         )
       },
-      pageDropDelegate: { _ in nil }  // Task 4 wires drops
+      pageDropDelegate: { _ in nil },  // Task 4 wires drops
+      onPageCountChange: { launchpadPageCount = $0 }
     ) { slot in
       launchpadSlotView(slot)
     }

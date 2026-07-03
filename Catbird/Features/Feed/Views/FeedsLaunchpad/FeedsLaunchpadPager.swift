@@ -29,6 +29,14 @@ struct FeedsLaunchpadPager<SlotContent: View>: View {
   /// Per-page background drop target (drop on empty space appends to the
   /// page's section). nil disables the drop area for that page.
   let pageDropDelegate: (FeedsLaunchpadPage) -> (any DropDelegate)?
+  /// Reports the computed page count on first measurement and on every
+  /// change. The page indicator is rendered by the CALLER, outside this
+  /// view, rather than as an internal overlay here — see the call site
+  /// (`FeedsStartPage.drawerContent`) for why: a non-glass overlay nested
+  /// inside this view ends up inside the caller's `GlassEffectContainer`
+  /// scope on iOS 26+, which silently sampled it into the shared glass
+  /// backdrop instead of drawing it as an opaque layer.
+  var onPageCountChange: (Int) -> Void = { _ in }
   @ViewBuilder let slotView: (FeedsLaunchpadSlot) -> SlotContent
 
   var body: some View {
@@ -55,16 +63,11 @@ struct FeedsLaunchpadPager<SlotContent: View>: View {
       // the NEXT page's top was still visible under the NavigationStack's
       // floating bottom-bar toolbar at rest. Pinning to the measured size and
       // clipping stops rendering at the exact viewport edge; the strip below
-      // shows only the drawer's backdrop, never page content. Clip only the
-      // ScrollView — the page-dot overlay below is layered on afterward, so
-      // it isn't affected.
+      // shows only the drawer's backdrop, never page content.
       .frame(width: geometry.size.width, height: geometry.size.height)
       .clipped()
-      .overlay(alignment: .trailing) {
-        FeedsLaunchpadPageIndicator(pageCount: pages.count, currentPage: $currentPage)
-          .padding(.trailing, DesignTokens.Spacing.sm)
-      }
-      .onChange(of: pages.count) { _, newCount in
+      .onChange(of: pages.count, initial: true) { _, newCount in
+        onPageCountChange(newCount)
         if let page = currentPage, page >= newCount {
           currentPage = max(newCount - 1, 0)
         }
@@ -93,17 +96,58 @@ struct FeedsLaunchpadPager<SlotContent: View>: View {
   }
 }
 
+/// iOS-home-screen-style page indicator: dots housed in a vertical capsule,
+/// each individually tappable to jump pages. Two layers share one geometry:
+/// a visual (non-interactive) capsule of narrow 6pt dots, and an invisible
+/// tap-target layer widened to 44pt horizontally and 20pt tall (matching the
+/// same `dotSpacing` gap as the visual layer, so targets stay well clear of
+/// each other). A 6pt-tall target (matching the visual dot) proved too thin
+/// to hit reliably, and expanding each dot's `.contentShape` independently
+/// (rather than giving it a real, larger layout frame) caused neighboring
+/// 44pt-tall regions to overlap almost completely and made taps resolve to
+/// the wrong page. VoiceOver still sees one adjustable element, matching the
+/// pre-existing accessibility contract.
 struct FeedsLaunchpadPageIndicator: View {
   let pageCount: Int
   @Binding var currentPage: Int?
 
+  private let dotSize: CGFloat = 6
+  private let dotSpacing: CGFloat = 8
+  private let tapTargetHeight: CGFloat = 20
+
   var body: some View {
     if pageCount > 1 {
-      VStack(spacing: 8) {
-        ForEach(0..<pageCount, id: \.self) { index in
-          Circle()
-            .fill(index == (currentPage ?? 0) ? Color.primary : Color.primary.opacity(0.3))
-            .frame(width: 6, height: 6)
+      ZStack(alignment: .trailing) {
+        VStack(spacing: dotSpacing) {
+          ForEach(0..<pageCount, id: \.self) { index in
+            Circle()
+              .fill(index == (currentPage ?? 0) ? Color.primary : Color.primary.opacity(0.3))
+              .frame(width: dotSize, height: dotSize)
+          }
+        }
+        .padding(.vertical, 8)
+        .padding(.horizontal, 5)
+        .background(Capsule().fill(.ultraThinMaterial))
+        .allowsHitTesting(false)
+
+        VStack(spacing: dotSpacing) {
+          ForEach(0..<pageCount, id: \.self) { index in
+            Button {
+              withAnimation(.easeInOut(duration: 0.2)) {
+                currentPage = index
+              }
+            } label: {
+              // A fully-transparent `Color.clear` label intermittently drops
+              // out of hit-testing even with an explicit `.contentShape` —
+              // a documented SwiftUI quirk. A technically-nonzero alpha
+              // keeps the tap target reliable while staying visually
+              // invisible against the capsule behind it.
+              Color.white.opacity(0.001)
+            }
+            .buttonStyle(.plain)
+            .frame(width: 44, height: tapTargetHeight)
+            .contentShape(Rectangle())
+          }
         }
       }
       .accessibilityElement(children: .ignore)
