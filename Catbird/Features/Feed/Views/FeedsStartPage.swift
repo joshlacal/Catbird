@@ -1170,6 +1170,8 @@ struct FeedsStartPage: View {
   }
 
   #if os(iOS)
+  @State private var edgeFlipCoordinator = FeedsLaunchpadEdgeFlipCoordinator()
+
   private var launchpadCellHeight: CGFloat {
     // Mirrors the grid cell: icon + 6 (VStack spacing) + 4 (label top pad)
     // + label block (min 28, Dynamic Type scaled) + 12 (cell padding 6×2).
@@ -1252,13 +1254,66 @@ struct FeedsStartPage: View {
           metrics: launchpadMetrics(containerHeight: measuredHeight)
         )
       },
-      pageDropDelegate: { _ in nil },  // Task 4 wires drops
+      pageDropDelegate: { page in
+        guard let section = page.section else { return nil }
+        return FeedsLaunchpadPageDropDelegate(
+          section: section,
+          viewModel: viewModel,
+          draggedItem: $draggedFeedItem,
+          draggedItemCategory: $draggedItemCategory,
+          resetDragState: resetDragState
+        )
+      },
       onPageCountChange: { launchpadPageCount = $0 }
     ) { slot in
       launchpadSlotView(slot)
     }
     .frame(width: contentWidth)
     .frame(maxHeight: .infinity)
+    .overlay(alignment: .top) {
+      launchpadEdgeZone(delta: -1)
+    }
+    .overlay(alignment: .bottom) {
+      launchpadEdgeZone(delta: 1)
+    }
+  }
+
+  /// Invisible drop strip along the drawer's top/bottom edge: while a feed is
+  /// being dragged, hovering here dwells and flips `launchpadPage` (repeating
+  /// while held), letting a launchpad-style drag reorder cross pages. Mounted
+  /// as a normal overlay on the pager itself (not inside the
+  /// `GlassEffectContainer` — see `drawerContent`'s note on why non-glass
+  /// overlays there get silently sampled into the shared glass backdrop).
+  /// `Color.white.opacity(0.001)` rather than `.clear`: a fully-transparent
+  /// color intermittently drops out of hit-testing even with
+  /// `.contentShape` (same fix as `FeedsLaunchpadPageIndicator`'s tap
+  /// targets).
+  @ViewBuilder
+  private func launchpadEdgeZone(delta: Int) -> some View {
+    if isDragging {
+      Color.white.opacity(0.001)
+        .frame(height: 44)
+        .frame(maxWidth: .infinity)
+        .contentShape(Rectangle())
+        .onDrop(
+          of: [UTType.plainText.identifier],
+          delegate: FeedsLaunchpadEdgeFlipDelegate(
+            coordinator: edgeFlipCoordinator,
+            flip: { flipLaunchpadPage(by: delta) },
+            resetDragState: resetDragState
+          )
+        )
+    }
+  }
+
+  private func flipLaunchpadPage(by delta: Int) {
+    let current = launchpadPage ?? 0
+    let target = min(max(current + delta, 0), max(launchpadPageCount - 1, 0))
+    guard target != current else { return }
+    MotionManager.withSpringAnimation(for: appState.appSettings, duration: 0.35) {
+      launchpadPage = target
+    }
+    impact.impactOccurred(intensity: 0.8)
   }
 
   @ViewBuilder
