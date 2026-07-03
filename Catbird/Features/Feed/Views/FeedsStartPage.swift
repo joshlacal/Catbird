@@ -1240,13 +1240,22 @@ struct FeedsStartPage: View {
         FeedsLaunchpadPageIndicator(pageCount: launchpadPageCount, currentPage: $launchpadPage)
           .padding(.trailing, DesignTokens.Spacing.sm)
       }
-      .onDisappear {
+      .onChange(of: isDrawerOpen) { _, open in
         // Defensive teardown: dropExited isn't guaranteed to fire when a
         // drag session ends outside our control (claimed by another drop
-        // target, app backgrounded, drawer dismissed mid-dwell). Without
+        // target, app backgrounded, drawer dismissed mid-dwell). `onDisappear`
+        // would be the obvious hook, but SideDrawer never structurally
+        // removes this content on close — the drawer only slides via
+        // `.offset(x:)` inside an unconditionally-rendered
+        // `ConcentricLiquidGlassDrawer`, so `onDisappear` never fires on a
+        // normal dismiss (only on identity-destroying events like an
+        // account switch or root rebuild). `isDrawerOpen` is the reliable
+        // signal instead: it flips the instant dismissal starts. Without
         // this, a repeating dwell Task could keep flipping pages and firing
-        // haptics after the view is gone.
-        edgeFlipCoordinator.cancel()
+        // haptics after the drawer is closed.
+        if !open {
+          edgeFlipCoordinator.cancel()
+        }
       }
     } else {
       standardContent(contentWidth: contentWidth)
