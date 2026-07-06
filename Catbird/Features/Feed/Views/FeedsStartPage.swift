@@ -490,6 +490,7 @@ struct FeedsStartPage: View {
               .stroke(Color.accentColor, lineWidth: 2)
           }
         }
+        .contentShape(RoundedRectangle(cornerRadius: cardCornerRadius, style: .continuous))
       }
     }
     .buttonStyle(PlainButtonStyle())
@@ -1129,15 +1130,7 @@ struct FeedsStartPage: View {
       let availableWidth = geometry.size.width
       let contentWidth = min(availableWidth, drawerWidth)
 
-      #if os(iOS)
-      if inSideDrawer {
-        drawerContent(contentWidth: contentWidth)
-      } else {
-        standardContent(contentWidth: contentWidth)
-      }
-      #else
       standardContent(contentWidth: contentWidth)
-      #endif
     }
     .frame(maxWidth: drawerWidth)
     .overlay {
@@ -1177,344 +1170,6 @@ struct FeedsStartPage: View {
       }
   }
 
-  @State private var launchpadPage: Int?
-  @State private var launchpadPageCount: Int = 0
-  /// Measured viewport height reported by `FeedsLaunchpadPager` (same value
-  /// it feeds into `makePages`). Used only to keep the rendered banner slot's
-  /// height in agreement with `launchpadMetrics`' own clamp of that same
-  /// value — see `clampedBannerHeight(availablePageHeight:)`.
-  @State private var launchpadPageHeight: CGFloat = 0
-
-  private var isSearchActive: Bool {
-    isSearchBarVisible || !searchText.isEmpty
-  }
-
-  #if os(iOS)
-  @State private var edgeFlipCoordinator = FeedsLaunchpadEdgeFlipCoordinator()
-
-  private var launchpadCellHeight: CGFloat {
-    // Mirrors the grid cell: icon + 6 (VStack spacing) + 4 (label top pad)
-    // + label block (min 28, Dynamic Type scaled) + 12 (cell padding 6×2).
-    let labelHeight = max(28, UIFontMetrics(forTextStyle: .caption2).scaledValue(for: 28))
-    return iconSize + 6 + 4 + labelHeight + 12
-  }
-
-  /// Vertical padding inside each launchpad page. Shared between
-  /// `launchpadMetrics` (which feeds it to `FeedsLaunchpadLayout.pages` for
-  /// row-fit math) and the `FeedsLaunchpadPager` call site (which applies it
-  /// as real interior padding) so the two can't drift apart. Applied
-  /// symmetrically top+bottom rather than as a one-sided top constant so the
-  /// chunker and the pager always agree on available page height.
-  private var launchpadVerticalPadding: CGFloat { DesignTokens.Spacing.lg }  // 15
-
-  // MARK: - Dynamic Type scaling for fixed launchpad slot heights
-  //
-  // `launchpadCellHeight` (above) already scales its label portion with
-  // Dynamic Type via UIFontMetrics; these four mirror that pattern for the
-  // other fixed-height slots the chunker (`FeedsLaunchpadLayout.pages`)
-  // budgets space for. Each base number is the same constant the slot's own
-  // `.padding`/layout comments already document (see `launchpadSlotView`).
-
-  private var scaledTitleRowHeight: CGFloat {
-    // "Feeds" (relativeTo: .title, i.e. UIFont.TextStyle.title1) + 15pt
-    // vertical padding top/bottom.
-    max(92, UIFontMetrics(forTextStyle: .title1).scaledValue(for: 92))
-  }
-
-  private var scaledAddFeedButtonHeight: CGFloat {
-    // "Add New Feed" body text + 12pt vertical padding top/bottom + 8pt
-    // outer padding top/bottom.
-    max(60, UIFontMetrics(forTextStyle: .body).scaledValue(for: 60))
-  }
-
-  private var scaledDefaultButtonHeight: CGFloat {
-    // iconSize is proportional to grid width, not Dynamic Type — only the
-    // surrounding 12×2 inner + 8×2 outer padding around the headline feed
-    // name needs to scale.
-    let basePadding: CGFloat = 40
-    return iconSize + max(basePadding, UIFontMetrics(forTextStyle: .headline).scaledValue(for: basePadding))
-  }
-
-  private var scaledSectionHeaderHeight: CGFloat {
-    // Section title (relativeTo: .title3) + 15pt top / 9pt bottom padding.
-    max(48, UIFontMetrics(forTextStyle: .title3).scaledValue(for: 48))
-  }
-
-  /// Banner height clamped so the fixed page-1 prefix (banner + title row +
-  /// [add-feed button] + default button) never exceeds a single launchpad
-  /// page. At accessibility Dynamic Type sizes the text-driven prefix slots
-  /// grow (see the `scaled*Height` properties above); the banner is the one
-  /// prefix element with no scaling text of its own, so it's the one safe to
-  /// shrink first. Never shrinks below 35% of the nominal `bannerHeight`
-  /// (still reads as a banner) — if that's still not enough room, the
-  /// pinned section simply defers to page 2, which `FeedsLaunchpadLayout`
-  /// already handles on its own (see its fit-or-defer logic).
-  private func clampedBannerHeight(availablePageHeight: CGFloat) -> CGFloat {
-    guard availablePageHeight > 0 else { return bannerHeight }
-    let addFeedAllowance = isEditingFeeds ? scaledAddFeedButtonHeight : 0
-    let essentialPrefix = scaledTitleRowHeight + addFeedAllowance + scaledDefaultButtonHeight
-    let budget = availablePageHeight - essentialPrefix
-    return max(bannerHeight * 0.35, min(bannerHeight, budget))
-  }
-
-  private func launchpadMetrics(containerHeight: CGFloat) -> FeedsLaunchpadMetrics {
-    let pageHeight = containerHeight - launchpadVerticalPadding * 2
-    return FeedsLaunchpadMetrics(
-      containerHeight: containerHeight,
-      verticalPadding: launchpadVerticalPadding,
-      columns: columns,
-      cellHeight: launchpadCellHeight,
-      rowSpacing: gridSpacing,
-      bannerHeight: clampedBannerHeight(availablePageHeight: pageHeight),
-      titleRowHeight: scaledTitleRowHeight,
-      addFeedButtonHeight: scaledAddFeedButtonHeight,
-      defaultButtonHeight: scaledDefaultButtonHeight,
-      sectionHeaderHeight: scaledSectionHeaderHeight
-    )
-  }
-
-  @ViewBuilder
-  private func drawerContent(contentWidth: CGFloat) -> some View {
-    // Grid mode pages; list mode and active search fall back to the flat
-    // continuous scroll (standardContent already handles clear backgrounds
-    // and the banner inset via its inSideDrawer-aware modifiers).
-    if layoutMode == .grid && !isSearchActive {
-      // The page indicator AND the edge-flip drop zones are ZStack siblings
-      // layered AFTER (never inside) any GlassEffectContainer. A non-glass
-      // view living inside a container's subtree gets sampled into its
-      // shared backdrop-rendering pass instead of drawing/hit-testing as its
-      // own opaque layer (see ConcentricLiquidGlassDrawer's own warning
-      // about this) — that silently turned the capsule into an invisible
-      // blur when the indicator lived inside FeedsLaunchpadPager's overlay.
-      // Keeping both a true sibling here, and reporting the page count out
-      // via `onPageCountChange` instead of re-deriving it, avoids the bug
-      // without giving either view a glass treatment of its own.
-      ZStack(alignment: .trailing) {
-        // `drawerLaunchpad` is intentionally NOT wrapped in a
-        // GlassEffectContainer here. It previously was — one container
-        // spanning the whole paged `ScrollView` — which composited every
-        // glass-tagged view across every page LazyVStack keeps mounted
-        // (including off-screen ones) in a single hoisted render pass that
-        // the pager's own `.clipped()` couldn't reach. That let a
-        // scrolled-away page's glass surface (most visibly the selected-
-        // feed cell) leak through as a floating ghost card + blur on
-        // whichever page was actually on screen (Task 4's originally
-        // reported artifact; root-caused and A/B-confirmed during Task 5:
-        // identical with a per-page-scoped container too, gone entirely
-        // once no container spans the scroll). See `launchpadSlotView`'s
-        // `.titleRow` case for the one glass group that still gets its own
-        // small, slot-scoped container (the header circles benefit from
-        // GlassEffectContainer's shape-blending since they sit close
-        // together) — the default button and the selected-feed cell are
-        // each the only glass shape on their own page and render correctly
-        // standalone.
-        drawerLaunchpad(contentWidth: contentWidth)
-
-        VStack(spacing: 0) {
-          launchpadEdgeZone(delta: -1)
-          Spacer(minLength: 0)
-          launchpadEdgeZone(delta: 1)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-        FeedsLaunchpadPageIndicator(pageCount: launchpadPageCount, currentPage: $launchpadPage)
-          .padding(.trailing, DesignTokens.Spacing.sm)
-      }
-      .onChange(of: isDrawerOpen) { _, open in
-        // Defensive teardown: dropExited isn't guaranteed to fire when a
-        // drag session ends outside our control (claimed by another drop
-        // target, app backgrounded, drawer dismissed mid-dwell). `onDisappear`
-        // would be the obvious hook, but SideDrawer never structurally
-        // removes this content on close — the drawer only slides via
-        // `.offset(x:)` inside an unconditionally-rendered
-        // `ConcentricLiquidGlassDrawer`, so `onDisappear` never fires on a
-        // normal dismiss (only on identity-destroying events like an
-        // account switch or root rebuild). `isDrawerOpen` is the reliable
-        // signal instead: it flips the instant dismissal starts. Without
-        // this, a repeating dwell Task could keep flipping pages and firing
-        // haptics after the drawer is closed.
-        //
-        // This is also the cheapest available guard against a dwell Task
-        // that's mid-repeat when the APP backgrounds (rather than the
-        // drawer closing): there's no scenePhase/background observer in
-        // this file to hook directly, and adding one solely for this rare
-        // case would be new infrastructure out of this task's scope. In
-        // practice, backgrounding while dragging is caught transitively —
-        // returning from the background re-triggers SwiftUI's drag-session
-        // teardown (the drop session doesn't survive backgrounding), which
-        // fires `dropExited`/`performDrop` and cancels the coordinator via
-        // its own paths above. If that transitive path ever proves
-        // insufficient, add a direct `@Environment(\.scenePhase)` observer
-        // here calling `edgeFlipCoordinator.cancel()` on `.background`.
-        if !open {
-          edgeFlipCoordinator.cancel()
-        }
-      }
-      .onChange(of: launchpadPage) { _, newValue in
-        guard let newValue else { return }
-        UIAccessibility.post(
-          notification: .pageScrolled,
-          argument: "Page \(newValue + 1) of \(launchpadPageCount)"
-        )
-      }
-    } else {
-      standardContent(contentWidth: contentWidth)
-    }
-  }
-
-  @ViewBuilder
-  private func drawerLaunchpad(contentWidth: CGFloat) -> some View {
-    // No pre-measured height is passed in here on purpose: FeedsLaunchpadPager
-    // measures its own resolved viewport (a normal, safe-area-respecting
-    // descendant of the drawer's NavigationStack, which already excludes the
-    // stack's real toolbar chrome) and uses that single number for chunking,
-    // page framing, and paging snap alike. See FeedsLaunchpadPager's doc
-    // comment on `makePages`.
-    FeedsLaunchpadPager(
-      currentPage: $launchpadPage,
-      verticalPadding: launchpadVerticalPadding,
-      horizontalPadding: horizontalPadding,
-      makePages: { measuredHeight in
-        FeedsLaunchpadLayout.pages(
-          pinnedGridFeeds: Array(filteredPinnedFeeds.dropFirst()),
-          savedFeeds: filteredSavedFeeds,
-          includeAddFeedButton: isEditingFeeds,
-          metrics: launchpadMetrics(containerHeight: measuredHeight)
-        )
-      },
-      pageDropDelegate: { page in
-        guard let section = page.section else { return nil }
-        return FeedsLaunchpadPageDropDelegate(
-          section: section,
-          viewModel: viewModel,
-          draggedItem: $draggedFeedItem,
-          draggedItemCategory: $draggedItemCategory,
-          resetDragState: resetDragState
-        )
-      },
-      onPageCountChange: { launchpadPageCount = $0 },
-      onPageHeightChange: { launchpadPageHeight = $0 }
-    ) { slot in
-      launchpadSlotView(slot)
-    }
-    .frame(width: contentWidth)
-    .frame(maxHeight: .infinity)
-  }
-
-  /// Invisible drop strip along the drawer's top/bottom edge: while a feed is
-  /// being dragged, hovering here dwells and flips `launchpadPage` (repeating
-  /// while held), letting a launchpad-style drag reorder cross pages. Mounted
-  /// by the caller (`drawerContent`) as a ZStack sibling AFTER — never
-  /// inside — `GlassEffectContainer`, same as `FeedsLaunchpadPageIndicator`:
-  /// attaching this to `drawerLaunchpad`'s own view chain would put it
-  /// inside the container's subtree, where non-glass content silently gets
-  /// sampled into the shared glass backdrop instead of hit-testing/drawing
-  /// as its own opaque layer.
-  /// `Color.white.opacity(0.001)` rather than `.clear`: a fully-transparent
-  /// color intermittently drops out of hit-testing even with
-  /// `.contentShape` (same fix as `FeedsLaunchpadPageIndicator`'s tap
-  /// targets).
-  @ViewBuilder
-  private func launchpadEdgeZone(delta: Int) -> some View {
-    if isDragging {
-      Color.white.opacity(0.001)
-        .frame(height: 44)
-        .frame(maxWidth: .infinity)
-        .contentShape(Rectangle())
-        .onDrop(
-          of: [UTType.plainText.identifier],
-          delegate: FeedsLaunchpadEdgeFlipDelegate(
-            coordinator: edgeFlipCoordinator,
-            flip: { flipLaunchpadPage(by: delta) },
-            resetDragState: resetDragState
-          )
-        )
-    }
-  }
-
-  private func flipLaunchpadPage(by delta: Int) {
-    let current = launchpadPage ?? 0
-    let target = min(max(current + delta, 0), max(launchpadPageCount - 1, 0))
-    guard target != current else { return }
-    MotionManager.withSpringAnimation(for: appState.appSettings, duration: 0.35) {
-      launchpadPage = target
-    }
-    impact.impactOccurred(intensity: 0.8)
-  }
-
-  @ViewBuilder
-  private func launchpadSlotView(_ slot: FeedsLaunchpadSlot) -> some View {
-    switch slot {
-    case .banner:
-      // Same clamp `launchpadMetrics` used to chunk this page, fed the same
-      // measured page height (via `launchpadPageHeight`, reported by the
-      // pager's `onPageHeightChange`) — keeps the rendered banner in
-      // agreement with the height the chunker budgeted for it. On the very
-      // first frame (before the pager reports a measurement) this falls
-      // back to the unclamped `bannerHeight`, same one-frame settle already
-      // accepted for `launchpadPageCount`.
-      bannerHeaderView()
-        .frame(height: clampedBannerHeight(
-          availablePageHeight: launchpadPageHeight - launchpadVerticalPadding * 2
-        ))
-        .modifier(LaunchpadBannerClip())
-        .padding(.bottom, DesignTokens.Spacing.base)
-    case .titleRow:
-      // Scoped to just this slot's three glass circles (search, grid/list
-      // toggle, edit/done) — not the whole scrolling pager. A container
-      // spanning the entire paged ScrollView (the previous architecture)
-      // composited every glass-tagged view across every LazyVStack-mounted
-      // page in one hoisted render pass that the pager's own `.clipped()`
-      // couldn't reach, letting an off-screen page's glass surface (e.g.
-      // the selected-feed cell) surface as a floating ghost + blur on a
-      // different, currently-visible page (root-caused + A/B-confirmed
-      // during Task 5: identical artifact with a per-page-scoped container,
-      // gone once NO container spans the scroll at all). The header
-      // circles are the one glass group on this page that benefits from
-      // GlassEffectContainer's shape-blending when they sit close together;
-      // the default button and the selected-feed cell are each the only
-      // glass shape on their own page, so they don't need a container to
-      // render or blend correctly standalone.
-      Group {
-        if #available(iOS 26.0, *) {
-          GlassEffectContainer(spacing: 8) {
-            feedsTitleRow
-          }
-        } else {
-          feedsTitleRow
-        }
-      }
-      .padding(.vertical, DesignTokens.Spacing.lg)  // 15 — budget 92 total
-    case .addFeedButton:
-      addFeedButton()
-    case .defaultButton:
-      bigDefaultFeedButton
-    case .sectionHeader(let section, _):
-      sectionHeader(section == .pinned ? "Pinned" : "Saved")
-    case .feedRow(let section, let feeds):
-      launchpadRow(feeds: feeds, category: section.rawValue)
-    }
-  }
-
-  @ViewBuilder
-  private func launchpadRow(feeds: [String], category: String) -> some View {
-    HStack(alignment: .top, spacing: gridSpacing) {
-      ForEach(feeds, id: \.self) { feed in
-        if SystemFeedTypes.isTimelineFeed(feed) {
-          timelineFeedLink(feedURI: feed, category: category)
-        } else if let uri = try? ATProtocolURI(uriString: feed) {
-          feedLink(for: uri, feedURI: feed, category: category)
-        }
-      }
-      if feeds.count < columns {
-        Spacer(minLength: 0)
-      }
-    }
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .padding(.bottom, gridSpacing)
-  }
-  #endif
-  
   private func handleRefresh() async {
     await viewModel.fetchFeedGenerators()
     await viewModel.fetchListDetails()
@@ -1759,7 +1414,22 @@ struct FeedsStartPage: View {
   @ViewBuilder
   private func feedsContent() -> some View {
       VStack(spacing: 0) {
-          feedsTitleRow
+          // Scoped to just this row's three glass circles (search, grid/list
+          // toggle, edit/done) — a small container INSIDE scroll content,
+          // scrolling with it, is safe. A container SPANNING scrolling/clipped
+          // content from outside is not: the hoisted glass pass ignores clips
+          // and leaks off-screen glass layers as ghost cards (see the launchpad
+          // pager's history of this bug). Do not wrap anything larger than the
+          // title row.
+          Group {
+            if #available(iOS 26.0, *) {
+              GlassEffectContainer(spacing: 8) {
+                feedsTitleRow
+              }
+            } else {
+              feedsTitleRow
+            }
+          }
               .padding(.top, DesignTokens.Spacing.section)     // 24
               .padding(.bottom, DesignTokens.Spacing.section)  // 24
 
@@ -2078,18 +1748,6 @@ private struct DrawerBannerInset: ViewModifier {
         }
     }
 }
-
-#if os(iOS)
-private struct LaunchpadBannerClip: ViewModifier {
-  func body(content: Content) -> some View {
-    if #available(iOS 26.0, *) {
-      content.clipShape(ConcentricRectangle(corners: .concentric(minimum: 16), isUniform: true))
-    } else {
-      content.clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-    }
-  }
-}
-#endif
 
 private extension View {
     func configuredToolbar(
