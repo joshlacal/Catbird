@@ -66,7 +66,7 @@ import SwiftUI
     var body: some View {
       VStack(spacing: DesignTokens.Spacing.sm) {
         // Embed preview (if attached)
-        if supportsEmbeds, let embed = attachedEmbed {
+        if let embed = attachedEmbed {
           embedPreviewSection(embed)
         }
 
@@ -551,7 +551,7 @@ import SwiftUI
 
       // Capture values before resetting state to avoid race condition
       let messageText = text
-      let messageEmbed = supportsEmbeds ? attachedEmbed : nil
+      let messageEmbed = attachedEmbed
 
       // Reset state immediately for better UX
       text = ""
