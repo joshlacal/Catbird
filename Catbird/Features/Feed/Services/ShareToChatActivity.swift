@@ -232,6 +232,13 @@ import CatbirdMLSCore
       .onChange(of: searchText) { _, newValue in
         performSearch(newValue)
       }
+      .onDisappear {
+        // Covers dismissal paths that bypass the (disabled-during-creation) Cancel
+        // button, e.g. swiping the UIKit-presented sheet away by its grabber: the
+        // in-flight shareToNewConversation completion's `guard isCreatingConversation`
+        // then fails and skips the stale navigation.
+        isCreatingConversation = false
+      }
     }
 
     // MARK: - View Components
