@@ -403,6 +403,23 @@ struct ChatTabView: View {
   private func handleOnAppear() {
     resetUnifiedListForCurrentAccountIfNeeded()
 
+    // DEEP-LINK FIX: a share/notification can set the target BEFORE this view
+    // mounts, so the .onChange(of: targetConversationId) below never fires
+    // (onChange only observes transitions). Same pattern as
+    // MLSConversationListView's NOTIFICATION FIX.
+    if let pending = appState.navigationManager.targetConversationId {
+      if pending != selectedConvoId {
+        selectedConvoId = pending
+      }
+      appState.navigationManager.targetConversationId = nil
+    }
+    if let pendingMLS = appState.navigationManager.targetMLSConversationId {
+      if pendingMLS != selectedConvoId {
+        selectedConvoId = pendingMLS
+      }
+      appState.navigationManager.targetMLSConversationId = nil
+    }
+
     // Bluesky DMs
     Task {
       if appState.chatManager.acceptedConversations.isEmpty && !appState.chatManager.loadingConversations {
