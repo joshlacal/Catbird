@@ -515,7 +515,7 @@ import CatbirdMLSCore
     let avatarURL: String?
     let isSelected: Bool
     let showDivider: Bool
-    var groupParticipants: [MLSParticipantViewModel]? = nil
+    var groupParticipants: [MLSParticipantViewModel]?
     var isEnabled: Bool = true
     let action: () -> Void
 
