@@ -19,6 +19,8 @@ struct ConversationView: View {
   }
   @State private var unifiedDataSource: BlueskyConversationDataSource?
   @State private var isInitialized = false
+  @State private var attachedEmbed: MLSEmbedData?
+  @State private var pendingPostRef: ComAtprotoRepoStrongRef?
 
   private var chatNavigationPath: Binding<NavigationPath> {
     appState.navigationManager.pathBinding(for: 4)
@@ -50,12 +52,22 @@ struct ConversationView: View {
     )
   }
 
+  @MainActor
+  private func consumePendingShareIfNeeded() {
+    guard let pending = appState.navigationManager.pendingChatShare,
+          pending.convoId == convoId else { return }
+    attachedEmbed = pending.previewEmbed
+    pendingPostRef = pending.postRef
+    appState.navigationManager.pendingChatShare = nil
+  }
+
   var body: some View {
       Group {
         chatContent
           .task {
             // Initialize data source before loading
             ensureUnifiedDataSource()
+            consumePendingShareIfNeeded()
             if let dataSource = unifiedDataSource {
               await dataSource.loadMessages()
             }
@@ -83,6 +95,7 @@ struct ConversationView: View {
     }
     .onAppear {
       ensureUnifiedDataSource()
+      consumePendingShareIfNeeded()
       Task {
         await chatManager.markConversationAsRead(convoId: convoId)
       }
@@ -179,10 +192,17 @@ struct ConversationView: View {
         get: { dataSource.draftText },
         set: { dataSource.draftText = $0 }
       ),
-        attachedEmbed: .constant(nil),
+        attachedEmbed: $attachedEmbed,
         conversationId: convoId,
-        onSend: { text, _ in
-        Task { await dataSource.sendMessage(text: text) }
+        onSend: { text, stagedEmbed in
+          let embedUnion: ChatBskyConvoDefs.MessageInputEmbedUnion?
+          if stagedEmbed != nil, let postRef = pendingPostRef {
+            embedUnion = .appBskyEmbedRecord(AppBskyEmbedRecord(record: postRef))
+          } else {
+            embedUnion = nil
+          }
+          pendingPostRef = nil
+          Task { await dataSource.sendMessage(text: text, embed: embedUnion) }
         },
         supportsEmbeds: false,
         showsAttachmentMenu: false,

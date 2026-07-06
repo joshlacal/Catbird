@@ -64,9 +64,14 @@ final class BlueskyConversationDataSource: UnifiedChatDataSource {
   }
 
   func sendMessage(text: String) async {
-    guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+    await sendMessage(text: text, embed: nil)
+  }
 
-    let success = await chatManager.sendMessage(convoId: convoID, text: text, embed: nil)
+  func sendMessage(text: String, embed: ChatBskyConvoDefs.MessageInputEmbedUnion?) async {
+    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty || embed != nil else { return }
+
+    let success = await chatManager.sendMessage(convoId: convoID, text: text, embed: embed)
     if success {
       draftText = ""
       // Refresh to get the sent message
