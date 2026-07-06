@@ -28,6 +28,10 @@ import SwiftUI
     // Target MLS conversation for deep-link navigation (Chat tab specific)
     var targetMLSConversationId: String?
 
+    // Post staged for share-to-chat; consumed once by ConversationView
+    // when the matching conversation opens.
+    var pendingChatShare: PendingChatShare?
+
     // Set the current tab index - called when the user switches tabs
     func updateCurrentTab(_ index: Int) {
         currentTabIndex = index
