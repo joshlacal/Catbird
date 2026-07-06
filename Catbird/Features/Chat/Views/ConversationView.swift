@@ -195,6 +195,9 @@ struct ConversationView: View {
         attachedEmbed: $attachedEmbed,
         conversationId: convoId,
         onSend: { text, stagedEmbed in
+          // Relies on supportsEmbeds: false below, so the only possible stagedEmbed is
+          // the consumed pending share. If attachments are ever enabled for Bluesky
+          // chat, this mapping must distinguish embed provenance instead of assuming it.
           let embedUnion: ChatBskyConvoDefs.MessageInputEmbedUnion?
           if stagedEmbed != nil, let postRef = pendingPostRef {
             embedUnion = .appBskyEmbedRecord(AppBskyEmbedRecord(record: postRef))

@@ -180,7 +180,6 @@ import CatbirdMLSCore
     let onDismiss: () -> Void
 
     @State private var searchText = ""
-    @State private var isSending = false
     @State private var isSearching = false
     @State private var searchResults: [AppBskyActorDefs.ProfileViewBasic] = []
     @State private var keyboardHeight: CGFloat = 0
@@ -215,7 +214,7 @@ import CatbirdMLSCore
             Button("Cancel", systemImage: "xmark") {
               onDismiss()
             }
-            .disabled(isSending)
+            .disabled(isCreatingConversation)
           }
         }
         .animation(.smooth(duration: 0.2), value: searchText)
@@ -443,6 +442,10 @@ import CatbirdMLSCore
         let convoId = await appState.chatManager.startConversationWith(
           userDID: profile.did.didString())
         await MainActor.run {
+          // Cancel is disabled while isCreatingConversation is true, but guard anyway:
+          // if the sheet was dismissed some other way and this got reset, a stale
+          // completion here must not force navigation into a conversation.
+          guard isCreatingConversation else { return }
           isCreatingConversation = false
           guard let convoId else {
             logger.error("Share-to-chat: failed to start conversation")
