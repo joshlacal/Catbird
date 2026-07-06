@@ -269,6 +269,19 @@ import CatbirdMLSCore
     private var recipientsList: some View {
       ScrollView {
         LazyVStack(spacing: 0) {
+          if searchText.isEmpty && !recentConversations.isEmpty {
+            sectionHeader("Recent")
+            ScrollView(.horizontal, showsIndicators: false) {
+              HStack(spacing: 16) {
+                ForEach(recentConversations) { conversation in
+                  recentChip(conversation)
+                }
+              }
+              .padding(.horizontal)
+              .padding(.bottom, 12)
+            }
+          }
+
           // Search results
           if !searchText.isEmpty && !searchResults.isEmpty {
             ForEach(searchResults, id: \.did) { profile in
@@ -368,6 +381,48 @@ import CatbirdMLSCore
       appState.chatManager.acceptedConversations.filter {
         $0.matchesShareSearch(searchText, currentUserDID: appState.userDID)
       }
+    }
+
+    private var recentConversations: [ChatBskyConvoDefs.ConvoView] {
+      Array(appState.chatManager.acceptedConversations.prefix(8))
+    }
+
+    @ViewBuilder
+    private func recentChip(_ conversation: ChatBskyConvoDefs.ConvoView) -> some View {
+      let userDID = appState.userDID
+      Button {
+        shareToConversation(conversation)
+      } label: {
+        VStack(spacing: 6) {
+          if conversation.isGroupConversation {
+            MLSGroupAvatarView(
+              participants: conversation
+                .displayMembersExcludingCurrentUser(currentUserDID: userDID)
+                .map { member in
+                  MLSParticipantViewModel(
+                    id: member.did.didString(),
+                    handle: member.handle.description,
+                    displayName: member.displayName,
+                    avatarURL: member.finalAvatarURL()
+                  )
+                },
+              size: 56
+            )
+          } else {
+            ChatProfileAvatarView(
+              profile: conversation.directDisplayMember(currentUserDID: userDID),
+              size: 56
+            )
+          }
+          Text(conversation.displayTitle(currentUserDID: userDID))
+            .font(.caption2)
+            .lineLimit(1)
+            .frame(width: 64)
+        }
+      }
+      .buttonStyle(.plain)
+      .disabled(conversation.isLockedForSending)
+      .opacity(conversation.isLockedForSending ? 0.5 : 1.0)
     }
 
     private func shareToConversation(_ conversation: ChatBskyConvoDefs.ConvoView) {
