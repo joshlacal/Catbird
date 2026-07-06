@@ -180,55 +180,14 @@ import CatbirdMLSCore
     let onDismiss: () -> Void
 
     @State private var searchText = ""
-    @State private var messageText = ""
-    @State private var selectedRecipient: RecipientSelection? = nil
     @State private var isSending = false
     @State private var isSearching = false
     @State private var searchResults: [AppBskyActorDefs.ProfileViewBasic] = []
-    @State private var showingPostPreview = false
     @State private var keyboardHeight: CGFloat = 0
-    @FocusState private var isMessageFieldFocused: Bool
+    @State private var isCreatingConversation = false
     @Environment(\.colorScheme) private var colorScheme
 
     private let logger = Logger(subsystem: "blue.catbird", category: "ShareToChat")
-
-    enum RecipientSelection: Equatable {
-      case conversation(ChatBskyConvoDefs.ConvoView)
-      case profile(AppBskyActorDefs.ProfileViewBasic)
-
-      var displayName: String {
-        switch self {
-        case .conversation(let convo):
-          if let member = convo.members.first {
-            return member.displayName ?? "@\(member.handle)"
-          }
-          return "Unknown"
-        case .profile(let profile):
-          return profile.displayName ?? "@\(profile.handle)"
-        }
-      }
-
-      var handle: String {
-        switch self {
-        case .conversation(let convo):
-          if let member = convo.members.first {
-            return "@\(member.handle)"
-          }
-          return ""
-        case .profile(let profile):
-          return "@\(profile.handle)"
-        }
-      }
-
-      var avatarURL: String? {
-        switch self {
-        case .conversation(let convo):
-          return convo.members.first?.avatar?.uriString()
-        case .profile(let profile):
-          return profile.avatar?.uriString()
-        }
-      }
-    }
 
     var body: some View {
       NavigationStack {
@@ -242,22 +201,6 @@ import CatbirdMLSCore
             searchBar
               .padding(.horizontal)
               .padding(.top, 8)
-
-            // Selected recipient chip
-            if let recipient = selectedRecipient {
-              selectedRecipientView(recipient)
-                .transition(
-                  .asymmetric(
-                    insertion: .push(from: .bottom).combined(with: .opacity),
-                    removal: .push(from: .top).combined(with: .opacity)
-                  ))
-            }
-
-            // Message composer
-            if selectedRecipient != nil {
-              messageComposer
-                .transition(.move(edge: .bottom).combined(with: .opacity))
-            }
 
             // Recipients list
             recipientsList
@@ -274,26 +217,21 @@ import CatbirdMLSCore
             }
             .disabled(isSending)
           }
-
-          ToolbarItem(placement: .primaryAction) {
-            if selectedRecipient != nil {
-              sendButton
+        }
+        .animation(.smooth(duration: 0.2), value: searchText)
+        .overlay {
+          if isCreatingConversation {
+            ZStack {
+              Color.black.opacity(0.2).ignoresSafeArea()
+              ProgressView("Starting chat…")
+                .padding(20)
+                .background(.regularMaterial, in: .rect(cornerRadius: 16))
             }
           }
         }
-        .sheet(isPresented: $showingPostPreview) {
-          PostPreviewSheet(post: post)
-            .presentationDetents([.medium])
-            .presentationDragIndicator(.visible)
-        }
-        .animation(.smooth(duration: 0.3), value: selectedRecipient)
-        .animation(.smooth(duration: 0.2), value: searchText)
       }
       .onChange(of: searchText) { _, newValue in
         performSearch(newValue)
-      }
-      .onAppear {
-        isMessageFieldFocused = false
       }
     }
 
@@ -328,126 +266,6 @@ import CatbirdMLSCore
       .background(.regularMaterial, in: .rect(cornerRadius: 16))
     }
 
-    private func selectedRecipientView(_ recipient: RecipientSelection) -> some View {
-      HStack(spacing: 12) {
-        // Avatar
-        Group {
-          if let avatarURL = recipient.avatarURL,
-            let url = URL(string: avatarURL)
-          {
-            AsyncImage(url: url) { image in
-              image
-                .resizable()
-                .scaledToFill()
-            } placeholder: {
-              Circle()
-                .fill(.quaternary)
-            }
-          } else {
-            Circle()
-              .fill(.quaternary)
-              .overlay {
-                Text(recipient.displayName.prefix(1))
-                  .font(.callout.bold())
-                  .foregroundStyle(.secondary)
-              }
-          }
-        }
-        .frame(width: 32, height: 32)
-        .clipShape(Circle())
-
-        VStack(alignment: .leading, spacing: 2) {
-          Text(recipient.displayName)
-            .font(.subheadline.weight(.medium))
-          Text(recipient.handle)
-            .font(.caption)
-            .foregroundStyle(.secondary)
-        }
-
-        Spacer()
-
-        Button {
-          withAnimation(.smooth(duration: 0.2)) {
-            selectedRecipient = nil
-            isMessageFieldFocused = false
-          }
-        } label: {
-          Image(systemName: "xmark.circle.fill")
-            .foregroundStyle(.secondary)
-            .imageScale(.medium)
-        }
-      }
-      .padding(.horizontal, 16)
-      .padding(.vertical, 12)
-      .background(.ultraThinMaterial, in: .rect(cornerRadius: 12))
-      .padding(.horizontal)
-      .padding(.vertical, 8)
-    }
-
-    private var messageComposer: some View {
-      VStack(alignment: .leading, spacing: 8) {
-        HStack {
-          Text("Message")
-            .font(.footnote.weight(.medium))
-            .foregroundStyle(.secondary)
-
-          Spacer()
-
-          // Post preview button
-          Button {
-            showingPostPreview = true
-          } label: {
-            Label("Preview", systemImage: "eye")
-              .font(.caption.weight(.medium))
-              .foregroundStyle(.accent)
-          }
-
-          Text("\(messageText.count)/1000")
-            .font(.caption2)
-            .foregroundStyle(
-              messageText.count > 900
-                ? .red
-                : Color.dynamicTertiaryBackground(appState.themeManager, currentScheme: colorScheme)
-            )
-            .contentTransition(.numericText())
-        }
-
-        TextEditor(text: $messageText)
-          .focused($isMessageFieldFocused)
-          .scrollContentBackground(.hidden)
-          .padding(.horizontal, 12)
-          .padding(.vertical, 8)
-          .background(.regularMaterial, in: .rect(cornerRadius: 12))
-          .frame(minHeight: 80, maxHeight: 120)
-          .onChange(of: messageText) { _, newValue in
-            if newValue.count > 1000 {
-              messageText = String(newValue.prefix(1000))
-            }
-          }
-
-        Text("The post will be attached automatically")
-          .font(.caption2)
-          .foregroundStyle(.tertiary)
-      }
-      .padding(.horizontal)
-      .padding(.bottom, 8)
-    }
-
-    private var sendButton: some View {
-      Button {
-        sendMessage()
-      } label: {
-        if isSending {
-          ProgressView()
-            .controlSize(.small)
-        } else {
-          Text("Send")
-            .fontWeight(.semibold)
-        }
-      }
-      .disabled(isSending)
-    }
-
     private var recipientsList: some View {
       ScrollView {
         LazyVStack(spacing: 0) {
@@ -461,7 +279,7 @@ import CatbirdMLSCore
                 isSelected: false,
                 showDivider: profile.did != searchResults.last?.did
               ) {
-                selectProfile(profile)
+                shareToNewConversation(with: profile)
               }
             }
           }
@@ -473,19 +291,7 @@ import CatbirdMLSCore
             }
 
             ForEach(filteredConversations) { conversation in
-              if let otherMember = conversation.members.first(where: {
-                $0.did.didString() != appState.userDID
-              }) {
-                ModernRecipientRow(
-                  title: otherMember.displayName ?? otherMember.handle.description,
-                  subtitle: "@\(otherMember.handle)",
-                  avatarURL: otherMember.avatar?.uriString(),
-                  isSelected: false,
-                  showDivider: conversation.id != filteredConversations.last?.id
-                ) {
-                  selectConversation(conversation)
-                }
-              }
+              conversationRow(conversation)
             }
           }
 
@@ -524,46 +330,78 @@ import CatbirdMLSCore
       .padding(.vertical, 60)
     }
 
+    @ViewBuilder
+    private func conversationRow(_ conversation: ChatBskyConvoDefs.ConvoView) -> some View {
+      let userDID = appState.userDID
+      let isLocked = conversation.isLockedForSending
+      let participants: [MLSParticipantViewModel]? =
+        conversation.isGroupConversation
+        ? conversation.displayMembersExcludingCurrentUser(currentUserDID: userDID).map { member in
+            MLSParticipantViewModel(
+              id: member.did.didString(),
+              handle: member.handle.description,
+              displayName: member.displayName,
+              avatarURL: member.finalAvatarURL()
+            )
+          }
+        : nil
+
+      ModernRecipientRow(
+        title: conversation.displayTitle(currentUserDID: userDID),
+        subtitle: isLocked
+          ? "Locked"
+          : (conversation.displaySubtitle(currentUserDID: userDID) ?? ""),
+        avatarURL: conversation.directDisplayMember(currentUserDID: userDID)?
+          .avatar?.uriString(),
+        isSelected: false,
+        showDivider: conversation.id != filteredConversations.last?.id,
+        groupParticipants: participants,
+        isEnabled: !isLocked
+      ) {
+        shareToConversation(conversation)
+      }
+    }
+
     // MARK: - Helper Methods
 
     private var filteredConversations: [ChatBskyConvoDefs.ConvoView] {
-      let conversations = appState.chatManager.acceptedConversations
-
-      if searchText.isEmpty {
-        return conversations
+      appState.chatManager.acceptedConversations.filter {
+        $0.matchesShareSearch(searchText, currentUserDID: appState.userDID)
       }
+    }
 
-      return conversations.filter { conversation in
-        guard
-          let otherMember = conversation.members.first(where: {
-            $0.did.didString() != appState.userDID
-          })
-        else {
-          return false
+    private func shareToConversation(_ conversation: ChatBskyConvoDefs.ConvoView) {
+      appState.navigationManager.pendingChatShare = PendingChatShare(
+        convoId: conversation.id,
+        postRef: ComAtprotoRepoStrongRef(uri: post.uri, cid: post.cid),
+        previewEmbed: PendingChatShare.makePreviewEmbed(from: post)
+      )
+      onDismiss()
+      appState.navigationManager.navigate(to: .conversation(conversation.id), in: 4)
+      appState.navigationManager.tabSelection?(4)
+    }
+
+    private func shareToNewConversation(with profile: AppBskyActorDefs.ProfileViewBasic) {
+      guard !isCreatingConversation else { return }
+      isCreatingConversation = true
+      Task {
+        let convoId = await appState.chatManager.startConversationWith(
+          userDID: profile.did.didString())
+        await MainActor.run {
+          isCreatingConversation = false
+          guard let convoId else {
+            logger.error("Share-to-chat: failed to start conversation")
+            return
+          }
+          appState.navigationManager.pendingChatShare = PendingChatShare(
+            convoId: convoId,
+            postRef: ComAtprotoRepoStrongRef(uri: post.uri, cid: post.cid),
+            previewEmbed: PendingChatShare.makePreviewEmbed(from: post)
+          )
+          onDismiss()
+          appState.navigationManager.navigate(to: .conversation(convoId), in: 4)
+          appState.navigationManager.tabSelection?(4)
         }
-
-        let displayName = otherMember.displayName ?? ""
-        let handle = otherMember.handle.description
-
-        return displayName.localizedCaseInsensitiveContains(searchText)
-          || handle.localizedCaseInsensitiveContains(searchText)
-      }
-    }
-
-    private func selectProfile(_ profile: AppBskyActorDefs.ProfileViewBasic) {
-      withAnimation(.smooth(duration: 0.3)) {
-        selectedRecipient = .profile(profile)
-        searchText = ""
-        searchResults = []
-        isMessageFieldFocused = true
-      }
-    }
-
-    private func selectConversation(_ conversation: ChatBskyConvoDefs.ConvoView) {
-      withAnimation(.smooth(duration: 0.3)) {
-        selectedRecipient = .conversation(conversation)
-        searchText = ""
-        isMessageFieldFocused = true
       }
     }
 
@@ -611,78 +449,6 @@ import CatbirdMLSCore
       }
     }
 
-    private func sendMessage() {
-      guard let recipient = selectedRecipient else { return }
-
-      isSending = true
-
-      switch recipient {
-      case .conversation(let conversation):
-        sendToConversation(conversation)
-      case .profile(let profile):
-        sendToNewConversation(with: profile)
-      }
-    }
-
-    private func sendToConversation(_ conversation: ChatBskyConvoDefs.ConvoView) {
-      Task {
-        await MainActor.run {
-          onDismiss()
-
-          // Navigate to conversation
-          appState.navigationManager.navigate(
-            to: .conversation(conversation.id),
-            in: 4
-          )
-          appState.navigationManager.tabSelection?(4)
-        }
-
-        // Send message in background
-        let strongRef = ComAtprotoRepoStrongRef(uri: post.uri, cid: post.cid)
-        let recordEmbed = AppBskyEmbedRecord(record: strongRef)
-        let embed = ChatBskyConvoDefs.MessageInputEmbedUnion.appBskyEmbedRecord(recordEmbed)
-
-        _ = await appState.chatManager.sendMessage(
-          convoId: conversation.id,
-          text: messageText,
-          embed: embed
-        )
-      }
-    }
-
-    private func sendToNewConversation(with profile: AppBskyActorDefs.ProfileViewBasic) {
-      Task {
-        if let convoId = await appState.chatManager.startConversationWith(
-          userDID: profile.did.didString())
-        {
-          await MainActor.run {
-            onDismiss()
-
-            // Navigate to conversation
-            appState.navigationManager.navigate(
-              to: .conversation(convoId),
-              in: 4
-            )
-            appState.navigationManager.tabSelection?(4)
-          }
-
-          // Send message in background
-          let strongRef = ComAtprotoRepoStrongRef(uri: post.uri, cid: post.cid)
-          let recordEmbed = AppBskyEmbedRecord(record: strongRef)
-          let embed = ChatBskyConvoDefs.MessageInputEmbedUnion.appBskyEmbedRecord(recordEmbed)
-
-          _ = await appState.chatManager.sendMessage(
-            convoId: convoId,
-            text: messageText,
-            embed: embed
-          )
-        } else {
-          await MainActor.run {
-            isSending = false
-          }
-        }
-      }
-    }
   }
 
   // MARK: - Modern Recipient Row
@@ -694,6 +460,8 @@ import CatbirdMLSCore
     let avatarURL: String?
     let isSelected: Bool
     let showDivider: Bool
+    var groupParticipants: [MLSParticipantViewModel]? = nil
+    var isEnabled: Bool = true
     let action: () -> Void
 
     @State private var isPressed = false
@@ -703,7 +471,9 @@ import CatbirdMLSCore
         HStack(spacing: 14) {
           // Avatar
           Group {
-            if let avatarURL = avatarURL,
+            if let groupParticipants, !groupParticipants.isEmpty {
+              MLSGroupAvatarView(participants: groupParticipants, size: 48)
+            } else if let avatarURL = avatarURL,
               let url = URL(string: avatarURL)
             {
               AsyncImage(url: url) { image in
@@ -714,6 +484,8 @@ import CatbirdMLSCore
                 Circle()
                   .fill(.quaternary)
               }
+              .frame(width: 48, height: 48)
+              .clipShape(Circle())
             } else {
               Circle()
                 .fill(.quaternary)
@@ -722,10 +494,10 @@ import CatbirdMLSCore
                     .font(.headline)
                     .foregroundStyle(.secondary)
                 }
+                .frame(width: 48, height: 48)
             }
           }
           .frame(width: 48, height: 48)
-          .clipShape(Circle())
 
           VStack(alignment: .leading, spacing: 4) {
             Text(title)
@@ -754,6 +526,8 @@ import CatbirdMLSCore
         .background(isPressed ? Color.secondary.opacity(0.1) : Color.clear)
       }
       .buttonStyle(.plain)
+      .disabled(!isEnabled)
+      .opacity(isEnabled ? 1.0 : 0.5)
       .scaleEffect(isPressed ? 0.98 : 1.0)
       .onLongPressGesture(minimumDuration: 0, maximumDistance: .infinity) { pressing in
         withAnimation(.easeInOut(duration: 0.1)) {
