@@ -22,19 +22,6 @@ struct NotificationWidgetData: Codable {
   let lastUpdated: Date
 }
 
-/// Payload used for generating local chat notifications when background polling detects new messages
-struct ChatNotificationPayload {
-  let messageID: String
-  let conversationID: String
-  /// DID of the account the message was delivered to, so a tap can switch to it first
-  let recipientDid: String
-  let senderDisplayName: String
-  let senderHandle: String
-  let conversationTitle: String
-  let messagePreview: String
-  let unreadCount: Int
-}
-
 /// Manages push notifications registration and handling for the Catbird app
 @Observable
 final class NotificationManager: NSObject {
@@ -1066,67 +1053,6 @@ final class NotificationManager: NSObject {
       )
 
       notificationLogger.info("Reset unread notification count after marking as seen")
-    }
-  }
-
-  // MARK: - Chat Notifications
-
-  /// Schedule a local notification for a new chat message
-  @MainActor
-  func scheduleChatNotification(_ payload: ChatNotificationPayload) async {
-    // Check if chat notifications are enabled
-    guard chatNotificationsEnabled else {
-      notificationLogger.debug(
-        "Chat notifications disabled, skipping notification for message \(payload.messageID)")
-      return
-    }
-
-    // Check if we have permission to send notifications
-    let center = UNUserNotificationCenter.current()
-    let settings = await center.notificationSettings()
-
-    switch settings.authorizationStatus {
-    case .authorized, .provisional, .ephemeral:
-      break
-    default:
-      notificationLogger.warning("No permission to send chat notifications")
-      return
-    }
-
-    // Create notification content
-    let content = UNMutableNotificationContent()
-    content.title = payload.conversationTitle
-    content.body = "\(payload.senderDisplayName): \(payload.messagePreview)"
-    content.sound = .default
-    content.badge = NSNumber(value: payload.unreadCount)
-
-    // Add custom data for handling tap
-    content.userInfo = [
-      "type": "chat",
-      "conversationID": payload.conversationID,
-      "recipientDid": payload.recipientDid,
-      "messageID": payload.messageID,
-      "senderHandle": payload.senderHandle,
-    ]
-
-    // Create unique identifier to prevent duplicates
-    let identifier = "chat-\(payload.conversationID)-\(payload.messageID)"
-
-    // Create request with immediate trigger
-    let request = UNNotificationRequest(
-      identifier: identifier,
-      content: content,
-      trigger: nil  // Immediate delivery
-    )
-
-    do {
-      try await center.add(request)
-      notificationLogger.info(
-        "Scheduled chat notification for message \(payload.messageID) in conversation \(payload.conversationID)"
-      )
-    } catch {
-      notificationLogger.error(
-        "Failed to schedule chat notification: \(error.localizedDescription)")
     }
   }
 
