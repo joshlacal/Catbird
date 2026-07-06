@@ -109,6 +109,24 @@ extension ChatBskyConvoDefs.ConvoView {
 
     return "@\(member.handle.description)"
   }
+
+  /// Share-picker search: matches the group name and ALL non-self member
+  /// names/handles (the legacy picker only matched the first member).
+  func matchesShareSearch(_ query: String, currentUserDID: String) -> Bool {
+    let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return true }
+
+    if displayTitle(currentUserDID: currentUserDID)
+      .localizedCaseInsensitiveContains(trimmed) {
+      return true
+    }
+
+    return displayMembersExcludingCurrentUser(currentUserDID: currentUserDID)
+      .contains { member in
+        member.chatDisplayName.localizedCaseInsensitiveContains(trimmed)
+          || member.handle.description.localizedCaseInsensitiveContains(trimmed)
+      }
+  }
 }
 
 extension ChatBskyActorDefs.ProfileViewBasic {
