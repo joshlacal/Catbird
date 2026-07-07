@@ -1858,6 +1858,9 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
               return ("Group update", sender)
             case .system:
               return nil
+            case .edit, .delete, .unknown:
+              // B1-TODO: apply edit/tombstone (a later milestone implements real behavior).
+              return nil
             }
           }
         }
@@ -2477,6 +2480,9 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
                     displayText = "Group update"
                   case .system:
                     displayText = payload.text ?? ""
+                  case .edit, .delete, .unknown:
+                    // B1-TODO: apply edit/tombstone (a later milestone implements real behavior).
+                    displayText = ""
                   }
 
                   capturedPlaintext = displayText
@@ -3128,6 +3134,13 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
       case .readReceipt, .deliveryAck, .recoveryRequest:
         // Read receipts, delivery acks, and recovery requests should not generate notifications
         notificationLogger.info("📖 [FG] Read receipt/delivery ack/recovery - suppressing notification")
+        completionHandler([])  // Suppress original notification
+        return
+
+      case .edit, .delete, .unknown:
+        // B1-TODO: apply edit/tombstone (a later milestone implements real behavior).
+        // Non-displayable control message — suppress like readReceipt/deliveryAck.
+        notificationLogger.info("✏️ [FG] Edit/delete/unknown payload - suppressing notification")
         completionHandler([])  // Suppress original notification
         return
 

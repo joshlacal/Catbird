@@ -145,6 +145,10 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
       case .system:
         // System messages (history boundary markers, etc.) are displayable
         return (payload.text ?? plaintext, false)
+      case .edit, .delete, .unknown:
+        // B1-TODO: apply edit/tombstone (a later milestone implements real behavior).
+        // Treat like other control messages — not displayed in the message list.
+        return (plaintext, true)
       }
     }
 

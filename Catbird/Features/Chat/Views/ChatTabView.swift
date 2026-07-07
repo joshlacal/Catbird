@@ -628,7 +628,9 @@ struct ChatTabView: View {
                 }
               case .reaction:
                 previews[convoID] = MLSLastMessagePreview(senderDID: message.senderID, text: "Reacted to a message")
-              case .readReceipt, .typing, .adminRoster, .adminAction, .deliveryAck, .recoveryRequest:
+              case .readReceipt, .typing, .adminRoster, .adminAction, .deliveryAck, .recoveryRequest,
+                   // B1-TODO: apply edit/tombstone (a later milestone implements real behavior).
+                   .edit, .delete, .unknown:
                 continue
               }
             } else {

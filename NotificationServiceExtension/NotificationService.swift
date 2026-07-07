@@ -1636,6 +1636,12 @@ class NotificationService: UNNotificationServiceExtension {
         logger.info("📖 [NSE] Read receipt/delivery ack/recovery - suppressing notification")
         return false
 
+      case .edit, .delete, .unknown:
+        // B1-TODO: apply edit/tombstone (a later milestone implements real behavior).
+        // Non-displayable control message — suppress like readReceipt/deliveryAck.
+        logger.info("✏️ [NSE] Edit/delete/unknown payload - suppressing notification")
+        return false
+
       case .typing:
         // Typing indicators are disabled - suppress notification
         logger.info(
