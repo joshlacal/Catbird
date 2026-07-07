@@ -1766,6 +1766,18 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
       }
     }
 
+    // Suppress banners for the chat conversation currently on screen —
+    // the user is already reading it; the thread updates live via polling.
+    if let type = userInfo["type"] as? String, type == "chat" || type == "chat_message",
+      let convoId = Self.chatConversationID(fromUserInfo: userInfo) {
+      let activeConvoId = appState?.chatManager.activeConversationId
+      if convoId == activeConvoId {
+        notificationLogger.info("Suppressing foreground chat banner for open conversation")
+        completionHandler([])
+        return
+      }
+    }
+
     // Show notification banner even when app is in foreground
     completionHandler([.banner, .sound])
   }

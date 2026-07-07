@@ -47,6 +47,11 @@ final class ChatManager: StateInvalidationSubscriber {
   private var conversationsPollingTask: Task<Void, Never>?
   private var messagePollingTasks: [String: Task<Void, Never>] = [:]
   private var isAppActive = true
+
+  /// The conversation currently on screen (set by ConversationView via
+  /// start/stopMessagePolling). Used to suppress foreground push banners
+  /// for the thread the user is already reading.
+  private(set) var activeConversationId: String?
   
   // Polling intervals (in seconds) - balanced for responsiveness and performance
   private let activeConversationPollInterval: TimeInterval = 5.0  // 5 seconds when viewing a conversation
@@ -1941,8 +1946,9 @@ final class ChatManager: StateInvalidationSubscriber {
   
   /// Starts polling for messages in a specific conversation
   func startMessagePolling(for convoId: String) {
+    activeConversationId = convoId
     stopMessagePolling(for: convoId)
-    
+
     messagePollingTasks[convoId] = Task { [weak self] in
       guard let self = self else { return }
       
@@ -1976,6 +1982,9 @@ final class ChatManager: StateInvalidationSubscriber {
     messagePollingTasks[convoId]?.cancel()
     messagePollingTasks[convoId] = nil
     messagePollBackoffs[convoId] = nil
+    if activeConversationId == convoId {
+      activeConversationId = nil
+    }
     logger.debug("Stopped message polling for conversation \(convoId)")
   }
   
