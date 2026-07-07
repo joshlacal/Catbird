@@ -1946,8 +1946,8 @@ final class ChatManager: StateInvalidationSubscriber {
   
   /// Starts polling for messages in a specific conversation
   func startMessagePolling(for convoId: String) {
-    activeConversationId = convoId
     stopMessagePolling(for: convoId)
+    activeConversationId = convoId
 
     messagePollingTasks[convoId] = Task { [weak self] in
       guard let self = self else { return }
