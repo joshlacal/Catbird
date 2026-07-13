@@ -62,7 +62,7 @@ struct ConcentricLiquidGlassDrawerTests {
     #expect(metrics.blurFraction(for: 0) == 0)
     #expect(metrics.blurFraction(for: 0.5) == 0.5)
     #expect(metrics.blurFraction(for: 1) == 1.0)
-    #expect(metrics.scrimOpacity(for: 1) == 0.1)
+    #expect(metrics.scrimOpacity(for: 1) == 0.18)
   }
 
   @Test("readability tuning lets system glass carry the surface")

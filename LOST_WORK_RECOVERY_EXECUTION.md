@@ -143,6 +143,15 @@ jj new
 - Post-fix full iOS suite: FAIL after launching normally, exiting 65 with `** TEST FAILED **`. `ConcentricLiquidGlassDrawerTests.backdropTuningScrubsBackdropBlurWithLightScrim()` expected scrim opacity `0.1` but received `0.18`; separately, `CatbirdUITests-Runner` could not load because Xcode beta's `AppIntentsTesting.framework` was built for iOS simulator 26.4 and requires an unavailable `AppIntentsTypeSupport.framework` on iOS 26.2. Full output: `/tmp/catbird-recovery-baseline-repair/ios-tests.log`; result bundle: `/Users/joshlacalamito/Library/Developer/Xcode/DerivedData/Catbird-gryvknwoutnhbsfxyasxwrraencn/Logs/Test/Test-Catbird-2026.07.13_16-55-20--0400.xcresult`.
 - Post-fix macOS build: PASS. Adding the shared macOS availability clause cleared the compiler error; the exact build exited 0 with `** BUILD SUCCEEDED **`. Full output: `/tmp/catbird-recovery-baseline-repair/macos-build.log`.
 
+#### Task 1B baseline test gate repair evidence
+
+- Historical production tuning: commit `29013f363fa7` intentionally raised `ConcentricDrawerBackdropMetrics.maximumScrimOpacity` from `0.1` to `0.18` for legibility, while `ConcentricLiquidGlassDrawerTests` retained the obsolete `0.1` assertion. The regression test now matches the shipped `0.18` full-progress scrim.
+- Pre-fix simulator loader failure: `AppIntentsSiriPathTests.swift` unconditionally imported `AppIntentsTesting`, forcing every simulator `CatbirdUITests` bundle to link its device-oriented support chain. On the pinned iOS 26.2 runtime, the runner failed before test discovery because `AppIntentsTypeSupport.framework` was unavailable. The import and physical iOS 27 test class are now excluded from simulator compilation while remaining intact for physical devices.
+- Xcode 27 beta launcher fallback: direct focused `xcodebuild test` and `test-without-building` commands repeated the known debugger-launch loop. The required `build-for-testing` fallback completed with `** TEST BUILD SUCCEEDED **` in `/tmp/catbird-task1b-build-for-testing.log`; focused execution then used XcodeBuildMCP with the same pinned simulator.
+- Post-fix drawer suite: PASS on iOS 26.2 simulator `40111BBE-8709-40D0-9016-A27448486A80`; all 6 discovered tests passed. Build log: `/Users/joshlacalamito/Library/Developer/XcodeBuildMCP/workspaces/Catbird-Petrel-abf01301fe68/logs/test_sim_2026-07-13T21-20-44-906Z_pid79600_c85c6898.log`.
+- Post-fix UI loader: PASS on the same simulator; `CatbirdUITestsLaunchTests/testLaunch` was discovered and passed, proving the test runner loads without the missing App Intents support framework. Build log: `/Users/joshlacalamito/Library/Developer/XcodeBuildMCP/workspaces/Catbird-Petrel-abf01301fe68/logs/test_sim_2026-07-13T21-23-01-128Z_pid79600_7a50d278.log`.
+- Post-fix unit target: PASS on the same simulator; XcodeBuildMCP reported 174 logical tests passed with 0 failures and 0 skips. Build log: `/Users/joshlacalamito/Library/Developer/XcodeBuildMCP/workspaces/Catbird-Petrel-abf01301fe68/logs/test_sim_2026-07-13T21-25-31-803Z_pid79600_4826619d.log`.
+
 ### Task 2: Recover Feed Icons and Unified Banner Geometry
 
 **Files:**

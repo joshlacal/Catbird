@@ -17,6 +17,10 @@
 //
 
 import XCTest
+
+#if !targetEnvironment(simulator)
+// AppIntentsTesting links support frameworks absent from older simulator runtimes;
+// keep this physical-device-only suite out of simulator test bundles.
 import AppIntentsTesting
 
 final class AppIntentsSiriPathTests: XCTestCase {
@@ -63,3 +67,4 @@ final class AppIntentsSiriPathTests: XCTestCase {
     // routing, not in the app — that's the Feedback case.
   }
 }
+#endif
