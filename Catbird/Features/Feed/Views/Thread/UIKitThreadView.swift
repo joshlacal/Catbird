@@ -2985,6 +2985,7 @@ struct ReplyView: View {
       VStack(alignment: .leading, spacing: 0) {
         // Show the top-level reply (depth 1)
         let layout = nestedLayout
+        let visibleReplies = visibleNestedReplies
         
         PostView(
           post: threadItemPost.post,
