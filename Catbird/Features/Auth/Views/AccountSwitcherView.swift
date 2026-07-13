@@ -531,7 +531,7 @@ struct AccountSwitcherView: View {
             // in Petrel's account list - it just needs a fresh OAuth session
             logger.debug("🔐 [SWITCH] Calling authentication.login(handle: \(handle)) for reauthentication")
             let authURL = try await appStateManager.authentication.login(handle: handle)
-            logger.info("✅ [SWITCH] Got OAuth URL for reauthentication: \(authURL.absoluteString)")
+            logger.info("✅ [SWITCH] Got OAuth URL for reauthentication")
 
             // Get the AppState if it exists
             guard let currentAppState = appStateManager.lifecycle.appState else {
@@ -650,7 +650,7 @@ struct AccountSwitcherView: View {
     do {
       // Get auth URL
       let authURL = try await appStateManager.authentication.addAccount(handle: cleanHandle)
-      logger.debug("Auth URL for new account: \(authURL.absoluteString)")
+      logger.debug("Auth URL generated for new account")
 
       // Open web authentication session with timeout
       do {
@@ -692,10 +692,10 @@ struct AccountSwitcherView: View {
         }
 
         logger.info("Authentication session completed successfully")
-        logger.debug("Callback URL: \(callbackURL.absoluteString)")
+        logger.debug("OAuth callback received")
 
         // Process callback
-        try await appStateManager.authentication.handleCallback(callbackURL)
+        try await appStateManager.authentication.handleGatewayCallback(callbackURL)
 
         // Success - close add account sheet
         isAddingAccount = false
@@ -703,6 +703,7 @@ struct AccountSwitcherView: View {
         // Refresh account list
         await loadAccounts()
       } catch _ as ASWebAuthenticationSessionError {
+        await appStateManager.authentication.cancelGatewayOAuthFlow()
         // User cancelled authentication
         logger.notice("Authentication was cancelled by user")
         authenticationCancelled = true
@@ -735,7 +736,7 @@ struct AccountSwitcherView: View {
   private func handleReauthentication(_ request: AppState.ReauthenticationRequest) async {
     logger.info("🔐 [REAUTH] Starting reauthentication for handle: \(request.handle)")
     logger.info("🔐 [REAUTH] DID: \(request.did)")
-    logger.info("🔐 [REAUTH] Auth URL: \(request.authURL.absoluteString)")
+    logger.info("🔐 [REAUTH] Auth URL is ready")
     logger.debug("🔐 [REAUTH] Auth URL scheme: \(request.authURL.scheme ?? "no scheme")")
     logger.debug("🔐 [REAUTH] Auth URL host: \(request.authURL.host ?? "no host")")
 
@@ -771,7 +772,7 @@ struct AccountSwitcherView: View {
               preferredBrowserSession: .shared,
               additionalHeaderFields: [:]
             )
-            self.logger.info("✅ [REAUTH] authenticate() returned with callback URL: \(result.absoluteString)")
+            self.logger.info("✅ [REAUTH] authenticate() returned an OAuth callback")
             return result
           } else {
             self.logger.info("🌐 [REAUTH] Using legacy authenticate API with callbackURLScheme")
@@ -782,7 +783,7 @@ struct AccountSwitcherView: View {
               callbackURLScheme: "catbird",
               preferredBrowserSession: .shared
             )
-            self.logger.info("✅ [REAUTH] authenticate() returned with callback URL: \(result.absoluteString)")
+            self.logger.info("✅ [REAUTH] authenticate() returned an OAuth callback")
             return result
           }
         }
@@ -808,13 +809,13 @@ struct AccountSwitcherView: View {
       }
 
       logger.info("✅ [REAUTH] Reauthentication session completed successfully")
-      logger.info("🔗 [REAUTH] Callback URL: \(callbackURL.absoluteString)")
+      logger.info("🔗 [REAUTH] OAuth callback received")
       logger.debug("🔗 [REAUTH] Callback scheme: \(callbackURL.scheme ?? "none")")
       logger.debug("🔗 [REAUTH] Callback host: \(callbackURL.host ?? "none")")
 
       // Process callback
       logger.info("🔄 [REAUTH] Processing callback with authManager.handleCallback()")
-      try await appStateManager.authentication.handleCallback(callbackURL)
+      try await appStateManager.authentication.handleGatewayCallback(callbackURL)
       logger.info("✅ [REAUTH] Callback processed successfully")
       
       // Clear any previous cancelled/error state since we succeeded
@@ -841,6 +842,7 @@ struct AccountSwitcherView: View {
       logger.debug("🔄 [REAUTH] Setting isLoading = false")
       isLoading = false
     } catch let error as ASWebAuthenticationSessionError {
+      await appStateManager.authentication.cancelGatewayOAuthFlow()
       // User cancelled reauthentication
       logger.notice("🚫 [REAUTH] Reauthentication was cancelled by user")
       logger.debug("🚫 [REAUTH] ASWebAuthenticationSessionError code: \(error.code.rawValue)")

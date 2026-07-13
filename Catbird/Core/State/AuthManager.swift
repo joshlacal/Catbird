@@ -124,6 +124,8 @@ enum AuthProgress: Equatable, Sendable {
 /// Handles all authentication-related operations with a clean state machine approach
 @Observable
 final class AuthenticationManager: AuthProgressDelegate {
+  static let gatewayURL = URL(string: "https://api.catbird.blue")!
+
   // MARK: - Properties
 
   private let logger = Logger(subsystem: "blue.catbird", category: "Authentication")
@@ -191,6 +193,12 @@ final class AuthenticationManager: AuthProgressDelegate {
     clientId: "https://catbird.blue/oauth-client-metadata.json",
     redirectUri: "https://catbird.blue/oauth/callback",
     scope: "atproto transition:generic transition:chat.bsky"
+  )
+
+  @ObservationIgnored
+  private let gatewayOAuthExchange = GatewayOAuthExchange(
+    gatewayURL: AuthenticationManager.gatewayURL,
+    callbackURL: URL(string: "https://catbird.blue/oauth/callback")!
   )
 
   // MARK: - Debounce Flag for Auth Expiration
@@ -410,7 +418,7 @@ final class AuthenticationManager: AuthProgressDelegate {
             oauthConfig: oauthCfg,
             namespace: "blue.catbird",
             authMode: .gateway,
-            gatewayURL: URL(string: "https://api.catbird.blue")!,
+            gatewayURL: AuthenticationManager.gatewayURL,
 //            gatewayURL: URL(string: "https://dev-api.catbird.blue")!,
             userAgent: "Catbird/1.0",
             bskyAppViewDID: appViewDID,
@@ -424,7 +432,7 @@ final class AuthenticationManager: AuthProgressDelegate {
           oauthConfig: oauthCfg,
           namespace: "blue.catbird",
           authMode: .gateway,
-          gatewayURL: URL(string: "https://api.catbird.blue")!,
+          gatewayURL: AuthenticationManager.gatewayURL,
           userAgent: "Catbird/1.0",
           bskyAppViewDID: appViewDID,
           bskyChatDID: chatDID,
@@ -715,7 +723,7 @@ final class AuthenticationManager: AuthProgressDelegate {
         oauthConfig: oauthConfig,
         namespace: "blue.catbird",
         authMode: .gateway,
-        gatewayURL: URL(string: "https://api.catbird.blue")!,
+        gatewayURL: AuthenticationManager.gatewayURL,
 //        gatewayURL: URL(string: "https://dev-api.catbird.blue")!,
         userAgent: "Catbird/1.0",
         bskyAppViewDID: customAppViewDID,
@@ -728,7 +736,7 @@ final class AuthenticationManager: AuthProgressDelegate {
           oauthConfig: oauthConfig,
           namespace: "blue.catbird",
           authMode: .gateway,
-          gatewayURL: URL(string: "https://api.catbird.blue")!,
+          gatewayURL: AuthenticationManager.gatewayURL,
           userAgent: "Catbird/1.0",
           bskyAppViewDID: customAppViewDID,
           bskyChatDID: customChatDID,
@@ -781,9 +789,10 @@ final class AuthenticationManager: AuthProgressDelegate {
             )
           }
 
-          logger.info("OAuth URL generated successfully: \(authURL.absoluteString)")
+          let boundAuthURL = try await gatewayOAuthExchange.prepareLogin(authURL)
+          logger.info("OAuth URL generated successfully")
           await self.updateState(.authenticating(progress: .openingBrowser))
-          return authURL
+          return boundAuthURL
         } catch {
           lastError = error
           self.logger.warning("OAuth flow attempt \(attempt) failed: \(error.localizedDescription)")
@@ -978,7 +987,7 @@ final class AuthenticationManager: AuthProgressDelegate {
   /// Handle the OAuth callback after web authentication with timeout support
   @MainActor
   func handleCallback(_ url: URL) async throws {
-    logger.info("🔗 [CALLBACK] Processing OAuth callback: \(url.absoluteString)")
+    logger.info("🔗 [CALLBACK] Processing OAuth callback")
     logger.debug("🔗 [CALLBACK] URL scheme: \(url.scheme ?? "none"), host: \(url.host ?? "none")")
     logger.debug("🔗 [CALLBACK] Current state: \(String(describing: self.state))")
     updateState(.authenticating(progress: .exchangingTokens))
@@ -1098,11 +1107,10 @@ final class AuthenticationManager: AuthProgressDelegate {
     }
   }
 
-  /// Handle OAuth callback from gateway BFF (session_id in URL fragment)
-  /// The gateway redirects to: https://catbird.blue/oauth/callback#session_id=<uuid>
+  /// Handle a gateway callback by atomically exchanging its one-time code.
   @MainActor
   func handleGatewayCallback(_ url: URL) async throws {
-    logger.info("🔗 [GATEWAY] Processing gateway callback: \(url.absoluteString)")
+    logger.info("🔗 [GATEWAY] Processing gateway callback")
     updateState(.authenticating(progress: .exchangingTokens))
 
     // Ensure client exists (cold start scenario)
@@ -1118,26 +1126,25 @@ final class AuthenticationManager: AuthProgressDelegate {
       }
     }
 
-    // Parse session_id from URL fragment
-    guard let fragment = url.fragment,
-      let sessionId = parseGatewaySessionId(from: fragment)
-    else {
-      logger.error("❌ [GATEWAY] Invalid callback URL - missing session_id in fragment")
-      let error = AuthError.invalidCallbackURL
-      updateState(.error(message: error.localizedDescription))
-      throw error
-    }
-
-    logger.debug("✅ [GATEWAY] Parsed session_id from fragment")
-
     do {
       updateState(.authenticating(progress: .creatingSession))
 
-      // Delegate to Petrel's gateway callback handler (which fetches /auth/session)
+      let sessionID = try await gatewayOAuthExchange.redeem(url)
+      var internalCallback = URLComponents()
+      internalCallback.scheme = "https"
+      internalCallback.host = "catbird.blue"
+      internalCallback.path = "/oauth/callback"
+      internalCallback.fragment = "session_id=\(sessionID)"
+      guard let sessionCallbackURL = internalCallback.url else {
+        throw AuthError.invalidCallbackURL
+      }
+
+      // Petrel consumes this in-memory URL to persist the exchanged gateway session.
+      // It is never emitted externally or logged.
       guard let activeClient = client else {
         throw AuthError.clientNotInitialized
       }
-      try await activeClient.handleOAuthCallback(url: url)
+      try await activeClient.handleOAuthCallback(url: sessionCallbackURL)
 
       updateState(.authenticating(progress: .finalizing))
 
@@ -1181,13 +1188,9 @@ final class AuthenticationManager: AuthProgressDelegate {
     }
   }
 
-  /// Parse session_id from URL fragment (e.g., "session_id=abc123&foo=bar")
-  private func parseGatewaySessionId(from fragment: String) -> String? {
-    let pairs = fragment.split(separator: "&").map { $0.split(separator: "=", maxSplits: 1) }
-    for pair in pairs where pair.count == 2 && pair[0] == "session_id" {
-      return String(pair[1])
-    }
-    return nil
+  @MainActor
+  func cancelGatewayOAuthFlow() async {
+    await gatewayOAuthExchange.cancelPendingLogin()
   }
 
   /// Logout the current user
@@ -1555,7 +1558,7 @@ final class AuthenticationManager: AuthProgressDelegate {
       oauthConfig: oauthConfig,
       namespace: "blue.catbird",
       authMode: .gateway,
-      gatewayURL: URL(string: "https://api.catbird.blue")!,
+      gatewayURL: AuthenticationManager.gatewayURL,
 //      gatewayURL: URL(string: "https://dev-api.catbird.blue")!,
       userAgent: "Catbird/1.0",
       bskyAppViewDID: customAppViewDID,
@@ -1567,7 +1570,7 @@ final class AuthenticationManager: AuthProgressDelegate {
         oauthConfig: oauthConfig,
         namespace: "blue.catbird",
         authMode: .gateway,
-        gatewayURL: URL(string: "https://api.catbird.blue")!,
+        gatewayURL: AuthenticationManager.gatewayURL,
         userAgent: "Catbird/1.0",
         bskyAppViewDID: customAppViewDID,
         bskyChatDID: customChatDID,
@@ -1871,10 +1874,11 @@ final class AuthenticationManager: AuthProgressDelegate {
       let authURL = try await withTimeout(timeout: networkTimeout) {
         try await client.startOAuthFlow(identifier: handle)
       }
-      self.logger.debug("OAuth URL generated for new account: \(authURL)")
+      let boundAuthURL = try await gatewayOAuthExchange.prepareLogin(authURL)
+      self.logger.debug("OAuth URL generated for new account")
 
       updateState(.authenticating(progress: .openingBrowser))
-      return authURL
+      return boundAuthURL
     } catch {
       let finalError: AuthError
       if error is CancellationError {
@@ -1891,6 +1895,16 @@ final class AuthenticationManager: AuthProgressDelegate {
       updateState(.error(message: "Failed to add account: \(finalError.localizedDescription)"))
       throw finalError
     }
+  }
+
+  /// Start gateway account creation with the same native nonce binding as login.
+  @MainActor
+  func startSignUp(pdsURL: URL) async throws -> URL {
+    guard let client else {
+      throw AuthError.clientNotInitialized
+    }
+    let authURL = try await client.startSignUpFlow(pdsURL: pdsURL)
+    return try await gatewayOAuthExchange.prepareLogin(authURL)
   }
 
   /// Get current active account info
