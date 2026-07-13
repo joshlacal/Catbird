@@ -136,6 +136,8 @@ struct GatewayOAuthExchangeTests {
   func invalidConfiguration() async throws {
     let invalidConfiguredCallbacks = [
       "http://catbird.blue/oauth/callback",
+      "https://evil.example/oauth/callback",
+      "https://catbird.blue.evil.example/oauth/callback",
       "https://user@catbird.blue/oauth/callback",
       "https://user:password@catbird.blue/oauth/callback",
       "https://catbird.blue/oauth/callback?next=%2F",

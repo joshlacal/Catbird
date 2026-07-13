@@ -92,7 +92,7 @@ actor GatewayOAuthLegacyCallback {
 
   private static func isValidConfiguredCallback(_ url: URL) -> Bool {
     url.scheme?.lowercased() == "https"
-      && url.host?.isEmpty == false
+      && url.host?.lowercased() == "catbird.blue"
       && url.user == nil
       && url.password == nil
       && url.query == nil
