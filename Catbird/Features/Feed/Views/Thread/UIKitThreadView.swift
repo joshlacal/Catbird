@@ -2949,17 +2949,47 @@ struct ReplyView: View {
   @Binding var path: NavigationPath
   var appState: AppState
 
+  private var visibleNestedReplies: [ReplyWrapper] {
+    Array(nestedReplies.prefix(max(0, maxDepth - 1)))
+  }
+
+  private var nestedLayout: ThreadReplyLayout {
+    ThreadReplyLayoutBuilder.build(
+      rootID: replyWrapper.id,
+      nestedItems: nestedReplies.map {
+        ThreadReplyLayoutInput(
+          id: $0.id,
+          parentID: $0.parentURI,
+          hasUnloadedReplies: $0.hasReplies
+        )
+      },
+      visibleLimit: maxDepth - 1
+    )
+  }
+
+  private func parentAuthor(
+    for reply: ReplyWrapper
+  ) -> AppBskyActorDefs.ProfileViewBasic? {
+    guard let parentURI = reply.parentURI else { return nil }
+
+    if parentURI == replyWrapper.id {
+      return replyWrapper.post?.author
+    }
+
+    return nestedReplies.first(where: { $0.id == parentURI })?.post?.author
+  }
+
   var body: some View {
     switch replyWrapper.threadItem.value {
     case .appBskyUnspeccedDefsThreadItemPost(let threadItemPost):
       VStack(alignment: .leading, spacing: 0) {
         // Show the top-level reply (depth 1)
-        let showLine = !nestedReplies.isEmpty
+        let layout = nestedLayout
         
         PostView(
           post: threadItemPost.post,
           grandparentAuthor: nil,
-          isParentPost: showLine,  // Show connecting line if there are nested replies
+          isParentPost: layout.connectsRootToFirst,
           isSelectable: false,
           path: $path,
           appState: appState,
@@ -2972,90 +3002,78 @@ struct ReplyView: View {
         .padding(.vertical, 3)
         .frame(maxWidth: 550, alignment: .leading)
         
-        // Show nested replies (depth 2+) in a chain
-        if !nestedReplies.isEmpty {
-          // Only the slice we'll actually consider rendering
-          let visible = Array(nestedReplies.prefix(maxDepth - 1))
-          
-          // Find the last element in `visible` that is actually renderable as a Post
-          let lastRenderableIndex: Int? = visible.lastIndex(where: {
-            if case .appBskyUnspeccedDefsThreadItemPost = $0.threadItem.value { return true }
-            return false
-          })
-          
-          ForEach(Array(visible.enumerated()), id: \.element.id) { idx, nestedWrapper in
-            switch nestedWrapper.threadItem.value {
+        // Show nested replies (depth 2+) using their actual parent relationships.
+        if !layout.items.isEmpty {
+          ForEach(layout.items) { item in
+            if let nestedWrapper = visibleNestedReplies.first(where: { $0.id == item.id }) {
+              switch nestedWrapper.threadItem.value {
               
-            case .appBskyUnspeccedDefsThreadItemPost(let nestedPost):
-              // "Renderable last" = last visible Post cell in the chain (ignoring placeholders)
-              let isLastRenderable = (idx == lastRenderableIndex)
-              // Draw the connecting line unless this is the last rendered post and it has no more replies
-              let showNestedLine = !(isLastRenderable && !nestedWrapper.hasReplies)
-              
-              PostView(
-                post: nestedPost.post,
-                grandparentAuthor: nil,
-                isParentPost: showNestedLine,
-                isSelectable: false,
-                path: $path,
-                appState: appState,
-                hasVisibleThreadContext: true
-              )
-              .contentShape(Rectangle())
-              .onTapGesture { path.append(NavigationDestination.post(nestedPost.post.uri)) }
-              .padding(.vertical, 3)
-              .frame(maxWidth: 550, alignment: .leading)
-              
-                let shouldShowContinue = isLastRenderable && nestedPost.post.replyCount ?? 0 > 0
-              
-              if shouldShowContinue {
-                Button(action: {
-                  // Jump into the last rendered post; the server will expand from here
-                  path.append(NavigationDestination.post(nestedPost.post.uri))
-                }) {
+              case .appBskyUnspeccedDefsThreadItemPost(let nestedPost):
+                PostView(
+                  post: nestedPost.post,
+                  grandparentAuthor: parentAuthor(for: nestedWrapper),
+                  isParentPost: item.connectsToNext,
+                  isSelectable: false,
+                  path: $path,
+                  appState: appState,
+                  hasVisibleThreadContext: true
+                )
+                .contentShape(Rectangle())
+                .onTapGesture { path.append(NavigationDestination.post(nestedPost.post.uri)) }
+                .padding(.vertical, 3)
+                .frame(maxWidth: 550, alignment: .leading)
+                
+                if item.hasAdditionalReplies {
+                  Button {
+                    // Jump into the last rendered post; the server will expand from here
+                    path.append(NavigationDestination.post(nestedPost.post.uri))
+                  } label: {
+                    HStack {
+                      Text("Continue thread").appFont(AppTextRole.subheadline)
+                      Image(systemName: "chevron.right").appFont(AppTextRole.subheadline)
+                    }
+                    .foregroundColor(.accentColor)
+                    .padding(.vertical, 8)
+                    .padding(.horizontal, 12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                  }
+                }
+                
+              case .appBskyUnspeccedDefsThreadItemNotFound:
+                PostNotFoundView(
+                  uri: nestedWrapper.threadItem.uri,
+                  reason: .notFound,
+                  path: $path
+                )
+                .applyAppStateEnvironment(appState)
+                
+                // Offer a way to jump into the missing leg of the chain
+                Button {
+                  path.append(NavigationDestination.post(nestedWrapper.uri))
+                } label: {
                   HStack {
                     Text("Continue thread").appFont(AppTextRole.subheadline)
                     Image(systemName: "chevron.right").appFont(AppTextRole.subheadline)
                   }
                   .foregroundColor(.accentColor)
-                  .padding(.vertical, 8)
-                  .padding(.horizontal, 12)
-                  .frame(maxWidth: .infinity, alignment: .leading)
-                  .contentShape(Rectangle())
+                  .padding(.vertical, 6)
                 }
+                
+              case .appBskyUnspeccedDefsThreadItemBlocked:
+                Text("Blocked reply")
+                  .appFont(AppTextRole.subheadline)
+                  .foregroundColor(.gray)
+                
+              case .appBskyUnspeccedDefsThreadItemNoUnauthenticated:
+                Text("Reply not available (authentication required)")
+                  .appFont(AppTextRole.subheadline)
+                  .foregroundColor(.gray)
+                
+              case .unexpected(let unexpected):
+                Text("Unexpected reply type: \(unexpected.textRepresentation)")
+                  .foregroundColor(.orange)
               }
-              
-            case .appBskyUnspeccedDefsThreadItemNotFound:
-              PostNotFoundView(
-                uri: nestedWrapper.threadItem.uri,
-                reason: .notFound,
-                path: $path
-              )
-              .applyAppStateEnvironment(appState)
-              
-              // Offer a way to jump into the missing leg of the chain
-              Button(action: { path.append(NavigationDestination.post(nestedWrapper.uri)) }) {
-                HStack {
-                  Text("Continue thread").appFont(AppTextRole.subheadline)
-                  Image(systemName: "chevron.right").appFont(AppTextRole.subheadline)
-                }
-                .foregroundColor(.accentColor)
-                .padding(.vertical, 6)
-              }
-              
-            case .appBskyUnspeccedDefsThreadItemBlocked:
-              Text("Blocked reply")
-                .appFont(AppTextRole.subheadline)
-                .foregroundColor(.gray)
-              
-            case .appBskyUnspeccedDefsThreadItemNoUnauthenticated:
-              Text("Reply not available (authentication required)")
-                .appFont(AppTextRole.subheadline)
-                .foregroundColor(.gray)
-              
-            case .unexpected(let unexpected):
-              Text("Unexpected reply type: \(unexpected.textRepresentation)")
-                .foregroundColor(.orange)
             }
           }
         }
@@ -3114,6 +3132,18 @@ extension ReplyWrapper {
          .appBskyUnspeccedDefsThreadItemNoUnauthenticated, .unexpected:
       return nil
     }
+  }
+
+  /// The URI this post directly replies to, when its record is available.
+  var parentURI: String? {
+    guard let post,
+      case .knownType(let record) = post.record,
+      let feedPost = record as? AppBskyFeedPost
+    else {
+      return nil
+    }
+
+    return feedPost.reply?.parent.uri.uriString()
   }
 
   /// URI accessor that works for all thread item types
