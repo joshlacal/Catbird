@@ -64,7 +64,7 @@ Update the disposition column in the same commit that closes each slice. Valid d
 - Consumes: `main`, `search-filtering-merged`, `feature/compose-fab-quick-actions`
 - Produces: isolated workspace `Catbird-recovery`, rescue bookmarks, baseline build/test evidence
 
-- [ ] **Step 1: Verify source identities and preserve them**
+- [x] **Step 1: Verify source identities and preserve them**
 
 ```bash
 cd /Users/joshlacalamito/Developer/Catbird+Petrel/Catbird
@@ -78,7 +78,7 @@ jj bookmark create rescue/compose-fab -r f7322e39b7ba880c853875c70f4b450f3366804
 
 Expected: the source commits resolve and both rescue bookmarks point at the clean preserved heads. If either bookmark already exists, verify its target instead of recreating it.
 
-- [ ] **Step 2: Prevent the sibling workspace from entering the dirty umbrella repository**
+- [x] **Step 2: Prevent the sibling workspace from entering the dirty umbrella repository**
 
 ```bash
 cd /Users/joshlacalamito/Developer/Catbird+Petrel
@@ -87,7 +87,7 @@ grep -qxF '/Catbird-recovery/' .git/info/exclude || printf '%s\n' '/Catbird-reco
 
 Expected: this changes only the local Git exclude file, not a tracked file.
 
-- [ ] **Step 3: Create the isolated workspace from the approved design commit**
+- [x] **Step 3: Create the isolated workspace from the approved design commit**
 
 ```bash
 cd /Users/joshlacalamito/Developer/Catbird+Petrel/Catbird
@@ -100,7 +100,7 @@ jj status
 
 Expected: clean empty working-copy commit whose parent contains only the approved design documentation plus baseline `main`.
 
-- [ ] **Step 4: Record baseline health**
+- [x] **Step 4: Record baseline health**
 
 ```bash
 mkdir -p /tmp/catbird-recovery-baseline
@@ -117,7 +117,7 @@ xcodebuild -project Catbird.xcodeproj -scheme Catbird \
 
 Expected: `** BUILD SUCCEEDED **` for both builds and `** TEST SUCCEEDED **`, or exact pre-existing failures recorded in the ledger before feature edits.
 
-- [ ] **Step 5: Seal the baseline evidence note**
+- [x] **Step 5: Seal the baseline evidence note**
 
 Add the baseline revision, command results, and any pre-existing failures beneath Task 1. Then:
 
@@ -125,6 +125,16 @@ Add the baseline revision, command results, and any pre-existing failures beneat
 jj describe -m 'Catbird: record recovery baseline'
 jj new
 ```
+
+#### Task 1 baseline evidence (2026-07-13)
+
+- Approved recovery parent: `ecda750f824803d17352c65db92845e3582fd2af` (`Catbird: add lost-work recovery implementation plan`), based on `main` at `bfa9395512daedb6255f97390df47a9333d11bee`.
+- Preserved sources: `rescue/lost-work-broad` points to `88818854beac35b0b5733bf94b76cee940a641fb`; `rescue/compose-fab` points to `f7322e39b7ba880c853875c70f4b450f33668045`.
+- Isolation: sibling `jj` workspace `Catbird-recovery` was created from the approved recovery parent. The dirty umbrella repository excludes `/Catbird-recovery/` through its local `.git/info/exclude`; no tracked umbrella file was changed.
+- iOS simulator build: PASS. The required `xcodebuild ... -destination 'platform=iOS Simulator,name=iPhone 17 Pro' build` command exited 0 with `** BUILD SUCCEEDED **`. Full output: `/tmp/catbird-recovery-baseline/ios-build.log`.
+- iOS simulator tests: PRE-EXISTING INFRASTRUCTURE FAILURE. The required full-scheme `xcodebuild test ... -destination 'platform=iOS Simulator,name=iPhone 17 Pro'` command built the app and test bundles, then spent more than five consecutive minutes in a simulator-launch loop without starting any test case. Xcode repeatedly emitted `IDELaunchParametersSnapshot: debugger version lookup failed for path '<nil>': noURL` followed by `IDELaunchParametersSnapshot: no debugger version`, interleaved with repeated package resolution. The command was terminated cleanly with Ctrl-C after approximately eleven minutes total and exited 130. Captured standard output: `/tmp/catbird-recovery-baseline/ios-tests.log`.
+- macOS build: PRE-EXISTING COMPILE FAILURE. The required `xcodebuild ... -destination 'platform=macOS' build` command exited 65 with `** BUILD FAILED **`. `Catbird/Features/Feed/Views/FeedsStartPage.swift:1426:15` reports `'GlassEffectContainer' is only available in macOS 26.0 or newer`; its enclosing branch checks only `if #available(iOS 26.0, *)`, so the macOS compiler requires an additional availability check. Captured standard output, including the compiler diagnostic: `/tmp/catbird-recovery-baseline/macos-build.log`.
+- Recovery gate: no feature code was edited. Task 2 must treat the simulator launch loop and macOS availability error as baseline failures rather than regressions introduced by recovered behavior.
 
 ### Task 2: Recover Feed Icons and Unified Banner Geometry
 
