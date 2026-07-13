@@ -79,7 +79,9 @@ final class URLHandler {
     func handle(_ url: URL, tabIndex: Int? = nil) -> OpenURLAction.Result {
         // Use the provided tab index or get the current tab from the navigation manager
         targetTabIndex = tabIndex ?? appState?.navigationManager.currentTabIndex
-        logger.info("📲 URLHandler processing URL: \(url.absoluteString, privacy: .sensitive), target tab: \(self.targetTabIndex ?? -1)")
+        logger.info(
+          "📲 URLHandler processing scheme=\(url.scheme ?? "none", privacy: .public) host=\(url.host ?? "none", privacy: .public) path=\(url.path, privacy: .public), target tab: \(self.targetTabIndex ?? -1)"
+        )
         let urlString = url.absoluteString
         
         // First check if the URL matches our OAuth callback path
@@ -362,7 +364,9 @@ final class URLHandler {
     func handleURL(_ url: URL, tabIndex: Int? = nil) async -> Bool {
         // Use the provided tab index or get the current tab from the navigation manager
         targetTabIndex = tabIndex ?? appState?.navigationManager.currentTabIndex
-        logger.info("📲 URLHandler simple processing URL: \(url.absoluteString, privacy: .sensitive), target tab: \(self.targetTabIndex ?? -1)")
+        logger.info(
+          "📲 URLHandler simple processing scheme=\(url.scheme ?? "none", privacy: .public) host=\(url.host ?? "none", privacy: .public) path=\(url.path, privacy: .public), target tab: \(self.targetTabIndex ?? -1)"
+        )
         let urlString = url.absoluteString
         
         // OAuth callback handling

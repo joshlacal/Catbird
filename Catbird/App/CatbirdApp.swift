@@ -1095,10 +1095,12 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
       }
       .catalystPlainButtons()
       .onOpenURL { url in
-          logger.info("Received URL: \(url.absoluteString)")
+          logger.info(
+            "Received URL for scheme=\(url.scheme ?? "none", privacy: .public) host=\(url.host ?? "none", privacy: .public) path=\(url.path, privacy: .public)"
+          )
 
           // Check for gateway BFF callback (Universal Link from catbird.blue)
-          // Gateway redirects to: https://catbird.blue/oauth/callback#session_id=<uuid>
+          // Gateway redirects with a one-time exchange code in the query.
           if url.host == "catbird.blue" && url.path == "/oauth/callback" {
             logger.info("Gateway OAuth callback detected")
             Task {

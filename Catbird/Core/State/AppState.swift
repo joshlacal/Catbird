@@ -1189,7 +1189,7 @@ final class AppState {
     @MainActor
     func handleOAuthCallback(_ url: URL) async throws {
         logger.info("AppState handling OAuth callback")
-        try await AppStateManager.shared.authentication.handleCallback(url)
+        try await AppStateManager.shared.authentication.handleGatewayCallback(url)
     }
 
     /// Force updates the authentication state (used in rare cases where state updates aren't properly propagated)

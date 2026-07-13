@@ -1154,7 +1154,7 @@ struct LoginView: View {
                     loginProgress = .processingCallback
 
                     // Process callback
-                    try await appStateManager.authentication.handleCallback(callbackURL)
+                    try await appStateManager.authentication.handleGatewayCallback(callbackURL)
 
                     // Check for cancellation after callback processing
                     try Task.checkCancellation()
@@ -1165,6 +1165,7 @@ struct LoginView: View {
                     // Success is handled via onChange of authState
 
                 } catch let authSessionError as ASWebAuthenticationSessionError {
+                    await appStateManager.authentication.cancelGatewayOAuthFlow()
                     // User cancelled authentication
                     logger.notice("Authentication was cancelled by user: \(authSessionError._nsError.localizedDescription)")
                     // Only set authenticationCancelled for explicit user cancellation
@@ -1287,7 +1288,7 @@ struct LoginView: View {
                     loginProgress = .processingCallback
 
                     // Process callback
-                    try await appStateManager.authentication.handleCallback(callbackURL)
+                    try await appStateManager.authentication.handleGatewayCallback(callbackURL)
 
                     // Check for cancellation after callback processing
                     try Task.checkCancellation()
@@ -1298,6 +1299,7 @@ struct LoginView: View {
                     // Success is handled via onChange of authState
 
                 } catch let authSessionError as ASWebAuthenticationSessionError {
+                    await appStateManager.authentication.cancelGatewayOAuthFlow()
                     // User cancelled authentication
                     logger.notice("Re-authentication was cancelled by user: \(authSessionError._nsError.localizedDescription)")
                     // Only set authenticationCancelled for explicit user cancellation
@@ -1367,18 +1369,10 @@ struct LoginView: View {
         authenticationTask = Task { @MainActor in
             do {
                 // Get auth URL for signup
-                let authURL = try await appStateManager.authentication.client?.startSignUpFlow(pdsURL: pdsURL)
+                let authURL = try await appStateManager.authentication.startSignUp(pdsURL: pdsURL)
 
                 // Check for cancellation after getting auth URL
                 try Task.checkCancellation()
-
-                guard let authURL else {
-                    logger.error("Failed to get auth URL for signup")
-                    error = "Failed to get authentication URL"
-                    isLoggingIn = false
-                    showTimeoutCountdown = false
-                    return
-                }
 
                 // Open web authentication session
                 do {
@@ -1394,7 +1388,7 @@ struct LoginView: View {
                     logger.info("Signup authentication session completed successfully")
 
                     // Process callback
-                    try await appStateManager.authentication.handleCallback(callbackURL)
+                    try await appStateManager.authentication.handleGatewayCallback(callbackURL)
 
                     // Check for cancellation after callback processing
                     try Task.checkCancellation()
@@ -1402,6 +1396,7 @@ struct LoginView: View {
                     // Success is handled via onChange of authState
 
                 } catch let authSessionError as ASWebAuthenticationSessionError {
+                    await appStateManager.authentication.cancelGatewayOAuthFlow()
                     // User cancelled authentication
                     logger.notice("Signup was cancelled by user: \(authSessionError._nsError.localizedDescription)")
                     // Only set authenticationCancelled for explicit user cancellation
