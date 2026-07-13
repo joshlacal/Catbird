@@ -105,10 +105,10 @@ Expected: clean empty working-copy commit whose parent contains only the approve
 ```bash
 mkdir -p /tmp/catbird-recovery-baseline
 xcodebuild -project Catbird.xcodeproj -scheme Catbird \
-  -destination 'platform=iOS Simulator,name=iPhone 17 Pro' build \
+  -destination 'platform=iOS Simulator,id=40111BBE-8709-40D0-9016-A27448486A80' build \
   | tee /tmp/catbird-recovery-baseline/ios-build.log
 xcodebuild test -project Catbird.xcodeproj -scheme Catbird \
-  -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
+  -destination 'platform=iOS Simulator,id=40111BBE-8709-40D0-9016-A27448486A80' \
   | tee /tmp/catbird-recovery-baseline/ios-tests.log
 xcodebuild -project Catbird.xcodeproj -scheme Catbird \
   -destination 'platform=macOS' build \
@@ -131,10 +131,17 @@ jj new
 - Approved recovery parent: `ecda750f824803d17352c65db92845e3582fd2af` (`Catbird: add lost-work recovery implementation plan`), based on `main` at `bfa9395512daedb6255f97390df47a9333d11bee`.
 - Preserved sources: `rescue/lost-work-broad` points to `88818854beac35b0b5733bf94b76cee940a641fb`; `rescue/compose-fab` points to `f7322e39b7ba880c853875c70f4b450f33668045`.
 - Isolation: sibling `jj` workspace `Catbird-recovery` was created from the approved recovery parent. The dirty umbrella repository excludes `/Catbird-recovery/` through its local `.git/info/exclude`; no tracked umbrella file was changed.
-- iOS simulator build: PASS. The required `xcodebuild ... -destination 'platform=iOS Simulator,name=iPhone 17 Pro' build` command exited 0 with `** BUILD SUCCEEDED **`. Full output: `/tmp/catbird-recovery-baseline/ios-build.log`.
-- iOS simulator tests: PRE-EXISTING INFRASTRUCTURE FAILURE. The required full-scheme `xcodebuild test ... -destination 'platform=iOS Simulator,name=iPhone 17 Pro'` command built the app and test bundles, then spent more than five consecutive minutes in a simulator-launch loop without starting any test case. Xcode repeatedly emitted `IDELaunchParametersSnapshot: debugger version lookup failed for path '<nil>': noURL` followed by `IDELaunchParametersSnapshot: no debugger version`, interleaved with repeated package resolution. The command was terminated cleanly with Ctrl-C after approximately eleven minutes total and exited 130. Captured standard output: `/tmp/catbird-recovery-baseline/ios-tests.log`.
+- iOS simulator build: PASS. The prior name-only iPhone simulator build command exited 0 with `** BUILD SUCCEEDED **`. Full output: `/tmp/catbird-recovery-baseline/ios-build.log`.
+- iOS simulator tests: PRE-EXISTING INFRASTRUCTURE FAILURE. The prior name-only iPhone full-scheme test command built the app and test bundles, then spent more than five consecutive minutes in a simulator-launch loop without starting any test case. Xcode repeatedly emitted `IDELaunchParametersSnapshot: debugger version lookup failed for path '<nil>': noURL` followed by `IDELaunchParametersSnapshot: no debugger version`, interleaved with repeated package resolution. The command was terminated cleanly with Ctrl-C after approximately eleven minutes total and exited 130. Captured standard output: `/tmp/catbird-recovery-baseline/ios-tests.log`.
 - macOS build: PRE-EXISTING COMPILE FAILURE. The required `xcodebuild ... -destination 'platform=macOS' build` command exited 65 with `** BUILD FAILED **`. `Catbird/Features/Feed/Views/FeedsStartPage.swift:1426:15` reports `'GlassEffectContainer' is only available in macOS 26.0 or newer`; its enclosing branch checks only `if #available(iOS 26.0, *)`, so the macOS compiler requires an additional availability check. Captured standard output, including the compiler diagnostic: `/tmp/catbird-recovery-baseline/macos-build.log`.
 - Recovery gate: no feature code was edited. Task 2 must treat the simulator launch loop and macOS availability error as baseline failures rather than regressions introduced by recovered behavior.
+
+#### Task 1A baseline gate repair evidence
+
+- Root causes: three installed runtimes expose an iPhone 17 Pro, making the name-only destination ambiguous; the shared feeds title-row branch also omitted the `macOS 26.0` availability requirement for `GlassEffectContainer`.
+- Pinned focused tests: PASS. XcodeBuildMCP launched `FeedsLaunchpadLayoutTests` on iOS 26.2 simulator `40111BBE-8709-40D0-9016-A27448486A80`; all seven tests passed. The post-fix full suite also ran and passed those same seven tests.
+- Post-fix full iOS suite: FAIL after launching normally, exiting 65 with `** TEST FAILED **`. `ConcentricLiquidGlassDrawerTests.backdropTuningScrubsBackdropBlurWithLightScrim()` expected scrim opacity `0.1` but received `0.18`; separately, `CatbirdUITests-Runner` could not load because Xcode beta's `AppIntentsTesting.framework` was built for iOS simulator 26.4 and requires an unavailable `AppIntentsTypeSupport.framework` on iOS 26.2. Full output: `/tmp/catbird-recovery-baseline-repair/ios-tests.log`; result bundle: `/Users/joshlacalamito/Library/Developer/Xcode/DerivedData/Catbird-gryvknwoutnhbsfxyasxwrraencn/Logs/Test/Test-Catbird-2026.07.13_16-55-20--0400.xcresult`.
+- Post-fix macOS build: PASS. Adding the shared macOS availability clause cleared the compiler error; the exact build exited 0 with `** BUILD SUCCEEDED **`. Full output: `/tmp/catbird-recovery-baseline-repair/macos-build.log`.
 
 ### Task 2: Recover Feed Icons and Unified Banner Geometry
 
@@ -165,7 +172,7 @@ Run:
 
 ```bash
 xcodebuild test -project Catbird.xcodeproj -scheme Catbird \
-  -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
+  -destination 'platform=iOS Simulator,id=40111BBE-8709-40D0-9016-A27448486A80' \
   -only-testing:CatbirdTests/FeedsLaunchpadLayoutTests
 ```
 
@@ -249,7 +256,7 @@ jj new
 
 ```bash
 xcodebuild test -project Catbird.xcodeproj -scheme Catbird \
-  -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
+  -destination 'platform=iOS Simulator,id=40111BBE-8709-40D0-9016-A27448486A80' \
   -only-testing:CatbirdTests/DraftSyncTranslationTests \
   -only-testing:CatbirdTests/PostComposerFixesTests
 ```
@@ -303,7 +310,7 @@ Tests must cover hidden/visible chip state, threadgate summary text, counter hid
 
 ```bash
 xcodebuild test -project Catbird.xcodeproj -scheme Catbird \
-  -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
+  -destination 'platform=iOS Simulator,id=40111BBE-8709-40D0-9016-A27448486A80' \
   -only-testing:CatbirdTests/ComposerChipsStripTests \
   -only-testing:CatbirdTests/ComposerCounterDisplayTests
 ```
@@ -345,7 +352,7 @@ Restore the photo-add and image-limit tests from `51036b1`, then run:
 
 ```bash
 xcodebuild test -project Catbird.xcodeproj -scheme Catbird \
-  -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
+  -destination 'platform=iOS Simulator,id=40111BBE-8709-40D0-9016-A27448486A80' \
   -only-testing:CatbirdTests/CapturedMediaIngestTests
 ```
 
@@ -540,7 +547,7 @@ Implement only table rows with a proven missing consumer. Relaunch after togglin
 
 ```bash
 xcodebuild test -project Catbird.xcodeproj -scheme Catbird \
-  -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
+  -destination 'platform=iOS Simulator,id=40111BBE-8709-40D0-9016-A27448486A80' \
   -only-testing:CatbirdTests/SettingsRuntimeWiringTests
 jj describe -m 'Catbird: recover missing settings runtime wiring'
 jj new
@@ -563,7 +570,7 @@ If every historical setting is already present or superseded, commit only the ev
 
 ```bash
 xcodebuild test -project Catbird.xcodeproj -scheme Catbird \
-  -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
+  -destination 'platform=iOS Simulator,id=40111BBE-8709-40D0-9016-A27448486A80' \
   -only-testing:CatbirdTests/ThreadReplyLayoutTests
 ```
 
@@ -671,10 +678,10 @@ Expected: only planned files, one clear commit per slice, no conflict markers, a
 ```bash
 mkdir -p /tmp/catbird-recovery-final
 xcodebuild test -project Catbird.xcodeproj -scheme Catbird \
-  -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
+  -destination 'platform=iOS Simulator,id=40111BBE-8709-40D0-9016-A27448486A80' \
   | tee /tmp/catbird-recovery-final/iphone-tests.log
 xcodebuild -project Catbird.xcodeproj -scheme Catbird \
-  -destination 'platform=iOS Simulator,name=iPad Pro 13-inch (M5)' build \
+  -destination 'platform=iOS Simulator,id=56D76971-EC63-4C7C-B2D8-A6D0C3FD07B0' build \
   | tee /tmp/catbird-recovery-final/ipad-build.log
 xcodebuild -project Catbird.xcodeproj -scheme Catbird \
   -destination 'platform=macOS' build \
