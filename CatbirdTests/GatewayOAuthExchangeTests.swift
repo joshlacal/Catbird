@@ -8,6 +8,20 @@ struct GatewayOAuthExchangeTests {
   private let callbackURL = URL(string: "https://catbird.blue/oauth/callback")!
   private let loginURL = URL(string: "https://api.catbird.blue/auth/login?identifier=alice.test")!
 
+  @Test("authentication manager activates only legacy compatibility")
+  func authenticationManagerWiring() throws {
+    let testsURL = URL(fileURLWithPath: #filePath)
+    let sourceURL = testsURL.deletingLastPathComponent()
+      .deletingLastPathComponent()
+      .appendingPathComponent("Catbird/Core/State/AuthManager.swift")
+    let source = try String(contentsOf: sourceURL, encoding: .utf8)
+
+    #expect(source.contains("GatewayOAuthLegacyCallback("))
+    #expect(source.contains("gatewayOAuthLegacyCallback.consume(url)"))
+    #expect(!source.contains("gatewayOAuthExchange.redeem(url)"))
+    #expect(!source.contains("GatewayOAuthExchange("))
+  }
+
   @Test("login URL remains unchanged and an exact legacy callback succeeds once")
   func validLegacyCallback() async throws {
     let callback = GatewayOAuthLegacyCallback(callbackURL: callbackURL)
