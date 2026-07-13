@@ -3,282 +3,163 @@ import Testing
 
 @testable import Catbird
 
-@Suite("Gateway OAuth single-use exchange")
+@Suite("Temporary gateway OAuth legacy callback compatibility")
 struct GatewayOAuthExchangeTests {
   private let callbackURL = URL(string: "https://catbird.blue/oauth/callback")!
-  private let gatewayURL = URL(string: "https://api.catbird.blue")!
+  private let loginURL = URL(string: "https://api.catbird.blue/auth/login?identifier=alice.test")!
 
-  @Test("login binds a cryptographic nonce and the exact callback URL")
-  func loginBinding() async throws {
-    let exchange = GatewayOAuthExchange(
-      gatewayURL: gatewayURL,
-      callbackURL: callbackURL,
-      send: { _ in throw GatewayOAuthExchangeError.unauthorized }
-    )
+  @Test("login URL remains unchanged and an exact legacy callback succeeds once")
+  func validLegacyCallback() async throws {
+    let callback = GatewayOAuthLegacyCallback(callbackURL: callbackURL)
+    #expect(try await callback.prepareLogin(loginURL) == loginURL)
 
-    let loginURL = try await exchange.prepareLogin(
-      URL(string: "https://api.catbird.blue/auth/login?identifier=alice.test")!
-    )
-    let components = try #require(URLComponents(url: loginURL, resolvingAgainstBaseURL: false))
-    let query = Dictionary(
-      uniqueKeysWithValues: (components.queryItems ?? []).map { ($0.name, $0.value) })
-    let nonce = try #require(query["browser_nonce"] ?? nil)
+    let result = try await callback.consume(
+      URL(string: "https://catbird.blue/oauth/callback#session_id=session-123")!)
+    #expect(result == "session-123")
 
-    #expect(query["identifier"] == "alice.test")
-    #expect(query["redirect_to"] == callbackURL.absoluteString)
-    #expect(nonce.count == 43)
-    #expect(nonce.allSatisfy { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" })
-  }
-
-  @Test("a second login cannot replace a live pending browser nonce")
-  func overlappingLoginRejected() async throws {
-    let exchange = GatewayOAuthExchange(
-      gatewayURL: gatewayURL,
-      callbackURL: callbackURL,
-      send: { _ in throw GatewayOAuthExchangeError.unauthorized }
-    )
-    _ = try await exchange.prepareLogin(URL(string: "https://api.catbird.blue/auth/login")!)
-
-    await #expect(throws: GatewayOAuthExchangeError.flowInProgress) {
-      try await exchange.prepareLogin(URL(string: "https://api.catbird.blue/auth/login")!)
+    await #expect(throws: GatewayOAuthLegacyCallbackError.unauthorized) {
+      try await callback.consume(
+        URL(string: "https://catbird.blue/oauth/callback#session_id=session-123")!)
     }
   }
 
-  @Test("a native nonce expires after sixty seconds")
-  func nativeNonceExpiry() async throws {
+  @Test("callback requires an active unexpired login attempt")
+  func attemptRequiredAndExpiring() async throws {
     let clock = TestUptime()
-    let exchange = GatewayOAuthExchange(
-      gatewayURL: gatewayURL,
-      callbackURL: callbackURL,
-      uptime: { clock.value },
-      send: { _ in throw GatewayOAuthExchangeError.unauthorized }
-    )
-    _ = try await exchange.prepareLogin(URL(string: "https://api.catbird.blue/auth/login")!)
+    let callback = GatewayOAuthLegacyCallback(callbackURL: callbackURL, uptime: { clock.value })
+    let validURL = URL(string: "https://catbird.blue/oauth/callback#session_id=session-123")!
+
+    await #expect(throws: GatewayOAuthLegacyCallbackError.unauthorized) {
+      try await callback.consume(validURL)
+    }
+    _ = try await callback.prepareLogin(loginURL)
     clock.value = 60.001
-
-    await #expect(throws: GatewayOAuthExchangeError.unauthorized) {
-      try await exchange.redeem(
-        URL(
-          string:
-            "https://catbird.blue/oauth/callback?code=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ")!
-      )
+    await #expect(throws: GatewayOAuthLegacyCallbackError.unauthorized) {
+      try await callback.consume(validURL)
     }
   }
 
-  @Test("exchange transport rejects redirects and streamed responses over budget")
-  func transportBoundaries() throws {
-    #expect(GatewayOAuthExchangeTransport.redirectTarget == nil)
-    var buffer = Data(repeating: 65, count: GatewayOAuthExchange.maximumResponseBytes)
-    try GatewayOAuthExchangeTransport.append(
-      Data(), to: &buffer, maximumBytes: GatewayOAuthExchange.maximumResponseBytes)
-    #expect(throws: GatewayOAuthExchangeError.unauthorized) {
-      try GatewayOAuthExchangeTransport.append(
-        Data([66]), to: &buffer, maximumBytes: GatewayOAuthExchange.maximumResponseBytes)
-    }
-  }
-
-  @Test("callback redemption sends JSON to the fixed endpoint with exact Origin")
-  func redemptionRequest() async throws {
-    let recorder = RequestRecorder(
-      responseData: Data(#"{"session_id":"session-123"}"#.utf8),
-      response: HTTPURLResponse(
-        url: gatewayURL.appendingPathComponent("auth/exchange"),
-        statusCode: 200,
-        httpVersion: nil,
-        headerFields: ["Content-Type": "application/json"]
-      )!
-    )
-    let exchange = GatewayOAuthExchange(
-      gatewayURL: gatewayURL,
-      callbackURL: callbackURL,
-      send: { request in await recorder.send(request) }
-    )
-    let loginURL = try await exchange.prepareLogin(
-      URL(string: "https://api.catbird.blue/auth/login")!
-    )
-    let loginComponents = try #require(URLComponents(url: loginURL, resolvingAgainstBaseURL: false))
-    let nonce = try #require(
-      loginComponents.queryItems?.first(where: { $0.name == "browser_nonce" })?.value)
-
-    let sessionID = try await exchange.redeem(
-      URL(
-        string:
-          "https://catbird.blue/oauth/callback?code=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ")!
-    )
-    let request = try #require(await recorder.request)
-    let body = try #require(request.httpBody)
-    let json = try #require(JSONSerialization.jsonObject(with: body) as? [String: String])
-
-    #expect(sessionID == "session-123")
-    #expect(request.url == gatewayURL.appendingPathComponent("auth/exchange"))
-    #expect(request.httpMethod == "POST")
-    #expect(request.value(forHTTPHeaderField: "Origin") == "https://catbird.blue")
-    #expect(request.value(forHTTPHeaderField: "Content-Type") == "application/json")
-    #expect(request.value(forHTTPHeaderField: "Accept") == "application/json")
-    #expect(
-      json == [
-        "code": "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ",
-        "browser_nonce": nonce,
-      ])
-  }
-
-  @Test("malformed callback consumes pending nonce and replay fails locally")
-  func malformedCallbackAndReplay() async throws {
-    let recorder = RequestRecorder(
-      responseData: Data(#"{"session_id":"session-123"}"#.utf8),
-      response: HTTPURLResponse(
-        url: gatewayURL.appendingPathComponent("auth/exchange"),
-        statusCode: 200,
-        httpVersion: nil,
-        headerFields: ["Content-Type": "application/json"]
-      )!
-    )
-    let exchange = GatewayOAuthExchange(
-      gatewayURL: gatewayURL,
-      callbackURL: callbackURL,
-      send: { request in await recorder.send(request) }
-    )
-    _ = try await exchange.prepareLogin(URL(string: "https://api.catbird.blue/auth/login")!)
-
-    await #expect(throws: GatewayOAuthExchangeError.unauthorized) {
-      try await exchange.redeem(
-        URL(
-          string:
-            "https://evil.example/oauth/callback?code=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ")!
-      )
-    }
-    await #expect(throws: GatewayOAuthExchangeError.unauthorized) {
-      try await exchange.redeem(
-        URL(
-          string:
-            "https://catbird.blue/oauth/callback?code=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ")!
-      )
-    }
-    #expect(await recorder.request == nil)
-  }
-
-  @Test("wrong origin, malformed code, fragments, and extra query fields fail closed")
-  func structuralCallbackValidation() async throws {
+  @Test("callback URL and session ID validation fail closed")
+  func invalidCallbacks() async throws {
     let invalidURLs = [
-      "http://catbird.blue/oauth/callback?code=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ",
-      "https://catbird.blue.evil.example/oauth/callback?code=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ",
-      "https://catbird.blue/oauth/callback?code=short",
-      "https://catbird.blue/oauth/callback?code=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ&session_id=leak",
-      "https://catbird.blue/oauth/callback?code=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ#fragment",
+      "http://catbird.blue/oauth/callback#session_id=session-123",
+      "https://catbird.blue.evil.example/oauth/callback#session_id=session-123",
+      "https://catbird.blue@evil.example/oauth/callback#session_id=session-123",
+      "https://user@catbird.blue/oauth/callback#session_id=session-123",
+      "https://catbird.blue:444/oauth/callback#session_id=session-123",
+      "https://catbird.blue/oauth/other#session_id=session-123",
+      "https://catbird.blue/oauth/callback?session_id=session-123",
+      "https://catbird.blue/oauth/callback?next=%2F#session_id=session-123",
+      "https://catbird.blue/oauth/callback#session_id=session-123&extra=value",
+      "https://catbird.blue/oauth/callback#extra=value&session_id=session-123",
+      "https://catbird.blue/oauth/callback#session_id=",
+      "https://catbird.blue/oauth/callback#session_id=session%20id",
     ]
 
     for rawURL in invalidURLs {
-      let exchange = GatewayOAuthExchange(
-        gatewayURL: gatewayURL,
-        callbackURL: callbackURL,
-        send: { _ in throw GatewayOAuthExchangeError.unauthorized }
-      )
-      _ = try await exchange.prepareLogin(URL(string: "https://api.catbird.blue/auth/login")!)
-      await #expect(throws: GatewayOAuthExchangeError.unauthorized) {
-        try await exchange.redeem(URL(string: rawURL)!)
+      let callback = GatewayOAuthLegacyCallback(callbackURL: callbackURL)
+      _ = try await callback.prepareLogin(loginURL)
+      await #expect(throws: GatewayOAuthLegacyCallbackError.unauthorized, "\(rawURL)") {
+        try await callback.consume(URL(string: rawURL)!)
       }
+    }
+
+    let oversized = String(repeating: "a", count: 513)
+    let oversizedURL = try #require(
+      legacyCallbackURL(sessionIDFragmentValue: oversized))
+    let oversizedCallback = GatewayOAuthLegacyCallback(callbackURL: callbackURL)
+    _ = try await oversizedCallback.prepareLogin(loginURL)
+    await #expect(throws: GatewayOAuthLegacyCallbackError.unauthorized) {
+      try await oversizedCallback.consume(oversizedURL)
+    }
+
+    let nonPrintableURL = try #require(
+      legacyCallbackURL(sessionIDFragmentValue: "session\n123"))
+    let nonPrintableCallback = GatewayOAuthLegacyCallback(callbackURL: callbackURL)
+    _ = try await nonPrintableCallback.prepareLogin(loginURL)
+    await #expect(throws: GatewayOAuthLegacyCallbackError.unauthorized) {
+      try await nonPrintableCallback.consume(nonPrintableURL)
     }
   }
 
-  @Test("HTTPS default port is equivalent when omitted or explicit")
+  @Test("omitted and explicit default HTTPS ports are equivalent")
   func defaultHTTPSPortNormalization() async throws {
-    for (configured, callback) in [
+    for (configured, received) in [
       (
         "https://catbird.blue/oauth/callback",
-        "https://catbird.blue:443/oauth/callback?code=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ"
+        "https://catbird.blue:443/oauth/callback#session_id=session-123"
       ),
       (
         "https://catbird.blue:443/oauth/callback",
-        "https://catbird.blue/oauth/callback?code=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ"
+        "https://catbird.blue/oauth/callback#session_id=session-123"
       ),
     ] {
-      let response = HTTPURLResponse(
-        url: gatewayURL.appendingPathComponent("auth/exchange"),
-        statusCode: 200,
-        httpVersion: nil,
-        headerFields: ["Content-Type": "application/json"]
-      )!
-      let exchange = GatewayOAuthExchange(
-        gatewayURL: gatewayURL,
-        callbackURL: URL(string: configured)!,
-        send: { request in
-          #expect(request.value(forHTTPHeaderField: "Origin") == "https://catbird.blue")
-          return (Data(#"{"session_id":"session-123"}"#.utf8), response)
-        }
-      )
-      _ = try await exchange.prepareLogin(URL(string: "https://api.catbird.blue/auth/login")!)
-      #expect(try await exchange.redeem(URL(string: callback)!) == "session-123")
+      let callback = GatewayOAuthLegacyCallback(callbackURL: URL(string: configured)!)
+      _ = try await callback.prepareLogin(loginURL)
+      #expect(try await callback.consume(URL(string: received)!) == "session-123")
     }
   }
 
-  @Test("non-default HTTPS callback ports are rejected")
-  func nonDefaultHTTPSPortRejected() async throws {
-    let exchange = GatewayOAuthExchange(
-      gatewayURL: gatewayURL,
-      callbackURL: callbackURL,
-      send: { _ in throw GatewayOAuthExchangeError.unauthorized }
-    )
-    _ = try await exchange.prepareLogin(URL(string: "https://api.catbird.blue/auth/login")!)
-    await #expect(throws: GatewayOAuthExchangeError.unauthorized) {
-      try await exchange.redeem(
-        URL(
-          string:
-            "https://catbird.blue:444/oauth/callback?code=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ"
-        )!
-      )
+  @Test("a malformed callback consumes the pending attempt")
+  func malformedCallbackConsumesAttempt() async throws {
+    let callback = GatewayOAuthLegacyCallback(callbackURL: callbackURL)
+    _ = try await callback.prepareLogin(loginURL)
+
+    await #expect(throws: GatewayOAuthLegacyCallbackError.unauthorized) {
+      try await callback.consume(
+        URL(string: "https://evil.example/oauth/callback#session_id=session-123")!)
+    }
+    await #expect(throws: GatewayOAuthLegacyCallbackError.unauthorized) {
+      try await callback.consume(
+        URL(string: "https://catbird.blue/oauth/callback#session_id=session-123")!)
     }
   }
 
-  @Test("transport eagerly initializes its session and cancels unknown delegate tasks")
-  func eagerTransportAndUnknownTaskPolicy() {
-    let transport = GatewayOAuthExchangeTransport(
-      maximumBytes: GatewayOAuthExchange.maximumResponseBytes)
-    #expect(transport.hasInitializedSession)
-    #expect(
-      GatewayOAuthExchangeTransport.responseDisposition(hasPendingRequest: false) == .cancel)
-    #expect(
-      GatewayOAuthExchangeTransport.responseDisposition(hasPendingRequest: true) == .allow)
+  @Test("a live attempt blocks replacement and cancellation clears it")
+  func overlappingAndCancelledAttempts() async throws {
+    let callback = GatewayOAuthLegacyCallback(callbackURL: callbackURL)
+    _ = try await callback.prepareLogin(loginURL)
+
+    await #expect(throws: GatewayOAuthLegacyCallbackError.flowInProgress) {
+      try await callback.prepareLogin(loginURL)
+    }
+
+    await callback.cancelPendingLogin()
+    await #expect(throws: GatewayOAuthLegacyCallbackError.unauthorized) {
+      try await callback.consume(
+        URL(string: "https://catbird.blue/oauth/callback#session_id=session-123")!)
+    }
+    #expect(try await callback.prepareLogin(loginURL) == loginURL)
   }
 
-  @Test("authentication manager uses one canonical gateway URL")
-  func canonicalGatewayURL() {
-    #expect(AuthenticationManager.gatewayURL == URL(string: "https://api.catbird.blue")!)
-  }
-
-  @Test("non-success and oversized or malformed responses fail closed")
-  func boundedResponse() async throws {
-    let cases: [(Data, Int, [String: String])] = [
-      (Data(#"{"session_id":"session-123"}"#.utf8), 401, ["Content-Type": "application/json"]),
-      (
-        Data(repeating: 65, count: GatewayOAuthExchange.maximumResponseBytes + 1), 200,
-        ["Content-Type": "application/json"]
-      ),
-      (Data(#"{"session_id":"session-123"}"#.utf8), 200, ["Content-Type": "text/plain"]),
-      (Data(#"{"session_id":""}"#.utf8), 200, ["Content-Type": "application/json"]),
+  @Test("invalid configured callbacks fail without creating an attempt")
+  func invalidConfiguration() async throws {
+    let invalidConfiguredCallbacks = [
+      "http://catbird.blue/oauth/callback",
+      "https://user@catbird.blue/oauth/callback",
+      "https://user:password@catbird.blue/oauth/callback",
+      "https://catbird.blue/oauth/callback?next=%2F",
+      "https://catbird.blue/oauth/callback#session_id=configured",
+      "https://catbird.blue/oauth/other",
+      "https://catbird.blue:444/oauth/callback",
     ]
+    let validURL = URL(string: "https://catbird.blue/oauth/callback#session_id=session-123")!
 
-    for (data, status, headers) in cases {
-      let response = HTTPURLResponse(
-        url: gatewayURL.appendingPathComponent("auth/exchange"),
-        statusCode: status,
-        httpVersion: nil,
-        headerFields: headers
-      )!
-      let exchange = GatewayOAuthExchange(
-        gatewayURL: gatewayURL,
-        callbackURL: callbackURL,
-        send: { _ in (data, response) }
-      )
-      _ = try await exchange.prepareLogin(URL(string: "https://api.catbird.blue/auth/login")!)
-
-      await #expect(throws: GatewayOAuthExchangeError.unauthorized) {
-        try await exchange.redeem(
-          URL(
-            string:
-              "https://catbird.blue/oauth/callback?code=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ"
-          )!)
+    for rawURL in invalidConfiguredCallbacks {
+      let callback = GatewayOAuthLegacyCallback(callbackURL: URL(string: rawURL)!)
+      await #expect(throws: GatewayOAuthLegacyCallbackError.configuration, "\(rawURL)") {
+        try await callback.prepareLogin(loginURL)
+      }
+      await #expect(throws: GatewayOAuthLegacyCallbackError.unauthorized, "\(rawURL)") {
+        try await callback.consume(validURL)
       }
     }
+  }
+
+  private func legacyCallbackURL(sessionIDFragmentValue: String) -> URL? {
+    var components = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false)
+    components?.fragment = "session_id=\(sessionIDFragmentValue)"
+    return components?.url
   }
 }
 
@@ -289,21 +170,5 @@ private final class TestUptime: @unchecked Sendable {
   var value: TimeInterval {
     get { lock.withLock { storedValue } }
     set { lock.withLock { storedValue = newValue } }
-  }
-}
-
-private actor RequestRecorder {
-  private(set) var request: URLRequest?
-  let responseData: Data
-  let response: URLResponse
-
-  init(responseData: Data, response: URLResponse) {
-    self.responseData = responseData
-    self.response = response
-  }
-
-  func send(_ request: URLRequest) -> (Data, URLResponse) {
-    self.request = request
-    return (responseData, response)
   }
 }
