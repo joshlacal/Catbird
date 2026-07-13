@@ -13,14 +13,15 @@ struct FeedDiscoveryHeaderView: View {
   let feed: AppBskyFeedDefs.GeneratorView
   let isSubscribed: Bool
   let onSubscriptionToggle: () async -> Void
-  
+  /// Invoked when the row body (avatar + text) is tapped. When `nil` the row is
+  /// non-tappable — used when this view is the header of an already-open feed.
+  var onTap: (() -> Void)? = nil
+
   @State private var isTogglingSubscription = false
   @State private var isLiking = false
   @State private var liked = false
   @State private var likeUri: ATProtocolURI?
   @State private var didSeedViewerState = false
-  @State private var showingFullDescription = false
-  @State private var isDescriptionExpanded = false
   
   private let logger = Logger(subsystem: "blue.catbird", category: "FeedDiscoveryHeaderView")
   
@@ -31,41 +32,35 @@ struct FeedDiscoveryHeaderView: View {
   }
   
   var body: some View {
-    VStack(alignment: .leading, spacing: 20) {
-      headerSection
-      descriptionSection
-      statsSection
-      actionSection
+    HStack(alignment: .top, spacing: 12) {
+      // Tappable content region — avatar + text. Disabled (non-tappable) when
+      // no onTap is provided, e.g. the header of an already-open feed.
+      Button {
+        onTap?()
+      } label: {
+        HStack(alignment: .top, spacing: 12) {
+          feedAvatar
+          feedInfo
+          Spacer(minLength: 8)
+        }
+        .contentShape(Rectangle())
+      }
+      .buttonStyle(.plain)
+      .disabled(onTap == nil)
+
+      // Trailing actions are separate hit targets, so tapping them never
+      // triggers row navigation.
+      subscribePill
+      moreMenu
     }
-    .padding(24)
-    .if(themeManager != nil) { view in
-      view.themedElevatedBackground(themeManager!, appSettings: appState.appSettings)
-    }
-    .if(themeManager == nil) { view in
-      view.background(Color(platformColor: .platformSystemBackground))
-    }
-    .clipShape(RoundedRectangle(cornerRadius: 16))
-    .shadow(color: Color.black.opacity(0.05), radius: 8, x: 0, y: 2)
+    .padding(.vertical, 8)
     .task(id: feed.uri.uriString()) {
       seedFromFeedViewer()
     }
   }
-  
-  // MARK: - Header Section
-  
-  private var headerSection: some View {
-    HStack(alignment: .top, spacing: 16) {
-      feedAvatar
-      
-      VStack(alignment: .leading, spacing: 8) {
-        feedTitleInfo
-        creatorInfo
-      }
-      
-      Spacer()
-    }
-  }
-  
+
+  // MARK: - Avatar
+
   private var feedAvatar: some View {
     AsyncImage(url: URL(string: feed.avatar?.uriString() ?? "")) { image in
       image
@@ -74,14 +69,14 @@ struct FeedDiscoveryHeaderView: View {
     } placeholder: {
       feedPlaceholder
     }
-    .frame(width: 64, height: 64)
-    .clipShape(RoundedRectangle(cornerRadius: 16))
+    .frame(width: 52, height: 52)
+    .clipShape(RoundedRectangle(cornerRadius: 12))
     .overlay(
-      RoundedRectangle(cornerRadius: 16)
+      RoundedRectangle(cornerRadius: 12)
         .stroke(Color(platformColor: PlatformColor.platformSeparator).opacity(0.15), lineWidth: 1)
     )
   }
-  
+
   private var feedPlaceholder: some View {
     ZStack {
       LinearGradient(
@@ -89,168 +84,104 @@ struct FeedDiscoveryHeaderView: View {
         startPoint: .topLeading,
         endPoint: .bottomTrailing
       )
-      
+
       Text(feed.displayName.prefix(1).uppercased())
-        .font(.system(size: 24, weight: .bold, design: .rounded))
+        .font(.system(size: 22, weight: .bold, design: .rounded))
         .foregroundColor(.white)
     }
   }
-  
-  private var feedTitleInfo: some View {
-    Text(feed.displayName)
-      .font(.system(size: 20, weight: .bold, design: .default))
-      .foregroundColor(.primary)
-      .multilineTextAlignment(.leading)
-  }
-  
-  private var creatorInfo: some View {
-    Text("by @\(feed.creator.handle.description)")
-      .font(.system(size: 16, weight: .medium, design: .default))
-      .foregroundColor(.secondary)
-      .multilineTextAlignment(.leading)
-  }
-  
-  // MARK: - Description Section
-  
-  private var descriptionSection: some View {
-    Group {
+
+  // MARK: - Info
+
+  private var feedInfo: some View {
+    VStack(alignment: .leading, spacing: 3) {
+      Text(feed.displayName)
+        .appFont(AppTextRole.headline)
+        .foregroundStyle(.primary)
+        .lineLimit(1)
+
+      subtitleLine
+
       if let description = feed.description, !description.isEmpty {
-        VStack(alignment: .leading, spacing: 12) {
-          descriptionText(description)
-        }
+        Text(description)
+          .appFont(AppTextRole.subheadline)
+          .foregroundStyle(.secondary)
+          .lineLimit(2)
+          .fixedSize(horizontal: false, vertical: true)
       }
     }
   }
-  
-  private func descriptionText(_ description: String) -> some View {
-    VStack(alignment: .leading, spacing: 8) {
-      let shouldTruncate = description.count > 200
-      let displayText = (shouldTruncate && !isDescriptionExpanded) ? 
-        String(description.prefix(200)) + "..." : description
-      
-      Text(displayText)
-        .font(.system(size: 16, weight: .regular, design: .default))
-        .foregroundColor(.primary)
-        .multilineTextAlignment(.leading)
-        .fixedSize(horizontal: false, vertical: true)
-      
-      if shouldTruncate {
-        Button(action: {
-          withAnimation(.easeInOut(duration: 0.3)) {
-            isDescriptionExpanded.toggle()
-          }
-        }) {
-          Text(isDescriptionExpanded ? "Show Less" : "Show More")
-            .font(.system(size: 15, weight: .medium, design: .default))
-            .foregroundColor(.accentColor)
-        }
-        .buttonStyle(.plain)
-      }
-    }
+
+  private var subtitleLine: some View {
+    let handle = "by @\(feed.creator.handle.description)"
+    let text = displayedLikeCount.map { "\(handle) · \(formatCount($0)) likes" } ?? handle
+    return Text(text)
+      .appFont(AppTextRole.subheadline)
+      .foregroundStyle(.secondary)
+      .lineLimit(1)
   }
-  
-  // MARK: - Stats Section
-  
-  private var statsSection: some View {
-    Group {
-      if let likeCount = displayedLikeCount {
-        HStack(spacing: 6) {
-          Image(systemName: "heart.fill")
-            .font(.system(size: 14, weight: .medium))
-            .foregroundColor(.pink)
-          
-          Text(formatCount(likeCount))
-            .font(.system(size: 16, weight: .semibold, design: .default))
-            .foregroundColor(.primary)
-          
-          Text("likes")
-            .font(.system(size: 14, weight: .regular, design: .default))
-            .foregroundColor(.secondary)
-            
-          Spacer()
-        }
-        .padding(.vertical, 8)
-      }
-    }
-  }
-  
-  // MARK: - Action Section
-  
-  private var actionSection: some View {
-    VStack(spacing: 16) {
-      subscribeButton
-      
-      secondaryActionsMenu
-    }
-  }
-  
-  private var subscribeButton: some View {
+
+  // MARK: - Trailing actions
+
+  /// Compact subscribe / subscribed toggle. Filled accent "+" when the user is
+  /// not subscribed; a tinted checkmark capsule once subscribed.
+  private var subscribePill: some View {
     Button {
       Task { await toggleSubscription() }
     } label: {
-      HStack(spacing: 8) {
+      Group {
         if isTogglingSubscription {
           ProgressView()
-            .progressViewStyle(CircularProgressViewStyle(tint: .white))
-            .scaleEffect(0.9)
+            .controlSize(.small)
+            .tint(isSubscribed ? .accentColor : .white)
         } else {
-          if !isSubscribed {
-            Image(systemName: "plus")
-              .font(.system(size: 16, weight: .semibold))
-          }
-          Text(isSubscribed ? "Subscribed" : "Subscribe")
-            .font(.system(size: 17, weight: .semibold, design: .default))
+          Image(systemName: isSubscribed ? "checkmark" : "plus")
+            .appFont(AppTextRole.subheadline)
+            .fontWeight(.bold)
+            .foregroundStyle(isSubscribed ? Color.accentColor : .white)
         }
       }
-      .foregroundColor(isSubscribed ? .accentColor : .white)
-      .frame(maxWidth: .infinity)
-      .frame(height: 50)
+      .frame(width: 40, height: 32)
       .background(
-        RoundedRectangle(cornerRadius: 12)
-          .fill(isSubscribed ? Color.accentColor.opacity(0.1) : Color.accentColor)
+        Capsule()
+          .fill(isSubscribed ? Color.accentColor.opacity(0.12) : Color.accentColor)
       )
       .overlay(
-        RoundedRectangle(cornerRadius: 12)
-          .stroke(isSubscribed ? Color.accentColor.opacity(0.3) : Color.clear, lineWidth: 1.5)
+        Capsule()
+          .stroke(isSubscribed ? Color.accentColor.opacity(0.35) : Color.clear, lineWidth: 1)
       )
+      .contentShape(Capsule())
     }
-    .disabled(isTogglingSubscription)
     .buttonStyle(.plain)
+    .disabled(isTogglingSubscription)
+    .accessibilityLabel(isSubscribed ? "Subscribed" : "Subscribe")
   }
-  
-  private var secondaryActionsMenu: some View {
+
+  private var moreMenu: some View {
     Menu {
-      Button(action: {
+      Button {
         if liked { unlikeFeed() } else { likeFeed() }
-      }) {
-        Label(liked ? "Unlike" : "Like", 
-              systemImage: liked ? "heart.fill" : "heart")
+      } label: {
+        Label(liked ? "Unlike" : "Like", systemImage: liked ? "heart.fill" : "heart")
       }
       .disabled(isLiking)
-      
-      Button(action: { shareFeed() }) {
+
+      Button { shareFeed() } label: {
         Label("Share", systemImage: "square.and.arrow.up")
       }
-      
-      Button(role: .destructive, action: { reportFeed() }) {
+
+      Button(role: .destructive) { reportFeed() } label: {
         Label("Report", systemImage: "exclamationmark.circle")
       }
     } label: {
-      HStack(spacing: 8) {
-        Image(systemName: "ellipsis")
-          .font(.system(size: 16, weight: .semibold))
-        Text("More")
-          .font(.system(size: 17, weight: .medium, design: .default))
-      }
-      .foregroundColor(.secondary)
-      .frame(maxWidth: .infinity)
-      .frame(height: 44)
-      .background(
-        RoundedRectangle(cornerRadius: 12)
-          .fill(Color(platformColor: .platformSecondarySystemBackground))
-      )
+      Image(systemName: "ellipsis")
+        .appFont(AppTextRole.headline)
+        .foregroundStyle(.secondary)
+        .frame(width: 32, height: 32)
+        .contentShape(Rectangle())
     }
     .buttonStyle(.plain)
+    .accessibilityLabel("More options")
   }
 
   

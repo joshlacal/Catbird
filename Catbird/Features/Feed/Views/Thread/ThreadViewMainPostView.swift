@@ -80,6 +80,9 @@ struct ThreadViewMainPostView: View, Equatable {
         .frame(maxHeight: .infinity, alignment: .top)
         .frame(width: Self.avatarContainerWidth)
         .padding(.horizontal, ThreadViewMainPostView.baseUnit)
+        // Keep this subtree free of ProfileEntity context. The enclosing
+        // thread post is annotated as PostEntity, and iOS 27 can flatten a
+        // nested profile DID into that post annotation during collection.
     }
     
     var body: some View {

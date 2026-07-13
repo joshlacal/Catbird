@@ -238,25 +238,19 @@ struct ResultsView: View {
             let items = limit.map { Array(viewModel.feedResults.prefix($0)) } ?? viewModel.feedResults
             ForEach(items, id: \.uri) { feed in
                 VStack(spacing: 0) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        FeedDiscoveryHeaderView(
-                            feed: feed,
-                            isSubscribed: subscriptionStatus[feed.uri.uriString()] ?? false,
-                            onSubscriptionToggle: {
-                                await toggleFeedSubscription(feed)
-                                await updateSubscriptionStatus(for: feed.uri)
-                            }
-                        )
-                        .task { await updateSubscriptionStatus(for: feed.uri) }
-
-                        // Make the entire card tappable to preview feed (bigger tap target)
-                        EmptyView()
-                    }
+                    FeedDiscoveryHeaderView(
+                        feed: feed,
+                        isSubscribed: subscriptionStatus[feed.uri.uriString()] ?? false,
+                        onSubscriptionToggle: {
+                            await toggleFeedSubscription(feed)
+                            await updateSubscriptionStatus(for: feed.uri)
+                        },
+                        onTap: { path.append(NavigationDestination.feed(feed.uri)) }
+                    )
+                    .task { await updateSubscriptionStatus(for: feed.uri) }
                     .mainContentFrame()
                     .padding(.horizontal, baseUnit * 1.5)
                     .padding(.top, baseUnit * 3)
-                    .contentShape(Rectangle())
-                    .onTapGesture { path.append(NavigationDestination.feed(feed.uri)) }
 
                     if feed != items.last {
                         Rectangle()
@@ -451,39 +445,19 @@ struct ResultsView: View {
                     ) {
                         VStack(spacing: 12) {
                             ForEach(viewModel.feedResults.prefix(3), id: \.uri) { feed in
-                                VStack(spacing: 8) {
-                                    FeedDiscoveryHeaderView(
-                                        feed: feed,
-                                        isSubscribed: subscriptionStatus[feed.uri.uriString()] ?? false,
-                                        onSubscriptionToggle: {
-                                            await toggleFeedSubscription(feed)
-                                            await updateSubscriptionStatus(for: feed.uri)
-                                        }
-                                    )
-                                    .task {
+                                FeedDiscoveryHeaderView(
+                                    feed: feed,
+                                    isSubscribed: subscriptionStatus[feed.uri.uriString()] ?? false,
+                                    onSubscriptionToggle: {
+                                        await toggleFeedSubscription(feed)
                                         await updateSubscriptionStatus(for: feed.uri)
-                                    }
-                                    
-                                    Button {
-                                        path.append(NavigationDestination.feed(feed.uri))
-                                    } label: {
-                                        HStack {
-                                            Text("Preview Feed")
-                                                .appFont(AppTextRole.caption)
-                                                .foregroundColor(.accentColor)
-                                            Spacer()
-                                            Image(systemName: "chevron.right")
-                                                .appFont(AppTextRole.caption2)
-                                                .foregroundColor(.secondary)
-                                        }
-                                        .padding(.vertical, 8)
-                                        .padding(.horizontal, 16)
-                                        .background(Color.secondary.opacity(0.1))
-                                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                                    }
-                                    .buttonStyle(.plain)
+                                    },
+                                    onTap: { path.append(NavigationDestination.feed(feed.uri)) }
+                                )
+                                .task {
+                                    await updateSubscriptionStatus(for: feed.uri)
                                 }
-                                
+
                                 if feed != viewModel.feedResults.prefix(3).last {
                                     Divider()
                                 }
@@ -616,26 +590,20 @@ struct ResultsView: View {
     private var feedResultsView: some View {
         LazyVStack(spacing: 12) {
             ForEach(viewModel.feedResults, id: \.uri) { feed in
-                VStack(spacing: 8) {
-                    // Show discovery header for feeds that might not be subscribed
-                    FeedDiscoveryHeaderView(
-                        feed: feed,
-                        isSubscribed: subscriptionStatus[feed.uri.uriString()] ?? false,
-                        onSubscriptionToggle: {
-                            await toggleFeedSubscription(feed)
-                            await updateSubscriptionStatus(for: feed.uri)
-                        }
-                    )
-                    .task {
+                // Show discovery header for feeds that might not be subscribed
+                FeedDiscoveryHeaderView(
+                    feed: feed,
+                    isSubscribed: subscriptionStatus[feed.uri.uriString()] ?? false,
+                    onSubscriptionToggle: {
+                        await toggleFeedSubscription(feed)
                         await updateSubscriptionStatus(for: feed.uri)
-                    }
-                    
-                    // Tap anywhere on the card to preview the feed
-                    HStack { Spacer(minLength: 0) }.padding(.horizontal, 2)
+                    },
+                    onTap: { path.append(NavigationDestination.feed(feed.uri)) }
+                )
+                .task {
+                    await updateSubscriptionStatus(for: feed.uri)
                 }
-                .contentShape(Rectangle())
-                .onTapGesture { path.append(NavigationDestination.feed(feed.uri)) }
-                
+
                 if feed != viewModel.feedResults.last {
                     Divider()
                         .padding(.vertical, 8)

@@ -5,6 +5,7 @@
 //  Created by Josh LaCalamito on 7/28/24.
 //
 
+import AppIntents
 import Nuke
 import NukeUI
 import Observation
@@ -572,6 +573,13 @@ var id: String {
       }
     }
 
+    // Seed entity stores so Siri's onscreen-context payload ('like this post')
+    // can resolve the entity without a network round trip.
+    if #available(iOS 18.0, *) {
+      await PostEntityStore.shared.store(post)
+      await ProfileEntityStore.shared.store(ProfileEntity(from: post.author))
+    }
+
     // Mark initial load as complete for transaction animation control
     initialLoadComplete = true
   }
@@ -933,6 +941,10 @@ struct AuthorAvatarColumn: View {
     .padding(.horizontal, Self.baseUnit)
     .padding(.top, Self.baseUnit)
     .background(parentPostIndicator)
+    // Do not add a ProfileEntity context inside a PostEntity-annotated post.
+    // iOS 27 can flatten nested entity contexts during view annotation
+    // collection and hydrate the author's DID as the surrounding PostEntity.
+    // Dedicated profile/search surfaces donate ProfileEntity context instead.
   }
 
   // Default avatar placeholder

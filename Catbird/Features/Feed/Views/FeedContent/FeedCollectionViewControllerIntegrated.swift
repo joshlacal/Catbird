@@ -5,6 +5,7 @@
 //  High-performance UIKit feed controller with SwiftUI cell hosting
 //
 
+import AppIntents
 import Petrel
 import SwiftUI
 import os
@@ -497,6 +498,18 @@ import os
           .background(Color.clear)
         }
         .margins(.all, 0)
+
+        // Annotate the cell so Siri's 'View AppIntents Payload' walk can collect
+        // onscreen PostEntity references. SwiftUI modifiers inside
+        // UIHostingConfiguration are NOT collected; UIKit cell annotation is required.
+        if #available(iOS 26.0, *) {
+          if postId.hasPrefix("at://") {
+            cell.appEntityIdentifier = EntityIdentifier(
+              for: PostEntity.self, identifier: postId)
+          } else {
+            cell.appEntityIdentifier = nil
+          }
+        }
 
         // Remove cell state handler to reduce memory overhead
         cell.configurationUpdateHandler = nil

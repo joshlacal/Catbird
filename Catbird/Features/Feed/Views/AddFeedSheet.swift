@@ -255,32 +255,19 @@ struct AddFeedSheet: View {
     private func feedsGrid(feeds: [AppBskyFeedDefs.GeneratorView]) -> some View {
         LazyVStack(spacing: 20) {
             ForEach(feeds, id: \.uri) { feed in
-                VStack(spacing: 12) {
-                    FeedDiscoveryHeaderView(
-                        feed: feed,
-                        isSubscribed: subscriptionStatus[feed.uri.uriString()] ?? false,
-                        onSubscriptionToggle: {
-                            await toggleFeedSubscription(feed)
-                            await updateSubscriptionStatus(for: feed.uri)
-                        }
-                    )
-                    .task { await updateSubscriptionStatus(for: feed.uri) }
-
-                    HStack {
-                        Spacer()
-                        Button {
-                            previewURI = feed.uri
-                            isShowingPreview = true
-                        } label: {
-                            Label("Preview", systemImage: "eye")
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                        .tint(.accentColor)
-                        .accessibilityLabel("Preview \(feed.displayName)")
+                FeedDiscoveryHeaderView(
+                    feed: feed,
+                    isSubscribed: subscriptionStatus[feed.uri.uriString()] ?? false,
+                    onSubscriptionToggle: {
+                        await toggleFeedSubscription(feed)
+                        await updateSubscriptionStatus(for: feed.uri)
+                    },
+                    onTap: {
+                        previewURI = feed.uri
+                        isShowingPreview = true
                     }
-                    .padding(.horizontal, 4)
-                }
+                )
+                .task { await updateSubscriptionStatus(for: feed.uri) }
                 .padding(.horizontal)
             }
         }

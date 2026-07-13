@@ -225,6 +225,22 @@ struct MainContentView: View {
     isDrawerOpen && selectedTab == 0
   }
 
+   #if os(iOS)
+   /// Whether the Profile tab should appear in the top (iPad) tab bar.
+   ///
+   /// The five iPad tabs — Home / Search / Notifications / Profile / Messages —
+   /// overflow into the system ">" chevron on narrow layouts, most visibly on
+   /// iPad mini in portrait. When there isn't room we drop Profile from the bar;
+   /// it stays reachable from the avatar button and the drawer's Profile
+   /// shortcut. Profile is never shown on iPhone.
+   private var shouldShowProfileTab: Bool {
+     guard !PlatformDeviceInfo.isPhone else { return false }
+     // NOTE: future — measure available tab-bar width and drop Profile when the
+     // five iPad tabs would overflow into the system ">" chevron.
+     return true
+   }
+   #endif
+
   // macOS computed properties removed — MacOSMainView now handles sidebar navigation
   
   // MARK: - Per-Account Feed Memory

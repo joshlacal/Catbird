@@ -1,6 +1,7 @@
 #if os(iOS)
 import Petrel
 import SwiftUI
+import AppIntents
 import UIKit
 import os
 
@@ -2460,6 +2461,16 @@ final class ParentPostCell: UICollectionViewCell {
       contentView.backgroundColor = UIColor(
         Color.dynamicBackground(appState.themeManager, currentScheme: contentView.getCurrentColorScheme())
       )
+
+    // Responder-level onscreen-context annotation — SwiftUI modifiers inside
+    // UIHostingConfiguration content aren't collected by the system.
+    // Only annotate if the id is a real at-uri; synthetic ids (e.g. from
+    // .unexpected thread items) can't be resolved and would cause ATProtocolError.
+    if #available(iOS 26.0, *), parentPost.id.hasPrefix("at://") {
+      appEntityIdentifier = EntityIdentifier(for: PostEntity.self, identifier: parentPost.id)
+    } else if #available(iOS 26.0, *) {
+      appEntityIdentifier = nil
+    }
     
     let content = AnyView(
       WidthLimitedContainer(maxWidth: 600) {
@@ -2489,6 +2500,9 @@ final class ParentPostCell: UICollectionViewCell {
 
   override func prepareForReuse() {
     super.prepareForReuse()
+    if #available(iOS 26.0, *) {
+      appEntityIdentifier = nil
+    }
     // Clean up resources when cell is reused
     contentConfiguration = nil
     configuredIdentity = nil
@@ -2570,6 +2584,9 @@ final class MainPostCell: UICollectionViewCell {
 
   override func prepareForReuse() {
     super.prepareForReuse()
+    if #available(iOS 26.0, *) {
+      appEntityIdentifier = nil
+    }
     contentConfiguration = nil
     configuredIdentity = nil
   }
@@ -2646,6 +2663,9 @@ final class ReplyCell: UICollectionViewCell {
 
   override func prepareForReuse() {
     super.prepareForReuse()
+    if #available(iOS 26.0, *) {
+      appEntityIdentifier = nil
+    }
     contentConfiguration = nil
     configuredIdentity = nil
   }
