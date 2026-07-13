@@ -3005,7 +3005,7 @@ struct ReplyView: View {
         // Show nested replies (depth 2+) using their actual parent relationships.
         if !layout.items.isEmpty {
           ForEach(layout.items) { item in
-            if let nestedWrapper = visibleNestedReplies.first(where: { $0.id == item.id }) {
+            if let nestedWrapper = visibleReplies.first(where: { $0.id == item.id }) {
               switch nestedWrapper.threadItem.value {
               
               case .appBskyUnspeccedDefsThreadItemPost(let nestedPost):
