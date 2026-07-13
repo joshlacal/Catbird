@@ -196,6 +196,7 @@
 				Services/MLS/MLSKeyPackageMonitor.swift,
 				Services/MLS/MLSMessagePadding.swift,
 				Services/MLS/MLSMessageValidator.swift,
+				Services/MLS/NSENotificationProcessingLeases.swift,
 				Services/MLS/MLSSyncValidator.swift,
 				Services/MLS/MLSWelcomeCoordinator.swift,
 				Services/MLS/Models/KeyPackageBatchResult.swift,

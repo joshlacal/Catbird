@@ -30,26 +30,190 @@ import FoundationModels
 // App-wide logger
 let logger = Logger(subsystem: "blue.catbird", category: "AppLifecycle")
 
+enum MLSForegroundResumeOutcome: Equatable {
+  case managerUnavailable
+  case preparationFailed
+  case failedStillSuspended
+  case staleTransition
+  case resumed
+}
+
+@MainActor
+enum MLSForegroundResumeCoordinator {
+  private static var sceneTransitionGeneration: UInt64 = 0
+  private static var currentScenePhase: ScenePhase?
+  private static var rustRuntimeClosedForCurrentSuspension = false
+
+  static func recordSceneTransition(to phase: ScenePhase) -> UInt64 {
+    sceneTransitionGeneration &+= 1
+    currentScenePhase = phase
+    if phase == .active {
+      rustRuntimeClosedForCurrentSuspension = false
+    }
+    return sceneTransitionGeneration
+  }
+
+  static func isCurrentActiveTransition(_ generation: UInt64) -> Bool {
+    isCurrentTransition(generation, expectedPhase: .active)
+  }
+
+  static func isCurrentTransition(_ generation: UInt64, expectedPhase: ScenePhase) -> Bool {
+    generation == sceneTransitionGeneration && currentScenePhase == expectedPhase
+  }
+
+  static var isApplicationActive: Bool {
+    currentScenePhase == .active
+  }
+
+  @discardableResult
+  static func markRustRuntimeClosedForSuspension(
+    _ generation: UInt64,
+    expectedPhase: ScenePhase
+  ) -> Bool {
+    guard expectedPhase != .active,
+          isCurrentTransition(generation, expectedPhase: expectedPhase)
+    else {
+      return false
+    }
+    rustRuntimeClosedForCurrentSuspension = true
+    return true
+  }
+
+  static func hasClosedRustRuntimeForSuspension(
+    _ generation: UInt64,
+    expectedPhase: ScenePhase
+  ) -> Bool {
+    expectedPhase != .active
+      && isCurrentTransition(generation, expectedPhase: expectedPhase)
+      && rustRuntimeClosedForCurrentSuspension
+  }
+
+  static func run(
+    managerAvailable: Bool,
+    resumeStillCurrent: () -> Bool,
+    prepareStorage: () async throws -> Void,
+    resumeManager: () async -> MLSResumeResult,
+    reassertSuspensionAfterStaleResume: () -> Void,
+    reloadProjection: () async -> Void,
+    performBackup: () async -> Void
+  ) async -> MLSForegroundResumeOutcome {
+    guard managerAvailable else { return .managerUnavailable }
+    guard resumeStillCurrent() else { return .staleTransition }
+
+    do {
+      try await prepareStorage()
+    } catch {
+      return .preparationFailed
+    }
+    guard resumeStillCurrent() else { return .staleTransition }
+
+    switch await resumeManager() {
+    case .failedStillSuspended:
+      return .failedStillSuspended
+    case .resumed:
+      guard resumeStillCurrent() else {
+        reassertSuspensionAfterStaleResume()
+        return .staleTransition
+      }
+      await reloadProjection()
+      guard resumeStillCurrent() else {
+        reassertSuspensionAfterStaleResume()
+        return .staleTransition
+      }
+      await performBackup()
+      return .resumed
+    }
+  }
+}
+
+@MainActor
+final class MLSSceneSuspensionCloseClaim {
+  let transitionToken: UInt64
+  let expectedPhase: ScenePhase
+  private var claimed = false
+
+  init(transitionToken: UInt64, expectedPhase: ScenePhase) {
+    self.transitionToken = transitionToken
+    self.expectedPhase = expectedPhase
+  }
+
+  func claimExpirationIfCurrent() -> Bool {
+    claimIfCurrent()
+  }
+
+  func claimNormalCloseIfCurrent() -> Bool {
+    claimIfCurrent()
+  }
+
+  private func claimIfCurrent() -> Bool {
+    guard !claimed,
+          expectedPhase != .active,
+          MLSForegroundResumeCoordinator.isCurrentTransition(
+            transitionToken,
+            expectedPhase: expectedPhase
+          )
+    else {
+      return false
+    }
+    claimed = true
+    return true
+  }
+}
+
+enum MLSSuspensionCloseOutcome: Equatable {
+  case rustPathUnavailable
+  case preparationFailed
+  case staleTransition
+  case closed
+}
+
+@MainActor
+enum MLSSuspensionCloseCoordinator {
+  static func run(
+    rustPathAvailable: Bool,
+    transitionStillCurrent: () -> Bool,
+    prepareRustRuntime: () async -> Bool,
+    closePreparedRuntime: () -> Void
+  ) async -> MLSSuspensionCloseOutcome {
+    guard rustPathAvailable else { return .rustPathUnavailable }
+    guard transitionStillCurrent() else { return .staleTransition }
+    guard await prepareRustRuntime() else { return .preparationFailed }
+    guard transitionStillCurrent() else { return .staleTransition }
+    closePreparedRuntime()
+    return .closed
+  }
+}
+
 #if os(iOS)
-/// Force the rustFull runtime closed immediately during background-task expiration.
-/// The invalidation must happen synchronously before the handler returns so iOS
-/// cannot suspend the process with a stale orchestrator runtime still cached.
-private func closeRustRuntimeSynchronousAfterExpiration(
-  appStateManager: AppStateManager,
+/// Force the exact scene suspension's rustFull runtime closed immediately during
+/// background-task expiration. Claim validation, close, and lifecycle marking all
+/// execute in one MainActor turn so a newer foreground generation cannot interleave.
+private func forceCloseSceneSuspensionSynchronously(
+  claim: MLSSceneSuspensionCloseClaim,
+  manager: MLSConversationManager?,
   reason: String
 ) {
+  let closeIfClaimed: @MainActor () -> Void = {
+    guard claim.claimExpirationIfCurrent() else { return }
+    MLSClient.interruptAllContexts()
+    MLSCoreContext.interruptAllContexts()
+    MLSClient.emergencyCloseAllContexts(reason: reason)
+    MLSCoreContext.emergencyCloseAllContexts()
+    manager?.markRustRuntimeClosedForSuspend(reason: reason)
+    MLSForegroundResumeCoordinator.markRustRuntimeClosedForSuspension(
+      claim.transitionToken,
+      expectedPhase: claim.expectedPhase
+    )
+  }
+
   if Thread.isMainThread {
     MainActor.assumeIsolated {
-      appStateManager.lifecycle.appState?.mlsConversationManager?.markRustRuntimeClosedForSuspend(
-        reason: reason
-      )
+      closeIfClaimed()
     }
   } else {
     DispatchQueue.main.sync {
       MainActor.assumeIsolated {
-        appStateManager.lifecycle.appState?.mlsConversationManager?.markRustRuntimeClosedForSuspend(
-          reason: reason
-        )
+        closeIfClaimed()
       }
     }
   }
@@ -1264,7 +1428,15 @@ private extension CatbirdApp {
     }
   }
 
+  @MainActor
   func handleScenePhaseChange(from oldPhase: ScenePhase, to newPhase: ScenePhase) {
+    let sceneTransitionToken = MLSForegroundResumeCoordinator.recordSceneTransition(to: newPhase)
+    let suspensionCloseClaim = MLSSceneSuspensionCloseClaim(
+      transitionToken: sceneTransitionToken,
+      expectedPhase: newPhase
+    )
+    var suspensionManager: MLSConversationManager?
+    var rustPathAvailable = false
     MLSSuspensionFlightRecorder.shared.record(
       .scenePhaseChange,
       details: "\(String(describing: oldPhase)) → \(String(describing: newPhase))",
@@ -1301,11 +1473,19 @@ private extension CatbirdApp {
       // Block new MLS FFI work immediately while we transition to background.
       // MLSClient delegates UniFFI MlsContext ownership to MLSCoreContext; both
       // gates are set because callers enter through both surfaces.
-      MLSClient.markSuspensionInProgress(reason: "scenePhase → \(String(describing: newPhase))")
+      if let manager = appStateManager.lifecycle.appState?.mlsConversationManager {
+        suspensionManager = manager
+        rustPathAvailable = manager.suspendMLSOperations()
+      } else {
+        // Without an instantiated manager there is no lifecycle owner. Keep the
+        // transition ownerless so later cleanup cannot abandon the suspension.
+        MLSClient.markSuspensionInProgress(reason: "scenePhase → \(String(describing: newPhase))")
+      }
       MLSCoreContext.markSuspensionInProgress()
     }
 
     #if os(iOS)
+    let suspensionOwner = suspensionManager
     // CRITICAL FIX: Synchronously acquire background task assertion
     // This bridges the gap between the synchronous onChange callback and the async Task execution.
     // Without this, aggressive OS suspension (especially in Release builds) can freeze the app
@@ -1316,12 +1496,9 @@ private extension CatbirdApp {
       taskId = UIApplication.shared.beginBackgroundTask(withName: "ScenePhaseTransition") {
         // Expiration: iOS is reclaiming time. Force-close everything NOW.
         logger.warning("ScenePhaseTransition expired — force-closing all contexts")
-        MLSClient.interruptAllContexts()
-        MLSCoreContext.interruptAllContexts()
-        MLSClient.emergencyCloseAllContexts(reason: "ScenePhaseTransition expired")
-        MLSCoreContext.emergencyCloseAllContexts()
-        closeRustRuntimeSynchronousAfterExpiration(
-          appStateManager: appStateManager,
+        forceCloseSceneSuspensionSynchronously(
+          claim: suspensionCloseClaim,
+          manager: suspensionOwner,
           reason: "ScenePhaseTransition expired"
         )
         if taskId != .invalid {
@@ -1332,21 +1509,12 @@ private extension CatbirdApp {
     }
     #endif
 
-    if newPhase == .inactive || newPhase == .background {
+    if newPhase == .inactive || newPhase == .background, !rustPathAvailable {
       #if os(iOS)
-      if let appState = appStateManager.lifecycle.appState {
-        let manager = appState.mlsConversationManager
-        let rustPrepareSucceeded = MainActor.assumeIsolated {
-          manager?.suspendMLSOperations() ?? false
-        }
-        if !rustPrepareSucceeded {
-          MLSClient.interruptAllContexts()
-          MLSCoreContext.interruptAllContexts()
-        }
-      } else {
-        MLSClient.interruptAllContexts()
-        MLSCoreContext.interruptAllContexts()
-      }
+      // A missing rustFull runtime has no normal close path. Keep every gate closed
+      // and interrupt any straggler; only background-task expiration may force-close.
+      MLSClient.interruptAllContexts()
+      MLSCoreContext.interruptAllContexts()
       #else
       MLSClient.interruptAllContexts()
       MLSCoreContext.interruptAllContexts()
@@ -1372,6 +1540,14 @@ private extension CatbirdApp {
 
       await FeedStateStore.shared.handleScenePhaseChange(newPhase)
 
+      guard MLSForegroundResumeCoordinator.isCurrentTransition(
+        sceneTransitionToken,
+        expectedPhase: newPhase
+      ) else {
+        logger.debug("Skipping stale scene lifecycle task after feed-state update")
+        return
+      }
+
 #if os(iOS)
       // ═══════════════════════════════════════════════════════════════════════════
       // 0xdead10cc FIX: Close Rust FFI connections on background.
@@ -1393,34 +1569,89 @@ private extension CatbirdApp {
         }
       }
 
-      if oldPhase == .active, (newPhase == .inactive || newPhase == .background) {
+      if newPhase == .inactive || newPhase == .background {
         // WAL health snapshot BEFORE suspension — baseline for corruption detection
         MLSGRDBManager.probeWALHealth(for: "all", label: "APP_SUSPENDING")
 
         // RAII background task protects the close operations
         let bgTask = CatbirdBackgroundTask(name: "MLSSuspensionClose") {
           // Last resort: iOS is killing our background time
-          MLSClient.interruptAllContexts()
-          MLSCoreContext.interruptAllContexts()
-          MLSClient.emergencyCloseAllContexts(reason: "MLSSuspensionClose expired")
-          MLSCoreContext.emergencyCloseAllContexts()
-          closeRustRuntimeSynchronousAfterExpiration(
-            appStateManager: appStateManager,
+          forceCloseSceneSuspensionSynchronously(
+            claim: suspensionCloseClaim,
+            manager: suspensionOwner,
             reason: "MLSSuspensionClose expired"
           )
         }
 
-        // Step 1: Close Rust FFI connections — releases WAL locks in App Group
-        MLSClient.emergencyCloseAllContexts(reason: "scenePhase active→\(String(describing: newPhase))")
-        MLSCoreContext.emergencyCloseAllContexts()
-        appStateManager.lifecycle.appState?.mlsConversationManager?.markRustRuntimeClosedForSuspend(
-          reason: "scenePhase active→\(String(describing: newPhase)) emergency close"
+        guard let manager = suspensionOwner else {
+          bgTask.end()
+          logger.warning("Skipping normal Rust close without the suspension-owning manager")
+          return
+        }
+
+        let closeOutcome = await MLSSuspensionCloseCoordinator.run(
+          rustPathAvailable: rustPathAvailable,
+          transitionStillCurrent: {
+            MLSForegroundResumeCoordinator.isCurrentTransition(
+              sceneTransitionToken,
+              expectedPhase: newPhase
+            )
+          },
+          prepareRustRuntime: {
+            await manager.prepareRustRuntimeForSuspensionAfterDrain(timeout: 5)
+          },
+          closePreparedRuntime: {
+            guard suspensionCloseClaim.claimNormalCloseIfCurrent() else { return }
+            MLSClient.emergencyCloseAllContexts(
+              reason: "scenePhase active→\(String(describing: newPhase))"
+            )
+            MLSCoreContext.emergencyCloseAllContexts()
+            manager.markRustRuntimeClosedForSuspend(
+              reason: "scenePhase active→\(String(describing: newPhase)) prepared close"
+            )
+            MLSForegroundResumeCoordinator.markRustRuntimeClosedForSuspension(
+              sceneTransitionToken,
+              expectedPhase: newPhase
+            )
+          }
         )
+
+        switch closeOutcome {
+        case .closed:
+          break
+        case .staleTransition:
+          bgTask.end()
+          logger.debug("Skipping stale suspension lifecycle task after Rust preparation")
+          return
+        case .preparationFailed:
+          bgTask.end()
+          logger.error("Rust suspension preparation failed; keeping lifecycle gates closed")
+          return
+        case .rustPathUnavailable:
+          guard MLSForegroundResumeCoordinator.hasClosedRustRuntimeForSuspension(
+            sceneTransitionToken,
+            expectedPhase: newPhase
+          ) else {
+            bgTask.end()
+            logger.warning("Rust suspension path unavailable; keeping lifecycle gates closed")
+            return
+          }
+          logger.debug("Reusing Rust close completed by the preceding suspended phase")
+        }
 
         // Step 2: Give GRDB time to complete its auto-suspension (checkpoint + release readers).
         // observesSuspensionNotifications fires on didEnterBackground which may be
         // slightly after scenePhase changes. 200ms is enough for the checkpoint to complete.
         try? await Task.sleep(nanoseconds: 200_000_000)
+
+        guard MLSForegroundResumeCoordinator.isCurrentTransition(
+          sceneTransitionToken,
+          expectedPhase: newPhase
+        ) else {
+          bgTask.end()
+          logger.debug("Skipping stale suspension lifecycle task after close delay")
+          return
+        }
 
         // Step 3: NOW signal NSE that it's safe to decrypt.
         // At this point, Rust FFI is closed and GRDB is fully suspended.
@@ -1439,52 +1670,7 @@ private extension CatbirdApp {
       if (oldPhase == .background || oldPhase == .inactive), newPhase == .active {
         // WAL health snapshot ON RESUME — detect corruption from NSE activity while suspended
         MLSGRDBManager.probeWALHealth(for: "all", label: "APP_RESUMING")
-
-        // CRITICAL: Clear suspension flag FIRST so getContext() works
-        MLSCoreContext.clearSuspensionFlag()
-        MLSClient.clearSuspensionFlag(reason: "scenePhase → active")
-
-        // Resume GRDB and coordination
-        MLSDatabaseCoordinator.shared.resumeFromSuspension()
-
-        if let appState = appStateManager.lifecycle.appState {
-          do {
-            let resumeResult = try await MLSGRDBManager.shared.prepareForForegroundResume(
-              for: appState.userDID
-            )
-            switch resumeResult {
-            case .ready:
-              logger.debug("✅ [RESUME] MLS storage healthy before foreground reopen")
-            case .repaired:
-              logger.info("✅ [RESUME] MLS storage repaired before foreground reopen")
-            case .reset:
-              logger.warning(
-                "🧰 [RESUME] MLS storage was rebuilt before foreground reopen after verified corruption"
-              )
-            }
-            appState.mlsServiceState.clearDatabaseFailure()
-          } catch {
-            logger.error("❌ [RESUME] Foreground MLS preparation failed: \(error.localizedDescription)")
-            // Don't return early — let the app continue to the MLS state reload.
-            // The conversation view will retry loading, and the pool may recover
-            // on its own once GRDB fully resumes. Blocking here just guarantees
-            // "Couldn't load messages" with no chance of recovery.
-            logger.warning("🔄 [RESUME] Continuing despite preparation failure — pool may self-heal")
-          }
-
-          // Creates fresh Rust connections on demand
-          await appState.reloadMLSStateFromDisk()
-
-          // Resume MLS operations that were suspended during backgrounding
-          if let manager = await appState.getMLSConversationManager() {
-            await manager.resumeMLSOperations()
-          }
-
-          // Check if auto-backup is needed
-          if let backupManager = appState.backupManager {
-            await backupManager.checkAndPerformAutoBackupIfNeeded()
-          }
-        }
+        await resumeMLSAfterReturningToForeground(transitionToken: sceneTransitionToken)
       }
 #endif
 
@@ -1499,6 +1685,72 @@ private extension CatbirdApp {
         logger.info("✅ Background scheduled - GRDB auto-suspended, Rust FFI closed")
 #endif
       }
+    }
+  }
+
+  @MainActor
+  private func resumeMLSAfterReturningToForeground(transitionToken: UInt64) async {
+    let appState = appStateManager.lifecycle.appState
+    let manager = appState?.mlsConversationManager
+
+    let outcome = await MLSForegroundResumeCoordinator.run(
+      managerAvailable: manager != nil,
+      resumeStillCurrent: {
+        MLSForegroundResumeCoordinator.isCurrentActiveTransition(transitionToken)
+      },
+      prepareStorage: {
+        guard let appState else { return }
+        let preparation = try await MLSGRDBManager.shared.prepareForForegroundResume(
+          for: appState.userDID
+        )
+        switch preparation {
+        case .ready:
+          logger.debug("✅ [RESUME] MLS storage healthy before foreground reopen")
+        case .repaired:
+          logger.info("✅ [RESUME] MLS storage repaired before foreground reopen")
+        case .reset:
+          logger.warning(
+            "🧰 [RESUME] MLS storage was rebuilt before foreground reopen after verified corruption"
+          )
+        }
+        appState.mlsServiceState.clearDatabaseFailure()
+      },
+      resumeManager: {
+        guard let manager else { return .failedStillSuspended }
+        return await manager.resumeMLSOperations()
+      },
+      reassertSuspensionAfterStaleResume: {
+        guard !MLSForegroundResumeCoordinator.isApplicationActive else {
+          return
+        }
+
+        // The newer inactive/background transition already owns suspension and
+        // preparation. Only interrupt stragglers here; never advance its generation
+        // or close beneath its in-flight drain.
+        MLSClient.interruptAllContexts()
+        MLSCoreContext.interruptAllContexts()
+      },
+      reloadProjection: {
+        await appState?.reloadMLSProjectionFromDisk()
+      },
+      performBackup: {
+        if let backupManager = appState?.backupManager {
+          await backupManager.checkAndPerformAutoBackupIfNeeded()
+        }
+      }
+    )
+
+    switch outcome {
+    case .managerUnavailable:
+      logger.warning("⏭️ [RESUME] No MLS manager; keeping MLS lifecycle gates closed")
+    case .preparationFailed:
+      logger.error("❌ [RESUME] Foreground MLS preparation failed; keeping MLS lifecycle gates closed")
+    case .failedStillSuspended:
+      logger.error("❌ [RESUME] MLS manager resume failed; lifecycle gates remain closed")
+    case .staleTransition:
+      logger.warning("⏭️ [RESUME] Discarded stale foreground transition")
+    case .resumed:
+      logger.info("✅ [RESUME] MLS transaction completed and UI projection reloaded")
     }
   }
 
