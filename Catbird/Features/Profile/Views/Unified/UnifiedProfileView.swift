@@ -19,7 +19,6 @@ struct UnifiedProfileView: View {
   private static let maxResponsiveContentWidth: CGFloat = 600
   @Environment(AppState.self) private var appState
   @Environment(\.colorScheme) private var currentColorScheme
-  @Environment(\.horizontalSizeClass) private var hSizeClass
   @State private var viewModel: ProfileViewModel
   @Binding var selectedTab: Int
   @Binding var lastTappedTab: Int?
@@ -114,10 +113,10 @@ struct UnifiedProfileView: View {
         ZStack {
             ScrollView {
                 VStack(spacing: 0) {
-                    // Banner section - constrained to 600pt like other content
-                    bannerHeaderView(profile: profile)
-                        .flexibleHeaderContent()
-                        .background(Color.accentColor.opacity(0.05))
+                    // ProfileBannerHeader owns the concentric clip and stretch treatment.
+                    ProfileBannerHeader(
+                        bannerURL: profile.banner.flatMap { URL(string: $0.uriString()) }
+                    )
                         .frame(maxWidth: contentMaxWidth, alignment: .center)
                         .frame(maxWidth: .infinity, alignment: .center)
 
@@ -823,53 +822,6 @@ struct UnifiedProfileView: View {
         logger.error("Failed to toggle block: \(error.localizedDescription)")
       }
     }
-  }
-
-  // MARK: - Banner Header View
-  @ViewBuilder
-  private func bannerHeaderView(profile: AppBskyActorDefs.ProfileViewDetailed) -> some View {
-    let banner = ZStack(alignment: .center) {
-      if let bannerURL = profile.banner?.uriString() {
-        LazyImage(url: URL(string: bannerURL)) { state in
-          if let image = state.image {
-            image
-              .resizable()
-              .scaledToFill() // Fill width, crop vertically if needed
-              .overlay {
-                Color(white: 0, opacity: 0.15)
-                  .blendMode(SwiftUI.BlendMode.overlay)
-              }
-          } else if state.error != nil {
-            Rectangle().fill(Color.accentColor.opacity(0.25))
-          } else {
-            Rectangle().fill(Color.accentColor.opacity(0.15))
-              .overlay(ProgressView().tint(.white))
-          }
-        }
-      } else {
-        Rectangle()
-          .fill(Color.accentColor.opacity(0.25))
-      }
-    }
-    .clipped() // Ensure banner content doesn’t overflow assigned frame
-    .contentShape(Rectangle())
-    .accessibilityLabel("Profile banner")
-
-    if hSizeClass == .compact {
-      banner
-        .containerRelativeFrame(.horizontal)
-    } else {
-      banner
-    }
-  }
-  
-  // Responsive banner height based on size class
-  private var responsiveBannerHeight: CGFloat {
-    #if os(iOS)
-    hSizeClass == .compact ? 140 : 160
-    #else
-    return 180 // macOS - slightly larger for desktop experience
-    #endif
   }
 
   // MARK: - View Components

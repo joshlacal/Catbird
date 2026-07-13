@@ -61,3 +61,36 @@ extension View {
         modifier(FlexibleHeaderContentModifier())
     }
 }
+
+/// Clips a banner header to a uniform rounded rectangle whose radius matches
+/// the concentric radius of the banner's top corners against its container.
+/// The zero default inset keeps banners full-bleed while preserving a minimum
+/// corner radius on platforms that cannot resolve concentric geometry.
+struct ConcentricBannerClip: ViewModifier {
+  var horizontalInset: CGFloat = 0
+  var minimumCornerRadius: CGFloat = 16
+
+  @State private var resolvedTopRadius: CGFloat?
+
+  private var cornerRadius: CGFloat {
+    max(resolvedTopRadius ?? 0, minimumCornerRadius)
+  }
+
+  func body(content: Content) -> some View {
+    content
+      .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+      .onGeometryChange(for: CGFloat.self) { proxy in
+        if #available(iOS 27.0, macOS 27.0, *),
+          let radii = proxy.concentricCornerRadii
+        {
+          return max(radii.topLeading, radii.topTrailing)
+        }
+        return 0
+      } action: { topRadius in
+        if topRadius > 0 {
+          resolvedTopRadius = topRadius
+        }
+      }
+      .padding(.horizontal, horizontalInset)
+  }
+}

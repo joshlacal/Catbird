@@ -31,6 +31,12 @@ enum FeedsLayoutMode: String, CaseIterable {
   }
 }
 
+enum FeedsStartPageLayoutMetrics {
+  static func iconSize(itemWidth: CGFloat) -> CGFloat {
+    max(64, min(itemWidth * 0.8, 110))
+  }
+}
+
 // MARK: - FeedsStartPage
 struct FeedsStartPage: View {
   // Environment and State properties
@@ -190,9 +196,7 @@ struct FeedsStartPage: View {
     return max(80, min(calculatedWidth, 140))
   }
   private var iconSize: CGFloat {
-    // Proportional to the computed grid item width, clamped for legibility.
-    let baseSize = itemWidth * 0.70
-    return max(64, min(baseSize, 110))
+    FeedsStartPageLayoutMetrics.iconSize(itemWidth: itemWidth)
   }
 
   #if os(iOS)
@@ -1144,13 +1148,11 @@ struct FeedsStartPage: View {
   private func standardContent(contentWidth: CGFloat) -> some View {
       ScrollView {
         VStack(spacing: 0) {
-          // Banner header using Apple's flexible header system. When the page
-          // renders inside the side drawer, inset the banner and clip it to a
-          // `ConcentricRectangle` so its corners stay concentric with the
-          // drawer's rounded trailing corners.
+          // The concentric clip must be inside `flexibleHeaderContent()` so
+          // the mask stretches and stays pinned with the image.
           bannerHeaderView()
-            .flexibleHeaderContent()
             .modifier(DrawerBannerInset())
+            .flexibleHeaderContent()
             .background(inSideDrawer ? Color.clear : Color.accentColor.opacity(0.05))
 
           // Main content below the banner
@@ -1524,14 +1526,12 @@ struct FeedsStartPage: View {
       if let bannerURL = profile?.banner?.url {
         LazyImage(url: bannerURL) { state in
           if let image = state.image {
-            // `aspectRatio(.fill)` lets the image overflow horizontally to
-            // cover its frame's height. Pin the rendered image to the parent
-            // frame and clip inside the LazyImage so the overflow is cropped
-            // before it can escape into the surrounding layout.
-            image
-              .resizable()
-              .aspectRatio(contentMode: .fill)
-              .frame(maxWidth: .infinity, maxHeight: .infinity)
+            Color.clear
+              .overlay {
+                image
+                  .resizable()
+                  .aspectRatio(contentMode: .fill)
+              }
               .overlay {
                 Color(white: 0, opacity: 0.15)
                   .blendMode(SwiftUI.BlendMode.overlay)
@@ -1709,13 +1709,8 @@ private struct DrawerAwareScrollBackground: ViewModifier {
     }
 }
 
-/// Insets the banner header inside the drawer and clips it to a shape that
-/// stays concentric with the drawer's rounded trailing corners. The drawer
-/// publishes its outer shape via `containerShape(_:)`, so a
-/// `ConcentricRectangle` here automatically resolves its corner radii against
-/// it. `isUniform: true` keeps the banner's four corners visually balanced
-/// even though the drawer's leading corners are square and trailing corners
-/// are rounded.
+/// Clips the drawer banner to a uniform radius measured from its top corners.
+/// The modifier's zero horizontal inset keeps the banner full-bleed.
 private struct DrawerBannerInset: ViewModifier {
     #if os(iOS)
     @Environment(\.inSideDrawer) private var inSideDrawer
@@ -1726,20 +1721,8 @@ private struct DrawerBannerInset: ViewModifier {
     func body(content: Content) -> some View {
         if inSideDrawer {
             #if os(iOS)
-            if #available(iOS 26.0, *) {
-                content
-                    .clipShape(ConcentricRectangle(
-                        corners: .concentric(minimum: 16),
-                        isUniform: true
-                    ))
-                    .padding(.horizontal, SideDrawerConstants.drawerInnerInset)
-                    .padding(.top, SideDrawerConstants.drawerInnerInset)
-            } else {
-                content
-                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                    .padding(.horizontal, SideDrawerConstants.drawerInnerInset)
-                    .padding(.top, SideDrawerConstants.drawerInnerInset)
-            }
+            content
+                .modifier(ConcentricBannerClip())
             #else
             content
             #endif

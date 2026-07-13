@@ -4,6 +4,13 @@ import Testing
 @testable import Catbird
 
 struct FeedsLaunchpadLayoutTests {
+  @Test("Feed start icons use eighty percent of available card width")
+  func feedStartIconScale() {
+    #expect(FeedsStartPageLayoutMetrics.iconSize(itemWidth: 50) == 64)
+    #expect(FeedsStartPageLayoutMetrics.iconSize(itemWidth: 100) == 80)
+    #expect(FeedsStartPageLayoutMetrics.iconSize(itemWidth: 200) == 110)
+  }
+
   // pageHeight = 800 - 2*12 = 776. Page-1 prefix = banner 190 + title 92 +
   // default 96 = 378. Pinned rows on page 1: remaining = 776-378-48 = 350
   // -> fits 2 rows (120 + 132 = 252 <= 350; 3 rows = 384 > 350).

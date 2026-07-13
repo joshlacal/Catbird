@@ -164,7 +164,7 @@ jj new
 **Interfaces:**
 - Produces: `ConcentricBannerClip(horizontalInset:minimumCornerRadius:)`, final `ProfileBannerHeader`, feed icon sizing clamped around `itemWidth * 0.8`
 
-- [ ] **Step 1: Add a failing icon-metric regression test**
+- [x] **Step 1: Add a failing icon-metric regression test**
 
 Expose an internal pure metric and test it:
 
@@ -187,7 +187,10 @@ xcodebuild test -project Catbird.xcodeproj -scheme Catbird \
 
 Expected: FAIL because `FeedsStartPageLayoutMetrics.iconSize` does not yet exist.
 
-- [ ] **Step 2: Restore the final geometry, not an intermediate diff**
+Evidence: the pinned shell run exited 65 with three expected `Cannot find
+'FeedsStartPageLayoutMetrics' in scope` diagnostics before production edits.
+
+- [x] **Step 2: Restore the final geometry, not an intermediate diff**
 
 Use `git show d062c2a:...`, `git show 650f738:...`, and `git show 2f3f4cc:...` side-by-side with current files. Implement this stable interface:
 
@@ -230,15 +233,25 @@ struct ConcentricBannerClip: ViewModifier {
 
 Extract `ProfileBannerHeader` as in `8e2b09d`, retain `Color.clear.overlay` containment from `650f738`, and retain the zero horizontal inset from `2f3f4cc`. Do not restore deleted UIKit profile controllers or `_trash` files.
 
-- [ ] **Step 3: Run focused tests and build**
+- [x] **Step 3: Run focused tests and build**
 
 Run the Task 2 test command, then the iOS build command from Task 1. Expected: PASS and `** BUILD SUCCEEDED **`.
+
+Evidence: XcodeBuildMCP on the pinned iOS 26.2 simulator passed all 8
+`FeedsLaunchpadLayoutTests` and the subsequent iOS simulator build succeeded.
 
 - [ ] **Step 4: Verify visually**
 
 Launch the app, use UI hierarchy inspection to open Feed Start and a unified profile, and capture compact-width and regular-width screenshots. Confirm larger icons, centered content, a continuous concentric curve, full-bleed banner edges, and no image overflow.
 
-- [ ] **Step 5: Update ledger and commit**
+Blocked boundary: the app launched on the compact simulator, but its retained
+state is the sign-in screen with `GatewayOAuthExchangeError error 2`, so the
+two authenticated screens could not be reached without mutating account state.
+Xcode-beta UI hierarchy capture also failed because its private
+`SimulatorKit.framework` is absent. Exact launch-state screenshot:
+`/tmp/catbird-task2-iphone.png`.
+
+- [x] **Step 5: Update ledger and commit**
 
 ```bash
 jj describe -m 'Catbird: recover feed icons and profile banner geometry'
