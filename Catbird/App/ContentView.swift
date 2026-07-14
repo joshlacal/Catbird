@@ -198,6 +198,8 @@ struct MainContentView: View {
 
   // Add state for showing post composer
   @State private var showingPostComposer = false
+  @State private var showingComposerDrafts = false
+  @State private var pendingSelectedDraft: PostComposerDraft?
   @State private var showingSettings = false
   @State private var showingNewMessageSheet = false
   @State private var hasInitializedFeed = false
@@ -207,6 +209,10 @@ struct MainContentView: View {
   @State private var drawerNavigationPath = NavigationPath()
   // Snapshot the draft at presentation time so autosave mutations don't recreate the sheet content
   @State private var composerInitialDraft: PostComposerDraft?
+  #if os(iOS)
+  @State private var pendingCameraCapture: CameraCaptureMode?
+  @State private var composerCapturedMedia: CapturedMedia?
+  #endif
   // Namespace for iOS 26 matched transitions
   @Namespace private var composeTransitionNamespace
   // chatMode is now stored per-account in appState.chatMode
@@ -429,12 +435,24 @@ struct MainContentView: View {
               #if !targetEnvironment(macCatalyst)
               if (selectedTab == 0 && isRootView) || (selectedTab == 3 && !PlatformDeviceInfo.isPhone) {
                 FAB(
-                  composeAction: { showingPostComposer = true },
+                  composeAction: { openComposerResumingDraft() },
                   feedsAction: {},
                   showFeedsButton: false,
                   hasMinimizedComposer: appState.composerDraftManager.currentDraft != nil,
                   clearDraftAction: {
                     appState.composerDraftManager.clearDraft()
+                  },
+                  newPostAction: { openFreshComposerStashingDraft() },
+                  showDraftsAction: { openDraftsBrowser() },
+                  takePhotoAction: {
+                    #if os(iOS)
+                    beginCameraCapture(.photo)
+                    #endif
+                  },
+                  recordVideoAction: {
+                    #if os(iOS)
+                    beginCameraCapture(.video)
+                    #endif
                   }
                 )
                 .padding(.bottom, 79)  // Tab bar (49) + spacing (30)
@@ -543,12 +561,24 @@ struct MainContentView: View {
             #if !targetEnvironment(macCatalyst)
             if (selectedTab == 0 && isRootView) || (selectedTab == 3 && !PlatformDeviceInfo.isPhone) {
               FAB(
-                composeAction: { showingPostComposer = true },
+                composeAction: { openComposerResumingDraft() },
                 feedsAction: {},
                 showFeedsButton: false,
                 hasMinimizedComposer: appState.composerDraftManager.currentDraft != nil,
                 clearDraftAction: {
                   appState.composerDraftManager.clearDraft()
+                },
+                newPostAction: { openFreshComposerStashingDraft() },
+                showDraftsAction: { openDraftsBrowser() },
+                takePhotoAction: {
+                  #if os(iOS)
+                  beginCameraCapture(.photo)
+                  #endif
+                },
+                recordVideoAction: {
+                  #if os(iOS)
+                  beginCameraCapture(.video)
+                  #endif
                 }
               )
               .padding(.bottom, 79)  // Tab bar (49) + spacing (30)
@@ -656,6 +686,23 @@ struct MainContentView: View {
       }
       .sheet(isPresented: $showingPostComposer) {
         Group {
+          #if os(iOS)
+          if let media = composerCapturedMedia {
+            PostComposerViewUIKit(
+              initialCapturedMedia: media,
+              appState: appState
+            )
+          } else if let draft = composerInitialDraft {
+            PostComposerViewUIKit(
+              restoringFromDraft: draft,
+              appState: appState
+            )
+          } else {
+            PostComposerViewUIKit(
+              appState: appState
+            )
+          }
+          #else
           if let draft = composerInitialDraft {
             PostComposerViewUIKit(
               restoringFromDraft: draft,
@@ -666,6 +713,7 @@ struct MainContentView: View {
               appState: appState
             )
           }
+          #endif
         }
         .applyAppStateEnvironment(appState)
         .presentationDetents([.large])
@@ -676,6 +724,40 @@ struct MainContentView: View {
           namespace: composeTransitionNamespace
         )
       }
+      .sheet(isPresented: $showingComposerDrafts, onDismiss: {
+        if let draft = pendingSelectedDraft {
+          pendingSelectedDraft = nil
+          openComposerRestoring(draft)
+        }
+      }) {
+        DraftsListView(appState: appState) { draftViewModel in
+          pendingSelectedDraft = appState.composerDraftManager.loadSavedDraft(draftViewModel)
+          showingComposerDrafts = false
+        }
+        .applyAppStateEnvironment(appState)
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+      }
+      #if os(iOS)
+      .fullScreenCover(item: $pendingCameraCapture, onDismiss: {
+        if composerCapturedMedia != nil {
+          showingPostComposer = true
+        }
+      }) { mode in
+        CameraCaptureView(
+          mode: mode,
+          onCapture: { media in
+            composerCapturedMedia = media
+            composerInitialDraft = nil
+            pendingCameraCapture = nil
+          },
+          onCancel: {
+            pendingCameraCapture = nil
+          }
+        )
+        .ignoresSafeArea()
+      }
+      #endif
       .sheet(isPresented: $showingNewMessageSheet) {
         NewConversationView()
           .applyAppStateEnvironment(appState)
@@ -690,7 +772,12 @@ struct MainContentView: View {
         showingOnboarding = newValue
       }
       .onChange(of: showingPostComposer) { _, isPresented in
-        composerInitialDraft = isPresented ? appState.composerDraftManager.currentDraft : nil
+        if !isPresented {
+          composerInitialDraft = nil
+          #if os(iOS)
+          composerCapturedMedia = nil
+          #endif
+        }
       }
       .onChange(of: showingOnboarding) { _, newValue in
         if !newValue && appState.onboardingManager.showWelcomeSheet {
@@ -856,6 +943,52 @@ extension MainContentView {
     guard !hasRestoredState else { return }
     hasRestoredState = true
   }
+
+  private func openComposerResumingDraft() {
+    #if os(iOS)
+    composerCapturedMedia = nil
+    #endif
+    composerInitialDraft = appState.composerDraftManager.currentDraft
+    showingPostComposer = true
+  }
+
+  private func stashWorkingDraft() {
+    guard let workingDraft = appState.composerDraftManager.currentDraft else { return }
+    appState.composerDraftManager.createSavedDraft(workingDraft)
+    appState.composerDraftManager.clearDraft()
+  }
+
+  private func openFreshComposerStashingDraft() {
+    #if os(iOS)
+    composerCapturedMedia = nil
+    #endif
+    stashWorkingDraft()
+    composerInitialDraft = nil
+    showingPostComposer = true
+  }
+
+  private func openComposerRestoring(_ draft: PostComposerDraft) {
+    #if os(iOS)
+    composerCapturedMedia = nil
+    #endif
+    composerInitialDraft = draft
+    showingPostComposer = true
+  }
+
+  private func openDraftsBrowser() {
+    showingComposerDrafts = true
+  }
+
+  #if os(iOS)
+  private func beginCameraCapture(_ mode: CameraCaptureMode) {
+    stashWorkingDraft()
+    guard UIImagePickerController.isSourceTypeAvailable(.camera) else {
+      appState.toastManager.show(ToastItem(message: "Camera is unavailable on this device", icon: "camera.fill"))
+      return
+    }
+    pendingCameraCapture = mode
+  }
+  #endif
 }
 
 

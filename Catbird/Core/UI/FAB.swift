@@ -6,6 +6,25 @@
 //
 
 import SwiftUI
+#if os(iOS)
+import UIKit
+#endif
+
+enum FABQuickAction: CaseIterable {
+    case newPost
+    case browseDrafts
+    case takePhoto
+    case recordVideo
+
+    var title: String {
+        switch self {
+        case .newPost: "New Post"
+        case .browseDrafts: "Browse Drafts"
+        case .takePhoto: "Take Photo"
+        case .recordVideo: "Record Video"
+        }
+    }
+}
 
 struct FAB: View {
     let composeAction: () -> Void
@@ -13,22 +32,37 @@ struct FAB: View {
     let showFeedsButton: Bool
     let hasMinimizedComposer: Bool
     let clearDraftAction: (() -> Void)?
+    let newPostAction: (() -> Void)?
+    let showDraftsAction: (() -> Void)?
+    let takePhotoAction: (() -> Void)?
+    let recordVideoAction: (() -> Void)?
     @Environment(\.colorScheme) var colorScheme
     @Environment(\.toastManager) private var toastManager
-    // When the user enables Reduce Transparency, the translucent Liquid Glass
-    // material is swapped for an opaque accent fill so the white glyph stays legible.
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     // Namespace for matched zoom transitions to the composer (provided by ContentView)
     @Environment(\.composerTransitionNamespace) private var composerNamespace
 
     private let circleSize: CGFloat = 62
     
-    init(composeAction: @escaping () -> Void, feedsAction: @escaping () -> Void, showFeedsButton: Bool, hasMinimizedComposer: Bool = false, clearDraftAction: (() -> Void)? = nil) {
+    init(
+        composeAction: @escaping () -> Void,
+        feedsAction: @escaping () -> Void,
+        showFeedsButton: Bool,
+        hasMinimizedComposer: Bool = false,
+        clearDraftAction: (() -> Void)? = nil,
+        newPostAction: (() -> Void)? = nil,
+        showDraftsAction: (() -> Void)? = nil,
+        takePhotoAction: (() -> Void)? = nil,
+        recordVideoAction: (() -> Void)? = nil
+    ) {
         self.composeAction = composeAction
         self.feedsAction = feedsAction
         self.showFeedsButton = showFeedsButton
         self.hasMinimizedComposer = hasMinimizedComposer
         self.clearDraftAction = clearDraftAction
+        self.newPostAction = newPostAction
+        self.showDraftsAction = showDraftsAction
+        self.takePhotoAction = takePhotoAction
+        self.recordVideoAction = recordVideoAction
     }
     
     var body: some View {
@@ -58,21 +92,26 @@ struct FAB: View {
                 }
                 Spacer()
                 if #available(iOS 26.0, macOS 26.0, *) {
-                    composeButton
+                    Menu {
+                        composeMenuItems
+                    } label: {
+                        composeButtonLabel
+                    } primaryAction: {
+                        composeAction()
+                    }
+                        .buttonStyle(.glassProminent)
                         .clipShape(Circle())
-                        .composeGlass(reduceTransparency: reduceTransparency)
-                        .composerContextMenu(
-                          hasMinimizedComposer: hasMinimizedComposer,
-                          clearDraftAction: clearDraftAction
-                        )
+                        .composerMatchedSource(namespace: composerNamespace)
                         .accessibilityLabel(composeAccessibilityLabel)
                         .accessibilityHint(composeAccessibilityHint)
                 } else {
-                    composeButton
-                        .composerContextMenu(
-                          hasMinimizedComposer: hasMinimizedComposer,
-                          clearDraftAction: clearDraftAction
-                        )
+                    Menu {
+                        composeMenuItems
+                    } label: {
+                        composeButtonLabel
+                    } primaryAction: {
+                        composeAction()
+                    }
                         .accessibilityLabel(composeAccessibilityLabel)
                         .accessibilityHint(composeAccessibilityHint)
                 }
@@ -116,41 +155,44 @@ struct FAB: View {
         }
     }
     
-    private var composeButton: some View {
-        Button(action: composeAction) {
-            if #available(iOS 26.0, macOS 26.0, *) {
+    private var composeButtonLabel: some View {
+        ZStack {
+            symbolWithBadge
+                .foregroundStyle(.white)
+        }
+        .frame(width: circleSize, height: circleSize)
+        .contentShape(Circle())
+    }
 
-            // Center the SF Symbol at 30x30, then place the badge
-            // relative to the symbol's bounds (not the full 62pt circle).
-            ZStack {
-                    symbolWithBadge
-                        .foregroundStyle(.white)
-                }
-            .frame(width: circleSize, height: circleSize)
+    @ViewBuilder
+    private var composeMenuItems: some View {
+        if let newPostAction {
+            Button(action: newPostAction) {
+                Label(FABQuickAction.newPost.title, systemImage: "square.and.pencil")
+            }
+        }
+        if let showDraftsAction {
+            Button(action: showDraftsAction) {
+                Label(FABQuickAction.browseDrafts.title, systemImage: "doc.on.doc")
+            }
+        }
+        #if os(iOS)
+        if let takePhotoAction {
+            Button(action: takePhotoAction) {
+                Label(FABQuickAction.takePhoto.title, systemImage: "camera")
+            }
+        }
+        if let recordVideoAction {
+            Button(action: recordVideoAction) {
+                Label(FABQuickAction.recordVideo.title, systemImage: "video")
+            }
+        }
+        #endif
 
-//            .background(
-//
-//                (hasMinimizedComposer ? Color.accentColor.opacity(0.5) : Color.accentColor.opacity(0.8))
-//
-//            )
-            .contentShape(Circle())
-            .buttonStyle(.glassProminent) // requires iOS 26+ / macOS 26+
-            // Mark the actual compose button as the matched transition source
-            // instead of tagging the entire FAB container from the outside.
-            .composerMatchedSource(namespace: composerNamespace)
-            } else {
-                ZStack {
-                    symbolWithBadge
-                        .foregroundStyle(.white)
-                }
-                .frame(width: circleSize, height: circleSize)
-                
-                //            .background(
-                //
-                //                (hasMinimizedComposer ? Color.accentColor.opacity(0.5) : Color.accentColor.opacity(0.8))
-                //
-                //            )
-                .contentShape(Circle())
+        if hasMinimizedComposer, let clearDraftAction {
+            Divider()
+            Button(role: .destructive, action: clearDraftAction) {
+                Label("Clear Draft", systemImage: "trash")
             }
         }
     }
@@ -196,40 +238,6 @@ struct FAB: View {
 
 }
 
-@available(iOS 26.0, macOS 26.0, *)
-private extension View {
-    /// Applies the compose FAB's Liquid Glass styling.
-    ///
-    /// The accent-tinted `.clear` glass keeps the button subtle over the feed
-    /// while letting content show through. When Reduce Transparency is enabled,
-    /// it falls back to the opaque `.regular` material so the white glyph never
-    /// loses contrast against bright content scrolling underneath.
-    @ViewBuilder
-    func composeGlass(reduceTransparency: Bool) -> some View {
-        if reduceTransparency {
-            self.glassEffect(.regular.tint(.accentColor).interactive())
-        } else {
-            self.glassEffect(.clear.tint(.accentColor).interactive())
-        }
-    }
-}
-
-private extension View {
-    @ViewBuilder
-    func composerContextMenu(
-        hasMinimizedComposer: Bool,
-        clearDraftAction: (() -> Void)?
-    ) -> some View {
-        if hasMinimizedComposer, let clearDraftAction {
-            self.contextMenu {
-                Button("Clear Draft", role: .destructive, action: clearDraftAction)
-            }
-        } else {
-            self
-        }
-    }
-}
-
 #Preview("FAB") {
   ZStack {
     Color.systemGroupedBackground.ignoresSafeArea()
@@ -238,7 +246,11 @@ private extension View {
       feedsAction: {},
       showFeedsButton: true,
       hasMinimizedComposer: false,
-      clearDraftAction: nil
+      clearDraftAction: nil,
+      newPostAction: {},
+      showDraftsAction: {},
+      takePhotoAction: {},
+      recordVideoAction: {}
     )
   }
 }

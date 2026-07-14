@@ -75,7 +75,7 @@ extension PostComposerViewModel {
     
     // MARK: - Media State Synchronization
     
-    private func syncMediaStateToCurrentThread() {
+    func syncMediaStateToCurrentThread() {
         if isThreadMode && threadEntries.indices.contains(currentThreadIndex) {
             threadEntries[currentThreadIndex].mediaItems = mediaItems
             threadEntries[currentThreadIndex].videoItem = videoItem

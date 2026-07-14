@@ -47,7 +47,7 @@ Update the disposition column in the same commit that closes each slice. Valid d
 | `412bb74` | Draft translation, account scoping, and drafts-sheet presentation | recovered |
 | `412bb74` | Default-on AppView draft sync; current-main requires explicit opt-in as a safety gate | superseded |
 | `4e833ba` | Composer chips/accessory redesign | candidate; exclude unrelated auth/chat content |
-| `17a4479` through `f7322e3`, plus `08e7368`, `dd7fde8` | FAB and capture actions | candidate; `dd7fde8` cell annotations audited under App Intents |
+| `17a4479` through `f7322e3`, plus `08e7368`, `dd7fde8` | FAB and capture actions | recovered; the unrelated `dd7fde8` App Intents/UIKit cell annotations are excluded with evidence |
 | `fea6386`, `dfb0b1e`, `19ae89a`, `29ab384`, `8881885` | Honest search filters | candidate |
 | `68043cb` | Repost/per-feed cache identity | candidate |
 | `d5eefcd`, `d06e076` | Own-message actions and sequence-zero ordering | candidate |
@@ -447,7 +447,7 @@ tests across `ComposerLinkEditTests`, `ComposerChipsStripTests`, and
 **Interfaces:**
 - Produces: `CapturedMedia.photo(Data)`, `CapturedMedia.video(URL)`, `CameraCaptureMode`, a single-orb FAB exposing New Post/Browse Drafts/Take Photo/Record Video, and captured-media ingestion into the current composer thread entry
 
-- [ ] **Step 1: Restore capture ingestion tests and verify failure**
+- [x] **Step 1: Restore capture ingestion tests and verify failure**
 
 Restore the photo-add and image-limit tests from `51036b1`, then run:
 
@@ -459,7 +459,7 @@ xcodebuild test -project Catbird.xcodeproj -scheme Catbird \
 
 Expected: FAIL until captured-media interfaces exist.
 
-- [ ] **Step 2: Add the capture boundary**
+- [x] **Step 2: Add the capture boundary**
 
 ```swift
 enum CapturedMedia {
@@ -481,7 +481,7 @@ enum CameraCaptureMode: Identifiable {
 
 Wrap the supported UIKit capture controller in `CameraCaptureView` and return one `CapturedMedia` result or cancellation. Do not place composer state inside the camera wrapper.
 
-- [ ] **Step 3: Restore ingestion and the single-orb menu**
+- [x] **Step 3: Restore ingestion and the single-orb menu**
 
 Port the ingestion boundary from `51036b1` plus the shared `syncMediaStateToCurrentThread()` call from `670c265`. Reconstruct the FAB chain through `f7322e3`, then apply the single-orb correction from `08e7368`. New Post opens a clean composer; Browse Drafts robustly opens the draft destination; capture actions first stash the current working draft.
 
@@ -489,12 +489,21 @@ Port the ingestion boundary from `51036b1` plus the shared `syncMediaStateToCurr
 
 Run capture and composer tests, build, then verify the morph under Reduce Motion on/off and Reduce Transparency on/off. On a physical iPhone, capture one photo and one video, cancel each flow once, and confirm an existing text draft survives all four paths.
 
-- [ ] **Step 5: Update ledger and commit**
+- [x] **Step 5: Update ledger and commit**
 
 ```bash
 jj describe -m 'Catbird: recover compose FAB quick actions and media capture'
 jj new
 ```
+
+#### Task 5 recovery evidence (2026-07-13)
+
+- Archaeology: `51036b1` supplied the captured-photo/video ingestion boundary and its two focused regressions; `670c265` supplied the shared `syncMediaStateToCurrentThread()` call. `cc1952b`/`4b5a04c` supplied the supported `UIImagePickerController` wrapper and identifiable capture modes. The quick-action chain from `17a4479` through `f7322e3` supplied New Post, Browse Drafts, Take Photo, Record Video, draft stashing, and robust drafts-sheet selection. `08e7368` superseded the redundant second glass layer so the recovered control remains one orb. `dd7fde8` changed only an App Intents annotation on the FAB plus unrelated UIKit feed/thread annotations; those changes are excluded from this slice.
+- TDD RED: the restored `CapturedMediaIngestTests` failed at compile time because `PostComposerViewModel` had no `ingestCapturedPhoto`. After the minimal ingestion boundary was added, the pure FAB/capture boundary tests failed because `FABQuickAction` and `CameraCaptureMode` did not exist. Logs: `/tmp/catbird-task5-capture-red.log` and the first run recorded in `/tmp/catbird-task5-capture-green.log`.
+- TDD GREEN: the dedicated focused run passed all 4 tests across `CapturedMediaIngestTests` and `FABQuickActionTests`, covering photo ingestion, image-limit refusal, the exact four recovered action titles/order, and stable photo/video identities. Log: `/tmp/catbird-task5-focused-green.log`.
+- Preservation regression: 43 tests passed with zero failures across captured media, FAB actions, composer chips/counter/link editing, draft translation/account scoping, and the legacy OAuth compatibility hotfix. Log: `/tmp/catbird-task5-regression.log`.
+- Build/runtime: XcodeBuildMCP built, installed, and launched `blue.catbird` on authenticated simulator `40111BBE-8709-40D0-9016-A27448486A80`. The running Timeline visibly contains one compose orb; screenshot: `/tmp/catbird-task5-launched.png`. Build log: `~/Library/Developer/XcodeBuildMCP/workspaces/Catbird-Petrel-abf01301fe68/logs/build_run_sim_2026-07-14T03-00-07-612Z_pid95668_da2bdbe1.log`. This closes build, launch, authenticated-state, and closed-orb presence only.
+- Open runtime gates: Xcode beta's missing `SimulatorKit.framework` prevents semantic UI inspection/tapping, and the simulator has no supported camera source. Menu expansion/action routing, photo capture, video capture, each cancellation path, captured-video eligibility, and Reduce Motion/Reduce Transparency variants therefore remain physical-device checks; they are not inferred from build success. Capture actions still preserve the working draft before attempting the camera, and an unavailable camera is refused before presenting `UIImagePickerController`.
 
 ### Task 6: Recover Honest Search Filters
 

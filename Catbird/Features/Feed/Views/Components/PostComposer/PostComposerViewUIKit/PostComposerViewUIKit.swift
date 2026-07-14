@@ -31,6 +31,7 @@ struct PostComposerViewUIKit: View {
   private let initialParentPost: AppBskyFeedDefs.PostView?
   private let initialQuotedPost: AppBskyFeedDefs.PostView?
   private let restoringDraftParam: PostComposerDraft?
+  private let initialCapturedMediaParam: CapturedMedia?
 
   // Link creation state
   @State var showingLinkCreation = false
@@ -77,6 +78,7 @@ struct PostComposerViewUIKit: View {
     self.initialParentPost = parentPost
     self.initialQuotedPost = quotedPost
     self.restoringDraftParam = nil
+    self.initialCapturedMediaParam = nil
   }
   
   init(restoringFromDraft draft: PostComposerDraft,
@@ -85,6 +87,16 @@ struct PostComposerViewUIKit: View {
     self.initialParentPost = nil
     self.initialQuotedPost = nil
     self.restoringDraftParam = draft
+    self.initialCapturedMediaParam = nil
+  }
+
+  init(initialCapturedMedia: CapturedMedia,
+       appState: AppState) {
+    self.appState = appState
+    self.initialParentPost = nil
+    self.initialQuotedPost = nil
+    self.restoringDraftParam = nil
+    self.initialCapturedMediaParam = initialCapturedMedia
   }
 
   var body: some View {
@@ -114,16 +126,27 @@ struct PostComposerViewUIKit: View {
       pcUIKitLogger.info("PostComposerViewUIKit: Initializing composer - parentPost: \(initialParentPost != nil), quotedPost: \(initialQuotedPost != nil), draft: \(restoringDraftParam != nil), currentDraft: \(appState.composerDraftManager.currentDraft != nil)")
       let vm = PostComposerViewModel(parentPost: initialParentPost, quotedPost: initialQuotedPost, appState: appState)
       
-      // Restore from parameter draft or current draft (e.g., after account switch)
+      // Captured media always opens a fresh composer; the previous working
+      // draft was stashed before entering the system camera.
       if let draft = restoringDraftParam {
         pcUIKitLogger.info("PostComposerViewUIKit: Restoring draft from parameter")
         vm.restoreDraftState(draft)
-      } else if let currentDraft = appState.composerDraftManager.currentDraft {
+      } else if initialCapturedMediaParam == nil,
+                let currentDraft = appState.composerDraftManager.currentDraft {
         pcUIKitLogger.info("PostComposerViewUIKit: Restoring current draft (likely from account switch)")
         vm.restoreDraftState(currentDraft)
       }
       
       viewModel = vm
+
+      if let capturedMedia = initialCapturedMediaParam {
+        switch capturedMedia {
+        case .photo(let data):
+          vm.ingestCapturedPhoto(data)
+        case .video(let url):
+          await vm.ingestCapturedVideo(url)
+        }
+      }
       
       await vm.loadUserLanguagePreference()
       
