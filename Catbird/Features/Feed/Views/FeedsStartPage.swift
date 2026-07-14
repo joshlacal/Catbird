@@ -1422,7 +1422,7 @@ struct FeedsStartPage: View {
           // pager's history of this bug). Do not wrap anything larger than the
           // title row.
           Group {
-            if #available(iOS 26.0, *) {
+            if #available(iOS 26.0, macOS 26.0, *) {
               GlassEffectContainer(spacing: 8) {
                 feedsTitleRow
               }
