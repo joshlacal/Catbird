@@ -30,10 +30,7 @@ struct DefaultFeedDropDelegate: DropDelegate {
         isDefaultFeedDropTarget = true
         dropTargetItem = "default-feed-button"
       }
-#if os(iOS)
-      let generator = UIImpactFeedbackGenerator(style: .medium)
-      generator.impactOccurred(intensity: 0.7)
-#endif
+      PlatformHaptics.customImpact(intensity: 0.7)
     }
   }
 
@@ -54,10 +51,7 @@ struct DefaultFeedDropDelegate: DropDelegate {
 
     let feedToSet = draggedFeedURI
     resetDragState()
-#if os(iOS)
-    let generator = UIImpactFeedbackGenerator(style: .medium)
-    generator.impactOccurred(intensity: 1.0)
-#endif
+    PlatformHaptics.customImpact(intensity: 1.0)
 
     // Set the dragged feed as the default (first pinned feed)
     Task {

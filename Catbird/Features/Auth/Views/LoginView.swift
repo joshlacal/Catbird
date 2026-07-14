@@ -399,10 +399,7 @@ struct LoginView: View {
         .onTapGesture(count: 5) {
             // Hidden gesture: tap 5 times to enable debug mode
             showDebugInfo.toggle()
-            #if os(iOS)
-            let feedback = UINotificationFeedbackGenerator()
-            feedback.notificationOccurred(.success)
-            #endif
+            PlatformHaptics.success()
         }
         .task {
             // Check biometric authentication availability

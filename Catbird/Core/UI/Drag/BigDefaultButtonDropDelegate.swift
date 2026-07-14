@@ -33,10 +33,7 @@ struct BigDefaultButtonDropDelegate: DropDelegate {
         isTimelineDropTarget = true
         dropTargetItem = "timeline-button"
       }
-      #if os(iOS)
-      let generator = UIImpactFeedbackGenerator(style: .medium)
-      generator.impactOccurred(intensity: 0.7)
-      #endif
+      PlatformHaptics.customImpact(intensity: 0.7)
     }
   }
 
@@ -58,10 +55,7 @@ struct BigDefaultButtonDropDelegate: DropDelegate {
     // Immediately reset the visual state
     let feedToSet = draggedFeedURI
     resetDragState()
-    #if os(iOS)
-    let generator = UIImpactFeedbackGenerator(style: .medium)
-    generator.impactOccurred(intensity: 1.0)
-    #endif
+    PlatformHaptics.customImpact(intensity: 1.0)
 
     // Update the local state immediately for UI responsiveness
     if let uri = try? ATProtocolURI(uriString: feedToSet) {

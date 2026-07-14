@@ -201,10 +201,7 @@ struct FeedDiscoveryHeaderView: View {
   
   private func likeFeed() {
     guard !isLiking, !liked else { return }
-    #if os(iOS)
-    let impactFeedback = UIImpactFeedbackGenerator(style: .light)
-    impactFeedback.impactOccurred()
-    #endif
+    PlatformHaptics.light()
     
     Task {
       do {
@@ -246,10 +243,7 @@ struct FeedDiscoveryHeaderView: View {
 
   private func unlikeFeed() {
     guard !isLiking, liked else { return }
-    #if os(iOS)
-    let impactFeedback = UIImpactFeedbackGenerator(style: .light)
-    impactFeedback.impactOccurred()
-    #endif
+    PlatformHaptics.light()
     Task {
       do {
         await MainActor.run { isLiking = true }
@@ -277,10 +271,7 @@ struct FeedDiscoveryHeaderView: View {
   }
   
   private func shareFeed() {
-    #if os(iOS)
-    let impactFeedback = UIImpactFeedbackGenerator(style: .light)
-    impactFeedback.impactOccurred()
-    #endif
+    PlatformHaptics.light()
 
     // Build a bsky.app web URL from the AT URI (at://did/collection/rkey)
     let creatorHandle = feed.creator.handle.description
@@ -305,10 +296,7 @@ struct FeedDiscoveryHeaderView: View {
   }
   
   private func reportFeed() {
-    #if os(iOS)
-    let impactFeedback = UIImpactFeedbackGenerator(style: .light)
-    impactFeedback.impactOccurred()
-    #endif
+    PlatformHaptics.light()
     
     Task {
       do {

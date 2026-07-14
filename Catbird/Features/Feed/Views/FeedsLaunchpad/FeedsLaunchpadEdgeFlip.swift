@@ -95,8 +95,7 @@ struct FeedsLaunchpadPageDropDelegate: DropDelegate {
       return false
     }
 
-    let generator = UIImpactFeedbackGenerator(style: .medium)
-    generator.impactOccurred(intensity: 1.0)
+    PlatformHaptics.customImpact(intensity: 1.0)
 
     let targetSection = section
     Task {

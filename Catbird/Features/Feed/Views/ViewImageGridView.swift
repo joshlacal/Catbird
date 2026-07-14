@@ -26,6 +26,8 @@ struct ViewImageGridView: View {
   let viewImages: [AppBskyEmbedImages.ViewImage]
   let shouldBlur: Bool
   @State private var isBlurred: Bool
+  @Environment(AppState.self) private var appState
+  @State private var altTextPreviewImage: AppBskyEmbedImages.ViewImage?
   @State private var selectedImage: AppBskyEmbedImages.ViewImage? {
     didSet {
 //      logger.debug("🖼️ selectedImage changed: was \(String(describing: oldValue?.id)), now \(String(describing: selectedImage?.id))")
@@ -202,6 +204,31 @@ struct ViewImageGridView: View {
     .onChange(of: currentIndex) { _, _ in
 //      logger.debug("✅ currentIndex onChange: was \(oldValue), now \(newValue)")
     }
+    .popover(item: $altTextPreviewImage) { image in
+      AltTextPreviewView(altText: image.alt)
+    }
+  }
+
+  @ViewBuilder
+  private func altBadge(for image: AppBskyEmbedImages.ViewImage) -> some View {
+    if !image.alt.isEmpty {
+      let isLarge = appState.appSettings.largerAltTextBadges
+      Button {
+        altTextPreviewImage = image
+      } label: {
+        Text("ALT")
+          .appFont(isLarge ? AppTextRole.subheadline : AppTextRole.caption2)
+          .fontWeight(.semibold)
+          .foregroundStyle(.white)
+          .frame(minWidth: AltTextBadgeMetrics.side(isLarge: isLarge))
+          .padding(.horizontal, isLarge ? 5 : 3)
+          .padding(.vertical, isLarge ? 4 : 2)
+          .background(.black.opacity(0.65), in: Capsule())
+      }
+      .buttonStyle(.plain)
+      .accessibilityLabel("Alt text available")
+      .accessibilityHint("Double tap to view description")
+    }
   }
 
   @ViewBuilder
@@ -244,6 +271,12 @@ struct ViewImageGridView: View {
       .pipeline(ImageLoadingManager.shared.pipeline)
     }
     .frame(width: width, height: height)
+    .overlay(alignment: .bottomLeading) {
+      if !isBlurred {
+        altBadge(for: viewImage)
+          .padding(6)
+      }
+    }
     .onTapGesture {
       if shouldBlur {
         isBlurred.toggle()
@@ -308,6 +341,12 @@ struct ViewImageGridView: View {
       }
       .frame(maxWidth: .infinity)
       .frame(height: height)
+      .overlay(alignment: .bottomLeading) {
+        if !isBlurred {
+          altBadge(for: viewImage)
+            .padding(10)
+        }
+      }
       .onTapGesture {
         if shouldBlur {
           isBlurred.toggle()
@@ -388,6 +427,29 @@ struct ViewImageGridView: View {
       }
     }
     .layoutPriority(1)
+  }
+}
+
+enum AltTextBadgeMetrics {
+  static func side(isLarge: Bool) -> CGFloat { isLarge ? 32 : 24 }
+}
+
+struct AltTextPreviewView: View {
+  let altText: String
+
+  var body: some View {
+    ScrollView {
+      Text(altText)
+        .appBody()
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding()
+    }
+    .frame(minWidth: 240, idealWidth: 320, maxWidth: 400, minHeight: 80, idealHeight: 160, maxHeight: 320)
+    #if os(iOS)
+    .presentationCompactAdaptation(.popover)
+    #endif
+    .accessibilityLabel("Alt text")
+    .accessibilityValue(altText)
   }
 }
 

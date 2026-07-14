@@ -85,6 +85,7 @@ import OSLog
         // IMPORTANT: Set isInitializing to false after initialization completes
         isInitializing = false
         logger.debug("AppSettings initialization complete, isInitializing set to false")
+        syncHapticsEnabledState(disableHaptics: disableHaptics)
     }
 
     // MARK: - Helper Methods
@@ -448,6 +449,13 @@ import OSLog
         set {
             settingsModel?.disableHaptics = newValue
             saveChanges()
+            syncHapticsEnabledState(disableHaptics: newValue)
+        }
+    }
+
+    private func syncHapticsEnabledState(disableHaptics: Bool) {
+        Task { @MainActor in
+            PlatformHaptics.isEnabled = HapticsPolicy.isEnabled(disableHaptics: disableHaptics)
         }
     }
     

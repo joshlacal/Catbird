@@ -281,7 +281,9 @@ struct SideDrawer<Content: View, DrawerContent: View>: View {
         let defaults = UserDefaults(suiteName: "group.blue.catbird.shared") ?? UserDefaults.standard
         defaults.set(newValue, forKey: "drawer_was_open")
       }
-      .sensoryFeedback(.impact(weight: .medium), trigger: isOpen)
+      .sensoryFeedback(.impact(weight: .medium), trigger: isOpen) { _, _ in
+        PlatformHaptics.isEnabled
+      }
       .accessibilityElement(children: .contain)
     }
     // Ignoring the safe area lets the drawer extend to the device's true bezel

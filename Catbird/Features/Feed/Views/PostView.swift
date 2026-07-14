@@ -58,6 +58,8 @@ struct PostView: View, Equatable, Identifiable {
   @State private var threadSummaryTask: Task<Void, Never>?
   @State private var showDeleteConfirmation = false
   @State private var showBlockConfirmation = false
+  @State private var showMuteUserConfirmation = false
+  @State private var showMuteThreadConfirmation = false
 
   // MARK: - Computed Properties
 var id: String {
@@ -194,6 +196,22 @@ var id: String {
     } message: {
       Text("Block @\(postState.currentPost.author.handle)? You won't see each other's posts, and they won't be able to follow you.")
     }
+    .alert("Mute User", isPresented: $showMuteUserConfirmation) {
+      Button("Cancel", role: .cancel) { }
+      Button("Mute", role: .destructive) {
+        Task { await contextMenuViewModel.muteUser() }
+      }
+    } message: {
+      Text("Mute @\(postState.currentPost.author.handle)? You won't see their posts and replies in your feeds.")
+    }
+    .alert("Mute Thread", isPresented: $showMuteThreadConfirmation) {
+      Button("Cancel", role: .cancel) { }
+      Button("Mute", role: .destructive) {
+        Task { await contextMenuViewModel.muteThread() }
+      }
+    } message: {
+      Text("Mute this thread? You won't be notified about new replies.")
+    }
   }
 
   // MARK: - Content Views
@@ -280,6 +298,13 @@ var id: String {
 
           Spacer()
 
+          if appState.appSettings.showReadingTimeEstimates,
+             let minutes = PostReadingTime.minutes(for: feedPost.text) {
+            Text("\(minutes) min read")
+              .appCaption2()
+              .foregroundStyle(.secondary)
+          }
+
           postEllipsisMenuView
         }
         .padding(.horizontal, PostView.baseUnit)
@@ -364,7 +389,13 @@ var id: String {
       // Only show mute/block for other users' posts
       if postState.currentPost.author.did.didString() != postState.currentUserDid {
         Button(action: {
-          Task { await contextMenuViewModel.muteUser() }
+          if DestructiveActionConfirmation.shouldConfirm(
+            isEnabled: appState.appSettings.confirmBeforeActions
+          ) {
+            showMuteUserConfirmation = true
+          } else {
+            Task { await contextMenuViewModel.muteUser() }
+          }
         }) {
           Label("Mute User", systemImage: "speaker.slash")
         }
@@ -377,7 +408,13 @@ var id: String {
       }
 
       Button(action: {
-        Task { await contextMenuViewModel.muteThread() }
+        if DestructiveActionConfirmation.shouldConfirm(
+          isEnabled: appState.appSettings.confirmBeforeActions
+        ) {
+          showMuteThreadConfirmation = true
+        } else {
+          Task { await contextMenuViewModel.muteThread() }
+        }
       }) {
         Label("Mute Thread", systemImage: "bubble.left.and.bubble.right.fill")
       }
@@ -781,6 +818,24 @@ var id: String {
       return []
     }
   }
+}
+
+enum PostReadingTime {
+  private static let wordsPerMinute = 200
+
+  static func minutes(for text: String) -> Int? {
+    let count = text.split(whereSeparator: { $0.isWhitespace }).count
+    return minutes(forWordCount: count)
+  }
+
+  static func minutes(forWordCount count: Int) -> Int? {
+    guard count >= 100 else { return nil }
+    return Int(ceil(Double(count) / Double(wordsPerMinute)))
+  }
+}
+
+enum DestructiveActionConfirmation {
+  static func shouldConfirm(isEnabled: Bool) -> Bool { isEnabled }
 }
 
 private struct ThreadSummarySheet: View {

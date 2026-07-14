@@ -14,6 +14,18 @@ protocol ProfileBasicInfo {
     var avatar: URL? { get }
 }
 
+enum LoggedOutVisibilitySelfLabels {
+    static let noUnauthenticated = "!no-unauthenticated"
+
+    static func reconciled(_ labels: [String], isVisible: Bool) -> [String] {
+        var result = labels.filter { $0 != noUnauthenticated }
+        if !isVisible {
+            result.append(noUnauthenticated)
+        }
+        return result
+    }
+}
+
 struct PrivacySecuritySettingsView: View {
     @Environment(AppState.self) private var appState
     
@@ -33,6 +45,10 @@ struct PrivacySecuritySettingsView: View {
     // Privacy settings
     @State private var loggedOutVisibility: Bool = false
     @State private var biometricAuthEnabled: Bool = false
+    @State private var isLoadingLoggedOutVisibility = false
+    @State private var isUpdatingLoggedOutVisibility = false
+    @State private var showLoggedOutVisibilityError = false
+    @State private var loggedOutVisibilityErrorMessage = ""
     
     // Biometric error handling
     @State private var showBiometricError = false
@@ -123,8 +139,12 @@ struct PrivacySecuritySettingsView: View {
             Section("Account Privacy") {
                 Toggle("Logged-Out Visibility", isOn: $loggedOutVisibility)
                     .tint(.blue)
-                    .onChange(of: loggedOutVisibility) {
-                        appState.appSettings.loggedOutVisibility = loggedOutVisibility
+                    .disabled(isLoadingLoggedOutVisibility || isUpdatingLoggedOutVisibility)
+                    .onChange(of: loggedOutVisibility) { oldValue, newValue in
+                        guard oldValue != newValue, !isLoadingLoggedOutVisibility else { return }
+                        Task {
+                            await updateLoggedOutVisibility(newValue, previousValue: oldValue)
+                        }
                     }
                 
                 Toggle("Attribution Tracking", isOn: Binding(
@@ -297,15 +317,195 @@ struct PrivacySecuritySettingsView: View {
         } message: {
             Text(biometricErrorMessage)
         }
+        .alert("Logged-Out Visibility", isPresented: $showLoggedOutVisibilityError) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(loggedOutVisibilityErrorMessage)
+        }
     }
     
     private func loadData() async {
+        await loadLoggedOutVisibility()
         // Load app passwords
         await loadAppPasswords()
         
         // Load blocks and mutes counts
         await loadBlocksCount()
         await loadMutesCount()
+    }
+
+    private static let noUnauthenticatedLabel = "!no-unauthenticated"
+
+    private func loadLoggedOutVisibility() async {
+        guard appState.isAuthenticated, let client = appState.atProtoClient else { return }
+        isLoadingLoggedOutVisibility = true
+        defer { isLoadingLoggedOutVisibility = false }
+
+        do {
+            let (code, record) = try await client.com.atproto.repo.getRecord(
+                input: try profileRecordParameters()
+            )
+            let isVisible: Bool
+            if code == 200, let record {
+                guard case let .knownType(value) = record.value,
+                      let profile = value as? AppBskyActorProfile else {
+                    throw visibilityError("Unexpected profile record format.")
+                }
+                isVisible = !Self.hasNoUnauthenticatedLabel(profile.labels)
+            } else if code == 400 {
+                isVisible = true
+            } else {
+                throw visibilityError("Failed to load profile record (\(code)).")
+            }
+
+            loggedOutVisibility = isVisible
+            appState.appSettings.loggedOutVisibility = isVisible
+        } catch {
+            logger.error("Error loading logged-out visibility: \(error.localizedDescription)")
+        }
+    }
+
+    private func updateLoggedOutVisibility(_ isVisible: Bool, previousValue: Bool) async {
+        guard let client = appState.atProtoClient else {
+            revertLoggedOutVisibility(to: previousValue, message: "You must be signed in to change this setting.")
+            return
+        }
+
+        isUpdatingLoggedOutVisibility = true
+        defer { isUpdatingLoggedOutVisibility = false }
+
+        do {
+            let (code, record) = try await client.com.atproto.repo.getRecord(
+                input: try profileRecordParameters()
+            )
+            if code == 200, let record {
+                try await putProfileVisibility(
+                    record: record,
+                    isVisible: isVisible,
+                    client: client
+                )
+            } else if code == 400 {
+                try await createProfileVisibility(isVisible: isVisible, client: client)
+            } else {
+                throw visibilityError("Failed to load profile record (\(code)).")
+            }
+            appState.appSettings.loggedOutVisibility = isVisible
+        } catch {
+            logger.error("Error updating logged-out visibility: \(error.localizedDescription)")
+            revertLoggedOutVisibility(
+                to: previousValue,
+                message: "Couldn't update this setting: \(error.localizedDescription)"
+            )
+        }
+    }
+
+    private func profileRecordParameters() throws -> ComAtprotoRepoGetRecord.Parameters {
+        ComAtprotoRepoGetRecord.Parameters(
+            repo: try ATIdentifier(string: appState.userDID),
+            collection: try NSID(nsidString: "app.bsky.actor.profile"),
+            rkey: try RecordKey(keyString: "self")
+        )
+    }
+
+    private func putProfileVisibility(
+        record: ComAtprotoRepoGetRecord.Output,
+        isVisible: Bool,
+        client: ATProtoClient
+    ) async throws {
+        guard case let .knownType(value) = record.value,
+              let profile = value as? AppBskyActorProfile else {
+            throw visibilityError("Unexpected profile record format.")
+        }
+
+        let updatedProfile = AppBskyActorProfile(
+            displayName: profile.displayName,
+            description: profile.description,
+            pronouns: profile.pronouns,
+            website: profile.website,
+            avatar: profile.avatar,
+            banner: profile.banner,
+            labels: try Self.updatedLabels(profile.labels, isVisible: isVisible),
+            joinedViaStarterPack: profile.joinedViaStarterPack,
+            pinnedPost: profile.pinnedPost,
+            createdAt: profile.createdAt
+        )
+        let input = ComAtprotoRepoPutRecord.Input(
+            repo: try ATIdentifier(string: appState.userDID),
+            collection: try NSID(nsidString: "app.bsky.actor.profile"),
+            rkey: try RecordKey(keyString: "self"),
+            record: .knownType(updatedProfile),
+            swapRecord: record.cid
+        )
+        let (code, _) = try await client.com.atproto.repo.putRecord(input: input)
+        guard code == 200 else { throw visibilityError("Profile update failed (\(code)).") }
+    }
+
+    private func createProfileVisibility(isVisible: Bool, client: ATProtoClient) async throws {
+        let profile = AppBskyActorProfile(
+            displayName: nil,
+            description: nil,
+            pronouns: nil,
+            website: nil,
+            avatar: nil,
+            banner: nil,
+            labels: try Self.updatedLabels(nil, isVisible: isVisible),
+            joinedViaStarterPack: nil,
+            pinnedPost: nil,
+            createdAt: ATProtocolDate(date: Date())
+        )
+        let input = ComAtprotoRepoCreateRecord.Input(
+            repo: try ATIdentifier(string: appState.userDID),
+            collection: try NSID(nsidString: "app.bsky.actor.profile"),
+            rkey: try RecordKey(keyString: "self"),
+            record: .knownType(profile)
+        )
+        let (code, _) = try await client.com.atproto.repo.createRecord(input: input)
+        guard code == 200 else { throw visibilityError("Profile creation failed (\(code)).") }
+    }
+
+    private static func hasNoUnauthenticatedLabel(
+        _ labels: AppBskyActorProfile.AppBskyActorProfileLabelsUnion?
+    ) -> Bool {
+        guard case let .comAtprotoLabelDefsSelfLabels(selfLabels) = labels else { return false }
+        return selfLabels.values.contains { $0.val == noUnauthenticatedLabel }
+    }
+
+    private static func updatedLabels(
+        _ labels: AppBskyActorProfile.AppBskyActorProfileLabelsUnion?,
+        isVisible: Bool
+    ) throws -> AppBskyActorProfile.AppBskyActorProfileLabelsUnion? {
+        let sourceValues: [ComAtprotoLabelDefs.SelfLabel]
+        switch labels {
+        case .comAtprotoLabelDefsSelfLabels(let selfLabels):
+            sourceValues = selfLabels.values
+        case .unexpected:
+            throw visibilityError("Unsupported profile label format; no changes were made.")
+        case nil:
+            sourceValues = []
+        }
+        let values = LoggedOutVisibilitySelfLabels
+            .reconciled(sourceValues.map(\.val), isVisible: isVisible)
+            .map { ComAtprotoLabelDefs.SelfLabel(val: $0) }
+        guard !values.isEmpty else { return nil }
+        return .comAtprotoLabelDefsSelfLabels(.init(values: values))
+    }
+
+    private func revertLoggedOutVisibility(to previousValue: Bool, message: String) {
+        loggedOutVisibility = previousValue
+        loggedOutVisibilityErrorMessage = message
+        showLoggedOutVisibilityError = true
+    }
+
+    private static func visibilityError(_ message: String) -> NSError {
+        NSError(
+            domain: "PrivacySecuritySettings",
+            code: 1,
+            userInfo: [NSLocalizedDescriptionKey: message]
+        )
+    }
+
+    private func visibilityError(_ message: String) -> NSError {
+        Self.visibilityError(message)
     }
     
     private func handleBiometricToggle(_ enabled: Bool) async {
@@ -1167,4 +1367,3 @@ struct AppPassword: Identifiable {
         }
   }
 }
-

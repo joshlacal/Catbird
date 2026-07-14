@@ -75,9 +75,6 @@ struct ActionButtonsView: View {
   @Binding var path: NavigationPath
 
   // Shared haptic feedback generator
-#if os(iOS)
-  @State private var feedbackGenerator = UIImpactFeedbackGenerator(style: .medium)
-#endif
 
   // Using multiples of 3 for spacing
   private static let baseUnit: CGFloat = 3
@@ -151,9 +148,7 @@ struct ActionButtonsView: View {
         isBig: isBig
       ) {
         // Haptic feedback using shared generator
-#if os(iOS)
-        feedbackGenerator.impactOccurred()
-#endif
+        PlatformHaptics.medium()
 
         // Set animation flag to true
         interactionState.animateLike = true
@@ -329,9 +324,7 @@ struct ActionButtonsView: View {
   }
 
   private func handleRepostToggle() {
-#if os(iOS)
-    feedbackGenerator.impactOccurred()
-#endif
+    PlatformHaptics.medium()
 
     Task {
       do {

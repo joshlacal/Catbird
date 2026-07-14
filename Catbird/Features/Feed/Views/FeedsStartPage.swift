@@ -199,10 +199,6 @@ struct FeedsStartPage: View {
     FeedsStartPageLayoutMetrics.iconSize(itemWidth: itemWidth)
   }
 
-  #if os(iOS)
-  private let impact = UIImpactFeedbackGenerator(style: .rigid)
-  #endif
-
   // MARK: - Initialization
   init(
     appState: AppState,
@@ -433,7 +429,7 @@ struct FeedsStartPage: View {
       guard !isEditingFeeds else { return }
 
       #if os(iOS)
-      impact.impactOccurred()
+      PlatformHaptics.rigid()
       #endif
 
       if let feedURI = defaultFeed, SystemFeedTypes.isTimelineFeed(feedURI) {
@@ -738,7 +734,7 @@ struct FeedsStartPage: View {
     Button {
       guard !isEditingFeeds else { return }
       #if os(iOS)
-      impact.impactOccurred()
+      PlatformHaptics.rigid()
       #endif
 
       if SystemFeedTypes.isTimelineFeed(feedURI) {
@@ -837,7 +833,7 @@ struct FeedsStartPage: View {
       guard !isEditingFeeds else { return }
 
       #if os(iOS)
-      impact.impactOccurred()
+      PlatformHaptics.rigid()
       #endif
 
       // Choose correct fetch type based on URI collection
@@ -983,7 +979,7 @@ struct FeedsStartPage: View {
       guard !isEditingFeeds else { return }
 
       #if os(iOS)
-      impact.impactOccurred()
+      PlatformHaptics.rigid()
       #endif
 
       selectedFeed = .timeline
@@ -1314,7 +1310,7 @@ struct FeedsStartPage: View {
     }
     .onLongPressGesture {
       #if os(iOS)
-      impact.impactOccurred()
+      PlatformHaptics.rigid()
       #endif
       isShowingAccountSwitcher = true
     }
@@ -1357,7 +1353,7 @@ struct FeedsStartPage: View {
             // Layout-mode toggle (grid <-> list). Persisted via @AppStorage.
             Button {
                 #if os(iOS)
-                impact.impactOccurred()
+                PlatformHaptics.rigid()
                 #endif
                 withAnimation(.easeInOut(duration: 0.25)) {
                     layoutModeRaw = (layoutMode == .grid ? FeedsLayoutMode.list : FeedsLayoutMode.grid).rawValue

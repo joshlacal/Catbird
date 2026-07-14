@@ -127,6 +127,15 @@ extension PostComposerViewModel {
             return PostComposerSubmitValidationState(canSubmit: false, reason: .emptyContent)
         }
 
+        if appState.appSettings.requireAltText {
+            if PostComposerAltTextRequirement.hasMissingAltText(
+                imageAltTexts: mediaItems.map(\.altText),
+                videoAltText: videoItem?.altText
+            ) {
+                return PostComposerSubmitValidationState(canSubmit: false, reason: .missingAltText)
+            }
+        }
+
         if isOverCharacterLimit {
             return PostComposerSubmitValidationState(
                 canSubmit: false,

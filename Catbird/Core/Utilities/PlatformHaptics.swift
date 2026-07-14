@@ -14,6 +14,10 @@ import OSLog
 
 private let hapticsLogger = Logger(subsystem: "blue.catbird", category: "PlatformHaptics")
 
+enum HapticsPolicy {
+    static func isEnabled(disableHaptics: Bool) -> Bool { !disableHaptics }
+}
+
 /// Cross-platform haptic feedback system
 @MainActor
 public struct PlatformHaptics {
@@ -45,6 +49,7 @@ public struct PlatformHaptics {
     
     /// Provide impact haptic feedback
     public static func impact(_ intensity: ImpactIntensity = .medium) {
+        guard isEnabled else { return }
         #if os(iOS)
         Task { @MainActor in
             let generator: UIImpactFeedbackGenerator
@@ -115,6 +120,7 @@ public struct PlatformHaptics {
     
     /// Provide notification haptic feedback
     public static func notification(_ type: NotificationType) {
+        guard isEnabled else { return }
         #if os(iOS)
         Task { @MainActor in
             let generator = UINotificationFeedbackGenerator()
@@ -165,6 +171,7 @@ public struct PlatformHaptics {
     
     /// Provide selection haptic feedback
     public static func selection() {
+        guard isEnabled else { return }
         #if os(iOS)
         Task { @MainActor in
             let generator = UISelectionFeedbackGenerator()
@@ -205,6 +212,7 @@ public struct PlatformHaptics {
     
     /// Custom impact with intensity value (0.0 to 1.0)
     public static func customImpact(intensity: CGFloat) {
+        guard isEnabled else { return }
         let clampedIntensity = max(0.0, min(1.0, intensity))
         
         #if os(iOS)
@@ -229,6 +237,7 @@ public struct PlatformHaptics {
     
     /// Prepare haptic generators for reduced latency
     public static func prepareHaptics() {
+        guard isEnabled else { return }
         #if os(iOS)
         Task { @MainActor in
             // Pre-warm haptic generators

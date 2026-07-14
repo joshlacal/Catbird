@@ -842,6 +842,49 @@ jj new
 
 ### Task 9: Audit Settings for Runtime Effects
 
+#### `10f1c17` control/storage/consumer audit
+
+The historical commit touches 32 files. Current storage and controls already exist for all
+11 persisted values; the table records every historical file/hunk and limits recovery to
+missing runtime consumers. "Exclude" means the hunk is unrelated cosmetic, account/OAuth,
+dead-property, or separately tracked secondary work rather than evidence that the control
+is wired.
+
+| Historical file | Control / storage | Current runtime consumer | Disposition |
+| --- | --- | --- | --- |
+| `Core/Extensions/AttributedString+AccentText.swift` | `highlightLinks`, `linkStyle` / `AppSettingsModel` | post facet link attributes | Recover with disabled/color/underline/both plus safe invalid fallback. |
+| `Core/State/AppState.swift` | `mlsMessageRetentionDays` / `AppSettingsModel` | MLS policy initialization and startup cleanup | Recover onto current MLS initialization lifecycle. |
+| `Core/UI/Drag/BigDefaultButtonDropDelegate.swift` | `disableHaptics` / `AppSettingsModel` | centralized drag feedback | Recover direct UIKit bypass through `PlatformHaptics`. |
+| `Core/UI/Drag/DefaultFeedDropDelegate.swift` | `disableHaptics` / `AppSettingsModel` | centralized drag feedback | Recover direct UIKit bypass through `PlatformHaptics`. |
+| `Core/UI/Drag/FeedDropDelegate.swift` | `disableHaptics` / `AppSettingsModel` | centralized drag feedback | Recover direct UIKit bypass through `PlatformHaptics`. |
+| `Core/Utilities/PlatformHaptics.swift` | `disableHaptics` / `AppSettingsModel` | all emitting entry points | Recover one testable centralized enable policy. |
+| `Features/Auth/Views/LoginView.swift` | `disableHaptics` / `AppSettingsModel` | centralized login feedback | Recover direct UIKit bypass through `PlatformHaptics`. |
+| `Features/Chat/Views/ConversationView.swift` | `disableHaptics` / `AppSettingsModel` | centralized message feedback | Recover direct UIKit bypass through `PlatformHaptics`. |
+| `Features/Feed/Services/ThreadManager.swift` | `threadSortOrder` / `AppSettingsModel` | both `getPostThreadV2.sort` calls | Recover via `ThreadSortAPIMapper`; invalid values safely use `oldest`. |
+| `Features/Feed/Views/Components/ActionButtons/ActionButtonsView.swift` | `disableHaptics` / `AppSettingsModel` | centralized post-action feedback | Recover direct UIKit bypass through `PlatformHaptics`. |
+| `Features/Feed/Views/Components/PostComposer/PostComposerCore.swift` | `requireAltText` / `AppSettingsModel` | composer submit validation | Recover missing-alt-text validation. |
+| `Features/Feed/Views/Components/PostComposer/PostComposerModels.swift` | `requireAltText` / `AppSettingsModel` | `PostComposerSubmitValidationState.missingAltText` | Recover validation state without changing composer ownership. |
+| `Features/Feed/Views/FeedDiscoveryHeaderView.swift` | `disableHaptics` / `AppSettingsModel` | centralized discovery feedback | Recover direct UIKit bypass through `PlatformHaptics`. |
+| `Features/Feed/Views/FeedsLaunchpad/FeedsLaunchpadEdgeFlip.swift` | `disableHaptics` / `AppSettingsModel` | centralized edge-flip feedback | Recover direct UIKit bypass through `PlatformHaptics`. |
+| `Features/Feed/Views/FeedsStartPage.swift` | `disableHaptics` / `AppSettingsModel` | centralized launchpad feedback | Recover direct UIKit bypasses; exclude icon/cosmetic hunks. |
+| `Features/Feed/Views/Post.swift` | `showLanguageIndicators`, `highlightLinks`, `linkStyle`, `disableHaptics` / `AppSettingsModel` | declared-language chips, styled post text, centralized feedback | Recover only those consumers. |
+| `Features/Feed/Views/PostView.swift` | `showReadingTimeEstimates`, `confirmBeforeActions` / `AppSettingsModel` | post metadata and mute user/thread confirmation | Recover using pure reading-time and confirmation predicates. |
+| `Features/Feed/Views/ViewImageGridView.swift` | `largerAltTextBadges` / `AppSettingsModel` | feed-image ALT badges and preview badge | Recover badge presence and size on image grid/preview paths. |
+| `Features/MLSChat/MLSConversationDetailView.swift` | `disableHaptics` / `AppSettingsModel` | centralized message-action feedback | Recover Task-8-current direct UIKit bypasses only. |
+| `Features/Profile/Views/Unified/ProfileHeader.swift` | `loggedOutVisibility`, `confirmBeforeActions` / `AppSettingsModel` | self-label source-of-truth reconciliation and mute/unfollow confirmation | Recover while preserving profile fields and unrelated labels. |
+| `Features/Settings/Models/AppSettingsModel.swift` | all 11 values | account-scoped persisted storage | Keep current storage; exclude historical dead-property cleanup. |
+| `Features/Settings/Views/AccessibilitySettingsView.swift` | accessibility controls / `AppSettingsModel` | consumers listed above | Keep current controls; exclude cosmetic copy/layout churn. |
+| `Features/Settings/Views/AccountSettingsHelpers.swift` | none of the 11 | none | Exclude OAuth/account-action deletion. |
+| `Features/Settings/Views/AccountSettingsView.swift` | none of the 11 | none | Exclude OAuth/account-action deletion and broad cleanup. |
+| `Features/Settings/Views/AppSettings.swift` | `disableHaptics` / `AppSettingsModel` | centralized `PlatformHaptics` policy | Recover startup, account-switch, and setter synchronization. |
+| `Features/Settings/Views/ContentMediaSettingsView.swift` | `threadSortOrder`, `showLanguageIndicators` / `AppSettingsModel` | consumers listed above | Keep current controls; exclude picker/cosmetic churn. |
+| `Features/Settings/Views/DataBackupSettingsView.swift` | none of the 11 | none | Exclude secondary backup-progress bug. |
+| `Features/Settings/Views/MLSChatSettingsView.swift` | `mlsMessageRetentionDays` / `AppSettingsModel` | MLS initialization policy | Keep current control; exclude zero-day picker semantics. |
+| `Features/Settings/Views/ModerationSettingsView.swift` | none of the 11 | none | Exclude moderation lookup/dead-code cleanup. |
+| `Features/Settings/Views/PrivacySecuritySettingsView.swift` | `loggedOutVisibility`, `mlsMessageRetentionDays` / `AppSettingsModel` | self-label record write and MLS lifecycle | Recover logged-out visibility only here; exclude broad view rewrite. |
+| `Features/Settings/Views/SettingsView.swift` | none of the 11 | none | Exclude credential/account cleanup and cosmetic rows. |
+| `Features/Settings/Views/SideDrawer.swift` | `disableHaptics` / `AppSettingsModel` | centralized drawer feedback | Recover direct UIKit bypass through `PlatformHaptics`. |
+
 **Files:**
 - Audit: every file from `git diff-tree --no-commit-id --name-status -r 10f1c17`
 - Modify: only settings views/models and current runtime consumers with absent behavior
@@ -850,11 +893,11 @@ jj new
 **Interfaces:**
 - Produces: a one-to-one mapping from each visible control to persisted state and an observable runtime consumer
 
-- [ ] **Step 1: Build a setting-to-consumer table in the ledger**
+- [x] **Step 1: Build a setting-to-consumer table in the ledger**
 
 For each `10f1c17` hunk, record control label, storage property, runtime consumer, and disposition. Audit these concrete mappings: `requireAltText` to composer submit validation; `highlightLinks` and `linkStyle` to attributed post links; `confirmBeforeActions` to mute/unfollow confirmation; `showReadingTimeEstimates` to post metadata; `showLanguageIndicators` to declared-language chips; `disableHaptics` to every `PlatformHaptics` entry point; `loggedOutVisibility` to the self-label record write; `threadSortOrder` to `getPostThreadV2.sort`; `largerAltTextBadges` to image-grid ALT badges; and `mlsMessageRetentionDays` to retention-policy startup sync. Exclude cosmetic churn, broad `AppState` replacements, the OAuth-blocked account actions removed by the historical commit, and any setting already wired differently on current `main`.
 
-- [ ] **Step 2: Test the concrete pure mappings first**
+- [x] **Step 2: Test the concrete pure mappings first**
 
 Extract only pure calculations that need coverage and add these assertions:
 
@@ -882,7 +925,7 @@ Add `ThreadSortAPIMapper` beside `ThreadManager` and `PostReadingTime` beside `P
 
 Implement only table rows with a proven missing consumer. Relaunch after toggling each recovered persistent setting and verify the affected feed, media, moderation, accessibility, privacy, or chat behavior changes.
 
-- [ ] **Step 4: Test, update ledger, and commit**
+- [x] **Step 4: Test, update ledger, and commit**
 
 ```bash
 xcodebuild test -project Catbird.xcodeproj -scheme Catbird \
@@ -893,6 +936,47 @@ jj new
 ```
 
 If every historical setting is already present or superseded, commit only the evidence-bearing ledger update with message `Catbird: audit recovered settings wiring`.
+
+#### Task 9 recovery evidence (2026-07-14)
+
+- Archaeology/control audit: all 32 files touched by historical `10f1c17` are
+  represented in the table above. Current account-scoped storage and controls
+  were retained; only the 11 accepted missing runtime mappings were recovered.
+  Backup progress, zero-day MLS picker semantics, moderation lookup, OAuth and
+  account cleanup, dead-property cleanup, cosmetic churn, and broad `AppState`
+  replacement remain excluded.
+- TDD RED: the initial focused suite failed on the absent thread-sort,
+  reading-time, link-style, language-indicator, ALT-badge, confirmation,
+  haptic, and self-label symbols. A second behavioral composer RED failed on
+  the deliberately absent `PostComposerAltTextRequirement` at all three call
+  sites in `SettingsRuntimeWiringTests`; that build was bounded after the exact
+  compiler failures were captured.
+- Focused GREEN: the final fresh run passed 8/8, exit 0, with
+  `** TEST SUCCEEDED **`; result bundle
+  `Test-Catbird-2026.07.14_06-46-04--0400.xcresult`. It covers the composer
+  predicate against complete image/video alt text, blank image alt text, and
+  blank video alt text.
+- Preservation GREEN: settings plus the Task 8 MLS pending-send, observation,
+  display-order, render-signature, send-blocking, and block-coordinator suites
+  passed 47/47 via `test-without-building`, exit 0; result bundle
+  `Test-Catbird-2026.07.14_06-43-51--0400.xcresult`.
+- Consumer audit: composer validation, attributed link rendering, mute/unfollow
+  confirmations, reading metadata, language chips, all `PlatformHaptics` entry
+  points and every historical direct-generator bypass, profile self-label
+  reconciliation, both thread API calls, image-grid ALT badges, and MLS startup
+  policy/cleanup each read their persisted setting. Haptic state is synchronized
+  by the setting setter and by account-scoped `AppSettings.initialize`, which is
+  invoked on preferences initialization/account reload.
+- Safety: logged-out visibility reads the live profile record, preserves every
+  current profile field and unrelated self-label, uses `swapRecord`, rejects
+  unknown label unions, and restores the local control on failed writes.
+- Build/runtime: the final focused test performed a fresh product/test build and
+  exited 0. That exact app installed and launched on simulator
+  `40111BBE-8709-40D0-9016-A27448486A80` as process 40507.
+- Open manual gate: toggling all 11 settings, relaunching, and observing each
+  affected screen/action remains an interactive simulator/device check. The
+  automated mapping tests and launch evidence do not close it, so Step 3 stays
+  unchecked.
 
 ### Task 10: Reconcile Threaded Replies with Current Main
 

@@ -22,10 +22,7 @@ struct FeedDropDelegate: DropDelegate {
     MotionManager.withSpringAnimation(for: appSettings, duration: 0.3) {
       dropTargetItem = item
     }
-#if os(iOS)
-    let generator = UIImpactFeedbackGenerator(style: .medium)
-    generator.impactOccurred(intensity: 0.7)
-#endif
+    PlatformHaptics.customImpact(intensity: 0.7)
   }
 
   func performDrop(info: DropInfo) -> Bool {
@@ -41,10 +38,7 @@ struct FeedDropDelegate: DropDelegate {
     let fromCategory = currentDraggedCategory
     let toCategory = category
 
-#if os(iOS)
-    let generator = UIImpactFeedbackGenerator(style: .medium)
-    generator.impactOccurred(intensity: 1.0)
-#endif
+    PlatformHaptics.customImpact(intensity: 1.0)
 
     // Then do the database operations async
     Task {

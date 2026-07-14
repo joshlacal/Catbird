@@ -597,7 +597,7 @@ import SwiftUI
         @MainActor
         private func lockVoiceRecording() {
             voiceComposerMode = .recording(locked: true)
-            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            PlatformHaptics.medium()
         }
 
         @MainActor
@@ -656,8 +656,7 @@ import SwiftUI
         // MARK: - Message Long Press Handler
 
         private func handleMessageLongPress(_ message: MLSMessageAdapter) {
-            let generator = UIImpactFeedbackGenerator(style: .soft)
-            generator.impactOccurred()
+            PlatformHaptics.soft()
 
             // Store for potential report spam action
             reportSpamDID = message.senderID

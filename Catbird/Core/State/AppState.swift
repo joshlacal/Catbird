@@ -2417,6 +2417,11 @@ final class AppState {
         // Load existing conversations (this processes pending Welcome messages)
         await loadMLSConversations()
 
+        await MLSEpochKeyRetentionManager.shared.updatePolicyFromSettings(
+            retentionDays: appSettings.mlsMessageRetentionDays
+        )
+        await MLSEpochKeyRetentionManager.shared.startAutomaticCleanup()
+
         // Run the block reconciler in the background once per day per user.
         // Handles cross-device blocks (user blocked someone on their iPad; this
         // iPhone catches up on next launch) and crash recovery (block was published

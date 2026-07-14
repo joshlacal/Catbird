@@ -20,6 +20,7 @@ struct Post: View, Equatable {
     }
     
     private let logger = Logger(subsystem: "blue.catbird", category: "Translation")
+    @Environment(AppState.self) private var appState
     
     let post: AppBskyFeedPost
     let isSelectable: Bool
@@ -98,12 +99,37 @@ struct Post: View, Equatable {
         // Show the button if any source language's base code differs from the target
         return sourceLanguages.contains { ($0.baseLanguageCode?.lowercased() ?? "") != targetBase }
     }
+
+    private var indicatorLanguage: Locale.Language? {
+        guard PostLanguageIndicators.shouldShow(
+            isEnabled: appState.appSettings.showLanguageIndicators,
+            languageCount: sourceLanguages.count
+        ) else { return nil }
+        let deviceCode = targetLanguage.baseLanguageCode?.lowercased()
+        let preferredCodes = Set(appState.appSettings.contentLanguages.map { $0.lowercased() })
+        return sourceLanguages.first { language in
+            guard let code = language.baseLanguageCode?.lowercased() else { return false }
+            return code != deviceCode && !preferredCodes.contains(code)
+        }
+    }
     
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             // Translation button with enhanced styling
-            if shouldShowTranslationButton {
-                translationButton
+            if shouldShowTranslationButton || indicatorLanguage != nil {
+                HStack(spacing: 6) {
+                    if shouldShowTranslationButton {
+                        translationButton
+                    }
+                    if let indicatorLanguage {
+                        Text(languageName(for: indicatorLanguage))
+                            .appCaption2()
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(.secondary.opacity(0.12), in: Capsule())
+                    }
+                }
             }
             
             // Main post content with translation inline
@@ -245,7 +271,10 @@ struct Post: View, Equatable {
         if showTranslation, let translated = translatedText {
             return AttributedString(translated)
         }
-        return post.facetsAsAttributedString.applyingPostBodyLinkAccent()
+        return post.facetsAsAttributedString.applyingPostBodyLinkAccent(
+            highlightLinks: appState.appSettings.highlightLinks,
+            linkStyle: appState.appSettings.linkStyle
+        )
     }
 
     // Extract complex animation value to prevent type checker explosion
@@ -296,8 +325,7 @@ struct Post: View, Equatable {
 
     private func toggleTranslation() {
 #if os(iOS)
-        let hapticFeedback = UIImpactFeedbackGenerator(style: .light)
-        hapticFeedback.impactOccurred()
+        PlatformHaptics.light()
 #endif
         
 #if targetEnvironment(simulator)
@@ -491,6 +519,12 @@ struct Post: View, Equatable {
                 isTranslating = false
             }
         }
+    }
+}
+
+enum PostLanguageIndicators {
+    static func shouldShow(isEnabled: Bool, languageCount: Int) -> Bool {
+        isEnabled && languageCount > 0
     }
 }
 

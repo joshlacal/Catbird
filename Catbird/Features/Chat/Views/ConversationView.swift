@@ -246,8 +246,7 @@ struct ConversationView: View {
   // MARK: - Message Actions
   
   private func presentMessageActions(for message: BlueskyMessageAdapter) {
-    let generator = UIImpactFeedbackGenerator(style: .soft)
-    generator.impactOccurred()
+    PlatformHaptics.soft()
     
     // Store for potential report/delete
     messageToReport = message.id

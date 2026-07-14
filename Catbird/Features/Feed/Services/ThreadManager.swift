@@ -11,6 +11,17 @@ import Petrel
 import SwiftData
 import os
 
+enum ThreadSortAPIMapper {
+  static func apiValue(for setting: String) -> String {
+    switch setting {
+    case "hot", "top": return "top"
+    case "newest": return "newest"
+    case "oldest": return "oldest"
+    default: return "oldest"
+    }
+  }
+}
+
 /// Manages loading and caching of thread data
 @Observable
 final class ThreadManager: StateInvalidationSubscriber {
@@ -134,7 +145,8 @@ final class ThreadManager: StateInvalidationSubscriber {
       let params = AppBskyUnspeccedGetPostThreadV2.Parameters(
         anchor: uri,
         above: true,  // Load parent posts
-        below: 10  // Load reply depth
+        below: 10,  // Load reply depth
+        sort: ThreadSortAPIMapper.apiValue(for: appState.appSettings.threadSortOrder)
       )
       let (responseCode, output) = try await client.app.bsky.unspecced.getPostThreadV2(input: params)
 
@@ -260,7 +272,8 @@ final class ThreadManager: StateInvalidationSubscriber {
       let params = AppBskyUnspeccedGetPostThreadV2.Parameters(
         anchor: topmostParent.uri,
         above: true,  // Load more parent posts
-        below: 0  // Don't load replies
+        below: 0,  // Don't load replies
+        sort: ThreadSortAPIMapper.apiValue(for: appState.appSettings.threadSortOrder)
       )
       
       let (responseCode, output) = try await client.app.bsky.unspecced.getPostThreadV2(input: params)

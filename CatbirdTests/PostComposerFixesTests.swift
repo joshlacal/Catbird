@@ -2,6 +2,14 @@ import Testing
 import SwiftUI
 @testable import Catbird
 
+@Test("Required alt text blocks media submission with an actionable reason")
+func testRequiredAltTextValidationReason() {
+    let state = PostComposerSubmitValidationState(canSubmit: false, reason: .missingAltText)
+    #expect(state.reason == .missingAltText)
+    #expect(state.message == "Add alt text to every image before posting.")
+    #expect(state.shouldShowInlineMessage)
+}
+
 @Test("PostComposer State Management - Basic Operations")
 func testPostComposerBasicOperations() async throws {
     // Create a mock app state

@@ -27,6 +27,7 @@ struct UnifiedProfileView: View {
   @State private var isEditingProfile = false
   @State private var isShowingAccountSwitcher = false
   @State private var isShowingBlockConfirmation = false
+  @State private var isShowingMuteConfirmation = false
   @State private var isShowingAddToListSheet = false
   @State private var isBlocking = false
   /// Conversations the current user would auto-leave if they block this profile.
@@ -588,7 +589,7 @@ struct UnifiedProfileView: View {
       }
 
       Button {
-        toggleMute()
+        requestMuteToggle()
       } label: {
         if isMuting {
           Label("Unmute User", systemImage: "speaker.wave.2")
@@ -782,6 +783,16 @@ struct UnifiedProfileView: View {
         isMuting = !isMuting
         logger.error("Failed to toggle mute: \(error.localizedDescription)")
       }
+    }
+  }
+
+  private func requestMuteToggle() {
+    if !isMuting && DestructiveActionConfirmation.shouldConfirm(
+      isEnabled: appState.appSettings.confirmBeforeActions
+    ) {
+      isShowingMuteConfirmation = true
+    } else {
+      toggleMute()
     }
   }
 
@@ -1015,6 +1026,14 @@ struct UnifiedProfileView: View {
     } message: {
       alertMessage
     }
+    .alert("Mute User", isPresented: $isShowingMuteConfirmation) {
+      Button("Cancel", role: .cancel) { }
+      Button("Mute", role: .destructive) { toggleMute() }
+    } message: {
+      if let profile = viewModel.profile {
+        Text("Mute @\(profile.handle)? You won't see their posts and replies in your feeds.")
+      }
+    }
     .onChange(of: lastTappedTab) { _, newValue in
       handleTabChange(newValue)
     }
@@ -1107,7 +1126,7 @@ struct UnifiedProfileView: View {
           }
 
           Button {
-            toggleMute()
+            requestMuteToggle()
           } label: {
             Label(isMuting ? "Unmute User" : "Mute User",
                   systemImage: isMuting ? "speaker.wave.2" : "speaker.slash")
@@ -1171,6 +1190,7 @@ struct ProfileHeader: View {
     @State private var activitySubscriptionError: String?
     @State private var isShowingProfileImageViewer = false
     @State private var verificationInfoKind: VerificationBadgeKind?
+    @State private var showUnfollowConfirmation = false
     @Namespace private var imageTransition
     
     private let avatarSize: CGFloat = 80
@@ -1239,6 +1259,12 @@ struct ProfileHeader: View {
         }
         .onChange(of: activitySubscriptionSnapshot) { _, _ in
             updateLocalActivitySubscription()
+        }
+        .alert("Unfollow", isPresented: $showUnfollowConfirmation) {
+            Button("Cancel", role: .cancel) { }
+            Button("Unfollow", role: .destructive) { performUnfollow() }
+        } message: {
+            Text("Unfollow @\(profile.handle)? You'll stop seeing their posts in your following feed.")
         }
     }
     
@@ -1424,6 +1450,26 @@ struct ProfileHeader: View {
             await MainActor.run {
                 isActivitySubscriptionLoading = false
             }
+        }
+    }
+
+    private func performUnfollow() {
+        Task(priority: .userInitiated) {
+            isFollowButtonLoading = true
+            localIsFollowing = false
+            do {
+                let success = try await appState.unfollow(did: profile.did.didString())
+                if success {
+                    try? await Task.sleep(for: .seconds(0.5))
+                    await viewModel.loadProfile()
+                } else {
+                    localIsFollowing = true
+                }
+            } catch {
+                logger.debug("Error unfollowing: \(error.localizedDescription)")
+                localIsFollowing = true
+            }
+            isFollowButtonLoading = false
         }
     }
 
@@ -1902,31 +1948,12 @@ struct ProfileHeader: View {
             )
         } else if localIsFollowing {
             Button(action: {
-                Task(priority: .userInitiated) {  // Explicit priority
-                    isFollowButtonLoading = true
-                    
-                    // Optimistically update UI
-                    localIsFollowing = false
-                    
-                    do {
-                        // Perform unfollow operation on server
-                        let success = try await appState.unfollow(did: profile.did.didString())  // Use performUnfollow
-                        
-                        if success {
-                            // Add a small delay before reloading to allow server to update
-                            try? await Task.sleep(for: .seconds(0.5))
-                            await viewModel.loadProfile()
-                        } else {
-                            // Revert local state if operation failed
-                            localIsFollowing = true
-                        }
-                    } catch {
-                        // Log error and revert local state
-                        logger.debug("Error unfollowing: \(error.localizedDescription)")
-                        localIsFollowing = true
-                    }
-                    
-                    isFollowButtonLoading = false
+                if DestructiveActionConfirmation.shouldConfirm(
+                    isEnabled: appState.appSettings.confirmBeforeActions
+                ) {
+                    showUnfollowConfirmation = true
+                } else {
+                    performUnfollow()
                 }
             }) {
                 HStack {

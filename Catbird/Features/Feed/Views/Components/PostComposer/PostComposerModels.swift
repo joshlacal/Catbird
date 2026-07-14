@@ -65,6 +65,19 @@ struct ThreadEntry: Identifiable, Hashable {
 
 // MARK: - Submit Validation
 
+enum PostComposerAltTextRequirement {
+    static func hasMissingAltText(
+        imageAltTexts: [String],
+        videoAltText: String?
+    ) -> Bool {
+        let isBlank: (String) -> Bool = {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        return imageAltTexts.contains(where: isBlank)
+            || videoAltText.map(isBlank) == true
+    }
+}
+
 struct PostComposerSubmitValidationState: Equatable {
     enum Reason: Equatable {
         case emptyContent
@@ -72,6 +85,7 @@ struct PostComposerSubmitValidationState: Equatable {
         case posting
         case videoPreparing
         case videoBlocked(String)
+        case missingAltText
     }
 
     let canSubmit: Bool
@@ -89,6 +103,8 @@ struct PostComposerSubmitValidationState: Equatable {
             return "Video is still preparing."
         case .videoBlocked(let reason):
             return reason
+        case .missingAltText:
+            return "Add alt text to every image before posting."
         case nil:
             return nil
         }
@@ -96,7 +112,7 @@ struct PostComposerSubmitValidationState: Equatable {
 
     var shouldShowInlineMessage: Bool {
         switch reason {
-        case .overCharacterLimit, .videoPreparing, .videoBlocked:
+        case .overCharacterLimit, .videoPreparing, .videoBlocked, .missingAltText:
             return true
         case .emptyContent, .posting, nil:
             return false
