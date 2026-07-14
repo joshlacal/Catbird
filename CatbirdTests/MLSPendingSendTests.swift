@@ -193,7 +193,7 @@ struct MLSPendingSendTests {
     #expect(dispatched?.text == "after")
   }
 
-  @Test func failedEditReturnsFailureAndKeepsTheEditSessionText() async {
+  @Test func failedEditReturnsFailureAndKeepsTheEditSessionText() async throws {
     let actions = MLSMessageActionPerformer(
       edit: { _, _, _ in throw ActionFailure.rejected },
       unsend: { _, _ in }
@@ -206,7 +206,7 @@ struct MLSPendingSendTests {
     )
     let message = MLSMessageAdapter(
       id: "msg-real",
-      text: "retry this edit",
+      text: "before",
       senderDID: "did:plc:tester",
       currentUserDID: "did:plc:tester",
       sentAt: Date()
@@ -214,19 +214,20 @@ struct MLSPendingSendTests {
     dataSource.ingestConfirmedMessageForTesting(message)
     var editSession = MLSMessageEditSession()
     editSession.begin(message)
+    let messageToEdit = editSession.prepareSubmission(draftText: "after")
 
     let succeeded = await dataSource.editMessage(
-      messageID: message.id,
-      newText: "retry this edit"
+      messageID: try #require(messageToEdit).id,
+      newText: "after"
     )
     editSession.finish(succeeded: succeeded)
 
     #expect(succeeded == false)
     #expect(editSession.message?.id == message.id)
-    #expect(editSession.message?.text == "retry this edit")
+    #expect(editSession.draftText == "after")
   }
 
-  @Test func successfulEditClearsTheEditSession() async {
+  @Test func successfulEditClearsTheEditSession() async throws {
     let actions = MLSMessageActionPerformer(
       edit: { _, _, _ in },
       unsend: { _, _ in }
@@ -247,15 +248,35 @@ struct MLSPendingSendTests {
     dataSource.ingestConfirmedMessageForTesting(message)
     var editSession = MLSMessageEditSession()
     editSession.begin(message)
+    let messageToEdit = editSession.prepareSubmission(draftText: "after")
 
     let succeeded = await dataSource.editMessage(
-      messageID: message.id,
+      messageID: try #require(messageToEdit).id,
       newText: "after"
     )
     editSession.finish(succeeded: succeeded)
 
     #expect(succeeded == true)
     #expect(editSession.message == nil)
+    #expect(editSession.draftText == nil)
+  }
+
+  @Test func cancellingEditClearsTheTargetAndDraft() {
+    let message = MLSMessageAdapter(
+      id: "msg-real",
+      text: "before",
+      senderDID: "did:plc:tester",
+      currentUserDID: "did:plc:tester",
+      sentAt: Date()
+    )
+    var editSession = MLSMessageEditSession()
+    editSession.begin(message)
+    _ = editSession.prepareSubmission(draftText: "after")
+
+    editSession.cancel()
+
+    #expect(editSession.message == nil)
+    #expect(editSession.draftText == nil)
   }
 
   @Test func remoteMessageCannotDispatchEditOrUnsend() async {

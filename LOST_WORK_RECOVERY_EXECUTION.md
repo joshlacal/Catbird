@@ -819,8 +819,13 @@ jj new
   initial ordered rows, the tombstone-driven removal, and a later mutation of
   the excluded row without reinsertion or an ordering jump.
 - Review follow-up: `editMessage` reports success or failure, and the UIKit
-  edit session clears only on success. A failed edit preserves the target and
-  retry text. Both success and failure paths passed focused tests.
+  edit session clears only on success. The session owns the current draft,
+  records the attempted text synchronously before dispatch, and supplies that
+  draft back to the SwiftUI-to-UIKit bridge. A failed edit therefore preserves
+  the attempted retry text even when the original message text differs; success
+  and cancel clear both target and draft. Strict TDD first failed only for the
+  missing draft-state API, then all 15 pending/action cases passed, exit 0, in
+  `/tmp/recovery-task8-draft-green-2.log`.
 - Final focused verification: four suites passed 29/29, exit 0, with
   `** TEST SUCCEEDED **`: 15 pending/action/edit-session cases, one live GRDB
   observation case, six display-order cases, and seven render-signature cases.

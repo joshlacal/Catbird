@@ -98,18 +98,28 @@ import SwiftUI
 
     struct MLSMessageEditSession {
         private(set) var message: MLSMessageAdapter?
+        private(set) var draftText: String?
 
         mutating func begin(_ message: MLSMessageAdapter) {
             self.message = message
+            draftText = message.text
+        }
+
+        mutating func prepareSubmission(draftText: String) -> MLSMessageAdapter? {
+            guard let message else { return nil }
+            self.draftText = draftText
+            return message
         }
 
         mutating func finish(succeeded: Bool) {
             guard succeeded else { return }
             message = nil
+            draftText = nil
         }
 
         mutating func cancel() {
             message = nil
+            draftText = nil
         }
     }
 
@@ -280,7 +290,7 @@ import SwiftUI
                                 ? "Sending paused during recovery" : "Message",
                             isSendBlocked: dataSource.isSendBlockedByRecovery,
                             onSend: { text in
-                                if let messageToEdit = editSession.message {
+                                if let messageToEdit = editSession.prepareSubmission(draftText: text) {
                                     Task {
                                         let succeeded = await unifiedDataSource?.editMessage(
                                             messageID: messageToEdit.id,
@@ -340,7 +350,7 @@ import SwiftUI
                                 discardVoicePreview()
                             },
                             isEditMode: editSession.message != nil,
-                            editMessageText: editSession.message?.text,
+                            editMessageText: editSession.draftText,
                             onCancelEdit: {
                                 editSession.cancel()
                             }
