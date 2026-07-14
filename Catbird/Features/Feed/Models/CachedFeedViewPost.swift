@@ -63,12 +63,21 @@ final class CachedFeedViewPost: Identifiable {
         for feedViewPost: AppBskyFeedDefs.FeedViewPost,
         feedType: String
     ) -> String {
-        let scopedFeed = "\(feedType.utf8.count):\(feedType)"
-        let base = "\(scopedFeed)|\(feedViewPost.post.uri.uriString())-\(feedViewPost.post.cid)"
+        let prefix = entryIdPrefix(
+            for: feedViewPost.post.uri.uriString(),
+            feedType: feedType
+        )
+        let base = "\(prefix)\(feedViewPost.post.cid)"
         if case .appBskyFeedDefsReasonRepost(let repost) = feedViewPost.reason {
             return "\(base)-repost-\(repost.by.did.didString())-\(idDateFormatter.string(from: repost.indexedAt.date))"
         }
         return base
+    }
+
+    /// Prefix shared by construction and URI-based lookups. Length delimiters
+    /// keep a feed or URI that extends another value from matching broadly.
+    static func entryIdPrefix(for uri: String, feedType: String) -> String {
+        "\(feedType.utf8.count):\(feedType)|\(uri.utf8.count):\(uri)|"
     }
     
     /// Initializer from a FeedViewPost with backwards compatibility

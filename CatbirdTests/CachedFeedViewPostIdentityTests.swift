@@ -189,6 +189,32 @@ struct CachedFeedViewPostIdentityTests {
     #expect(!source.contains("IMPORTANT: Fetch ALL existing posts by ID (across ALL feeds)"))
   }
 
+  @Test("Thread cache lookup prefix recognizes scoped IDs without URI-prefix collisions")
+  func threadCacheLookupUsesScopedEntryPrefix() throws {
+    let post = try makeFeedViewPost(rkey: "abc123")
+    let cached = try #require(
+      CachedFeedViewPost(from: post, feedType: "thread-cache")
+    )
+    let uri = post.post.uri.uriString()
+    let prefix = CachedFeedViewPost.entryIdPrefix(for: uri, feedType: "thread-cache")
+    let longerURIPrefix = CachedFeedViewPost.entryIdPrefix(
+      for: "\(uri)-different",
+      feedType: "thread-cache"
+    )
+
+    #expect(cached.id.starts(with: prefix))
+    #expect(!cached.id.starts(with: longerURIPrefix))
+
+    let source = try sourceFile("Catbird/Features/Feed/Services/ThreadManager.swift")
+    #expect(
+      source.contains(
+        "CachedFeedViewPost.entryIdPrefix(for: uriString, feedType: threadCacheFeedType)"
+      )
+    )
+    #expect(source.contains("post.id.starts(with: entryPrefix)"))
+    #expect(!source.contains("post.id.starts(with: uriString)"))
+  }
+
   @Test("Thread cache upsert is scoped to feed identity")
   func threadCacheUpsertScopesIdentity() throws {
     let source = try sourceFile("Catbird/Features/Feed/Services/ThreadManager.swift")

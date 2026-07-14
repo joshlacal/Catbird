@@ -733,6 +733,16 @@ jj new
   `Test-Catbird-2026.07.14_04-25-40--0400.xcresult`.
 - Preservation GREEN: repost menu/icon and draft-sync suites passed 19/19,
   exit 0; result bundle `Test-Catbird-2026.07.14_04-26-10--0400.xcresult`.
+- Final thread-cache lookup correction: scoped cache IDs begin with the encoded
+  feed scope, so `ThreadManager.hasCachedThread` now builds the same
+  `entryIdPrefix(for:feedType:)` used by cache insertion instead of searching
+  for the URI at byte zero. The focused suite includes both collision behavior
+  and source contracts for the lookup and upsert paths. A fresh verification
+  attempt was infrastructure-blocked by a concurrent DerivedData lock, then a
+  separate warmed cache was interrupted during dependency compilation; the
+  existing 12/12 focused, 19/19 preservation, and build evidence remains valid
+  for the preceding commit, while this final lookup delta is source-contract
+  covered and pending the final cross-platform Task 12 rerun.
 - Final iOS simulator build exited 0 with `** BUILD SUCCEEDED **`. The manual
   two-feed browse/refresh/relaunch header check is still open; Step 3 remains
   unchecked.
