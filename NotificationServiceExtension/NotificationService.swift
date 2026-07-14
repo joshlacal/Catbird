@@ -838,7 +838,7 @@ class NotificationService: UNNotificationServiceExtension {
     if shouldForceCleanup {
       // Emergency cleanup before system kills us. NSE must use PASSIVE checkpoint because
       // TRUNCATE can corrupt a WAL that the main app still has open.
-      MLSCoreContext.emergencyCloseAllContexts()
+      MLSClient.emergencyCloseAllContexts(reason: "NSE service extension expiration")
       MLSGRDBManager.emergencyCloseAllDatabases(mode: .passive)
       Self.notificationProcessingLeases.finishExpirationCleanupIfIdle()
     }
@@ -865,7 +865,7 @@ class NotificationService: UNNotificationServiceExtension {
     if lease.startsNewGeneration {
       // A previous notification may have ended through emergency cleanup. Clear only before
       // the first delivery in a new generation, never while another delivery is active.
-      MLSCoreContext.clearSuspensionFlag()
+      MLSClient.clearSuspensionFlag(reason: "NSE new notification processing generation")
     }
 
     await operation()
@@ -935,9 +935,9 @@ class NotificationService: UNNotificationServiceExtension {
     // Log WAL state BEFORE cleanup — if corruption happens during cleanup, this is the "before" snapshot
     MLSGRDBManager.probeWALHealth(for: recipientDid, label: "PRE_CLEANUP")
 
-    // 1. Close all Rust FFI contexts (flushes ratchet state to disk)
-    // NOTE: This sets suspensionInProgress = true internally.
-    MLSCoreContext.emergencyCloseAllContexts()
+    // 1. Close all Rust FFI contexts (flushes ratchet state to disk) through the
+    // coupled lifecycle boundary. This sets both admission gates internally.
+    MLSClient.emergencyCloseAllContexts(reason: "NSE final notification cleanup")
 
     // 2. Close all GRDB DatabasePools registered in the static emergency list.
     // The NSE's own databaseManager uses lightweight DatabaseQueues (nseRead/nseWrite)
@@ -962,7 +962,7 @@ class NotificationService: UNNotificationServiceExtension {
     // the next notification's getContext() call will be blocked — especially when
     // this defer block runs concurrently with the next didReceive (which clears
     // the flag early, but our deferred cleanup re-sets it via emergencyCloseAllContexts).
-    MLSCoreContext.clearSuspensionFlag()
+    MLSClient.clearSuspensionFlag(reason: "NSE final notification cleanup complete")
 
     logger.info("✅ [NSE] Cleanup complete")
   }

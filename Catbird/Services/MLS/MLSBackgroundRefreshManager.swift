@@ -238,11 +238,9 @@ actor MLSBackgroundRefreshManager {
       if terminationState.claimExpiration() {
         logger.warning("Background task expired; force-closing MLS runtime exactly once")
         MLSClient.markSuspensionInProgress(reason: "MLS BGTask expired")
-        MLSCoreContext.markSuspensionInProgress()
         MLSClient.interruptAllContexts()
         MLSCoreContext.interruptAllContexts()
         MLSClient.emergencyCloseAllContexts(reason: "MLS BGTask expired")
-        MLSCoreContext.emergencyCloseAllContexts()
         markBackgroundRefreshRustRuntimeClosedSynchronously(
           manager: manager,
           reason: "MLS BGTask expired"
@@ -274,7 +272,6 @@ actor MLSBackgroundRefreshManager {
       },
       closePreparedRuntime: {
         MLSClient.emergencyCloseAllContexts(reason: "MLS BGTask prepared completion")
-        MLSCoreContext.emergencyCloseAllContexts()
         manager.markRustRuntimeClosedForSuspend(reason: "MLS BGTask prepared completion")
       }
     )

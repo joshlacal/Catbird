@@ -3,7 +3,7 @@ import XCTest
 
 @MainActor
 final class MLSAccountSwitchSuspensionContractTests: XCTestCase {
-    func testScenePhaseUsesManagerOwnedSuspensionWithOwnerlessFallback() throws {
+    func testScenePhaseUsesManagerOwnedSuspensionWithContextFreeFallback() throws {
         let source = try appSource(relativePath: "Catbird/App/CatbirdApp.swift")
         let body = try XCTUnwrap(
             appFunctionBody(
@@ -31,7 +31,7 @@ final class MLSAccountSwitchSuspensionContractTests: XCTestCase {
         XCTAssertFalse(managerBranch.contains("MLSClient.markSuspensionInProgress("))
         XCTAssertTrue(
             ownerlessBranch.contains(
-                "MLSClient.markSuspensionInProgress(reason: \"scenePhase → \\(String(describing: newPhase))\")"
+                "appStateManager.beginContextFreeMLSSuspension("
             )
         )
         XCTAssertFalse(ownerlessBranch.contains("manager.suspendMLSOperations()"))
@@ -41,10 +41,7 @@ final class MLSAccountSwitchSuspensionContractTests: XCTestCase {
             ).count - 1,
             1
         )
-        XCTAssertEqual(
-            body.components(separatedBy: "MLSClient.markSuspensionInProgress(").count - 1,
-            1
-        )
+        XCTAssertFalse(body.contains("MLSCoreContext.markSuspensionInProgress()"))
     }
 
     func testOnlyAccountSwitchShutdownConsumesSuspensionAbandonmentAuthorization() throws {

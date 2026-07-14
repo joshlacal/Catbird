@@ -214,11 +214,33 @@ final class NSEProcessingLeaseContractTests: XCTestCase {
     let cleanupBody = try XCTUnwrap(
       functionBody(signature: "private func bestEffortNSECleanup(", in: source)
     )
+    let leaseWrapper = try XCTUnwrap(
+      functionBody(signature: "private func withNotificationProcessingLease(", in: source)
+    )
 
     XCTAssertFalse(receiveBody.contains("MLSCoreContext.clearSuspensionFlag()"))
-    XCTAssertTrue(cleanupBody.contains("MLSCoreContext.emergencyCloseAllContexts()"))
+    XCTAssertTrue(leaseWrapper.contains("if lease.startsNewGeneration"))
+    XCTAssertTrue(leaseWrapper.contains("MLSClient.clearSuspensionFlag("))
+    XCTAssertFalse(leaseWrapper.contains("MLSCoreContext.clearSuspensionFlag()"))
+    XCTAssertTrue(cleanupBody.contains("MLSClient.emergencyCloseAllContexts("))
+    XCTAssertFalse(cleanupBody.contains("MLSCoreContext.emergencyCloseAllContexts()"))
     XCTAssertTrue(cleanupBody.contains("MLSGRDBManager.emergencyCloseAllDatabases(mode: .passive)"))
-    XCTAssertTrue(cleanupBody.contains("MLSCoreContext.clearSuspensionFlag()"))
+    XCTAssertTrue(cleanupBody.contains("MLSClient.clearSuspensionFlag("))
+    XCTAssertFalse(cleanupBody.contains("MLSCoreContext.clearSuspensionFlag()"))
+  }
+
+  func testNSEUsesOnlyCoupledLifecycleMutators() throws {
+    let source = try notificationServiceSource()
+
+    for rawMutator in [
+      "MLSCoreContext.markSuspensionInProgress()",
+      "MLSCoreContext.clearSuspensionFlag()",
+      "MLSCoreContext.emergencyCloseAllContexts()",
+    ] {
+      XCTAssertFalse(source.contains(rawMutator), "NSE must not call \(rawMutator)")
+    }
+    XCTAssertTrue(source.contains("MLSClient.clearSuspensionFlag("))
+    XCTAssertTrue(source.contains("MLSClient.emergencyCloseAllContexts("))
   }
 
   func testExpirationClaimsExceptionalCleanupExactlyOnce() throws {
@@ -229,6 +251,9 @@ final class NSEProcessingLeaseContractTests: XCTestCase {
     XCTAssertTrue(expirationBody.contains("claimExpirationCleanup()"))
     XCTAssertTrue(expirationBody.contains("if shouldForceCleanup"))
     XCTAssertTrue(expirationBody.contains("activeRecipientDIDs"))
+    XCTAssertTrue(expirationBody.contains("MLSClient.emergencyCloseAllContexts("))
+    XCTAssertFalse(expirationBody.contains("MLSCoreContext.emergencyCloseAllContexts()"))
+    XCTAssertTrue(expirationBody.contains("MLSGRDBManager.emergencyCloseAllDatabases(mode: .passive)"))
   }
 
   func testAppStopCleanupUsesExclusiveLeaseOwnedRecipientSet() throws {

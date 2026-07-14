@@ -219,7 +219,6 @@ private func forceCloseSceneSuspensionSynchronously(
     MLSClient.interruptAllContexts()
     MLSCoreContext.interruptAllContexts()
     MLSClient.emergencyCloseAllContexts(reason: reason)
-    MLSCoreContext.emergencyCloseAllContexts()
     manager?.markRustRuntimeClosedForSuspend(reason: reason)
     MLSForegroundResumeCoordinator.markRustRuntimeClosedForSuspension(
       claim.transitionToken,
@@ -1492,8 +1491,8 @@ private extension CatbirdApp {
     // ═══════════════════════════════════════════════════════════════════════════
     if newPhase == .inactive || newPhase == .background {
       // Block new MLS FFI work immediately while we transition to background.
-      // MLSClient delegates UniFFI MlsContext ownership to MLSCoreContext; both
-      // gates are set because callers enter through both surfaces.
+      // Every entry path uses the coupled MLSClient lifecycle boundary, which
+      // owns both client and Core admission gates.
       if let manager = appStateManager.lifecycle.appState?.mlsConversationManager {
         suspensionManager = manager
         rustPathAvailable = manager.suspendMLSOperations()
@@ -1505,7 +1504,6 @@ private extension CatbirdApp {
           reason: "scenePhase → \(String(describing: newPhase))"
         )
       }
-      MLSCoreContext.markSuspensionInProgress()
     }
 
     #if os(iOS)
@@ -1629,7 +1627,6 @@ private extension CatbirdApp {
             MLSClient.emergencyCloseAllContexts(
               reason: "scenePhase active→\(String(describing: newPhase))"
             )
-            MLSCoreContext.emergencyCloseAllContexts()
             manager.markRustRuntimeClosedForSuspend(
               reason: "scenePhase active→\(String(describing: newPhase)) prepared close"
             )

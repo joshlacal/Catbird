@@ -276,14 +276,11 @@ final class MLSForegroundResumeContractTests: XCTestCase {
         let clientClose = try XCTUnwrap(
             backgroundCloseBody.range(of: "MLSClient.emergencyCloseAllContexts(")
         )
-        let coreClose = try XCTUnwrap(
-            backgroundCloseBody.range(of: "MLSCoreContext.emergencyCloseAllContexts()")
-        )
         let runtimeMark = try XCTUnwrap(
             backgroundCloseBody.range(of: "manager.markRustRuntimeClosedForSuspend(")
         )
-        XCTAssertLessThan(clientClose.lowerBound, coreClose.lowerBound)
-        XCTAssertLessThan(coreClose.lowerBound, runtimeMark.lowerBound)
+        XCTAssertLessThan(clientClose.lowerBound, runtimeMark.lowerBound)
+        XCTAssertFalse(backgroundCloseBody.contains("MLSCoreContext.emergencyCloseAllContexts()"))
         XCTAssertFalse(backgroundCloseBody.contains("await"))
 
         let expirationBody = try XCTUnwrap(
@@ -422,10 +419,9 @@ final class MLSForegroundResumeContractTests: XCTestCase {
             functionBody(signature: "closePreparedRuntime:", in: body)
         )
         let clientClose = try XCTUnwrap(closeBody.range(of: "MLSClient.emergencyCloseAllContexts("))
-        let coreClose = try XCTUnwrap(closeBody.range(of: "MLSCoreContext.emergencyCloseAllContexts()"))
         let runtimeMark = try XCTUnwrap(closeBody.range(of: "manager.markRustRuntimeClosedForSuspend("))
-        XCTAssertLessThan(clientClose.lowerBound, coreClose.lowerBound)
-        XCTAssertLessThan(coreClose.lowerBound, runtimeMark.lowerBound)
+        XCTAssertLessThan(clientClose.lowerBound, runtimeMark.lowerBound)
+        XCTAssertFalse(closeBody.contains("MLSCoreContext.emergencyCloseAllContexts()"))
         XCTAssertFalse(closeBody.contains("await"))
         XCTAssertTrue(
             body.contains(
@@ -726,6 +722,29 @@ final class MLSForegroundResumeContractTests: XCTestCase {
         XCTAssertTrue(
             foregroundResume.contains("return await manager.resumeMLSOperations()")
         )
+    }
+
+    func testCatbirdConsumersUseOnlyCoupledCoreLifecycleMutators() throws {
+        let consumerPaths = [
+            "Catbird/App/CatbirdApp.swift",
+            "Catbird/Services/MLS/MLSBackgroundRefreshManager.swift",
+            "NotificationServiceExtension/NotificationService.swift",
+        ]
+        let rawCoreMutators = [
+            "MLSCoreContext.markSuspensionInProgress()",
+            "MLSCoreContext.clearSuspensionFlag()",
+            "MLSCoreContext.emergencyCloseAllContexts()",
+        ]
+
+        for path in consumerPaths {
+            let consumerSource = try source(relativePath: path)
+            for rawMutator in rawCoreMutators {
+                XCTAssertFalse(
+                    consumerSource.contains(rawMutator),
+                    "\(path) must not bypass MLSClient with \(rawMutator)"
+                )
+            }
+        }
     }
 
     private func source(relativePath: String) throws -> String {
@@ -1048,13 +1067,14 @@ final class MLSForegroundResumeRaceTests: XCTestCase {
         let ownerBoundSuspend = try XCTUnwrap(
             sceneHandler.range(of: "rustPathAvailable = manager.suspendMLSOperations()")
         )
-        let coreGateClose = try XCTUnwrap(
-            sceneHandler.range(of: "MLSCoreContext.markSuspensionInProgress()")
+        let contextFreeGateClose = try XCTUnwrap(
+            sceneHandler.range(of: "appStateManager.beginContextFreeMLSSuspension(")
         )
         let firstAwaitingTask = try XCTUnwrap(sceneHandler.range(of: "Task { @MainActor in"))
         XCTAssertLessThan(recordTransition.lowerBound, ownerBoundSuspend.lowerBound)
-        XCTAssertLessThan(ownerBoundSuspend.lowerBound, coreGateClose.lowerBound)
-        XCTAssertLessThan(coreGateClose.lowerBound, firstAwaitingTask.lowerBound)
+        XCTAssertLessThan(ownerBoundSuspend.lowerBound, firstAwaitingTask.lowerBound)
+        XCTAssertLessThan(contextFreeGateClose.lowerBound, firstAwaitingTask.lowerBound)
+        XCTAssertFalse(sceneHandler.contains("MLSCoreContext.markSuspensionInProgress()"))
 
         let foregroundToken = MLSForegroundResumeCoordinator.recordSceneTransition(to: .active)
         var managerContinuation: CheckedContinuation<Void, Never>?
