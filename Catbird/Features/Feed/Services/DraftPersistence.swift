@@ -53,7 +53,8 @@ final class DraftPersistence {
     
     func deleteDraft(id: UUID) async throws {
         logger.info("🗑️ deleteDraft (async) - ID: \(id.uuidString)")
-        try await databaseActor.deleteDraft(id: id)
+        let referencedVideoURLs = try await databaseActor.deleteDraft(id: id)
+        await removeOwnedCapturedVideos(referencedBy: referencedVideoURLs)
     }
     
     func countDrafts(for accountDID: String) async throws -> Int {
@@ -173,12 +174,28 @@ final class DraftPersistence {
     }
 
     /// Delete a local draft without remote propagation (used when the remote copy is already gone)
-    func deleteDraftLocally(id: UUID) throws {
-        let modelContext = modelContainer.mainContext
-        guard let model = try fetchDraftModel(id: id) else { return }
-        modelContext.delete(model)
-        try modelContext.save()
+    func deleteDraftLocally(id: UUID) async throws {
+        try await deleteDraft(id: id)
         logger.info("🗑️ Deleted local draft \(id.uuidString) (remote deletion propagated)")
+    }
+
+    /// Remove only capture files owned by Catbird, and only after the saved
+    /// draft row deletion has succeeded.
+    private func removeOwnedCapturedVideos(referencedBy rawURLs: [String]) async {
+        guard let store = try? CapturedVideoStore.applicationStore() else {
+            logger.warning("Could not open captured-video storage for post-delete cleanup")
+            return
+        }
+
+        for rawURL in rawURLs {
+            guard let url = URL(string: rawURL), store.owns(url) else { continue }
+            do {
+                try await store.removeVideoIfOwned(url)
+                logger.debug("Removed captured video after saved-draft deletion: \(url.lastPathComponent)")
+            } catch {
+                logger.error("Failed post-delete captured-video cleanup: \(error.localizedDescription)")
+            }
+        }
     }
 }
 

@@ -495,7 +495,7 @@ final class DraftSyncService {
             try await merge(local: local, remote: remote, accountDID: accountDID)
           } else if local.lastSyncedAt != nil {
             // Synced before but gone remotely — deletion propagates down
-            try persistence.deleteDraftLocally(id: local.id)
+            try await persistence.deleteDraftLocally(id: local.id)
           }
         } else {
           // Local-only draft — push up

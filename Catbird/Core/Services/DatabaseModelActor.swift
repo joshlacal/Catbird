@@ -71,7 +71,7 @@ actor DatabaseModelActor {
     }
     
     /// Delete a draft by ID
-    func deleteDraft(id: UUID) throws {
+    func deleteDraft(id: UUID) throws -> [String] {
         logger.info("🗑️ Deleting draft: \(id.uuidString)")
         
         let predicate = #Predicate<DraftPost> { $0.id == id }
@@ -80,10 +80,23 @@ actor DatabaseModelActor {
         guard let draft = try modelContext.fetch(descriptor).first else {
             throw DraftError.draftNotFound
         }
+
+        // Decode references while the row still exists, but do not hand them
+        // to file cleanup until the database deletion has committed.
+        let persistedDraft = try draft.decodeDraft()
+        let mediaItems = persistedDraft.mediaItems
+            + persistedDraft.threadEntries.flatMap(\.mediaItems)
+        let videoItems = [persistedDraft.videoItem]
+            + persistedDraft.threadEntries.map(\.videoItem)
+        let referencedVideoURLs = Set(
+            mediaItems.compactMap(\.rawVideoURLString)
+                + videoItems.compactMap { $0?.rawVideoURLString }
+        )
         
         modelContext.delete(draft)
         try modelContext.save()
         logger.info("✅ Deleted draft \(id.uuidString)")
+        return Array(referencedVideoURLs)
     }
     
     /// Count drafts for an account

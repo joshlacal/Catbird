@@ -11,6 +11,12 @@ import SwiftData
 import Petrel
 import OSLog
 
+enum SavedDraftMediaCleanupPolicy {
+  static func allowsImmediateCleanup(hasPersistedRow: Bool) -> Bool {
+    !hasPersistedRow
+  }
+}
+
 /// Manager for handling post composer drafts across the app
 /// 
 /// Two types of drafts:
@@ -569,7 +575,10 @@ final class ComposerDraftManager {
     clearGeneration += 1
 
     // Clean up any files referenced by the draft (videos/images saved by Share Extension)
-    if let draft = currentDraft {
+    if let draft = currentDraft,
+       SavedDraftMediaCleanupPolicy.allowsImmediateCleanup(
+         hasPersistedRow: restoredSavedDraftId != nil
+       ) {
       logger.debug("🗑️ Cleaning up files for draft")
       cleanUpFiles(for: draft)
     }
