@@ -4,6 +4,15 @@ import SwiftUI
 import UIKit
 #endif
 
+extension PostComposerViewModel.MediaItem {
+  static func capturedVideo(url: URL) -> Self {
+    var item = Self(url: url)
+    item.isLoading = true
+    item.videoData = nil
+    return item
+  }
+}
+
 extension PostComposerViewModel {
   @MainActor
   func ingestCapturedPhoto(_ data: Data) {
@@ -30,11 +39,10 @@ extension PostComposerViewModel {
   @MainActor
   func ingestCapturedVideo(_ url: URL) async {
     mediaItems.removeAll()
-    var item = MediaItem(url: url)
-    item.videoData = try? Data(contentsOf: url)
-    item.isLoading = true
+    let item = MediaItem.capturedVideo(url: url)
     videoItem = item
     syncMediaStateToCurrentThread()
+    saveDraftIfNeeded()
     await loadVideoThumbnail(for: item)
     await checkVideoUploadEligibility(force: true)
     syncMediaStateToCurrentThread()

@@ -439,19 +439,24 @@ struct MainContentView: View {
                   feedsAction: {},
                   showFeedsButton: false,
                   hasMinimizedComposer: appState.composerDraftManager.currentDraft != nil,
-                  clearDraftAction: {
-                    appState.composerDraftManager.clearDraft()
+                  newPostAction: {
+                    Task { @MainActor in
+                      await openFreshComposerStashingDraft()
+                    }
                   },
-                  newPostAction: { openFreshComposerStashingDraft() },
                   showDraftsAction: { openDraftsBrowser() },
                   takePhotoAction: {
                     #if os(iOS)
-                    beginCameraCapture(.photo)
+                    Task { @MainActor in
+                      await beginCameraCapture(.photo)
+                    }
                     #endif
                   },
                   recordVideoAction: {
                     #if os(iOS)
-                    beginCameraCapture(.video)
+                    Task { @MainActor in
+                      await beginCameraCapture(.video)
+                    }
                     #endif
                   }
                 )
@@ -565,19 +570,24 @@ struct MainContentView: View {
                 feedsAction: {},
                 showFeedsButton: false,
                 hasMinimizedComposer: appState.composerDraftManager.currentDraft != nil,
-                clearDraftAction: {
-                  appState.composerDraftManager.clearDraft()
+                newPostAction: {
+                  Task { @MainActor in
+                    await openFreshComposerStashingDraft()
+                  }
                 },
-                newPostAction: { openFreshComposerStashingDraft() },
                 showDraftsAction: { openDraftsBrowser() },
                 takePhotoAction: {
                   #if os(iOS)
-                  beginCameraCapture(.photo)
+                  Task { @MainActor in
+                    await beginCameraCapture(.photo)
+                  }
                   #endif
                 },
                 recordVideoAction: {
                   #if os(iOS)
-                  beginCameraCapture(.video)
+                  Task { @MainActor in
+                    await beginCameraCapture(.video)
+                  }
                   #endif
                 }
               )
@@ -952,17 +962,35 @@ extension MainContentView {
     showingPostComposer = true
   }
 
-  private func stashWorkingDraft() {
-    guard let workingDraft = appState.composerDraftManager.currentDraft else { return }
-    appState.composerDraftManager.createSavedDraft(workingDraft)
-    appState.composerDraftManager.clearDraft()
+  private func stashWorkingDraft(
+    destinationAvailable: Bool = true
+  ) async -> WorkingDraftStashPolicy.Result {
+    let manager = appState.composerDraftManager
+    let workingDraft = manager.currentDraft
+    return await WorkingDraftStashPolicy.perform(
+      hasWorkingDraft: workingDraft != nil,
+      destinationAvailable: destinationAvailable,
+      save: {
+        guard let workingDraft else { return false }
+        return await manager.createSavedDraftAndWait(workingDraft)
+      },
+      clearAfterSave: {
+        manager.clearWorkingDraftAfterStash()
+      }
+    )
   }
 
-  private func openFreshComposerStashingDraft() {
+  private func openFreshComposerStashingDraft() async {
+    let result = await stashWorkingDraft()
+    guard result.allowsTransition else {
+      appState.toastManager.show(
+        ToastItem(message: "Could not save your current draft", icon: "exclamationmark.triangle.fill")
+      )
+      return
+    }
     #if os(iOS)
     composerCapturedMedia = nil
     #endif
-    stashWorkingDraft()
     composerInitialDraft = nil
     showingPostComposer = true
   }
@@ -980,10 +1008,17 @@ extension MainContentView {
   }
 
   #if os(iOS)
-  private func beginCameraCapture(_ mode: CameraCaptureMode) {
-    stashWorkingDraft()
-    guard UIImagePickerController.isSourceTypeAvailable(.camera) else {
+  private func beginCameraCapture(_ mode: CameraCaptureMode) async {
+    let cameraAvailable = UIImagePickerController.isSourceTypeAvailable(.camera)
+    let result = await stashWorkingDraft(destinationAvailable: cameraAvailable)
+    guard result != .destinationUnavailable else {
       appState.toastManager.show(ToastItem(message: "Camera is unavailable on this device", icon: "camera.fill"))
+      return
+    }
+    guard result.allowsTransition else {
+      appState.toastManager.show(
+        ToastItem(message: "Could not save your current draft", icon: "exclamationmark.triangle.fill")
+      )
       return
     }
     pendingCameraCapture = mode

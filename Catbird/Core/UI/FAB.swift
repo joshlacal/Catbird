@@ -10,11 +10,15 @@ import SwiftUI
 import UIKit
 #endif
 
-enum FABQuickAction: CaseIterable {
+enum FABQuickAction: CaseIterable, Hashable, Identifiable {
     case newPost
     case browseDrafts
     case takePhoto
     case recordVideo
+
+    static let productionMenuActions = allCases
+
+    var id: Self { self }
 
     var title: String {
         switch self {
@@ -24,6 +28,15 @@ enum FABQuickAction: CaseIterable {
         case .recordVideo: "Record Video"
         }
     }
+
+    var systemImage: String {
+        switch self {
+        case .newPost: "square.and.pencil"
+        case .browseDrafts: "doc.on.doc"
+        case .takePhoto: "camera"
+        case .recordVideo: "video"
+        }
+    }
 }
 
 struct FAB: View {
@@ -31,11 +44,10 @@ struct FAB: View {
     let feedsAction: () -> Void
     let showFeedsButton: Bool
     let hasMinimizedComposer: Bool
-    let clearDraftAction: (() -> Void)?
-    let newPostAction: (() -> Void)?
-    let showDraftsAction: (() -> Void)?
-    let takePhotoAction: (() -> Void)?
-    let recordVideoAction: (() -> Void)?
+    let newPostAction: () -> Void
+    let showDraftsAction: () -> Void
+    let takePhotoAction: () -> Void
+    let recordVideoAction: () -> Void
     @Environment(\.colorScheme) var colorScheme
     @Environment(\.toastManager) private var toastManager
     // Namespace for matched zoom transitions to the composer (provided by ContentView)
@@ -48,17 +60,15 @@ struct FAB: View {
         feedsAction: @escaping () -> Void,
         showFeedsButton: Bool,
         hasMinimizedComposer: Bool = false,
-        clearDraftAction: (() -> Void)? = nil,
-        newPostAction: (() -> Void)? = nil,
-        showDraftsAction: (() -> Void)? = nil,
-        takePhotoAction: (() -> Void)? = nil,
-        recordVideoAction: (() -> Void)? = nil
+        newPostAction: @escaping () -> Void,
+        showDraftsAction: @escaping () -> Void,
+        takePhotoAction: @escaping () -> Void,
+        recordVideoAction: @escaping () -> Void
     ) {
         self.composeAction = composeAction
         self.feedsAction = feedsAction
         self.showFeedsButton = showFeedsButton
         self.hasMinimizedComposer = hasMinimizedComposer
-        self.clearDraftAction = clearDraftAction
         self.newPostAction = newPostAction
         self.showDraftsAction = showDraftsAction
         self.takePhotoAction = takePhotoAction
@@ -166,34 +176,21 @@ struct FAB: View {
 
     @ViewBuilder
     private var composeMenuItems: some View {
-        if let newPostAction {
-            Button(action: newPostAction) {
-                Label(FABQuickAction.newPost.title, systemImage: "square.and.pencil")
+        ForEach(FABQuickAction.productionMenuActions) { quickAction in
+            Button {
+                perform(quickAction)
+            } label: {
+                Label(quickAction.title, systemImage: quickAction.systemImage)
             }
         }
-        if let showDraftsAction {
-            Button(action: showDraftsAction) {
-                Label(FABQuickAction.browseDrafts.title, systemImage: "doc.on.doc")
-            }
-        }
-        #if os(iOS)
-        if let takePhotoAction {
-            Button(action: takePhotoAction) {
-                Label(FABQuickAction.takePhoto.title, systemImage: "camera")
-            }
-        }
-        if let recordVideoAction {
-            Button(action: recordVideoAction) {
-                Label(FABQuickAction.recordVideo.title, systemImage: "video")
-            }
-        }
-        #endif
+    }
 
-        if hasMinimizedComposer, let clearDraftAction {
-            Divider()
-            Button(role: .destructive, action: clearDraftAction) {
-                Label("Clear Draft", systemImage: "trash")
-            }
+    private func perform(_ quickAction: FABQuickAction) {
+        switch quickAction {
+        case .newPost: newPostAction()
+        case .browseDrafts: showDraftsAction()
+        case .takePhoto: takePhotoAction()
+        case .recordVideo: recordVideoAction()
         }
     }
 
@@ -246,7 +243,6 @@ struct FAB: View {
       feedsAction: {},
       showFeedsButton: true,
       hasMinimizedComposer: false,
-      clearDraftAction: nil,
       newPostAction: {},
       showDraftsAction: {},
       takePhotoAction: {},

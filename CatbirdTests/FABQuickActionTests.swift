@@ -12,6 +12,7 @@ struct FABQuickActionTests {
       "Take Photo",
       "Record Video",
     ])
+    #expect(FABQuickAction.productionMenuActions == FABQuickAction.allCases)
   }
 
   @Test("Camera capture modes have stable distinct identities")

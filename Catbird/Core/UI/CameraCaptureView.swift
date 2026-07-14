@@ -59,17 +59,16 @@ struct CameraCaptureView: UIViewControllerRepresentable {
         return
       }
 
-      let fileExtension = sourceURL.pathExtension.isEmpty ? "mov" : sourceURL.pathExtension
-      let destinationURL = FileManager.default.temporaryDirectory
-        .appendingPathComponent(UUID().uuidString)
-        .appendingPathExtension(fileExtension)
-      do {
-        try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
-        cameraCaptureLogger.info("Captured video into app-owned temporary storage")
-        parent.onCapture(.video(destinationURL))
-      } catch {
-        cameraCaptureLogger.error("Failed to preserve captured video: \(error.localizedDescription)")
-        parent.onCancel()
+      Task { @MainActor in
+        do {
+          let store = try CapturedVideoStore.applicationStore()
+          let destinationURL = try await store.importVideo(from: sourceURL)
+          cameraCaptureLogger.info("Captured video into managed draft storage")
+          parent.onCapture(.video(destinationURL))
+        } catch {
+          cameraCaptureLogger.error("Failed to preserve captured video: \(error.localizedDescription)")
+          parent.onCancel()
+        }
       }
     }
 

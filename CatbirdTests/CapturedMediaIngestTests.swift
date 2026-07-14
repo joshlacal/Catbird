@@ -48,4 +48,14 @@ struct CapturedMediaIngestTests {
 
     #expect(viewModel.mediaItems.count == viewModel.maxImagesAllowed)
   }
+
+  @Test("Captured video media uses its managed URL without eager movie data")
+  func capturedVideoUsesURLWithoutEagerData() {
+    let url = URL(fileURLWithPath: "/managed/SharedDrafts/CapturedMedia/video.mov")
+
+    let item = PostComposerViewModel.MediaItem.capturedVideo(url: url)
+
+    #expect(item.rawVideoURL == url)
+    #expect(item.videoData == nil)
+  }
 }

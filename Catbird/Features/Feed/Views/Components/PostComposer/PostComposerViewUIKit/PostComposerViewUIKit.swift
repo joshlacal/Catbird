@@ -204,17 +204,20 @@ struct PostComposerViewUIKit: View {
             ) {
               Button("Save Draft") {
                 guard let vm = viewModel else { return }
-                suppressAutoSaveOnDismiss = true
                 let draft = vm.saveDraftState()
                 
-                Task {
-                  await appState.composerDraftManager.createSavedDraftAndWait(draft)
-                  await MainActor.run {
-                    appState.composerDraftManager.clearDraft()
-                    vm.clearAll()
-                    dismissReason = .discard
-                    dismiss()
+                Task { @MainActor in
+                  guard await appState.composerDraftManager.createSavedDraftAndWait(draft) else {
+                    appState.toastManager.show(
+                      ToastItem(message: "Could not save your draft", icon: "exclamationmark.triangle.fill")
+                    )
+                    return
                   }
+                  suppressAutoSaveOnDismiss = true
+                  appState.composerDraftManager.clearWorkingDraftAfterStash()
+                  vm.clearAll()
+                  dismissReason = .discard
+                  dismiss()
                 }
               }
               Button("Discard", role: .destructive) {

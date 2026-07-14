@@ -212,29 +212,50 @@ final class ComposerDraftManager {
   
   /// Save a new draft directly to SwiftData and wait for completion
   @MainActor
-  func createSavedDraftAndWait(_ draft: PostComposerDraft) async {
+  func createSavedDraftAndWait(_ draft: PostComposerDraft) async -> Bool {
     logger.info("📝 createSavedDraftAndWait called - Post text length: \(draft.postText.count), Media items: \(draft.mediaItems.count)")
     
     guard let accountDID = currentAccountDID else {
       logger.warning("❌ Cannot create draft - no account DID available")
-      return
+      return false
     }
     guard let persistence = draftPersistence else {
       logger.warning("❌ Cannot create draft - persistence not initialized")
-      return
+      return false
     }
     
     logger.info("💾 Creating new saved draft - Account: \(accountDID)")
     
     do {
-      let draftId = try persistence.saveDraft(draft, accountDID: accountDID)
+      let draftId: UUID
+      if let restoredId = restoredSavedDraftId {
+        try await persistence.updateDraft(id: restoredId, draft: draft, accountDID: accountDID)
+        draftId = restoredId
+      } else {
+        draftId = try await persistence.saveDraftAsync(draft, accountDID: accountDID)
+      }
       logger.info("✅ Successfully created saved draft - ID: \(draftId.uuidString)")
       await loadSavedDrafts()
       logger.info("✅ Draft saved and drafts reloaded - Total drafts: \(self.savedDrafts.count)")
       scheduleRemotePush(draftId: draftId)
+      return true
     } catch {
       logger.error("❌ Failed to create saved draft: \(error.localizedDescription)")
+      return false
     }
+  }
+
+  /// Detach a working draft after its durable saved-draft write succeeds.
+  /// Unlike `clearDraft()`, this intentionally preserves managed media files
+  /// and the saved record that now owns them.
+  @MainActor
+  func clearWorkingDraftAfterStash() {
+    persistDebounceTask?.cancel()
+    persistDebounceTask = nil
+    clearGeneration += 1
+    currentDraft = nil
+    restoredSavedDraftId = nil
+    UserDefaults.standard.removeObject(forKey: draftKey)
   }
   
   /// Load a saved draft (returns the draft for restoration)
