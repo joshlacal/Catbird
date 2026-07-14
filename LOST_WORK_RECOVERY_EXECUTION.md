@@ -412,6 +412,27 @@ jj describe -m 'Catbird: recover composer chips and accessory controls'
 jj new
 ```
 
+- [x] **Independent review follow-up: make link creation selection-safe**
+
+All UIKit composer link entry points now use one presentation method that reads
+the active `UITextView.selectedRange`, validates it against the current
+attributed text, derives the selected text, and falls back to an end-of-text
+caret if the range is unavailable or invalid. Completion refuses a changed
+source string or an invalid/changed selected range. Valid completion uses
+`RichTextFacetUtils.addOrInsertLinkFacet`, including zero-length caret insertion;
+the old direct unchecked `NSMutableAttributedString.addAttribute` path was
+removed.
+
+Strict TDD evidence: `ComposerLinkEditTests` first failed to compile because the
+wished-for `ComposerLinkEdit` interface was absent. After implementation, the
+focused `build-for-testing` completed with `** TEST BUILD SUCCEEDED **`, and
+`test-without-building` completed with `** TEST EXECUTE SUCCEEDED **`: all 10
+tests across `ComposerLinkEditTests`, `ComposerChipsStripTests`, and
+`ComposerCounterDisplayTests` passed on simulator
+`40111BBE-8709-40D0-9016-A27448486A80`. Logs:
+`/tmp/catbird-task4-link-red.log`, `/tmp/catbird-task4-link-build.log`, and
+`/tmp/catbird-task4-link-focused.log`.
+
 ### Task 5: Recover the Morphing FAB and Capture Handoff
 
 **Files:**

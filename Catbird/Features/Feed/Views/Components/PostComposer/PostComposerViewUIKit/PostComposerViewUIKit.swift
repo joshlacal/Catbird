@@ -34,8 +34,7 @@ struct PostComposerViewUIKit: View {
 
   // Link creation state
   @State var showingLinkCreation = false
-  @State var selectedTextForLink: String = ""
-  @State var selectedRangeForLink: NSRange = .init(location: 0, length: 0)
+  @State var linkSelection: ComposerLinkEdit.Selection?
   @State var linkFacets: [RichTextFacetUtils.LinkFacet] = []
   @State var pendingSelectionRange: NSRange? = nil
 
@@ -420,7 +419,7 @@ struct PostComposerViewUIKit: View {
           onVideo: { videoPickerVisible = true },
           onGif: { showingGifPicker = true },
           onAudio: { showingAudioRecorder = true },
-          onLink: { showingLinkCreation = true },
+          onLink: { presentLinkCreation(vm: vm) },
           onThreadgate: { showingThreadgate = true },
           onLanguage: { showingLanguagePicker = true },
           onTags: { showingOutlineTagsEditor = true },
@@ -535,9 +534,7 @@ struct PostComposerViewUIKit: View {
         },
         onLinkCreationRequested: { selectedText, range in
           pcUIKitLogger.info("PostComposerViewUIKit: Link creation requested - text: '\(selectedText)', range: \(range)")
-          selectedTextForLink = selectedText
-          selectedRangeForLink = range
-          showingLinkCreation = true
+          presentLinkCreation(vm: vm, suggestedRange: range)
         },
         // Avoid auto-focus on every attach to prevent keyboard reloads.
         focusOnAppear: false,
@@ -590,7 +587,7 @@ struct PostComposerViewUIKit: View {
         },
         onLinkAction: { 
           pcUIKitLogger.info("PostComposerViewUIKit: Link action triggered")
-          showingLinkCreation = true 
+          presentLinkCreation(vm: vm)
         },
         allowTenor: appState.appSettings.allowTenor,
         onTextViewCreated: { textView in

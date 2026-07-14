@@ -143,9 +143,7 @@ extension PostComposerViewUIKit {
       },
       onLinkCreationRequested: { text, range in
         pcThreadLogger.info("PostComposerThread: Link creation requested in thread entry - text: '\(text)', range: \(range)")
-        selectedTextForLink = text
-        selectedRangeForLink = range
-        showingLinkCreation = true
+        presentLinkCreation(vm: vm, suggestedRange: range)
       },
       // Avoid auto-focus on every attach to prevent keyboard reloads.
       focusOnAppear: false,
@@ -174,9 +172,7 @@ extension PostComposerViewUIKit {
         }
       },
       onLinkAction: {
-        selectedTextForLink = ""
-        selectedRangeForLink = NSRange(location: vm.postText.count, length: 0)
-        showingLinkCreation = true
+        presentLinkCreation(vm: vm)
       },
       allowTenor: appState.appSettings.allowTenor,
       onTextViewCreated: { textView in

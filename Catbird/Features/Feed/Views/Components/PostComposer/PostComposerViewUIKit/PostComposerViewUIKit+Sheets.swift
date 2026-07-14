@@ -122,36 +122,36 @@ extension PostComposerViewUIKit {
     let linkSheetContent = draftsSheetContent
       .sheet(isPresented: $showingLinkCreation) {
         LinkCreationDialog(
-          selectedText: selectedTextForLink,
+          selectedText: linkSelection?.selectedText ?? "",
           onComplete: { url, displayText in
-            pcSheetsLogger.info("PostComposerSheets: Link created - URL: \(url), displayText: '\(displayText ?? "nil")', range: \(selectedRangeForLink)")
-            let linkText = displayText ?? selectedTextForLink
-            let linkURL = url
-            
-            let newFacet = RichTextFacetUtils.LinkFacet(
-                range: selectedRangeForLink,
-                url: linkURL,
-              displayText: linkText
+            guard let selection = linkSelection,
+                  let result = ComposerLinkEdit.apply(
+                    url: url,
+                    displayText: displayText,
+                    selection: selection,
+                    to: vm.richAttributedText
+                  ) else {
+              pcSheetsLogger.warning("PostComposerSheets: Refusing stale or invalid link selection")
+              linkSelection = nil
+              showingLinkCreation = false
+              return
+            }
+
+            pcSheetsLogger.info("PostComposerSheets: Link created - URL: \(url), range: \(result.linkedRange)")
+            vm.updateFromAttributedText(
+              result.attributedText,
+              cursorPosition: result.caretRange.location
             )
-            linkFacets.append(newFacet)
-            pcSheetsLogger.debug("PostComposerSheets: Total link facets after creation: \(linkFacets.count)")
+            linkFacets.append(result.linkFacet)
             vm.updateManualLinkFacets(from: linkFacets)
-            
-            // Update the attributed text to show the link
-            let mutable = NSMutableAttributedString(attributedString: vm.richAttributedText)
-            mutable.addAttribute(.link, value: linkURL, range: selectedRangeForLink)
-            mutable.addAttribute(.foregroundColor, value: PlatformColor.systemBlue, range: selectedRangeForLink)
-            vm.richAttributedText = mutable
-            
-            // Move cursor after the link
-            let newPosition = selectedRangeForLink.location + selectedRangeForLink.length
-            pendingSelectionRange = NSRange(location: newPosition, length: 0)
-            pcSheetsLogger.debug("PostComposerSheets: Cursor moved to position \(newPosition)")
-            
+            vm.richAttributedText = result.attributedText
+            pendingSelectionRange = result.caretRange
+            linkSelection = nil
             showingLinkCreation = false
           },
           onCancel: {
             pcSheetsLogger.info("PostComposerSheets: Link creation cancelled")
+            linkSelection = nil
             showingLinkCreation = false
           }
         )
