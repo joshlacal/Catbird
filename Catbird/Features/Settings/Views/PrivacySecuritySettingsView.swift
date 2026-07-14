@@ -320,7 +320,7 @@ struct PrivacySecuritySettingsView: View {
     .toolbarTitleDisplayMode(.inline)
     #endif
         .task {
-            loggedOutVisibility = appState.appSettings.loggedOutVisibility
+            setLoggedOutVisibilityProgrammatically(appState.appSettings.loggedOutVisibility)
             await loadData()
             // Initialize biometric state
             await MainActor.run {

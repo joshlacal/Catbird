@@ -92,21 +92,40 @@ struct SettingsRuntimeWiringTests {
     }
   }
 
-  @Test("Failed visibility writes suppress the programmatic rollback change")
-  func loggedOutVisibilityRollbackDoesNotRetry() {
+  @Test("Initial visibility seed and failed rollback never issue programmatic writes")
+  func loggedOutVisibilityProgrammaticChangesDoNotWrite() throws {
     var gate = LoggedOutVisibilityChangeGate()
     var requestCount = 0
     var rollbackCount = 0
     var alertCount = 0
 
+    let didSeed = gate.prepareProgrammaticChange(current: true, target: false)
+    #expect(didSeed)
     if gate.shouldWriteChange(to: false) { requestCount += 1 }
-    if gate.prepareProgrammaticChange(current: false, target: true) { rollbackCount += 1 }
-    alertCount += 1
+
     if gate.shouldWriteChange(to: true) { requestCount += 1 }
+    let didRollback = gate.prepareProgrammaticChange(current: true, target: false)
+    #expect(didRollback)
+    rollbackCount += 1
+    alertCount += 1
+    if gate.shouldWriteChange(to: false) { requestCount += 1 }
 
     #expect(requestCount == 1)
     #expect(rollbackCount == 1)
     #expect(alertCount == 1)
+
+    let source = try settingsSource(named: "PrivacySecuritySettingsView.swift")
+    let taskBody = try sourceSlice(
+      source,
+      from: ".task {",
+      through: ".alert(\"Biometric Authentication\""
+    )
+    #expect(
+      taskBody.contains(
+        "setLoggedOutVisibilityProgrammatically(appState.appSettings.loggedOutVisibility)"
+      )
+    )
+    #expect(!taskBody.contains("loggedOutVisibility = appState.appSettings.loggedOutVisibility"))
   }
 
   @Test("Retention cleanup scans every conversation and keeps one replaceable worker")
@@ -144,6 +163,39 @@ struct SettingsRuntimeWiringTests {
     #expect(stopped.cancelledWorkerCount == 2)
   }
 
+  @Test("Account switch and logout use the retention-stopping MLS teardown")
+  func retentionStopsForSwitchAndLogout() throws {
+    let appState = try coreStateSource(named: "AppState.swift")
+    let resetBody = try sourceSlice(
+      appState,
+      from: "func prepareMLSStorageReset() async {",
+      through: "func stopMLSStreams()"
+    )
+    #expect(resetBody.contains("await mlsEpochRetentionCleanupCoordinator.stop()"))
+
+    let manager = try coreStateSource(named: "AppStateManager.swift")
+    let switchBody = try sourceSlice(
+      manager,
+      from: "private func performSwitchAccount(",
+      through: "func removeAccount("
+    )
+    #expect(switchBody.contains("await oldState.prepareMLSStorageReset()"))
+
+    let logoutBody = try sourceSlice(
+      manager,
+      from: "func logout(isManual: Bool = true) async {",
+      through: "// MARK: - Account Management"
+    )
+    #expect(logoutBody.contains("await currentState.prepareMLSStorageReset()"))
+    let shutdownRange = try #require(
+      logoutBody.range(of: "await currentState.prepareMLSStorageReset()")
+    )
+    let authRange = try #require(
+      logoutBody.range(of: "await authManager.logout(isManual: isManual)")
+    )
+    #expect(shutdownRange.lowerBound < authRange.lowerBound)
+  }
+
   @Test("Display-only settings expose deterministic predicates")
   func displayPredicates() {
     #expect(PostLanguageIndicators.shouldShow(isEnabled: true, languageCount: 1))
@@ -173,6 +225,38 @@ struct SettingsRuntimeWiringTests {
         == ["porn", "graphic-media", "!no-unauthenticated"]
     )
   }
+}
+
+private func settingsSource(named filename: String) throws -> String {
+  try repositorySource(
+    components: ["Catbird", "Features", "Settings", "Views", filename]
+  )
+}
+
+private func coreStateSource(named filename: String) throws -> String {
+  try repositorySource(components: ["Catbird", "Core", "State", filename])
+}
+
+private func repositorySource(components: [String]) throws -> String {
+  let testsDirectory = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+  let repositoryRoot = testsDirectory.deletingLastPathComponent()
+  let sourceURL = components.reduce(repositoryRoot) { partial, component in
+    partial.appendingPathComponent(component)
+  }
+  return try String(contentsOf: sourceURL, encoding: .utf8)
+}
+
+private func sourceSlice(_ source: String, from start: String, through end: String) throws -> Substring {
+  guard let startRange = source.range(of: start),
+        let endRange = source.range(of: end, range: startRange.upperBound..<source.endIndex)
+  else {
+    throw SettingsRuntimeSourceError.missingBoundary
+  }
+  return source[startRange.lowerBound..<endRange.lowerBound]
+}
+
+private enum SettingsRuntimeSourceError: Error {
+  case missingBoundary
 }
 
 private actor RetentionCoordinatorProbe {

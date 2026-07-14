@@ -512,6 +512,12 @@ final class AppStateManager {
   func logout(isManual: Bool = true) async {
     logger.info("🚪 Logging out (isManual: \(isManual))")
 
+    if let currentUserDID = lifecycle.userDID,
+      let currentState = authenticatedStates[currentUserDID]
+    {
+      await currentState.prepareMLSStorageReset()
+    }
+
     // Clear auth manager session - pass isManual to control re-auth behavior
     await authManager.logout(isManual: isManual)
 

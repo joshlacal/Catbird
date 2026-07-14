@@ -1020,6 +1020,43 @@ If every historical setting is already present or superseded, commit only the ev
   `MLSConversationManager.swift` remains outside the recovery workspace change.
   The interactive toggle/relaunch gate above remains open.
 
+#### Task 9 lifecycle-gap closure evidence (2026-07-14)
+
+- Old-state shutdown: `AppState.prepareMLSStorageReset()` now awaits the
+  app-layer retention coordinator's `stop()` immediately after cancelling MLS
+  initialization. This is the shared old-state teardown already used by account
+  switching, explicit account removal/storage reset, and now logout, so cleanup
+  cannot continue scanning a closing old-account database.
+- Logout ordering: `AppStateManager.logout` captures the current cached
+  `AppState` and awaits `prepareMLSStorageReset()` before clearing the auth
+  session or changing lifecycle state. The switch path continues to await that
+  same shared teardown before database closure.
+- Privacy initial seed: the cached `loggedOutVisibility` seed in the view task
+  now uses `setLoggedOutVisibilityProgrammatically`, matching server load and
+  failed-write rollback. The next `onChange` consumes the suppression target,
+  while a subsequent user toggle still produces exactly one write.
+- TDD RED: the source-backed focused run proved all three gaps before product
+  edits: the cached seed directly assigned state, the shared storage reset did
+  not contain the awaited coordinator stop, and logout did not await the current
+  state's reset. Log: `/tmp/recovery-task9-lifecycle-red-test.log`.
+- Focused GREEN: the final settings execution passed 12/12 in one suite and
+  emitted `** TEST EXECUTE SUCCEEDED **`. Log:
+  `/tmp/recovery-task9-lifecycle-green-focused.log`; result bundle:
+  `/tmp/CatbirdTask9RedDerivedData/Logs/Test/Test-Catbird-2026.07.14_07-26-47--0400.xcresult`.
+- Preservation GREEN: settings plus the six Task 8 MLS/chat suites passed 52/52
+  in seven suites and emitted `** TEST EXECUTE SUCCEEDED **`. Log:
+  `/tmp/recovery-task9-lifecycle-preservation.log`; result bundle:
+  `/tmp/CatbirdTask9RedDerivedData/Logs/Test/Test-Catbird-2026.07.14_07-27-15--0400.xcresult`.
+- Build/runtime: the final product/test bundle emitted
+  `** TEST BUILD SUCCEEDED **` in
+  `/tmp/recovery-task9-lifecycle-green-build.log`. That exact app installed and
+  launched on clean iOS 26.2 simulator
+  `CEC8381E-065C-468C-ACED-6A9DC716987B` as `blue.catbird` process 15022.
+- Scope safety: this follow-up is based on Task 10's sealed ledger commit
+  `7325dcd2` and does not alter its Task 10 section. No `CatbirdMLSCore` source
+  was edited; its external dirty `MLSConversationManager.swift` remains outside
+  this recovery commit.
+
 ### Task 10: Reconcile Threaded Replies with Current Main
 
 **Files:**

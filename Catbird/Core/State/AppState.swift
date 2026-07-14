@@ -1641,6 +1641,7 @@ final class AppState {
         // Step 1: Cancel any pending initialization to prevent new operations
         mlsConversationManagerInitTask?.cancel()
         mlsConversationManagerInitTask = nil
+        await mlsEpochRetentionCleanupCoordinator.stop()
         clearMLSGlobalWebSocketSubscriptionTracking()
 
         // ═══════════════════════════════════════════════════════════════════════════
