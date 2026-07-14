@@ -14,7 +14,7 @@ extension PostComposerViewUIKit {
   
   func cancelAction(vm: PostComposerViewModel) {
     pcActionsLogger.info("PostComposerActions: Cancel tapped")
-    if vm.hasContent {
+    if hasContent(vm: vm) {
       pcActionsLogger.info("PostComposerActions: Showing dismiss alert due to content")
       showingDismissAlert = true
     } else {

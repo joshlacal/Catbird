@@ -358,7 +358,7 @@ jj new
 **Interfaces:**
 - Produces: pure chip visibility/summary state, character-counter display threshold, reusable accessory bar consumed by the UIKit composer
 
-- [ ] **Step 1: Restore the two focused test files from `4e833ba` and run them**
+- [x] **Step 1: Restore the two focused test files from `4e833ba` and run them**
 
 Tests must cover hidden/visible chip state, threadgate summary text, counter hidden far from the limit, visible at fifty remaining, and custom maximum count.
 
@@ -371,15 +371,41 @@ xcodebuild test -project Catbird.xcodeproj -scheme Catbird \
 
 Expected: FAIL for every absent historical interface; already-passing cases receive `already present` ledger evidence.
 
-- [ ] **Step 2: Port only the composer-owned portion of `4e833ba`**
+Evidence: both restored suites were included by the synchronized test target. The
+pre-production run failed at compile time only because `ComposerChipsStrip` and
+`ComposerCounterDisplay` were absent, covering every required historical
+interface. After the composer-owned implementation, all 6 focused tests passed
+on simulator `40111BBE-8709-40D0-9016-A27448486A80`.
+
+- [x] **Step 2: Port only the composer-owned portion of `4e833ba`**
 
 Implement `ComposerChipsStrip` and `ComposerAccessoryBar`, then wire them through `PostComposerViewUIKit.swift`, `+Actions`, `+Metadata`, `+Sheets`, and `+Thread`. Exclude `AuthManager`, profile, and chat files from this commit. Preserve current submit validation and media-state synchronization.
+
+Evidence: restored the pure chip/counter policies, reusable safe-area accessory
+bar, Liquid Glass plus menu with legacy fallback, and the current UIKit
+composer bindings. The old editor-owned keyboard toolbar was disabled to avoid
+duplicate controls. Existing sheet bindings supply the accessory actions; no
+historical auth, profile, chat, generated Petrel, submit, media, or draft code
+was imported.
 
 - [ ] **Step 3: Test and visually verify**
 
 Run the focused tests plus `PostComposerFixesTests`, build, and capture composer screenshots for empty, language-selected, labels-selected, threadgate-selected, and near-character-limit states.
 
-- [ ] **Step 4: Update ledger and commit**
+Automated evidence: all 6 focused tests passed, then a fresh XcodeBuildMCP
+simulator build succeeded, installed, and launched the authenticated app as
+process 23149; the authenticated timeline is captured at
+`/tmp/catbird-task4-launch.png`. `PostComposerFixesTests.swift` and the other historical composer
+suites remain excluded from the current `CatbirdTests` target; the two restored
+suites are the only composer suites that enumerate.
+
+Outstanding visual QA gate: the empty, language, labels, threadgate, and
+near-limit states remain unobserved. Xcode-beta hierarchy capture failed because
+`SimulatorKit.framework` is absent, so the running app could not be navigated
+reliably into each composer state. Build and launch evidence do not close these
+visual checks.
+
+- [x] **Step 4: Update ledger and commit**
 
 ```bash
 jj describe -m 'Catbird: recover composer chips and accessory controls'

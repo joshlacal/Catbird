@@ -212,16 +212,9 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
       textView.pasteDelegate = context.coordinator
     }
     
-    // Set up custom keyboard accessory view with Liquid Glass toolbar
-    #if targetEnvironment(macCatalyst)
-    // On Mac Catalyst, anchor the toolbar at the bottom of the sheet/content instead of inputAccessoryView
-    DispatchQueue.main.async { [weak coord = context.coordinator, weak tv = textView] in
-      guard let coord, let tv else { return }
-      coord.installCatalystBottomToolbar(for: tv)
-    }
-    #else
-    textView.inputAccessoryView = context.coordinator.createKeyboardAccessoryView()
-    #endif
+    // The composer owns its accessory controls through a SwiftUI safe-area
+    // inset so the same chips, counter, and menu stay visible with or without
+    // the keyboard. Installing another input accessory here would duplicate it.
     
     // Debug: Creation log removed to avoid noisy repeated logs during re-render cycles
     // Set focus request flag - the textView will handle this in didMoveToWindow

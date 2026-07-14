@@ -96,10 +96,10 @@ extension PostComposerViewUIKit {
             if index == vm.currentThreadIndex {
               mentionSuggestionsSection(vm: vm)
               activeEntryMediaSection(vm: vm)
-              activeEntryMetadataSection(vm: vm)
+              submitValidationMessageView(vm: vm)
+                .padding(.horizontal, 16)
             } else {
               inactiveEntryMediaSection(entry: entry)
-              inactiveEntryMetadataSection(entry: entry, vm: vm)
             }
 
             if index < vm.threadEntries.count - 1 {

@@ -8,10 +8,22 @@
 
 import SwiftUI
 
+enum ComposerCounterDisplay {
+  static let maxCharacters = 300
+  static let numeralThreshold = 50
+
+  static func showsNumeral(
+    currentCount: Int,
+    maxCount: Int = ComposerCounterDisplay.maxCharacters
+  ) -> Bool {
+    maxCount - currentCount <= numeralThreshold
+  }
+}
+
 @available(iOS 26.0, macOS 26.0, *)
 struct CharacterLimitIndicator: View {
   let currentCount: Int
-  let maxCount: Int = 300
+  let maxCount: Int = ComposerCounterDisplay.maxCharacters
   
   private var progress: Double {
     guard currentCount > 0 else { return 0 }
@@ -85,7 +97,7 @@ struct CharacterLimitIndicator: View {
         Image(systemName: "exclamationmark")
           .font(.system(size: 12, weight: .bold))
           .foregroundStyle(tintColor)
-      } else {
+      } else if ComposerCounterDisplay.showsNumeral(currentCount: currentCount, maxCount: maxCount) {
         Text(displayText)
           .font(.system(size: 11, weight: .semibold, design: .rounded))
           .foregroundStyle(tintColor)
@@ -114,7 +126,7 @@ struct CharacterLimitIndicator: View {
 @available(iOS 18.0, macOS 13.0, *)
 struct CharacterLimitIndicatorLegacy: View {
   let currentCount: Int
-  let maxCount: Int = 300
+  let maxCount: Int = ComposerCounterDisplay.maxCharacters
   
   private var progress: Double {
     guard currentCount > 0 else { return 0 }
@@ -165,7 +177,7 @@ struct CharacterLimitIndicatorLegacy: View {
         Image(systemName: "exclamationmark")
           .font(.system(size: 12, weight: .bold))
           .foregroundStyle(tintColor)
-      } else {
+      } else if ComposerCounterDisplay.showsNumeral(currentCount: currentCount, maxCount: maxCount) {
         Text(displayText)
           .font(.system(size: 11, weight: .semibold, design: .rounded))
           .foregroundStyle(tintColor)

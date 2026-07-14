@@ -22,6 +22,7 @@ private let pcUIKitLogger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "C
 struct PostComposerViewUIKit: View {
   @Environment(\.dismiss) var dismiss
   @Environment(\.horizontalSizeClass) private var hSize
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
   
   // Store AppState reference locally to avoid global observation
  let appState: AppState
@@ -61,6 +62,7 @@ struct PostComposerViewUIKit: View {
   @State var showingThreadgate = false
   @State var showingLabelSelector = false
   @State var showingOutlineTagsEditor = false
+  @State var showingPlusMenu = false
   @State var suppressAutoSaveOnDismiss = false
   @State var activeEditorFocusID = UUID()
   @State var didSetInitialFocusID = false
@@ -159,8 +161,9 @@ struct PostComposerViewUIKit: View {
         .toolbar {
           // Leading: X button with confirmation dialog
           ToolbarItem(placement: .cancellationAction) {
-            Button(action: { 
-              if vm.hasContent {
+            Button(action: {
+              closePlusMenu()
+              if hasContent(vm: vm) {
                 showingDismissAlert = true
               } else {
                 dismissReason = .discard
@@ -210,7 +213,10 @@ struct PostComposerViewUIKit: View {
           // Drafts button next to X on leading side
           ToolbarItem(placement: .cancellationAction) {
             if !appState.composerDraftManager.savedDrafts.isEmpty {
-              Button(action: { showingDrafts = true }) {
+              Button(action: {
+                closePlusMenu()
+                showingDrafts = true
+              }) {
                 Image(systemName: "doc.text")
               }
               .accessibilityLabel("Open Drafts")
@@ -225,7 +231,10 @@ struct PostComposerViewUIKit: View {
           // Trailing: Post button with glass effect
           ToolbarItem(placement: .primaryAction) {
             if #available(iOS 26.0, macOS 26.0, *) {
-              Button(action: { submitAction(vm: vm) }) {
+              Button(action: {
+                closePlusMenu()
+                submitAction(vm: vm)
+              }) {
                 if isSubmitting {
                   ProgressView()
                     .progressViewStyle(.circular)
@@ -240,7 +249,10 @@ struct PostComposerViewUIKit: View {
               .keyboardShortcut(.return, modifiers: .command)
               .accessibilityLabel(vm.isThreadMode ? "Post All" : "Post")
             } else {
-              Button(action: { submitAction(vm: vm) }) {
+              Button(action: {
+                closePlusMenu()
+                submitAction(vm: vm)
+              }) {
                 if isSubmitting {
                   ProgressView()
                     .progressViewStyle(.circular)
@@ -270,7 +282,7 @@ struct PostComposerViewUIKit: View {
         .toolbar {
           ToolbarItem(placement: .cancellationAction) {
             Button("Cancel") {
-              if vm.hasContent {
+              if hasContent(vm: vm) {
                 showingDismissAlert = true
               } else {
                 dismissReason = .discard
@@ -341,7 +353,121 @@ struct PostComposerViewUIKit: View {
         .padding(.top, 8)
       }
       .background(Color.systemBackground)
+      .overlay {
+        if showingPlusMenu {
+          Button(action: closePlusMenu) {
+            Color.black.opacity(0.12)
+              .ignoresSafeArea()
+          }
+          .buttonStyle(.plain)
+          .accessibilityLabel("Dismiss menu")
+        }
+      }
+      .safeAreaInset(edge: .bottom) {
+        composerAccessoryStack(vm: vm)
+      }
+      .onChange(of: showingPlusMenu) { _, isOpen in
+        #if os(iOS)
+        if isOpen {
+          vm.activeRichTextView?.resignFirstResponder()
+        } else if !isPresentingFromPlusMenu {
+          activeEditorFocusID = UUID()
+        }
+        #endif
+      }
     )
+  }
+
+  private func composerAccessoryStack(vm: PostComposerViewModel) -> some View {
+    VStack(alignment: .leading, spacing: 8) {
+      ComposerChipsStrip(
+        outlineTags: vm.outlineTags,
+        selectedLanguages: vm.selectedLanguages,
+        selectedLabels: vm.selectedLabels,
+        threadgateSettings: vm.threadgateSettings,
+        suggestedLanguage: vm.suggestedLanguage,
+        hasText: !vm.postText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+        onRemoveTag: { tag in
+          closePlusMenu()
+          vm.outlineTags.removeAll { $0 == tag }
+        },
+        onToggleLanguage: { language in
+          closePlusMenu()
+          vm.toggleLanguage(language)
+        },
+        onApplySuggestedLanguage: {
+          closePlusMenu()
+          vm.applySuggestedLanguage()
+        },
+        onEditThreadgate: {
+          closePlusMenu()
+          showingThreadgate = true
+        },
+        onEditLabels: {
+          closePlusMenu()
+          showingLabelSelector = true
+        }
+      )
+
+      ComposerAccessoryBar(
+        isPlusMenuOpen: $showingPlusMenu,
+        characterCount: vm.postText.count,
+        allowTenor: appState.appSettings.allowTenor,
+        threadgateValue: ComposerChipsStrip.threadgateSummary(vm.threadgateSettings),
+        languageValue: languageSummary(vm: vm),
+        actions: ComposerBarActions(
+          onPhotos: { photoPickerVisible = true },
+          onVideo: { videoPickerVisible = true },
+          onGif: { showingGifPicker = true },
+          onAudio: { showingAudioRecorder = true },
+          onLink: { showingLinkCreation = true },
+          onThreadgate: { showingThreadgate = true },
+          onLanguage: { showingLanguagePicker = true },
+          onTags: { showingOutlineTagsEditor = true },
+          onLabels: { showingLabelSelector = true },
+          onAddToThread: {
+            withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
+              if vm.isThreadMode {
+                vm.addNewThreadEntry()
+              } else {
+                vm.enterThreadMode()
+                vm.addNewThreadEntry()
+              }
+              activeEditorFocusID = UUID()
+            }
+          }
+        )
+      )
+    }
+    .padding(.horizontal, 16)
+    .padding(.top, 4)
+    .padding(.bottom, 8)
+  }
+
+  private func languageSummary(vm: PostComposerViewModel) -> String {
+    if vm.selectedLanguages.isEmpty {
+      let code = Locale.current.language.languageCode?.identifier ?? "en"
+      return Locale.current.localizedString(forLanguageCode: code) ?? code
+    }
+
+    return vm.selectedLanguages
+      .map { ComposerChipsStrip.languageDisplayName($0) }
+      .joined(separator: ", ")
+  }
+
+  private var isPresentingFromPlusMenu: Bool {
+    photoPickerVisible || videoPickerVisible || showingGifPicker
+      || showingAudioRecorder || showingLinkCreation || showingThreadgate
+      || showingLanguagePicker || showingOutlineTagsEditor
+      || showingLabelSelector || showingDrafts || showingAccountSwitcher
+      || showingDismissAlert
+  }
+
+  private func closePlusMenu() {
+    guard showingPlusMenu else { return }
+    withAnimation(ComposerAccessoryBar.menuAnimation(reduceMotion: reduceMotion)) {
+      showingPlusMenu = false
+    }
   }
   
   @ViewBuilder
