@@ -73,6 +73,10 @@ struct MLSMessageAdapter: UnifiedChatMessage {
     let processingError: String?
     let processingAttempts: Int?
     let validationFailureReason: String?
+    let isEdited: Bool
+    let editedAt: Date?
+    let isTombstone: Bool
+    let deletedAt: Date?
   }
 
   private let metadata: MessageMetadata
@@ -106,7 +110,11 @@ struct MLSMessageAdapter: UnifiedChatMessage {
       sequence: messageView.seq,
       processingError: nil,
       processingAttempts: nil,
-      validationFailureReason: nil
+      validationFailureReason: nil,
+      isEdited: false,
+      editedAt: nil,
+      isTombstone: false,
+      deletedAt: nil
     )
     self.originalMessage = DecryptedMLSMessage(
       messageView: messageView,
@@ -140,7 +148,11 @@ struct MLSMessageAdapter: UnifiedChatMessage {
       sequence: nil,
       processingError: nil,
       processingAttempts: nil,
-      validationFailureReason: nil
+      validationFailureReason: nil,
+      isEdited: false,
+      editedAt: nil,
+      isTombstone: false,
+      deletedAt: nil
     )
     self.diffableID = message.id
     self.currentUserDID = currentUserDID
@@ -158,6 +170,10 @@ struct MLSMessageAdapter: UnifiedChatMessage {
     senderDID: String,
     currentUserDID: String,
     sentAt: Date,
+    isEdited: Bool = false,
+    editedAt: Date? = nil,
+    isTombstone: Bool = false,
+    deletedAt: Date? = nil,
     senderProfile: MLSProfileData? = nil,
     reactions: [MLSMessageReaction] = [],
     embed: MLSEmbedData? = nil,
@@ -180,7 +196,11 @@ struct MLSMessageAdapter: UnifiedChatMessage {
       sequence: sequence,
       processingError: processingError,
       processingAttempts: processingAttempts,
-      validationFailureReason: validationFailureReason
+      validationFailureReason: validationFailureReason,
+      isEdited: isEdited,
+      editedAt: editedAt,
+      isTombstone: isTombstone,
+      deletedAt: deletedAt
     )
     self.diffableID = diffableID ?? id
     self.currentUserDID = currentUserDID
@@ -236,6 +256,50 @@ struct MLSMessageAdapter: UnifiedChatMessage {
     lhs.displayOrderKey < rhs.displayOrderKey
   }
 
+  static func sortedForDisplay(_ messages: [MLSMessageAdapter]) -> [MLSMessageAdapter] {
+    var sequenced: [MLSMessageAdapter] = []
+    var unsequenced: [MLSMessageAdapter] = []
+    sequenced.reserveCapacity(messages.count)
+    unsequenced.reserveCapacity(messages.count)
+
+    for message in messages {
+      if (message.mlsSequence ?? 0) > 0 {
+        sequenced.append(message)
+      } else {
+        unsequenced.append(message)
+      }
+    }
+
+    sequenced.sort { lhs, rhs in
+      let lhsSequence = lhs.mlsSequence ?? 0
+      let rhsSequence = rhs.mlsSequence ?? 0
+      if lhsSequence != rhsSequence { return lhsSequence < rhsSequence }
+      return lhs.id < rhs.id
+    }
+    guard !unsequenced.isEmpty else { return sequenced }
+
+    unsequenced.sort { lhs, rhs in
+      if lhs.sentAt != rhs.sentAt { return lhs.sentAt < rhs.sentAt }
+      return lhs.id < rhs.id
+    }
+
+    var result: [MLSMessageAdapter] = []
+    result.reserveCapacity(messages.count)
+    var nextSequencedIndex = 0
+    for row in unsequenced {
+      while
+        nextSequencedIndex < sequenced.count,
+        sequenced[nextSequencedIndex].sentAt <= row.sentAt
+      {
+        result.append(sequenced[nextSequencedIndex])
+        nextSequencedIndex += 1
+      }
+      result.append(row)
+    }
+    result.append(contentsOf: sequenced[nextSequencedIndex...])
+    return result
+  }
+
   var processingError: String? {
     metadata.processingError
   }
@@ -246,6 +310,37 @@ struct MLSMessageAdapter: UnifiedChatMessage {
 
   var validationFailureReason: String? {
     metadata.validationFailureReason
+  }
+
+  var canEdit: Bool {
+    isFromCurrentUser && !isTombstone && embed == nil && isServerConfirmed
+  }
+
+  var canUnsend: Bool {
+    isFromCurrentUser && !isTombstone && isServerConfirmed
+  }
+
+  private var isServerConfirmed: Bool {
+    guard !id.hasPrefix(PendingMLSSend.idPrefix) else { return false }
+    switch sendState {
+    case .sent, .delivered, .read:
+      return true
+    case .sending, .failed:
+      return false
+    }
+  }
+
+  var isEdited: Bool { metadata.isEdited }
+
+  var editedAt: Date? { metadata.editedAt }
+
+  var isTombstone: Bool { metadata.isTombstone }
+
+  var deletedAt: Date? { metadata.deletedAt }
+
+  static func dateFromUnixMilliseconds(_ milliseconds: Int64?) -> Date? {
+    guard let milliseconds else { return nil }
+    return Date(timeIntervalSince1970: Double(milliseconds) / 1_000)
   }
 
   /// True if the message has valid decrypted content and is not a placeholder/error state
@@ -329,7 +424,9 @@ struct MLSMessageAdapter: UnifiedChatMessage {
 
   static func == (lhs: MLSMessageAdapter, rhs: MLSMessageAdapter) -> Bool {
     lhs.id == rhs.id && lhs.text == rhs.text && lhs.sendState == rhs.sendState
-      && lhs.reactions == rhs.reactions
+      && lhs.reactions == rhs.reactions && lhs.isEdited == rhs.isEdited
+      && lhs.editedAt == rhs.editedAt && lhs.isTombstone == rhs.isTombstone
+      && lhs.deletedAt == rhs.deletedAt
   }
 
   // MARK: - Embed Conversion

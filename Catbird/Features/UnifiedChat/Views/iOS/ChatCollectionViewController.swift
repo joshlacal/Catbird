@@ -92,6 +92,8 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
   var onReactionTapped: ((String, String) -> Void)? // (messageID, emoji)
   var onRequestEmojiPicker: ((String) -> Void)?
   var onRetryMessage: ((String) -> Void)? // (messageID) retry a failed send (WS-6.5)
+  var onEditMessage: ((Message) -> Void)?
+  var onUnsendMessage: ((Message) -> Void)?
 
   private var hasPerformedInitialScroll = false
   private var lastScrollToBottomTrigger: Int = 0
@@ -117,9 +119,10 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
   private var onComposerVoiceCancelled: (() -> Void)?
   private var onComposerVoicePreviewSend: (() -> Void)?
   private var onComposerVoicePreviewDiscard: (() -> Void)?
+  private var onComposerCancelEdit: (() -> Void)?
 
   private var reactionOverlayControl: UIControl?
-  private var reactionOverlayHost: UIHostingController<UnifiedQuickReactionBar>?
+  private var reactionOverlayHost: UIViewController?
 
   // MARK: - Initialization
 
@@ -627,6 +630,7 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
     onComposerVoiceCancelled = config.onVoiceRecordingCancelled
     onComposerVoicePreviewSend = config.onVoicePreviewSend
     onComposerVoicePreviewDiscard = config.onVoicePreviewDiscard
+    onComposerCancelEdit = config.onCancelEdit
     composerView?.hasEmbed = config.hasEmbed
     composerView?.embedPreviewImage = config.embedPreviewImage
     composerView?.onEmbedRemoved = { [weak self] in self?.onComposerEmbedRemoved?() }
@@ -666,6 +670,7 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
     onComposerVoiceCancelled = config.onVoiceRecordingCancelled
     onComposerVoicePreviewSend = config.onVoicePreviewSend
     onComposerVoicePreviewDiscard = config.onVoicePreviewDiscard
+    onComposerCancelEdit = config.onCancelEdit
     composerView?.placeholderText = config.placeholderText
     composerView?.isSendBlocked = config.isSendBlocked
     composerView?.hasEmbed = config.hasEmbed
@@ -680,6 +685,14 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
     }
     if let url = config.voicePreviewURL, case .preview = config.voiceMode {
       composerView?.loadPreviewAudio(url: url)
+    }
+  }
+
+  func updateComposerEditState(isEditMode: Bool, text: String?, onCancelEdit: (() -> Void)?) {
+    composerView?.onCancelEdit = onCancelEdit
+    composerView?.isEditMode = isEditMode
+    if isEditMode, let text, composerView?.text != text {
+      composerView?.text = text
     }
   }
 
@@ -803,7 +816,7 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
 
     guard let message = dataSource.message(for: messageID) else { return }
 
-    let bar = UnifiedQuickReactionBar(
+    let overlay = MessageLongPressOverlay(
       quickReactions: UnifiedQuickReactionBar.defaultQuickReactions,
       onReactionSelected: { [weak self] emoji in
         guard let self else { return }
@@ -819,10 +832,31 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
           self.dismissReactionOverlay()
           self.onRequestEmojiPicker?(messageID)
         }
+      },
+      canEdit: message.canEdit,
+      canUnsend: message.canUnsend,
+      onEditTapped: { [weak self] in
+        guard let self else { return }
+        self.dismissReactionOverlay()
+        self.onEditMessage?(message)
+      },
+      onUnsendTapped: { [weak self] in
+        guard let self else { return }
+        self.dismissReactionOverlay()
+        let alert = UIAlertController(
+          title: "Unsend Message",
+          message: "This removes the message for everyone in the conversation.",
+          preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        alert.addAction(UIAlertAction(title: "Unsend", style: .destructive) { [weak self] _ in
+          self?.onUnsendMessage?(message)
+        })
+        self.present(alert, animated: true)
       }
     )
 
-    let host = UIHostingController(rootView: bar)
+    let host = UIHostingController(rootView: overlay)
     host.view.backgroundColor = .clear
 
     let control = UIControl(frame: view.bounds)
@@ -1159,6 +1193,55 @@ extension ChatCollectionViewController: UIKitMLSComposerDelegate {
 
   func composerDidTapSharePost(_ composer: UIKitMLSComposerView) {
     onComposerSharePost?()
+  }
+
+  func composerDidTapCancelEdit(_ composer: UIKitMLSComposerView) {
+    onComposerCancelEdit?()
+  }
+}
+
+@available(iOS 16.0, *)
+struct MessageLongPressOverlay: View {
+  let quickReactions: [String]
+  let onReactionSelected: (String) -> Void
+  let onMoreTapped: () -> Void
+  let canEdit: Bool
+  let canUnsend: Bool
+  let onEditTapped: () -> Void
+  let onUnsendTapped: () -> Void
+
+  var body: some View {
+    VStack(alignment: .trailing, spacing: 8) {
+      UnifiedQuickReactionBar(
+        quickReactions: quickReactions,
+        onReactionSelected: onReactionSelected,
+        onMoreTapped: onMoreTapped
+      )
+
+      if canEdit || canUnsend {
+        HStack(spacing: 16) {
+          if canEdit {
+            Button(action: onEditTapped) {
+              Label("Edit", systemImage: "square.and.pencil")
+                .font(.subheadline.weight(.medium))
+            }
+            .tint(.primary)
+          }
+
+          if canUnsend {
+            Button(role: .destructive, action: onUnsendTapped) {
+              Label("Unsend", systemImage: "arrow.uturn.backward")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.red)
+            }
+          }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(.ultraThinMaterial, in: Capsule())
+        .shadow(color: .black.opacity(0.1), radius: 4, x: 0, y: 2)
+      }
+    }
   }
 }
 #endif

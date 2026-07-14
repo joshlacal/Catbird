@@ -29,6 +29,10 @@ struct InlineComposerConfig {
   var onVoiceRecordingCancelled: (() -> Void)?
   var onVoicePreviewSend: (() -> Void)?
   var onVoicePreviewDiscard: (() -> Void)?
+
+  var isEditMode: Bool = false
+  var editMessageText: String? = nil
+  var onCancelEdit: (() -> Void)? = nil
 }
 
 @available(iOS 16.0, *)
@@ -40,6 +44,8 @@ struct ChatCollectionViewBridge<DataSource: UnifiedChatDataSource>: UIViewContro
   var onMessageLongPress: ((DataSource.Message) -> Void)?
   var onRequestEmojiPicker: ((String) -> Void)?
   var onRetryMessage: ((String) -> Void)?
+  var onEditMessage: ((DataSource.Message) -> Void)?
+  var onUnsendMessage: ((DataSource.Message) -> Void)?
   var composerConfig: InlineComposerConfig?
 
   func makeUIViewController(context: Context) -> ChatCollectionViewController<DataSource> {
@@ -51,6 +57,8 @@ struct ChatCollectionViewBridge<DataSource: UnifiedChatDataSource>: UIViewContro
     controller.onMessageLongPress = onMessageLongPress
     controller.onRequestEmojiPicker = onRequestEmojiPicker
     controller.onRetryMessage = onRetryMessage
+    controller.onEditMessage = onEditMessage
+    controller.onUnsendMessage = onUnsendMessage
     if let config = composerConfig {
       controller.installComposer(config: config)
     }
@@ -66,10 +74,17 @@ struct ChatCollectionViewBridge<DataSource: UnifiedChatDataSource>: UIViewContro
     controller.onMessageLongPress = onMessageLongPress
     controller.onRequestEmojiPicker = onRequestEmojiPicker
     controller.onRetryMessage = onRetryMessage
+    controller.onEditMessage = onEditMessage
+    controller.onUnsendMessage = onUnsendMessage
     if let config = composerConfig {
       controller.updateComposerCallbacks(config: config)
       controller.updateComposerEmbedState(hasEmbed: config.hasEmbed, previewImage: config.embedPreviewImage)
       controller.updateComposerVoiceMode(config: config)
+      controller.updateComposerEditState(
+        isEditMode: config.isEditMode,
+        text: config.editMessageText,
+        onCancelEdit: config.onCancelEdit
+      )
     }
   }
 }

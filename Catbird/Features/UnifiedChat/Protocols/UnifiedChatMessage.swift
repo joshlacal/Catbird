@@ -20,6 +20,12 @@ protocol UnifiedChatMessage: Identifiable, Hashable, Sendable {
   var reactions: [UnifiedReaction] { get }
   var embed: UnifiedEmbed? { get }
   var sendState: MessageSendState { get }
+  var canEdit: Bool { get }
+  var canUnsend: Bool { get }
+  var isEdited: Bool { get }
+  var editedAt: Date? { get }
+  var isTombstone: Bool { get }
+  var deletedAt: Date? { get }
 }
 
 // MARK: - MessageSendState
@@ -41,6 +47,13 @@ extension UnifiedChatMessage {
   var attributedText: AttributedString {
     ChatTextRenderer.attributedString(for: text)
   }
+
+  var canEdit: Bool { false }
+  var canUnsend: Bool { false }
+  var isEdited: Bool { false }
+  var editedAt: Date? { nil }
+  var isTombstone: Bool { false }
+  var deletedAt: Date? { nil }
 }
 
 // MARK: - ChatTextRenderer

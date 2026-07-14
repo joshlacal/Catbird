@@ -758,15 +758,15 @@ jj new
 **Interfaces:**
 - Produces: own-message capability metadata, edit/unsend actions routed through `MLSConversationDataSource`, and `MLSMessageAdapter.sortedForDisplay(_:)` with timestamp anchoring for delivered sequence-zero rows
 
-- [ ] **Step 1: Run current ordering and pending-send tests**
+- [x] **Step 1: Run current ordering and pending-send tests**
 
 Determine whether newer `main` already supersedes `d06e076`. Keep current ordering if it passes the six historical display-order cases, including all input permutations.
 
-- [ ] **Step 2: Add failing edit/unsend capability tests before UI wiring**
+- [x] **Step 2: Add failing edit/unsend capability tests before UI wiring**
 
 Use a test adapter whose current-user message reports editable/unsendable and whose remote message reports neither. Assert action dispatch targets the exact message ID and that a successful unsend removes or tombstones the row according to the current data-source contract.
 
-- [ ] **Step 3: Reconcile UI and data source**
+- [x] **Step 3: Reconcile UI and data source**
 
 Port `d5eefcd` through the protocol, adapter, data source, bubble, bridge, controller, and UIKit MLS composer. Never expose edit/unsend for another sender. Preserve current read cursors, epochs, and sequence persistence.
 
@@ -774,12 +774,54 @@ Port `d5eefcd` through the protocol, adapter, data source, bubble, bridge, contr
 
 Run all three focused suites, build, then use two accounts to edit and unsend an own message while confirming the peer observes the update and neither account shows ordering jumps.
 
-- [ ] **Step 5: Update ledger and commit**
+- [x] **Step 5: Update ledger and commit**
 
 ```bash
 jj describe -m 'Catbird: reconcile own-message actions and MLS ordering'
 jj new
 ```
+
+#### Task 8 recovery evidence (2026-07-14)
+
+- Archaeology: `d5eefcd` and `d06e076` were read from the original Catbird
+  repository without importing either commit. Current pending-send identity,
+  read-cutoff, recovery-state, epoch, and globally monotonic sequence behavior
+  were retained. The historical edit/unsend UI and delivered-sequence-zero
+  timeline anchoring were reconciled onto those newer contracts.
+- Baseline: the active `MLSPendingSendTests` and
+  `UnifiedChatRenderSignatureTests` passed 14/14. The dedicated six-case
+  `MLSMessageDisplayOrderTests` file was absent from the recovery tree and was
+  not enumerated, proving that current coverage did not supersede `d06e076`.
+- TDD RED: after restoring the six ordering cases and adding action tests, the
+  focused build failed only for the missing `canEdit`, `canUnsend`,
+  `sortedForDisplay`, `MLSMessageActionPerformer`, and action-performer init
+  seam. A separate render-signature cycle passed the six existing cases and
+  failed the new edit-metadata signature assertion before its minimal fix.
+- TDD GREEN: all three live focused suites passed 25/25, exit 0, with
+  `** TEST SUCCEEDED **`: 12 pending/action cases, six display-order cases
+  (including every five-message input permutation), and seven render-signature
+  cases. Exact resolved server message IDs dispatch for edit and unsend; remote
+  rows dispatch neither; successful unsend immediately removes the row, matching
+  the current tombstone-filtered observation contract.
+- Preservation: `MLSSendBlockingTests` passed 6/6 and
+  `MLSBlockCoordinatorTests` passed 4/4 via `test-without-building`, exit 0.
+  Three older requested preservation files are explicitly excluded from the
+  active CatbirdTests target, so their zero-test run is not claimed as evidence.
+- Final capability audit: acknowledged pending rows temporarily use `.sent`
+  before their confirmed GRDB twin arrives. A final regression and production
+  guard now deny server actions to every `pending:` identity during that
+  handoff. Two immediate reruns were infrastructure-blocked repeating package
+  graph resolution despite a warmed cache and automatic resolution disabled;
+  this final one-line guard is source-covered and remains in the Task 12 rerun
+  set rather than being represented as executed evidence.
+- Build/runtime: the final focused run compiled and linked the complete app.
+  That exact product installed on simulator
+  `40111BBE-8709-40D0-9016-A27448486A80` and launched authenticated as PID
+  46862. The launch screenshot showed the live Timeline.
+- Open runtime gate: real two-account edit, unsend, peer propagation, and
+  no-ordering-jump verification was not observed. Step 4 remains unchecked;
+  automated ownership, dispatch, removal, ordering, preservation, build, and
+  authenticated-launch evidence does not substitute for that interaction.
 
 ### Task 9: Audit Settings for Runtime Effects
 

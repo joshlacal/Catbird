@@ -172,6 +172,7 @@ import SwiftUI
         // Delete state
         @State private var messageToDelete: Message?
         @State private var showingDeleteAlert = false
+        @State private var messageToEdit: MLSMessageAdapter?
 
         private let logger = Logger(subsystem: "blue.catbird", category: "MLSConversationDetail")
         private let storage = MLSStorage.shared
@@ -249,15 +250,35 @@ import SwiftUI
                         onRetryMessage: { messageID in
                             Task { await retryFailedSend(pendingID: messageID) }
                         },
+                        onEditMessage: { message in
+                            guard message.canEdit else { return }
+                            messageToEdit = message
+                        },
+                        onUnsendMessage: { message in
+                            guard message.canUnsend else { return }
+                            Task { await unifiedDataSource?.unsendMessage(messageID: message.id) }
+                        },
                         composerConfig: isPendingRequest ? nil : InlineComposerConfig(
                             placeholderText: dataSource.isSendBlockedByRecovery
                                 ? "Sending paused during recovery" : "Message",
                             isSendBlocked: dataSource.isSendBlockedByRecovery,
                             onSend: { text in
-                                let embed = unifiedDataSource?.attachedEmbed
-                                unifiedDataSource?.attachedEmbed = nil
-                                embedPreviewUIImage = nil
-                                Task { await sendMLSMessage(text: text, embed: embed) }
+                                if let messageToEdit {
+                                    Task {
+                                        await unifiedDataSource?.editMessage(
+                                            messageID: messageToEdit.id,
+                                            newText: text
+                                        )
+                                        await MainActor.run {
+                                            self.messageToEdit = nil
+                                        }
+                                    }
+                                } else {
+                                    let embed = unifiedDataSource?.attachedEmbed
+                                    unifiedDataSource?.attachedEmbed = nil
+                                    embedPreviewUIImage = nil
+                                    Task { await sendMLSMessage(text: text, embed: embed) }
+                                }
                             },
                             onAttachTapped: {},
                             onPhotoPicker: {
@@ -300,6 +321,11 @@ import SwiftUI
                             },
                             onVoicePreviewDiscard: {
                                 discardVoicePreview()
+                            },
+                            isEditMode: messageToEdit != nil,
+                            editMessageText: messageToEdit?.text,
+                            onCancelEdit: {
+                                messageToEdit = nil
                             }
                         )
                     )

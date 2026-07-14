@@ -122,4 +122,132 @@ struct MLSPendingSendTests {
     #expect(dataSource.conversationRecoveryState == .healthy)
     #expect(dataSource.isSendBlockedByRecovery == false)
   }
+
+  @Test func onlyCurrentUserMessageExposesEditAndUnsendCapabilities() {
+    let own = MLSMessageAdapter(
+      id: "own",
+      text: "hello",
+      senderDID: "did:plc:tester",
+      currentUserDID: "did:plc:tester",
+      sentAt: Date()
+    )
+    let remote = MLSMessageAdapter(
+      id: "remote",
+      text: "hello",
+      senderDID: "did:plc:remote",
+      currentUserDID: "did:plc:tester",
+      sentAt: Date()
+    )
+
+    #expect(own.canEdit == true)
+    #expect(own.canUnsend == true)
+    #expect(remote.canEdit == false)
+    #expect(remote.canUnsend == false)
+  }
+
+  @Test func acknowledgedPendingMessageDoesNotExposeServerActionsBeforeHandoff() {
+    let dataSource = makeDataSource()
+    let pendingID = dataSource.beginPendingSend(text: "hello", embed: nil)
+
+    dataSource.completePendingSend(id: pendingID, realMessageID: "msg-real")
+
+    let acknowledgedPending = dataSource.message(for: pendingID)
+    #expect(acknowledgedPending?.sendState == .sent)
+    #expect(acknowledgedPending?.canEdit == false)
+    #expect(acknowledgedPending?.canUnsend == false)
+  }
+
+  @Test func editDispatchesTheResolvedExactMessageID() async {
+    var dispatched: (conversationID: String, messageID: String, text: String)?
+    let actions = MLSMessageActionPerformer(
+      edit: { conversationID, messageID, text in
+        dispatched = (conversationID, messageID, text)
+      },
+      unsend: { _, _ in }
+    )
+    let dataSource = MLSConversationDataSource(
+      conversationId: "convo-1",
+      currentUserDID: "did:plc:tester",
+      appState: nil,
+      actionPerformer: actions
+    )
+    dataSource.ingestConfirmedMessageForTesting(
+      MLSMessageAdapter(
+        id: "msg-real",
+        text: "before",
+        senderDID: "did:plc:tester",
+        currentUserDID: "did:plc:tester",
+        sentAt: Date(),
+        diffableID: "pending:stable"
+      )
+    )
+
+    await dataSource.editMessage(messageID: "pending:stable", newText: "  after  ")
+
+    #expect(dispatched?.conversationID == "convo-1")
+    #expect(dispatched?.messageID == "msg-real")
+    #expect(dispatched?.text == "after")
+  }
+
+  @Test func remoteMessageCannotDispatchEditOrUnsend() async {
+    var editCount = 0
+    var unsendCount = 0
+    let actions = MLSMessageActionPerformer(
+      edit: { _, _, _ in editCount += 1 },
+      unsend: { _, _ in unsendCount += 1 }
+    )
+    let dataSource = MLSConversationDataSource(
+      conversationId: "convo-1",
+      currentUserDID: "did:plc:tester",
+      appState: nil,
+      actionPerformer: actions
+    )
+    dataSource.ingestConfirmedMessageForTesting(
+      MLSMessageAdapter(
+        id: "remote",
+        text: "not mine",
+        senderDID: "did:plc:remote",
+        currentUserDID: "did:plc:tester",
+        sentAt: Date()
+      )
+    )
+
+    await dataSource.editMessage(messageID: "remote", newText: "no")
+    await dataSource.unsendMessage(messageID: "remote")
+
+    #expect(editCount == 0)
+    #expect(unsendCount == 0)
+  }
+
+  @Test func successfulUnsendDispatchesExactIDAndRemovesTheRow() async {
+    var dispatched: (conversationID: String, messageID: String)?
+    let actions = MLSMessageActionPerformer(
+      edit: { _, _, _ in },
+      unsend: { conversationID, messageID in
+        dispatched = (conversationID, messageID)
+      }
+    )
+    let dataSource = MLSConversationDataSource(
+      conversationId: "convo-1",
+      currentUserDID: "did:plc:tester",
+      appState: nil,
+      actionPerformer: actions
+    )
+    dataSource.ingestConfirmedMessageForTesting(
+      MLSMessageAdapter(
+        id: "msg-real",
+        text: "remove me",
+        senderDID: "did:plc:tester",
+        currentUserDID: "did:plc:tester",
+        sentAt: Date(),
+        diffableID: "pending:stable"
+      )
+    )
+
+    await dataSource.unsendMessage(messageID: "pending:stable")
+
+    #expect(dispatched?.conversationID == "convo-1")
+    #expect(dispatched?.messageID == "msg-real")
+    #expect(dataSource.messages.isEmpty)
+  }
 }

@@ -33,6 +33,7 @@ protocol UIKitMLSComposerDelegate: AnyObject {
   func composerDidTapPhoto(_ composer: UIKitMLSComposerView)
   func composerDidTapGif(_ composer: UIKitMLSComposerView)
   func composerDidTapSharePost(_ composer: UIKitMLSComposerView)
+  func composerDidTapCancelEdit(_ composer: UIKitMLSComposerView)
 
   // Voice recording lifecycle
   func composerDidStartVoiceRecording(_ composer: UIKitMLSComposerView)
@@ -91,6 +92,15 @@ final class UIKitMLSComposerView: UIView, UITextViewDelegate {
   }
 
   var onEmbedRemoved: (() -> Void)?
+
+  var isEditMode: Bool = false {
+    didSet {
+      guard oldValue != isEditMode else { return }
+      updateEditModeView()
+    }
+  }
+
+  var onCancelEdit: (() -> Void)?
 
   // MARK: - Layout Constants
 
@@ -226,6 +236,52 @@ final class UIKitMLSComposerView: UIView, UITextViewDelegate {
     stack.layoutMargins = UIEdgeInsets(top: 8, left: 8, bottom: 8, right: 8)
     stack.isLayoutMarginsRelativeArrangement = true
     return stack
+  }()
+
+  private let topContainerStack: UIStackView = {
+    let stack = UIStackView()
+    stack.axis = .vertical
+    stack.spacing = 4
+    stack.translatesAutoresizingMaskIntoConstraints = false
+    return stack
+  }()
+
+  private let editModeHeaderContainer: UIStackView = {
+    let stack = UIStackView()
+    stack.axis = .horizontal
+    stack.alignment = .center
+    stack.spacing = 8
+    stack.isHidden = true
+    stack.backgroundColor = .secondarySystemBackground
+    stack.layer.cornerRadius = 8
+    stack.layer.cornerCurve = .continuous
+    stack.layoutMargins = UIEdgeInsets(top: 8, left: 8, bottom: 8, right: 8)
+    stack.isLayoutMarginsRelativeArrangement = true
+    return stack
+  }()
+
+  private let editModeLabel: UILabel = {
+    let label = UILabel()
+    label.font = .systemFont(ofSize: 14, weight: UIFont.Weight.medium)
+    label.textColor = .secondaryLabel
+    label.text = "Editing Message"
+    label.setContentHuggingPriority(.defaultLow, for: .horizontal)
+    return label
+  }()
+
+  private lazy var editModeCancelButton: UIButton = {
+    var config = UIButton.Configuration.plain()
+    config.image = UIImage(systemName: "xmark.circle.fill")
+    config.baseForegroundColor = .tertiaryLabel
+    config.contentInsets = .zero
+    let button = UIButton(configuration: config)
+    button.accessibilityLabel = "Cancel edit"
+    button.addTarget(self, action: #selector(editCancelTapped), for: .touchUpInside)
+    NSLayoutConstraint.activate([
+      button.widthAnchor.constraint(equalToConstant: 24),
+      button.heightAnchor.constraint(equalToConstant: 24),
+    ])
+    return button
   }()
 
   private let embedPreviewImageView: UIImageView = {
@@ -458,8 +514,6 @@ final class UIKitMLSComposerView: UIView, UITextViewDelegate {
   // MARK: - Private Layout State
 
   private var textViewHeightConstraint: NSLayoutConstraint!
-  private var contentStackTopWithoutEmbed: NSLayoutConstraint!
-  private var contentStackTopWithEmbed: NSLayoutConstraint!
   private var wasTyping = false
   private var voiceLongPressStartY: CGFloat = 0
   private var hasLockedRecording = false
@@ -489,7 +543,10 @@ final class UIKitMLSComposerView: UIView, UITextViewDelegate {
 
     // The content goes into the glass view's contentView
     setupEmbedPreview()
-    backgroundEffectView.contentView.addSubview(embedPreviewContainer)
+    setupEditModeHeader()
+    topContainerStack.addArrangedSubview(editModeHeaderContainer)
+    topContainerStack.addArrangedSubview(embedPreviewContainer)
+    backgroundEffectView.contentView.addSubview(topContainerStack)
     backgroundEffectView.contentView.addSubview(contentStack)
 
     // Attach button wrapper to center it vertically against the bottom line
@@ -609,24 +666,16 @@ final class UIKitMLSComposerView: UIView, UITextViewDelegate {
       backgroundEffectView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -outerMargin),
       backgroundEffectView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -outerMargin / 2),
 
-      // Embed preview container above content stack
-      embedPreviewContainer.topAnchor.constraint(equalTo: backgroundEffectView.contentView.topAnchor, constant: verticalPadding),
-      embedPreviewContainer.leadingAnchor.constraint(equalTo: backgroundEffectView.contentView.leadingAnchor, constant: horizontalPadding),
-      embedPreviewContainer.trailingAnchor.constraint(equalTo: backgroundEffectView.contentView.trailingAnchor, constant: -horizontalPadding),
+      topContainerStack.topAnchor.constraint(equalTo: backgroundEffectView.contentView.topAnchor, constant: verticalPadding),
+      topContainerStack.leadingAnchor.constraint(equalTo: backgroundEffectView.contentView.leadingAnchor, constant: horizontalPadding),
+      topContainerStack.trailingAnchor.constraint(equalTo: backgroundEffectView.contentView.trailingAnchor, constant: -horizontalPadding),
 
       // Content stack inside the effect view
+      contentStack.topAnchor.constraint(equalTo: topContainerStack.bottomAnchor, constant: verticalPadding),
       contentStack.leadingAnchor.constraint(equalTo: backgroundEffectView.contentView.leadingAnchor, constant: horizontalPadding),
       contentStack.trailingAnchor.constraint(equalTo: backgroundEffectView.contentView.trailingAnchor, constant: -horizontalPadding),
       contentStack.bottomAnchor.constraint(equalTo: backgroundEffectView.contentView.bottomAnchor, constant: -verticalPadding),
     ])
-
-    // Dynamic top constraint for content stack (toggles based on embed visibility)
-    contentStackTopWithoutEmbed = contentStack.topAnchor.constraint(
-      equalTo: backgroundEffectView.contentView.topAnchor, constant: verticalPadding)
-    contentStackTopWithEmbed = contentStack.topAnchor.constraint(
-      equalTo: embedPreviewContainer.bottomAnchor, constant: verticalPadding)
-    contentStackTopWithoutEmbed.isActive = true
-    contentStackTopWithEmbed.isActive = false
 
     // Recording stack constraints
     NSLayoutConstraint.activate([
@@ -700,18 +749,23 @@ final class UIKitMLSComposerView: UIView, UITextViewDelegate {
     }
 
     // Un-hide before animation starts
-    if showCompose { contentStack.isHidden = false }
+    if showCompose {
+      contentStack.isHidden = false
+      topContainerStack.isHidden = false
+    }
     if showRecording { recordingStack.isHidden = false }
     if showPreview { previewStack.isHidden = false }
 
     // Cross-fade subview groups
     UIView.animate(withDuration: duration) {
       self.contentStack.alpha = showCompose ? 1 : 0
+      self.topContainerStack.alpha = showCompose ? 1 : 0
       self.embedPreviewContainer.alpha = showCompose && self.hasEmbed ? 1 : 0
       self.recordingStack.alpha = showRecording ? 1 : 0
       self.previewStack.alpha = showPreview ? 1 : 0
     } completion: { _ in
       self.contentStack.isHidden = !showCompose
+      self.topContainerStack.isHidden = !showCompose
       self.embedPreviewContainer.isHidden = !(showCompose && self.hasEmbed)
       self.recordingStack.isHidden = !showRecording
       self.previewStack.isHidden = !showPreview
@@ -834,15 +888,19 @@ final class UIKitMLSComposerView: UIView, UITextViewDelegate {
     let trimmed = textView.text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty || hasEmbed else { return }
     let message = textView.text ?? ""
-    textView.text = ""
-    hasEmbed = false
-    embedPreviewImage = nil
-    updatePlaceholderVisibility()
-    updateSendButtonState()
-    recalculateTextViewHeight()
-    delegate?.composerDidTapSend(self, text: message)
-    delegate?.composerDidChangeTypingState(self, isTyping: false)
-    wasTyping = false
+    if isEditMode {
+      delegate?.composerDidTapSend(self, text: message)
+    } else {
+      textView.text = ""
+      hasEmbed = false
+      embedPreviewImage = nil
+      updatePlaceholderVisibility()
+      updateSendButtonState()
+      recalculateTextViewHeight()
+      delegate?.composerDidTapSend(self, text: message)
+      delegate?.composerDidChangeTypingState(self, isTyping: false)
+      wasTyping = false
+    }
   }
 
   // MARK: - Preview Playback
@@ -967,12 +1025,47 @@ final class UIKitMLSComposerView: UIView, UITextViewDelegate {
     embedPreviewContainer.addArrangedSubview(embedPreviewDismissButton)
   }
 
+  private func setupEditModeHeader() {
+    let icon = UIImageView(image: UIImage(systemName: "square.and.pencil"))
+    icon.tintColor = .secondaryLabel
+    NSLayoutConstraint.activate([
+      icon.widthAnchor.constraint(equalToConstant: 16),
+      icon.heightAnchor.constraint(equalToConstant: 16),
+    ])
+
+    editModeHeaderContainer.addArrangedSubview(icon)
+    editModeHeaderContainer.addArrangedSubview(editModeLabel)
+    editModeHeaderContainer.addArrangedSubview(editModeCancelButton)
+  }
+
+  @objc private func editCancelTapped() {
+    delegate?.composerDidTapCancelEdit(self)
+  }
+
+  private func updateEditModeView() {
+    editModeHeaderContainer.isHidden = !isEditMode
+    attachButton.superview?.isHidden = isEditMode
+    placeholderLabel.text = isEditMode ? "Edit message" : placeholderText
+
+    var config = sendButton.configuration
+    config?.image = UIImage(systemName: isEditMode ? "checkmark" : "arrow.up")
+    sendButton.configuration = config
+    sendButton.accessibilityLabel = isEditMode ? "Confirm edit" : "Send message"
+
+    if !isEditMode {
+      textView.text = ""
+      wasTyping = false
+    }
+
+    updateSendButtonState()
+    updatePlaceholderVisibility()
+    recalculateTextViewHeight()
+    notifyHeightChange()
+  }
+
   private func updateEmbedPreview() {
     let showEmbed = hasEmbed
     embedPreviewContainer.isHidden = !showEmbed
-
-    contentStackTopWithoutEmbed.isActive = !showEmbed
-    contentStackTopWithEmbed.isActive = showEmbed
 
     if let image = embedPreviewImage {
       embedPreviewImageView.image = image

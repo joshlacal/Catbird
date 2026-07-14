@@ -21,6 +21,11 @@ enum UnifiedChatRenderSignature {
       avatarSignature,
       embedSignature,
       minuteSignature,
+      message.isEdited ? "edited" : "original",
+      message.editedAt.map { String($0.timeIntervalSince1970) } ?? "",
+      message.isTombstone ? "tombstone" : "live",
+      message.canEdit ? "editable" : "not-editable",
+      message.canUnsend ? "unsendable" : "not-unsendable",
     ].joined(separator: "|")
   }
 
@@ -36,4 +41,3 @@ enum UnifiedChatRenderSignature {
     .joined(separator: ";")
   }
 }
-

@@ -82,6 +82,32 @@ struct UnifiedChatRenderSignatureTests {
         #expect(signatureOther != signatureCurrent)
     }
 
+    @Test("Signature changes when MLS edit metadata changes")
+    func signatureChangesWhenEditMetadataChanges() {
+        let sentAt = Date(timeIntervalSince1970: 1_700_000_000)
+        let original = MLSMessageAdapter(
+            id: "m1",
+            text: "same text",
+            senderDID: "did:plc:me",
+            currentUserDID: "did:plc:me",
+            sentAt: sentAt
+        )
+        let edited = MLSMessageAdapter(
+            id: "m1",
+            text: "same text",
+            senderDID: "did:plc:me",
+            currentUserDID: "did:plc:me",
+            sentAt: sentAt,
+            isEdited: true,
+            editedAt: sentAt.addingTimeInterval(10)
+        )
+
+        #expect(
+            UnifiedChatRenderSignature.messageSignature(for: original)
+                != UnifiedChatRenderSignature.messageSignature(for: edited)
+        )
+    }
+
     @Test("MLS display ordering places not-yet-sequenced messages after confirmed ones")
     func testMLSDisplayOrderingSinksUnsequencedAfterConfirmed() {
         // A message with no server sequence (optimistic local send, or a row whose

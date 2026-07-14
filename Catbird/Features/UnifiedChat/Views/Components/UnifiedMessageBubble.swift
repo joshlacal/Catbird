@@ -102,6 +102,7 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
   /// True when the message is just a media embed (image or GIF) with no text and no MLS error.
   /// Media-only bubbles drop the bubble chrome — the media surface IS the bubble.
   private var isMediaOnly: Bool {
+    guard !message.isTombstone else { return false }
     guard message.text.isEmpty else { return false }
     if (message as? MLSMessageAdapter)?.debugInfo != nil { return false }
     guard let embed = message.embed else { return false }
@@ -200,7 +201,7 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
         )
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
 
-      if onLongPress != nil {
+      if onLongPress != nil, !message.isTombstone {
         bubbleSurface
           .background(
             GeometryReader { proxy in
@@ -221,7 +222,7 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
       }
 
       // Reactions
-      if !message.reactions.isEmpty {
+      if !message.reactions.isEmpty, !message.isTombstone {
         UnifiedMessageReactions(
           reactions: message.reactions,
           isCurrentUser: message.isFromCurrentUser,
@@ -240,6 +241,12 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
           Text(message.sentAt, style: .time)
             .font(.caption2)
             .foregroundStyle(.secondary)
+
+          if message.isEdited {
+            Text("(edited)")
+              .font(.caption2)
+              .foregroundStyle(.secondary)
+          }
 
           if message.isFromCurrentUser {
             // Fixed-width slot: the indicator changing (clock → blank → read
@@ -278,6 +285,7 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
     // Audio bubbles still want compact padding (the voice player has its own chrome),
     // but image/gif bubbles drop padding entirely so the media fills the bubble.
     let isAudioOnly: Bool = {
+      guard !message.isTombstone else { return false }
       guard message.text.isEmpty, mlsDebugInfo == nil else { return false }
       if case .audio = message.embed { return true }
       return false
@@ -288,7 +296,15 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
 
     let bubble = BubbleWidthLimiter(maxWidth: maxBubbleWidth) {
       VStack(alignment: .leading, spacing: 8) {
-        if mlsDebugInfo != nil {
+        if message.isTombstone {
+          HStack(spacing: 6) {
+            Image(systemName: "trash")
+              .foregroundStyle(message.isFromCurrentUser ? .white.opacity(0.7) : .secondary)
+            Text("This message was deleted")
+              .italic()
+              .foregroundStyle(message.isFromCurrentUser ? .white.opacity(0.8) : .secondary)
+          }
+        } else if mlsDebugInfo != nil {
           HStack(spacing: 6) {
             Image(systemName: "exclamationmark.triangle.fill")
               .font(.caption)
@@ -305,13 +321,13 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
         }
 
         // Embed preview
-        if let embed = message.embed {
+        if !message.isTombstone, let embed = message.embed {
           UnifiedEmbedView(embed: embed, isOwnMessage: message.isFromCurrentUser, navigationPath: $navigationPath)
             .frame(maxWidth: maxBubbleWidth)
         }
 
         // Message text
-        if !message.text.isEmpty {
+        if !message.isTombstone, !message.text.isEmpty {
           let messageTextView = ChatRichTextView(
             attributedText: message.attributedText,
             isCurrentUser: message.isFromCurrentUser

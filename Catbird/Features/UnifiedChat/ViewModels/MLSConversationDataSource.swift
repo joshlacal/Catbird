@@ -32,6 +32,11 @@ struct PendingMLSSend: Identifiable, Equatable, Sendable {
   }
 }
 
+struct MLSMessageActionPerformer {
+  let edit: @MainActor (_ conversationID: String, _ messageID: String, _ text: String) async throws -> Void
+  let unsend: @MainActor (_ conversationID: String, _ messageID: String) async throws -> Void
+}
+
 /// Data source that provides MLS messages for the unified chat UI
 /// Pulls messages from MLSStorage and provides them as MLSMessageAdapter objects
 @MainActor
@@ -44,6 +49,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
   private let conversationId: String
   private let currentUserDID: String
   private weak var appState: AppState?
+  private let actionPerformer: MLSMessageActionPerformer?
 
   // Profile cache for display names/avatars
   private var profileCache: [String: MLSProfileEnricher.ProfileData] = [:]
@@ -158,10 +164,16 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
 
   // MARK: - Init
 
-  init(conversationId: String, currentUserDID: String, appState: AppState?) {
+  init(
+    conversationId: String,
+    currentUserDID: String,
+    appState: AppState?,
+    actionPerformer: MLSMessageActionPerformer? = nil
+  ) {
     self.conversationId = conversationId
     self.currentUserDID = MLSStorageHelpers.normalizeDID(currentUserDID)
     self.appState = appState
+    self.actionPerformer = actionPerformer
   }
 
   // MARK: - Observation
@@ -603,6 +615,10 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
         senderDID: model.senderID,
         currentUserDID: currentUserDID,
         sentAt: model.timestamp,
+        isEdited: model.isEdited != 0,
+        editedAt: model.editedAt,
+        isTombstone: model.isTombstone != 0,
+        deletedAt: MLSMessageAdapter.dateFromUnixMilliseconds(model.deletedAt),
         senderProfile: senderProfile,
         reactions: reactions,
         embed: payload.embed,
@@ -724,6 +740,10 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
       senderDID: adapter.senderID,
       currentUserDID: currentUserDID,
       sentAt: adapter.sentAt,
+      isEdited: adapter.isEdited,
+      editedAt: adapter.editedAt,
+      isTombstone: adapter.isTombstone,
+      deletedAt: adapter.deletedAt,
       senderProfile: adapter.mlsProfile,
       reactions: localReactions[adapter.id] ?? [],
       embed: adapter.mlsEmbed,
@@ -814,6 +834,10 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
         senderDID: adapter.senderID,
         currentUserDID: currentUserDID,
         sentAt: adapter.sentAt,
+        isEdited: adapter.isEdited,
+        editedAt: adapter.editedAt,
+        isTombstone: adapter.isTombstone,
+        deletedAt: adapter.deletedAt,
         senderProfile: senderProfile,
         reactions: localReactions[adapter.id] ?? [],
         embed: adapter.mlsEmbed,
@@ -933,6 +957,10 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
         senderDID: adapter.senderID,
         currentUserDID: currentUserDID,
         sentAt: adapter.sentAt,
+        isEdited: adapter.isEdited,
+        editedAt: adapter.editedAt,
+        isTombstone: adapter.isTombstone,
+        deletedAt: adapter.deletedAt,
         senderProfile: adapter.mlsProfile,
         reactions: reactionsToShow,
         embed: adapter.mlsEmbed,
@@ -1188,6 +1216,10 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
           senderDID: model.senderID,
           currentUserDID: currentUserDID,
           sentAt: model.timestamp,
+          isEdited: model.isEdited != 0,
+          editedAt: model.editedAt,
+          isTombstone: model.isTombstone != 0,
+          deletedAt: MLSMessageAdapter.dateFromUnixMilliseconds(model.deletedAt),
           senderProfile: senderProfile,
           reactions: reactions,
           embed: payload.embed,
@@ -1492,6 +1524,10 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
             senderDID: oldAdapter.senderID,
             currentUserDID: currentUserDID,
             sentAt: oldAdapter.sentAt,
+            isEdited: oldAdapter.isEdited,
+            editedAt: oldAdapter.editedAt,
+            isTombstone: oldAdapter.isTombstone,
+            deletedAt: oldAdapter.deletedAt,
             senderProfile: oldAdapter.mlsProfile,
             reactions: localReactions[messageID] ?? [],
             embed: oldAdapter.mlsEmbed,
@@ -1561,6 +1597,10 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
             senderDID: oldAdapter.senderID,
             currentUserDID: currentUserDID,
             sentAt: oldAdapter.sentAt,
+            isEdited: oldAdapter.isEdited,
+            editedAt: oldAdapter.editedAt,
+            isTombstone: oldAdapter.isTombstone,
+            deletedAt: oldAdapter.deletedAt,
             senderProfile: oldAdapter.mlsProfile,
             reactions: localReactions[messageID] ?? [],
             embed: oldAdapter.mlsEmbed,
@@ -1641,6 +1681,10 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
       senderDID: oldAdapter.senderID,
       currentUserDID: currentUserDID,
       sentAt: oldAdapter.sentAt,
+      isEdited: oldAdapter.isEdited,
+      editedAt: oldAdapter.editedAt,
+      isTombstone: oldAdapter.isTombstone,
+      deletedAt: oldAdapter.deletedAt,
       senderProfile: oldAdapter.mlsProfile,
       reactions: localReactions[messageID] ?? [],
       embed: oldAdapter.mlsEmbed,
@@ -1733,8 +1777,68 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
     }
   }
 
+  func editMessage(messageID: String, newText: String) async {
+    let trimmedText = newText.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmedText.isEmpty, let target = message(for: messageID), target.canEdit else { return }
+    let resolvedMessageID = target.id
+
+    do {
+      if let actionPerformer {
+        try await actionPerformer.edit(conversationId, resolvedMessageID, trimmedText)
+      } else {
+        guard let appState, let manager = await appState.getMLSConversationManager() else {
+          throw NSError(
+            domain: "MLS",
+            code: -1,
+            userInfo: [NSLocalizedDescriptionKey: "MLS service not available"]
+          )
+        }
+        _ = try await manager.editMessage(
+          convoId: conversationId,
+          messageId: resolvedMessageID,
+          newText: trimmedText
+        )
+      }
+    } catch {
+      self.error = error
+      logger.error("Failed to edit MLS message: \(error.localizedDescription)")
+      await refreshRecoveryState()
+    }
+  }
+
+  func unsendMessage(messageID: String) async {
+    guard let target = message(for: messageID), target.canUnsend else { return }
+    let resolvedMessageID = target.id
+
+    do {
+      if let actionPerformer {
+        try await actionPerformer.unsend(conversationId, resolvedMessageID)
+      } else {
+        guard let appState, let manager = await appState.getMLSConversationManager() else {
+          throw NSError(
+            domain: "MLS",
+            code: -1,
+            userInfo: [NSLocalizedDescriptionKey: "MLS service not available"]
+          )
+        }
+        _ = try await manager.unsendMessage(
+          convoId: conversationId,
+          messageId: resolvedMessageID
+        )
+      }
+
+      confirmedMessages.removeAll { $0.id == resolvedMessageID }
+      pendingIDAliases.removeValue(forKey: resolvedMessageID)
+      localReactions.removeValue(forKey: resolvedMessageID)
+    } catch {
+      self.error = error
+      logger.error("Failed to unsend MLS message: \(error.localizedDescription)")
+      await refreshRecoveryState()
+    }
+  }
+
   func deleteMessage(messageID: String) async {
-    // MLS doesn't support message deletion
+    await unsendMessage(messageID: messageID)
   }
 
   // MARK: - Profile Loading
@@ -1773,6 +1877,10 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
         senderDID: adapter.senderID,
         currentUserDID: currentUserDID,
         sentAt: adapter.sentAt,
+        isEdited: adapter.isEdited,
+        editedAt: adapter.editedAt,
+        isTombstone: adapter.isTombstone,
+        deletedAt: adapter.deletedAt,
         senderProfile: .init(
           displayName: profile.displayName, avatarURL: profile.avatarURL, handle: profile.handle),
         reactions: localReactions[adapter.id] ?? [],
@@ -1789,6 +1897,6 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
   }
 
   private func sortMessagesInDisplayOrder(_ messages: inout [MLSMessageAdapter]) {
-    messages.sort(by: MLSMessageAdapter.sortsInDisplayOrder)
+    messages = MLSMessageAdapter.sortedForDisplay(messages)
   }
 }
