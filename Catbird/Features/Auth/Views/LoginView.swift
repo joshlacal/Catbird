@@ -386,8 +386,12 @@ struct LoginView: View {
                 }
             }
         }
+        // ASWebAuthenticationSession browser presentation can make this view disappear.
+        // Keep the live task; actual cancellation and error exits clean up explicitly.
         .onDisappear {
-            cancelAuthenticationTaskAndPendingAttempt()
+            if !isLoggingIn {
+                cancelAuthenticationTaskAndPendingAttempt()
+            }
             showTimeoutCountdown = false
             // Reset the re-authentication flag so it can trigger again if the user returns to this view
             hasStartedReAuthentication = false

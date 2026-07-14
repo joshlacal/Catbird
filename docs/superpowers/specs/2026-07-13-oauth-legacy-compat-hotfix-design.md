@@ -17,7 +17,7 @@ The compatibility flow is:
 1. Catbird starts a local login attempt and records a short-lived, single-use proof that a callback is expected.
 2. Catbird opens the unmodified gateway login URL produced by Petrel. It does not attach `browser_nonce` or `redirect_to` while compatibility mode is active.
 3. Catbird accepts only the exact callback origin `https://catbird.blue:443` and exact path `/oauth/callback`, with no userinfo or query.
-4. Catbird requires exactly one fragment field named `session_id`, validates its bounded printable-ASCII shape, consumes the active login attempt before processing, and passes the validated callback to Petrel.
+4. Catbird requires exactly one fragment field named `session_id`, validates it as an exact canonical lowercase hyphenated UUID, consumes the active login attempt before processing, and passes the validated callback to Petrel.
 5. Missing, expired, replayed, malformed, or unexpected callbacks fail closed without logging secrets.
 
 ## Preserved Hardening
@@ -26,7 +26,7 @@ The hotfix must preserve:
 
 - exact scheme, host, effective port, and path validation;
 - rejection of userinfo, query parameters, suffix-host tricks, alternate ports, and extra fragment fields;
-- bounded callback and session-ID parsing;
+- bounded callback parsing and canonical UUID session-ID validation;
 - single-use, expiring local login-attempt state;
 - redirect refusal and ephemeral transport behavior retained by unaffected code;
 - secret-safe logging that never emits callback URLs, session IDs, exchange codes, nonces, or credentials;
@@ -53,7 +53,9 @@ Required rejection cases:
 - non-default or explicitly disallowed ports;
 - wrong path;
 - multiple fragment fields or extra fragment data;
-- missing, empty, oversized, non-printable, or malformed session IDs.
+- missing, empty, oversized, noncanonical, uppercase, malformed, or structurally significant (`&`, `%`, `=`) session IDs.
+
+Deployed Nest creates legacy session IDs with Rust `Uuid::new_v4().to_string()`, which emits the canonical lowercase hyphenated UUID form. Catbird intentionally narrows acceptance to that deployed format. Because this alphabet cannot contain fragment delimiters or percent escapes, the validated value can be handed to Petrel unchanged; Petrel does not need a parser change in this hotfix.
 
 Focused tests must pass on the pinned iOS simulator, followed by an iOS build. Runtime verification must confirm a real simulator login reaches the authenticated app against currently deployed Nest.
 
@@ -87,4 +89,3 @@ Legacy support must not be disabled merely because the new client exists. Remova
 - Reverting unrelated CI, privacy logging, URL redaction, or authentication hardening.
 - Merging unfinished recovery UI work into the hotfix.
 - Moving or rewriting concurrent security workspaces.
-

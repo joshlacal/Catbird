@@ -434,6 +434,7 @@ struct AccountSwitcherView: View {
       .toolbar {
         ToolbarItem(placement: .primaryAction) {
           Button("Cancel", systemImage: "xmark") {
+            cancelAuthenticationTaskAndPendingAttempt()
             isAddingAccount = false
           }
         }

@@ -10,7 +10,6 @@ enum GatewayOAuthLegacyCallbackError: Error, Equatable {
 /// Remove only after the conditions in the hotfix design document are met.
 actor GatewayOAuthLegacyCallback {
   static let attemptLifetime: TimeInterval = 60
-  static let maximumSessionIDBytes = 512
 
   private let callbackURL: URL
   private let uptime: @Sendable () -> TimeInterval
@@ -87,9 +86,8 @@ actor GatewayOAuthLegacyCallback {
     guard parts.count == 2, parts[0] == "session_id" else { return nil }
 
     guard let sessionID = String(parts[1]).removingPercentEncoding else { return nil }
-    guard !sessionID.isEmpty,
-      sessionID.utf8.count <= maximumSessionIDBytes,
-      sessionID.utf8.allSatisfy({ $0 >= 0x21 && $0 <= 0x7e })
+    guard let uuid = UUID(uuidString: sessionID),
+      uuid.uuidString.lowercased() == sessionID
     else {
       return nil
     }

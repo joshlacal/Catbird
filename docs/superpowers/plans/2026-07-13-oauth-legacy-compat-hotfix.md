@@ -14,7 +14,7 @@
 - Accept only `https://catbird.blue/oauth/callback#session_id=...`, treating omitted port and explicit `:443` as equivalent.
 - Reject userinfo, query parameters, suffix/lookalike hosts, alternate ports, wrong paths, and any fragment structure other than exactly one `session_id` field.
 - Require a live local attempt no older than 60 seconds and consume it before callback validation so malformed callbacks and replays fail locally.
-- Session IDs must contain 1 through 512 printable ASCII bytes (`0x21...0x7e`) and must not be logged.
+- Session IDs must be exact canonical lowercase hyphenated UUID strings, matching deployed Nest's `Uuid::new_v4().to_string()` output, and must not be logged.
 - Return Petrel's login URL byte-for-byte unchanged; do not add `browser_nonce` or `redirect_to`.
 - Preserve secret-safe logging and the unrelated Claude review workflow update from PR #24.
 - Do not deploy Nest or re-enable `/auth/exchange` in this hotfix.
@@ -53,6 +53,7 @@ Replace the suite with tests that instantiate `GatewayOAuthLegacyCallback`, star
 struct GatewayOAuthExchangeTests {
   private let callbackURL = URL(string: "https://catbird.blue/oauth/callback")!
   private let loginURL = URL(string: "https://api.catbird.blue/auth/login?identifier=alice.test")!
+  private let sessionID = "550e8400-e29b-41d4-a716-446655440000"
 
   @Test("login URL remains unchanged and an exact legacy callback succeeds once")
   func validLegacyCallback() async throws {
@@ -60,12 +61,12 @@ struct GatewayOAuthExchangeTests {
     #expect(try await callback.prepareLogin(loginURL) == loginURL)
 
     let result = try await callback.consume(
-      URL(string: "https://catbird.blue/oauth/callback#session_id=session-123")!)
-    #expect(result == "session-123")
+      URL(string: "https://catbird.blue/oauth/callback#session_id=\(sessionID)")!)
+    #expect(result == sessionID)
 
     await #expect(throws: GatewayOAuthLegacyCallbackError.unauthorized) {
       try await callback.consume(
-        URL(string: "https://catbird.blue/oauth/callback#session_id=session-123")!)
+        URL(string: "https://catbird.blue/oauth/callback#session_id=\(sessionID)")!)
     }
   }
 
@@ -73,7 +74,7 @@ struct GatewayOAuthExchangeTests {
   func attemptRequiredAndExpiring() async throws {
     let clock = TestUptime()
     let callback = GatewayOAuthLegacyCallback(callbackURL: callbackURL, uptime: { clock.value })
-    let validURL = URL(string: "https://catbird.blue/oauth/callback#session_id=session-123")!
+    let validURL = URL(string: "https://catbird.blue/oauth/callback#session_id=\(sessionID)")!
 
     await #expect(throws: GatewayOAuthLegacyCallbackError.unauthorized) {
       try await callback.consume(validURL)
@@ -91,22 +92,22 @@ Add table-driven cases for all required invalid callbacks:
 
 ```swift
 let invalidURLs = [
-  "http://catbird.blue/oauth/callback#session_id=session-123",
-  "https://catbird.blue.evil.example/oauth/callback#session_id=session-123",
-  "https://catbird.blue@evil.example/oauth/callback#session_id=session-123",
-  "https://user@catbird.blue/oauth/callback#session_id=session-123",
-  "https://catbird.blue:444/oauth/callback#session_id=session-123",
-  "https://catbird.blue/oauth/other#session_id=session-123",
-  "https://catbird.blue/oauth/callback?session_id=session-123",
-  "https://catbird.blue/oauth/callback?next=%2F#session_id=session-123",
-  "https://catbird.blue/oauth/callback#session_id=session-123&extra=value",
-  "https://catbird.blue/oauth/callback#extra=value&session_id=session-123",
+  "http://catbird.blue/oauth/callback#session_id=550e8400-e29b-41d4-a716-446655440000",
+  "https://catbird.blue.evil.example/oauth/callback#session_id=550e8400-e29b-41d4-a716-446655440000",
+  "https://catbird.blue@evil.example/oauth/callback#session_id=550e8400-e29b-41d4-a716-446655440000",
+  "https://user@catbird.blue/oauth/callback#session_id=550e8400-e29b-41d4-a716-446655440000",
+  "https://catbird.blue:444/oauth/callback#session_id=550e8400-e29b-41d4-a716-446655440000",
+  "https://catbird.blue/oauth/other#session_id=550e8400-e29b-41d4-a716-446655440000",
+  "https://catbird.blue/oauth/callback?session_id=550e8400-e29b-41d4-a716-446655440000",
+  "https://catbird.blue/oauth/callback?next=%2F#session_id=550e8400-e29b-41d4-a716-446655440000",
+  "https://catbird.blue/oauth/callback#session_id=550e8400-e29b-41d4-a716-446655440000&extra=value",
+  "https://catbird.blue/oauth/callback#extra=value&session_id=550e8400-e29b-41d4-a716-446655440000",
   "https://catbird.blue/oauth/callback#session_id=",
   "https://catbird.blue/oauth/callback#session_id=session%20id",
 ]
 ```
 
-Also construct oversized and non-printable session-ID URLs programmatically, verify omitted and explicit `:443` both pass, verify a malformed callback consumes the pending attempt, verify a live second attempt throws `.flowInProgress`, verify cancellation clears the attempt, and verify a configured callback containing userinfo/query/fragment or a non-HTTPS scheme throws `.configuration` without creating an attempt.
+Also reject `&`, `%`, `=`, uppercase, unhyphenated, malformed, and oversized session IDs; verify omitted and explicit `:443` both pass; verify a malformed callback consumes the pending attempt; verify a live second attempt throws `.flowInProgress`; verify cancellation clears the attempt; and verify a configured callback containing userinfo/query/fragment or a non-HTTPS scheme throws `.configuration` without creating an attempt.
 
 - [ ] **Step 2: Run the focused suite and confirm RED**
 
@@ -137,7 +138,6 @@ enum GatewayOAuthLegacyCallbackError: Error, Equatable {
 /// Remove only after the conditions in the hotfix design document are met.
 actor GatewayOAuthLegacyCallback {
   static let attemptLifetime: TimeInterval = 60
-  static let maximumSessionIDBytes = 512
 
   private let callbackURL: URL
   private let uptime: @Sendable () -> TimeInterval
@@ -188,7 +188,7 @@ actor GatewayOAuthLegacyCallback {
 }
 ```
 
-`validatedSessionID` must compare lowercased scheme and host, exact effective port and path, reject `user`, `password`, and `query`, require `URLComponents.fragment` to split into exactly one item with name `session_id`, percent-decode its value exactly once, and require 1...512 UTF-8 bytes all within `0x21...0x7e`. `isValidConfiguredCallback` must require HTTPS, host, no userinfo/query/fragment, exact `/oauth/callback`, and effective port 443.
+`validatedSessionID` must compare lowercased scheme and host, exact effective port and raw percent-encoded path, reject `user`, `password`, and `query`, require `URLComponents.percentEncodedFragment` to contain exactly one literal field named `session_id`, percent-decode its value exactly once, and require the decoded value to equal Foundation's canonical lowercase hyphenated UUID rendering. `isValidConfiguredCallback` must require HTTPS, host, no userinfo/query/fragment, exact raw `/oauth/callback`, and effective port 443.
 
 - [ ] **Step 4: Run the focused suite and confirm GREEN**
 
@@ -258,7 +258,7 @@ Make `login(handle:)`, `addAccount(handle:)`, and `startSignUp(pdsURL:)` call `g
 let sessionID = try await gatewayOAuthLegacyCallback.consume(url)
 ```
 
-Keep construction of the internal fragment callback and Petrel processing unchanged so the validated session ID is never logged or exposed. Make `cancelGatewayOAuthFlow()` call `gatewayOAuthLegacyCallback.cancelPendingLogin()`.
+Keep construction of the internal fragment callback and Petrel processing unchanged so the validated session ID is never logged or exposed. This is safe because deployed Nest creates IDs with `Uuid::new_v4().to_string()`, whose canonical lowercase hyphenated output contains no fragment delimiters or percent escapes. Petrel is intentionally unchanged. Make `cancelGatewayOAuthFlow()` call `gatewayOAuthLegacyCallback.cancelPendingLogin()`.
 
 Do not change the existing redacted logging in `AuthManager`, `LoginView`, `AccountSwitcherView`, `CatbirdApp`, or `URLHandler`.
 
