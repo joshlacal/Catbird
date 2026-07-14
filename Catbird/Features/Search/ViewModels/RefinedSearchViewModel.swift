@@ -29,11 +29,8 @@ enum SearchState {
 
   // MARK: - Filtering
   var selectedContentType: ContentType = .all
-  var searchSort: SearchSort = .top
-  var filterDate: FilterDate = .anytime
-  var filterContentTypes: Set<ContentType> = []
-  var filterLanguages: Set<String> = []
-  var advancedParams = AdvancedSearchParams()
+  /// Single source of truth for applied post-search filters (sort/date/language).
+  var filterState = SearchFilterState()
 
   // MARK: - Results
   var profileResults: [AppBskyActorDefs.ProfileView] = []
@@ -301,9 +298,7 @@ enum SearchState {
           // Search posts (similar pattern for other searches)
           group.addTask {
             do {
-              let input = AppBskyFeedSearchPosts.Parameters(
-                q: currentQuery, limit: 25
-              )
+              let input = await self.buildPostSearchParameters(cursor: nil)
 
               let (_, response) = try await client.app.bsky.feed.searchPosts(input: input)
 
@@ -400,37 +395,19 @@ enum SearchState {
     await fetchTaggedSuggestions(client: client)
   }
 
-  /// Apply basic filters
-  func applyFilters(
-    date: FilterDate,
-    contentTypes: Set<ContentType>,
-    languages: Set<String>
-  ) {
-    filterDate = date
-    filterContentTypes = contentTypes
-    filterLanguages = languages
-
-    // Re-run search with filters
+  /// Apply a new filter state (date/language) and re-run the committed search.
+  func applyFilterState(_ state: SearchFilterState, client: ATProtoClient) {
+    filterState = state
     if isCommittedSearch {
-      Task {
-        if let client = appState.atProtoClient {
-          await executeSearch(client: client)
-        }
-      }
+      Task { await executeSearch(client: client) }
     }
   }
 
-  /// Apply advanced filters
-  func applyAdvancedFilters(_ params: AdvancedSearchParams) {
-    advancedParams = params
-
-    // Re-run search with filters
+  /// Change the sort mode and re-run the committed search.
+  func setSort(_ sort: SearchSort, client: ATProtoClient) {
+    filterState.sort = sort
     if isCommittedSearch {
-      Task {
-        if let client = appState.atProtoClient {
-          await executeSearch(client: client)
-        }
-      }
+      Task { await executeSearch(client: client) }
     }
   }
 
@@ -580,27 +557,11 @@ enum SearchState {
     let savedSearch = SavedSearch(
       name: name,
       query: searchQuery,
-      filters: advancedParams
+      filters: filterState
     )
 
     let userDID = AppStateManager.shared.authentication.state.userDID
     searchHistoryManager.saveSearch(savedSearch, userDID: userDID)
-    loadSavedSearches()
-  }
-
-  /// Load a saved search and apply it
-  func loadSavedSearch(_ savedSearch: SavedSearch, client: ATProtoClient) {
-    let userDID = AppStateManager.shared.authentication.state.userDID
-    searchHistoryManager.updateLastUsed(savedSearch.id, userDID: userDID)
-
-    // Apply the saved search
-    searchQuery = savedSearch.query
-    advancedParams = savedSearch.filters
-
-    // Execute the search
-    commitSearch(client: client)
-
-    // Reload saved searches to update order
     loadSavedSearches()
   }
 
@@ -696,6 +657,12 @@ enum SearchState {
     // Clear previous error
     searchError = nil
 
+    // A full search replaces results, so stale cursors must not leak into it.
+    profileCursor = nil
+    postCursor = nil
+    feedCursor = nil
+    starterPackCursor = nil
+
     logger.debug("executeSearch proceeding with parallel task group")
 
     do {
@@ -758,53 +725,35 @@ enum SearchState {
     }
   }
 
-  /// Search for posts matching the query with enhanced hashtag and mention support
+  /// Build real searchPosts parameters from the applied filter state.
+  private func buildPostSearchParameters(cursor: String?) -> AppBskyFeedSearchPosts.Parameters {
+    let enhancedQuery = enhanceQueryForSpecialTypes(searchQuery)
+    let bounds = filterState.dateBounds()
+    return AppBskyFeedSearchPosts.Parameters(
+      q: enhancedQuery,
+      sort: filterState.sortValue,
+      since: bounds.since,
+      until: bounds.until,
+      lang: filterState.languageContainer,
+      limit: 25,
+      cursor: cursor
+    )
+  }
+
+  /// Search for posts matching the query with current filters applied.
   private func searchPosts(client: ATProtoClient) async {
     do {
-      // Enhanced query processing for hashtags and mentions
-      let enhancedQuery = enhanceQueryForSpecialTypes(searchQuery)
-
-      // Prepare query parameters with filters
-      var queryParams: [String: String] = [:]
-
-      // Apply date filters
-      switch filterDate {
-      case .today:
-        queryParams["since"] = formatDateFilter(daysAgo: 1)
-      case .week:
-        queryParams["since"] = formatDateFilter(daysAgo: 7)
-      case .month:
-        queryParams["since"] = formatDateFilter(daysAgo: 30)
-      case .year:
-        queryParams["since"] = formatDateFilter(daysAgo: 365)
-      case .anytime:
-        break  // No date filter
-      }
-
-      // Add advanced filter parameters
-      let advancedQueryParams = advancedParams.toQueryParameters()
-      queryParams.merge(advancedQueryParams) { (_, new) in new }
-
-      // Create input parameter with enhanced query
-      let input = AppBskyFeedSearchPosts.Parameters(
-        q: enhancedQuery,
-        limit: 25,
-        cursor: postCursor
-      )
-
-      // Execute search
+      let input = buildPostSearchParameters(cursor: postCursor)
       let (_, response) = try await client.app.bsky.feed.searchPosts(input: input)
 
       if let postsResponse = response {
         var results = postsResponse.posts
 
-        // Apply local ranking if relevance boost is enabled
-        if advancedParams.relevanceBoost != .minimal {
-          results = rankSearchResults(results, query: searchQuery)
-        }
-
-        // Apply language filtering if enabled and user has preferred languages
-        if appState.appSettings.hideNonPreferredLanguages
+        // Trust server ordering (top/latest). An explicit per-search language
+        // bypasses the global preferred-language filter so the requested
+        // language is not stripped client-side.
+        if filterState.language == nil
+          && appState.appSettings.hideNonPreferredLanguages
           && !appState.appSettings.contentLanguages.isEmpty
         {
           results = applyLanguageFiltering(to: results)
@@ -849,59 +798,6 @@ enum SearchState {
     }
 
     return enhancedQuery
-  }
-
-  /// Rank search results using the enhanced ranking system
-  private func rankSearchResults(_ posts: [AppBskyFeedDefs.PostView], query: String)
-    -> [AppBskyFeedDefs.PostView]
-  {
-    return posts.sorted { post1, post2 in
-      let score1 = calculatePostRelevanceScore(post1, query: query)
-      let score2 = calculatePostRelevanceScore(post2, query: query)
-      return score1 > score2
-    }
-  }
-
-  /// Calculate relevance score for a post
-  private func calculatePostRelevanceScore(_ post: AppBskyFeedDefs.PostView, query: String)
-    -> Double
-  {
-    guard case .knownType(let record) = post.record,
-      let feedPost = record as? AppBskyFeedPost
-    else { return 0 }
-
-    let postRecord = feedPost
-
-    // Extract engagement metrics
-    let engagement = EngagementMetrics(
-      likes: post.likeCount ?? 0,
-      reposts: post.repostCount ?? 0,
-      replies: post.replyCount ?? 0
-    )
-
-    // Extract user metrics
-    // Note: ProfileViewBasic doesn't have followerCount, so we use 0 as default
-    let userMetrics = UserMetrics(
-      followerCount: 0,  // ProfileViewBasic doesn't expose follower count
-      isVerified: post.author.labels?.contains { $0.val == "verified" } ?? false,
-      isFollowing: post.author.viewer?.following != nil
-    )
-
-    // Calculate recency
-    let createdAt = postRecord.createdAt
-    let recency = Date().timeIntervalSince(createdAt.date)
-
-    // Get post content
-    let content = postRecord.text
-
-    return SearchRanking.calculateRelevanceScore(
-      query: query,
-      content: content,
-      engagement: engagement,
-      userMetrics: userMetrics,
-      recency: recency,
-      boost: advancedParams.relevanceBoost
-    )
   }
 
   /// Search for feeds matching the query
@@ -970,10 +866,7 @@ enum SearchState {
     guard let cursor = postCursor else { return }
 
     do {
-      let input = AppBskyFeedSearchPosts.Parameters(
-        q: searchQuery, limit: 25,
-        cursor: cursor
-      )
+      let input = buildPostSearchParameters(cursor: cursor)
 
       let (_, response) = try await client.app.bsky.feed.searchPosts(input: input)
 
@@ -1040,17 +933,6 @@ enum SearchState {
   }
 
   // MARK: - Helper Methods
-
-  /// Format date filter string for API
-  private func formatDateFilter(daysAgo: Int) -> String {
-    let calendar = Calendar.current
-    let date = calendar.date(byAdding: .day, value: -daysAgo, to: Date())!
-
-    let formatter = ISO8601DateFormatter()
-    formatter.formatOptions = [.withInternetDateTime]
-
-    return formatter.string(from: date)
-  }
 
   /// Apply language filtering to search results
   private func applyLanguageFiltering(to posts: [AppBskyFeedDefs.PostView]) -> [AppBskyFeedDefs
@@ -1133,14 +1015,12 @@ enum SearchState {
   func loadAndApplySavedSearch(_ savedSearch: SavedSearch, client: ATProtoClient) {
     // Apply the saved search parameters
     searchQuery = savedSearch.query
-    advancedParams = savedSearch.filters
+    filterState = savedSearch.filters
 
     // Update the last used timestamp
     searchHistoryManager.updateLastUsed(savedSearch.id, userDID: appState.userDID)
 
-    // Perform the search
-    Task {
-      await searchPosts(client: client)
-    }
+    // Run the full committed search after all saved state is loaded.
+    commitSearch(client: client)
   }
 }

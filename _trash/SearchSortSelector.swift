@@ -92,4 +92,3 @@ struct SearchSortSegmentedControl: View {
         .environment(AppStateManager.shared)
   }
 }
-

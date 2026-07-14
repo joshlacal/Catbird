@@ -85,11 +85,11 @@ struct SavedSearch: Codable, Identifiable {
     let id: UUID
     let name: String
     let query: String
-    let filters: AdvancedSearchParams
+    let filters: SearchFilterState
     let createdAt: Date
     var lastUsed: Date
     
-    init(name: String, query: String, filters: AdvancedSearchParams) {
+    init(name: String, query: String, filters: SearchFilterState) {
         self.id = UUID()
         self.name = name
         self.query = query
@@ -104,7 +104,7 @@ struct SavedSearch: Codable, Identifiable {
         return copy
     }
     
-    private init(id: UUID, name: String, query: String, filters: AdvancedSearchParams, createdAt: Date, lastUsed: Date) {
+    private init(id: UUID, name: String, query: String, filters: SearchFilterState, createdAt: Date, lastUsed: Date) {
         self.id = id
         self.name = name
         self.query = query
@@ -225,130 +225,10 @@ class SearchHistoryManager {
     
     private func savedSearchesKey(for userDID: String?) -> String {
         if let userDID = userDID {
-            return "savedSearches_\(userDID)"
+            return "savedSearches_v2_\(userDID)"
         }
-        return "savedSearches_default"
+        return "savedSearches_v2_default"
     }
-}
-
-// MARK: - Search Ranking and Relevance
-
-/// Advanced search result ranking system
-enum SearchRanking {
-    /// Calculate relevance score for a search result
-    static func calculateRelevanceScore(
-        query: String,
-        content: String,
-        engagement: EngagementMetrics,
-        userMetrics: UserMetrics,
-        recency: TimeInterval,
-        boost: AdvancedSearchParams.RelevanceBoost = .balanced
-    ) -> Double {
-        let textScore = calculateTextRelevance(query: query, content: content)
-        let engagementScore = calculateEngagementScore(engagement)
-        let userScore = calculateUserScore(userMetrics)
-        let recencyScore = calculateRecencyScore(recency)
-        
-        // Apply weighting based on boost level
-        let weights = getWeights(for: boost)
-        
-        return (textScore * weights.text) +
-               (engagementScore * weights.engagement) +
-               (userScore * weights.user) +
-               (recencyScore * weights.recency)
-    }
-    
-    private static func calculateTextRelevance(query: String, content: String) -> Double {
-        let queryTerms = query.lowercased().components(separatedBy: .whitespacesAndNewlines)
-        let contentWords = content.lowercased().components(separatedBy: .whitespacesAndNewlines)
-        
-        var score: Double = 0
-        
-        for term in queryTerms {
-            // Exact matches score higher
-            if contentWords.contains(term) {
-                score += 1.0
-            }
-            // Partial matches
-            else {
-                for word in contentWords {
-                    if word.contains(term) || term.contains(word) {
-                        score += 0.5
-                    }
-                }
-            }
-        }
-        
-        // Normalize by query length
-        return min(score / Double(queryTerms.count), 1.0)
-    }
-    
-    private static func calculateEngagementScore(_ engagement: EngagementMetrics) -> Double {
-        let totalEngagement = engagement.likes + engagement.reposts + engagement.replies
-        // Logarithmic scale to prevent outliers from dominating
-        return min(log10(Double(totalEngagement + 1)) / 4.0, 1.0)
-    }
-    
-    private static func calculateUserScore(_ userMetrics: UserMetrics) -> Double {
-        var score: Double = 0
-        
-        // Verified users get a boost
-        if userMetrics.isVerified {
-            score += 0.3
-        }
-        
-        // Follower count (logarithmic)
-        score += min(log10(Double(userMetrics.followerCount + 1)) / 6.0, 0.5)
-        
-        // Following relationship boost
-        if userMetrics.isFollowing {
-            score += 0.2
-        }
-        
-        return min(score, 1.0)
-    }
-    
-    private static func calculateRecencyScore(_ recency: TimeInterval) -> Double {
-        let hoursAgo = recency / 3600
-        
-        // Recent content scores higher, with exponential decay
-        if hoursAgo < 1 {
-            return 1.0
-        } else if hoursAgo < 24 {
-            return 0.8
-        } else if hoursAgo < 168 { // 1 week
-            return 0.6
-        } else if hoursAgo < 720 { // 1 month
-            return 0.4
-        } else {
-            return 0.2
-        }
-    }
-    
-    private static func getWeights(for boost: AdvancedSearchParams.RelevanceBoost) -> (text: Double, engagement: Double, user: Double, recency: Double) {
-        switch boost {
-        case .minimal:
-            return (text: 0.7, engagement: 0.1, user: 0.1, recency: 0.1)
-        case .balanced:
-            return (text: 0.4, engagement: 0.3, user: 0.2, recency: 0.1)
-        case .aggressive:
-            return (text: 0.3, engagement: 0.4, user: 0.2, recency: 0.1)
-        }
-    }
-}
-
-/// Metrics for engagement calculation
-struct EngagementMetrics {
-    let likes: Int
-    let reposts: Int
-    let replies: Int
-}
-
-/// Metrics for user scoring
-struct UserMetrics {
-    let followerCount: Int
-    let isVerified: Bool
-    let isFollowing: Bool
 }
 
 // MARK: - Search Suggestions

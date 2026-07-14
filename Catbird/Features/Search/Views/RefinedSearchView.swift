@@ -23,13 +23,12 @@ struct RefinedSearchView: View {
     
     // UI state
     @State private var searchText = ""
-    @State private var isShowingFilters = false
-    @State private var isShowingAdvancedFilters = false
     @State private var isShowingAllTrendingTopics = false
     @State private var isShowingAllSavedSearches = false  // SRCH-015: All saved searches sheet
     @State private var isShowingSaveSearchSheet = false  // SRCH-015: Save search UI
     @State private var isShowingSuggestedProfiles = false
     @State private var isShowingAddFeedSheet = false
+    @State private var isShowingFiltersSheet = false
     @FocusState private var isSearchFieldFocused: Bool
     @State private var lastHandledSearchRequestID: UUID?
     @State private var isApplyingPendingSearchRequest = false
@@ -74,12 +73,6 @@ struct RefinedSearchView: View {
         .onDisappear {
             handleViewDisappear()
         }
-        .sheet(isPresented: $isShowingFilters) {
-            FilterView(viewModel: viewModel)
-        }
-        .sheet(isPresented: $isShowingAdvancedFilters) {
-            AdvancedFilterView(viewModel: viewModel)
-        }
         .sheet(isPresented: $isShowingAllTrendingTopics) {
             AllTrendingTopicsView(
                 topics: viewModel.trendingTopics,
@@ -104,14 +97,24 @@ struct RefinedSearchView: View {
             // SRCH-015: Save search sheet
             SaveSearchSheet(
                 query: viewModel.searchQuery,
-                filters: viewModel.advancedParams,
+                filters: viewModel.filterState,
                 onSave: { name in
                     let savedSearch = SavedSearch(
                         name: name,
                         query: viewModel.searchQuery,
-                        filters: viewModel.advancedParams
+                        filters: viewModel.filterState
                     )
                     viewModel.saveSearch(savedSearch)
+                }
+            )
+        }
+        .sheet(isPresented: $isShowingFiltersSheet) {
+            SearchFiltersSheet(
+                initialState: viewModel.filterState,
+                onApply: { state in
+                    if let client = appState.atProtoClient {
+                        viewModel.applyFilterState(state, client: client)
+                    }
                 }
             )
         }
@@ -143,6 +146,12 @@ struct RefinedSearchView: View {
     private var navigationPath: Binding<NavigationPath> {
         appState.navigationManager.pathBinding(for: 1)
     }
+
+    /// The sort/filter bar only applies to post results (All + Posts scopes).
+    private var shouldShowFilterBar: Bool {
+        viewModel.searchState == .results
+            && (viewModel.selectedContentType == .all || viewModel.selectedContentType == .posts)
+    }
     
     @ViewBuilder
     private var mainContentContainer: some View {
@@ -154,6 +163,19 @@ struct RefinedSearchView: View {
             
             // Edge-to-edge content; individual rows constrain via .mainContentFrame()
             VStack(spacing: 0) {
+                if shouldShowFilterBar {
+                    SearchFilterBar(
+                        sort: viewModel.filterState.sort,
+                        activeFilterCount: viewModel.filterState.activeFilterCount,
+                        onSortChange: { newSort in
+                            if let client = appState.atProtoClient {
+                                viewModel.setSort(newSort, client: client)
+                            }
+                        },
+                        onFiltersTap: { isShowingFiltersSheet = true }
+                    )
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                }
                 mainContentArea
             }
         }
@@ -356,34 +378,6 @@ struct RefinedSearchView: View {
                 
                 Divider()
             }
-            
-            // Sort options
-            Menu("Sort") {
-                ForEach(SearchSort.allCases, id: \.self) { option in
-                    Button {
-                        viewModel.searchSort = option
-                        if viewModel.isCommittedSearch, let client = appState.atProtoClient {
-                            Task { await viewModel.refreshSearch(client: client) }
-                        }
-                    } label: {
-                        Label(option.displayName, systemImage: option.icon)
-                    }
-                }
-            }
-            
-            Button {
-                isShowingFilters = true
-            } label: {
-                Label("Basic Filters", systemImage: "line.3.horizontal.decrease.circle")
-            }
-            
-            Button {
-                isShowingAdvancedFilters = true
-            } label: {
-                Label("Advanced Filters", systemImage: "slider.horizontal.3")
-            }
-            
-            Divider()
             
             Button {
                 reset()

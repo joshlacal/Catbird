@@ -15,7 +15,7 @@ struct SaveSearchSheet: View {
     @Environment(\.colorScheme) private var colorScheme
     
     let query: String
-    let filters: AdvancedSearchParams
+    let filters: SearchFilterState
     let onSave: (String) -> Void
     
     @State private var searchName = ""
@@ -107,36 +107,16 @@ struct SaveSearchSheet: View {
     @ViewBuilder
     private var activeFiltersView: some View {
         VStack(alignment: .leading, spacing: 12) {
-            if !filters.languages.isEmpty {
-                filterRow(icon: "globe", title: "Languages", value: filters.languages.joined(separator: ", "))
+            if let language = filters.language {
+                filterRow(icon: "globe", title: "Language", value: language.uppercased())
             }
             
             if filters.dateRange != .anytime {
                 filterRow(icon: "calendar", title: "Date Range", value: filters.dateRange.displayName)
             }
             
-            if filters.excludeReplies {
-                filterRow(icon: "bubble.left.and.bubble.right.fill", title: "Exclude Replies", value: "Yes")
-            }
-            
-            if filters.excludeReposts {
-                filterRow(icon: "arrow.2.squarepath", title: "Exclude Reposts", value: "Yes")
-            }
-            
-            if filters.mustHaveMedia {
-                filterRow(icon: "photo", title: "Media Required", value: "Yes")
-            }
-            
-            if filters.onlyFromFollowing {
-                filterRow(icon: "person.2.fill", title: "From Following", value: "Yes")
-            }
-            
-            if filters.onlyVerified {
-                filterRow(icon: "checkmark.seal.fill", title: "Verified Only", value: "Yes")
-            }
-            
-            if filters.sortBy != .latest {
-                filterRow(icon: "arrow.up.arrow.down", title: "Sort By", value: filters.sortBy.displayName)
+            if filters.sort != .top {
+                filterRow(icon: "arrow.up.arrow.down", title: "Sort By", value: filters.sort.displayName)
             }
         }
     }
@@ -162,14 +142,9 @@ struct SaveSearchSheet: View {
     }
     
     private var hasActiveFilters: Bool {
-        return !filters.languages.isEmpty ||
+        return filters.language != nil ||
                filters.dateRange != .anytime ||
-               filters.excludeReplies ||
-               filters.excludeReposts ||
-               filters.mustHaveMedia ||
-               filters.onlyFromFollowing ||
-               filters.onlyVerified ||
-               filters.sortBy != .latest
+               filters.sort != .top
     }
     
     private func generateSearchName() -> String {
@@ -180,8 +155,8 @@ struct SaveSearchSheet: View {
             name = String(query.prefix(30)) + "..."
         }
         
-        if !filters.languages.isEmpty {
-            name += " (\(filters.languages.first ?? ""))"
+        if let language = filters.language {
+            name += " (\(language.uppercased()))"
         } else if filters.dateRange != .anytime {
             name += " (\(filters.dateRange.displayName))"
         }
@@ -202,9 +177,8 @@ struct SaveSearchSheet: View {
   AsyncPreviewContent { appState in
     SaveSearchSheet(
             query: "artificial intelligence",
-            filters: AdvancedSearchParams(),
+            filters: SearchFilterState(),
             onSave: { _ in }
         )
   }
 }
-

@@ -89,8 +89,8 @@ struct SavedSearchesSection: View {
                             .foregroundColor(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
                             .lineLimit(1)
                         
-                        if !search.filters.languages.isEmpty {
-                            Text("• \(search.filters.languages.count) filter\(search.filters.languages.count == 1 ? "" : "s")")
+                        if search.filters.activeFilterCount > 0 {
+                            Text("• \(search.filters.activeFilterCount) filter\(search.filters.activeFilterCount == 1 ? "" : "s")")
                                 .appFont(AppTextRole.caption)
                                 .foregroundColor(Color(platformColor: PlatformColor.platformTertiaryLabel))
                         }
@@ -328,27 +328,19 @@ struct AllSavedSearchesView: View {
     }
     
     @ViewBuilder
-    private func filtersPreview(_ filters: AdvancedSearchParams) -> some View {
+    private func filtersPreview(_ filters: SearchFilterState) -> some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                if !filters.languages.isEmpty {
-                    filterChip(icon: "globe", text: "\(filters.languages.count) language\(filters.languages.count == 1 ? "" : "s")")
+                if let language = filters.language {
+                    filterChip(icon: "globe", text: language.uppercased())
                 }
                 
                 if filters.dateRange != .anytime {
                     filterChip(icon: "calendar", text: filters.dateRange.displayName)
                 }
                 
-                if filters.excludeReplies {
-                    filterChip(icon: "bubble.left.and.bubble.right.fill", text: "No replies")
-                }
-                
-                if filters.mustHaveMedia {
-                    filterChip(icon: "photo", text: "Has media")
-                }
-                
-                if filters.onlyFromFollowing {
-                    filterChip(icon: "person.2.fill", text: "Following")
+                if filters.sort != .top {
+                    filterChip(icon: "arrow.up.arrow.down", text: filters.sort.displayName)
                 }
             }
         }
@@ -372,13 +364,10 @@ struct AllSavedSearchesView: View {
         .foregroundColor(.accentColor)
     }
     
-    private func hasActiveFilters(_ filters: AdvancedSearchParams) -> Bool {
-        return !filters.languages.isEmpty ||
+    private func hasActiveFilters(_ filters: SearchFilterState) -> Bool {
+        return filters.language != nil ||
                filters.dateRange != .anytime ||
-               filters.excludeReplies ||
-               filters.excludeReposts ||
-               filters.mustHaveMedia ||
-               filters.onlyFromFollowing
+               filters.sort != .top
     }
     
     @ViewBuilder
@@ -426,9 +415,9 @@ struct AllSavedSearchesView: View {
 
 #Preview("Saved Searches Section") {
     let sampleSearches = [
-        SavedSearch(name: "AI News", query: "artificial intelligence", filters: AdvancedSearchParams()),
-        SavedSearch(name: "Local Events", query: "events near me", filters: AdvancedSearchParams()),
-        SavedSearch(name: "Tech Updates", query: "technology", filters: AdvancedSearchParams())
+        SavedSearch(name: "AI News", query: "artificial intelligence", filters: SearchFilterState()),
+        SavedSearch(name: "Local Events", query: "events near me", filters: SearchFilterState()),
+        SavedSearch(name: "Tech Updates", query: "technology", filters: SearchFilterState())
     ]
     
     SavedSearchesSection(
@@ -442,9 +431,9 @@ struct AllSavedSearchesView: View {
 
 #Preview("All Saved Searches") {
     let sampleSearches = [
-        SavedSearch(name: "AI News", query: "artificial intelligence", filters: AdvancedSearchParams()),
-        SavedSearch(name: "Local Events", query: "events near me", filters: AdvancedSearchParams()),
-        SavedSearch(name: "Tech Updates", query: "technology", filters: AdvancedSearchParams())
+        SavedSearch(name: "AI News", query: "artificial intelligence", filters: SearchFilterState()),
+        SavedSearch(name: "Local Events", query: "events near me", filters: SearchFilterState()),
+        SavedSearch(name: "Tech Updates", query: "technology", filters: SearchFilterState())
     ]
     
     AllSavedSearchesView(

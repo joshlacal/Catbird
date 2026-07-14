@@ -242,4 +242,3 @@ struct AdvancedFilterView: View {
         return AdvancedFilterView(viewModel: RefinedSearchViewModel(appState: appState))
   }
 }
-

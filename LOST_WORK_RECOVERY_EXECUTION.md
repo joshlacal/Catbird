@@ -48,7 +48,7 @@ Update the disposition column in the same commit that closes each slice. Valid d
 | `412bb74` | Default-on AppView draft sync; current-main requires explicit opt-in as a safety gate | superseded |
 | `4e833ba` | Composer chips/accessory redesign | candidate; exclude unrelated auth/chat content |
 | `17a4479` through `f7322e3`, plus `08e7368`, `dd7fde8` | FAB and capture actions | recovered; the unrelated `dd7fde8` App Intents/UIKit cell annotations are excluded with evidence |
-| `fea6386`, `dfb0b1e`, `19ae89a`, `29ab384`, `8881885` | Honest search filters | candidate |
+| `fea6386`, `dfb0b1e`, `19ae89a`, `29ab384`, `8881885` | Honest search filters | recovered |
 | `68043cb` | Repost/per-feed cache identity | candidate |
 | `d5eefcd`, `d06e076` | Own-message actions and sequence-zero ordering | candidate |
 | `10f1c17` | Settings runtime wiring | candidate; file-by-file semantic audit |
@@ -523,11 +523,11 @@ jj new
 **Interfaces:**
 - Produces: `SearchFilterState` with `.sort`, `.dateRange`, custom bounds, optional language, `activeFilterCount`, `sortValue`, `languageContainer`, and `dateBounds(now:)`
 
-- [ ] **Step 1: Restore the complete focused test suite and run it**
+- [x] **Step 1: Restore the complete focused test suite and run it**
 
 The suite from `8881885` must cover defaults, counts, API sort mapping, fixed/custom bounds, language conversion, Codable round-trip, and legacy saved-search reset.
 
-- [ ] **Step 2: Implement supported parameters only**
+- [x] **Step 2: Implement supported parameters only**
 
 ```swift
 struct SearchFilterState: Codable, Equatable {
@@ -545,12 +545,52 @@ Wire only real `searchPosts` sort/date/language parameters. Apply filters before
 
 Run `SearchFilterStateTests`, build, then verify Top/Latest pills, filter count, date/language selection, saved-search reload, and pagination after a filter change.
 
-- [ ] **Step 4: Update ledger and commit**
+- [x] **Step 4: Update ledger and commit**
 
 ```bash
 jj describe -m 'Catbird: recover supported search filters'
 jj new
 ```
+
+#### Task 6 recovery evidence (2026-07-14)
+
+- Archaeology: `fea6386`/`dfb0b1e` supplied the pure supported filter model and
+  focused tests; `19ae89a` replaced the unused fictional query dictionary with
+  real Petrel `sort`/`since`/`until`/`lang` arguments; `29ab384` supplied the
+  inline Top/Latest bar and compact filter sheet; `8881885` closed cursor reset,
+  saved-state ordering, and explicit-language precedence. The current Petrel
+  generated signature was inspected directly and supports those parameters.
+- Root cause: current code computed `queryParams` from date and
+  `AdvancedSearchParams` but never passed that dictionary to `searchPosts`.
+  Initial search, refresh, and pagination also constructed different requests,
+  allowing pagination to drop filters, while saved-search reload called a bare
+  post search after loading only the obsolete schema.
+- TDD RED: the restored 10-test `SearchFilterStateTests` suite failed to compile
+  because `SearchFilterState` was absent (`/tmp/recovery-task6-red.log`). Four
+  additional wiring regressions then failed for the missing supported parameter
+  builder, pre-search cursor reset, saved-state ordering, and honest filter UI
+  (`/tmp/recovery-task6-wiring-red.log`).
+- TDD GREEN: the final focused run passed 14/14 tests across
+  `SearchFilterStateTests` and `SearchFilterWiringTests`; log:
+  `/tmp/recovery-task6-focused-green.log`.
+- Preservation: 34/34 tests passed across `GatewayOAuthExchangeTests`,
+  `DraftSyncTranslationTests`, `ComposerChipsStripTests`, and
+  `FABQuickActionTests`; log: `/tmp/recovery-task6-preservation.log`.
+- Build/runtime: the iOS simulator build exited 0 with `** BUILD SUCCEEDED **`
+  (`/tmp/recovery-task6-build.log`). The resulting app installed and launched on
+  authenticated simulator `40111BBE-8709-40D0-9016-A27448486A80` as process
+  21490; launch screenshot: `/tmp/recovery-task6-auth-launch.png`.
+- Disposition: only API-supported sort, date bounds, and one optional language
+  were recovered. `AdvancedSearchParams`, `AdvancedFilterView`, and
+  `SearchSortSelector` were moved to repository `_trash` per file-safety rules;
+  fictional media, verification, follower, engagement, and local re-ranking
+  filters are excluded with evidence.
+- Open runtime gates: Top/Latest interaction, active filter count, custom
+  date/language selection, saved-search reload, and pagination after a filter
+  change remain unobserved. Xcode beta cannot load its private
+  `SimulatorKit.framework`, so semantic UI inspection/tapping is unavailable.
+  Build, source-contract tests, and authenticated launch do not close these
+  interactive checks.
 
 ### Task 7: Recover Repost and Per-Feed Cache Correctness
 
