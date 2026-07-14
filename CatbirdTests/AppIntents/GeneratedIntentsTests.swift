@@ -473,6 +473,18 @@ struct GeneratedIntentsTests {
       #expect(hits.isEmpty)
     }
 
+    @Test("Duplicate identifiers resolve without crashing")
+    func duplicateIdentifiers() async throws {
+      let view = try Fixture.postView(text: "Duplicated onscreen annotation")
+      let store = PostEntityStore(defaults: nil)
+      await store.store(view)
+
+      let id = view.uri.uriString()
+      let entities = await store.entities(for: [id, id])
+
+      #expect(entities.map(\.id) == [id, id])
+    }
+
     @Test("A fresh store resolves posts persisted by another process")
     func persistentRoundTrip() async throws {
       let suiteName = "test.app-intents.post-cache.\(UUID().uuidString)"
@@ -544,4 +556,3 @@ struct GeneratedIntentsTests {
   }
 
 } // GeneratedIntentsTests
-

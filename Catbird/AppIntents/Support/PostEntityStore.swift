@@ -63,14 +63,16 @@ actor PostEntityStore {
   /// omitted — the query fetches only those over the network.
   func entities(for identifiers: [String]) -> [PostEntity] {
     let memoryEntities = Dictionary(
-      uniqueKeysWithValues: identifiers.compactMap { id in
+      identifiers.compactMap { id in
         views[id].map { (id, PostEntity(from: $0)) }
-      })
+      },
+      uniquingKeysWith: { existing, _ in existing })
     let missing = identifiers.filter { memoryEntities[$0] == nil }
     let persistentEntities = Dictionary(
-      uniqueKeysWithValues: PostEntityCache.entities(for: missing, defaults: defaults).map {
+      PostEntityCache.entities(for: missing, defaults: defaults).map {
         ($0.id, $0)
-      })
+      },
+      uniquingKeysWith: { existing, _ in existing })
     let hits = identifiers.compactMap { memoryEntities[$0] ?? persistentEntities[$0] }
     logger.info(
       "resolve: \(hits.count)/\(identifiers.count) from store (\(self.views.count) cached)")

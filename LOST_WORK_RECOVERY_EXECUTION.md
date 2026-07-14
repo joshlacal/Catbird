@@ -1002,6 +1002,13 @@ If every historical setting is already present or superseded, commit only the ev
   affected screen/action remains an interactive simulator/device check. The
   automated mapping tests and launch evidence do not close it, so Step 3 stays
   unchecked.
+- Partial authenticated runtime evidence: Thread Sort Order persisted across a
+  relaunch from Hot to Latest, and Link Style persisted from Color Only to
+  Underline Only while its live preview updated. Both controls were restored to
+  their original values after verification. Evidence:
+  `/tmp/catbird-recovery-final/visual-settings-link-underline.png`. The manual
+  gate remains open for the other accepted settings, especially physical
+  haptics and the mutation-bearing privacy/retention paths.
 
 #### Task 9 review follow-up evidence (2026-07-14)
 
@@ -1240,6 +1247,25 @@ jj new
   invocation, and onscreen entity lookup remain required before Step 4 can be
   closed; simulator/unit/build evidence does not substitute for that device
   boundary.
+- Physical annotation RED: two unlocked runs of
+  `testOnscreenPostAnnotationsAreCollectable` crashed Catbird when the App
+  Intents runner queried `PostEntity` view annotations. The exported device
+  crash log symbolicated the trap to `PostEntityStore.entities(for:)` creating
+  a dictionary from duplicate requested post IDs. Evidence:
+  `/tmp/catbird-recovery-final/physical-appintents-annotations-retry.log` and
+  `/tmp/catbird-recovery-final/appintents-attachments/C2F1E93D-529F-4EE1-BD66-8BE1887AAECA.ips`.
+- Duplicate-ID fix: in-memory and persistent lookup maps now keep the first
+  entity for a repeated key while the result preserves the caller's requested
+  order and duplicates. The pre-fix unit regression reproduced the same fatal
+  duplicate-key trap; the focused GREEN passed 4/4, including two identical IDs
+  resolving to two ordered entities. Logs:
+  `/tmp/catbird-recovery-final/post-entity-duplicate-red.log` and
+  `/tmp/catbird-recovery-final/post-entity-duplicate-green.log`.
+- The fixed physical product and UI-test runner are signed and built with
+  `** TEST BUILD SUCCEEDED **` in
+  `/tmp/catbird-recovery-final/physical-appintents-build-fixed.log`. The exact
+  physical annotation rerun remains pending because the phone auto-locked after
+  the build; Step 4 remains open.
 
 ### Task 12: Final Cross-Platform Verification and Integration Audit
 
@@ -1350,12 +1376,11 @@ Expected: a clean working copy. Do not move `main`; present the branch and evide
   `visual-threaded-replies-true-siblings.png`, and
   `visual-threaded-replies-continue-thread.png` prove the direct-child, sibling,
   and omitted-child cases respectively.
-- Physical-device status: the annotation-only App Intents UI test is already
-  built successfully in `physical-appintents-build-for-testing.log`. A
-  `test-without-building` attempt reached device preflight but Xcode refused to
-  launch because Josh's iPhone was locked; the exact gate is recorded in
-  `physical-appintents-annotations.log`. No representational Like intent was
-  run.
+- Physical-device status: after the initial lock gate, two unlocked annotation
+  runs exposed and reproduced a duplicate-ID crash in `PostEntityStore`. The
+  focused regression and fixed signed device build are green; the exact
+  physical rerun is waiting for the phone to be unlocked again. No
+  representational Like intent was run.
 - Remaining device gate: Step 3 stays open for physical-iPhone photo/video,
   Siri/App Intents, entity lookup, remote draft round-trip, and device-backed
   chat ordering/edit/unsend checks. The branch is integration-ready for code
