@@ -1009,6 +1009,31 @@ If every historical setting is already present or superseded, commit only the ev
   `/tmp/catbird-recovery-final/visual-settings-link-underline.png`. The manual
   gate remains open for the other accepted settings, especially physical
   haptics and the mutation-bearing privacy/retention paths.
+- Expanded authenticated runtime evidence: Required Alt Text blocked a composer
+  submission containing media without alt text and left the composer open;
+  larger ALT badges changed from 30x17 to 42x26; Highlight Links, Reading Time,
+  and Confirm Before Actions each persisted across relaunch. The confirmation
+  path displayed the expected Mute User alert and was cancelled without a
+  remote mutation. Disable Haptic Feedback also persisted across relaunch on
+  the simulator, although actual tactile suppression still requires hardware.
+  Show Language Indicators was verified against the same declared-Spanish
+  search result: its accessibility description included `Spanish` while on and
+  omitted it after the off-state relaunch. Every temporary local setting was
+  restored to its original value. Evidence:
+  `/tmp/catbird-recovery-final/visual-settings-required-alt-text-block.png`,
+  `visual-settings-alt-badge-large.png`,
+  `visual-settings-alt-badge-default.png`,
+  `visual-settings-links-disabled.png`,
+  `visual-settings-reading-time-enabled.png`,
+  `visual-settings-confirm-before-action.png`,
+  `visual-settings-haptics-disabled.png`,
+  `visual-settings-language-indicator-on.png`, and
+  `visual-settings-language-indicator-off.png`.
+- Remaining manual settings boundary: `loggedOutVisibility` performs a remote
+  profile-record write, `mlsMessageRetentionDays` can delete local MLS history,
+  and tactile haptic behavior requires a physical device. Those mutation/device
+  checks are intentionally not inferred from simulator persistence, so Step 3
+  remains open.
 
 #### Task 9 review follow-up evidence (2026-07-14)
 
@@ -1263,9 +1288,15 @@ jj new
   `/tmp/catbird-recovery-final/post-entity-duplicate-green.log`.
 - The fixed physical product and UI-test runner are signed and built with
   `** TEST BUILD SUCCEEDED **` in
-  `/tmp/catbird-recovery-final/physical-appintents-build-fixed.log`. The exact
-  physical annotation rerun remains pending because the phone auto-locked after
-  the build; Step 4 remains open.
+  `/tmp/catbird-recovery-final/physical-appintents-build-fixed.log`. Two exact
+  unlocked rerun attempts reached the physical runner without reproducing the
+  prior duplicate-key crash, but neither produced a test verdict: the first
+  timed out while enabling automation mode, and the retry launched the selected
+  test before the CoreDevice/Mercury remote connection was invalidated. Logs:
+  `/tmp/catbird-recovery-final/physical-appintents-annotations-fixed.log` and
+  `/tmp/catbird-recovery-final/physical-appintents-annotations-fixed-retry.log`.
+  These are device-automation infrastructure failures, not passing evidence;
+  the exact physical annotation verdict and the rest of Step 4 remain open.
 
 ### Task 12: Final Cross-Platform Verification and Integration Audit
 
@@ -1378,9 +1409,11 @@ Expected: a clean working copy. Do not move `main`; present the branch and evide
   and omitted-child cases respectively.
 - Physical-device status: after the initial lock gate, two unlocked annotation
   runs exposed and reproduced a duplicate-ID crash in `PostEntityStore`. The
-  focused regression and fixed signed device build are green; the exact
-  physical rerun is waiting for the phone to be unlocked again. No
-  representational Like intent was run.
+  focused regression and fixed signed device build are green. With the phone
+  unlocked, two post-fix reruns then failed in Xcode/CoreDevice automation
+  infrastructure (automation-mode timeout, followed by a remote Mercury
+  connection invalidation after test launch) without reproducing the crash or
+  yielding a test verdict. No representational Like intent was run.
 - Remaining device gate: Step 3 stays open for physical-iPhone photo/video,
   Siri/App Intents, entity lookup, remote draft round-trip, and device-backed
   chat ordering/edit/unsend checks. The branch is integration-ready for code
