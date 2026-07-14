@@ -115,6 +115,8 @@ extension PostComposerViewUIKit {
           }
           showingDrafts = false
         }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.automatic)
       }
 
     let linkSheetContent = draftsSheetContent

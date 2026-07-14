@@ -33,7 +33,8 @@ final class ExperimentalSettings {
     // MARK: - Draft Sync (AppView-stored drafts)
 
     /// Whether composer drafts are synced to the Bluesky AppView (app.bsky.draft.*).
-    /// Defaults to OFF — ships dark until the AppView endpoints are confirmed live.
+    /// Defaults to OFF as a current-main safety gate; an explicit opt-in is
+    /// required even though the translation and synchronization path exists.
     var draftSyncEnabled: Bool {
         get { UserDefaults.standard.bool(forKey: Self.draftSyncEnabledKey) }
         set {

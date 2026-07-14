@@ -63,27 +63,28 @@ struct DraftsListView: View {
   private var draftsList: some View {
     List {
       ForEach(appState.composerDraftManager.savedDrafts) { draft in
-        DraftRow(draft: draft)
-          .contentShape(Rectangle())
-          .onTapGesture {
-            onSelectDraft?(draft)
+        Button {
+          onSelectDraft?(draft)
+        } label: {
+          DraftRow(draft: draft)
+        }
+        .buttonStyle(.plain)
+        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+          Button(role: .destructive) {
+            draftToDelete = draft
+            showDeleteConfirmation = true
+          } label: {
+            Label("Delete", systemImage: "trash")
           }
-          .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-            Button(role: .destructive) {
-              draftToDelete = draft
-              showDeleteConfirmation = true
-            } label: {
-              Label("Delete", systemImage: "trash")
-            }
+        }
+        .contextMenu {
+          Button(role: .destructive) {
+            draftToDelete = draft
+            showDeleteConfirmation = true
+          } label: {
+            Label("Delete", systemImage: "trash")
           }
-          .contextMenu {
-            Button(role: .destructive) {
-              draftToDelete = draft
-              showDeleteConfirmation = true
-            } label: {
-              Label("Delete", systemImage: "trash")
-            }
-          }
+        }
       }
     }
     .listStyle(.plain)
@@ -130,7 +131,7 @@ private struct DraftRow: View {
                 .foregroundStyle(.secondary)
             }
             if draft.isThread {
-              Label("Thread", systemImage: "list.bullet")
+              Label("Thread · \(draft.postCount) posts", systemImage: "list.bullet")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             }
@@ -138,6 +139,11 @@ private struct DraftRow: View {
               Label("Media", systemImage: "photo")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            }
+            if let deviceName = draft.remoteMediaDeviceName {
+              Label("Media on \(deviceName)", systemImage: "iphone.and.arrow.forward")
+                .font(.caption)
+                .foregroundStyle(.orange)
             }
           }
         }
@@ -148,6 +154,12 @@ private struct DraftRow: View {
           Text(draft.modifiedDate, style: .relative)
             .font(.caption)
             .foregroundStyle(.secondary)
+          if draft.isSynced {
+            Image(systemName: "checkmark.icloud")
+              .font(.caption)
+              .foregroundStyle(.secondary)
+              .accessibilityLabel("Synced")
+          }
         }
       }
     }

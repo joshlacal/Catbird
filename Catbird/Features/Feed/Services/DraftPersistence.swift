@@ -124,6 +124,7 @@ final class DraftPersistence {
         }
         model.remoteId = remoteId
         model.lastSyncedAt = date
+        model.remoteMediaDeviceName = nil
         try modelContainer.mainContext.save()
         logger.debug("🔗 Marked draft \(id.uuidString) synced - remoteId: \(remoteId)")
     }
@@ -133,7 +134,8 @@ final class DraftPersistence {
         _ draft: PostComposerDraft,
         toDraftWithId id: UUID,
         modifiedDate: Date,
-        syncedAt: Date
+        syncedAt: Date,
+        remoteMediaDeviceName: String? = nil
     ) throws {
         guard let model = try fetchDraftModel(id: id) else {
             throw DraftError.draftNotFound
@@ -141,6 +143,7 @@ final class DraftPersistence {
         try model.apply(draft)
         model.modifiedDate = modifiedDate
         model.lastSyncedAt = syncedAt
+        model.remoteMediaDeviceName = remoteMediaDeviceName
         try modelContainer.mainContext.save()
         logger.info("⬇️ Applied remote draft content to \(id.uuidString)")
     }
@@ -153,7 +156,8 @@ final class DraftPersistence {
         remoteId: String,
         createdDate: Date,
         modifiedDate: Date,
-        syncedAt: Date
+        syncedAt: Date,
+        remoteMediaDeviceName: String? = nil
     ) throws -> UUID {
         let modelContext = modelContainer.mainContext
         let model = try DraftPost.create(from: draft, accountDID: accountDID)
@@ -161,6 +165,7 @@ final class DraftPersistence {
         model.createdDate = createdDate
         model.modifiedDate = modifiedDate
         model.lastSyncedAt = syncedAt
+        model.remoteMediaDeviceName = remoteMediaDeviceName
         modelContext.insert(model)
         try modelContext.save()
         logger.info("⬇️ Materialized remote draft \(remoteId) as local \(model.id.uuidString)")

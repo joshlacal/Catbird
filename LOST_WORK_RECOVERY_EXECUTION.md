@@ -44,7 +44,7 @@ Update the disposition column in the same commit that closes each slice. Valid d
 | Candidate commits | Behavior | Initial disposition |
 |---|---|---|
 | `d062c2a`, `8e2b09d`, `650f738`, `2f3f4cc` | Feed icons and banner geometry | candidate |
-| `412bb74` | Draft/AppView sync and drafts sheet | candidate |
+| `412bb74` | Draft/AppView sync and drafts sheet | recovered |
 | `4e833ba` | Composer chips/accessory redesign | candidate; exclude unrelated auth/chat content |
 | `17a4479` through `f7322e3`, plus `08e7368`, `dd7fde8` | FAB and capture actions | candidate; `dd7fde8` cell annotations audited under App Intents |
 | `fea6386`, `dfb0b1e`, `19ae89a`, `29ab384`, `8881885` | Honest search filters | candidate |
@@ -274,7 +274,7 @@ jj new
 **Interfaces:**
 - Produces: `DraftSyncTranslator.isSyncable(_:)`, `remoteDraft(...)`, `localDraft(from:includeLocalMedia:)`, account-scoped draft selection and working-draft preservation
 
-- [ ] **Step 1: Run current draft tests before editing**
+- [x] **Step 1: Run current draft tests before editing**
 
 ```bash
 xcodebuild test -project Catbird.xcodeproj -scheme Catbird \
@@ -285,7 +285,13 @@ xcodebuild test -project Catbird.xcodeproj -scheme Catbird \
 
 Expected: establishes whether `412bb74` is already present. A passing test is evidence, not automatic proof that the UI behavior is present.
 
-- [ ] **Step 2: Reconcile `412bb74` symbol by symbol**
+Evidence: the pre-edit command passed all 12 enumerated
+`DraftSyncTranslationTests`. `PostComposerFixesTests.swift` is excluded from the
+current `CatbirdTests` target by the Xcode project and therefore did not
+enumerate; the recovered account-selection regressions were added to the
+targeted translation suite instead.
+
+- [x] **Step 2: Reconcile `412bb74` symbol by symbol**
 
 Retain or restore these exact semantics:
 
@@ -303,11 +309,27 @@ enum DraftSyncTranslator {
 
 Keep remote media as device-local references, exclude reply/quote drafts from sync, preserve account scoping, and keep current Petrel-generated signatures when they differ from history.
 
-- [ ] **Step 3: Verify selection and sync UI**
+Evidence: reconciled the historical behavior against current generated Petrel
+types, including schema clamping, current gallery writes plus legacy image
+reads, non-advancing pagination termination, device-local media metadata,
+account-scoped selection, and immediate working-draft preservation. The
+historical default-on sync flag was not restored; current main's explicit
+opt-in default remains the safety gate.
+
+- [x] **Step 3: Verify selection and sync UI**
 
 Run the tests again, build, launch Drafts, select a local draft, return to the composer, and confirm its text/thread metadata restore. If a test account supports AppView drafts, pull then push a text-only draft and confirm round-trip behavior.
 
-- [ ] **Step 4: Update ledger and commit**
+Evidence: all 16 enumerated `DraftSyncTranslationTests` passed on simulator
+`40111BBE-8709-40D0-9016-A27448486A80`; the fresh `Catbird` simulator build
+exited 0; and the built app installed, launched, and rendered its authenticated
+timeline (`/tmp/catbird-task3-launch.png`). Scripted simulator tooling could not
+reliably navigate into the Drafts sheet, so local selection/thread restoration
+is covered by the focused regression rather than a manual tap-through. No
+AppView text-only push/pull was performed because that would mutate the signed-in
+account's remote draft state.
+
+- [x] **Step 4: Update ledger and commit**
 
 ```bash
 jj describe -m 'Catbird: reconcile draft sync and drafts presentation'

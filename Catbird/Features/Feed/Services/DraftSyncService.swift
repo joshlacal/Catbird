@@ -25,6 +25,12 @@ import UIKit
 /// the AppView's app.bsky.draft.defs record shape.
 enum DraftSyncTranslator {
 
+  // app.bsky.draft.defs schema limits.
+  static let maxPosts = 100
+  static let maxLangs = 3
+  static let maxTextLength = 10_000
+  static let maxDeviceNameLength = 100
+
   /// Whether a local draft can be represented by the remote schema.
   /// Replies and quotes have no representation in app.bsky.draft.defs#draft
   /// (no reply ref; embedRecords requires a CID the draft doesn't carry),
@@ -32,6 +38,15 @@ enum DraftSyncTranslator {
   static func isSyncable(_ draft: PostComposerDraft) -> Bool {
     guard draft.parentPostURI == nil, draft.quotedPostURI == nil else { return false }
     return !draft.threadEntries.contains { $0.parentPostURI != nil || $0.quotedPostURI != nil }
+  }
+
+  static func remoteDraftHasMedia(_ draft: AppBskyDraftDefs.Draft) -> Bool {
+    draft.posts.contains { post in
+      if let gallery = post.embedGallery, !gallery.items.items.isEmpty { return true }
+      if let images = post.embedImages, !images.isEmpty { return true }
+      if let videos = post.embedVideos, !videos.isEmpty { return true }
+      return false
+    }
   }
 
   /// Translate a local draft into the remote record shape for push.
@@ -76,9 +91,9 @@ enum DraftSyncTranslator {
 
     return AppBskyDraftDefs.Draft(
       deviceId: deviceId,
-      deviceName: deviceName,
-      posts: posts,
-      langs: draft.selectedLanguages.isEmpty ? nil : draft.selectedLanguages,
+      deviceName: deviceName.map { String($0.prefix(Self.maxDeviceNameLength)) },
+      posts: Array(posts.prefix(Self.maxPosts)),
+      langs: draft.selectedLanguages.isEmpty ? nil : Array(draft.selectedLanguages.prefix(Self.maxLangs)),
       postgateEmbeddingRules: nil,
       threadgateAllow: nil
     )
@@ -146,11 +161,15 @@ enum DraftSyncTranslator {
 
     let externals = externalURL.map { [AppBskyDraftDefs.DraftEmbedExternal(uri: URI(uriString: $0))] }
 
+    let gallery: AppBskyDraftDefs.DraftEmbedGallery? = images.isEmpty
+      ? nil
+      : .init(items: .init(items: images.map { .draftEmbedImage($0) }))
+
     return AppBskyDraftDefs.DraftPost(
-      text: text,
+      text: String(text.prefix(Self.maxTextLength)),
       labels: labels,
-      embedImages: images.isEmpty ? nil : images,
-      embedGallery: nil,
+      embedImages: nil,
+      embedGallery: gallery,
       embedVideos: videos.isEmpty ? nil : videos,
       embedExternals: externals,
       embedRecords: nil
@@ -164,7 +183,15 @@ enum DraftSyncTranslator {
     var mediaItems: [CodableMediaItem] = []
     var videoItem: CodableMediaItem?
     if includeLocalMedia {
-      mediaItems = (post.embedImages ?? []).map { image in
+      var images = (post.embedGallery?.items.items ?? []).compactMap {
+        item -> AppBskyDraftDefs.DraftEmbedImage? in
+        if case .draftEmbedImage(let image) = item { return image }
+        return nil
+      }
+      if images.isEmpty {
+        images = post.embedImages ?? []
+      }
+      mediaItems = images.map { image in
         CodableMediaItem(
           altText: image.alt ?? "",
           aspectRatio: nil,
@@ -430,7 +457,8 @@ final class DraftSyncService {
 
     await migrateLocalDraftsIfNeeded(accountDID: accountDID)
 
-    // Fetch all remote drafts (paginated)
+    // The service may return a cursor on its final page. Stop on an empty or
+    // non-advancing page rather than spinning to the safety cap.
     var remoteViews: [AppBskyDraftDefs.DraftView] = []
     var cursor: String?
     do {
@@ -443,8 +471,10 @@ final class DraftSyncService {
           return
         }
         remoteViews.append(contentsOf: data.drafts)
-        cursor = data.cursor
-      } while cursor != nil && remoteViews.count < Self.pullMaxDrafts
+        let nextCursor = data.cursor
+        guard !data.drafts.isEmpty, let nextCursor, nextCursor != cursor else { break }
+        cursor = nextCursor
+      } while remoteViews.count < Self.pullMaxDrafts
     } catch {
       logger.error("Draft pull failed: \(error.localizedDescription)")
       return
@@ -483,7 +513,11 @@ final class DraftSyncService {
           remoteId: remoteId,
           createdDate: remote.createdAt.date,
           modifiedDate: remote.updatedAt.date,
-          syncedAt: Date()
+          syncedAt: Date(),
+          remoteMediaDeviceName: Self.unrestorableMediaDeviceName(
+            for: remote.draft,
+            mediaIncluded: includeMedia
+          )
         )
       }
 
@@ -528,8 +562,20 @@ final class DraftSyncService {
       translated,
       toDraftWithId: local.id,
       modifiedDate: remote.updatedAt.date,
-      syncedAt: Date()
+      syncedAt: Date(),
+      remoteMediaDeviceName: Self.unrestorableMediaDeviceName(
+        for: remote.draft,
+        mediaIncluded: includeMedia
+      )
     )
+  }
+
+  private static func unrestorableMediaDeviceName(
+    for draft: AppBskyDraftDefs.Draft,
+    mediaIncluded: Bool
+  ) -> String? {
+    guard !mediaIncluded, DraftSyncTranslator.remoteDraftHasMedia(draft) else { return nil }
+    return draft.deviceName ?? "another device"
   }
 
   // MARK: - Migration

@@ -238,8 +238,27 @@ final class ComposerDraftManager {
   }
   
   /// Load a saved draft (returns the draft for restoration)
+  @MainActor
   func loadSavedDraft(_ draftViewModel: DraftPostViewModel) -> PostComposerDraft? {
+    guard let accountDID = currentAccountDID else {
+      logger.warning("Cannot select saved draft without an active account")
+      return nil
+    }
+    return loadSavedDraft(draftViewModel, accountDID: accountDID)
+  }
+
+  /// Account-scoped selection boundary used by the drafts sheet and tests.
+  @MainActor
+  func loadSavedDraft(
+    _ draftViewModel: DraftPostViewModel,
+    accountDID: String
+  ) -> PostComposerDraft? {
     logger.info("📖 Loading saved draft - ID: \(draftViewModel.id.uuidString), Preview: '\(draftViewModel.previewText.prefix(30))...'")
+
+    guard draftViewModel.accountDID == accountDID else {
+      logger.warning("Refusing to load draft \(draftViewModel.id.uuidString) from another account")
+      return nil
+    }
     
     do {
       let draft = try draftViewModel.decodeDraft()
@@ -248,6 +267,10 @@ final class ComposerDraftManager {
       // Track which saved draft was restored
       restoredSavedDraftId = draftViewModel.id
       logger.debug("  Tracking restored draft ID: \(draftViewModel.id.uuidString)")
+
+      // Preserve the selection immediately. The composer autosave loop may
+      // not run before sheet dismissal or another presentation transition.
+      storeDraft(draft)
       
       return draft
     } catch {
@@ -364,7 +387,7 @@ final class ComposerDraftManager {
 
   @MainActor
   private var currentAccountDID: String? {
-      AppStateManager.shared.lifecycle.userDID
+      appState?.userDID
   }
   
   // MARK: - Legacy Migration
@@ -741,6 +764,9 @@ struct DraftPostViewModel: Identifiable {
   let isReply: Bool
   let isQuote: Bool
   let isThread: Bool
+  let isSynced: Bool
+  let remoteMediaDeviceName: String?
+  let postCount: Int
   
   private let draftData: Data
   
@@ -754,7 +780,14 @@ struct DraftPostViewModel: Identifiable {
     self.isReply = draftPost.isReply
     self.isQuote = draftPost.isQuote
     self.isThread = draftPost.isThread
+    self.isSynced = draftPost.remoteId != nil
+    self.remoteMediaDeviceName = draftPost.remoteMediaDeviceName
     self.draftData = draftPost.draftData
+    if let draft = try? JSONDecoder().decode(PostComposerDraft.self, from: draftData) {
+      self.postCount = draft.isThreadMode ? max(1, draft.threadEntries.count) : 1
+    } else {
+      self.postCount = 1
+    }
   }
   
   func decodeDraft() throws -> PostComposerDraft {

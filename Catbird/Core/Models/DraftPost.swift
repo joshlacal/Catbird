@@ -52,6 +52,9 @@ final class DraftPost {
   /// Timestamp of the last successful AppView sync
   var lastSyncedAt: Date?
 
+  /// Origin device for media that cannot be restored on this device.
+  var remoteMediaDeviceName: String?
+
   init(
     id: UUID = UUID(),
     accountDID: String,
@@ -62,7 +65,8 @@ final class DraftPost {
     isQuote: Bool,
     isThread: Bool,
     remoteId: String? = nil,
-    lastSyncedAt: Date? = nil
+    lastSyncedAt: Date? = nil,
+    remoteMediaDeviceName: String? = nil
   ) {
     self.id = id
     self.accountDID = accountDID
@@ -76,6 +80,7 @@ final class DraftPost {
     self.isThread = isThread
     self.remoteId = remoteId
     self.lastSyncedAt = lastSyncedAt
+    self.remoteMediaDeviceName = remoteMediaDeviceName
     
       DraftPost.logger.info("📝 DraftPost initialized - ID: \(id.uuidString), Account: \(accountDID), Preview: '\(previewText.prefix(50))...', HasMedia: \(hasMedia), IsReply: \(isReply), IsQuote: \(isQuote), IsThread: \(isThread)")
   }
@@ -106,10 +111,20 @@ final class DraftPost {
     let encoder = JSONEncoder()
     draftData = try encoder.encode(draft)
     previewText = DraftPost.previewText(for: draft)
-    hasMedia = !draft.mediaItems.isEmpty || draft.videoItem != nil || draft.selectedGif != nil
+    hasMedia = DraftPost.hasMedia(draft)
     isReply = draft.parentPostURI != nil || draft.threadEntries.first?.parentPostURI != nil
     isQuote = draft.quotedPostURI != nil || draft.threadEntries.first?.quotedPostURI != nil
     isThread = draft.isThreadMode && draft.threadEntries.count > 1
+  }
+
+  /// Whether the draft has media at the top level or in any thread entry.
+  static func hasMedia(_ draft: PostComposerDraft) -> Bool {
+    if !draft.mediaItems.isEmpty || draft.videoItem != nil || draft.selectedGif != nil {
+      return true
+    }
+    return draft.threadEntries.contains {
+      !$0.mediaItems.isEmpty || $0.videoItem != nil || $0.selectedGif != nil
+    }
   }
 
   /// Generate the list-display preview text for a composer draft
@@ -150,7 +165,7 @@ final class DraftPost {
     let previewText = Self.previewText(for: draft)
 
     // Compute metadata flags
-    let hasMedia = !draft.mediaItems.isEmpty || draft.videoItem != nil || draft.selectedGif != nil
+    let hasMedia = Self.hasMedia(draft)
     let isReply = draft.parentPostURI != nil || draft.threadEntries.first?.parentPostURI != nil
     let isQuote = draft.quotedPostURI != nil || draft.threadEntries.first?.quotedPostURI != nil
     let isThread = draft.isThreadMode && draft.threadEntries.count > 1

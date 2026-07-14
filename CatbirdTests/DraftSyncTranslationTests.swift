@@ -170,13 +170,45 @@ struct DraftSyncTranslationTests {
     let remote = DraftSyncTranslator.remoteDraft(from: draft, deviceId: "device-1", deviceName: nil)
 
     let post = remote.posts.first
-    #expect(post?.embedImages?.count == 1)
-    #expect(post?.embedImages?.first?.localRef.path == imagePath)
-    #expect(post?.embedImages?.first?.alt == "An image")
+    #expect(post?.embedImages == nil)
+    guard case .draftEmbedImage(let image)? = post?.embedGallery?.items.items.first else {
+      Issue.record("Expected image in the current embedGallery write shape")
+      return
+    }
+    #expect(image.localRef.path == imagePath)
+    #expect(image.alt == "An image")
     #expect(post?.embedVideos?.count == 1)
     #expect(post?.embedVideos?.first?.localRef.path == videoPath)
     // Empty alt text becomes nil rather than an empty string
     #expect(post?.embedVideos?.first?.alt == nil)
+  }
+
+  @Test("Push clamps fields to app.bsky.draft schema limits")
+  func pushClampsSchemaLimits() {
+    let entries = (0...DraftSyncTranslator.maxPosts).map {
+      makeEntry(text: String(repeating: "x", count: DraftSyncTranslator.maxTextLength + 1) + "\($0)")
+    }
+    let languages = (0...DraftSyncTranslator.maxLangs).map {
+      LanguageCodeContainer(languageCode: "x-\($0)")
+    }
+    let draft = makeDraft(
+      postText: entries[0].text,
+      selectedLanguages: languages,
+      threadEntries: entries,
+      isThreadMode: true
+    )
+    let deviceName = String(repeating: "d", count: DraftSyncTranslator.maxDeviceNameLength + 1)
+
+    let remote = DraftSyncTranslator.remoteDraft(
+      from: draft,
+      deviceId: "device-1",
+      deviceName: deviceName
+    )
+
+    #expect(remote.posts.count == DraftSyncTranslator.maxPosts)
+    #expect(remote.posts.allSatisfy { $0.text.count == DraftSyncTranslator.maxTextLength })
+    #expect(remote.langs?.count == DraftSyncTranslator.maxLangs)
+    #expect(remote.deviceName?.count == DraftSyncTranslator.maxDeviceNameLength)
   }
 
   @Test("Empty optional collections push as nil")
@@ -302,6 +334,58 @@ struct DraftSyncTranslationTests {
     #expect(otherDevice.postText == "Pic")
   }
 
+  @Test("Current gallery media and legacy image media both pull")
+  func galleryAndLegacyImagesPull() {
+    let galleryPath = "file:///tmp/SharedDrafts/gallery.jpg"
+    let legacyPath = "file:///tmp/SharedDrafts/legacy.jpg"
+    let galleryPost = AppBskyDraftDefs.DraftPost(
+      text: "Gallery",
+      labels: nil,
+      embedImages: nil,
+      embedGallery: .init(items: .init(items: [
+        .draftEmbedImage(.init(localRef: .init(path: galleryPath), alt: "gallery"))
+      ])),
+      embedVideos: nil,
+      embedExternals: nil,
+      embedRecords: nil
+    )
+    let legacyPost = AppBskyDraftDefs.DraftPost(
+      text: "Legacy",
+      labels: nil,
+      embedImages: [.init(localRef: .init(path: legacyPath), alt: "legacy")],
+      embedGallery: nil,
+      embedVideos: nil,
+      embedExternals: nil,
+      embedRecords: nil
+    )
+
+    let gallery = DraftSyncTranslator.localDraft(
+      from: .init(
+        deviceId: nil,
+        deviceName: nil,
+        posts: [galleryPost],
+        langs: nil,
+        postgateEmbeddingRules: nil,
+        threadgateAllow: nil
+      ),
+      includeLocalMedia: true
+    )
+    let legacy = DraftSyncTranslator.localDraft(
+      from: .init(
+        deviceId: nil,
+        deviceName: nil,
+        posts: [legacyPost],
+        langs: nil,
+        postgateEmbeddingRules: nil,
+        threadgateAllow: nil
+      ),
+      includeLocalMedia: true
+    )
+
+    #expect(gallery.mediaItems.first?.rawImageURLString == galleryPath)
+    #expect(legacy.mediaItems.first?.rawImageURLString == legacyPath)
+  }
+
   @Test("Remote labels pull into selectedLabels")
   func labelsPull() {
     let remote = AppBskyDraftDefs.Draft(
@@ -360,5 +444,47 @@ struct DraftSyncTranslationTests {
     #expect(restored.selectedLabels == original.selectedLabels)
     #expect(restored.mediaItems.first?.rawImageURLString == "file:///tmp/SharedDrafts/img.jpg")
     #expect(restored.mediaItems.first?.altText == "pic")
+  }
+
+  // MARK: - Selection and presentation metadata
+
+  @Test("Saved draft selection is account scoped and preserves the working draft")
+  @MainActor
+  func savedDraftSelectionIsAccountScopedAndPreservesWorkingDraft() throws {
+    let accountDID = "did:plc:owner"
+    let entry = makeEntry(text: "Selected thread")
+    let draft = makeDraft(
+      postText: "Selected thread",
+      threadEntries: [entry],
+      isThreadMode: true
+    )
+    let owned = DraftPostViewModel(
+      draftPost: try DraftPost.create(from: draft, accountDID: accountDID)
+    )
+    let foreign = DraftPostViewModel(
+      draftPost: try DraftPost.create(from: draft, accountDID: "did:plc:other")
+    )
+    let manager = ComposerDraftManager()
+
+    #expect(manager.loadSavedDraft(foreign, accountDID: accountDID) == nil)
+    let selected = try #require(manager.loadSavedDraft(owned, accountDID: accountDID))
+    #expect(selected.postText == "Selected thread")
+    #expect(selected.threadEntries.map(\.text) == ["Selected thread"])
+    #expect(manager.currentDraft?.postText == "Selected thread")
+    #expect(manager.restoredSavedDraftId == owned.id)
+  }
+
+  @Test("Draft media metadata includes thread entry attachments")
+  func draftMediaMetadataIncludesThreadEntryAttachments() throws {
+    let image = makeImage(path: "file:///tmp/thread-image.jpg")
+    let draft = makeDraft(
+      postText: "Thread media",
+      threadEntries: [makeEntry(text: "Thread media", mediaItems: [image])],
+      isThreadMode: true
+    )
+
+    let model = try DraftPost.create(from: draft, accountDID: "did:plc:owner")
+
+    #expect(model.hasMedia)
   }
 }
