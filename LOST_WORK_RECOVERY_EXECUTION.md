@@ -44,7 +44,8 @@ Update the disposition column in the same commit that closes each slice. Valid d
 | Candidate commits | Behavior | Initial disposition |
 |---|---|---|
 | `d062c2a`, `8e2b09d`, `650f738`, `2f3f4cc` | Feed icons and banner geometry | candidate |
-| `412bb74` | Draft/AppView sync and drafts sheet | recovered |
+| `412bb74` | Draft translation, account scoping, and drafts-sheet presentation | recovered |
+| `412bb74` | Default-on AppView draft sync; current-main requires explicit opt-in as a safety gate | superseded |
 | `4e833ba` | Composer chips/accessory redesign | candidate; exclude unrelated auth/chat content |
 | `17a4479` through `f7322e3`, plus `08e7368`, `dd7fde8` | FAB and capture actions | candidate; `dd7fde8` cell annotations audited under App Intents |
 | `fea6386`, `dfb0b1e`, `19ae89a`, `29ab384`, `8881885` | Honest search filters | candidate |
@@ -316,18 +317,27 @@ account-scoped selection, and immediate working-draft preservation. The
 historical default-on sync flag was not restored; current main's explicit
 opt-in default remains the safety gate.
 
-- [x] **Step 3: Verify selection and sync UI**
+- [ ] **Step 3: Verify selection and sync UI**
 
 Run the tests again, build, launch Drafts, select a local draft, return to the composer, and confirm its text/thread metadata restore. If a test account supports AppView drafts, pull then push a text-only draft and confirm round-trip behavior.
 
-Evidence: all 16 enumerated `DraftSyncTranslationTests` passed on simulator
+Automated evidence: all 17 enumerated `DraftSyncTranslationTests` passed on simulator
 `40111BBE-8709-40D0-9016-A27448486A80`; the fresh `Catbird` simulator build
 exited 0; and the built app installed, launched, and rendered its authenticated
-timeline (`/tmp/catbird-task3-launch.png`). Scripted simulator tooling could not
-reliably navigate into the Drafts sheet, so local selection/thread restoration
-is covered by the focused regression rather than a manual tap-through. No
-AppView text-only push/pull was performed because that would mutate the signed-in
-account's remote draft state.
+timeline (`/tmp/catbird-task3-launch.png`). The focused suite covers local
+selection, thread restoration, schema/media translation, and drafts-row media
+metadata.
+
+Outstanding runtime QA gates:
+
+- [ ] Launch Drafts, inspect grouped rows/thumbnails/sync disclosure, select a
+  local draft, and confirm text/thread metadata in the composer.
+- [ ] With explicit authorization to mutate test-account data, pull then push a
+  text-only AppView draft and confirm the round trip.
+
+These remain open because scripted simulator tooling could not reliably navigate
+into the Drafts sheet and a live AppView round trip would mutate the signed-in
+account's remote drafts. App launch alone does not close either gate.
 
 - [x] **Step 4: Update ledger and commit**
 

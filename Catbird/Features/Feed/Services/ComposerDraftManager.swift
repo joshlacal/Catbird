@@ -305,6 +305,12 @@ final class ComposerDraftManager {
     }
   }
 
+  /// Whether AppView draft sync is active (drives the drafts sheet disclosure).
+  @MainActor
+  var isDraftSyncEnabled: Bool {
+    draftSyncService?.isEnabled ?? false
+  }
+
   /// Two-way sync of saved drafts with the AppView, then reload the local
   /// list. No-op while the draftSyncEnabled feature flag is off.
   @MainActor
@@ -767,6 +773,9 @@ struct DraftPostViewModel: Identifiable {
   let isSynced: Bool
   let remoteMediaDeviceName: String?
   let postCount: Int
+  let thumbnailURLs: [URL]
+  let mediaCount: Int
+  let hasVideo: Bool
   
   private let draftData: Data
   
@@ -784,9 +793,23 @@ struct DraftPostViewModel: Identifiable {
     self.remoteMediaDeviceName = draftPost.remoteMediaDeviceName
     self.draftData = draftPost.draftData
     if let draft = try? JSONDecoder().decode(PostComposerDraft.self, from: draftData) {
-      self.postCount = draft.isThreadMode ? max(1, draft.threadEntries.count) : 1
+      let entries = draft.threadEntries
+      self.postCount = draft.isThreadMode ? max(1, entries.count) : 1
+
+      let images = draft.mediaItems + entries.flatMap(\.mediaItems)
+      let videos = ([draft.videoItem] + entries.map(\.videoItem)).compactMap { $0 }
+      let gifs = ([draft.selectedGif] + entries.map(\.selectedGif)).compactMap { $0 }
+      self.mediaCount = images.count + videos.count + gifs.count
+      self.hasVideo = !videos.isEmpty
+      self.thumbnailURLs = images
+        .compactMap { $0.rawImageURLString.flatMap(URL.init(string:)) }
+        .prefix(3)
+        .map { $0 }
     } else {
       self.postCount = 1
+      self.thumbnailURLs = []
+      self.mediaCount = 0
+      self.hasVideo = false
     }
   }
   

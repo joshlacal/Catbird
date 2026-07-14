@@ -487,4 +487,30 @@ struct DraftSyncTranslationTests {
 
     #expect(model.hasMedia)
   }
+
+  @Test("Draft row metadata summarizes thumbnails and video across the thread")
+  func draftRowMetadataSummarizesAllAttachments() throws {
+    let coverPath = "file:///tmp/draft-cover.jpg"
+    let threadPath = "file:///tmp/draft-thread.jpg"
+    let videoPath = "file:///tmp/draft-video.mov"
+    let draft = makeDraft(
+      postText: "Media thread",
+      mediaItems: [makeImage(path: coverPath)],
+      threadEntries: [
+        makeEntry(
+          text: "Media thread",
+          mediaItems: [makeImage(path: threadPath)],
+          videoItem: makeVideo(path: videoPath)
+        )
+      ],
+      isThreadMode: true
+    )
+    let viewModel = DraftPostViewModel(
+      draftPost: try DraftPost.create(from: draft, accountDID: "did:plc:owner")
+    )
+
+    #expect(viewModel.mediaCount == 3)
+    #expect(viewModel.hasVideo)
+    #expect(viewModel.thumbnailURLs.map(\.absoluteString) == [coverPath, threadPath])
+  }
 }
