@@ -470,6 +470,96 @@ final class MLSForegroundResumeContractTests: XCTestCase {
         }
     }
 
+    func testContextFreeExpirationPreservesExactOwnerForForegroundResume() async {
+        let owner = MLSContextFreeLifecycleSuspensionOwner()
+        owner.markSuspensionInProgress(reason: "manager-free background")
+
+        XCTAssertTrue(
+            owner.emergencyCloseAllContextsIfOwned(reason: "manager-free expiration")
+        )
+        XCTAssertTrue(MLSClient.isSuspensionInProgress)
+        XCTAssertTrue(MLSCoreContext.isSuspensionInProgress)
+
+        let resumed = await owner.resumeSuspensionIfOwnedAndContextFree()
+        XCTAssertTrue(resumed)
+        XCTAssertFalse(MLSClient.isSuspensionInProgress)
+        XCTAssertFalse(MLSCoreContext.isSuspensionInProgress)
+    }
+
+    func testRotatedContextFreeOwnerCannotCloseOrReleaseSuccessor() async {
+        let staleOwner = MLSContextFreeLifecycleSuspensionOwner()
+        staleOwner.markSuspensionInProgress(reason: "older background")
+
+        let currentOwner = MLSContextFreeLifecycleSuspensionOwner()
+        currentOwner.markSuspensionInProgress(reason: "newer background")
+
+        XCTAssertFalse(
+            staleOwner.emergencyCloseAllContextsIfOwned(reason: "stale expiration")
+        )
+        let staleReleased = await staleOwner.resumeSuspensionIfOwnedAndContextFree()
+        XCTAssertFalse(staleReleased)
+        XCTAssertTrue(MLSClient.isSuspensionInProgress)
+        XCTAssertTrue(MLSCoreContext.isSuspensionInProgress)
+
+        XCTAssertTrue(
+            currentOwner.emergencyCloseAllContextsIfOwned(reason: "current expiration")
+        )
+        let currentReleased = await currentOwner.resumeSuspensionIfOwnedAndContextFree()
+        XCTAssertTrue(currentReleased)
+        XCTAssertFalse(MLSClient.isSuspensionInProgress)
+        XCTAssertFalse(MLSCoreContext.isSuspensionInProgress)
+    }
+
+    func testSceneTransitionCapturesContextFreeOwnerBeforeExpirationClosures() throws {
+        let appSource = try source(relativePath: "Catbird/App/CatbirdApp.swift")
+        let sceneHandler = try XCTUnwrap(
+            functionBody(
+                signature: "func handleScenePhaseChange(from oldPhase: ScenePhase, to newPhase: ScenePhase)",
+                in: appSource
+            )
+        )
+        let ownerCapture = try XCTUnwrap(
+            sceneHandler.range(
+                of: "contextFreeSuspensionOwner = "
+                    + "appStateManager.contextFreeMLSSuspensionOwner"
+            )
+        )
+        let firstExpiration = try XCTUnwrap(
+            sceneHandler.range(of: "beginBackgroundTask(withName: \"ScenePhaseTransition\")")
+        )
+        let asynchronousLifecycleTask = try XCTUnwrap(
+            sceneHandler.range(of: "Task { @MainActor in")
+        )
+
+        XCTAssertLessThan(ownerCapture.lowerBound, firstExpiration.lowerBound)
+        XCTAssertLessThan(ownerCapture.lowerBound, asynchronousLifecycleTask.lowerBound)
+
+        let forceClose = try XCTUnwrap(
+            functionBody(signature: "func forceCloseSceneSuspensionSynchronously(", in: appSource)
+        )
+        let managerClose = try XCTUnwrap(
+            functionBody(signature: "if let manager", in: forceClose)
+        )
+        let contextFreeStart = try XCTUnwrap(
+            forceClose.range(of: "} else {\n      guard")
+        )
+        let sceneCloseMark = try XCTUnwrap(
+            forceClose.range(
+                of: "MLSForegroundResumeCoordinator.markRustRuntimeClosedForSuspension("
+            )
+        )
+        let contextFreeClose = String(
+            forceClose[contextFreeStart.upperBound ..< sceneCloseMark.lowerBound]
+        )
+        XCTAssertTrue(managerClose.contains("MLSClient.interruptAllContexts()"))
+        XCTAssertTrue(managerClose.contains("MLSCoreContext.interruptAllContexts()"))
+        XCTAssertTrue(managerClose.contains("MLSClient.emergencyCloseAllContexts("))
+        XCTAssertTrue(contextFreeClose.contains("contextFreeSuspensionOwner"))
+        XCTAssertTrue(contextFreeClose.contains(".emergencyCloseAllContextsIfOwned("))
+        XCTAssertFalse(contextFreeClose.contains("interruptAllContexts"))
+        XCTAssertFalse(contextFreeClose.contains("MLSClient.emergencyCloseAllContexts("))
+    }
+
     func testSceneExpirationHandlersRaceForExactlyOneCloseAndMark() {
         let transitionToken = MLSForegroundResumeCoordinator.recordSceneTransition(to: .background)
         let closeClaim = MLSSceneSuspensionCloseClaim(

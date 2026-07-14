@@ -212,14 +212,24 @@ enum MLSSuspensionCloseCoordinator {
 private func forceCloseSceneSuspensionSynchronously(
   claim: MLSSceneSuspensionCloseClaim,
   manager: MLSConversationManager?,
+  contextFreeSuspensionOwner: MLSContextFreeLifecycleSuspensionOwner?,
   reason: String
 ) {
   let closeIfClaimed: @MainActor () -> Void = {
     guard claim.claimExpirationIfCurrent() else { return }
-    MLSClient.interruptAllContexts()
-    MLSCoreContext.interruptAllContexts()
-    MLSClient.emergencyCloseAllContexts(reason: reason)
-    manager?.markRustRuntimeClosedForSuspend(reason: reason)
+    if let manager {
+      MLSClient.interruptAllContexts()
+      MLSCoreContext.interruptAllContexts()
+      MLSClient.emergencyCloseAllContexts(reason: reason)
+      manager.markRustRuntimeClosedForSuspend(reason: reason)
+    } else {
+      guard
+        let contextFreeSuspensionOwner,
+        contextFreeSuspensionOwner.emergencyCloseAllContextsIfOwned(reason: reason)
+      else {
+        return
+      }
+    }
     MLSForegroundResumeCoordinator.markRustRuntimeClosedForSuspension(
       claim.transitionToken,
       expectedPhase: claim.expectedPhase
@@ -1456,6 +1466,7 @@ private extension CatbirdApp {
       expectedPhase: newPhase
     )
     var suspensionManager: MLSConversationManager?
+    var contextFreeSuspensionOwner: MLSContextFreeLifecycleSuspensionOwner?
     var rustPathAvailable = false
     MLSSuspensionFlightRecorder.shared.record(
       .scenePhaseChange,
@@ -1503,11 +1514,13 @@ private extension CatbirdApp {
         appStateManager.beginContextFreeMLSSuspension(
           reason: "scenePhase → \(String(describing: newPhase))"
         )
+        contextFreeSuspensionOwner = appStateManager.contextFreeMLSSuspensionOwner
       }
     }
 
     #if os(iOS)
     let suspensionOwner = suspensionManager
+    let contextFreeOwner = contextFreeSuspensionOwner
     // CRITICAL FIX: Synchronously acquire background task assertion
     // This bridges the gap between the synchronous onChange callback and the async Task execution.
     // Without this, aggressive OS suspension (especially in Release builds) can freeze the app
@@ -1521,6 +1534,7 @@ private extension CatbirdApp {
         forceCloseSceneSuspensionSynchronously(
           claim: suspensionCloseClaim,
           manager: suspensionOwner,
+          contextFreeSuspensionOwner: contextFreeOwner,
           reason: "ScenePhaseTransition expired"
         )
         if taskId != .invalid {
@@ -1601,6 +1615,7 @@ private extension CatbirdApp {
           forceCloseSceneSuspensionSynchronously(
             claim: suspensionCloseClaim,
             manager: suspensionOwner,
+            contextFreeSuspensionOwner: contextFreeOwner,
             reason: "MLSSuspensionClose expired"
           )
         }
