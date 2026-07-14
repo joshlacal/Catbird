@@ -38,6 +38,12 @@ enum MLSForegroundResumeOutcome: Equatable {
   case resumed
 }
 
+enum MLSContextFreeForegroundResumeOutcome: Equatable {
+  case failedStillSuspended
+  case staleTransition
+  case resumed
+}
+
 @MainActor
 enum MLSForegroundResumeCoordinator {
   private static var sceneTransitionGeneration: UInt64 = 0
@@ -123,6 +129,21 @@ enum MLSForegroundResumeCoordinator {
       await performBackup()
       return .resumed
     }
+  }
+
+  static func runContextFree(
+    resumeStillCurrent: () -> Bool,
+    releaseOwnedSuspension: () async -> Bool
+  ) async -> MLSContextFreeForegroundResumeOutcome {
+    guard resumeStillCurrent() else { return .staleTransition }
+
+    let released = await releaseOwnedSuspension()
+
+    // The Core release performs the security decision through a two-sided owner and
+    // generation CAS. This post-await check only classifies the UI transition outcome;
+    // it must never clear or reassert either global gate.
+    guard resumeStillCurrent() else { return .staleTransition }
+    return released ? .resumed : .failedStillSuspended
   }
 }
 
@@ -1477,9 +1498,12 @@ private extension CatbirdApp {
         suspensionManager = manager
         rustPathAvailable = manager.suspendMLSOperations()
       } else {
-        // Without an instantiated manager there is no lifecycle owner. Keep the
-        // transition ownerless so later cleanup cannot abandon the suspension.
-        MLSClient.markSuspensionInProgress(reason: "scenePhase → \(String(describing: newPhase))")
+        // Backgrounding can precede the first chat. Bind this no-context transition
+        // to the process-stable AppStateManager owner so only its exact generation
+        // can reopen admission when the matching foreground transition arrives.
+        appStateManager.beginContextFreeMLSSuspension(
+          reason: "scenePhase → \(String(describing: newPhase))"
+        )
       }
       MLSCoreContext.markSuspensionInProgress()
     }
@@ -1693,8 +1717,35 @@ private extension CatbirdApp {
     let appState = appStateManager.lifecycle.appState
     let manager = appState?.mlsConversationManager
 
+    guard let manager else {
+      // Capture the exact suspension owner before the first await. A newer
+      // background transition rotates AppStateManager to a different owner,
+      // so this stale task cannot acquire its Core release capability.
+      let contextFreeSuspensionOwner = appStateManager.contextFreeMLSSuspensionOwner
+      let contextFreeOutcome = await MLSForegroundResumeCoordinator.runContextFree(
+        resumeStillCurrent: {
+          MLSForegroundResumeCoordinator.isCurrentActiveTransition(transitionToken)
+        },
+        releaseOwnedSuspension: {
+          await contextFreeSuspensionOwner.resumeSuspensionIfOwnedAndContextFree()
+        }
+      )
+
+      switch contextFreeOutcome {
+      case .failedStillSuspended:
+        logger.warning(
+          "⏭️ [RESUME] No MLS manager and no matching context-free suspension; gates remain closed"
+        )
+      case .staleTransition:
+        logger.warning("⏭️ [RESUME] Discarded stale context-free foreground transition")
+      case .resumed:
+        logger.info("✅ [RESUME] Released exact context-free MLS lifecycle suspension")
+      }
+      return
+    }
+
     let outcome = await MLSForegroundResumeCoordinator.run(
-      managerAvailable: manager != nil,
+      managerAvailable: true,
       resumeStillCurrent: {
         MLSForegroundResumeCoordinator.isCurrentActiveTransition(transitionToken)
       },
@@ -1716,7 +1767,6 @@ private extension CatbirdApp {
         appState.mlsServiceState.clearDatabaseFailure()
       },
       resumeManager: {
-        guard let manager else { return .failedStillSuspended }
         return await manager.resumeMLSOperations()
       },
       reassertSuspensionAfterStaleResume: {

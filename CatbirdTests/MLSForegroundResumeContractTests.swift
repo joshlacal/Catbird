@@ -527,6 +527,9 @@ final class MLSForegroundResumeContractTests: XCTestCase {
 
     func testBackgroundBeforeFirstChatUsesOwnedContextFreeSuspensionLifecycle() throws {
         let appSource = try source(relativePath: "Catbird/App/CatbirdApp.swift")
+        let appStateManagerSource = try source(
+            relativePath: "Catbird/Core/State/AppStateManager.swift"
+        )
         let sceneHandler = try XCTUnwrap(
             functionBody(
                 signature: "func handleScenePhaseChange(from oldPhase: ScenePhase, to newPhase: ScenePhase)",
@@ -541,6 +544,15 @@ final class MLSForegroundResumeContractTests: XCTestCase {
         )
 
         XCTAssertTrue(
+            appStateManagerSource.contains(
+                "var contextFreeMLSSuspensionOwner = "
+                    + "MLSContextFreeLifecycleSuspensionOwner()"
+            )
+        )
+        XCTAssertTrue(
+            appStateManagerSource.contains("func beginContextFreeMLSSuspension(")
+        )
+        XCTAssertFalse(
             appSource.contains(
                 "private let contextFreeMLSSuspensionOwner = "
                     + "MLSContextFreeLifecycleSuspensionOwner()"
@@ -548,21 +560,172 @@ final class MLSForegroundResumeContractTests: XCTestCase {
         )
         XCTAssertTrue(
             sceneHandler.contains(
-                "contextFreeMLSSuspensionOwner.markSuspensionInProgress("
+                "appStateManager.beginContextFreeMLSSuspension("
             )
         )
         XCTAssertTrue(
             foregroundResume.contains(
-                "await contextFreeMLSSuspensionOwner.resumeSuspensionIfOwnedAndContextFree()"
+                "appStateManager.contextFreeMLSSuspensionOwner"
             )
         )
+        XCTAssertTrue(foregroundResume.contains(".resumeSuspensionIfOwnedAndContextFree()"))
         XCTAssertTrue(
             foregroundResume.contains(
-                "MLSForegroundResumeCoordinator.isCurrentActiveTransition(transitionToken)"
+                "MLSForegroundResumeCoordinator."
+                    + "isCurrentActiveTransition(transitionToken)"
             )
         )
         XCTAssertFalse(foregroundResume.contains("MLSClient.clearSuspension"))
         XCTAssertFalse(foregroundResume.contains("MLSCoreContext.clearSuspensionFlag"))
+    }
+
+    func testCurrentContextFreeResumeReleasesExactlyOnce() async {
+        var releaseCount = 0
+
+        let outcome = await MLSForegroundResumeCoordinator.runContextFree(
+            resumeStillCurrent: { true },
+            releaseOwnedSuspension: {
+                releaseCount += 1
+                return true
+            }
+        )
+
+        XCTAssertEqual(outcome, .resumed)
+        XCTAssertEqual(releaseCount, 1)
+    }
+
+    func testStaleContextFreeResumeDoesNotInvokeOwnerRelease() async {
+        var releaseCount = 0
+
+        let outcome = await MLSForegroundResumeCoordinator.runContextFree(
+            resumeStillCurrent: { false },
+            releaseOwnedSuspension: {
+                releaseCount += 1
+                return true
+            }
+        )
+
+        XCTAssertEqual(outcome, .staleTransition)
+        XCTAssertEqual(releaseCount, 0)
+    }
+
+    func testNewerBackgroundDuringContextFreeReleaseKeepsAdmissionClosed() async {
+        let foregroundToken = MLSForegroundResumeCoordinator.recordSceneTransition(
+            to: .active
+        )
+        let releaseStarted = expectation(description: "context-free release started")
+        var releaseContinuation: CheckedContinuation<Void, Never>?
+        var releaseCount = 0
+        var clientGateClosed = true
+        var coreGateClosed = true
+        let capturedOwner = UUID()
+        var currentOwner = capturedOwner
+
+        let resumeTask = Task { @MainActor in
+            await MLSForegroundResumeCoordinator.runContextFree(
+                resumeStillCurrent: {
+                    MLSForegroundResumeCoordinator.isCurrentActiveTransition(
+                        foregroundToken
+                    )
+                },
+                releaseOwnedSuspension: {
+                    releaseCount += 1
+                    releaseStarted.fulfill()
+                    await withCheckedContinuation { continuation in
+                        releaseContinuation = continuation
+                    }
+
+                    // Models Core's opaque owner check at capability capture.
+                    // The superseding transition rotates the owner before this
+                    // stale release resumes.
+                    guard capturedOwner == currentOwner else {
+                        return false
+                    }
+                    clientGateClosed = false
+                    coreGateClosed = false
+                    return true
+                }
+            )
+        }
+
+        await fulfillment(of: [releaseStarted])
+        let backgroundToken = MLSForegroundResumeCoordinator.recordSceneTransition(
+            to: .background
+        )
+        currentOwner = UUID()
+        clientGateClosed = true
+        coreGateClosed = true
+        releaseContinuation?.resume()
+
+        let outcome = await resumeTask.value
+        XCTAssertEqual(outcome, .staleTransition)
+        XCTAssertEqual(releaseCount, 1)
+        XCTAssertTrue(clientGateClosed)
+        XCTAssertTrue(coreGateClosed)
+        XCTAssertTrue(
+            MLSForegroundResumeCoordinator.isCurrentTransition(
+                backgroundToken,
+                expectedPhase: .background
+            )
+        )
+    }
+
+    func testRotatedOwnerRejectsStaleReleaseBeforeCoreCapabilityCapture() async {
+        let staleForegroundOwner = MLSContextFreeLifecycleSuspensionOwner()
+        staleForegroundOwner.markSuspensionInProgress(reason: "older foreground owner")
+
+        // The app-level active precheck has already passed. A newer background
+        // transition now rotates the stable store to a distinct opaque owner.
+        let newerBackgroundOwner = MLSContextFreeLifecycleSuspensionOwner()
+        newerBackgroundOwner.markSuspensionInProgress(reason: "newer background owner")
+
+        let staleReleased =
+            await staleForegroundOwner.resumeSuspensionIfOwnedAndContextFree()
+        XCTAssertFalse(staleReleased)
+        XCTAssertTrue(MLSClient.isSuspensionInProgress)
+        XCTAssertTrue(MLSCoreContext.isSuspensionInProgress)
+
+        let newerReleased =
+            await newerBackgroundOwner.resumeSuspensionIfOwnedAndContextFree()
+        XCTAssertTrue(newerReleased)
+        XCTAssertFalse(MLSClient.isSuspensionInProgress)
+        XCTAssertFalse(MLSCoreContext.isSuspensionInProgress)
+    }
+
+    func testManagerResumePathDoesNotInvokeContextFreeRelease() throws {
+        let appSource = try source(relativePath: "Catbird/App/CatbirdApp.swift")
+        let foregroundResume = try XCTUnwrap(
+            functionBody(
+                signature: "private func resumeMLSAfterReturningToForeground("
+                    + "transitionToken: UInt64) async",
+                in: appSource
+            )
+        )
+        let contextFreeBranch = try XCTUnwrap(
+            functionBody(signature: "guard let manager else", in: foregroundResume)
+        )
+        let capturedOwner = try XCTUnwrap(
+            contextFreeBranch.range(
+                of: "let contextFreeSuspensionOwner = "
+                    + "appStateManager.contextFreeMLSSuspensionOwner"
+            )
+        )
+        let coordinatorCall = try XCTUnwrap(
+            contextFreeBranch.range(
+                of: "MLSForegroundResumeCoordinator.runContextFree("
+            )
+        )
+        XCTAssertLessThan(capturedOwner.lowerBound, coordinatorCall.lowerBound)
+        XCTAssertTrue(
+            contextFreeBranch.contains("contextFreeSuspensionOwner")
+        )
+        XCTAssertTrue(
+            contextFreeBranch.contains(".resumeSuspensionIfOwnedAndContextFree()")
+        )
+        XCTAssertFalse(contextFreeBranch.contains("manager.resumeMLSOperations()"))
+        XCTAssertTrue(
+            foregroundResume.contains("return await manager.resumeMLSOperations()")
+        )
     }
 
     private func source(relativePath: String) throws -> String {
