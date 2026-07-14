@@ -626,7 +626,9 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
 
   /// Current schema version - increment this when making breaking schema changes
   /// This forces a database reset for users with older incompatible schemas
-  private static let currentSchemaVersion = 4  // Increment when schema changes break migration
+  private static let currentSchemaVersion = 5  // Increment when schema changes break migration
+  // v5: CachedFeedViewPost uniqueness changed from global id to (feedType, id),
+  // and entry ids became repost-aware. Cached rows can be safely regenerated.
 
   /// Checks if database needs reset due to schema version mismatch
   private func shouldResetDatabase() -> Bool {

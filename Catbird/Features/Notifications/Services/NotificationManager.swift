@@ -3589,9 +3589,10 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
     await MainActor.run {
       // Upsert: update existing post or insert new one to avoid constraint violations
       let postId = cachedPost.id
+      let postFeedType = cachedPost.feedType
       let descriptor = FetchDescriptor<CachedFeedViewPost>(
         predicate: #Predicate<CachedFeedViewPost> { post in
-          post.id == postId
+          post.id == postId && post.feedType == postFeedType
         }
       )
 

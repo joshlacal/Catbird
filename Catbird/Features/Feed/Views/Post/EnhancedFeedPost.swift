@@ -28,18 +28,11 @@ struct EnhancedFeedPost: View, Equatable {
   // MARK: - Layout Constants
   private static let baseUnit: CGFloat = 3
 
-  // MARK: - Static Formatters
-  private static let isoFormatter = ISO8601DateFormatter()
-
   // MARK: - Computed Properties
 
-  /// Post identity computed without JSON decoding by using stored repost metadata
+  /// Cached entry identity is already repost-aware.
   private var id: String {
-    guard cachedPost.isRepost, let repostDate = cachedPost.repostIndexedAt else {
-      return cachedPost.id
-    }
-    // Use ISO8601 string for consistent ID generation
-    return "\(cachedPost.id)-repost-\(Self.isoFormatter.string(from: repostDate))"
+    cachedPost.id
   }
 
   private var feedViewPost: AppBskyFeedDefs.FeedViewPost? {

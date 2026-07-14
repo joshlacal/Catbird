@@ -9,8 +9,12 @@ private let cachedPostLogger = Logger(subsystem: "blue.catbird.Catbird", categor
 /// A model class for caching feed posts in SwiftData
 @Model
 final class CachedFeedViewPost: Identifiable {
-    /// Unique identifier for the post
-    @Attribute(.unique) var id: String
+    /// Cached rows represent feed entries rather than globally unique posts. The
+    /// same organic post can therefore coexist in multiple feeds.
+    #Unique<CachedFeedViewPost>([\.feedType, \.id])
+
+    /// Identifier for this entry, unique within `feedType`.
+    var id: String
     
     /// The feed type this post belongs to
     var feedType: String
@@ -37,7 +41,7 @@ final class CachedFeedViewPost: Identifiable {
     var isPartOfThread: Bool
     var isIncompleteThread: Bool
 
-    /// Repost metadata for efficient ID computation (avoids JSON decoding during equality checks)
+    /// Repost metadata extracted at cache time for cheap filtering.
     var isRepost: Bool
     var repostIndexedAt: Date?
     
@@ -49,10 +53,26 @@ final class CachedFeedViewPost: Identifiable {
 
     /// Cached decoded FeedViewPost to avoid repeated JSON decoding
     @Transient private var _cachedFeedViewPost: AppBskyFeedDefs.FeedViewPost?
+
+    private static let idDateFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+
+    /// Returns the stable identity of one feed entry. Repost attribution is part
+    /// of the entry, so it must not share an identity with the organic variant.
+    static func computeId(for feedViewPost: AppBskyFeedDefs.FeedViewPost) -> String {
+        let base = "\(feedViewPost.post.uri.uriString())-\(feedViewPost.post.cid)"
+        if case .appBskyFeedDefsReasonRepost(let repost) = feedViewPost.reason {
+            return "\(base)-repost-\(repost.by.did.didString())-\(idDateFormatter.string(from: repost.indexedAt.date))"
+        }
+        return base
+    }
     
     /// Initializer from a FeedViewPost with backwards compatibility
     init?(feedViewPost: AppBskyFeedDefs.FeedViewPost) {
-        self.id = "\(feedViewPost.post.uri.uriString())-\(feedViewPost.post.cid)"
+        self.id = Self.computeId(for: feedViewPost)
         self.feedType = "timeline" // Default feed type for compatibility
         do {
             self.serializedPost = try JSONEncoder().encode(feedViewPost)
@@ -93,7 +113,7 @@ final class CachedFeedViewPost: Identifiable {
     
     /// Full initializer with all parameters
     init?(from feedViewPost: AppBskyFeedDefs.FeedViewPost, cursor: String? = nil, feedType: String, feedOrder: Int? = nil) {
-        self.id = "\(feedViewPost.post.uri.uriString())-\(feedViewPost.post.cid)"
+        self.id = Self.computeId(for: feedViewPost)
         self.feedType = feedType
         do {
             self.serializedPost = try JSONEncoder().encode(feedViewPost)
@@ -134,7 +154,7 @@ final class CachedFeedViewPost: Identifiable {
     /// Initializer with thread metadata
     init?(from enhanced: EnhancedCachedFeedViewPost, feedType: String = "timeline") {
         let feedViewPost = enhanced.feedViewPost
-        self.id = "\(feedViewPost.post.uri.uriString())-\(feedViewPost.post.cid)"
+        self.id = Self.computeId(for: feedViewPost)
         self.feedType = feedType
         do {
             self.serializedPost = try JSONEncoder().encode(feedViewPost)
@@ -208,7 +228,7 @@ final class CachedFeedViewPost: Identifiable {
             reqId: nil
         )
 
-        self.id = "\(mainItem.post.uri.uriString())-\(mainItem.post.cid)"
+        self.id = Self.computeId(for: feedViewPost)
         self.feedType = feedType
         do {
             self.serializedPost = try JSONEncoder().encode(feedViewPost)

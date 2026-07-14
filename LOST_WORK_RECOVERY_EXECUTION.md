@@ -644,11 +644,11 @@ jj new
 **Interfaces:**
 - Produces: stable cache identity that distinguishes organic/repost variants and feed membership without changing current repost-menu behavior
 
-- [ ] **Step 1: Restore and run the four identity regressions**
+- [x] **Step 1: Restore and run the four identity regressions**
 
 Tests must prove repost differs from organic, repost identity is stable, a profile repost cannot clobber the timeline organic row, and the same organic post can coexist in two feeds.
 
-- [ ] **Step 2: Reconcile `68043cb` narrowly**
+- [x] **Step 2: Reconcile `68043cb` narrowly**
 
 Implement the identity/key behavior and header containment only. Before committing, verify `jj diff` contains no repost-menu action or menu-layout change.
 
@@ -656,12 +656,54 @@ Implement the identity/key behavior and header containment only. Before committi
 
 Run `CachedFeedViewPostIdentityTests`, build, browse two feeds containing the same post/repost, refresh, relaunch, and confirm headers never bleed between rows or feeds.
 
-- [ ] **Step 4: Update ledger and commit**
+- [x] **Step 4: Update ledger and commit**
 
 ```bash
 jj describe -m 'Catbird: recover repost-aware feed cache identity'
 jj new
 ```
+
+#### Task 7 recovery evidence (2026-07-14)
+
+- Archaeology: `68043cb` was read from the original Catbird repository without
+  importing the commit. Only repost-aware entry identity, composite
+  `(feedType, id)` uniqueness, feed-scoped upserts, direct cached identity use,
+  and the cache schema reset were reconciled. Historical formatting and menu UI
+  changes were excluded.
+- TDD RED: the four restored behavioral tests initially failed for organic vs.
+  repost identity, cross-feed repost clobbering, and same-post coexistence; the
+  stable repost case already passed. After current-state audit found later
+  thread and notification upserts still matching global id only, their two new
+  source contracts were added while the fixes were absent; direct contract
+  evaluation returned exit 1. The corresponding Xcode RED build was bounded
+  during an unexpected full dependency rebuild before test execution.
+- TDD GREEN: the final focused run printed 6/6 passing tests and the suite
+  result `CachedFeedViewPost identity passed after 0.091 seconds`. This includes
+  the four SwiftData identity/containment cases plus source contracts for both
+  current-state upsert sites. Xcode was bounded after the results printed during
+  its known post-result hang, so the process exit was 143 rather than a normal
+  test-run exit.
+- Preservation: `ActionButtonsRepostPresentationTests` and
+  `NotificationsRepostIconPresentationTests` passed 2/2 via
+  `test-without-building`; result bundle:
+  `Test-Catbird-2026.07.14_03-57-50--0400.xcresult`. The repost action remains a
+  `Menu`, and no action or menu-layout file appears in `jj diff`.
+- Build/runtime: the focused test run completed compilation and linking before
+  executing all six tests. The resulting app installed and launched on
+  simulator `40111BBE-8709-40D0-9016-A27448486A80` as process 6074; startup
+  initialized the version-5 ModelContainer successfully. The version bump
+  resets only regenerable feed cache rows whose old uniqueness contract is
+  incompatible.
+- Justified scope expansion: `ThreadManager.swift` and
+  `NotificationManager.swift` are included because they were added or changed
+  after `68043cb` and still performed global-id upserts. Leaving either site
+  unchanged would reintroduce cross-feed row mutation despite the recovered
+  composite uniqueness contract. Both are covered by explicit regressions.
+- Open runtime gate: manually browsing two feeds containing the same organic
+  post/repost, refreshing, relaunching, and visually checking header isolation
+  remains unobserved. Build, real SwiftData persistence tests, authenticated
+  launch, and menu/icon preservation are green, but they do not close this
+  interactive visual check; Step 3 therefore remains unchecked.
 
 ### Task 8: Reconcile Chat Actions and MLS Display Ordering
 
