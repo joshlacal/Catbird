@@ -249,7 +249,12 @@ Compact-width runtime evidence is now captured from the authenticated recovery
 build. `visual-feed-start.png` shows the restored larger centered launchpad
 icons, and `visual-unified-profile.png` shows the full-bleed banner contained by
 the continuous top curve without horizontal overflow. Regular-width iPad
-runtime capture remains open, so this step is not yet claimed complete.
+runtime capture remains open, so this step is not yet claimed complete. The
+same recovered simulator product installs and launches at regular width on iPad
+Pro 13-inch simulator `56D76971-EC63-4C7C-B2D8-A6D0C3FD07B0`, but that fresh
+simulator has no authenticated account and correctly stops at the sign-in
+screen; no credentials were entered. Gate screenshot:
+`/tmp/catbird-recovery-final/visual-ipad-auth-gate.png`.
 
 - [x] **Step 5: Update ledger and commit**
 
@@ -1297,6 +1302,10 @@ jj new
   `/tmp/catbird-recovery-final/physical-appintents-annotations-fixed-retry.log`.
   These are device-automation infrastructure failures, not passing evidence;
   the exact physical annotation verdict and the rest of Step 4 remain open.
+  `devicectl` subsequently reported the paired iPhone transport as
+  `localNetwork` with `tunnelState: disconnected`, matching the CoreDevice and
+  Mercury failures. A USB connection or restored device tunnel is required
+  before another physical automation retry is meaningful.
 
 ### Task 12: Final Cross-Platform Verification and Integration Audit
 
@@ -1416,5 +1425,10 @@ Expected: a clean working copy. Do not move `main`; present the branch and evide
   yielding a test verdict. No representational Like intent was run.
 - Remaining device gate: Step 3 stays open for physical-iPhone photo/video,
   Siri/App Intents, entity lookup, remote draft round-trip, and device-backed
-  chat ordering/edit/unsend checks. The branch is integration-ready for code
-  review, but those release gates are not claimed complete.
+  chat ordering/edit/unsend checks. The iPhone is paired but currently visible
+  only through a disconnected local-network CoreDevice tunnel; the regular-
+  width iPad simulator is separately blocked at first sign-in. Remote draft,
+  chat/MLS, profile-visibility, and retention checks also require explicit
+  authorization because they mutate account or stored-message state. The
+  branch is integration-ready for code review, but those release gates are not
+  claimed complete.
