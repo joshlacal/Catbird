@@ -263,23 +263,23 @@ actor PersistentFeedStateManager {
         modelContext.delete(post)
       }
 
-      // IMPORTANT: Fetch ALL existing posts by ID (across ALL feeds) to handle unique constraint
-      // The same post can appear in multiple feeds, but has a global unique constraint on id
-      let allPostsDescriptor = FetchDescriptor<CachedFeedViewPost>()
-      let allExistingPosts = try modelContext.fetch(allPostsDescriptor)
-      let existingPostsById = Dictionary(
-        allExistingPosts.map { ($0.id, $0) },
-        uniquingKeysWith: { first, _ in first }
-      )
-
-      // Upsert new posts: update existing records in place, insert new ones
-      // This avoids unique constraint violations by checking against ALL existing posts
-      let (updated, inserted) = modelContext.batchUpsert(
-        uniquePosts,
-        existingModels: Array(existingPostsById.values.filter { newPostIds.contains($0.id) }),
-        uniqueKeyPath: \.id,
-        update: { existing, new in existing.update(from: new) }
-      )
+      var updated = 0
+      var inserted = 0
+      for post in uniquePosts {
+        let postId = post.id
+        let descriptor = FetchDescriptor<CachedFeedViewPost>(
+          predicate: #Predicate<CachedFeedViewPost> { post in
+            post.feedType == currentFeedId && post.id == postId
+          }
+        )
+        if let existing = try modelContext.fetch(descriptor).first {
+          existing.update(from: post)
+          updated += 1
+        } else {
+          modelContext.insert(post)
+          inserted += 1
+        }
+      }
 
       // Save new feed state
       let postIds = uniquePosts.map { $0.id }

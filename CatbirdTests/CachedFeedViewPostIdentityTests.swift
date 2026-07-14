@@ -111,6 +111,84 @@ struct CachedFeedViewPostIdentityTests {
     #expect(Set(all.map(\.feedType)) == ["timeline", "profile-did:plc:author"])
   }
 
+  @Test("Identical organic post has a distinct stable identity in each feed")
+  func samePostIdentityIncludesFeedScope() throws {
+    let post = try makeFeedViewPost(rkey: "abc123")
+    let timeline = try #require(CachedFeedViewPost(from: post, feedType: "timeline"))
+    let profile = try #require(
+      CachedFeedViewPost(from: post, feedType: "profile-did:plc:author")
+    )
+
+    #expect(timeline.id != profile.id)
+    #expect(timeline.id == CachedFeedViewPost.computeId(for: post, feedType: "timeline"))
+    #expect(
+      profile.id
+        == CachedFeedViewPost.computeId(for: post, feedType: "profile-did:plc:author")
+    )
+  }
+
+  @Test("Updating a cached row cannot move it into another feed")
+  func updateRefusesCrossFeedSource() throws {
+    let organic = try makeFeedViewPost(rkey: "abc123")
+    let repost = try makeFeedViewPost(
+      rkey: "abc123",
+      repostedBy: "did:plc:reposter",
+      repostIndexedAt: Date(timeIntervalSince1970: 1_750_000_000)
+    )
+    let timeline = try #require(CachedFeedViewPost(from: organic, feedType: "timeline"))
+    let originalData = timeline.serializedPost
+    let profile = try #require(
+      CachedFeedViewPost(from: repost, feedType: "profile-did:plc:reposter")
+    )
+
+    timeline.update(from: profile)
+
+    #expect(timeline.feedType == "timeline")
+    #expect(timeline.serializedPost == originalData)
+    #expect(timeline.isRepost == false)
+  }
+
+  @Test("Primary feed persistence keeps the same post in two feeds")
+  func primaryPersistenceKeepsFeedScopedRows() async throws {
+    let schema = Schema([
+      CachedFeedViewPost.self,
+      PersistedScrollPosition.self,
+      PersistedFeedState.self,
+      FeedContinuityInfo.self,
+    ])
+    let configuration = ModelConfiguration(
+      "CachedFeedPrimaryPath-InMemory",
+      schema: schema,
+      isStoredInMemoryOnly: true,
+      cloudKitDatabase: .none
+    )
+    let container = try ModelContainer(for: schema, configurations: [configuration])
+    let manager = PersistentFeedStateManager(modelContainer: container)
+    let post = try makeFeedViewPost(rkey: "abc123")
+    let timeline = try #require(CachedFeedViewPost(from: post, feedType: "timeline"))
+    let profile = try #require(
+      CachedFeedViewPost(from: post, feedType: "profile-did:plc:author")
+    )
+
+    await manager.saveFeedData([timeline], for: "timeline")
+    await manager.saveFeedData([profile], for: "profile-did:plc:author")
+
+    let context = ModelContext(container)
+    let rows = try context.fetch(FetchDescriptor<CachedFeedViewPost>())
+    #expect(rows.count == 2)
+    #expect(Set(rows.map(\.feedType)) == ["timeline", "profile-did:plc:author"])
+  }
+
+  @Test("Primary feed upsert matches both feed type and entry id")
+  func primaryFeedUpsertScopesIdentity() throws {
+    let source = try sourceFile(
+      "Catbird/Features/Feed/Services/PersistentFeedStateManager.swift"
+    )
+
+    #expect(source.contains("post.feedType == currentFeedId && post.id == postId"))
+    #expect(!source.contains("IMPORTANT: Fetch ALL existing posts by ID (across ALL feeds)"))
+  }
+
   @Test("Thread cache upsert is scoped to feed identity")
   func threadCacheUpsertScopesIdentity() throws {
     let source = try sourceFile("Catbird/Features/Feed/Services/ThreadManager.swift")

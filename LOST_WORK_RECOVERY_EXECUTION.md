@@ -705,6 +705,38 @@ jj new
   launch, and menu/icon preservation are green, but they do not close this
   interactive visual check; Step 3 therefore remains unchecked.
 
+#### Task 7 critical/important review follow-up (2026-07-14)
+
+- Critical store-safety correction: the version-5 composite uniqueness change
+  and schema-reset path were removed. `CachedFeedViewPost` retains the deployed
+  v4 global unique `id` attribute, while newly generated IDs encode feed scope.
+  This avoids quarantining the shared SwiftData store that also owns drafts,
+  settings, backups, and repository data.
+- Targeted cache transition: old global-ID cache rows remain readable. On the
+  next primary save for a feed, `PersistentFeedStateManager` removes only that
+  feed's stale rows and inserts feed-encoded rows; non-cache entities are never
+  copied, deleted, or recreated.
+- Real on-disk preservation GREEN: a full production-v4 schema store containing
+  one legacy cache row plus representative `DraftPost`, `AppSettingsModel`,
+  `BackupRecord`, and `RepositoryRecord` data reopened through the production
+  store factory. After the real primary feed save replaced only the legacy
+  timeline row, fresh fetches preserved the exact non-cache IDs and values.
+  `CachedFeedStoreMigrationTests` passed 2/2, exit 0; result bundle
+  `Test-Catbird-2026.07.14_04-24-12--0400.xcresult`.
+- Important upsert correction: the primary save path fetches by
+  `(feedType, id)`, and `CachedFeedViewPost.update(from:)` refuses cross-feed
+  sources. Behavioral coverage proves the same post coexists in timeline and
+  profile feeds through this primary path. Background, thread, and notification
+  live upserts were re-audited and remain feed-scoped.
+- Final focused GREEN: identity, containment, primary-path, upsert contracts,
+  and migration passed 12/12, exit 0; result bundle
+  `Test-Catbird-2026.07.14_04-25-40--0400.xcresult`.
+- Preservation GREEN: repost menu/icon and draft-sync suites passed 19/19,
+  exit 0; result bundle `Test-Catbird-2026.07.14_04-26-10--0400.xcresult`.
+- Final iOS simulator build exited 0 with `** BUILD SUCCEEDED **`. The manual
+  two-feed browse/refresh/relaunch header check is still open; Step 3 remains
+  unchecked.
+
 ### Task 8: Reconcile Chat Actions and MLS Display Ordering
 
 **Files:**

@@ -205,6 +205,33 @@ enum MLSSuspensionCloseCoordinator {
   }
 }
 
+/// Owns the production SwiftData schema so app startup and migration tests open
+/// exactly the same store shape.
+enum CatbirdSwiftDataStore {
+  static let modelTypes: [any PersistentModel.Type] = [
+    CachedFeedViewPost.self, PersistedScrollPosition.self, PersistedFeedState.self,
+    FeedContinuityInfo.self, Preferences.self, AppSettingsModel.self, DraftPost.self,
+    BackupRecord.self, BackupConfiguration.self, RepositoryRecord.self,
+    ParsedATProtocolRecord.self, ParsedPost.self, ParsedProfile.self,
+    ParsedMedia.self, ParsedConnection.self, ParsedUnknownRecord.self,
+  ]
+
+  static func makeContainer(at storeURL: URL) throws -> ModelContainer {
+    let schema = Schema(modelTypes)
+    let configuration = ModelConfiguration(
+      "Catbird",
+      schema: schema,
+      url: storeURL,
+      cloudKitDatabase: .none
+    )
+    return try ModelContainer(for: schema, configurations: [configuration])
+  }
+
+  static func makeContainer(configuration: ModelConfiguration) throws -> ModelContainer {
+    let schema = Schema(modelTypes)
+    return try ModelContainer(for: schema, configurations: [configuration])
+  }
+}
 #if os(iOS)
 /// Force the exact scene suspension's rustFull runtime closed immediately during
 /// background-task expiration. Claim validation, close, and lifecycle marking all
@@ -626,9 +653,7 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
 
   /// Current schema version - increment this when making breaking schema changes
   /// This forces a database reset for users with older incompatible schemas
-  private static let currentSchemaVersion = 5  // Increment when schema changes break migration
-  // v5: CachedFeedViewPost uniqueness changed from global id to (feedType, id),
-  // and entry ids became repost-aware. Cached rows can be safely regenerated.
+  private static let currentSchemaVersion = 4  // Increment only for a truly incompatible store schema
 
   /// Checks if database needs reset due to schema version mismatch
   private func shouldResetDatabase() -> Bool {
@@ -880,14 +905,7 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
       logger.warning("⚠️ App group unavailable, using default store location")
     }
 
-    return try ModelContainer(
-      for: CachedFeedViewPost.self, PersistedScrollPosition.self, PersistedFeedState.self,
-      FeedContinuityInfo.self, Preferences.self, AppSettingsModel.self, DraftPost.self,
-      BackupRecord.self, BackupConfiguration.self, RepositoryRecord.self,
-      ParsedATProtocolRecord.self, ParsedPost.self, ParsedProfile.self,
-      ParsedMedia.self, ParsedConnection.self, ParsedUnknownRecord.self,
-      configurations: config
-    )
+    return try CatbirdSwiftDataStore.makeContainer(configuration: config)
   }
 
   /// Creates an in-memory ModelContainer for degraded mode

@@ -9,12 +9,9 @@ private let cachedPostLogger = Logger(subsystem: "blue.catbird.Catbird", categor
 /// A model class for caching feed posts in SwiftData
 @Model
 final class CachedFeedViewPost: Identifiable {
-    /// Cached rows represent feed entries rather than globally unique posts. The
-    /// same organic post can therefore coexist in multiple feeds.
-    #Unique<CachedFeedViewPost>([\.feedType, \.id])
-
-    /// Identifier for this entry, unique within `feedType`.
-    var id: String
+    /// Globally unique feed-entry identifier. `feedType` is encoded into this
+    /// value so the deployed v4 store constraint remains migration-compatible.
+    @Attribute(.unique) var id: String
     
     /// The feed type this post belongs to
     var feedType: String
@@ -62,8 +59,12 @@ final class CachedFeedViewPost: Identifiable {
 
     /// Returns the stable identity of one feed entry. Repost attribution is part
     /// of the entry, so it must not share an identity with the organic variant.
-    static func computeId(for feedViewPost: AppBskyFeedDefs.FeedViewPost) -> String {
-        let base = "\(feedViewPost.post.uri.uriString())-\(feedViewPost.post.cid)"
+    static func computeId(
+        for feedViewPost: AppBskyFeedDefs.FeedViewPost,
+        feedType: String
+    ) -> String {
+        let scopedFeed = "\(feedType.utf8.count):\(feedType)"
+        let base = "\(scopedFeed)|\(feedViewPost.post.uri.uriString())-\(feedViewPost.post.cid)"
         if case .appBskyFeedDefsReasonRepost(let repost) = feedViewPost.reason {
             return "\(base)-repost-\(repost.by.did.didString())-\(idDateFormatter.string(from: repost.indexedAt.date))"
         }
@@ -72,8 +73,9 @@ final class CachedFeedViewPost: Identifiable {
     
     /// Initializer from a FeedViewPost with backwards compatibility
     init?(feedViewPost: AppBskyFeedDefs.FeedViewPost) {
-        self.id = Self.computeId(for: feedViewPost)
-        self.feedType = "timeline" // Default feed type for compatibility
+        let feedType = "timeline" // Default feed type for compatibility
+        self.feedType = feedType
+        self.id = Self.computeId(for: feedViewPost, feedType: feedType)
         do {
             self.serializedPost = try JSONEncoder().encode(feedViewPost)
         } catch {
@@ -113,8 +115,8 @@ final class CachedFeedViewPost: Identifiable {
     
     /// Full initializer with all parameters
     init?(from feedViewPost: AppBskyFeedDefs.FeedViewPost, cursor: String? = nil, feedType: String, feedOrder: Int? = nil) {
-        self.id = Self.computeId(for: feedViewPost)
         self.feedType = feedType
+        self.id = Self.computeId(for: feedViewPost, feedType: feedType)
         do {
             self.serializedPost = try JSONEncoder().encode(feedViewPost)
         } catch {
@@ -154,8 +156,8 @@ final class CachedFeedViewPost: Identifiable {
     /// Initializer with thread metadata
     init?(from enhanced: EnhancedCachedFeedViewPost, feedType: String = "timeline") {
         let feedViewPost = enhanced.feedViewPost
-        self.id = Self.computeId(for: feedViewPost)
         self.feedType = feedType
+        self.id = Self.computeId(for: feedViewPost, feedType: feedType)
         do {
             self.serializedPost = try JSONEncoder().encode(feedViewPost)
         } catch {
@@ -228,8 +230,8 @@ final class CachedFeedViewPost: Identifiable {
             reqId: nil
         )
 
-        self.id = Self.computeId(for: feedViewPost)
         self.feedType = feedType
+        self.id = Self.computeId(for: feedViewPost, feedType: feedType)
         do {
             self.serializedPost = try JSONEncoder().encode(feedViewPost)
         } catch {
@@ -448,7 +450,12 @@ extension CachedFeedViewPost {
     ///
     /// - Parameter source: The source post to copy values from
     func update(from source: CachedFeedViewPost) {
-        self.feedType = source.feedType
+        guard feedType == source.feedType else {
+            cachedPostLogger.error(
+                "Refusing cross-feed cache update from \(source.feedType, privacy: .public) to \(self.feedType, privacy: .public)"
+            )
+            return
+        }
         self.serializedPost = source.serializedPost
         self._cachedFeedViewPost = nil  // Invalidate cache when data changes
         self.cursor = source.cursor
