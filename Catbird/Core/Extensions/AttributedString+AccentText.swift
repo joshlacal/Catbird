@@ -30,12 +30,12 @@ extension AttributedString {
       highlightLinks: highlightLinks,
       linkStyle: linkStyle
     )
-    guard style != .disabled else { return self }
-
     var output = self
     let textAccent = Color("AccentTextColor")
     let linkRanges = output.runs.compactMap { $0.link != nil ? $0.range : nil }
     for range in linkRanges {
+      output[range].foregroundColor = nil
+      output[range].underlineStyle = nil
       if style == .color || style == .both {
         output[range].foregroundColor = textAccent
       }

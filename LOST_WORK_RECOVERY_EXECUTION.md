@@ -978,6 +978,48 @@ If every historical setting is already present or superseded, commit only the ev
   automated mapping tests and launch evidence do not close it, so Step 3 stays
   unchecked.
 
+#### Task 9 review follow-up evidence (2026-07-14)
+
+- Retention P1: the ineffective core-owned automatic-cleanup call was replaced
+  at the app layer by an actor-isolated coordinator. It scans the active user's
+  persisted MLS conversations immediately, invokes the existing effective
+  `cleanupConversation` path for each current epoch, and then waits for the
+  current policy interval. Settings changes update the policy and replace the
+  worker; account switching explicitly stops it. Restart generations await all
+  retiring workers, so concurrent restart/stop calls cannot leave overlapping
+  or untracked cleanup loops.
+- Privacy rollback: logged-out visibility now marks programmatic load/rollback
+  targets and consumes that mark in `onChange`. A failed network write therefore
+  produces one rollback and one alert without issuing the inverse write.
+- Link attributes and composer copy: every linked run, including ordinary web,
+  `mention://`, and `tag://` destinations, first clears Petrel's foreground and
+  underline attributes before applying the selected style. Required-alt-text
+  copy now refers neutrally to every media attachment rather than images only.
+- TDD RED: `/tmp/recovery-task9-review-red.log` exited 65 with the expected
+  missing `LoggedOutVisibilityChangeGate` and
+  `MLSEpochRetentionCleanupCoordinator` production symbols. The async probe was
+  then simplified to use cancellation of a long injected sleep, with no elapsed
+  time dependency. A later first execution exposed only an invalid test URL
+  fixture (`mention://did:plc:example` parsed `plc` as a port); the corrected
+  valid `mention://did.example` fixture required no production change.
+- Focused GREEN: the final `test-without-building` execution passed 11/11 in one
+  suite and emitted `** TEST EXECUTE SUCCEEDED **`. Log:
+  `/tmp/recovery-task9-review-focused-final.log`; result bundle:
+  `/tmp/CatbirdTask9RedDerivedData/Logs/Test/Test-Catbird-2026.07.14_07-14-40--0400.xcresult`.
+- Preservation GREEN: settings plus the six preserved Task 8 MLS/chat suites
+  passed 51/51 in seven suites and emitted `** TEST EXECUTE SUCCEEDED **`. Log:
+  `/tmp/recovery-task9-review-preservation-final.log`; result bundle:
+  `/tmp/CatbirdTask9RedDerivedData/Logs/Test/Test-Catbird-2026.07.14_07-15-07--0400.xcresult`.
+- Build/runtime: the final product/test bundle emitted
+  `** TEST BUILD SUCCEEDED **` in
+  `/tmp/recovery-task9-review-build-fixture.log`. That exact app installed and
+  launched on clean iOS 26.2 simulator
+  `CEC8381E-065C-468C-ACED-6A9DC716987B` as `blue.catbird` process 62845.
+- Scope safety: no `CatbirdMLSCore` source was edited or committed by this
+  follow-up. Its pre-existing concurrent change to
+  `MLSConversationManager.swift` remains outside the recovery workspace change.
+  The interactive toggle/relaunch gate above remains open.
+
 ### Task 10: Reconcile Threaded Replies with Current Main
 
 **Files:**

@@ -26,6 +26,21 @@ enum LoggedOutVisibilitySelfLabels {
     }
 }
 
+struct LoggedOutVisibilityChangeGate {
+    private var suppressedTarget: Bool?
+
+    mutating func prepareProgrammaticChange(current: Bool, target: Bool) -> Bool {
+        guard current != target else { return false }
+        suppressedTarget = target
+        return true
+    }
+
+    mutating func shouldWriteChange(to value: Bool) -> Bool {
+        defer { suppressedTarget = nil }
+        return suppressedTarget != value
+    }
+}
+
 struct PrivacySecuritySettingsView: View {
     @Environment(AppState.self) private var appState
     
@@ -49,6 +64,7 @@ struct PrivacySecuritySettingsView: View {
     @State private var isUpdatingLoggedOutVisibility = false
     @State private var showLoggedOutVisibilityError = false
     @State private var loggedOutVisibilityErrorMessage = ""
+    @State private var loggedOutVisibilityChangeGate = LoggedOutVisibilityChangeGate()
     
     // Biometric error handling
     @State private var showBiometricError = false
@@ -141,7 +157,8 @@ struct PrivacySecuritySettingsView: View {
                     .tint(.blue)
                     .disabled(isLoadingLoggedOutVisibility || isUpdatingLoggedOutVisibility)
                     .onChange(of: loggedOutVisibility) { oldValue, newValue in
-                        guard oldValue != newValue, !isLoadingLoggedOutVisibility else { return }
+                        guard oldValue != newValue,
+                              loggedOutVisibilityChangeGate.shouldWriteChange(to: newValue) else { return }
                         Task {
                             await updateLoggedOutVisibility(newValue, previousValue: oldValue)
                         }
@@ -206,7 +223,7 @@ struct PrivacySecuritySettingsView: View {
 
                         // Update retention manager immediately
                         Task {
-                            await MLSEpochKeyRetentionManager.shared.updatePolicyFromSettings(retentionDays: days)
+                            await appState.updateMLSEpochRetentionPolicy(days: days)
                         }
                     }
                 )) {
@@ -358,7 +375,7 @@ struct PrivacySecuritySettingsView: View {
                 throw visibilityError("Failed to load profile record (\(code)).")
             }
 
-            loggedOutVisibility = isVisible
+            setLoggedOutVisibilityProgrammatically(isVisible)
             appState.appSettings.loggedOutVisibility = isVisible
         } catch {
             logger.error("Error loading logged-out visibility: \(error.localizedDescription)")
@@ -491,9 +508,17 @@ struct PrivacySecuritySettingsView: View {
     }
 
     private func revertLoggedOutVisibility(to previousValue: Bool, message: String) {
-        loggedOutVisibility = previousValue
+        setLoggedOutVisibilityProgrammatically(previousValue)
         loggedOutVisibilityErrorMessage = message
         showLoggedOutVisibilityError = true
+    }
+
+    private func setLoggedOutVisibilityProgrammatically(_ value: Bool) {
+        _ = loggedOutVisibilityChangeGate.prepareProgrammaticChange(
+            current: loggedOutVisibility,
+            target: value
+        )
+        loggedOutVisibility = value
     }
 
     private static func visibilityError(_ message: String) -> NSError {

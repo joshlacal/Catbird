@@ -104,7 +104,7 @@ struct PostComposerSubmitValidationState: Equatable {
         case .videoBlocked(let reason):
             return reason
         case .missingAltText:
-            return "Add alt text to every image before posting."
+            return "Add alt text to every media attachment before posting."
         case nil:
             return nil
         }

@@ -418,6 +418,7 @@ final class AppState {
 
     /// MLS service state for retry logic and status tracking
     @ObservationIgnored var mlsServiceState = MLSServiceState()
+    @ObservationIgnored private let mlsEpochRetentionCleanupCoordinator = MLSEpochRetentionCleanupCoordinator()
 
     // MARK: - Backup & Repository
 
@@ -1033,6 +1034,7 @@ final class AppState {
         // Step 1: Cancel any pending initialization to prevent new manager creation
         mlsConversationManagerInitTask?.cancel()
         mlsConversationManagerInitTask = nil
+        await mlsEpochRetentionCleanupCoordinator.stop()
         clearMLSGlobalWebSocketSubscriptionTracking()
 
         // CRITICAL FIX: Signal NSE to yield BEFORE stopping event streams
@@ -2417,10 +2419,7 @@ final class AppState {
         // Load existing conversations (this processes pending Welcome messages)
         await loadMLSConversations()
 
-        await MLSEpochKeyRetentionManager.shared.updatePolicyFromSettings(
-            retentionDays: appSettings.mlsMessageRetentionDays
-        )
-        await MLSEpochKeyRetentionManager.shared.startAutomaticCleanup()
+        await updateMLSEpochRetentionPolicy(days: appSettings.mlsMessageRetentionDays)
 
         // Run the block reconciler in the background once per day per user.
         // Handles cross-device blocks (user blocked someone on their iPad; this
@@ -2431,6 +2430,38 @@ final class AppState {
         scheduleBlockReconcileIfNeeded()
 
         logger.info("MLS: Successfully initialized")
+    }
+
+    @MainActor
+    func updateMLSEpochRetentionPolicy(days: Int) async {
+        let retentionManager = MLSEpochKeyRetentionManager.shared
+        await retentionManager.updatePolicyFromSettings(retentionDays: days)
+        let cleanupInterval = await retentionManager.policy.cleanupInterval
+        let userDID = self.userDID
+
+        await mlsEpochRetentionCleanupCoordinator.restart(
+            interval: .seconds(cleanupInterval),
+            scan: {
+                try await MLSGRDBManager.shared.read(for: userDID) { database in
+                    try MLSConversationModel
+                        .filter(MLSConversationModel.Columns.currentUserDID == userDID)
+                        .fetchAll(database)
+                        .map {
+                            MLSEpochRetentionCleanupCoordinator.Conversation(
+                                conversationID: $0.conversationID,
+                                currentEpoch: $0.epoch
+                            )
+                        }
+                }
+            },
+            cleanup: { conversationID, currentEpoch in
+                _ = try await retentionManager.cleanupConversation(
+                    conversationID: conversationID,
+                    currentEpoch: currentEpoch
+                )
+            },
+            wait: MLSEpochRetentionCleanupCoordinator.continuousWait
+        )
     }
 
     @MainActor
