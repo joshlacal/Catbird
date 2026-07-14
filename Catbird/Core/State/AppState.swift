@@ -1058,7 +1058,15 @@ final class AppState {
             logger.info("MLS: Shutting down conversation manager with timeout...")
 
             let oldManager = manager
-            let shutdownTask = Task { await oldManager.shutdown() }
+            let rustAvailable = oldManager.suspendMLSOperations()
+            if !rustAvailable {
+                logger.info("MLS: Account-switch suspension has no live rustFull runtime; Core shutdown will decide safety")
+            }
+            guard let authorization = oldManager.authorizeSuspensionAbandonmentForAccountSwitch() else {
+                logger.critical("🚨 MLS: Account-switch suspension ownership unavailable; refusing shutdown")
+                return
+            }
+            let shutdownTask = Task { await oldManager.shutdown(accountSwitchSuspensionAuthorization: authorization) }
 
             let shutdownResult: Bool? = await withTaskGroup(of: Bool?.self) { group in
                 // Task 1: Wait for graceful shutdown (do NOT run shutdown inside the group so we don't cancel it on timeout)
@@ -1843,31 +1851,39 @@ final class AppState {
             await manager.reloadStateFromDisk()
             logger.info("✅ [AppState] MLS state reload complete")
 
-            // Re-establish database connection if it was released during NSE handshake.
-            // The nseWillClose handler sets mlsDatabase = nil; we need it back for
-            // the data source's loadMessages() which reads via appState.mlsDatabase.
-            if mlsDatabase == nil {
-                do {
-                    let database = try await MLSGRDBManager.shared.getDatabasePool(for: userDID)
-                    mlsDatabase = database
-                    logger.info("✅ [AppState] Re-established MLS database after NSE handshake")
-                } catch {
-                    logger.error("❌ [AppState] Failed to re-establish MLS database: \(error.localizedDescription)")
-                }
-            }
-
-            // Also reload conversations to pick up any new messages decrypted by NSE
-            // This updates the UI with messages the NSE may have stored in the database
-            await loadMLSConversations()
-            logger.info("✅ [AppState] MLS conversations reloaded after state sync")
-
-            // Signal active chat views to refresh messages from the database.
-            // Without this, the conversation list updates but the open chat detail
-            // view never re-reads the DB to pick up NSE-decrypted messages.
-            nseStateReloadTrigger += 1
+            await reloadMLSProjectionFromDisk()
         } else {
             logger.debug("⏭️ [AppState] No MLS manager - skipping state reload")
         }
+    }
+
+    /// Reload only Catbird's GRDB-backed presentation state after the authoritative
+    /// manager resume transaction has refreshed Core state and released MLS gates.
+    @MainActor
+    func reloadMLSProjectionFromDisk() async {
+        logger.info("🔄 [AppState] Reloading MLS UI projection from disk")
+
+        // Re-establish database connection if it was released during NSE handshake.
+        // The nseWillClose handler sets mlsDatabase = nil; we need it back for
+        // the data source's loadMessages() which reads via appState.mlsDatabase.
+        if mlsDatabase == nil {
+            do {
+                let database = try await MLSGRDBManager.shared.getDatabasePool(for: userDID)
+                mlsDatabase = database
+                logger.info("✅ [AppState] Re-established MLS database after NSE handshake")
+            } catch {
+                logger.error("❌ [AppState] Failed to re-establish MLS database: \(error.localizedDescription)")
+            }
+        }
+
+        // Reload conversations to pick up any new messages decrypted by NSE.
+        await loadMLSConversations()
+        logger.info("✅ [AppState] MLS conversations reloaded after state sync")
+
+        // Signal active chat views to refresh messages from the database.
+        // Without this, the conversation list updates but the open chat detail
+        // view never re-reads the DB to pick up NSE-decrypted messages.
+        nseStateReloadTrigger += 1
     }
 
     /// Release MLS database readers to allow NSE to perform a clean checkpoint.

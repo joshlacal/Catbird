@@ -7,6 +7,7 @@ import PetrelCatbird
 import UserNotifications
 import os.log
 
+@MainActor
 class NotificationService: UNNotificationServiceExtension {
 
   var contentHandler: ((UNNotificationContent) -> Void)?
@@ -19,8 +20,8 @@ class NotificationService: UNNotificationServiceExtension {
   // NSE runs in a separate process from main app - each process needs its own instance.
   // Cross-process coordination is handled by MLSNotificationCoordinator (Darwin + versioning).
   private let databaseManager = MLSGRDBManager()
-  private var activeRecipientDID: String?
   private var isObservingAppStop = false
+  private static let notificationProcessingLeases = NSENotificationProcessingLeases()
 
   // MARK: - Profile Cache (shared via App Group UserDefaults)
 
@@ -35,7 +36,13 @@ class NotificationService: UNNotificationServiceExtension {
   private static let mlsServiceNamespace = "blue.catbird.mls"
 
   deinit {
-    stopObservingAppStop()
+    let center = CFNotificationCenterGetDarwinNotifyCenter()
+    CFNotificationCenterRemoveObserver(
+      center,
+      Unmanaged.passUnretained(self).toOpaque(),
+      CFNotificationName(kMLSNSEStopNotification),
+      nil
+    )
   }
 
   private func startObservingAppStop() {
@@ -58,38 +65,26 @@ class NotificationService: UNNotificationServiceExtension {
     logger.info("🔔 [NSE] Observing app stop notifications")
   }
 
-  private func stopObservingAppStop() {
-    guard isObservingAppStop else { return }
-    let center = CFNotificationCenterGetDarwinNotifyCenter()
-    CFNotificationCenterRemoveObserver(
-      center,
-      Unmanaged.passUnretained(self).toOpaque(),
-      CFNotificationName(kMLSNSEStopNotification),
-
-      nil
-    )
-    isObservingAppStop = false
-  }
-
   private func handleAppStopNotification() {
     Task { @MainActor [weak self] in
       guard let self else { return }
-      guard let userDID = self.activeRecipientDID else {
+      switch await Self.notificationProcessingLeases.requestAppStopCleanup() {
+      case .cleanupAlreadyPerformed:
         self.logger.info("🛑 [NSE] App stop received with no active recipient")
         return
-      }
+      case .performCleanup(let claim):
+        guard Self.notificationProcessingLeases.appStopCleanupIsCurrent(claim) else { return }
+        guard let probeDID = claim.recipientDIDs.sorted().first else { return }
+        guard Self.notificationProcessingLeases.beginAppStopClose(claim) else { return }
 
-      self.logger.warning(
-        "🛑 [NSE] App requested stop - releasing DB for \(userDID.prefix(24))...")
-      await MLSCoreContext.shared.removeContext(for: userDID)
-      let released = await self.databaseManager.releaseConnectionWithoutCheckpoint(
-        for: userDID)
-      if released {
-        self.logger.info("✅ [NSE] Released DB for \(userDID.prefix(24))...")
-      } else {
-        self.logger.warning("⚠️ [NSE] Failed to release DB for \(userDID.prefix(24))...")
+        // No suspension point is allowed between claiming the close and completing it.
+        // Expiration can supersede the app-stop request before this point; afterward this
+        // synchronous emergency close is the generation's one close owner.
+        self.logger.warning(
+          "🛑 [NSE] App requested stop for \(claim.recipientDIDs.count) recipient(s)")
+        self.bestEffortNSECleanup(recipientDid: probeDID)
+        Self.notificationProcessingLeases.finishAppStopCleanup(claim)
       }
-      self.activeRecipientDID = nil
     }
   }
 
@@ -99,9 +94,6 @@ class NotificationService: UNNotificationServiceExtension {
   ) {
     // Ensure custom lexicon types are registered before any decoding
     _ = Self.lexiconRegistration
-
-    // Reset suspension flag from previous notification's cleanup (NSE process reuse)
-    MLSCoreContext.clearSuspensionFlag()
 
     self.contentHandler = contentHandler
     bestAttemptContent = (request.content.mutableCopy() as? UNMutableNotificationContent)
@@ -248,30 +240,26 @@ class NotificationService: UNNotificationServiceExtension {
         "⏭️ [NSE] rustFull authority: avoiding direct NSE MLS decrypt; using cache-only notification path"
       )
       Task { @MainActor in
-        self.activeRecipientDID = recipientDid
-        defer {
-          self.activeRecipientDID = nil
-          self.bestEffortNSECleanup(recipientDid: recipientDid)
-        }
-
-        for attempt in 0..<10 {
-          if await self.deliverCachedNotificationIfAvailable(
-            content: bestAttemptContent,
-            contentHandler: contentHandler,
-            messageId: messageId,
-            convoId: convoId,
-            recipientDid: recipientDid,
-            epoch: epoch,
-            sequenceNumber: sequenceNumber
-          ) {
-            return
+        await self.withNotificationProcessingLease(recipientDid: recipientDid) {
+          for attempt in 0..<10 {
+            if await self.deliverCachedNotificationIfAvailable(
+              content: bestAttemptContent,
+              contentHandler: contentHandler,
+              messageId: messageId,
+              convoId: convoId,
+              recipientDid: recipientDid,
+              epoch: epoch,
+              sequenceNumber: sequenceNumber
+            ) {
+              return
+            }
+            if attempt < 9 { try? await Task.sleep(nanoseconds: 200_000_000) }
           }
-          if attempt < 9 { try? await Task.sleep(nanoseconds: 200_000_000) }
-        }
 
-        bestAttemptContent.title = "New Message"
-        bestAttemptContent.body = "New Encrypted Message"
-        contentHandler(bestAttemptContent)
+          bestAttemptContent.title = "New Message"
+          bestAttemptContent.body = "New Encrypted Message"
+          contentHandler(bestAttemptContent)
+        }
       }
       return
     }
@@ -303,17 +291,7 @@ class NotificationService: UNNotificationServiceExtension {
     let capturedBestAttemptContent = bestAttemptContent
 
     Task { @MainActor in
-      self.activeRecipientDID = recipientDid
-      defer {
-        // ═══════════════════════════════════════════════════════════════
-        // GUARANTEED CLEANUP: Runs on every exit path (cache-hit, error,
-        // timeout, expiry, normal completion). Prevents leaked SQLite
-        // handles in the App Group container that cause 0xdead10cc.
-        // ═══════════════════════════════════════════════════════════════
-        self.activeRecipientDID = nil
-        self.bestEffortNSECleanup(recipientDid: recipientDid)
-      }
-
+      await self.withNotificationProcessingLease(recipientDid: recipientDid) {
       // Check per-conversation mute before expensive decryption
       do {
         let conversation = try await self.databaseManager.nseRead(for: recipientDid) { db in
@@ -843,61 +821,7 @@ class NotificationService: UNNotificationServiceExtension {
         capturedContentHandler(capturedBestAttemptContent)
       }
 
-      // ═══════════════════════════════════════════════════════════════════════════
-      // PHASE 5-6: Enhanced NSE Close Sequence (2024-12)
-      // ═══════════════════════════════════════════════════════════════════════════
-      //
-      // This implements a coordinated close sequence to prevent HMAC check failures
-      // when the main app tries to open the database while NSE is closing:
-      //
-      // 1. Post nseWillClose notification - tells main app to release readers
-      // 2. Wait for app acknowledgment (with timeout)
-      // 3. Use MLSShutdownCoordinator for proper close sequence
-      // 4. Post stateChanged notification - tells app to reload
-      //
-      // ═══════════════════════════════════════════════════════════════════════════
-
-      // Step 1: Post nseWillClose notification
-      self.logger.info("📢 [NSE] Posting nseWillClose notification")
-      let token = MLSNotificationCoordinator.prepareNSECloseHandshake(userDID: recipientDid)
-
-      // Step 2: Wait for app acknowledgment (with timeout)
-      let acked = await MLSNotificationCoordinator.waitForAppAcknowledgment(
-        userDID: recipientDid,
-        token: token,
-        timeout: .milliseconds(1500)
-      )
-      if acked {
-        self.logger.info("✅ [NSE] App acknowledged - waiting for connection release")
-        // Give the app's connection a moment to fully close
-        // The app calls releaseConnectionWithoutCheckpoint which takes ~50ms
-        try? await Task.sleep(nanoseconds: 100_000_000)  // 100ms safety buffer
-      } else {
-        self.logger.warning("⏱️ [NSE] App acknowledgment timeout - skipping close sequence")
-        return
       }
-
-      // Step 3: Use MLSShutdownCoordinator for proper close sequence
-      // This handles: FFI flush → WAL checkpoint → DB release (without 200ms delay for NSE)
-      self.logger.info("🔐 [NSE] Using shutdown coordinator for clean close...")
-      let result = await MLSShutdownCoordinator.shared.quickShutdownForNSE(
-        for: recipientDid, databaseManager: databaseManager)
-      switch result {
-      case .success(let durationMs):
-        self.logger.info("✅ [NSE] Quick shutdown complete in \(durationMs)ms")
-      case .successWithWarnings(let durationMs, let warnings):
-        self.logger.warning(
-          "⚠️ [NSE] Quick shutdown in \(durationMs)ms with \(warnings.count) warning(s)")
-      case .timedOut(let durationMs, let phase):
-        self.logger.warning(
-          "⏱️ [NSE] Quick shutdown timed out at \(phase.rawValue) after \(durationMs)ms")
-      case .failed(let error):
-        self.logger.error("❌ [NSE] Quick shutdown failed: \(error.localizedDescription)")
-      }
-
-      // Step 4: Post stateChanged notification - tells app to reload
-      MLSNotificationCoordinator.postStateChanged()
-      self.logger.info("📢 [NSE] Posted state change notification to main app")
     }
   }
 
@@ -906,15 +830,18 @@ class NotificationService: UNNotificationServiceExtension {
       "⏱️ [NSE] serviceExtensionTimeWillExpire called - system is terminating extension")
 
     // Log WAL state at the moment iOS is killing us — critical for corruption diagnosis
-    if let recipientDid = activeRecipientDID {
+    for recipientDid in Self.notificationProcessingLeases.activeRecipientDIDs.sorted() {
       MLSGRDBManager.probeWALHealth(for: recipientDid, label: "TIME_WILL_EXPIRE")
     }
 
-    // Emergency cleanup before system kills us
-    // CRITICAL: NSE must use PASSIVE checkpoint — TRUNCATE from NSE while main app
-    // has the DB open causes WAL corruption (two processes racing for exclusive WAL access).
-    MLSCoreContext.emergencyCloseAllContexts()
-    MLSGRDBManager.emergencyCloseAllDatabases(mode: .passive)
+    let shouldForceCleanup = Self.notificationProcessingLeases.claimExpirationCleanup()
+    if shouldForceCleanup {
+      // Emergency cleanup before system kills us. NSE must use PASSIVE checkpoint because
+      // TRUNCATE can corrupt a WAL that the main app still has open.
+      MLSClient.emergencyCloseAllContexts(reason: "NSE service extension expiration")
+      MLSGRDBManager.emergencyCloseAllDatabases(mode: .passive)
+      Self.notificationProcessingLeases.finishExpirationCleanupIfIdle()
+    }
 
     if let contentHandler = contentHandler, let bestAttemptContent = bestAttemptContent {
       if bestAttemptContent.body.isEmpty || bestAttemptContent.body == "Decrypting..." {
@@ -930,20 +857,87 @@ class NotificationService: UNNotificationServiceExtension {
 
   // MARK: - NSE Cleanup
 
+  private func withNotificationProcessingLease(
+    recipientDid: String,
+    operation: @MainActor () async -> Void
+  ) async {
+    let lease = await Self.notificationProcessingLeases.acquire(recipientDID: recipientDid)
+    if lease.startsNewGeneration {
+      // A previous notification may have ended through emergency cleanup. Clear only before
+      // the first delivery in a new generation, never while another delivery is active.
+      MLSClient.clearSuspensionFlag(reason: "NSE new notification processing generation")
+    }
+
+    await operation()
+
+    switch Self.notificationProcessingLeases.release(lease) {
+    case .stillProcessing, .cleanupAlreadyPerformed, .cleanupOwnedElsewhere:
+      return
+    case .performCleanup(let claim):
+      await performCoordinatedNSECleanup(recipientDid: recipientDid, claim: claim)
+      guard Self.notificationProcessingLeases.ordinaryCleanupIsCurrent(claim) else { return }
+      bestEffortNSECleanup(recipientDid: recipientDid)
+      Self.notificationProcessingLeases.finishOrdinaryCleanup(claim)
+    }
+  }
+
+  private func performCoordinatedNSECleanup(
+    recipientDid: String,
+    claim: NSENotificationProcessingLeases.OrdinaryCleanupClaim
+  ) async {
+    logger.info("📢 [NSE] Posting nseWillClose notification")
+    let token = MLSNotificationCoordinator.prepareNSECloseHandshake(userDID: recipientDid)
+    let acked = await MLSNotificationCoordinator.waitForAppAcknowledgment(
+      userDID: recipientDid,
+      token: token,
+      timeout: .milliseconds(1500)
+    )
+    guard acked else {
+      logger.warning("⏱️ [NSE] App acknowledgment timeout - skipping coordinated close")
+      return
+    }
+    guard Self.notificationProcessingLeases.ordinaryCleanupIsCurrent(claim) else { return }
+
+    logger.info("✅ [NSE] App acknowledged - waiting for connection release")
+    try? await Task.sleep(nanoseconds: 100_000_000)
+    guard Self.notificationProcessingLeases.beginOrdinaryClose(claim) else { return }
+
+    logger.info("🔐 [NSE] Using shutdown coordinator for clean close...")
+    let result = await MLSShutdownCoordinator.shared.quickShutdownForNSE(
+      for: recipientDid,
+      databaseManager: databaseManager
+    )
+    switch result {
+    case .success(let durationMs):
+      logger.info("✅ [NSE] Quick shutdown complete in \(durationMs)ms")
+    case .successWithWarnings(let durationMs, let warnings):
+      logger.warning(
+        "⚠️ [NSE] Quick shutdown in \(durationMs)ms with \(warnings.count) warning(s)")
+    case .timedOut(let durationMs, let phase):
+      logger.warning(
+        "⏱️ [NSE] Quick shutdown timed out at \(phase.rawValue) after \(durationMs)ms")
+    case .failed(let error):
+      logger.error("❌ [NSE] Quick shutdown failed: \(error.localizedDescription)")
+    }
+
+    MLSNotificationCoordinator.postStateChanged()
+    logger.info("📢 [NSE] Posted state change notification to main app")
+  }
+
   /// Best-effort cleanup of all process-local MLS state.
   ///
-  /// Called from the processing task's `defer` block to ensure DB handles
-  /// are released even on early-return paths (cache hit, error, timeout).
-  /// Safe to call multiple times — the emergency close APIs are idempotent.
+  /// Called only after the final processing lease drains, so no ordinary cleanup can close
+  /// a context that another delivery is using. Expiration cleanup claims the generation first
+  /// and makes the final ordinary release a no-op.
   private func bestEffortNSECleanup(recipientDid: String) {
     logger.info("🧹 [NSE] Best-effort cleanup for \(recipientDid.prefix(24))...")
 
     // Log WAL state BEFORE cleanup — if corruption happens during cleanup, this is the "before" snapshot
     MLSGRDBManager.probeWALHealth(for: recipientDid, label: "PRE_CLEANUP")
 
-    // 1. Close all Rust FFI contexts (flushes ratchet state to disk)
-    // NOTE: This sets suspensionInProgress = true internally.
-    MLSCoreContext.emergencyCloseAllContexts()
+    // 1. Close all Rust FFI contexts (flushes ratchet state to disk) through the
+    // coupled lifecycle boundary. This sets both admission gates internally.
+    MLSClient.emergencyCloseAllContexts(reason: "NSE final notification cleanup")
 
     // 2. Close all GRDB DatabasePools registered in the static emergency list.
     // The NSE's own databaseManager uses lightweight DatabaseQueues (nseRead/nseWrite)
@@ -968,7 +962,7 @@ class NotificationService: UNNotificationServiceExtension {
     // the next notification's getContext() call will be blocked — especially when
     // this defer block runs concurrently with the next didReceive (which clears
     // the flag early, but our deferred cleanup re-sets it via emergencyCloseAllContexts).
-    MLSCoreContext.clearSuspensionFlag()
+    MLSClient.clearSuspensionFlag(reason: "NSE final notification cleanup complete")
 
     logger.info("✅ [NSE] Cleanup complete")
   }
@@ -1814,8 +1808,8 @@ class NotificationService: UNNotificationServiceExtension {
 
     // Try to find any stored account DID from the shared defaults
     // The main app stores account hashes; we need the actual DID.
-    // Fall back to the active recipient if set during this NSE session.
-    if let activeDid = activeRecipientDID {
+    // Fall back to a lease-owned active recipient from this NSE session.
+    if let activeDid = Self.notificationProcessingLeases.activeRecipientDIDs.sorted().first {
       return activeDid
     }
 

@@ -49,6 +49,12 @@ final class AppStateManager {
 
   private let logger = Logger(subsystem: "blue.catbird", category: "AppStateManager")
 
+  /// Stable storage for the exact lifecycle owner used before an MLS manager exists.
+  /// The owner rotates per suspension so a stale foreground task cannot acquire a
+  /// capability for a newer background signal that arrived before its Core call.
+  @ObservationIgnored
+  private(set) var contextFreeMLSSuspensionOwner = MLSContextFreeLifecycleSuspensionOwner()
+
   /// The authentication manager (owned by AppStateManager)
   private let authManager = AuthenticationManager()
 
@@ -155,6 +161,14 @@ final class AppStateManager {
     }
     
     Task { await MLSClient.shared.setStorageMaintenanceCoordinator(self) }
+  }
+
+  /// Starts a new context-free suspension with a distinct opaque Core owner.
+  /// This synchronous MainActor operation publishes the owner before closing the gate.
+  func beginContextFreeMLSSuspension(reason: String) {
+    let owner = MLSContextFreeLifecycleSuspensionOwner()
+    contextFreeMLSSuspensionOwner = owner
+    owner.markSuspensionInProgress(reason: reason)
   }
 
   /// Initialize the app - check for saved session and transition to appropriate state
