@@ -245,12 +245,11 @@ Evidence: XcodeBuildMCP on the pinned iOS 26.2 simulator passed all 8
 
 Launch the app, use UI hierarchy inspection to open Feed Start and a unified profile, and capture compact-width and regular-width screenshots. Confirm larger icons, centered content, a continuous concentric curve, full-bleed banner edges, and no image overflow.
 
-Blocked boundary: the app launched on the compact simulator, but its retained
-state is the sign-in screen with `GatewayOAuthExchangeError error 2`, so the
-two authenticated screens could not be reached without mutating account state.
-Xcode-beta UI hierarchy capture also failed because its private
-`SimulatorKit.framework` is absent. Exact launch-state screenshot:
-`/tmp/catbird-task2-iphone.png`.
+Compact-width runtime evidence is now captured from the authenticated recovery
+build. `visual-feed-start.png` shows the restored larger centered launchpad
+icons, and `visual-unified-profile.png` shows the full-bleed banner contained by
+the continuous top curve without horizontal overflow. Regular-width iPad
+runtime capture remains open, so this step is not yet claimed complete.
 
 - [x] **Step 5: Update ledger and commit**
 
@@ -330,14 +329,17 @@ metadata.
 
 Outstanding runtime QA gates:
 
-- [ ] Launch Drafts, inspect grouped rows/thumbnails/sync disclosure, select a
+- [x] Launch Drafts, inspect grouped rows/thumbnails/sync disclosure, select a
   local draft, and confirm text/thread metadata in the composer.
 - [ ] With explicit authorization to mutate test-account data, pull then push a
   text-only AppView draft and confirm the round trip.
 
-These remain open because scripted simulator tooling could not reliably navigate
-into the Drafts sheet and a live AppView round trip would mutate the signed-in
-account's remote drafts. App launch alone does not close either gate.
+The local path is now runtime-verified in the authenticated simulator:
+`visual-drafts-browser.png` shows the browser presentation and grouped rows,
+while `visual-draft-thread-restored.png` and
+`visual-draft-thread-two-posts-restored.png` show selection restoring the
+thread metadata and both posts in the composer. The AppView pull/push round trip
+remains open because it mutates the signed-in account's remote drafts.
 
 - [x] **Step 4: Update ledger and commit**
 
@@ -388,7 +390,7 @@ duplicate controls. Existing sheet bindings supply the accessory actions; no
 historical auth, profile, chat, generated Petrel, submit, media, or draft code
 was imported.
 
-- [ ] **Step 3: Test and visually verify**
+- [x] **Step 3: Test and visually verify**
 
 Run the focused tests plus `PostComposerFixesTests`, build, and capture composer screenshots for empty, language-selected, labels-selected, threadgate-selected, and near-character-limit states.
 
@@ -399,11 +401,13 @@ process 23149; the authenticated timeline is captured at
 suites remain excluded from the current `CatbirdTests` target; the two restored
 suites are the only composer suites that enumerate.
 
-Outstanding visual QA gate: the empty, language, labels, threadgate, and
-near-limit states remain unobserved. Xcode-beta hierarchy capture failed because
-`SimulatorKit.framework` is absent, so the running app could not be navigated
-reliably into each composer state. Build and launch evidence do not close these
-visual checks.
+Authenticated runtime QA now covers the required states. Evidence:
+`visual-composer-new-post.png`, `visual-composer-language-selected.png`,
+`visual-composer-label-selected.png`,
+`visual-composer-threadgate-selected.png`, and
+`visual-composer-near-limit-258.png`. The accessory row remains singular and
+stable as each chip appears, and the near-limit counter is visible at the
+tested threshold.
 
 - [x] **Step 4: Update ledger and commit**
 
@@ -509,7 +513,17 @@ jj new
 - Final cleanup-integration build/runtime: XcodeBuildMCP built, installed, and launched `blue.catbird` (process 57625) on simulator `0F51B352-E2B1-4647-9958-0F0E2594F05F`. Build log: `~/Library/Developer/XcodeBuildMCP/workspaces/Catbird-Petrel-abf01301fe68/logs/build_run_sim_2026-07-14T04-00-53-024Z_pid95698_6a29f517.log`.
 - Build/runtime: XcodeBuildMCP built, installed, and launched `blue.catbird` on authenticated simulator `40111BBE-8709-40D0-9016-A27448486A80`. The running Timeline visibly contains one compose orb; screenshot: `/tmp/catbird-task5-launched.png`. Build log: `~/Library/Developer/XcodeBuildMCP/workspaces/Catbird-Petrel-abf01301fe68/logs/build_run_sim_2026-07-14T03-00-07-612Z_pid95668_da2bdbe1.log`. This closes build, launch, authenticated-state, and closed-orb presence only.
 - Post-review build/runtime: the final hardened tree built, installed, and launched successfully as `blue.catbird` (process 62417) on the same simulator. Build log: `~/Library/Developer/XcodeBuildMCP/workspaces/Catbird-Petrel-abf01301fe68/logs/build_run_sim_2026-07-14T03-26-45-871Z_pid95698_8ff33221.log`.
-- Open runtime gates: Xcode beta's missing `SimulatorKit.framework` prevents semantic UI inspection/tapping, and the simulator has no supported camera source. Menu expansion/action routing, photo capture, video capture, each cancellation path, captured-video eligibility, and Reduce Motion/Reduce Transparency variants therefore remain physical-device checks; they are not inferred from build success. An unavailable camera is refused before draft mutation or `UIImagePickerController` presentation; an available-camera route awaits the durable stash before presenting.
+- Simulator runtime evidence now covers menu expansion and action routing plus
+  the accessibility variants: `visual-fab-menu.png`,
+  `visual-fab-reduce-motion-on.png`,
+  `visual-fab-reduce-transparency-on.png`, and
+  `visual-fab-reduce-motion-transparency-on.png`. The menu remains one orb and
+  exposes New Post, Browse Drafts, Take Photo, and Record Video. The remaining
+  gate is physical-device photo/video capture and cancellation with draft
+  preservation; the simulator has no supported camera source. An unavailable
+  camera is refused before draft mutation or `UIImagePickerController`
+  presentation, and an available-camera route awaits the durable stash before
+  presenting.
 
 ### Task 6: Recover Honest Search Filters
 
@@ -541,7 +555,7 @@ struct SearchFilterState: Codable, Equatable {
 
 Wire only real `searchPosts` sort/date/language parameters. Apply filters before the request, reset the cursor when query/filter state changes, and load all saved state before searching. Do not restore fictional media/verification/follower filters.
 
-- [ ] **Step 3: Test and verify UI**
+- [x] **Step 3: Test and verify UI**
 
 Run `SearchFilterStateTests`, build, then verify Top/Latest pills, filter count, date/language selection, saved-search reload, and pagination after a filter change.
 
@@ -585,12 +599,20 @@ jj new
   `SearchSortSelector` were moved to repository `_trash` per file-safety rules;
   fictional media, verification, follower, engagement, and local re-ranking
   filters are excluded with evidence.
-- Open runtime gates: Top/Latest interaction, active filter count, custom
-  date/language selection, saved-search reload, and pagination after a filter
-  change remain unobserved. Xcode beta cannot load its private
-  `SimulatorKit.framework`, so semantic UI inspection/tapping is unavailable.
-  Build, source-contract tests, and authenticated launch do not close these
-  interactive checks.
+- Authenticated runtime evidence closes Top/Latest interaction, active filter
+  count, date/language selection, saved-search reload, and filtered pagination:
+  `visual-search-filters-selected.png`,
+  `visual-search-latest-two-filters.png`,
+  `visual-search-language-filter-fixed-pagination.png`, and
+  `visual-search-saved-reload-fixed.png`.
+- Runtime testing exposed one defect outside Catbird's filter-state layer:
+  Petrel's `LanguageCodeContainer` did not conform to
+  `QueryParameterConvertible`, so both scalar `lang` and repeated `languages`
+  values were silently omitted from requests. Petrel commit `c36e0a7f` adds the
+  serialization contract. RED/GREEN logs are
+  `petrel-language-query-red.log` and `petrel-language-query-green.log`; the
+  full Petrel run in `petrel-full-green.log` passes 17 XCTest tests plus 128
+  Swift Testing tests.
 
 #### Task 6 review hardening evidence (2026-07-14)
 
@@ -1080,7 +1102,7 @@ xcodebuild test -project Catbird.xcodeproj -scheme Catbird \
 
 Diff `b86c5ca` against the current two view files. If current code passes all three tests and exposes the same continuation behavior at runtime, mark `b86c5ca` superseded and make no product-code edit. Otherwise port only the missing connector predicate or continuation affordance.
 
-- [ ] **Step 3: Verify nested, sibling, and omitted reply layouts**
+- [x] **Step 3: Verify nested, sibling, and omitted reply layouts**
 
 Build and capture thread screenshots for all three arrangements. Confirm no regression to scroll position, initial reveal animation, or App Entity annotations.
 
@@ -1114,12 +1136,15 @@ jj new
   at the Task 9 parent rather than competing with another active Xcode build.
   That same `Catbird.app` was then installed and launched outside the test host
   on the clean simulator as `blue.catbird` process 72781.
-- Scroll/reveal preservation: Task 10 made no product edit. The existing initial
-  snapshot, non-animated main-post positioning, delayed drift correction, and
-  post-stabilization reveal paths remain unchanged. Screenshot verification of
-  nested, sibling, and omitted-child fixtures remains open because those
-  semantic fixtures are not navigable from the simulator's unauthenticated
-  state; Step 3 intentionally remains unchecked.
+- Scroll/reveal preservation: the authenticated recovery build opened a public
+  1,449-reply thread through the normal search and navigation path without an
+  initial-position jump. `visual-threaded-replies-dense-siblings.png` shows a
+  regular depth-one reply connected to its compact direct child;
+  `visual-threaded-replies-true-siblings.png` shows two compact children of the
+  same parent with no false connector between them; and
+  `visual-threaded-replies-continue-thread.png` shows a mini deep reply followed
+  by the live `Continue thread` affordance. This closes all three semantic
+  fixtures while preserving the current URI-derived connector rules.
 - Settings carry-forward at the Task 10 checkpoint: `ContentMediaSettingsView`
   exposed a `Threaded Replies View` toggle and persisted `threadedReplies`, but
   runtime code had no consumer. During Task 12 the product owner explicitly
@@ -1318,11 +1343,18 @@ Expected: a clean working copy. Do not move `main`; present the branch and evide
 - Runtime evidence: the signed-in iPhone simulator was used to inspect Feed
   Start, timeline, unified profile, FAB actions, drafts, composer/accessories,
   search filters, and the restored threaded-replies toggle. Thread captures
-  `visual-threaded-replies-parent-child.png` and
-  `visual-threaded-replies-compact.png` show a regular root, compact children,
-  and preserved parent-to-direct-child rail without a false sibling rail.
+  `visual-threaded-replies-dense-siblings.png`,
+  `visual-threaded-replies-true-siblings.png`, and
+  `visual-threaded-replies-continue-thread.png` prove the direct-child, sibling,
+  and omitted-child cases respectively.
+- Physical-device status: the annotation-only App Intents UI test is already
+  built successfully in `physical-appintents-build-for-testing.log`. A
+  `test-without-building` attempt reached device preflight but Xcode refused to
+  launch because Josh's iPhone was locked; the exact gate is recorded in
+  `physical-appintents-annotations.log`. No representational Like intent was
+  run.
 - Remaining device gate: Step 3 stays open for physical-iPhone photo/video,
-  Siri/App Intents, locked-device behavior, entity lookup, live repeated-repost
-  evidence, and device-backed chat ordering/edit/unsend checks. The branch is
+  Siri/App Intents, entity lookup, live repeated-repost evidence, remote draft
+  round-trip, and device-backed chat ordering/edit/unsend checks. The branch is
   integration-ready for code review, but those release gates are not claimed
   complete.
