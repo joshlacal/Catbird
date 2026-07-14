@@ -1,3 +1,4 @@
+import AppIntents
 import CatbirdMLSCore
 import Foundation
 import NukeUI
@@ -165,6 +166,8 @@ struct UnifiedProfileView: View {
             .ignoresSafeArea(edges: .top)
             .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
         }
+        .entityContext(
+          EntityIdentifier(for: ProfileEntity.self, identifier: profile.did.didString()))
     }
   // MARK: - Helper Views
   @ViewBuilder

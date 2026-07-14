@@ -127,6 +127,18 @@ struct CachedFeedViewPostIdentityTests {
     )
   }
 
+  @Test("App Entity annotation uses the underlying post URI, not the feed-scoped cache id")
+  func appEntityAnnotationUsesUnderlyingURI() throws {
+    let post = try makeFeedViewPost(rkey: "entity123")
+    let cached = try #require(CachedFeedViewPost(from: post, feedType: "timeline"))
+
+    #expect(!cached.id.hasPrefix("at://"))
+    #expect(
+      AppEntityAnnotationIdentifiers.postURI(for: cached)
+        == "at://did:plc:author/app.bsky.feed.post/entity123"
+    )
+  }
+
   @Test("Updating a cached row cannot move it into another feed")
   func updateRefusesCrossFeedSource() throws {
     let organic = try makeFeedViewPost(rkey: "abc123")

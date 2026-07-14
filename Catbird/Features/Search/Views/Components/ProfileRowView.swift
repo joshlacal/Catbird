@@ -1,3 +1,4 @@
+import AppIntents
 import SwiftUI
 import Petrel
 
@@ -50,7 +51,11 @@ struct ProfileRowView: View {
         .buttonStyle(.plain)
         .padding(.vertical, DesignTokens.Spacing.base)
         .padding(.horizontal, DesignTokens.Spacing.lg)
+        .entityContext(
+          EntityIdentifier(for: ProfileEntity.self, identifier: profile.did.didString()))
         .task {
+            await ProfileEntityStore.shared.store(ProfileEntity(displayable: profile))
+
             // Fetch the DID asynchronously
             currentUserDid = try? await appState.atProtoClient?.getDid()
             

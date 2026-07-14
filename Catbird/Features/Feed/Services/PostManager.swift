@@ -58,7 +58,7 @@ final class PostManager {
     selfLabels: ComAtprotoLabelDefs.SelfLabels,
     embed: AppBskyFeedPost.AppBskyFeedPostEmbedUnion? = nil,
     threadgateAllowRules: [AppBskyFeedThreadgate.AppBskyFeedThreadgateAllowUnion]? = nil
-  ) async throws {
+  ) async throws -> ATProtocolURI {
     logger.info(
       "Creating \(parentPost == nil ? "post" : "reply") with text length: \(postText.count)")
 
@@ -266,6 +266,8 @@ final class PostManager {
         try? await Task.sleep(for: .seconds(2))
         status = .idle
       }
+
+      return postURI
 
     } catch {
       // Update status on error

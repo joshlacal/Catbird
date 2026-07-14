@@ -20,6 +20,10 @@ extension ProfileEntity: URLRepresentableEntity {
 
 @available(iOS 18.0, *)
 extension ProfileEntity {
+  var webURL: URL? {
+    URL(string: "https://bsky.app/profile/\(id)")
+  }
+
   var attributeSet: CSSearchableItemAttributeSet {
     let set = defaultAttributeSet
     set.contentDescription = description

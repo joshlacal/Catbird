@@ -696,6 +696,17 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
     }
   }
 
+  /// Applies an external draft only when doing so cannot overwrite user text
+  /// or an active edit session.
+  func applyComposerPrefill(text: String) -> Bool {
+    guard let composer = composerView, !composer.isEditMode else { return false }
+    guard composer.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+      return false
+    }
+    composer.text = text
+    return true
+  }
+
   func updateComposerEmbedState(hasEmbed: Bool, previewImage: UIImage?) {
     composerView?.hasEmbed = hasEmbed
     composerView?.embedPreviewImage = previewImage

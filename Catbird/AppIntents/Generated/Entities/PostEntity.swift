@@ -11,40 +11,58 @@ struct PostEntity: AppEntity {
 
     let id: String
 
-    let authorDisplayName: String?
+    @Property(title: "Author Name")
+    var authorDisplayName: String?
 
-    let authorHandle: String
+    @Property(title: "Author Handle")
+    var authorHandle: String
 
-    let likeCount: Int?
+    @Property(title: "Like Count")
+    var likeCount: Int?
 
-    let repostCount: Int?
+    @Property(title: "Repost Count")
+    var repostCount: Int?
 
-    let replyCount: Int?
+    @Property(title: "Reply Count")
+    var replyCount: Int?
 
-    let indexedAt: Date
+    @Property(title: "Date")
+    var indexedAt: Date
 
-    let text: String?
+    @Property(title: "Text")
+    var text: String?
 
-    let rkey: String
+    @Property(title: "Record Key")
+    var rkey: String
+
 
     var displayRepresentation: DisplayRepresentation {
         DisplayRepresentation(
             title: "\(text ?? authorHandle)",
-            subtitle: "@\(authorHandle)",
+            subtitle: "\(authorHandle)",
             image: nil
         )
     }
 
     init(from view: AppBskyFeedDefs.PostView) {
         id = view.uri.uriString()
+
         authorDisplayName = view.author.displayName
+
         authorHandle = view.author.handle.value
+
         likeCount = view.likeCount
+
         repostCount = view.repostCount
+
         replyCount = view.replyCount
+
         indexedAt = view.indexedAt.date
+
         text = IntentEntityBridges.postText(view)
+
         rkey = IntentEntityBridges.recordKey(view.uri)
+
     }
 
 }
@@ -54,46 +72,26 @@ struct PostEntityQuery: EntityQuery, EntityStringQuery {
     init() {}
 
     func entities(for identifiers: [String]) async throws -> [PostEntity] {
-        // 1. In-memory actor store — fast, works in-process.
         let cached = await PostEntityStore.shared.entities(for: identifiers)
         if cached.count == identifiers.count { return cached }
-
-        // 2. Persistent shared cache — works out-of-process (Siri / Shortcuts).
-        //    The main app writes here via PostEntityStore.store(views:) so the
-        //    entity daemon process can skip the slow network bootstrap entirely.
         let cachedIDs = Set(cached.map(\.id))
-        let missingAfterMemory = identifiers.filter { !cachedIDs.contains($0) }
-        let persisted = PostEntityCache.entities(for: missingAfterMemory)
-        var results = cached + persisted
-        let resolvedIDs = cachedIDs.union(persisted.map(\.id))
-        if results.count == identifiers.count { return results }
-
-        // 3. Network fallback for any remaining misses.
-        let missing = identifiers.filter { !resolvedIDs.contains($0) }
+        let missing = identifiers.filter { !cachedIDs.contains($0) }
         let did = IntentAccountResolver.activeDID()
         let client = try await IntentClientProvider.shared.client(for: did)
+        var results: [PostEntity] = cached
         for start in stride(from: 0, to: missing.count, by: 25) {
             let chunk = Array(missing[start..<min(start + 25, missing.count)])
-            let uris = chunk.compactMap { try? ATProtocolURI(uriString: $0) }
-            guard !uris.isEmpty else { continue }
-            let output = try unwrapIntentResponse(
-                await client.app.bsky.feed.getPosts(
-                    input: AppBskyFeedGetPosts.Parameters(uris: uris)
-                )
-            )
+            let output = try unwrapIntentResponse(await client.app.bsky.feed.getPosts(input: AppBskyFeedGetPosts.Parameters(uris: try chunk.map { try ATProtocolURI(uriString: $0) })))
             results.append(contentsOf: output.posts.map { PostEntity(from: $0) })
         }
         return results
     }
 
+
     func entities(matching string: String) async throws -> [PostEntity] {
         let did = IntentAccountResolver.activeDID()
         let client = try await IntentClientProvider.shared.client(for: did)
-        let output = try unwrapIntentResponse(
-            await client.app.bsky.feed.searchPosts(
-                input: AppBskyFeedSearchPosts.Parameters(q: string)
-            )
-        )
+        let output = try unwrapIntentResponse(await client.app.bsky.feed.searchPosts(input: AppBskyFeedSearchPosts.Parameters(q: string)))
         return output.posts.map { PostEntity(from: $0) }
     }
 

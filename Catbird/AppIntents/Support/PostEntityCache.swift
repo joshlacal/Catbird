@@ -47,7 +47,6 @@ struct PersistedPostEntity: Codable {
 
 enum PostEntityCache {
   private static let logger = Logger(subsystem: "blue.catbird", category: "PostEntityCache")
-  private static let sharedDefaults = UserDefaults(suiteName: "group.blue.catbird.shared")
   static let storageKey = "recentPostEntities.v1"
   static let capacity = 50
 
@@ -66,8 +65,11 @@ enum PostEntityCache {
   /// Merges new post views into the persistent shared cache. Existing entries
   /// for the same AT URI are updated; new entries are prepended. The cache is
   /// trimmed to `capacity` after each write.
-  static func upsert(_ views: [AppBskyFeedDefs.PostView]) {
-    guard let defaults = sharedDefaults else { return }
+  static func upsert(
+    _ views: [AppBskyFeedDefs.PostView],
+    defaults: UserDefaults? = UserDefaults(suiteName: IntentAccountResolver.appGroupSuiteName)
+  ) {
+    guard let defaults else { return }
     let newEntries = views.compactMap { PersistedPostEntity(from: $0) }
     guard !newEntries.isEmpty else { return }
 
@@ -92,8 +94,11 @@ enum PostEntityCache {
   /// Returns PostEntity instances for the given AT URI identifiers from the
   /// persistent shared cache. Identifiers with no matching entry are omitted.
   @available(iOS 18.0, *)
-  static func entities(for identifiers: [String]) -> [PostEntity] {
-    guard let defaults = sharedDefaults else { return [] }
+  static func entities(
+    for identifiers: [String],
+    defaults: UserDefaults? = UserDefaults(suiteName: IntentAccountResolver.appGroupSuiteName)
+  ) -> [PostEntity] {
+    guard let defaults else { return [] }
     let entries = decode(from: defaults)
     let byID = Dictionary(entries.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
     let result = identifiers.compactMap { id in byID[id].map { PostEntity(persisted: $0) } }

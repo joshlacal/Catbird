@@ -26,10 +26,20 @@ actor PostEntityStore {
   private var views: [String: AppBskyFeedDefs.PostView] = [:]
   private var order: [String] = []
   private let capacity = 500
+  private let defaults: UserDefaults?
 
-  private init() {}
+  init(
+    defaults: UserDefaults? = UserDefaults(suiteName: IntentAccountResolver.appGroupSuiteName)
+  ) {
+    self.defaults = defaults
+  }
 
   func store(_ view: AppBskyFeedDefs.PostView) {
+    storeInMemory(view)
+    PostEntityCache.upsert([view], defaults: defaults)
+  }
+
+  private func storeInMemory(_ view: AppBskyFeedDefs.PostView) {
     let id = view.uri.uriString()
     if views.updateValue(view, forKey: id) == nil {
       order.append(id)
@@ -41,24 +51,33 @@ actor PostEntityStore {
 
   func store(views newViews: [AppBskyFeedDefs.PostView]) {
     for view in newViews {
-      store(view)
+      storeInMemory(view)
     }
     // Write through to the shared app group so App Intents extension processes
     // (Siri, Shortcuts) can resolve entities without a network round trip.
-    PostEntityCache.upsert(newViews)
+    PostEntityCache.upsert(newViews, defaults: defaults)
   }
 
   /// Contract consumed by the generated PostEntityQuery (manifest
   /// `query.byIds.localStore`): identifiers with no cached view are simply
   /// omitted — the query fetches only those over the network.
   func entities(for identifiers: [String]) -> [PostEntity] {
-    let hits = identifiers.compactMap { id in
-      views[id].map { PostEntity(from: $0) }
-    }
+    let memoryEntities = Dictionary(
+      uniqueKeysWithValues: identifiers.compactMap { id in
+        views[id].map { (id, PostEntity(from: $0)) }
+      })
+    let missing = identifiers.filter { memoryEntities[$0] == nil }
+    let persistentEntities = Dictionary(
+      uniqueKeysWithValues: PostEntityCache.entities(for: missing, defaults: defaults).map {
+        ($0.id, $0)
+      })
+    let hits = identifiers.compactMap { memoryEntities[$0] ?? persistentEntities[$0] }
     logger.info(
       "resolve: \(hits.count)/\(identifiers.count) from store (\(self.views.count) cached)")
     if hits.count < identifiers.count {
-      let missing = identifiers.filter { views[$0] == nil }
+      let missing = identifiers.filter {
+        memoryEntities[$0] == nil && persistentEntities[$0] == nil
+      }
       logger.warning("misses (network fallback): \(missing.prefix(3).joined(separator: " | "))")
     }
     return hits

@@ -200,6 +200,7 @@ import SwiftUI
         @State private var messageToDelete: Message?
         @State private var showingDeleteAlert = false
         @State private var editSession = MLSMessageEditSession()
+        @State private var pendingDraftText: String?
 
         private let logger = Logger(subsystem: "blue.catbird", category: "MLSConversationDetail")
         private let storage = MLSStorage.shared
@@ -353,6 +354,10 @@ import SwiftUI
                             editMessageText: editSession.draftText,
                             onCancelEdit: {
                                 editSession.cancel()
+                            },
+                            prefillText: pendingDraftText,
+                            onPrefillApplied: {
+                                pendingDraftText = nil
                             }
                         )
                     )
@@ -372,6 +377,12 @@ import SwiftUI
                     }
                     .task {
                         await dataSource.loadMessages()
+                        consumePendingChatDraft()
+                    }
+                    .onReceive(
+                        NotificationCenter.default.publisher(for: ChatDraftHandoff.didStoreDraft)
+                    ) { _ in
+                        consumePendingChatDraft()
                     }
                     .customEmojiPicker(isPresented: $showingEmojiPicker) { emoji in
                         selectedEmoji = emoji
@@ -541,6 +552,12 @@ import SwiftUI
                     }
                 }
             }
+        }
+
+        @MainActor
+        private func consumePendingChatDraft() {
+            guard let draft = ChatDraftHandoff.shared.consume(for: conversationId) else { return }
+            pendingDraftText = draft.isEmpty ? nil : draft
         }
 
         /// Loading placeholder shown while profiles are loading to avoid DID flicker

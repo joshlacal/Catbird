@@ -21,6 +21,8 @@ enum IntentError: LocalizedError {
   case emptyResponse
   /// A parameter supplied to the intent was invalid or unusable.
   case invalidParameter(String)
+  /// A required app or system service is temporarily unavailable.
+  case serviceUnavailable(String)
 
   var errorDescription: String? {
     switch self {
@@ -33,6 +35,8 @@ enum IntentError: LocalizedError {
     case .emptyResponse:
       return "The server didn't return the expected data. Please try again."
     case .invalidParameter(let detail):
+      return detail
+    case .serviceUnavailable(let detail):
       return detail
     }
   }

@@ -33,6 +33,11 @@ struct InlineComposerConfig {
   var isEditMode: Bool = false
   var editMessageText: String? = nil
   var onCancelEdit: (() -> Void)? = nil
+
+  // One-shot Siri/Shortcuts draft handoff. The owner clears this only after
+  // the UIKit composer confirms that it applied the text.
+  var prefillText: String? = nil
+  var onPrefillApplied: (() -> Void)? = nil
 }
 
 @available(iOS 16.0, *)
@@ -85,6 +90,11 @@ struct ChatCollectionViewBridge<DataSource: UnifiedChatDataSource>: UIViewContro
         text: config.editMessageText,
         onCancelEdit: config.onCancelEdit
       )
+      if let prefill = config.prefillText, !config.isEditMode,
+        controller.applyComposerPrefill(text: prefill)
+      {
+        config.onPrefillApplied?()
+      }
     }
   }
 }

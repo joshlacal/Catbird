@@ -7,6 +7,7 @@
 //  @Observable ViewModel for individual feed posts that persists across cell reuse
 //
 
+import AppIntents
 import Foundation
 import SwiftUI
 import Petrel
@@ -331,6 +332,11 @@ final class FeedPostViewModel {
         do {
             if newLikedState {
                 try await performLike()
+                donateIntent {
+                    var intent = LikePostIntent()
+                    intent.post = PostEntity(from: fvp.post)
+                    return intent
+                }
             } else {
                 try await performUnlike()
             }
@@ -371,6 +377,11 @@ final class FeedPostViewModel {
         do {
             if newRepostedState {
                 try await performRepost()
+                donateIntent {
+                    var intent = RepostPostIntent()
+                    intent.post = PostEntity(from: fvp.post)
+                    return intent
+                }
             } else {
                 try await performUnrepost()
             }
@@ -381,6 +392,14 @@ final class FeedPostViewModel {
         }
         
         logger.debug("Repost toggled for post: \(self.post.id)")
+    }
+
+    private func donateIntent(_ makeIntent: @escaping @Sendable () -> some AppIntent) {
+        #if os(iOS)
+        Task.detached(priority: .background) {
+            _ = try? await makeIntent().donate()
+        }
+        #endif
     }
     
     /// Toggles the bookmark state of the post

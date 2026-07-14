@@ -488,6 +488,8 @@ final class FeedModel: StateInvalidationSubscriber {
 
   /// Refresh post shadows in parallel for better performance
   private func refreshPostShadows(_ posts: [AppBskyFeedDefs.FeedViewPost]) async {
+    await SpotlightEntityDonator.shared.donate(posts: posts.map(\.post))
+
     // Use task group for parallel shadow updates
     await withTaskGroup(of: Void.self) { group in
       for post in posts {

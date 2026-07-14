@@ -141,6 +141,7 @@ var id: String {
       }
     }
     .fixedSize(horizontal: false, vertical: true)
+    .entityContext(EntityIdentifier(for: PostEntity.self, identifier: post.uri.uriString()))
     .task {
       await setupPost()
     }
@@ -563,6 +564,13 @@ var id: String {
       initialLoadComplete = true
       return
     }
+
+    // Seed before any lifecycle wait or image prefetch. The responder may be
+    // visible to AppIntentsTesting as soon as this view renders.
+    if #available(iOS 18.0, *) {
+      await PostEntityStore.shared.store(post)
+      await ProfileEntityStore.shared.store(ProfileEntity(from: post.author))
+    }
     
     // Set up report callback
     contextMenuViewModel.onReportPost = {
@@ -608,13 +616,6 @@ var id: String {
         try Task.checkCancellation()  // Check for cancellation
         postState.currentPost = await appState.postShadowManager.mergeShadow(post: post)  // Use consolidated state
       }
-    }
-
-    // Seed entity stores so Siri's onscreen-context payload ('like this post')
-    // can resolve the entity without a network round trip.
-    if #available(iOS 18.0, *) {
-      await PostEntityStore.shared.store(post)
-      await ProfileEntityStore.shared.store(ProfileEntity(from: post.author))
     }
 
     // Mark initial load as complete for transaction animation control

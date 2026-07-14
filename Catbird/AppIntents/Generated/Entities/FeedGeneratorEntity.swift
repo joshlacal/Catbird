@@ -11,11 +11,14 @@ struct FeedGeneratorEntity: AppEntity {
 
     let id: String
 
-    let displayName: String
+    @Property(title: "Feed Name")
+    var displayName: String
 
-    let description: String?
+    @Property(title: "Description")
+    var description: String?
 
-    let avatar: URL?
+    @Property(title: "Avatar")
+    var avatar: URL?
 
 
     var displayRepresentation: DisplayRepresentation {
@@ -46,7 +49,7 @@ struct FeedGeneratorEntityQuery: EntityQuery, EntityStringQuery {
     func entities(for identifiers: [String]) async throws -> [FeedGeneratorEntity] {
         let did = IntentAccountResolver.activeDID()
         let client = try await IntentClientProvider.shared.client(for: did)
-        let output = try unwrapIntentResponse(await client.app.bsky.feed.getFeedGenerators(input: AppBskyFeedGetFeedGenerators.Parameters(feeds: identifiers.compactMap { try? ATProtocolURI(uriString: $0) })))
+        let output = try unwrapIntentResponse(await client.app.bsky.feed.getFeedGenerators(input: AppBskyFeedGetFeedGenerators.Parameters(feeds: try identifiers.map { try ATProtocolURI(uriString: $0) })))
         return output.feeds.map { FeedGeneratorEntity(from: $0) }
     }
 

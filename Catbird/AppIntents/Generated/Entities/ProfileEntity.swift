@@ -11,13 +11,17 @@ struct ProfileEntity: AppEntity {
 
     let id: String
 
-    let handle: String
+    @Property(title: "Handle")
+    var handle: String
 
-    let displayName: String?
+    @Property(title: "Display Name")
+    var displayName: String?
 
-    let description: String?
+    @Property(title: "Bio")
+    var description: String?
 
-    let avatar: URL?
+    @Property(title: "Avatar")
+    var avatar: URL?
 
 
     var displayRepresentation: DisplayRepresentation {
@@ -30,26 +34,41 @@ struct ProfileEntity: AppEntity {
 
     init(from view: AppBskyActorDefs.ProfileViewDetailed) {
         id = view.did.didString()
+
         handle = view.handle.value
+
         displayName = view.displayName
+
         description = view.description
+
         avatar = view.avatar?.url
+
     }
 
     init(from view: AppBskyActorDefs.ProfileViewBasic) {
         id = view.did.didString()
+
         handle = view.handle.value
+
         displayName = view.displayName
+
         description = nil
+
         avatar = view.avatar?.url
+
     }
 
     init(from view: AppBskyActorDefs.ProfileView) {
         id = view.did.didString()
+
         handle = view.handle.value
+
         displayName = view.displayName
+
         description = view.description
+
         avatar = view.avatar?.url
+
     }
 
 }
@@ -59,11 +78,8 @@ struct ProfileEntityQuery: EntityQuery, EntityStringQuery {
     init() {}
 
     func entities(for identifiers: [String]) async throws -> [ProfileEntity] {
-        // 1. In-memory actor store — fast, works in-process.
         let cached = await ProfileEntityStore.shared.entities(for: identifiers)
         if cached.count == identifiers.count { return cached }
-
-        // 2. Network fallback for any remaining misses.
         let cachedIDs = Set(cached.map(\.id))
         let missing = identifiers.filter { !cachedIDs.contains($0) }
         let did = IntentAccountResolver.activeDID()
@@ -71,26 +87,17 @@ struct ProfileEntityQuery: EntityQuery, EntityStringQuery {
         var results: [ProfileEntity] = cached
         for start in stride(from: 0, to: missing.count, by: 25) {
             let chunk = Array(missing[start..<min(start + 25, missing.count)])
-            let actors = chunk.compactMap { try? ATIdentifier(string: $0) }
-            guard !actors.isEmpty else { continue }
-            let output = try unwrapIntentResponse(
-                await client.app.bsky.actor.getProfiles(
-                    input: AppBskyActorGetProfiles.Parameters(actors: actors)
-                )
-            )
+            let output = try unwrapIntentResponse(await client.app.bsky.actor.getProfiles(input: AppBskyActorGetProfiles.Parameters(actors: try chunk.map { try ATIdentifier(string: $0) })))
             results.append(contentsOf: output.profiles.map { ProfileEntity(from: $0) })
         }
         return results
     }
 
+
     func entities(matching string: String) async throws -> [ProfileEntity] {
         let did = IntentAccountResolver.activeDID()
         let client = try await IntentClientProvider.shared.client(for: did)
-        let output = try unwrapIntentResponse(
-            await client.app.bsky.actor.searchActors(
-                input: AppBskyActorSearchActors.Parameters(q: string)
-            )
-        )
+        let output = try unwrapIntentResponse(await client.app.bsky.actor.searchActors(input: AppBskyActorSearchActors.Parameters(q: string)))
         return output.actors.map { ProfileEntity(from: $0) }
     }
 

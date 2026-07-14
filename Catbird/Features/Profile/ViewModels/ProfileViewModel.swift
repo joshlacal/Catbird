@@ -196,6 +196,10 @@ import AppKit
         input: .init(actor: try ATIdentifier(string: userDID))
       )
 
+      if responseCode == 200, let profile = profileData {
+        await SpotlightEntityDonator.shared.donate(profiles: [profile])
+      }
+
       await MainActor.run {
         // Double-check that we're still valid and not cancelled
         guard !Task.isCancelled else { 

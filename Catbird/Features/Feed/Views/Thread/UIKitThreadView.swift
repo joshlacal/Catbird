@@ -1024,6 +1024,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   }
 
   private func updateDataSnapshot(animatingDifferences: Bool = false) {
+    seedThreadEntityCache()
     var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
 
     // Add all sections
@@ -1534,6 +1535,8 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       controllerLogger.debug("⬆️ LOAD MORE PARENTS: Root post found, marking thread top reached")
       hasReachedTopOfThread = true
     }
+
+    seedThreadEntityCache()
     
     // Create new snapshot with updated data
     var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
@@ -2332,6 +2335,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   // Helper to apply snapshot with optimistic updates
   @MainActor
   private func applySnapshotOptimistically() {
+    seedThreadEntityCache()
     var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
     
     // Add sections
@@ -2356,6 +2360,18 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     // Apply without animation for optimistic updates to avoid fly-in
     applySnapshot(snapshot, animatingDifferences: false)
   }
+
+  /// Writes every post represented by the upcoming UIKit snapshot before its
+  /// responder annotations become visible to Siri/AppIntentsTesting.
+  private func seedThreadEntityCache() {
+    var posts: [AppBskyFeedDefs.PostView] = []
+    posts.append(contentsOf: parentPosts.compactMap(\.post))
+    if let mainPost { posts.append(mainPost) }
+    posts.append(contentsOf: opThreadContinuations.compactMap(\.post))
+    posts.append(contentsOf: replyWrappers.compactMap(\.post))
+    posts.append(contentsOf: nestedRepliesMap.values.flatMap { $0 }.compactMap(\.post))
+    PostEntityCache.upsert(posts)
+  }
 }
 
 // MARK: - ParentPost Extensions
@@ -2363,6 +2379,13 @@ extension ParentPost {
   /// Safely extracts URI from parent post thread item
   var uri: ATProtocolURI? {
     return threadItem.uri
+  }
+
+  var post: AppBskyFeedDefs.PostView? {
+    guard case .appBskyUnspeccedDefsThreadItemPost(let item) = threadItem.value else {
+      return nil
+    }
+    return item.post
   }
 }
 
@@ -2466,8 +2489,10 @@ final class ParentPostCell: UICollectionViewCell {
     // UIHostingConfiguration content aren't collected by the system.
     // Only annotate if the id is a real at-uri; synthetic ids (e.g. from
     // .unexpected thread items) can't be resolved and would cause ATProtocolError.
-    if #available(iOS 26.0, *), parentPost.id.hasPrefix("at://") {
-      appEntityIdentifier = EntityIdentifier(for: PostEntity.self, identifier: parentPost.id)
+    if #available(iOS 26.0, *),
+      let entityURI = AppEntityAnnotationIdentifiers.postURI(parentPost.id)
+    {
+      appEntityIdentifier = EntityIdentifier(for: PostEntity.self, identifier: entityURI)
     } else if #available(iOS 26.0, *) {
       appEntityIdentifier = nil
     }
@@ -2541,6 +2566,14 @@ final class MainPostCell: UICollectionViewCell {
 
   func configure(post: AppBskyFeedDefs.PostView, appState: AppState, path: Binding<NavigationPath>) {
     let postIdentity = post.uri.uriString()
+
+    if #available(iOS 26.0, *),
+      let entityURI = AppEntityAnnotationIdentifiers.postURI(postIdentity)
+    {
+      appEntityIdentifier = EntityIdentifier(for: PostEntity.self, identifier: entityURI)
+    } else if #available(iOS 26.0, *) {
+      appEntityIdentifier = nil
+    }
 
     // Set themed background color
       contentView.backgroundColor = UIColor(
@@ -2623,6 +2656,14 @@ final class ReplyCell: UICollectionViewCell {
     appState: AppState,
     path: Binding<NavigationPath>
   ) {
+    if #available(iOS 26.0, *),
+      let entityURI = AppEntityAnnotationIdentifiers.postURI(replyWrapper.id)
+    {
+      appEntityIdentifier = EntityIdentifier(for: PostEntity.self, identifier: entityURI)
+    } else if #available(iOS 26.0, *) {
+      appEntityIdentifier = nil
+    }
+
     // Set themed background color
       contentView.backgroundColor = UIColor(
         Color.dynamicBackground(appState.themeManager, currentScheme: contentView.getCurrentColorScheme())

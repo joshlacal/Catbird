@@ -503,9 +503,9 @@ import os
         // onscreen PostEntity references. SwiftUI modifiers inside
         // UIHostingConfiguration are NOT collected; UIKit cell annotation is required.
         if #available(iOS 26.0, *) {
-          if postId.hasPrefix("at://") {
+          if let entityURI = AppEntityAnnotationIdentifiers.postURI(for: post) {
             cell.appEntityIdentifier = EntityIdentifier(
-              for: PostEntity.self, identifier: postId)
+              for: PostEntity.self, identifier: entityURI)
           } else {
             cell.appEntityIdentifier = nil
           }

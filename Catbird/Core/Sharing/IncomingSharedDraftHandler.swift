@@ -24,6 +24,13 @@ enum IncomingSharedDraftHandler {
       return
     }
 
+    // Keep the payload until a signed-in AppState can actually accept it.
+    // This handler also runs during launch, before lifecycle setup completes.
+    guard let appState = AppStateManager.shared.lifecycle.appState else {
+      logger.info("  Deferring incoming shared draft until AppState is available")
+      return
+    }
+
     logger.info("📥 Found incoming shared draft - Size: \(data.count) bytes")
 
     defer {
@@ -37,7 +44,7 @@ enum IncomingSharedDraftHandler {
     logger.debug("  Attempting to decode as PostComposerDraft")
     if let draft = try? decoder.decode(PostComposerDraft.self, from: data) {
       logger.info("✅ Successfully decoded as PostComposerDraft - Post text length: \(draft.postText.count), Media items: \(draft.mediaItems.count)")
-      AppStateManager.shared.lifecycle.appState?.composerDraftManager.storeDraft(draft)
+      appState.composerDraftManager.storeDraft(draft)
       logger.debug("  Stored draft in ComposerDraftManager")
       return
     }
@@ -55,7 +62,7 @@ enum IncomingSharedDraftHandler {
       logger.debug("  Parsed URLs - General: \(urls.count), Videos: \(videoURLs.count), Images: \(imageURLs.count)")
 
       let draft = SharedDraftImporter.makeDraft(text: payload.text, urls: urls, imageURLs: imageURLs, imagesData: payload.images, videoURLs: videoURLs)
-      AppStateManager.shared.lifecycle.appState?.composerDraftManager.storeDraft(draft)
+      appState.composerDraftManager.storeDraft(draft)
       logger.info("✅ Created and stored draft from shared payload")
       return
     }

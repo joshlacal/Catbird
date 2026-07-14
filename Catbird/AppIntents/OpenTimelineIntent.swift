@@ -12,6 +12,7 @@ struct OpenTimelineIntent: AppIntent {
       let nav = appState.navigationManager as? AppNavigationManager
     {
       nav.tabSelection?(0)
+      nav.clearPath(for: 0)
     }
     return .result()
   }

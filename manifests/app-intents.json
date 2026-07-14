@@ -1,0 +1,434 @@
+{
+  "$comment": "Production App Intents manifest for Catbird (A3). Generated via generator/app_intents_generator.py (see Petrel repo). Paths are resolved relative to THIS file's directory: lexicons.reference -> ../../Petrel/generator/lexicons (up to the Catbird+Petrel workspace root, then into Petrel), swift.output -> ../Catbird/AppIntents/Generated (up to the Catbird repo root, then into the app target). Regenerate with: cd Petrel && python3 run.py --manifest ../Catbird/manifests/app-intents.json swift. Dropped from the target set (see docs/superpowers for the A3 plan): NotificationEntity/listNotifications (no string-searchable field backs the required EntityStringQuery -- the only String-typed param is 'cursor', a pagination token, and using it as the search field would be a nonsensical UX hack) and BookmarkEntity/getBookmarks (bookmarkView.item is a union of postView/blockedPost/notFoundPost, and the one-level nested-ref extension only supports a single $ref leaf, not unions).",
+  "package": {
+    "kind": "app-intents",
+    "name": "CatbirdAppIntents"
+  },
+  "lexicons": {
+    "reference": ["../../Petrel/generator/lexicons"]
+  },
+  "swift": {
+    "output": "../Catbird/AppIntents/Generated"
+  },
+  "appIntents": {
+    "availability": "iOS 18.0",
+    "intents": [
+      {
+        "id": "app.bsky.actor.searchActors",
+        "kind": "query",
+        "structName": "SearchProfilesIntent",
+        "title": "Search Profiles",
+        "description": "Find Bluesky profiles matching a search query.",
+        "excludeParameters": ["term", "cursor"],
+        "parameters": {
+          "q": { "title": "Search Query", "requestValue": true },
+          "limit": { "title": "Result Limit" }
+        },
+        "confirmation": false,
+        "returns": { "entity": "ProfileEntity", "outputPath": "actors" }
+      },
+      {
+        "id": "app.bsky.actor.getProfile",
+        "kind": "query",
+        "structName": "GetProfileIntent",
+        "title": "Get Profile",
+        "description": "Look up a single Bluesky profile by handle or DID.",
+        "parameters": {
+          "actor": { "title": "Handle or DID" }
+        },
+        "confirmation": false,
+        "returns": { "entity": "ProfileEntity" }
+      },
+      {
+        "id": "app.bsky.actor.getSuggestions",
+        "kind": "query",
+        "structName": "SuggestedProfilesIntent",
+        "title": "Suggested Profiles",
+        "description": "Get a list of suggested Bluesky profiles to follow.",
+        "excludeParameters": ["cursor"],
+        "parameters": {
+          "limit": { "title": "Result Limit" }
+        },
+        "confirmation": false,
+        "returns": { "entity": "ProfileEntity", "outputPath": "actors" }
+      },
+      {
+        "id": "app.bsky.feed.searchPosts",
+        "kind": "query",
+        "structName": "SearchPostsIntent",
+        "title": "Search Posts",
+        "description": "Find Bluesky posts matching a search query.",
+        "excludeParameters": [
+          "sort", "since", "until", "mentions", "author", "lang", "domain", "url", "tag", "cursor"
+        ],
+        "parameters": {
+          "q": { "title": "Search Query", "requestValue": true },
+          "limit": { "title": "Result Limit" }
+        },
+        "confirmation": false,
+        "returns": { "entity": "PostEntity", "outputPath": "posts" }
+      },
+      {
+        "id": "app.bsky.feed.getTimeline",
+        "kind": "query",
+        "structName": "GetTimelineIntent",
+        "title": "Get Timeline",
+        "description": "Get the signed-in account's home timeline.",
+        "excludeParameters": ["algorithm", "cursor"],
+        "parameters": {
+          "limit": { "title": "Result Limit" }
+        },
+        "confirmation": false,
+        "returns": { "entity": "PostEntity", "outputPath": "feed.post" }
+      },
+      {
+        "id": "app.bsky.feed.getAuthorFeed",
+        "kind": "query",
+        "structName": "AuthorPostsIntent",
+        "title": "Author's Posts",
+        "description": "Get the posts and reposts authored by a Bluesky account.",
+        "excludeParameters": ["cursor", "filter", "includePins"],
+        "parameters": {
+          "actor": { "title": "Handle or DID" },
+          "limit": { "title": "Result Limit" }
+        },
+        "confirmation": false,
+        "returns": { "entity": "PostEntity", "outputPath": "feed.post" }
+      },
+      {
+        "id": "app.bsky.feed.getActorLikes",
+        "kind": "query",
+        "structName": "LikedPostsIntent",
+        "title": "Liked Posts",
+        "description": "Get the posts liked by a Bluesky account.",
+        "excludeParameters": ["cursor"],
+        "parameters": {
+          "actor": { "title": "Handle or DID" },
+          "limit": { "title": "Result Limit" }
+        },
+        "confirmation": false,
+        "returns": { "entity": "PostEntity", "outputPath": "feed.post" }
+      },
+      {
+        "id": "app.bsky.notification.getUnreadCount",
+        "kind": "query",
+        "structName": "UnreadNotificationCountIntent",
+        "title": "Unread Notification Count",
+        "description": "Get the number of unread Bluesky notifications.",
+        "excludeParameters": ["priority", "seenAt"],
+        "confirmation": false,
+        "dialog": "You have {value} unread notifications.",
+        "returns": { "scalar": "Int", "outputPath": "count" }
+      },
+      {
+        "id": "app.bsky.graph.getFollowers",
+        "kind": "query",
+        "structName": "FollowersIntent",
+        "title": "Followers",
+        "description": "Get the accounts following a Bluesky account.",
+        "excludeParameters": ["cursor"],
+        "parameters": {
+          "actor": { "title": "Handle or DID" },
+          "limit": { "title": "Result Limit" }
+        },
+        "confirmation": false,
+        "returns": { "entity": "ProfileEntity", "outputPath": "followers" }
+      },
+      {
+        "id": "app.bsky.graph.getFollows",
+        "kind": "query",
+        "structName": "FollowingIntent",
+        "title": "Following",
+        "description": "Get the accounts a Bluesky account follows.",
+        "excludeParameters": ["cursor"],
+        "parameters": {
+          "actor": { "title": "Handle or DID" },
+          "limit": { "title": "Result Limit" }
+        },
+        "confirmation": false,
+        "returns": { "entity": "ProfileEntity", "outputPath": "follows" }
+      },
+      {
+        "id": "app.bsky.unspecced.getPopularFeedGenerators",
+        "kind": "query",
+        "structName": "DiscoverFeedsIntent",
+        "title": "Discover Feeds",
+        "description": "Browse or search popular Bluesky custom feeds.",
+        "excludeParameters": ["cursor"],
+        "parameters": {
+          "query": { "title": "Search Query" },
+          "limit": { "title": "Result Limit" }
+        },
+        "confirmation": false,
+        "returns": { "entity": "FeedGeneratorEntity", "outputPath": "feeds" }
+      },
+      {
+        "id": "app.bsky.graph.muteActor",
+        "kind": "procedure",
+        "structName": "MuteActorIntent",
+        "title": "Mute Profile",
+        "description": "Mute a Bluesky account.",
+        "parameterOverrides": {
+          "actor": { "resolveAs": "ProfileEntity", "bridge": "id" }
+        },
+        "confirmation": true,
+        "dialog": "Muted."
+      },
+      {
+        "id": "app.bsky.graph.unmuteActor",
+        "kind": "procedure",
+        "structName": "UnmuteActorIntent",
+        "title": "Unmute Profile",
+        "description": "Unmute a Bluesky account.",
+        "parameterOverrides": {
+          "actor": { "resolveAs": "ProfileEntity", "bridge": "id" }
+        },
+        "confirmation": false,
+        "dialog": "Unmuted."
+      },
+      {
+        "id": "app.bsky.feed.like",
+        "kind": "recordWrite",
+        "structName": "LikePostIntent",
+        "title": "Like Post",
+        "description": "Like a Bluesky post.",
+        "confirmation": false,
+        "recordWrite": {
+          "action": "create",
+          "subject": {
+            "kind": "strongRef",
+            "parameter": { "name": "post", "title": "Post", "entity": "PostEntity" },
+            "hydrate": { "nsid": "app.bsky.feed.getPosts", "param": "uris", "resultsPath": "posts" }
+          },
+          "viewerPath": "viewer.like",
+          "dialog": { "success": "Liked.", "alreadyDone": "You already liked that post." }
+        }
+      },
+      {
+        "id": "app.bsky.feed.like",
+        "kind": "recordWrite",
+        "structName": "UnlikePostIntent",
+        "title": "Unlike Post",
+        "description": "Remove your like from a Bluesky post.",
+        "confirmation": false,
+        "recordWrite": {
+          "action": "delete",
+          "subject": {
+            "kind": "strongRef",
+            "parameter": { "name": "post", "title": "Post", "entity": "PostEntity" },
+            "hydrate": { "nsid": "app.bsky.feed.getPosts", "param": "uris", "resultsPath": "posts" }
+          },
+          "viewerPath": "viewer.like",
+          "dialog": { "success": "Removed your like.", "alreadyDone": "You haven't liked that post." }
+        }
+      },
+      {
+        "id": "app.bsky.feed.repost",
+        "kind": "recordWrite",
+        "structName": "RepostPostIntent",
+        "title": "Repost",
+        "description": "Repost a Bluesky post to your followers.",
+        "confirmation": false,
+        "recordWrite": {
+          "action": "create",
+          "subject": {
+            "kind": "strongRef",
+            "parameter": { "name": "post", "title": "Post", "entity": "PostEntity" },
+            "hydrate": { "nsid": "app.bsky.feed.getPosts", "param": "uris", "resultsPath": "posts" }
+          },
+          "viewerPath": "viewer.repost",
+          "dialog": { "success": "Reposted.", "alreadyDone": "You already reposted that post." }
+        }
+      },
+      {
+        "id": "app.bsky.feed.repost",
+        "kind": "recordWrite",
+        "structName": "UnrepostPostIntent",
+        "title": "Remove Repost",
+        "description": "Remove your repost of a Bluesky post.",
+        "confirmation": false,
+        "recordWrite": {
+          "action": "delete",
+          "subject": {
+            "kind": "strongRef",
+            "parameter": { "name": "post", "title": "Post", "entity": "PostEntity" },
+            "hydrate": { "nsid": "app.bsky.feed.getPosts", "param": "uris", "resultsPath": "posts" }
+          },
+          "viewerPath": "viewer.repost",
+          "dialog": { "success": "Removed your repost.", "alreadyDone": "You haven't reposted that post." }
+        }
+      },
+      {
+        "id": "app.bsky.graph.follow",
+        "kind": "recordWrite",
+        "structName": "FollowProfileIntent",
+        "title": "Follow Profile",
+        "description": "Follow a Bluesky account.",
+        "confirmation": false,
+        "recordWrite": {
+          "action": "create",
+          "subject": {
+            "kind": "did",
+            "parameter": { "name": "profile", "title": "Profile", "entity": "ProfileEntity" },
+            "hydrate": { "nsid": "app.bsky.actor.getProfiles", "param": "actors", "resultsPath": "profiles" }
+          },
+          "viewerPath": "viewer.following",
+          "dialog": { "success": "Followed.", "alreadyDone": "You already follow them." }
+        }
+      },
+      {
+        "id": "app.bsky.graph.follow",
+        "kind": "recordWrite",
+        "structName": "UnfollowProfileIntent",
+        "title": "Unfollow Profile",
+        "description": "Unfollow a Bluesky account.",
+        "confirmation": false,
+        "recordWrite": {
+          "action": "delete",
+          "subject": {
+            "kind": "did",
+            "parameter": { "name": "profile", "title": "Profile", "entity": "ProfileEntity" },
+            "hydrate": { "nsid": "app.bsky.actor.getProfiles", "param": "actors", "resultsPath": "profiles" }
+          },
+          "viewerPath": "viewer.following",
+          "dialog": { "success": "Unfollowed.", "alreadyDone": "You don't follow them." }
+        }
+      },
+      {
+        "id": "app.bsky.graph.block",
+        "kind": "recordWrite",
+        "structName": "BlockProfileIntent",
+        "title": "Block Profile",
+        "description": "Block a Bluesky account. They won't be able to see your posts or interact with you.",
+        "confirmation": true,
+        "recordWrite": {
+          "action": "create",
+          "subject": {
+            "kind": "did",
+            "parameter": { "name": "profile", "title": "Profile", "entity": "ProfileEntity" },
+            "hydrate": { "nsid": "app.bsky.actor.getProfiles", "param": "actors", "resultsPath": "profiles" }
+          },
+          "viewerPath": "viewer.blocking",
+          "dialog": { "success": "Blocked.", "alreadyDone": "You already blocked them." }
+        }
+      },
+      {
+        "id": "app.bsky.graph.block",
+        "kind": "recordWrite",
+        "structName": "UnblockProfileIntent",
+        "title": "Unblock Profile",
+        "description": "Unblock a Bluesky account.",
+        "confirmation": false,
+        "recordWrite": {
+          "action": "delete",
+          "subject": {
+            "kind": "did",
+            "parameter": { "name": "profile", "title": "Profile", "entity": "ProfileEntity" },
+            "hydrate": { "nsid": "app.bsky.actor.getProfiles", "param": "actors", "resultsPath": "profiles" }
+          },
+          "viewerPath": "viewer.blocking",
+          "dialog": { "success": "Unblocked.", "alreadyDone": "You haven't blocked them." }
+        }
+      }
+    ],
+    "entities": [
+      {
+        "name": "ProfileEntity",
+        "source": [
+          "app.bsky.actor.defs#profileViewDetailed",
+          "app.bsky.actor.defs#profileViewBasic"
+        ],
+        "identifier": "did",
+        "syncable": true,
+        "indexed": true,
+        "display": {
+          "title": "displayName",
+          "titleFallback": "handle",
+          "subtitle": "handle",
+          "image": "avatar"
+        },
+        "properties": [
+          { "path": "handle", "title": "Handle" },
+          { "path": "displayName", "title": "Display Name" },
+          { "path": "description", "title": "Bio" },
+          { "path": "avatar", "title": "Avatar" }
+        ],
+        "query": {
+          "kind": "string",
+          "nsid": "app.bsky.actor.searchActors",
+          "param": "q",
+          "resultsPath": "actors",
+          "byIds": {
+            "nsid": "app.bsky.actor.getProfiles",
+            "param": "actors",
+            "resultsPath": "profiles",
+            "localStore": "ProfileEntityStore.shared"
+          }
+        }
+      },
+      {
+        "name": "PostEntity",
+        "source": "app.bsky.feed.defs#postView",
+        "identifier": "uri",
+        "syncable": true,
+        "indexed": true,
+        "display": {
+          "title": "text",
+          "titleFallback": "author.handle",
+          "subtitle": "author.handle"
+        },
+        "properties": [
+          { "path": "author.displayName", "title": "Author Name" },
+          { "path": "author.handle", "title": "Author Handle" },
+          { "path": "likeCount", "title": "Like Count" },
+          { "path": "repostCount", "title": "Repost Count" },
+          { "path": "replyCount", "title": "Reply Count" },
+          { "path": "indexedAt", "title": "Date" }
+        ],
+        "customProperties": [
+          { "name": "text", "swiftType": "String", "optional": true, "title": "Text", "expr": "IntentEntityBridges.postText(view)" },
+          { "name": "rkey", "swiftType": "String", "optional": false, "title": "Record Key", "expr": "IntentEntityBridges.recordKey(view.uri)" }
+        ],
+        "query": {
+          "kind": "string",
+          "nsid": "app.bsky.feed.searchPosts",
+          "param": "q",
+          "resultsPath": "posts",
+          "byIds": {
+            "nsid": "app.bsky.feed.getPosts",
+            "param": "uris",
+            "resultsPath": "posts",
+            "localStore": "PostEntityStore.shared"
+          }
+        }
+      },
+      {
+        "name": "FeedGeneratorEntity",
+        "source": "app.bsky.feed.defs#generatorView",
+        "identifier": "uri",
+        "syncable": true,
+        "display": {
+          "title": "displayName",
+          "subtitle": "description",
+          "image": "avatar"
+        },
+        "properties": [
+          { "path": "displayName", "title": "Feed Name" },
+          { "path": "description", "title": "Description" },
+          { "path": "avatar", "title": "Avatar" }
+        ],
+        "query": {
+          "kind": "string",
+          "nsid": "app.bsky.unspecced.getPopularFeedGenerators",
+          "param": "query",
+          "resultsPath": "feeds",
+          "byIds": {
+            "nsid": "app.bsky.feed.getFeedGenerators",
+            "param": "feeds",
+            "resultsPath": "feeds"
+          }
+        }
+      }
+    ]
+  }
+}
