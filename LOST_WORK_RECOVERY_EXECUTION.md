@@ -674,7 +674,7 @@ Tests must prove repost differs from organic, repost identity is stable, a profi
 
 Implement the identity/key behavior and header containment only. Before committing, verify `jj diff` contains no repost-menu action or menu-layout change.
 
-- [ ] **Step 3: Test, build, and visually verify**
+- [x] **Step 3: Test, build, and visually verify**
 
 Run `CachedFeedViewPostIdentityTests`, build, browse two feeds containing the same post/repost, refresh, relaunch, and confirm headers never bleed between rows or feeds.
 
@@ -721,11 +721,14 @@ jj new
   after `68043cb` and still performed global-id upserts. Leaving either site
   unchanged would reintroduce cross-feed row mutation despite the recovered
   composite uniqueness contract. Both are covered by explicit regressions.
-- Open runtime gate: manually browsing two feeds containing the same organic
-  post/repost, refreshing, relaunching, and visually checking header isolation
-  remains unobserved. Build, real SwiftData persistence tests, authenticated
-  launch, and menu/icon preservation are green, but they do not close this
-  interactive visual check; Step 3 therefore remains unchecked.
+- Authenticated runtime GREEN: the Timeline rendered David Dao's 19-hour
+  GainForest post with the `reposted by Anuj Ahooja` header, while David Dao's
+  own Posts feed rendered the identical post organically with no repost header.
+  After terminating and relaunching Catbird, the refreshed Timeline again
+  rendered the repost header on only its scoped row. Evidence:
+  `/tmp/catbird-recovery-final/visual-repost-timeline-header.png`,
+  `/tmp/catbird-recovery-final/visual-repost-profile-organic.png`, and
+  `/tmp/catbird-recovery-final/visual-repost-timeline-relaunch.png`.
 
 #### Task 7 critical/important review follow-up (2026-07-14)
 
@@ -1354,7 +1357,6 @@ Expected: a clean working copy. Do not move `main`; present the branch and evide
   `physical-appintents-annotations.log`. No representational Like intent was
   run.
 - Remaining device gate: Step 3 stays open for physical-iPhone photo/video,
-  Siri/App Intents, entity lookup, live repeated-repost evidence, remote draft
-  round-trip, and device-backed chat ordering/edit/unsend checks. The branch is
-  integration-ready for code review, but those release gates are not claimed
-  complete.
+  Siri/App Intents, entity lookup, remote draft round-trip, and device-backed
+  chat ordering/edit/unsend checks. The branch is integration-ready for code
+  review, but those release gates are not claimed complete.
