@@ -619,6 +619,18 @@ jj new
   `ComposerChipsStripTests`, and `FABQuickActionTests`.
 - Review build: `/tmp/recovery-task6-review-build.log` completed with
   `** BUILD SUCCEEDED **` for the iOS simulator.
+- Final review feedback-loop RED: `/tmp/recovery-task6-final-review-red.log`
+  failed on the missing query-update gate. The follow-up gate ignores only an
+  identical query echo while the model search is already committed; a distinct
+  user edit and all uncommitted typing still flow through normal typeahead and
+  reset behavior. Both saved-search routes retain their committed state, so
+  subsequent sort/filter changes continue to schedule full searches.
+- Final review focused GREEN: `/tmp/recovery-task6-final-review-green.log`
+  passed 21/21 search model and wiring tests.
+- Final review preservation: `/tmp/recovery-task6-final-review-preservation.log`
+  passed 34/34 OAuth, draft-sync, composer-chip, and FAB regressions.
+- Final review build: `/tmp/recovery-task6-final-review-build.log` completed
+  with `** BUILD SUCCEEDED **` for the iOS simulator.
 
 ### Task 7: Recover Repost and Per-Feed Cache Correctness
 

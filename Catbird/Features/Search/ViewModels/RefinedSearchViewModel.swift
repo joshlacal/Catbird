@@ -146,6 +146,14 @@ enum SearchState {
 
   /// Update search based on query
   func updateSearch(query: String, client: ATProtoClient) {
+    guard SearchQueryUpdateGate.shouldProcess(
+      incoming: query,
+      current: searchQuery,
+      isCommitted: isCommittedSearch
+    ) else {
+      return
+    }
+
     if query != searchQuery {
       invalidateSearchRequests(resetCursors: true)
     }

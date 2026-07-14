@@ -4,6 +4,19 @@ import Testing
 
 @Suite("Search filter wiring")
 struct SearchFilterWiringTests {
+  @Test("committed saved-query echo is ignored without blocking real edits")
+  func savedQueryEchoDisposition() {
+    #expect(!SearchQueryUpdateGate.shouldProcess(
+      incoming: "saved", current: "saved", isCommitted: true
+    ))
+    #expect(SearchQueryUpdateGate.shouldProcess(
+      incoming: "saved plus edit", current: "saved", isCommitted: true
+    ))
+    #expect(SearchQueryUpdateGate.shouldProcess(
+      incoming: "typing", current: "typing", isCommitted: false
+    ))
+  }
+
   @Test("new request generations reject stale responses and retain snapshots")
   func generationRejectsStaleResponses() {
     var generation = SearchRequestGeneration()
@@ -87,6 +100,12 @@ struct SearchFilterWiringTests {
     let discovery = try sourceFile("Catbird/Features/Search/Views/MainViews/DiscoveryView.swift")
     #expect(refined.contains("onQueryLoaded: { searchText = $0 }"))
     #expect(discovery.contains("onQueryLoaded: onQueryLoaded"))
+
+    let viewModel = try sourceFile("Catbird/Features/Search/ViewModels/RefinedSearchViewModel.swift")
+    let update = try #require(functionBody("func updateSearch", in: viewModel))
+    let gate = try #require(update.range(of: "SearchQueryUpdateGate.shouldProcess"))
+    let reset = try #require(update.range(of: "isCommittedSearch = false"))
+    #expect(gate.lowerBound < reset.lowerBound)
   }
 
   @Test("search UI exposes only honest inline filters")

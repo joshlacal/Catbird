@@ -22,3 +22,14 @@ struct SearchRequestGeneration: Sendable {
     request.generation == value
   }
 }
+
+/// Distinguishes a deferred SwiftUI echo of a committed model query from user editing.
+enum SearchQueryUpdateGate {
+  static func shouldProcess(
+    incoming: String,
+    current: String,
+    isCommitted: Bool
+  ) -> Bool {
+    incoming != current || !isCommitted
+  }
+}
