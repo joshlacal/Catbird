@@ -16,6 +16,7 @@ struct DiscoveryView: View {
     @Binding var showAllSavedSearches: Bool
     @Binding var showSuggestedProfiles: Bool
     @Binding var showAddFeedSheet: Bool
+    let onQueryLoaded: (String) -> Void
     @Environment(\.colorScheme) private var colorScheme
     @Environment(AppState.self) private var appState
     
@@ -28,7 +29,11 @@ struct DiscoveryView: View {
                         savedSearches: viewModel.savedSearches,
                         onSelect: { savedSearch in
                             if let client = appState.atProtoClient {
-                                viewModel.loadAndApplySavedSearch(savedSearch, client: client)
+                                viewModel.loadAndApplySavedSearch(
+                                    savedSearch,
+                                    client: client,
+                                    onQueryLoaded: onQueryLoaded
+                                )
                             }
                         },
                         onDelete: { savedSearch in
@@ -698,7 +703,8 @@ private struct InlineTopicSummaryLine: View {
         showAllTrendingTopics: .constant(false),
         showAllSavedSearches: .constant(false),
         showSuggestedProfiles: .constant(false),
-        showAddFeedSheet: .constant(false)
+        showAddFeedSheet: .constant(false),
+        onQueryLoaded: { _ in }
       )
     }
   }

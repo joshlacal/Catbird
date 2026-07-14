@@ -592,6 +592,34 @@ jj new
   Build, source-contract tests, and authenticated launch do not close these
   interactive checks.
 
+#### Task 6 review hardening evidence (2026-07-14)
+
+- Request correctness: every committed query/filter change now creates an
+  immutable `SearchRequestSnapshot` with a monotonic generation. The preceding
+  execution task is cancelled, and initial, refresh, and pagination responses
+  are generation-gated before they can mutate results or cursors. Pagination
+  also refuses snapshots that no longer match the visible query/filter state.
+- Custom dates: selecting Custom initializes concrete editable dates. Request
+  bounds normalize reversed dates and translate the UI's inclusive end date to
+  the API's next-day exclusive `until` bound.
+- Refresh and saved searches: refresh installs response cursors rather than
+  resetting successful pagination to `nil`; both saved-search entry points now
+  update `RefinedSearchView.searchText` before committing the restored search.
+- Review RED: `/tmp/recovery-task6-review-red.log` failed at compile time on the
+  absent generation helper, date normalization API, and custom-date selection
+  API. The first integrated attempt then exposed a missing preview callback and
+  two stale source-contract assertions; these were corrected before final
+  verification.
+- Review GREEN: `/tmp/recovery-task6-review-green.log` passed 20/20 across
+  `SearchFilterStateTests` and `SearchFilterWiringTests`, including stale
+  generation rejection, custom-date inclusion/normalization, response cursor
+  retention, and both saved-search visible-query routes.
+- Review preservation: `/tmp/recovery-task6-review-preservation.log` passed
+  34/34 across `GatewayOAuthExchangeTests`, `DraftSyncTranslationTests`,
+  `ComposerChipsStripTests`, and `FABQuickActionTests`.
+- Review build: `/tmp/recovery-task6-review-build.log` completed with
+  `** BUILD SUCCEEDED **` for the iOS simulator.
+
 ### Task 7: Recover Repost and Per-Feed Cache Correctness
 
 **Files:**

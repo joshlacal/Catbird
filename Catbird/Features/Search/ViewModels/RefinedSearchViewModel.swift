@@ -71,6 +71,9 @@ enum SearchState {
 
   // MARK: - Debouncing
   private var searchTask: Task<Void, Never>?
+  private var searchExecutionTask: Task<Void, Never>?
+  private var requestGeneration = SearchRequestGeneration()
+  private var activeSearchRequest: SearchRequestSnapshot?
   private let searchDebounceTime: TimeInterval = 0.15  // SRCH-006: Reduced from 300ms to 150ms for better responsiveness
 
   // MARK: - Computed Properties
@@ -143,6 +146,9 @@ enum SearchState {
 
   /// Update search based on query
   func updateSearch(query: String, client: ATProtoClient) {
+    if query != searchQuery {
+      invalidateSearchRequests(resetCursors: true)
+    }
     searchQuery = query
 
     // Cancel previous search task
@@ -213,23 +219,15 @@ enum SearchState {
     feedResults = []
     starterPackResults = []
 
-    // Reset cursors
-    profileCursor = nil
-    postCursor = nil
-    feedCursor = nil
-    starterPackCursor = nil
-
     logger.debug(
       "Results cleared, executing search task for content type: \(self.selectedContentType.title)")
 
-    // Run search
-    Task {
-      await executeSearch(client: client)
-    }
+    scheduleSearch(client: client)
   }
 
   /// Reset search to initial state
   func resetSearch() {
+    invalidateSearchRequests(resetCursors: true)
     searchState = .idle
     searchQuery = ""
     isCommittedSearch = false
@@ -244,11 +242,6 @@ enum SearchState {
     typeaheadProfiles = []
     typeaheadSuggestions = []
 
-    // Reset cursors
-    profileCursor = nil
-    postCursor = nil
-    feedCursor = nil
-    starterPackCursor = nil
   }
 
   /// Refresh current search with latest data
@@ -256,12 +249,13 @@ enum SearchState {
   /// Refresh current search with latest data
   func refreshSearch(client: ATProtoClient) async {
     if isCommittedSearch {
+      let request = beginSearchRequest()
       // Important: Don't clear results until we have new ones
 
       // Reset cursors for pagination
-      let newProfileCursor: String? = nil
-      let newPostCursor: String? = nil
-      let newFeedCursor: String? = nil
+      var newProfileCursor: String?
+      var newPostCursor: String?
+      var newFeedCursor: String?
       let newStarterPackCursor: String? = nil
 
       // Create temporary arrays to store new results
@@ -272,20 +266,19 @@ enum SearchState {
       // Execute search to get new results
       do {
         // Create a task group with a manual task cancelation check
-        let currentQuery = self.searchQuery
         try await withThrowingTaskGroup(of: Void.self) { group in
           // Search profiles
           group.addTask {
             do {
               let input = AppBskyActorSearchActors.Parameters(
-                term: currentQuery, limit: 25
+                term: request.query, limit: 25
               )
 
               let (_, response) = try await client.app.bsky.actor.searchActors(input: input)
 
               if let actorsResponse = response {
                 newProfileResults = actorsResponse.actors
-                // Don't update cursor yet
+                newProfileCursor = actorsResponse.cursor
               }
             } catch {
               // Log but don't rethrow so other tasks can continue
@@ -298,13 +291,13 @@ enum SearchState {
           // Search posts (similar pattern for other searches)
           group.addTask {
             do {
-              let input = await self.buildPostSearchParameters(cursor: nil)
+              let input = await self.buildPostSearchParameters(request: request, cursor: nil)
 
               let (_, response) = try await client.app.bsky.feed.searchPosts(input: input)
 
               if let postsResponse = response {
                 newPostResults = postsResponse.posts
-                // Don't update cursor yet
+                newPostCursor = postsResponse.cursor
               }
             } catch {
               Task { @MainActor in
@@ -318,7 +311,7 @@ enum SearchState {
             do {
               let input = AppBskyUnspeccedGetPopularFeedGenerators.Parameters(
                 limit: 25,
-                query: currentQuery
+                query: request.query
               )
 
               let (_, response) = try await client.app.bsky.unspecced.getPopularFeedGenerators(
@@ -326,6 +319,7 @@ enum SearchState {
 
               if let feedsResponse = response {
                 newFeedResults = feedsResponse.feeds
+                newFeedCursor = feedsResponse.cursor
               }
             } catch {
               Task { @MainActor in
@@ -337,6 +331,8 @@ enum SearchState {
           // Wait for all tasks
           for try await _ in group {}
         }
+
+        guard requestGeneration.accepts(request), !Task.isCancelled else { return }
 
         // Only update UI with new results if any were successfully fetched
         let hasNewResults =
@@ -361,18 +357,17 @@ enum SearchState {
             ? [] : (filteredPostResults.isEmpty ? self.postResults : filteredPostResults)
           let feedResults = newFeedResults.isEmpty ? self.feedResults : newFeedResults
 
-          await MainActor.run {
-            self.profileResults = profileResults
-            self.postResults = postResults
-            self.feedResults = feedResults
+          guard requestGeneration.accepts(request), !Task.isCancelled else { return }
+          self.profileResults = profileResults
+          self.postResults = postResults
+          self.feedResults = feedResults
 
-            self.profileCursor = newProfileCursor
-            self.postCursor = newPostCursor
-            self.feedCursor = newFeedCursor
-            self.starterPackCursor = newStarterPackCursor
+          self.profileCursor = newProfileCursor
+          self.postCursor = newPostCursor
+          self.feedCursor = newFeedCursor
+          self.starterPackCursor = newStarterPackCursor
 
-            self.searchState = .results
-          }
+          self.searchState = .results
         }
       } catch {
         // Keep existing results on error
@@ -399,7 +394,7 @@ enum SearchState {
   func applyFilterState(_ state: SearchFilterState, client: ATProtoClient) {
     filterState = state
     if isCommittedSearch {
-      Task { await executeSearch(client: client) }
+      scheduleSearch(client: client)
     }
   }
 
@@ -407,7 +402,7 @@ enum SearchState {
   func setSort(_ sort: SearchSort, client: ATProtoClient) {
     filterState.sort = sort
     if isCommittedSearch {
-      Task { await executeSearch(client: client) }
+      scheduleSearch(client: client)
     }
   }
 
@@ -641,27 +636,54 @@ enum SearchState {
     }
   }
 
-  /// Execute search with current query and filters
-  private func executeSearch(client: ATProtoClient) async {
-    logger.debug(
-      "executeSearch started with query: '\(self.searchQuery)', selectedContentType: \(self.selectedContentType.title)"
-    )
-
-    // If query is empty, reset to idle state
-    guard !searchQuery.isEmpty else {
-      logger.warning("executeSearch aborted - empty search query")
-      searchState = .idle
-      return
-    }
-
-    // Clear previous error
-    searchError = nil
-
-    // A full search replaces results, so stale cursors must not leak into it.
+  private func resetPaginationCursors() {
     profileCursor = nil
     postCursor = nil
     feedCursor = nil
     starterPackCursor = nil
+  }
+
+  private func invalidateSearchRequests(resetCursors: Bool) {
+    searchExecutionTask?.cancel()
+    searchExecutionTask = nil
+    requestGeneration.invalidate()
+    activeSearchRequest = nil
+    if resetCursors { resetPaginationCursors() }
+  }
+
+  private func beginSearchRequest() -> SearchRequestSnapshot {
+    searchExecutionTask?.cancel()
+    let request = requestGeneration.begin(query: searchQuery, filters: filterState)
+    activeSearchRequest = request
+    resetPaginationCursors()
+    return request
+  }
+
+  private func scheduleSearch(client: ATProtoClient) {
+    let request = beginSearchRequest()
+    searchExecutionTask = Task { [weak self] in
+      guard let self else { return }
+      await self.executeSearch(client: client, request: request)
+    }
+  }
+
+  /// Execute search with an immutable query/filter snapshot.
+  private func executeSearch(client: ATProtoClient, request: SearchRequestSnapshot) async {
+    logger.debug(
+      "executeSearch started with query: '\(request.query)', selectedContentType: \(self.selectedContentType.title)"
+    )
+
+    // If query is empty, reset to idle state
+    guard !request.query.isEmpty else {
+      logger.warning("executeSearch aborted - empty search query")
+      if requestGeneration.accepts(request) { searchState = .idle }
+      return
+    }
+
+    guard requestGeneration.accepts(request), !Task.isCancelled else { return }
+
+    // Clear previous error
+    searchError = nil
 
     logger.debug("executeSearch proceeding with parallel task group")
 
@@ -670,17 +692,17 @@ enum SearchState {
       await withTaskGroup(of: Void.self) { group in
         // Search profiles
         group.addTask {
-          await self.searchProfiles(client: client)
+          await self.searchProfiles(client: client, request: request, cursor: nil)
         }
 
         // Search posts
         group.addTask {
-          await self.searchPosts(client: client)
+          await self.searchPosts(client: client, request: request, cursor: nil)
         }
 
         // Search feeds
         group.addTask {
-          await self.searchFeeds(client: client)
+          await self.searchFeeds(client: client, request: request)
         }
 
         // Search starter packs
@@ -692,11 +714,13 @@ enum SearchState {
         for await _ in group {}
       }
 
+      guard requestGeneration.accepts(request), !Task.isCancelled else { return }
       // Update state
       logger.debug("executeSearch completed successfully, setting state to results")
       searchState = .results
 
     } catch {
+      guard requestGeneration.accepts(request), !Task.isCancelled else { return }
       logger.error("Error executing search: \(error.localizedDescription)")
       searchError = error
       searchState = .results  // Still move to results state to show error
@@ -706,44 +730,57 @@ enum SearchState {
   }
 
   /// Search for profiles matching the query
-  private func searchProfiles(client: ATProtoClient) async {
+  private func searchProfiles(
+    client: ATProtoClient,
+    request: SearchRequestSnapshot,
+    cursor: String?
+  ) async {
     do {
       let input = AppBskyActorSearchActors.Parameters(
-        term: searchQuery, limit: 25,
-        cursor: profileCursor
+        term: request.query, limit: 25,
+        cursor: cursor
       )
 
       let (_, response) = try await client.app.bsky.actor.searchActors(input: input)
 
+      guard requestGeneration.accepts(request), !Task.isCancelled else { return }
       if let actorsResponse = response {
         profileResults = actorsResponse.actors
         profileCursor = actorsResponse.cursor
       }
     } catch {
+      guard requestGeneration.accepts(request), !Task.isCancelled else { return }
       logger.error("Error searching profiles: \(error.localizedDescription)")
       profileResults = []
     }
   }
 
   /// Build real searchPosts parameters from the applied filter state.
-  private func buildPostSearchParameters(cursor: String?) -> AppBskyFeedSearchPosts.Parameters {
-    let enhancedQuery = enhanceQueryForSpecialTypes(searchQuery)
-    let bounds = filterState.dateBounds()
+  private func buildPostSearchParameters(
+    request: SearchRequestSnapshot,
+    cursor: String?
+  ) -> AppBskyFeedSearchPosts.Parameters {
+    let enhancedQuery = enhanceQueryForSpecialTypes(request.query)
+    let bounds = request.filters.dateBounds()
     return AppBskyFeedSearchPosts.Parameters(
       q: enhancedQuery,
-      sort: filterState.sortValue,
+      sort: request.filters.sortValue,
       since: bounds.since,
       until: bounds.until,
-      lang: filterState.languageContainer,
+      lang: request.filters.languageContainer,
       limit: 25,
       cursor: cursor
     )
   }
 
   /// Search for posts matching the query with current filters applied.
-  private func searchPosts(client: ATProtoClient) async {
+  private func searchPosts(
+    client: ATProtoClient,
+    request: SearchRequestSnapshot,
+    cursor: String?
+  ) async {
     do {
-      let input = buildPostSearchParameters(cursor: postCursor)
+      let input = buildPostSearchParameters(request: request, cursor: cursor)
       let (_, response) = try await client.app.bsky.feed.searchPosts(input: input)
 
       if let postsResponse = response {
@@ -752,7 +789,7 @@ enum SearchState {
         // Trust server ordering (top/latest). An explicit per-search language
         // bypasses the global preferred-language filter so the requested
         // language is not stripped client-side.
-        if filterState.language == nil
+        if request.filters.language == nil
           && appState.appSettings.hideNonPreferredLanguages
           && !appState.appSettings.contentLanguages.isEmpty
         {
@@ -765,10 +802,12 @@ enum SearchState {
         logger.debug(
           "Applied content filtering to search results: \(results.count) posts after filtering")
 
+        guard requestGeneration.accepts(request), !Task.isCancelled else { return }
         postResults = results
         postCursor = postsResponse.cursor
       }
     } catch {
+      guard requestGeneration.accepts(request), !Task.isCancelled else { return }
       logger.error("Error searching posts: \(error.localizedDescription)")
       postResults = []
     }
@@ -801,19 +840,21 @@ enum SearchState {
   }
 
   /// Search for feeds matching the query
-  private func searchFeeds(client: ATProtoClient) async {
+  private func searchFeeds(client: ATProtoClient, request: SearchRequestSnapshot) async {
     do {
       let input = AppBskyUnspeccedGetPopularFeedGenerators.Parameters(
         limit: 25,
-        query: searchQuery
+        query: request.query
       )
 
       let (_, response) = try await client.app.bsky.unspecced.getPopularFeedGenerators(input: input)
 
+      guard requestGeneration.accepts(request), !Task.isCancelled else { return }
       if let feedsResponse = response {
         feedResults = feedsResponse.feeds
       }
     } catch {
+      guard requestGeneration.accepts(request), !Task.isCancelled else { return }
       logger.error("Error searching feeds: \(error.localizedDescription)")
       feedResults = []
     }
@@ -839,16 +880,22 @@ enum SearchState {
 
   /// Load more profiles for pagination
   private func loadMoreProfiles(client: ATProtoClient) async {
-    guard let cursor = profileCursor else { return }
+    guard let request = activeSearchRequest,
+          requestGeneration.accepts(request),
+          request.query == searchQuery,
+          request.filters == filterState,
+          let cursor = profileCursor
+    else { return }
 
     do {
       let input = AppBskyActorSearchActors.Parameters(
-        term: searchQuery, limit: 25,
+        term: request.query, limit: 25,
         cursor: cursor
       )
 
       let (_, response) = try await client.app.bsky.actor.searchActors(input: input)
 
+      guard requestGeneration.accepts(request), !Task.isCancelled else { return }
       if let actorsResponse = response {
         // Deduplicate by DID when appending
         let existing = Set(profileResults.map { $0.did.didString() })
@@ -863,13 +910,19 @@ enum SearchState {
 
   /// Load more posts for pagination
   private func loadMorePosts(client: ATProtoClient) async {
-    guard let cursor = postCursor else { return }
+    guard let request = activeSearchRequest,
+          requestGeneration.accepts(request),
+          request.query == searchQuery,
+          request.filters == filterState,
+          let cursor = postCursor
+    else { return }
 
     do {
-      let input = buildPostSearchParameters(cursor: cursor)
+      let input = buildPostSearchParameters(request: request, cursor: cursor)
 
       let (_, response) = try await client.app.bsky.feed.searchPosts(input: input)
 
+      guard requestGeneration.accepts(request), !Task.isCancelled else { return }
       if let postsResponse = response {
         // Deduplicate by URI when appending
         let existing = Set(postResults.map { $0.uri.uriString() })
@@ -1012,10 +1065,15 @@ enum SearchState {
   }
 
   /// Load and apply a saved search configuration
-  func loadAndApplySavedSearch(_ savedSearch: SavedSearch, client: ATProtoClient) {
+  func loadAndApplySavedSearch(
+    _ savedSearch: SavedSearch,
+    client: ATProtoClient,
+    onQueryLoaded: (String) -> Void
+  ) {
     // Apply the saved search parameters
     searchQuery = savedSearch.query
     filterState = savedSearch.filters
+    onQueryLoaded(savedSearch.query)
 
     // Update the last used timestamp
     searchHistoryManager.updateLastUsed(savedSearch.id, userDID: appState.userDID)

@@ -66,7 +66,7 @@ enum ContentType: String, CaseIterable {
 }
 
 /// Enum for API-supported search result sorting options.
-enum SearchSort: String, CaseIterable, Codable {
+enum SearchSort: String, CaseIterable, Codable, Sendable {
   case top
   case latest
 

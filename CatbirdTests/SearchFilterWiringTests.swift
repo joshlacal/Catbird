@@ -1,44 +1,60 @@
 import Foundation
 import Testing
+@testable import Catbird
 
 @Suite("Search filter wiring")
 struct SearchFilterWiringTests {
+  @Test("new request generations reject stale responses and retain snapshots")
+  func generationRejectsStaleResponses() {
+    var generation = SearchRequestGeneration()
+    var oldFilters = SearchFilterState()
+    oldFilters.sort = .top
+    let old = generation.begin(query: "old", filters: oldFilters)
+    var newFilters = SearchFilterState()
+    newFilters.sort = .latest
+    let current = generation.begin(query: "new", filters: newFilters)
+
+    #expect(old.query == "old")
+    #expect(old.filters.sort == .top)
+    #expect(!generation.accepts(old))
+    #expect(generation.accepts(current))
+  }
+
   @Test("all post search paths use the supported parameter builder")
   func postSearchPathsUseSupportedParameters() throws {
     let source = try sourceFile("Catbird/Features/Search/ViewModels/RefinedSearchViewModel.swift")
     let builder = try #require(functionBody("private func buildPostSearchParameters", in: source))
 
-    #expect(builder.contains("sort: filterState.sortValue"))
+    #expect(builder.contains("sort: request.filters.sortValue"))
     #expect(builder.contains("since: bounds.since"))
     #expect(builder.contains("until: bounds.until"))
-    #expect(builder.contains("lang: filterState.languageContainer"))
+    #expect(builder.contains("lang: request.filters.languageContainer"))
     #expect(builder.contains("cursor: cursor"))
 
     let initialSearch = try #require(functionBody("private func searchPosts", in: source))
-    #expect(initialSearch.contains("buildPostSearchParameters(cursor: postCursor)"))
+    #expect(initialSearch.contains("buildPostSearchParameters(request: request, cursor: cursor)"))
 
     let pagination = try #require(functionBody("private func loadMorePosts", in: source))
-    #expect(pagination.contains("buildPostSearchParameters(cursor: cursor)"))
+    #expect(pagination.contains("buildPostSearchParameters(request: request, cursor: cursor)"))
   }
 
   @Test("filter changes and full searches reset pagination")
   func filterChangesResetPagination() throws {
     let source = try sourceFile("Catbird/Features/Search/ViewModels/RefinedSearchViewModel.swift")
-    let executeSearch = try #require(functionBody("private func executeSearch", in: source))
-    let taskGroup = try #require(executeSearch.range(of: "withTaskGroup"))
-
-    for cursor in ["profileCursor", "postCursor", "feedCursor", "starterPackCursor"] {
-      let reset = try #require(executeSearch.range(of: "\(cursor) = nil"))
-      #expect(reset.lowerBound < taskGroup.lowerBound)
-    }
+    let begin = try #require(functionBody("private func beginSearchRequest", in: source))
+    #expect(begin.contains("resetPaginationCursors()"))
+    let schedule = try #require(functionBody("private func scheduleSearch", in: source))
+    let snapshot = try #require(schedule.range(of: "let request = beginSearchRequest()"))
+    let task = try #require(schedule.range(of: "Task"))
+    #expect(snapshot.lowerBound < task.lowerBound)
 
     let applyFilters = try #require(functionBody("func applyFilterState", in: source))
     #expect(applyFilters.contains("filterState = state"))
-    #expect(applyFilters.contains("executeSearch(client: client)"))
+    #expect(applyFilters.contains("scheduleSearch(client: client)"))
 
     let setSort = try #require(functionBody("func setSort", in: source))
     #expect(setSort.contains("filterState.sort = sort"))
-    #expect(setSort.contains("executeSearch(client: client)"))
+    #expect(setSort.contains("scheduleSearch(client: client)"))
   }
 
   @Test("saved search state is loaded before the committed search")
@@ -47,10 +63,30 @@ struct SearchFilterWiringTests {
     let load = try #require(functionBody("func loadAndApplySavedSearch", in: source))
     let query = try #require(load.range(of: "searchQuery = savedSearch.query"))
     let filters = try #require(load.range(of: "filterState = savedSearch.filters"))
+    let visibleQuery = try #require(load.range(of: "onQueryLoaded(savedSearch.query)"))
     let search = try #require(load.range(of: "commitSearch(client: client)"))
 
     #expect(query.lowerBound < search.lowerBound)
     #expect(filters.lowerBound < search.lowerBound)
+    #expect(visibleQuery.lowerBound < search.lowerBound)
+  }
+
+  @Test("refresh retains response cursors for pagination")
+  func refreshRetainsCursors() throws {
+    let source = try sourceFile("Catbird/Features/Search/ViewModels/RefinedSearchViewModel.swift")
+    let refresh = try #require(functionBody("func refreshSearch", in: source))
+    #expect(refresh.contains("newProfileCursor = actorsResponse.cursor"))
+    #expect(refresh.contains("newPostCursor = postsResponse.cursor"))
+    #expect(refresh.contains("newFeedCursor = feedsResponse.cursor"))
+    #expect(refresh.contains("guard requestGeneration.accepts(request)"))
+  }
+
+  @Test("both saved-search selection paths propagate the visible query")
+  func savedSearchSelectionPropagatesVisibleQuery() throws {
+    let refined = try sourceFile("Catbird/Features/Search/Views/RefinedSearchView.swift")
+    let discovery = try sourceFile("Catbird/Features/Search/Views/MainViews/DiscoveryView.swift")
+    #expect(refined.contains("onQueryLoaded: { searchText = $0 }"))
+    #expect(discovery.contains("onQueryLoaded: onQueryLoaded"))
   }
 
   @Test("search UI exposes only honest inline filters")

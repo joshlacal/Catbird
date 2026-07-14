@@ -30,6 +30,9 @@ struct SearchFiltersSheet: View {
               Text(range.displayName).tag(range)
             }
           }
+          .onChange(of: draft.dateRange) { _, range in
+            draft.selectDateRange(range)
+          }
 
           if draft.dateRange == .custom {
             DatePicker("Start date", selection: Binding(

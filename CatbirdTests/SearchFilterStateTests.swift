@@ -77,6 +77,50 @@ struct SearchFilterStateTests {
     #expect(b.until == nil)
   }
 
+  @Test("custom range includes the selected end day")
+  func customRangeIncludesEndDay() throws {
+    let calendar = Calendar(identifier: .gregorian)
+    let start = try #require(calendar.date(from: DateComponents(year: 2026, month: 7, day: 10)))
+    let end = try #require(calendar.date(from: DateComponents(year: 2026, month: 7, day: 12)))
+    var s = SearchFilterState()
+    s.dateRange = .custom
+    s.customStartDate = start
+    s.customEndDate = end
+
+    let bounds = s.dateBounds(calendar: calendar)
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime]
+    let until = try #require(bounds.until.flatMap(formatter.date(from:)))
+    #expect(until == calendar.date(byAdding: .day, value: 1, to: end))
+  }
+
+  @Test("reversed custom range is normalized before request")
+  func reversedCustomRangeIsNormalized() throws {
+    let calendar = Calendar(identifier: .gregorian)
+    let earlier = try #require(calendar.date(from: DateComponents(year: 2026, month: 7, day: 10)))
+    let later = try #require(calendar.date(from: DateComponents(year: 2026, month: 7, day: 12)))
+    var s = SearchFilterState()
+    s.dateRange = .custom
+    s.customStartDate = later
+    s.customEndDate = earlier
+
+    let bounds = s.dateBounds(calendar: calendar)
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime]
+    #expect(bounds.since.flatMap(formatter.date(from:)) == earlier)
+    #expect(bounds.until.flatMap(formatter.date(from:)) == calendar.date(byAdding: .day, value: 1, to: later))
+  }
+
+  @Test("selecting custom initializes stored dates")
+  func selectingCustomInitializesDates() {
+    let now = Date(timeIntervalSince1970: 1_700_000_000)
+    var s = SearchFilterState()
+    s.selectDateRange(.custom, now: now)
+    #expect(s.dateRange == .custom)
+    #expect(s.customStartDate != nil)
+    #expect(s.customEndDate != nil)
+  }
+
   @Test("language container is built from the code")
   func languageContainer() {
     var s = SearchFilterState()

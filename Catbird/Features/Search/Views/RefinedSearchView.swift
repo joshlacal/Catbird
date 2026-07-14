@@ -85,7 +85,11 @@ struct RefinedSearchView: View {
                 onSelect: { savedSearch in
                     isShowingAllSavedSearches = false
                     if let client = appState.atProtoClient {
-                        viewModel.loadAndApplySavedSearch(savedSearch, client: client)
+                        viewModel.loadAndApplySavedSearch(
+                            savedSearch,
+                            client: client,
+                            onQueryLoaded: { searchText = $0 }
+                        )
                     }
                 },
                 onDelete: { savedSearch in
@@ -339,7 +343,8 @@ struct RefinedSearchView: View {
             showAllTrendingTopics: $isShowingAllTrendingTopics,
             showAllSavedSearches: $isShowingAllSavedSearches,
             showSuggestedProfiles: $isShowingSuggestedProfiles,
-            showAddFeedSheet: $isShowingAddFeedSheet
+            showAddFeedSheet: $isShowingAddFeedSheet,
+            onQueryLoaded: { searchText = $0 }
         )
     }
     
