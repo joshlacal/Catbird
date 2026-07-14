@@ -25,6 +25,26 @@ import SwiftUI
   }
 }
 
+/// Avatar sizing used to make reply depth visible without changing ordinary
+/// feed and profile rows. The default preserves PostView's original geometry.
+enum PostAvatarScale: Equatable, Sendable {
+  case regular
+  case compact
+  case mini
+
+  var avatarSize: CGFloat {
+    switch self {
+    case .regular: 48
+    case .compact: 32
+    case .mini: 24
+    }
+  }
+
+  var containerWidth: CGFloat {
+    avatarSize + 6
+  }
+}
+
 /// A view that displays a single post with its content, avatar, and actions
 struct PostView: View, Equatable, Identifiable {
     static func == (lhs: PostView, rhs: PostView) -> Bool {
@@ -40,6 +60,7 @@ struct PostView: View, Equatable, Identifiable {
   let isSelectable: Bool
   let isToYou: Bool
   let hasVisibleThreadContext: Bool
+  let avatarScale: PostAvatarScale
   @Binding var path: NavigationPath
   @Environment(\.feedPostID) private var feedPostID
 
@@ -89,7 +110,8 @@ var id: String {
     path: Binding<NavigationPath>,
     appState: AppState,
     isToYou: Bool = false,
-    hasVisibleThreadContext: Bool = false
+    hasVisibleThreadContext: Bool = false,
+    avatarScale: PostAvatarScale = .regular
   ) {
     self.post = post
     self.grandparentAuthor = grandparentAuthor
@@ -98,6 +120,7 @@ var id: String {
     self._path = path
     self.isToYou = isToYou
     self.hasVisibleThreadContext = hasVisibleThreadContext
+    self.avatarScale = avatarScale
 
     // Initialize states
     _postState = State(initialValue: PostState(post: post))  // Initialize consolidated state
@@ -118,7 +141,8 @@ var id: String {
         author: getAuthorForDisplay(),
         isParentPost: isParentPost,
         isAvatarLoaded: $postState.isAvatarLoaded,
-        path: $path
+        path: $path,
+        avatarScale: avatarScale
       )
 
       // Content column - show error view or normal post content
@@ -946,18 +970,19 @@ struct AuthorAvatarColumn: View {
   let isParentPost: Bool
   @Binding var isAvatarLoaded: Bool
   @Binding var path: NavigationPath
+  var avatarScale: PostAvatarScale = .regular
 
   // Using multiples of 3 for spacing
   private static let baseUnit: CGFloat = 3
-  private static let avatarSize: CGFloat = 48
-  private static let avatarContainerWidth: CGFloat = 54
+  private var avatarSize: CGFloat { avatarScale.avatarSize }
+  private var avatarContainerWidth: CGFloat { avatarScale.containerWidth }
 
   // Reusable image request for avatars
   private var avatarRequest: (URL) -> ImageRequest {
     { url in
       ImageLoadingManager.imageRequest(
         for: url,
-        targetSize: CGSize(width: Self.avatarSize, height: Self.avatarSize)
+        targetSize: CGSize(width: avatarSize, height: avatarSize)
       )
     }
   }
@@ -970,7 +995,7 @@ struct AuthorAvatarColumn: View {
             image
               .resizable()
               .aspectRatio(1, contentMode: .fill)
-              .frame(width: Self.avatarSize, height: Self.avatarSize)
+              .frame(width: avatarSize, height: avatarSize)
               .clipShape(Circle())
               .contentShape(Circle())
               .overlay(liveStatusRing)
@@ -993,7 +1018,7 @@ struct AuthorAvatarColumn: View {
       }
     }
     .frame(maxHeight: .infinity, alignment: .top)
-    .frame(width: Self.avatarContainerWidth)
+    .frame(width: avatarContainerWidth)
     .padding(.horizontal, Self.baseUnit)
     .padding(.top, Self.baseUnit)
     .background(parentPostIndicator)
@@ -1008,7 +1033,7 @@ struct AuthorAvatarColumn: View {
     Image(systemName: "person.crop.circle")
       .resizable()
       .aspectRatio(1, contentMode: .fit)
-      .frame(width: Self.avatarSize, height: Self.avatarSize)
+      .frame(width: avatarSize, height: avatarSize)
       .foregroundColor(.gray)
       .overlay(liveStatusRing)
       .onTapGesture {
@@ -1020,7 +1045,7 @@ struct AuthorAvatarColumn: View {
   private var avatarPlaceholder: some View {
     Circle()
       .fill(Color.gray.opacity(0.2))
-      .frame(width: Self.avatarSize, height: Self.avatarSize)
+      .frame(width: avatarSize, height: avatarSize)
       .overlay(ProgressView().scaleEffect(0.8))  // Optional: add a smaller ProgressView
       .overlay(liveStatusRing)
   }
@@ -1042,8 +1067,8 @@ struct AuthorAvatarColumn: View {
         .fill(Color.systemGray4)
         .frame(width: 2)
         .frame(maxHeight: .infinity)
-        .padding(.bottom, Self.avatarSize + Self.baseUnit * 2)
-        .offset(y: Self.avatarSize + Self.baseUnit * 3)
+        .padding(.bottom, avatarSize + Self.baseUnit * 2)
+        .offset(y: avatarSize + Self.baseUnit * 3)
     }
   }
 }

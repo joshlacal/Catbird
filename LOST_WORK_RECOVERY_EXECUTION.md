@@ -43,17 +43,17 @@ Update the disposition column in the same commit that closes each slice. Valid d
 
 | Candidate commits | Behavior | Initial disposition |
 |---|---|---|
-| `d062c2a`, `8e2b09d`, `650f738`, `2f3f4cc` | Feed icons and banner geometry | candidate |
+| `d062c2a`, `8e2b09d`, `650f738`, `2f3f4cc` | Feed icons and banner geometry | recovered in `53084284` |
 | `412bb74` | Draft translation, account scoping, and drafts-sheet presentation | recovered |
 | `412bb74` | Default-on AppView draft sync; current-main requires explicit opt-in as a safety gate | superseded |
-| `4e833ba` | Composer chips/accessory redesign | candidate; exclude unrelated auth/chat content |
+| `4e833ba` | Composer chips/accessory redesign | recovered in `44b7e366` and hardened in `b62b5b5c`; unrelated auth/chat content excluded with evidence |
 | `17a4479` through `f7322e3`, plus `08e7368`, `dd7fde8` | FAB and capture actions | recovered; the unrelated `dd7fde8` App Intents/UIKit cell annotations are excluded with evidence |
 | `fea6386`, `dfb0b1e`, `19ae89a`, `29ab384`, `8881885` | Honest search filters | recovered |
-| `68043cb` | Repost/per-feed cache identity | candidate |
-| `d5eefcd`, `d06e076` | Own-message actions and sequence-zero ordering | candidate |
-| `10f1c17` | Settings runtime wiring | candidate; file-by-file semantic audit |
-| `b86c5ca` | Threaded replies and account cleanup | candidate; compare with current sibling-reply tests |
-| `67d8872` through `641531a` | App Intents expansion and runtime hardening | candidate; regenerate, never copy generated files |
+| `68043cb` | Repost/per-feed cache identity | recovered in `d7c098b1`, with store and scope hardening through `cc668b1b` |
+| `d5eefcd`, `d06e076` | Own-message actions and sequence-zero ordering | recovered in `6cfc47c9`, with lifecycle hardening through `39ad6e77` |
+| `10f1c17` | Settings runtime wiring | recovered in `7932735a`, with runtime and lifecycle hardening through `7f569427` |
+| `b86c5ca` | Threaded replies and account cleanup | recovered selectively in the final audit: 48/32/24-point avatar depth cues, 0/12/24-point indentation, and the deeper cap restored while current URI-based connector rules remain authoritative; unrelated account cleanup excluded |
+| `67d8872` through `641531a` | App Intents expansion and runtime hardening | recovered from canonical inputs and regenerated in `116cdf7e` |
 
 ### Task 1: Isolate and Baseline the Recovery
 
@@ -1120,12 +1120,13 @@ jj new
   nested, sibling, and omitted-child fixtures remains open because those
   semantic fixtures are not navigable from the simulator's unauthenticated
   state; Step 3 intentionally remains unchecked.
-- Settings carry-forward: `ContentMediaSettingsView` still exposes a
-  `Threaded Replies View` toggle and persists `threadedReplies`, but current
-  runtime code has no consumer. Do not restore the incompatible Option B
-  implementation under this task. Task 12 must either remove the misleading
-  control/property or record an explicitly approved, connector-compatible
-  replacement behavior before closing the ledger.
+- Settings carry-forward at the Task 10 checkpoint: `ContentMediaSettingsView`
+  exposed a `Threaded Replies View` toggle and persisted `threadedReplies`, but
+  runtime code had no consumer. During Task 12 the product owner explicitly
+  identified the compact avatar/indentation behavior as required. The final
+  audit therefore restores that presentation layer while retaining Task 10's
+  URI-based connector predicates instead of historical Option B's blanket
+  all-rails-off behavior.
 - App Entity carry-forward: parent thread cells currently assign a responder
   `appEntityIdentifier`, while main-post and reply cells only clear identifiers
   on reuse and `PostView` seeds the entity stores without adding a SwiftUI
@@ -1145,7 +1146,7 @@ jj new
 **Interfaces:**
 - Produces: approved shortcut set within the ten-shortcut cap, Messages draft handoff, supported record-write intents, reliable entity discovery/donation, and current secure client resolution
 
-- [ ] **Step 1: Freeze all generator inputs before generation**
+- [x] **Step 1: Freeze all generator inputs before generation**
 
 ```bash
 jj status
@@ -1154,7 +1155,7 @@ jj new
 
 Expected: clean checkpoint before any generator command.
 
-- [ ] **Step 2: Create a manifest-to-runtime audit table**
+- [x] **Step 2: Create a manifest-to-runtime audit table**
 
 For each candidate commit from `67d8872` through `641531a`, record: user-visible intent, canonical manifest/schema entry, handwritten runtime implementation, generated artifact, shortcut inclusion, current disposition, and test coverage. Explicitly reconcile the 10-shortcut cap and exclude duplicate handwritten/generated Like/Repost implementations.
 
@@ -1165,7 +1166,7 @@ cells clear the property on reuse but do not assign it during configuration.
 Reconcile this deliberately rather than treating Task 10's no-op as proof of
 complete App Entity coverage.
 
-- [ ] **Step 3: Restore the canonical manifest, change inputs, and regenerate**
+- [x] **Step 3: Restore the canonical manifest, change inputs, and regenerate**
 
 Start from `b8c552c:manifests/app-intents.json` and `8881885:Catbird/AppIntents/README.md`, then reconcile their declared intents with the completed audit table. Checkpoint both repositories and run the documented generator exactly:
 
@@ -1191,12 +1192,26 @@ Expected: only intended App Intents output and handwritten runtime/test changes,
 
 Build first to validate App Intents metadata extraction. Run `AppIntentsSiriPathTests` on a physical iPhone, then exercise shortcut phrases, Compose Post, chat draft handoff, Like/Repost or their generated equivalents, onscreen post/profile entities, and locked-device behavior. Preserve current secure account/client resolution.
 
-- [ ] **Step 5: Update ledger and commit**
+- [x] **Step 5: Update ledger and commit**
 
 ```bash
 jj describe -m 'Catbird: reconcile App Intents recovery surface'
 jj new
 ```
+
+#### Task 11 recovery evidence (2026-07-14)
+
+- Commit `116cdf7e` restores the canonical manifest and generated surface,
+  reconciles the ten-shortcut cap, removes duplicate handwritten Like/Repost
+  implementations, restores Messages draft handoff and direct-message intents,
+  and wires post/profile entity discovery into the visible runtime surfaces.
+- The generated and handwritten intent suites are included in the final 310-test
+  iPhone unit run recorded by Task 12. App Intents metadata extraction also
+  completes in the final iPad and macOS builds.
+- Physical-iPhone Siri phrases, locked-device behavior, Messages schema
+  invocation, and onscreen entity lookup remain required before Step 4 can be
+  closed; simulator/unit/build evidence does not substitute for that device
+  boundary.
 
 ### Task 12: Final Cross-Platform Verification and Integration Audit
 
@@ -1208,7 +1223,7 @@ jj new
 - Consumes: all recovered slice commits
 - Produces: closed ledger, build/test logs, screenshots, device results, integration-ready branch
 
-- [ ] **Step 1: Audit scope and conflict markers**
+- [x] **Step 1: Audit scope and conflict markers**
 
 ```bash
 jj diff --from bfa9395512daedb6255f97390df47a9333d11bee --stat
@@ -1223,7 +1238,7 @@ git apply --check --whitespace=error-all \
 
 Expected: only planned files, one clear commit per slice, no conflict markers, and no whitespace errors.
 
-- [ ] **Step 2: Run the final automated matrix**
+- [x] **Step 2: Run the final automated matrix**
 
 ```bash
 mkdir -p /tmp/catbird-recovery-final
@@ -1245,16 +1260,16 @@ Expected: all builds and tests succeed, with any baseline-only failures clearly 
 Capture evidence for Feed Start, unified profile, composer states, FAB open/closed, drafts, search filters, repeated reposts across feeds, chat edit/unsend, MLS ordering, recovered settings, and threaded replies. On the physical iPhone, repeat photo, video, Siri, App Intents, and entity lookup tests.
 
 For threaded replies, capture sibling, direct-child, and omitted-child layouts
-and confirm initial position/reveal behavior. Also resolve the dead
-`threadedReplies` setting: remove the misleading control/property or verify an
-explicitly approved connector-compatible behavior. Do not restore historical
-Option B's all-rails-off behavior by default.
+and confirm initial position/reveal behavior. The product owner explicitly
+approved restoring compact threaded presentation during this audit. Preserve
+the current URI-based connector predicates; do not restore historical Option
+B's all-rails-off behavior.
 
-- [ ] **Step 4: Close every ledger row**
+- [x] **Step 4: Close every ledger row**
 
 No row may remain `candidate`. For every exclusion or supersession, include the replacement commit/code path and test or runtime evidence.
 
-- [ ] **Step 5: Seal the final audit**
+- [x] **Step 5: Seal the final audit**
 
 ```bash
 jj describe -m 'Catbird: record lost-work recovery verification'
@@ -1263,3 +1278,51 @@ jj status
 ```
 
 Expected: a clean working copy. Do not move `main`; present the branch and evidence for final review first.
+
+#### Task 12 recovery evidence (2026-07-14)
+
+- Scope audit: `/tmp/catbird-recovery-final/recovery-stat.txt` and
+  `recovery-log.txt` record the complete recovery stack from the approved
+  baseline. `conflict-markers.txt` is empty. The complete
+  `recovery.patch` passes a reverse applicability and whitespace check against
+  the recovered tree; reverse mode is used because the jj-only baseline commit
+  is not exported as a Git tree object. No ledger disposition remains
+  `candidate`.
+- Threaded-reply correction: historical `b86c5ca` incorrectly bundled useful
+  compact presentation with obsolete blanket connector suppression. The final
+  audit restores 48/32/24-point avatars, 0/12/24-point capped indentation, and
+  the enabled depth cap of five through `PostView` and
+  `ThreadReplyPresentationMetrics`, while retaining URI-derived direct-child,
+  sibling, and omitted-child connector rules. Focused RED/GREEN logs are
+  `threaded-replies-red.log` and `threaded-replies-green-rerun2.log`; the final
+  focused run passes 5 tests in 1 suite.
+- Automated iPhone evidence: `iphone-unit-tests-final.log` passes 310 tests in
+  55 suites. `iphone-ui-smoke-green.log` passes 5 UI smoke tests. The broader
+  `iphone-tests-serial.log` also exposes 13 fixture/manual failures rather than
+  concealing them: 11 moderation tests still search for the removed `MLS Chat`
+  tab/fixture, and 2 repost-ghost tests explicitly require live feed data and
+  physical evidence. Those suites need fixture modernization or their declared
+  device environment; they are not product regressions introduced by this
+  recovery patch.
+- Cross-platform evidence: `ipad-build-final.log` and
+  `macos-build-final.log` both end in `** BUILD SUCCEEDED **`. The macOS build
+  required guarding the iOS 27 Messages schema files with `#if os(iOS)`, which
+  preserves their iPhone behavior without compiling unavailable Messages APIs
+  into Catbird for macOS.
+- Lifecycle audit: captured-media testing exposed a pre-existing deinit
+  resurrection in `FeedFeedbackManager`; removing its escaping best-effort
+  `Task` closes that crash without changing interaction submission while the
+  manager is alive. RED/GREEN evidence is recorded in
+  `captured-media-deinit-red.log` and
+  `captured-media-deinit-green-suite.log`.
+- Runtime evidence: the signed-in iPhone simulator was used to inspect Feed
+  Start, timeline, unified profile, FAB actions, drafts, composer/accessories,
+  search filters, and the restored threaded-replies toggle. Thread captures
+  `visual-threaded-replies-parent-child.png` and
+  `visual-threaded-replies-compact.png` show a regular root, compact children,
+  and preserved parent-to-direct-child rail without a false sibling rail.
+- Remaining device gate: Step 3 stays open for physical-iPhone photo/video,
+  Siri/App Intents, locked-device behavior, entity lookup, live repeated-repost
+  evidence, and device-backed chat ordering/edit/unsend checks. The branch is
+  integration-ready for code review, but those release gates are not claimed
+  complete.

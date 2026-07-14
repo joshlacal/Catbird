@@ -8,6 +8,33 @@ import Testing
 
 @Suite("Thread reply layout")
 struct ThreadReplyLayoutTests {
+  @Test("Threaded replies progressively reduce avatar size and cap indentation")
+  func threadedReplyPresentationMetrics() {
+    #expect(ThreadReplyPresentationMetrics.maximumDepth(isEnabled: false) == 3)
+    #expect(ThreadReplyPresentationMetrics.maximumDepth(isEnabled: true) == 5)
+
+    #expect(ThreadReplyPresentationMetrics.avatarScale(forDepth: 1, isEnabled: true) == .regular)
+    #expect(ThreadReplyPresentationMetrics.avatarScale(forDepth: 2, isEnabled: true) == .compact)
+    #expect(ThreadReplyPresentationMetrics.avatarScale(forDepth: 3, isEnabled: true) == .mini)
+    #expect(ThreadReplyPresentationMetrics.avatarScale(forDepth: 8, isEnabled: false) == .regular)
+
+    #expect(ThreadReplyPresentationMetrics.leadingIndent(forDepth: 1, isEnabled: true) == 0)
+    #expect(ThreadReplyPresentationMetrics.leadingIndent(forDepth: 2, isEnabled: true) == 12)
+    #expect(ThreadReplyPresentationMetrics.leadingIndent(forDepth: 3, isEnabled: true) == 24)
+    #expect(ThreadReplyPresentationMetrics.leadingIndent(forDepth: 8, isEnabled: true) == 24)
+    #expect(ThreadReplyPresentationMetrics.leadingIndent(forDepth: 8, isEnabled: false) == 0)
+  }
+
+  @Test("Post avatar scales preserve the regular layout and compact depth cues")
+  func postAvatarScaleMetrics() {
+    #expect(PostAvatarScale.regular.avatarSize == 48)
+    #expect(PostAvatarScale.compact.avatarSize == 32)
+    #expect(PostAvatarScale.mini.avatarSize == 24)
+    #expect(PostAvatarScale.regular.containerWidth == 54)
+    #expect(PostAvatarScale.compact.containerWidth == 38)
+    #expect(PostAvatarScale.mini.containerWidth == 30)
+  }
+
   @Test("Sibling replies do not connect to each other")
   func siblingRepliesDoNotConnect() {
     let layout = ThreadReplyLayoutBuilder.build(

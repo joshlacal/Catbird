@@ -5,6 +5,8 @@
 //  iOS 27 Messages App Schema entities for Catbird MLS chat.
 //
 
+#if os(iOS)
+
 import AppIntents
 import CatbirdMLSCore
 import CoreTransferable
@@ -462,3 +464,4 @@ struct CatbirdMessagesPersonQuery: EntityStringQuery {
   }
 }
 
+#endif

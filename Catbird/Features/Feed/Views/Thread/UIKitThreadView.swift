@@ -3006,9 +3006,16 @@ struct ReplyView: View {
   let replyWrapper: ReplyWrapper
   let opAuthorID: String
   let nestedReplies: [ReplyWrapper]  // Nested replies for this post
-  let maxDepth: Int = 3
   @Binding var path: NavigationPath
   var appState: AppState
+
+  private var isThreadedRepliesMode: Bool {
+    appState.appSettings.threadedReplies
+  }
+
+  private var maxDepth: Int {
+    ThreadReplyPresentationMetrics.maximumDepth(isEnabled: isThreadedRepliesMode)
+  }
 
   private var visibleNestedReplies: [ReplyWrapper] {
     Array(nestedReplies.prefix(max(0, maxDepth - 1)))
@@ -3055,7 +3062,8 @@ struct ReplyView: View {
           isSelectable: false,
           path: $path,
           appState: appState,
-          hasVisibleThreadContext: true
+          hasVisibleThreadContext: true,
+          avatarScale: .regular
         )
         .contentShape(Rectangle())
         .onTapGesture {
@@ -3078,11 +3086,22 @@ struct ReplyView: View {
                   isSelectable: false,
                   path: $path,
                   appState: appState,
-                  hasVisibleThreadContext: true
+                  hasVisibleThreadContext: true,
+                  avatarScale: ThreadReplyPresentationMetrics.avatarScale(
+                    forDepth: nestedWrapper.depth,
+                    isEnabled: isThreadedRepliesMode
+                  )
                 )
                 .contentShape(Rectangle())
                 .onTapGesture { path.append(NavigationDestination.post(nestedPost.post.uri)) }
                 .padding(.vertical, 3)
+                .padding(
+                  .leading,
+                  ThreadReplyPresentationMetrics.leadingIndent(
+                    forDepth: nestedWrapper.depth,
+                    isEnabled: isThreadedRepliesMode
+                  )
+                )
                 .frame(maxWidth: 550, alignment: .leading)
                 
                 if item.hasAdditionalReplies {

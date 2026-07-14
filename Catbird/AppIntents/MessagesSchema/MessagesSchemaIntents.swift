@@ -5,6 +5,8 @@
 //  iOS 27 Messages App Schema intents for Catbird MLS chat.
 //
 
+#if os(iOS)
+
 import AppIntents
 import Foundation
 import GeoToolbox
@@ -260,3 +262,4 @@ struct CatbirdSetMessageReadStatusSchemaIntent {
   }
 }
 
+#endif

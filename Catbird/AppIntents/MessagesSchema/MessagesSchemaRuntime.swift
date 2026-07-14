@@ -7,6 +7,8 @@
 //  keys, storage, and recovery state.
 //
 
+#if os(iOS)
+
 import AppIntents
 import CatbirdMLSCore
 import Foundation
@@ -383,3 +385,4 @@ enum MessagesSchemaRuntime {
   }
 }
 
+#endif

@@ -3,6 +3,34 @@
 //  Catbird
 //
 
+import CoreGraphics
+
+enum ThreadReplyPresentationMetrics {
+  static func maximumDepth(isEnabled: Bool) -> Int {
+    isEnabled ? 5 : 3
+  }
+
+  static func avatarScale(forDepth depth: Int, isEnabled: Bool) -> PostAvatarScale {
+    guard isEnabled else { return .regular }
+
+    switch depth {
+    case ...1: return .regular
+    case 2: return .compact
+    default: return .mini
+    }
+  }
+
+  static func leadingIndent(forDepth depth: Int, isEnabled: Bool) -> CGFloat {
+    guard isEnabled else { return 0 }
+
+    switch depth {
+    case ...1: return 0
+    case 2: return 12
+    default: return 24
+    }
+  }
+}
+
 struct ThreadReplyLayoutInput: Equatable, Sendable {
   let id: String
   let parentID: String?

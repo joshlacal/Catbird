@@ -298,10 +298,5 @@ final class FeedFeedbackManager {
   
   deinit {
     sendTimer?.invalidate()
-    
-    // Try to flush on deinit (best effort)
-    Task {
-      await flushInteractions()
-    }
   }
 }
