@@ -1031,7 +1031,7 @@ If every historical setting is already present or superseded, commit only the ev
 **Interfaces:**
 - Produces: sibling replies do not connect to one another, direct children retain connectors, omitted children retain continuation affordance
 
-- [ ] **Step 1: Run the current sibling-reply regression suite**
+- [x] **Step 1: Run the current sibling-reply regression suite**
 
 ```bash
 xcodebuild test -project Catbird.xcodeproj -scheme Catbird \
@@ -1039,7 +1039,7 @@ xcodebuild test -project Catbird.xcodeproj -scheme Catbird \
   -only-testing:CatbirdTests/ThreadReplyLayoutTests
 ```
 
-- [ ] **Step 2: Compare behavior, not whole files**
+- [x] **Step 2: Compare behavior, not whole files**
 
 Diff `b86c5ca` against the current two view files. If current code passes all three tests and exposes the same continuation behavior at runtime, mark `b86c5ca` superseded and make no product-code edit. Otherwise port only the missing connector predicate or continuation affordance.
 
@@ -1047,12 +1047,53 @@ Diff `b86c5ca` against the current two view files. If current code passes all th
 
 Build and capture thread screenshots for all three arrangements. Confirm no regression to scroll position, initial reveal animation, or App Entity annotations.
 
-- [ ] **Step 4: Update ledger and commit**
+- [x] **Step 4: Update ledger and commit**
 
 ```bash
 jj describe -m 'Catbird: reconcile threaded reply layout'
 jj new
 ```
+
+#### Task 10 recovery evidence (2026-07-14)
+
+- Source disposition: the audited layout files at recovery parent `33ff4233`
+  match the reviewed state exactly. Historical `b86c5ca` used positional
+  assumptions and an optional Option B mode that removed all connector rails in
+  favor of 48/32/24-point avatars and indentation. Restoring it literally would
+  violate this task's requirement that direct children retain connectors.
+  Current `ThreadReplyLayoutBuilder` instead derives the root and child rails
+  from actual parent URIs and derives continuation from either `moreReplies` or
+  an omitted direct child. `ReplyView` consumes those exact values for the root
+  rail, each visible child rail, and the `Continue thread` button. Therefore
+  `b86c5ca` is superseded for this task and neither `PostView.swift` nor
+  `UIKitThreadView.swift` was edited.
+- Focused GREEN: a fresh `test-without-building` execution on clean iOS 26.2
+  simulator `CEC8381E-065C-468C-ACED-6A9DC716987B`, with parallel testing
+  disabled and one maximum worker, passed 3/3 in the single
+  `ThreadReplyLayoutTests` suite and emitted `** TEST EXECUTE SUCCEEDED **`.
+  Log: `/tmp/recovery-task10-thread-layout.log`; result bundle:
+  `/tmp/CatbirdTask9RedDerivedData/Logs/Test/Test-Catbird-2026.07.14_07-17-41--0400.xcresult`.
+- Build/runtime: the suite reused the exact product/test build already verified
+  at the Task 9 parent rather than competing with another active Xcode build.
+  That same `Catbird.app` was then installed and launched outside the test host
+  on the clean simulator as `blue.catbird` process 72781.
+- Scroll/reveal preservation: Task 10 made no product edit. The existing initial
+  snapshot, non-animated main-post positioning, delayed drift correction, and
+  post-stabilization reveal paths remain unchanged. Screenshot verification of
+  nested, sibling, and omitted-child fixtures remains open because those
+  semantic fixtures are not navigable from the simulator's unauthenticated
+  state; Step 3 intentionally remains unchecked.
+- Settings carry-forward: `ContentMediaSettingsView` still exposes a
+  `Threaded Replies View` toggle and persists `threadedReplies`, but current
+  runtime code has no consumer. Do not restore the incompatible Option B
+  implementation under this task. Task 12 must either remove the misleading
+  control/property or record an explicitly approved, connector-compatible
+  replacement behavior before closing the ledger.
+- App Entity carry-forward: parent thread cells currently assign a responder
+  `appEntityIdentifier`, while main-post and reply cells only clear identifiers
+  on reuse and `PostView` seeds the entity stores without adding a SwiftUI
+  entity context. Task 11 must reconcile that responder-level annotation
+  coverage from canonical App Intents sources; Task 10 did not change it.
 
 ### Task 11: Reconcile App Intents from Canonical Sources
 
@@ -1079,6 +1120,13 @@ Expected: clean checkpoint before any generator command.
 - [ ] **Step 2: Create a manifest-to-runtime audit table**
 
 For each candidate commit from `67d8872` through `641531a`, record: user-visible intent, canonical manifest/schema entry, handwritten runtime implementation, generated artifact, shortcut inclusion, current disposition, and test coverage. Explicitly reconcile the 10-shortcut cap and exclude duplicate handwritten/generated Like/Repost implementations.
+
+Include a thread-cell annotation row: verify canonical onscreen-entity behavior
+for parent, main-post, and reply `UICollectionViewCell` responders. The current
+state assigns `appEntityIdentifier` only for parent cells; main-post and reply
+cells clear the property on reuse but do not assign it during configuration.
+Reconcile this deliberately rather than treating Task 10's no-op as proof of
+complete App Entity coverage.
 
 - [ ] **Step 3: Restore the canonical manifest, change inputs, and regenerate**
 
@@ -1158,6 +1206,12 @@ Expected: all builds and tests succeed, with any baseline-only failures clearly 
 - [ ] **Step 3: Run the final visual/device matrix**
 
 Capture evidence for Feed Start, unified profile, composer states, FAB open/closed, drafts, search filters, repeated reposts across feeds, chat edit/unsend, MLS ordering, recovered settings, and threaded replies. On the physical iPhone, repeat photo, video, Siri, App Intents, and entity lookup tests.
+
+For threaded replies, capture sibling, direct-child, and omitted-child layouts
+and confirm initial position/reveal behavior. Also resolve the dead
+`threadedReplies` setting: remove the misleading control/property or verify an
+explicitly approved connector-compatible behavior. Do not restore historical
+Option B's all-rails-off behavior by default.
 
 - [ ] **Step 4: Close every ledger row**
 
