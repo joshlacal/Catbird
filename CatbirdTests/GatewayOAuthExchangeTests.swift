@@ -96,6 +96,78 @@ struct GatewayOAuthExchangeTests {
     }
   }
 
+  @Test("callback path must be the literal percent-encoded path")
+  func encodedCallbackPathIsRejected() async throws {
+    let callback = GatewayOAuthLegacyCallback(callbackURL: callbackURL)
+    _ = try await callback.prepareLogin(loginURL)
+
+    await #expect(throws: GatewayOAuthLegacyCallbackError.unauthorized) {
+      try await callback.consume(
+        URL(string: "https://catbird.blue/oauth/%63allback#session_id=session-123")!)
+    }
+  }
+
+  @Test("printable ASCII session IDs are accepted at both length boundaries")
+  func printableASCIISessionIDBounds() async throws {
+    for sessionID in ["!", String(repeating: "~", count: 512)] {
+      let callback = GatewayOAuthLegacyCallback(callbackURL: callbackURL)
+      _ = try await callback.prepareLogin(loginURL)
+      let callbackURL = try #require(
+        legacyCallbackURL(sessionIDFragmentValue: sessionID)
+      )
+      #expect(try await callback.consume(callbackURL) == sessionID)
+    }
+  }
+
+  @Test("fragment field name must be literal and the value is decoded exactly once")
+  func rawFragmentStructureAndValueDecoding() async throws {
+    let encodedNameCallback = GatewayOAuthLegacyCallback(callbackURL: callbackURL)
+    _ = try await encodedNameCallback.prepareLogin(loginURL)
+    await #expect(throws: GatewayOAuthLegacyCallbackError.unauthorized) {
+      try await encodedNameCallback.consume(
+        URL(string: "https://catbird.blue/oauth/callback#session%5Fid=abc")!)
+    }
+
+    let encodedValueCallback = GatewayOAuthLegacyCallback(callbackURL: callbackURL)
+    _ = try await encodedValueCallback.prepareLogin(loginURL)
+    #expect(
+      try await encodedValueCallback.consume(
+        URL(string: "https://catbird.blue/oauth/callback#session_id=a%26b")!) == "a&b"
+    )
+  }
+
+  @Test("auth views clear a prepared legacy attempt on every pre-callback exit")
+  func authViewPendingAttemptCleanupWiring() throws {
+    let testsURL = URL(fileURLWithPath: #filePath)
+    let repositoryURL = testsURL.deletingLastPathComponent().deletingLastPathComponent()
+    let loginSource = try String(
+      contentsOf: repositoryURL.appendingPathComponent("Catbird/Features/Auth/Views/LoginView.swift"),
+      encoding: .utf8
+    )
+    let switcherSource = try String(
+      contentsOf: repositoryURL.appendingPathComponent(
+        "Catbird/Features/Auth/Views/AccountSwitcherView.swift"),
+      encoding: .utf8
+    )
+
+    #expect(loginSource.contains("private func cancelAuthenticationTaskAndPendingAttempt()"))
+    #expect(loginSource.contains("await cancelPendingAttemptBeforeCallback()"))
+    #expect(loginSource.contains(".onDisappear {\n            cancelAuthenticationTaskAndPendingAttempt()"))
+    let cancelAction = try #require(
+      loginSource.range(of: "private func cancelAuthentication()")
+    )
+    let timeoutAction = try #require(
+      loginSource.range(of: "private func startTimeoutCountdown()")
+    )
+    #expect(
+      loginSource[cancelAction.lowerBound..<timeoutAction.lowerBound]
+        .contains("cancelAuthenticationTaskAndPendingAttempt()")
+    )
+    #expect(switcherSource.contains("private func cancelAuthenticationTaskAndPendingAttempt()"))
+    #expect(switcherSource.contains("await cancelPendingAttemptBeforeCallback()"))
+    #expect(switcherSource.contains(".onDisappear(perform: cancelAuthenticationTaskAndPendingAttempt)"))
+  }
+
   @Test("omitted and explicit default HTTPS ports are equivalent")
   func defaultHTTPSPortNormalization() async throws {
     for (configured, received) in [

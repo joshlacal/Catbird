@@ -60,26 +60,33 @@ actor GatewayOAuthLegacyCallback {
   }
 
   private static func validatedSessionID(from callback: URL, expected: URL) -> String? {
-    guard callback.scheme?.lowercased() == expected.scheme?.lowercased(),
+    guard let callbackComponents = URLComponents(
+      url: callback,
+      resolvingAgainstBaseURL: false
+    ),
+      let expectedComponents = URLComponents(
+        url: expected,
+        resolvingAgainstBaseURL: false
+      ),
+      callback.scheme?.lowercased() == expected.scheme?.lowercased(),
       callback.host?.lowercased() == expected.host?.lowercased(),
       effectivePort(of: callback) == effectivePort(of: expected),
-      callback.path == expected.path,
+      callbackComponents.percentEncodedPath == expectedComponents.percentEncodedPath,
       callback.user == nil,
       callback.password == nil,
-      callback.query == nil,
-      let components = URLComponents(url: callback, resolvingAgainstBaseURL: false),
-      let fragment = components.fragment
+      callbackComponents.percentEncodedQuery == nil,
+      let rawFragment = callbackComponents.percentEncodedFragment
     else {
       return nil
     }
 
-    let items = fragment.split(separator: "&", omittingEmptySubsequences: false)
+    let items = rawFragment.split(separator: "&", omittingEmptySubsequences: false)
     guard items.count == 1 else { return nil }
 
     let parts = items[0].split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
     guard parts.count == 2, parts[0] == "session_id" else { return nil }
 
-    let sessionID = String(parts[1])
+    guard let sessionID = String(parts[1]).removingPercentEncoding else { return nil }
     guard !sessionID.isEmpty,
       sessionID.utf8.count <= maximumSessionIDBytes,
       sessionID.utf8.allSatisfy({ $0 >= 0x21 && $0 <= 0x7e })
@@ -90,13 +97,17 @@ actor GatewayOAuthLegacyCallback {
   }
 
   private static func isValidConfiguredCallback(_ url: URL) -> Bool {
-    url.scheme?.lowercased() == "https"
+    guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+      return false
+    }
+
+    return url.scheme?.lowercased() == "https"
       && url.host?.lowercased() == "catbird.blue"
       && url.user == nil
       && url.password == nil
-      && url.query == nil
-      && url.fragment == nil
-      && url.path == "/oauth/callback"
+      && components.percentEncodedQuery == nil
+      && components.percentEncodedFragment == nil
+      && components.percentEncodedPath == "/oauth/callback"
       && effectivePort(of: url) == 443
   }
 

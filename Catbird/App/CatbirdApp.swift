@@ -1100,7 +1100,8 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
           )
 
           // Check for gateway BFF callback (Universal Link from catbird.blue)
-          // Gateway redirects with a one-time exchange code in the query.
+          // Temporary compatibility accepts Nest's legacy session_id fragment callback.
+          // Remove this path only after the hotfix design document's rollout gate is met.
           if url.host == "catbird.blue" && url.path == "/oauth/callback" {
             logger.info("Gateway OAuth callback detected")
             Task {
