@@ -10,6 +10,10 @@ import Foundation
 @Suite("MLSPendingSend")
 struct MLSPendingSendTests {
 
+  private enum ActionFailure: Error {
+    case rejected
+  }
+
   private func makeDataSource() -> MLSConversationDataSource {
     MLSConversationDataSource(
       conversationId: "convo-1",
@@ -187,6 +191,71 @@ struct MLSPendingSendTests {
     #expect(dispatched?.conversationID == "convo-1")
     #expect(dispatched?.messageID == "msg-real")
     #expect(dispatched?.text == "after")
+  }
+
+  @Test func failedEditReturnsFailureAndKeepsTheEditSessionText() async {
+    let actions = MLSMessageActionPerformer(
+      edit: { _, _, _ in throw ActionFailure.rejected },
+      unsend: { _, _ in }
+    )
+    let dataSource = MLSConversationDataSource(
+      conversationId: "convo-1",
+      currentUserDID: "did:plc:tester",
+      appState: nil,
+      actionPerformer: actions
+    )
+    let message = MLSMessageAdapter(
+      id: "msg-real",
+      text: "retry this edit",
+      senderDID: "did:plc:tester",
+      currentUserDID: "did:plc:tester",
+      sentAt: Date()
+    )
+    dataSource.ingestConfirmedMessageForTesting(message)
+    var editSession = MLSMessageEditSession()
+    editSession.begin(message)
+
+    let succeeded = await dataSource.editMessage(
+      messageID: message.id,
+      newText: "retry this edit"
+    )
+    editSession.finish(succeeded: succeeded)
+
+    #expect(succeeded == false)
+    #expect(editSession.message?.id == message.id)
+    #expect(editSession.message?.text == "retry this edit")
+  }
+
+  @Test func successfulEditClearsTheEditSession() async {
+    let actions = MLSMessageActionPerformer(
+      edit: { _, _, _ in },
+      unsend: { _, _ in }
+    )
+    let dataSource = MLSConversationDataSource(
+      conversationId: "convo-1",
+      currentUserDID: "did:plc:tester",
+      appState: nil,
+      actionPerformer: actions
+    )
+    let message = MLSMessageAdapter(
+      id: "msg-real",
+      text: "before",
+      senderDID: "did:plc:tester",
+      currentUserDID: "did:plc:tester",
+      sentAt: Date()
+    )
+    dataSource.ingestConfirmedMessageForTesting(message)
+    var editSession = MLSMessageEditSession()
+    editSession.begin(message)
+
+    let succeeded = await dataSource.editMessage(
+      messageID: message.id,
+      newText: "after"
+    )
+    editSession.finish(succeeded: succeeded)
+
+    #expect(succeeded == true)
+    #expect(editSession.message == nil)
   }
 
   @Test func remoteMessageCannotDispatchEditOrUnsend() async {

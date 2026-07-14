@@ -807,17 +807,29 @@ jj new
   `MLSBlockCoordinatorTests` passed 4/4 via `test-without-building`, exit 0.
   Three older requested preservation files are explicitly excluded from the
   active CatbirdTests target, so their zero-test run is not claimed as evidence.
-- Final capability audit: acknowledged pending rows temporarily use `.sent`
-  before their confirmed GRDB twin arrives. A final regression and production
-  guard now deny server actions to every `pending:` identity during that
-  handoff. Two immediate reruns were infrastructure-blocked repeating package
-  graph resolution despite a warmed cache and automatic resolution disabled;
-  this final one-line guard is source-covered and remains in the Task 12 rerun
-  set rather than being represented as executed evidence.
+- Review follow-up: acknowledged pending rows temporarily use `.sent` before
+  their confirmed GRDB twin arrives. The regression and production guard deny
+  server actions to every `pending:` identity during that handoff, and the
+  final focused run executed that case successfully.
+- Review follow-up: live-message reads now share one
+  `MLSDisplayableMessageQuery` for initial fetch, GRDB observation, and refresh.
+  It filters `payloadExpired == false` and `isTombstone == 0`; pagination keeps
+  using the storage helper with the same tombstone exclusion. Successful unsend
+  still removes immediately. A real `DatabasePool` regression observed the
+  initial ordered rows, the tombstone-driven removal, and a later mutation of
+  the excluded row without reinsertion or an ordering jump.
+- Review follow-up: `editMessage` reports success or failure, and the UIKit
+  edit session clears only on success. A failed edit preserves the target and
+  retry text. Both success and failure paths passed focused tests.
+- Final focused verification: four suites passed 29/29, exit 0, with
+  `** TEST SUCCEEDED **`: 15 pending/action/edit-session cases, one live GRDB
+  observation case, six display-order cases, and seven render-signature cases.
+  The earlier package-graph/result-bundle hang was terminated and preserved at
+  `/tmp/recovery-task8-review-green.log`; the conclusive run used the known-good
+  isolated `/tmp/CatbirdThreadReplyDerivedData` cache.
 - Build/runtime: the final focused run compiled and linked the complete app.
   That exact product installed on simulator
-  `40111BBE-8709-40D0-9016-A27448486A80` and launched authenticated as PID
-  46862. The launch screenshot showed the live Timeline.
+  `40111BBE-8709-40D0-9016-A27448486A80` and launched as PID 9911.
 - Open runtime gate: real two-account edit, unsend, peer propagation, and
   no-ordering-jump verification was not observed. Step 4 remains unchecked;
   automated ownership, dispatch, removal, ordering, preservation, build, and

@@ -37,6 +37,47 @@ struct MLSMessageActionPerformer {
   let unsend: @MainActor (_ conversationID: String, _ messageID: String) async throws -> Void
 }
 
+enum MLSDisplayableMessageQuery {
+  static func request(
+    conversationID: String,
+    currentUserDID: String
+  ) -> QueryInterfaceRequest<MLSMessageModel> {
+    MLSMessageModel
+      .filter(MLSMessageModel.Columns.conversationID == conversationID)
+      .filter(MLSMessageModel.Columns.currentUserDID == currentUserDID)
+      .filter(MLSMessageModel.Columns.payloadExpired == false)
+      .filter(MLSMessageModel.Columns.isTombstone == 0)
+      .order(
+        MLSMessageModel.Columns.sequenceNumber.asc,
+        MLSMessageModel.Columns.timestamp.asc,
+        MLSMessageModel.Columns.messageID.asc
+      )
+  }
+
+  static func observation(
+    conversationID: String,
+    currentUserDID: String
+  ) -> ValueObservation<ValueReducers.Fetch<[MLSMessageModel]>> {
+    ValueObservation.tracking { db in
+      try request(
+        conversationID: conversationID,
+        currentUserDID: currentUserDID
+      ).fetchAll(db)
+    }
+  }
+
+  static func fetchAll(
+    _ db: Database,
+    conversationID: String,
+    currentUserDID: String
+  ) throws -> [MLSMessageModel] {
+    try request(
+      conversationID: conversationID,
+      currentUserDID: currentUserDID
+    ).fetchAll(db)
+  }
+}
+
 /// Data source that provides MLS messages for the unified chat UI
 /// Pulls messages from MLSStorage and provides them as MLSMessageAdapter objects
 @MainActor
@@ -189,18 +230,10 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
     let convoId = conversationId
     let userDID = currentUserDID
 
-    let observation = ValueObservation.tracking { db in
-      try MLSMessageModel
-        .filter(MLSMessageModel.Columns.conversationID == convoId)
-        .filter(MLSMessageModel.Columns.currentUserDID == userDID)
-        .filter(MLSMessageModel.Columns.payloadExpired == false)
-        .order(
-          MLSMessageModel.Columns.sequenceNumber.asc,
-          MLSMessageModel.Columns.timestamp.asc,
-          MLSMessageModel.Columns.messageID.asc
-        )
-        .fetchAll(db)
-    }
+    let observation = MLSDisplayableMessageQuery.observation(
+      conversationID: convoId,
+      currentUserDID: userDID
+    )
 
     messageObservation = observation.start(
       in: database,
@@ -223,16 +256,11 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
     let userDID = currentUserDID
 
     return try await database.read { db in
-      try MLSMessageModel
-        .filter(MLSMessageModel.Columns.conversationID == convoId)
-        .filter(MLSMessageModel.Columns.currentUserDID == userDID)
-        .filter(MLSMessageModel.Columns.payloadExpired == false)
-        .order(
-          MLSMessageModel.Columns.sequenceNumber.asc,
-          MLSMessageModel.Columns.timestamp.asc,
-          MLSMessageModel.Columns.messageID.asc
-        )
-        .fetchAll(db)
+      try MLSDisplayableMessageQuery.fetchAll(
+        db,
+        conversationID: convoId,
+        currentUserDID: userDID
+      )
     }
   }
 
@@ -1777,9 +1805,12 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
     }
   }
 
-  func editMessage(messageID: String, newText: String) async {
+  @discardableResult
+  func editMessage(messageID: String, newText: String) async -> Bool {
     let trimmedText = newText.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !trimmedText.isEmpty, let target = message(for: messageID), target.canEdit else { return }
+    guard !trimmedText.isEmpty, let target = message(for: messageID), target.canEdit else {
+      return false
+    }
     let resolvedMessageID = target.id
 
     do {
@@ -1799,10 +1830,12 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
           newText: trimmedText
         )
       }
+      return true
     } catch {
       self.error = error
       logger.error("Failed to edit MLS message: \(error.localizedDescription)")
       await refreshRecoveryState()
+      return false
     }
   }
 

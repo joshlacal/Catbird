@@ -96,6 +96,23 @@ import SwiftUI
         }
     }
 
+    struct MLSMessageEditSession {
+        private(set) var message: MLSMessageAdapter?
+
+        mutating func begin(_ message: MLSMessageAdapter) {
+            self.message = message
+        }
+
+        mutating func finish(succeeded: Bool) {
+            guard succeeded else { return }
+            message = nil
+        }
+
+        mutating func cancel() {
+            message = nil
+        }
+    }
+
     struct MLSConversationDetailView: View {
         @Environment(AppState.self) var appState
         @Environment(\.colorScheme) private var colorScheme
@@ -172,7 +189,7 @@ import SwiftUI
         // Delete state
         @State private var messageToDelete: Message?
         @State private var showingDeleteAlert = false
-        @State private var messageToEdit: MLSMessageAdapter?
+        @State private var editSession = MLSMessageEditSession()
 
         private let logger = Logger(subsystem: "blue.catbird", category: "MLSConversationDetail")
         private let storage = MLSStorage.shared
@@ -252,7 +269,7 @@ import SwiftUI
                         },
                         onEditMessage: { message in
                             guard message.canEdit else { return }
-                            messageToEdit = message
+                            editSession.begin(message)
                         },
                         onUnsendMessage: { message in
                             guard message.canUnsend else { return }
@@ -263,14 +280,14 @@ import SwiftUI
                                 ? "Sending paused during recovery" : "Message",
                             isSendBlocked: dataSource.isSendBlockedByRecovery,
                             onSend: { text in
-                                if let messageToEdit {
+                                if let messageToEdit = editSession.message {
                                     Task {
-                                        await unifiedDataSource?.editMessage(
+                                        let succeeded = await unifiedDataSource?.editMessage(
                                             messageID: messageToEdit.id,
                                             newText: text
-                                        )
+                                        ) ?? false
                                         await MainActor.run {
-                                            self.messageToEdit = nil
+                                            self.editSession.finish(succeeded: succeeded)
                                         }
                                     }
                                 } else {
@@ -322,10 +339,10 @@ import SwiftUI
                             onVoicePreviewDiscard: {
                                 discardVoicePreview()
                             },
-                            isEditMode: messageToEdit != nil,
-                            editMessageText: messageToEdit?.text,
+                            isEditMode: editSession.message != nil,
+                            editMessageText: editSession.message?.text,
                             onCancelEdit: {
-                                messageToEdit = nil
+                                editSession.cancel()
                             }
                         )
                     )
