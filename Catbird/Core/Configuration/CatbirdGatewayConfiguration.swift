@@ -57,7 +57,7 @@ struct CatbirdGatewayConfiguration: Sendable, Equatable {
     case .production:
       nil
     case .stagingE2E:
-      "did:web:dev-api.catbird.blue:mls"
+      "did:web:dev-api.catbird.blue:mls#atproto_mls"
     }
   }
 

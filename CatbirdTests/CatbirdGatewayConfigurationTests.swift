@@ -29,7 +29,9 @@ struct CatbirdGatewayConfigurationTests {
 
     #expect(configuration.origin == URL(string: "https://dev-api.catbird.blue")!)
     #expect(configuration.serviceDID == "did:web:dev-api.catbird.blue")
-    #expect(configuration.mlsServiceDID == "did:web:dev-api.catbird.blue:mls")
+    #expect(
+      configuration.mlsServiceDID == "did:web:dev-api.catbird.blue:mls#atproto_mls"
+    )
   }
 
   @Test("a staging override without E2E mode fails closed")
