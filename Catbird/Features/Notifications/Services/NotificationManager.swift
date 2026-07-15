@@ -2760,7 +2760,13 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
       return nil
     }
 
-    let apiClient = await MLSAPIClient(client: standaloneClient, environment: .production)
+    let mlsServiceDID = CatbirdGatewayConfiguration.current.mlsServiceDID
+    let environment: MLSEnvironment = if let mlsServiceDID {
+      .custom(serviceDID: mlsServiceDID)
+    } else {
+      .production
+    }
+    let apiClient = await MLSAPIClient(client: standaloneClient, environment: environment)
     notificationLogger.info("🔄 [FG] Created standalone MLS API client for recipient")
     return apiClient
     #else

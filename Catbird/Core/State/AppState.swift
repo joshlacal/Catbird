@@ -1293,7 +1293,7 @@ final class AppState {
             } else {
                 .production
             }
-            await MLSAPIClient(
+            return await MLSAPIClient(
                 client: client,
                 environment: environment
             )
