@@ -8,7 +8,7 @@ import Testing
 
 @Suite("Action buttons repost presentation")
 struct ActionButtonsRepostPresentationTests {
-  @Test("Repost actions are presented as a menu on every supported OS")
+  @Test("Repost actions use a Menu pre-iOS 27, and a confirmation dialog on iOS 27+")
   func repostActionsUseMenuPresentation() throws {
     let sourceURL = URL(fileURLWithPath: #filePath)
       .deletingLastPathComponent()
@@ -17,15 +17,18 @@ struct ActionButtonsRepostPresentationTests {
         "Catbird/Features/Feed/Views/Components/ActionButtons/ActionButtonsView.swift")
     let source = try String(contentsOf: sourceURL, encoding: .utf8)
 
-    #expect(source.contains("Menu {"), "Repost actions should be rendered in a SwiftUI Menu.")
+    #expect(source.contains("Menu {"), "Repost actions should still be rendered in a SwiftUI Menu pre-iOS 27.")
     #expect(!source.contains("showRepostOptions"), "The repost options sheet state should be removed.")
-    // The iOS 27 Menu ghost-overlay compositor bug was fixed in beta 3, so the
-    // Button+confirmationDialog workaround was reverted — the plain Menu is used
-    // on every supported OS again (see docs/feedback/repost-ghost-overlay/FEEDBACK.md).
-    #expect(!source.contains("showingRepostOptions"), "The repost options dialog state should be removed.")
-    #expect(!source.contains("repostDialogButton"), "The iOS 27 confirmation-dialog workaround should be removed.")
-    #expect(!source.contains("if #available(iOS 27.0, *)"), "iOS 27 should use the same Menu path again.")
-    #expect(!source.contains(".confirmationDialog("), "Repost options should not use confirmationDialog.")
+    // The iOS 27 Menu ghost-overlay compositor bug persists through beta 3 (confirmed
+    // in production), so the Button+confirmationDialog workaround is restored for
+    // iOS 27+ (see docs/feedback/repost-ghost-overlay/FEEDBACK.md).
+    #expect(source.contains("showingRepostOptions"), "iOS 27 needs the confirmation-dialog presentation state.")
+    #expect(
+      source.contains("repostDialogButton"),
+      "iOS 27 beta ghosts stale SF Symbol layers from Menu labels (docs/feedback/repost-ghost-overlay/FEEDBACK.md); keep the confirmation-dialog workaround."
+    )
+    #expect(source.contains("if #available(iOS 27.0, *)"), "iOS 27+ should route repost through the confirmation-dialog workaround.")
+    #expect(source.contains(".confirmationDialog("), "iOS 27's repost workaround should use confirmationDialog.")
     #expect(!source.contains("RepostOptionsView(post: post, viewModel: viewModel)"))
 
     guard let repostMenuRange = source.range(of: "private var repostMenu: some View"),

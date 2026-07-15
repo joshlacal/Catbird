@@ -522,7 +522,7 @@ final class NotificationManager: NSObject {
       "app.bsky.notification.getPreferences",
       "app.bsky.notification.putPreferencesV2",
       "app.bsky.notification.listActivitySubscriptions",
-      "app.bsky.notification.putActivitySubscription",
+      "app.bsky.notification.putActivitySubscription"
     ]
 
     for endpoint in routedEndpoints {
@@ -555,8 +555,7 @@ final class NotificationManager: NSObject {
 
   @discardableResult
   private func fetchNotificationPreferences(using client: ATProtoClient) async
-    -> AppBskyNotificationDefs.Preferences?
-  {
+    -> AppBskyNotificationDefs.Preferences? {
     do {
       await configureNotificationServiceRouting(on: client)
       let (responseCode, output) = try await client.app.bsky.notification.getPreferences(input: .init())
@@ -584,8 +583,7 @@ final class NotificationManager: NSObject {
   }
 
   private func currentNotificationPreferencesSnapshot(using client: ATProtoClient) async
-    -> AppBskyNotificationDefs.Preferences?
-  {
+    -> AppBskyNotificationDefs.Preferences? {
     if let serverPreferencesSnapshot {
       return serverPreferencesSnapshot
     }
@@ -786,8 +784,7 @@ final class NotificationManager: NSObject {
 
     if status == .registered,
       let previousToken = lastRegisteredDeviceToken,
-      previousToken == deviceToken
-    {
+      previousToken == deviceToken {
       notificationLogger.info(
         "🔁 Device token already registered; skipping duplicate registration request")
       return
@@ -1159,8 +1156,7 @@ final class NotificationManager: NSObject {
         result = try await client.app.bsky.graph.getListBlocks(
           input: params as! AppBskyGraphGetListBlocks.Parameters)
 
-        if result.responseCode == 200, let output = result.data as? AppBskyGraphGetListBlocks.Output
-        {
+        if result.responseCode == 200, let output = result.data as? AppBskyGraphGetListBlocks.Output {
           for list in output.lists {
             allLists.append(
               (
@@ -1178,8 +1174,7 @@ final class NotificationManager: NSObject {
         result = try await client.app.bsky.graph.getListMutes(
           input: params as! AppBskyGraphGetListMutes.Parameters)
 
-        if result.responseCode == 200, let output = result.data as? AppBskyGraphGetListMutes.Output
-        {
+        if result.responseCode == 200, let output = result.data as? AppBskyGraphGetListMutes.Output {
           for list in output.lists {
             allLists.append(
               (
@@ -1619,8 +1614,7 @@ final class NotificationManager: NSObject {
 
       // Sync relationships if we haven't in a while
       if let lastSync = lastRelationshipSync,
-        Date().timeIntervalSince(lastSync) > 3600
-      {  // If it's been over an hour
+        Date().timeIntervalSince(lastSync) > 3600 {  // If it's been over an hour
         await syncRelationships()
       }
 
@@ -1718,8 +1712,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
 
       // Skip self-sent messages (no notification needed)
       if let sender = senderDid, let recipient = recipientDid,
-        sender.lowercased() == recipient.lowercased()
-      {
+        sender.lowercased() == recipient.lowercased() {
         notificationLogger.info("🔇 [FG] Self-sent message - suppressing notification")
         completionHandler([])
         return
@@ -1729,8 +1722,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
       if let ciphertext = ciphertext,
         let convoId = convoId,
         let messageId = messageId,
-        let recipientDid = recipientDid
-      {
+        let recipientDid = recipientDid {
 
         Task {
           await decryptAndPresentMLSNotification(
@@ -1752,8 +1744,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
 
     // Handle non-MLS notifications (standard Bluesky notifications)
     if let uriString = userInfo["uri"] as? String,
-      let typeString = userInfo["type"] as? String
-    {
+      let typeString = userInfo["type"] as? String {
       Task {
         await prefetchNotificationContent(uri: uriString, type: typeString)
       }
@@ -1976,8 +1967,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
     let processIsRustFull = processAuthorityMode == .rustFull
     let activeManagerIsRustFull: Bool
     if isActiveUser,
-      let conversationManager = await appState?.getMLSConversationManager()
-    {
+      let conversationManager = await appState?.getMLSConversationManager() {
       activeManagerIsRustFull = conversationManager.protocolAuthorityMode == .rustFull
     } else {
       activeManagerIsRustFull = false
@@ -2410,9 +2400,9 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
       notificationLogger.info("🔄 [FG] Fetched \(result.messages.count) messages for group sync")
 
       var processedCount = 0
-      var capturedPlaintext: String? = nil
-      var capturedServerMessageId: String? = nil
-      var capturedSenderDid: String? = nil
+      var capturedPlaintext: String?
+      var capturedServerMessageId: String?
+      var capturedSenderDid: String?
 
       // No advisory lock needed - SQLite WAL handles concurrent access
       // Cross-process coordination uses MLSNotificationCoordinator.
@@ -2452,8 +2442,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
               let isTarget =
                 isTargetByOrder || isTargetByCiphertext || message.id == targetMessageId
               if isTarget {
-                if let payload = try? CatbirdMLSCore.MLSMessagePayload.decodeFromJSON(plaintextData)
-                {
+                if let payload = try? CatbirdMLSCore.MLSMessagePayload.decodeFromJSON(plaintextData) {
                   let displayText: String
                   switch payload.messageType {
                   case .text:
@@ -2525,8 +2514,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
                   // can't decrypt later to reconstruct the reaction.
                   if payload.messageType == .reaction,
                     let reaction = payload.reaction,
-                    senderDid != "unknown"
-                  {
+                    senderDid != "unknown" {
                     switch reaction.action {
                     case .add:
                       let reactionID =
@@ -2585,13 +2573,12 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
           }
 
           notificationLogger.debug(
-            "🔄 [FG] Processed message \(message.id.prefix(8)) (type: \(message.messageType ?? "unknown"))"
+            "🔄 [FG] Processed message \(message.id.prefix(8)) (type: \(message.messageType?.rawValue ?? "unknown"))"
           )
         } catch {
           let errorDescription = error.localizedDescription
           if errorDescription.contains("SecretReuseError")
-            || errorDescription.contains("Decryption failed")
-          {
+            || errorDescription.contains("Decryption failed") {
             notificationLogger.warning(
               "⚠️ [FG] Message \(message.id.prefix(8)) triggered SecretReuseError/DecryptionFailed - attempting recovery from cache"
             )
@@ -2624,8 +2611,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
                   if !senderDid.isEmpty && senderDid != "unknown",
                     let payload = cachedPayload,
                     payload.messageType == .reaction,
-                    let reaction = payload.reaction
-                  {
+                    let reaction = payload.reaction {
 
                     notificationLogger.info(
                       "🔄 [FG] Recovering reaction for \(message.id.prefix(8)) from sender \(senderDid)"
@@ -2738,8 +2724,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
   private func getOrCreateAPIClient(for userDid: String) async -> MLSAPIClient? {
     #if os(iOS)
     if let recipientAppState = await getAppStateForUser(userDid),
-      let existingClient = await recipientAppState.getMLSAPIClient()
-    {
+      let existingClient = await recipientAppState.getMLSAPIClient() {
       // IMPORTANT: The stored client can be authenticated as a *different* account
       // if the active account has changed since it was created.
       let authenticated = await existingClient.authenticatedUserDID()
@@ -2882,8 +2867,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
           notificationLogger.info(
             "ℹ️ [FG] Welcome expired for this group (410) - attempting External Commit fallback")
           do {
-            if let groupIdData = Data(hexEncoded: convoId), try context.groupExists(groupId: groupIdData)
-            {
+            if let groupIdData = Data(hexEncoded: convoId), try context.groupExists(groupId: groupIdData) {
               notificationLogger.info(
                 "⏭️ [FG] Group already exists locally after 410 - skipping External Commit")
               return true
@@ -2945,8 +2929,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
 
         // If we can't process Welcome, try joining via External Commit so we can decrypt immediately.
         do {
-          if let groupIdData = Data(hexEncoded: convoId), try context.groupExists(groupId: groupIdData)
-          {
+          if let groupIdData = Data(hexEncoded: convoId), try context.groupExists(groupId: groupIdData) {
             notificationLogger.info(
               "⏭️ [FG] Group already exists after NoMatchingKeyPackage - skipping External Commit")
             return true
@@ -3036,8 +3019,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
   private func getAppStateForUser(_ userDid: String) async -> AppState? {
     // First check if current appState matches
     if let currentAppState = appState,
-      await MainActor.run(body: { currentAppState.userDID }) == userDid
-    {
+      await MainActor.run(body: { currentAppState.userDID }) == userDid {
       return currentAppState
     }
 
@@ -3084,8 +3066,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
 
     // Try to parse as MLSMessagePayload JSON first
     if let payloadData = plaintext.data(using: .utf8),
-      let payload = try? CatbirdMLSCore.MLSMessagePayload.decodeFromJSON(payloadData)
-    {
+      let payload = try? CatbirdMLSCore.MLSMessagePayload.decodeFromJSON(payloadData) {
 
       switch payload.messageType {
       case .text:
@@ -3172,8 +3153,8 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
       return canonical.isEmpty ? nil : canonical
     }
 
-    var senderName: String? = nil
-    var senderAvatarURL: URL? = nil
+    var senderName: String?
+    var senderAvatarURL: URL?
 
     if let senderDid = canonicalSenderDid {
       // 1. Try the in-memory profile cache (fastest, most reliable in foreground)
@@ -3187,8 +3168,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
       // 2. Fall back to DB member table
       if senderName == nil {
         if let memberInfo = await getMLSMemberInfo(
-          senderDid: senderDid, convoId: convoId, recipientDid: recipientDid)
-        {
+          senderDid: senderDid, convoId: convoId, recipientDid: recipientDid) {
           senderName = memberInfo.displayName ?? memberInfo.handle
           if senderAvatarURL == nil {
             senderAvatarURL = memberInfo.avatarURL.flatMap(URL.init(string:))
@@ -3723,8 +3703,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
       return MainActor.assumeIsolated {
         let appStateManager = AppStateManager.shared
         if let activeDID = appStateManager.lifecycle.userDID,
-          hashForAccountMatching(activeDID) == hash
-        {
+          hashForAccountMatching(activeDID) == hash {
           return activeDID
         }
         for did in appStateManager.authenticatedDIDs {
@@ -3900,8 +3879,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
 
   /// Create a NavigationDestination from notification data
   private func createNavigationDestination(from uriString: String, type: String) throws
-    -> NavigationDestination
-  {
+    -> NavigationDestination {
     // For URI-based notifications, convert to ATProtocolURI
     if type.lowercased() != "follow" {
       guard let uri = try? ATProtocolURI(uriString: uriString) else {
@@ -3992,7 +3970,7 @@ struct NotificationPreferences: Codable, Equatable {
       "quotes": quotes,
       "likeViaRepost": likeViaRepost,
       "repostViaRepost": repostViaRepost,
-      "activitySubscriptions": activitySubscriptions,
+      "activitySubscriptions": activitySubscriptions
     ]
   }
 }

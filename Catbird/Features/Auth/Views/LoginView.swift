@@ -1435,7 +1435,19 @@ struct LoginView: View {
             authenticationTask = nil
         }
     }
-    
+
+    private func cancelPendingAttemptBeforeCallback() async {
+        await appStateManager.authentication.cancelGatewayOAuthFlow()
+    }
+
+    private func cancelAuthenticationTaskAndPendingAttempt() {
+        authenticationTask?.cancel()
+        authenticationTask = nil
+        Task { @MainActor in
+            await cancelPendingAttemptBeforeCallback()
+        }
+    }
+
     // MARK: - Adaptive Layout Helpers
     // (Kept the same as original)
     
