@@ -28,8 +28,6 @@ struct AccountSwitcherView: View {
   @State private var validationError: String?
   @State private var showInvalidAnimation = false
   @State private var authenticationCancelled = false
-  @State private var authenticationTask: Task<Void, Never>?
-  @State private var authenticationTaskID: UUID?
 
   // Logger
   private let logger = Logger(subsystem: "blue.catbird", category: "AccountSwitcher")
@@ -86,7 +84,6 @@ struct AccountSwitcherView: View {
         .onChange(of: appStateManager.lifecycle.appState?.pendingReauthenticationRequest, handleReauthRequestChange)
         .onChange(of: isAddingAccount, handleIsAddingAccountChange)
         .task { await loadAccounts() }
-        .onDisappear(perform: cancelAuthenticationTaskAndPendingAttempt)
     }
   }
 
@@ -117,7 +114,6 @@ struct AccountSwitcherView: View {
     if showsDismissButton {
       ToolbarItem(placement: .cancellationAction) {
         Button {
-          cancelAuthenticationTaskAndPendingAttempt()
           dismiss()
         } label: {
           Image(systemName: "xmark")
@@ -140,7 +136,6 @@ struct AccountSwitcherView: View {
     if showsDismissButton {
       ToolbarItem(placement: .cancellationAction) {
           Button {
-              cancelAuthenticationTaskAndPendingAttempt()
               dismiss()
           } label: {
               Image(systemName: "xmark")
@@ -193,13 +188,9 @@ struct AccountSwitcherView: View {
 
       if let request = newRequest {
         logger.info("🔔 [REAUTH-ONCHANGE] Detected new reauthentication request for \(request.handle)")
-        if authenticationTask == nil {
-          logger.info("🔔 [REAUTH-ONCHANGE] Starting handleReauthentication in Task")
-          beginAuthenticationTask {
-            await handleReauthentication(request)
-          }
-        } else {
-          logger.debug("🔔 [REAUTH-ONCHANGE] Authentication task already owns this request")
+        logger.info("🔔 [REAUTH-ONCHANGE] Starting handleReauthentication in Task")
+        Task {
+          await handleReauthentication(request)
         }
       } else {
         logger.debug("🔔 [REAUTH-ONCHANGE] Request is nil, ignoring")
@@ -303,7 +294,7 @@ struct AccountSwitcherView: View {
     .contentShape(Rectangle())
     .onTapGesture {
       guard !account.isActive else { return }
-      beginAuthenticationTask {
+      Task {
         await switchToAccount(account)
       }
     }
@@ -434,7 +425,6 @@ struct AccountSwitcherView: View {
       .toolbar {
         ToolbarItem(placement: .primaryAction) {
           Button("Cancel", systemImage: "xmark") {
-            cancelAuthenticationTaskAndPendingAttempt()
             isAddingAccount = false
           }
         }
@@ -545,7 +535,6 @@ struct AccountSwitcherView: View {
 
             // Get the AppState if it exists
             guard let currentAppState = appStateManager.lifecycle.appState else {
-              await cancelPendingAttemptBeforeCallback()
               logger.error("❌ [SWITCH] No AppState available after switch")
               self.error = "Failed to switch account"
               isLoading = false
@@ -568,7 +557,6 @@ struct AccountSwitcherView: View {
             logger.info("✅ [SWITCH] Reauthentication flow initiated - triggering handleReauthentication")
             await handleReauthentication(reauthRequest)
           } catch {
-            await cancelPendingAttemptBeforeCallback()
             logger.error("❌ [SWITCH] Failed to initiate reauthentication: \(error.localizedDescription)")
             self.error = "Failed to switch account: \(error.localizedDescription)"
           }
@@ -623,7 +611,7 @@ struct AccountSwitcherView: View {
     }
 
     // Start authentication process
-    beginAuthenticationTask {
+    Task {
       await startAddAccount()
     }
   }
@@ -654,7 +642,6 @@ struct AccountSwitcherView: View {
     // Update state
     isLoading = true
     error = nil
-    await cancelPendingAttemptBeforeCallback()
 
     // Clean up handle - remove @ prefix and whitespace
     let cleanHandle = newAccountHandle.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -716,19 +703,17 @@ struct AccountSwitcherView: View {
         // Refresh account list
         await loadAccounts()
       } catch _ as ASWebAuthenticationSessionError {
-        await cancelPendingAttemptBeforeCallback()
+        await appStateManager.authentication.cancelGatewayOAuthFlow()
         // User cancelled authentication
         logger.notice("Authentication was cancelled by user")
         authenticationCancelled = true
         isLoading = false
       } catch is CancellationError {
-        await cancelPendingAttemptBeforeCallback()
         // Task was cancelled (e.g., auth state changed to authenticated
         // before this task finished cleanup) — not a real error
         logger.notice("Authentication task cancelled (auth may have already succeeded)")
         isLoading = false
       } catch {
-        await cancelPendingAttemptBeforeCallback()
         // Other authentication errors (including timeout)
         logger.error("Authentication error: \(error.localizedDescription)")
 
@@ -741,7 +726,6 @@ struct AccountSwitcherView: View {
       }
 
     } catch {
-      await cancelPendingAttemptBeforeCallback()
       // Error starting login flow
       logger.error("Error starting add account: \(error.localizedDescription)")
       self.error = error.localizedDescription
@@ -858,14 +842,13 @@ struct AccountSwitcherView: View {
       logger.debug("🔄 [REAUTH] Setting isLoading = false")
       isLoading = false
     } catch let error as ASWebAuthenticationSessionError {
-      await cancelPendingAttemptBeforeCallback()
+      await appStateManager.authentication.cancelGatewayOAuthFlow()
       // User cancelled reauthentication
       logger.notice("🚫 [REAUTH] Reauthentication was cancelled by user")
       logger.debug("🚫 [REAUTH] ASWebAuthenticationSessionError code: \(error.code.rawValue)")
       authenticationCancelled = true
       isLoading = false
     } catch {
-      await cancelPendingAttemptBeforeCallback()
       // Other authentication errors (including timeout)
       logger.error("❌ [REAUTH] Reauthentication error: \(error.localizedDescription)")
       logger.error("❌ [REAUTH] Error type: \(String(describing: type(of: error)))")
@@ -877,34 +860,6 @@ struct AccountSwitcherView: View {
         self.error = "Failed to reauthenticate: \(error.localizedDescription)"
       }
       isLoading = false
-    }
-  }
-
-  private func cancelPendingAttemptBeforeCallback() async {
-    await appStateManager.authentication.cancelGatewayOAuthFlow()
-  }
-
-  private func beginAuthenticationTask(
-    _ operation: @escaping @MainActor @Sendable () async -> Void
-  ) {
-    authenticationTask?.cancel()
-    let taskID = UUID()
-    authenticationTaskID = taskID
-    authenticationTask = Task { @MainActor in
-      await operation()
-      if authenticationTaskID == taskID {
-        authenticationTask = nil
-        authenticationTaskID = nil
-      }
-    }
-  }
-
-  private func cancelAuthenticationTaskAndPendingAttempt() {
-    authenticationTask?.cancel()
-    authenticationTask = nil
-    authenticationTaskID = nil
-    Task { @MainActor in
-      await cancelPendingAttemptBeforeCallback()
     }
   }
 }

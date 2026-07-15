@@ -20,8 +20,7 @@ struct Post: View, Equatable {
     }
     
     private let logger = Logger(subsystem: "blue.catbird", category: "Translation")
-    @Environment(AppState.self) private var appState
-    
+
     let post: AppBskyFeedPost
     let isSelectable: Bool
     let useUIKitSelectableText: Bool
@@ -35,6 +34,9 @@ struct Post: View, Equatable {
     @State private var showTranslationPopover = false
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(AppState.self) private var appState
+    @Environment(\.adultContentEnabled) private var adultContentEnabled
+    @State private var bluemojiEnriched: AttributedString?
     @State private var showLanguageSelection = false
     private let textSize: CGFloat?
     private let textStyle: Font.TextStyle
@@ -201,6 +203,14 @@ struct Post: View, Equatable {
                 }
             }
         .animation(.easeInOut(duration: 0.2), value: shouldAnimateTranslation)
+        .task(id: post.text) {
+            bluemojiEnriched = nil
+            guard !post.text.isEmpty, let facets = post.facets, !facets.isEmpty else { return }
+            let base = bluemojiBaseString
+            let enriched = await appState.bluemojiRenderer.enrich(
+                base, text: post.text, facets: facets, allowAdult: adultContentEnabled)
+            if enriched != base { bluemojiEnriched = enriched }
+        }
         .modifier(TranslationTaskModifier(config: translationConfig) { session in
             if #available(iOS 18.0, macOS 15.0, macCatalyst 26.0, *),
                let translationSession = session as? TranslationSession {
@@ -271,7 +281,15 @@ struct Post: View, Equatable {
         if showTranslation, let translated = translatedText {
             return AttributedString(translated)
         }
-        return post.facetsAsAttributedString.applyingPostBodyLinkAccent(
+        return bluemojiEnriched ?? post.facetsAsAttributedString.applyingPostBodyLinkAccent(
+            highlightLinks: appState.appSettings.highlightLinks,
+            linkStyle: appState.appSettings.linkStyle
+        )
+    }
+
+    /// Base string enrichment is applied over: matches the non-translated path above.
+    private var bluemojiBaseString: AttributedString {
+        post.facetsAsAttributedString.applyingPostBodyLinkAccent(
             highlightLinks: appState.appSettings.highlightLinks,
             linkStyle: appState.appSettings.linkStyle
         )

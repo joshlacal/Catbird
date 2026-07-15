@@ -410,8 +410,7 @@ struct CatbirdApp: App {
 
       // Check if this is an MLS key package inventory notification
       if let type = userInfo["type"] as? String,
-         type == "keyPackageLowInventory" || type == "keyPackageReplenishRequested"
-      {
+         type == "keyPackageLowInventory" || type == "keyPackageReplenishRequested" {
         logger.info("Processing MLS key package notification (\(type))")
 
         guard application.applicationState == .active else {
@@ -621,11 +620,9 @@ struct CatbirdApp: App {
 
     // BGTask registration deferred to background task to speed up launch
 
-      
 #if os(iOS)
 NavigationFontConfig.applyEarlyNavigationBarAppearance()
 #endif
-
 
     // Don't configure audio session at app launch - let it remain in default state
     // This prevents interrupting music or other audio apps when the app starts
@@ -1308,6 +1305,13 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
         }
       }
       .catalystPlainButtons()
+      #if DEBUG
+      .overlay {
+        if ProcessInfo.processInfo.arguments.contains("--bluemoji-visual-test") {
+          BluemojiVisualTestView()
+        }
+      }
+      #endif
       .onOpenURL { url in
           logger.info(
             "Received URL for scheme=\(url.scheme ?? "none", privacy: .public) host=\(url.host ?? "none", privacy: .public) path=\(url.path, privacy: .public)"
@@ -1722,7 +1726,7 @@ private extension CatbirdApp {
 
       // Reload MLS state from disk when returning to foreground.
       // The NSE may have advanced the MLS ratchet while the app was in background.
-      if (oldPhase == .background || oldPhase == .inactive), newPhase == .active {
+      if oldPhase == .background || oldPhase == .inactive, newPhase == .active {
         // WAL health snapshot ON RESUME — detect corruption from NSE activity while suspended
         MLSGRDBManager.probeWALHealth(for: "all", label: "APP_RESUMING")
         await resumeMLSAfterReturningToForeground(transitionToken: sceneTransitionToken)
@@ -1865,7 +1869,6 @@ private extension CatbirdApp {
       return
     }
 
-
 #if DEBUG
       try? Tips.resetDatastore()
 #endif
@@ -1918,7 +1921,6 @@ private extension CatbirdApp {
 
     logger.info("🎉 initializeApplicationIfNeeded completed - hasBiometricCheck: \(hasBiometricCheck)")
   }
-
 
   var shouldShowContent: Bool {
     let hasAppState = appState != nil
@@ -3682,8 +3684,7 @@ extension CatbirdApp.AppDelegate {
 
     // 1. Handle key package notifications
     if let type = userInfo["type"] as? String,
-       type == "keyPackageLowInventory" || type == "keyPackageReplenishRequested"
-    {
+       type == "keyPackageLowInventory" || type == "keyPackageReplenishRequested" {
       Task { @MainActor in
         guard let appState = AppStateManager.shared.lifecycle.appState else {
           logger.warning("AppState not available for MLS notification handling")
@@ -3779,8 +3780,7 @@ extension CatbirdApp.AppDelegate {
       let appStateManager = AppStateManager.shared
       // Check the active account first
       if let activeDID = appStateManager.lifecycle.userDID,
-        hashForAccountMatching(activeDID) == hash
-      {
+        hashForAccountMatching(activeDID) == hash {
         return activeDID
       }
       // Check all authenticated accounts
@@ -3868,8 +3868,7 @@ extension CatbirdApp.AppDelegate {
     
     // 1. Handle key package notifications
     if let type = userInfo["type"] as? String,
-       type == "keyPackageLowInventory" || type == "keyPackageReplenishRequested"
-    {
+       type == "keyPackageLowInventory" || type == "keyPackageReplenishRequested" {
       Task { @MainActor in
         guard let appState = AppStateManager.shared.lifecycle.appState else {
           let logger = Logger(subsystem: "blue.catbird", category: "AppDelegate")

@@ -1,6 +1,15 @@
 {
-  "originHash" : "420f675b3c7b5bb99a336996512c73bdba6ec5eef5eeb074b66537ce609cdf13",
+  "originHash" : "39c62acc2921d86371dce3b96c0231b3b36e68645a0f09e4e62d441132b0723d",
   "pins" : [
+    {
+      "identity" : "adaptiveglyphkit",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/joshlacal/AdaptiveGlyphKit.git",
+      "state" : {
+        "revision" : "33976203876adfb91676f3729199a0f40433a96a",
+        "version" : "0.1.0"
+      }
+    },
     {
       "identity" : "cryptoswift",
       "kind" : "remoteSourceControl",
@@ -65,12 +74,21 @@
       }
     },
     {
+      "identity" : "petrelbluemoji",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/joshlacal/PetrelBluemoji.git",
+      "state" : {
+        "revision" : "c2418e6041810cd1aed6334800bf00391b56b3e5",
+        "version" : "0.1.1"
+      }
+    },
+    {
       "identity" : "pkl-swift",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/pkl-swift",
       "state" : {
-        "revision" : "40e5decb9481c8c5d8c64389255166023c936900",
-        "version" : "0.8.2"
+        "revision" : "00f4b15c0941e137bf90de712b6fb643c9f0880a",
+        "version" : "0.10.0"
       }
     },
     {
@@ -168,8 +186,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-system",
       "state" : {
-        "revision" : "7502b711c92a17741fa625d722b0ccbd595d8ed1",
-        "version" : "1.7.2"
+        "revision" : "b5544ba79a70a0cb3563e75bf26dc198d6b40ed3",
+        "version" : "1.7.4"
       }
     },
     {

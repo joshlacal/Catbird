@@ -1,4 +1,5 @@
 import AVKit
+import BluemojiKit
 import CatbirdMLSCore
 import Foundation
 import GRDB
@@ -143,8 +144,7 @@ final class AppState {
         arguments: [String]
     ) -> MLSProtocolAuthorityMode {
         if let value = environment["CATBIRD_MLS_AUTHORITY_MODE"],
-           let mode = MLSProtocolAuthorityMode(rawRuntimeValue: value)
-        {
+           let mode = MLSProtocolAuthorityMode(rawRuntimeValue: value) {
             return mode
         }
 
@@ -152,15 +152,13 @@ final class AppState {
             guard argument.hasPrefix("--mls-authority-mode=") else { return nil }
             return String(argument.dropFirst("--mls-authority-mode=".count))
         }).first,
-           let mode = MLSProtocolAuthorityMode(rawRuntimeValue: value)
-        {
+           let mode = MLSProtocolAuthorityMode(rawRuntimeValue: value) {
             return mode
         }
 
         if let index = arguments.firstIndex(of: "--mls-authority-mode"),
            arguments.indices.contains(arguments.index(after: index)),
-           let mode = MLSProtocolAuthorityMode(rawRuntimeValue: arguments[arguments.index(after: index)])
-        {
+           let mode = MLSProtocolAuthorityMode(rawRuntimeValue: arguments[arguments.index(after: index)]) {
             return mode
         }
 
@@ -189,6 +187,9 @@ final class AppState {
 
     /// URL handling for deep links
     @ObservationIgnored let urlHandler: URLHandler
+
+    /// Shared renderer for inline Bluemoji custom emoji (verify + forge + cache).
+    @ObservationIgnored let bluemojiRenderer = BluemojiRenderer()
 
     /// User preference settings
     var isAdultContentEnabled: Bool = false
@@ -1353,8 +1354,7 @@ final class AppState {
         // This prevents cross-account SQLCipher churn and repeated init timeout loops after switches.
         if let activeUserDID = AppStateManager.shared.lifecycle.userDID,
            activeUserDID != userDid,
-           mlsConversationManagerStorage == nil
-        {
+           mlsConversationManagerStorage == nil {
             logger.debug("MLS: ⏭️ Skipping manager creation for inactive account: \(userDid)")
             return nil
         }
@@ -2573,8 +2573,7 @@ final class AppState {
         if forceReconnect,
            mlsGlobalWebSocketSubscriptionStarted,
            let lastRefresh = mlsGlobalWebSocketLastRefreshAt,
-           Date().timeIntervalSince(lastRefresh) < 1.0
-        {
+           Date().timeIntervalSince(lastRefresh) < 1.0 {
             logger.debug("MLS: Global WebSocket refresh already ran recently, skipping duplicate for \(reason)")
             return
         }
@@ -2599,8 +2598,7 @@ final class AppState {
         }
 
         if let existingObserver = mlsGlobalWebSocketObserver,
-           let observedManager = mlsGlobalWebSocketObservedManager
-        {
+           let observedManager = mlsGlobalWebSocketObservedManager {
             observedManager.removeObserver(existingObserver)
         }
 
@@ -2624,8 +2622,7 @@ final class AppState {
     @MainActor
     private func clearMLSGlobalWebSocketSubscriptionTracking() {
         if let observer = mlsGlobalWebSocketObserver,
-           let manager = mlsGlobalWebSocketObservedManager
-        {
+           let manager = mlsGlobalWebSocketObservedManager {
             manager.removeObserver(observer)
         }
         mlsGlobalWebSocketObserver = nil
@@ -2642,8 +2639,7 @@ final class AppState {
         let defaults = UserDefaults.standard
         let calendar = Calendar.current
         if let last = defaults.object(forKey: key) as? Date,
-           calendar.isDate(last, inSameDayAs: Date())
-        {
+           calendar.isDate(last, inSameDayAs: Date()) {
             logger.debug("MLS: Block reconcile already ran today, skipping")
             return
         }
@@ -3078,8 +3074,7 @@ final class AppState {
 
             // Present the composer using the appropriate window system
             if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-               let rootViewController = windowScene.windows.first?.rootViewController
-            {
+               let rootViewController = windowScene.windows.first?.rootViewController {
                 rootViewController.present(hostingController, animated: true)
             }
         #elseif os(macOS)

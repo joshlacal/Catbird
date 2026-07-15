@@ -386,11 +386,12 @@ struct LoginView: View {
                 }
             }
         }
-        // ASWebAuthenticationSession browser presentation can make this view disappear.
-        // Keep the live task; actual cancellation and error exits clean up explicitly.
         .onDisappear {
+            // Clean up authentication task when view disappears, but only if not actively authenticating
+            // to avoid cancelling the task when ASWebAuthenticationSession opens a browser
             if !isLoggingIn {
-                cancelAuthenticationTaskAndPendingAttempt()
+                authenticationTask?.cancel()
+                authenticationTask = nil
             }
             showTimeoutCountdown = false
             // Reset the re-authentication flag so it can trigger again if the user returns to this view
@@ -1091,7 +1092,6 @@ struct LoginView: View {
         
         // Cancel any existing authentication task
         authenticationTask?.cancel()
-        await cancelPendingAttemptBeforeCallback()
         
         // Update state
         isLoggingIn = true
@@ -1161,7 +1161,7 @@ struct LoginView: View {
                     // Success is handled via onChange of authState
 
                 } catch let authSessionError as ASWebAuthenticationSessionError {
-                    await cancelPendingAttemptBeforeCallback()
+                    await appStateManager.authentication.cancelGatewayOAuthFlow()
                     // User cancelled authentication
                     logger.notice("Authentication was cancelled by user: \(authSessionError._nsError.localizedDescription)")
                     // Only set authenticationCancelled for explicit user cancellation
@@ -1172,7 +1172,6 @@ struct LoginView: View {
                     // Reset auth state to prevent getting stuck
                     appStateManager.authentication.resetError()
                 } catch is CancellationError {
-                    await cancelPendingAttemptBeforeCallback()
                     // Task was cancelled (e.g., auth state changed to authenticated
                     // before this task finished cleanup) — not a real error
                     logger.notice("Authentication task cancelled (auth may have already succeeded)")
@@ -1180,7 +1179,6 @@ struct LoginView: View {
                     loginProgress = .idle
                     showTimeoutCountdown = false
                 } catch {
-                    await cancelPendingAttemptBeforeCallback()
                     // Other authentication errors (including timeout)
                     logger.error("Authentication error: \(error.localizedDescription)")
                     // Don't show authenticationCancelled for errors, use error state instead
@@ -1192,7 +1190,6 @@ struct LoginView: View {
                 }
                 
             } catch {
-                await cancelPendingAttemptBeforeCallback()
                 // Error starting login flow (including timeout and cancellation)
                 logger.error("Error starting login: \(error.localizedDescription)")
                 
@@ -1232,7 +1229,6 @@ struct LoginView: View {
 
         // Cancel any existing authentication task
         authenticationTask?.cancel()
-        await cancelPendingAttemptBeforeCallback()
 
         // Update state
         isLoggingIn = true
@@ -1299,7 +1295,7 @@ struct LoginView: View {
                     // Success is handled via onChange of authState
 
                 } catch let authSessionError as ASWebAuthenticationSessionError {
-                    await cancelPendingAttemptBeforeCallback()
+                    await appStateManager.authentication.cancelGatewayOAuthFlow()
                     // User cancelled authentication
                     logger.notice("Re-authentication was cancelled by user: \(authSessionError._nsError.localizedDescription)")
                     // Only set authenticationCancelled for explicit user cancellation
@@ -1315,7 +1311,6 @@ struct LoginView: View {
                     // Reset auth state to prevent getting stuck
                     appStateManager.authentication.resetError()
                 } catch {
-                    await cancelPendingAttemptBeforeCallback()
                     // Other authentication errors (including timeout)
                     logger.error("Re-authentication error: \(error.localizedDescription)")
                     // Don't show authenticationCancelled for errors, use error state instead
@@ -1328,7 +1323,6 @@ struct LoginView: View {
                 }
 
             } catch {
-                await cancelPendingAttemptBeforeCallback()
                 // Error starting re-authentication flow (including timeout and cancellation)
                 logger.error("Error starting re-authentication: \(error.localizedDescription)")
 
@@ -1359,7 +1353,6 @@ struct LoginView: View {
         
         // Cancel any existing authentication task
         authenticationTask?.cancel()
-        await cancelPendingAttemptBeforeCallback()
         
         // Update state
         isLoggingIn = true
@@ -1399,7 +1392,7 @@ struct LoginView: View {
                     // Success is handled via onChange of authState
 
                 } catch let authSessionError as ASWebAuthenticationSessionError {
-                    await cancelPendingAttemptBeforeCallback()
+                    await appStateManager.authentication.cancelGatewayOAuthFlow()
                     // User cancelled authentication
                     logger.notice("Signup was cancelled by user: \(authSessionError._nsError.localizedDescription)")
                     // Only set authenticationCancelled for explicit user cancellation
@@ -1409,7 +1402,6 @@ struct LoginView: View {
                     // Reset auth state to prevent getting stuck
                     appStateManager.authentication.resetError()
                 } catch {
-                    await cancelPendingAttemptBeforeCallback()
                     // Other authentication errors (including timeout)
                     logger.error("Signup authentication error: \(error.localizedDescription)")
                     
@@ -1421,7 +1413,6 @@ struct LoginView: View {
                 }
                 
             } catch {
-                await cancelPendingAttemptBeforeCallback()
                 // Error starting signup flow (including timeout and cancellation)
                 logger.error("Error starting signup: \(error.localizedDescription)")
                 
@@ -1442,18 +1433,6 @@ struct LoginView: View {
             
             // Clean up the task reference
             authenticationTask = nil
-        }
-    }
-
-    private func cancelPendingAttemptBeforeCallback() async {
-        await appStateManager.authentication.cancelGatewayOAuthFlow()
-    }
-
-    private func cancelAuthenticationTaskAndPendingAttempt() {
-        authenticationTask?.cancel()
-        authenticationTask = nil
-        Task { @MainActor in
-            await cancelPendingAttemptBeforeCallback()
         }
     }
     
@@ -1499,13 +1478,12 @@ struct LoginView: View {
 }
 
 #Preview {
-  AsyncPreviewContent { appState in
+  AsyncPreviewContent { _ in
     // Preview provider for LoginView
     
         LoginView()
   }
 }
-
 
 // MARK: - View Modifiers
 
