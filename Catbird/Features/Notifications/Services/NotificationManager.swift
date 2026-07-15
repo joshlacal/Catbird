@@ -424,14 +424,7 @@ final class NotificationManager: NSObject {
   // MARK: - Initialization
 
   init(
-    notificationServiceDIDString: String = {
-      #if DEBUG
-        "did:web:api.catbird.blue"
-//        "did:web:dev-api.catbird.blue"
-      #else
-        "did:web:api.catbird.blue"
-      #endif
-    }()
+    notificationServiceDIDString: String = CatbirdGatewayConfiguration.current.serviceDID
   ) {
     self.notificationServiceDIDString = notificationServiceDIDString
     super.init()
@@ -3005,30 +2998,16 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
 
     let client: ATProtoClient
     do {
-        #if DEBUG
-        client = try await ATProtoClient(
-          oauthConfig: oauthConfig,
-          namespace: "blue.catbird",
-          authMode: .gateway,
-          gatewayURL: URL(string: "https://api.catbird.blue")!,
-//          gatewayURL: URL(string: "https://dev-api.catbird.blue")!,
-          userAgent: "Catbird/1.0",
-          bskyAppViewDID: "did:web:api.bsky.app#bsky_appview",
-          bskyChatDID: "did:web:api.bsky.chat#bsky_chat",
-          accessGroup: accessGroup
-        )
-        #else
       client = try await ATProtoClient(
         oauthConfig: oauthConfig,
         namespace: "blue.catbird",
         authMode: .gateway,
-        gatewayURL: URL(string: "https://api.catbird.blue")!,
+        gatewayURL: CatbirdGatewayConfiguration.current.origin,
         userAgent: "Catbird/1.0",
         bskyAppViewDID: "did:web:api.bsky.app#bsky_appview",
         bskyChatDID: "did:web:api.bsky.chat#bsky_chat",
         accessGroup: accessGroup
       )
-        #endif
     } catch {
       notificationLogger.error(
         "❌ [FG] Failed to create ATProtoClient: \(error.localizedDescription)")

@@ -12,7 +12,7 @@ final class ChatHeartbeatManager {
   private let logger = Logger(subsystem: "blue.catbird", category: "ChatHeartbeat")
 
   /// Service DID for routing heartbeat calls through Nest.
-  private static let nestServiceDID = "did:web:api.catbird.blue"
+  private static let nestServiceDID = CatbirdGatewayConfiguration.current.serviceDID
 
   /// XRPC endpoint for push heartbeat.
   private static let heartbeatEndpoint = "blue.catbird.bskychat.pushHeartbeat"
