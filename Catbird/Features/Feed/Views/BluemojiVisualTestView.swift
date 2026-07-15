@@ -3,23 +3,26 @@
   import Petrel
   import SwiftUI
 
-  /// Launch-arg-gated (`--bluemoji-visual-test`) screen that renders a synthetic
-  /// post containing a `blue.moji.richtext.facet` through the real
+  /// Launch-arg-gated (`--bluemoji-visual-test`) screen that renders a **real,
+  /// in-the-wild** post containing a `blue.moji.richtext.facet` through the real
   /// ``BluemojiRenderer``, to visually confirm inline Bluemoji rendering.
+  ///
+  /// Source post: `at://did:plc:kmzpsik7s5y5fwu7nnkngfx4/app.bsky.feed.post/3mqchxbzgqh2k`
   struct BluemojiVisualTestView: View {
     @State private var rendered = AttributedString("Loading Bluemoji…")
     @State private var status = "resolving…"
     private let renderer = BluemojiRenderer()
 
-    private static let text = "hello :test1: world"
+    // Verbatim text + facet of the organic post 3mqchxbzgqh2k.
+    private static let text = "test test :test1: yay"
 
     private static func facet() -> AppBskyRichtextFacet {
-      // ":test1:" occupies UTF-8 bytes 6..13 of "hello :test1: world".
+      // ":test1:" occupies UTF-8 bytes 10..17 of "test test :test1: yay".
       AppBskyRichtextFacet(
-        index: AppBskyRichtextFacet.ByteSlice(byteStart: 6, byteEnd: 13),
+        index: AppBskyRichtextFacet.ByteSlice(byteStart: 10, byteEnd: 17),
         features: [.unexpected(.object([
           "$type": .string("blue.moji.richtext.facet"),
-          "did": .string("did:plc:w5pfavrjij2ax3ur34tvbkg2"),
+          "did": .string("did:plc:kmzpsik7s5y5fwu7nnkngfx4"),
           "name": .string(":test1:")
         ]))])
     }
@@ -29,6 +32,7 @@
         Color(.systemBackground).ignoresSafeArea()
         VStack(spacing: 28) {
           Text("Bluemoji Visual Test").font(.headline)
+          Text("real post 3mqchxbzgqh2k").font(.caption2).foregroundStyle(.secondary)
           Text(rendered).font(.system(size: 40))
           Text(status).font(.footnote).foregroundStyle(.secondary)
             .accessibilityIdentifier("bluemoji-status")
