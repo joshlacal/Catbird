@@ -683,7 +683,7 @@ final class ChatManager: StateInvalidationSubscriber {
   // MARK: - Mute Status Server Sync
 
   /// Service DID for routing custom Catbird endpoints through Nest.
-  private static let nestServiceDID = "did:web:api.catbird.blue"
+  private static let nestServiceDID = CatbirdGatewayConfiguration.current.serviceDID
 
   /// Syncs the mute status of a conversation to Nest for server-side push filtering.
   /// This is non-fatal: the 15-minute background sync catches any missed updates.

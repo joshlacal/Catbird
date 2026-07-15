@@ -1284,12 +1284,18 @@ final class AppState {
             return existing
         }
 
-        logger.info("MLS: Creating new API client for production environment (lazy initialization)")
+        let mlsServiceDID = CatbirdGatewayConfiguration.current.mlsServiceDID
+        logger.info("MLS: Creating new API client for configured environment (lazy initialization)")
         // Create MLS client off main actor to avoid blocking UI
         let mlsClient = await Task.detached(priority: .userInitiated) {
-            await MLSAPIClient(
+            let environment: MLSEnvironment = if let mlsServiceDID {
+                .custom(serviceDID: mlsServiceDID)
+            } else {
+                .production
+            }
+            return await MLSAPIClient(
                 client: client,
-                environment: .production
+                environment: environment
             )
         }.value
         mlsAPIClientStorage = mlsClient

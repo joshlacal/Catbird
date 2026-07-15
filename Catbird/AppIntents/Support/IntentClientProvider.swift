@@ -105,7 +105,7 @@ actor IntentClientProvider {
         oauthConfig: oauthConfig,
         namespace: "blue.catbird",
         authMode: .gateway,
-        gatewayURL: URL(string: "https://api.catbird.blue")!,
+        gatewayURL: CatbirdGatewayConfiguration.current.origin,
         userAgent: "Catbird/1.0",
         bskyAppViewDID: "did:web:api.bsky.app#bsky_appview",
         bskyChatDID: "did:web:api.bsky.chat#bsky_chat",

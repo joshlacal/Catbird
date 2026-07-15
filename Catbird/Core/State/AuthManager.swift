@@ -124,7 +124,7 @@ enum AuthProgress: Equatable, Sendable {
 /// Handles all authentication-related operations with a clean state machine approach
 @Observable
 final class AuthenticationManager: AuthProgressDelegate {
-  static let gatewayURL = URL(string: "https://api.catbird.blue")!
+  static let gatewayURL = CatbirdGatewayConfiguration.current.origin
 
   // MARK: - Properties
 
@@ -418,7 +418,6 @@ final class AuthenticationManager: AuthProgressDelegate {
             namespace: "blue.catbird",
             authMode: .gateway,
             gatewayURL: AuthenticationManager.gatewayURL,
-//            gatewayURL: URL(string: "https://dev-api.catbird.blue")!,
             userAgent: "Catbird/1.0",
             bskyAppViewDID: appViewDID,
             bskyChatDID: chatDID,
@@ -723,7 +722,6 @@ final class AuthenticationManager: AuthProgressDelegate {
         namespace: "blue.catbird",
         authMode: .gateway,
         gatewayURL: AuthenticationManager.gatewayURL,
-//        gatewayURL: URL(string: "https://dev-api.catbird.blue")!,
         userAgent: "Catbird/1.0",
         bskyAppViewDID: customAppViewDID,
         bskyChatDID: customChatDID,
@@ -1558,7 +1556,6 @@ final class AuthenticationManager: AuthProgressDelegate {
       namespace: "blue.catbird",
       authMode: .gateway,
       gatewayURL: AuthenticationManager.gatewayURL,
-//      gatewayURL: URL(string: "https://dev-api.catbird.blue")!,
       userAgent: "Catbird/1.0",
       bskyAppViewDID: customAppViewDID,
       bskyChatDID: customChatDID,
