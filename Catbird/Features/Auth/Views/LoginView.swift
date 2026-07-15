@@ -914,7 +914,7 @@ struct LoginView: View {
     private func cancelAuthentication() {
         logger.warning("User cancelled authentication")
         
-        // Cancel the authentication task and invalidate any prepared legacy callback.
+        // Cancel the authentication task and invalidate any prepared exchange attempt.
         cancelAuthenticationTaskAndPendingAttempt()
         
         // Reset state

@@ -196,7 +196,8 @@ final class AuthenticationManager: AuthProgressDelegate {
   )
 
   @ObservationIgnored
-  private let gatewayOAuthLegacyCallback = GatewayOAuthLegacyCallback(
+  private let gatewayOAuthExchange = GatewayOAuthExchange(
+    gatewayURL: AuthenticationManager.gatewayURL,
     callbackURL: URL(string: "https://catbird.blue/oauth/callback")!
   )
 
@@ -786,7 +787,7 @@ final class AuthenticationManager: AuthProgressDelegate {
             )
           }
 
-          let boundAuthURL = try await gatewayOAuthLegacyCallback.prepareLogin(authURL)
+          let boundAuthURL = try await gatewayOAuthExchange.prepareLogin(authURL)
           logger.info("OAuth URL generated successfully")
           await self.updateState(.authenticating(progress: .openingBrowser))
           return boundAuthURL
@@ -1104,7 +1105,7 @@ final class AuthenticationManager: AuthProgressDelegate {
     }
   }
 
-  /// Handle a gateway callback using the temporary legacy compatibility path.
+  /// Handle a gateway callback by atomically exchanging its one-time code.
   @MainActor
   func handleGatewayCallback(_ url: URL) async throws {
     logger.info("🔗 [GATEWAY] Processing gateway callback")
@@ -1126,7 +1127,7 @@ final class AuthenticationManager: AuthProgressDelegate {
     do {
       updateState(.authenticating(progress: .creatingSession))
 
-      let sessionID = try await gatewayOAuthLegacyCallback.consume(url)
+      let sessionID = try await gatewayOAuthExchange.redeem(url)
       var internalCallback = URLComponents()
       internalCallback.scheme = "https"
       internalCallback.host = "catbird.blue"
@@ -1187,7 +1188,7 @@ final class AuthenticationManager: AuthProgressDelegate {
 
   @MainActor
   func cancelGatewayOAuthFlow() async {
-    await gatewayOAuthLegacyCallback.cancelPendingLogin()
+    await gatewayOAuthExchange.cancelPendingLogin()
   }
 
   /// Logout the current user
@@ -1870,7 +1871,7 @@ final class AuthenticationManager: AuthProgressDelegate {
       let authURL = try await withTimeout(timeout: networkTimeout) {
         try await client.startOAuthFlow(identifier: handle)
       }
-      let boundAuthURL = try await gatewayOAuthLegacyCallback.prepareLogin(authURL)
+      let boundAuthURL = try await gatewayOAuthExchange.prepareLogin(authURL)
       self.logger.debug("OAuth URL generated for new account")
 
       updateState(.authenticating(progress: .openingBrowser))
@@ -1893,14 +1894,14 @@ final class AuthenticationManager: AuthProgressDelegate {
     }
   }
 
-  /// Start gateway account creation with the same legacy callback validation as login.
+  /// Start gateway account creation with the same native nonce binding as login.
   @MainActor
   func startSignUp(pdsURL: URL) async throws -> URL {
     guard let client else {
       throw AuthError.clientNotInitialized
     }
     let authURL = try await client.startSignUpFlow(pdsURL: pdsURL)
-    return try await gatewayOAuthLegacyCallback.prepareLogin(authURL)
+    return try await gatewayOAuthExchange.prepareLogin(authURL)
   }
 
   /// Get current active account info
