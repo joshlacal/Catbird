@@ -466,7 +466,6 @@ final class FeedModel: StateInvalidationSubscriber {
     isLoadingMore = false
   }
 
-
   func prefetchNextPage() async {
     let cursorValue = await MainActor.run { cursor }
     let shouldPrefetch = await MainActor.run { hasMore && !isLoadingMore && !isLoading }
@@ -505,6 +504,32 @@ final class FeedModel: StateInvalidationSubscriber {
         }
       }
     }
+
+    // Every fetched page funnels through this method regardless of load
+    // path (initial load, load-more, prefetch, prewarm, restore), making it
+    // the single seam to batch-warm blocked-author identity for this page's
+    // threadgate-hidden reply parents/roots — mirrors the per-thread-page
+    // prefetch in UIKitThreadView.processThreadData().
+    prefetchBlockedAuthors(from: posts)
+  }
+
+  /// Collects blocked-author DIDs from `.appBskyFeedDefsBlockedPost` reply
+  /// parents/roots in a fetched feed page and fires ONE hydrator prefetch,
+  /// so blocked-reply tombstone cards can render handles/avatars without a
+  /// per-card fetch stampede. Per-card hydration already coalesces within
+  /// 100ms, so this is a purely additive optimization — safe to no-op.
+  private func prefetchBlockedAuthors(from posts: [AppBskyFeedDefs.FeedViewPost]) {
+    var blockedDids: [String] = []
+    for post in posts {
+      if case .appBskyFeedDefsBlockedPost(let blocked) = post.reply?.parent {
+        blockedDids.append(blocked.author.did.didString())
+      }
+      if case .appBskyFeedDefsBlockedPost(let blocked) = post.reply?.root {
+        blockedDids.append(blocked.author.did.didString())
+      }
+    }
+    guard !blockedDids.isEmpty else { return }
+    Task { await appState.blockedAuthorHydrator?.prefetch(dids: blockedDids) }
   }
 
   @MainActor

@@ -984,9 +984,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     guard let hiddenReplies = threadManager?.hiddenReplies, !hiddenReplies.isEmpty else {
       return
     }
-    
-    guard let mainPost = mainPost else { return }
-    
+
     // Get existing reply URIs to avoid duplicates
     let existingURIs = Set(replyWrappers.map { $0.id })
     
@@ -1010,7 +1008,9 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       switch item.value {
       case .appBskyUnspeccedDefsThreadItemPost(let threadItemPost):
         v2Value = .appBskyUnspeccedDefsThreadItemPost(threadItemPost)
-        isFromOP = threadItemPost.post.author.did.didString() == mainPost.author.did.didString()
+        // Optional-safe: with a blocked anchor there is no OP to compare against,
+        // so `mainPost == nil` yields `isFromOP == false`.
+        isFromOP = mainPost?.author.did.didString() == threadItemPost.post.author.did.didString()
         isOpThread = threadItemPost.opThread
         hasReplies = threadItemPost.moreReplies > 0
       case .unexpected(let container):

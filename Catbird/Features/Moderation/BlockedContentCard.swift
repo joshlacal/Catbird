@@ -53,8 +53,14 @@ struct BlockedContentCard: View {
 
   // MARK: Compact (quote embeds) — no avatar, no buttons, no navigation
 
+  /// Only a your-block quote promises a loadable thread (anchor card + reveal live there).
+  private var isCompactTapActionable: Bool {
+    relationship.canReveal && relationship.direction == .youBlocked && postUri != nil
+  }
+
+  @ViewBuilder
   private var compactBody: some View {
-    HStack(spacing: 6) {
+    let content = HStack(spacing: 6) {
       Image(systemName: "hand.raised")
         .foregroundStyle(.secondary)
       Text(compactText)
@@ -66,19 +72,21 @@ struct BlockedContentCard: View {
     .padding(12)
     .background(Color.systemGroupedBackground)
     .clipShape(RoundedRectangle(cornerRadius: 10))
-    .contentShape(Rectangle())
-    .onTapGesture {
-      // Only a your-block quote promises a loadable thread (anchor card + reveal live there).
-      if relationship.canReveal, relationship.direction == .youBlocked, let postUri {
-        path.append(NavigationDestination.post(postUri))
-      }
-    }
     .accessibilityElement(children: .combine)
     .accessibilityLabel(compactText)
-    .accessibilityHint(
-      relationship.direction == .youBlocked && postUri != nil
-        ? "Opens the blocked post's thread" : ""
-    )
+    .accessibilityHint(isCompactTapActionable ? "Opens the blocked post's thread" : "")
+
+    if isCompactTapActionable, let postUri {
+      content
+        .contentShape(Rectangle())
+        .onTapGesture {
+          path.append(NavigationDestination.post(postUri))
+        }
+    } else {
+      // No action for this direction — let the tap fall through to the
+      // enclosing quoted-post cell instead of swallowing it here.
+      content
+    }
   }
 
   private var compactText: String {
@@ -265,9 +273,11 @@ struct BlockedContentCard: View {
   private func revealedView(_ post: AppBskyFeedDefs.PostView) -> some View {
     VStack(alignment: .leading, spacing: 6) {
       HStack {
-        Text(unblockSucceeded ? "" : "Shown once — the account stays blocked")
-          .appFont(AppTextRole.caption)
-          .foregroundStyle(.secondary)
+        if !unblockSucceeded {
+          Text("Shown once — the account stays blocked")
+            .appFont(AppTextRole.caption)
+            .foregroundStyle(.secondary)
+        }
         Spacer()
         if !unblockSucceeded {
           Button("Hide again") { revealedPost = nil }
