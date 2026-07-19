@@ -89,6 +89,34 @@ final class ListDetailViewModel {
       showingError = true
     }
   }
+
+  // MARK: - Mod-list Block Actions
+
+  /// Blocks every account currently on this moderation list.
+  @MainActor
+  func blockListAccounts() async {
+    do {
+      try await appState.blockList(listUri: listURI)
+      await refreshData()
+    } catch {
+      logger.error("Failed to block list accounts: \(error.localizedDescription)")
+      errorMessage = error.localizedDescription
+      showingError = true
+    }
+  }
+
+  /// Removes the viewer's list-level block record for this moderation list.
+  @MainActor
+  func unblockListAccounts(listblockRecordUri: ATProtocolURI) async {
+    do {
+      try await appState.unblockList(listblockRecordUri: listblockRecordUri)
+      await refreshData()
+    } catch {
+      logger.error("Failed to unblock list accounts: \(error.localizedDescription)")
+      errorMessage = error.localizedDescription
+      showingError = true
+    }
+  }
 }
 
 struct ListDetailView: View {
@@ -96,6 +124,8 @@ struct ListDetailView: View {
   @Environment(\.dismiss) private var dismiss
   @State private var vm: ListDetailViewModel?
   @State private var feedSelectedTab: Int = 0
+  @State private var isConfirmingListBlock = false
+  @State private var isConfirmingListUnblock = false
   @Binding var path: NavigationPath
   
   let listURIString: String
@@ -186,6 +216,20 @@ struct ListDetailView: View {
           } label: {
             Label("Refresh", systemImage: "arrow.clockwise")
           }
+
+          if let listDetails = viewModel.listDetails, listDetails.purpose == .appbskygraphdefsmodlist {
+            Divider()
+
+            if listDetails.viewer?.blocked != nil {
+              Button("Stop blocking accounts on this list", role: .destructive) {
+                isConfirmingListUnblock = true
+              }
+            } else {
+              Button("Block accounts on this list", role: .destructive) {
+                isConfirmingListBlock = true
+              }
+            }
+          }
         } label: {
           Image(systemName: "ellipsis.circle")
         }
@@ -202,6 +246,24 @@ struct ListDetailView: View {
       if let errorMessage = viewModel.errorMessage {
         Text(errorMessage)
       }
+    }
+    .alert("Block accounts on this list", isPresented: $isConfirmingListBlock) {
+      Button("Cancel", role: .cancel) {}
+      Button("Block accounts on this list", role: .destructive) {
+        Task { await viewModel.blockListAccounts() }
+      }
+    } message: {
+      Text("Accounts currently on this list will be blocked. Future membership changes may change which accounts are blocked. Accounts you blocked directly stay blocked.")
+    }
+    .alert("Stop blocking accounts on this list", isPresented: $isConfirmingListUnblock) {
+      Button("Cancel", role: .cancel) {}
+      Button("Stop blocking accounts on this list", role: .destructive) {
+        if let blockedRecordUri = viewModel.listDetails?.viewer?.blocked {
+          Task { await viewModel.unblockListAccounts(listblockRecordUri: blockedRecordUri) }
+        }
+      }
+    } message: {
+      Text("Stop blocking accounts on this list? Accounts you blocked directly stay blocked.")
     }
   }
   

@@ -135,7 +135,16 @@ struct UnifiedProfileView: View {
                         .padding(.horizontal, 16)
                         .frame(maxWidth: contentMaxWidth, alignment: .center)
                         .frame(maxWidth: .infinity, alignment: .center)
-                        
+
+                        // Block relationship banner — neutral, direction-aware.
+                        // Renders for every non-unknown direction, including
+                        // blockedBy-only (previously invisible on this screen).
+                        blockRelationshipBanner(profile: profile)
+                            .padding(.horizontal, 16)
+                            .padding(.top, 8)
+                            .frame(maxWidth: contentMaxWidth, alignment: .center)
+                            .frame(maxWidth: .infinity, alignment: .center)
+
                         // Followed by section
                         followedBySection(profile: profile)
                             .padding(.horizontal, 16)
@@ -168,6 +177,40 @@ struct UnifiedProfileView: View {
           EntityIdentifier(for: ProfileEntity.self, identifier: profile.did.didString()))
     }
   // MARK: - Helper Views
+
+  /// Neutral, direction-aware banner surfacing the block relationship on the
+  /// profile screen. Direction meaning lives entirely in `statusText` — no
+  /// red anywhere here; red is reserved for the destructive confirm button
+  /// inside the block/unblock alert.
+  @ViewBuilder
+  private func blockRelationshipBanner(profile: AppBskyActorDefs.ProfileViewDetailed) -> some View {
+    let relationship = BlockRelationship(viewer: profile.viewer)
+    if relationship.direction != .unknown {
+      VStack(alignment: .leading, spacing: 6) {
+        Text(relationship.statusText)
+          .appFont(AppTextRole.subheadline)
+          .fontWeight(.medium)
+        HStack(spacing: 16) {
+          if relationship.canUnblockDirectly {
+            Button("Unblock") { Task { await prepareBlockConfirmation() } }
+              .appFont(AppTextRole.callout)
+          }
+          if let listRef = relationship.listRef {
+            Button("View list") {
+              navigationPath.append(NavigationDestination.list(listRef.uri))
+            }
+            .appFont(AppTextRole.callout)
+          }
+        }
+      }
+      .padding(12)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .background(Color.systemGroupedBackground)
+      .clipShape(RoundedRectangle(cornerRadius: 10))
+      .accessibilityElement(children: .combine)
+    }
+  }
+
   @ViewBuilder
   private func followedBySection(profile: AppBskyActorDefs.ProfileViewDetailed) -> some View {
     if !viewModel.isCurrentUser && !viewModel.knownFollowers.isEmpty {
@@ -1895,8 +1938,10 @@ struct ProfileHeader: View {
             ProgressView()
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-        } else if profile.viewer?.blocking != nil {
-            // Show blocked state instead of follow button
+        } else if profile.viewer?.blocking != nil || profile.viewer?.blockedBy == true {
+            // Show blocked state instead of follow button. Neutral styling —
+            // direction (you blocked them / they blocked you / mutual) is
+            // carried by the block relationship banner's text, not this pill.
             Button(action: {
                 // Do nothing - blocking handled in parent view
             }) {
@@ -1910,12 +1955,12 @@ struct ProfileHeader: View {
                 .fontWeight(.medium)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-                .foregroundColor(.red)
+                .foregroundColor(.secondary)
                 .cornerRadius(16)
             }
             .background(
                 Capsule()
-                    .stroke(Color.red, lineWidth: 1.5)
+                    .stroke(Color.secondary, lineWidth: 1.5)
             )
         } else if profile.viewer?.muted == true {
             // Show muted state
