@@ -129,6 +129,14 @@ Catbird/
 - **AppNavigationManager**: Central navigation coordinator
 - **AT Protocol**: Models in `Petrel/Sources/Petrel/Generated/`, use `ATProtoClient` for API calls
 
+## Preview Fixtures (credential-free SwiftUI previews)
+
+- Static JSON snapshots of ~35 live XRPC responses live in `Catbird/Resources/Preview Content/Fixtures/`, loaded by `Catbird/Core/Preview/PreviewFixtures.swift` (typed accessors + `PostShape` keys into `posts-shapes.json` via `FixtureManifest.json`). Decode with a bare `JSONDecoder()`.
+- `PreviewData` live fetchers fall back to fixtures when unauthenticated; `PreviewNetworkMode.mock` / `FixturePreviewContent` force the fixture path (zero credentials). `PreviewContainer.fixtureAppState()` builds an offline `AppState` (no login).
+- On-simulator visual check: launch with `--fixture-gallery` (DEBUG overlay, like `--bluemoji-visual-test`).
+- Regenerate the corpus with `scripts/preview-fixtures/` at the workspace root (see its README; seed = bot posts on the live network, harvest = verbatim wire snapshots). Never hand-edit fixture JSON — re-harvest.
+- Decode tests: `-only-testing:CatbirdTests/PreviewFixturesTests`.
+
 ## Debugging
 
 - ATProtoClient logs all requests/responses
