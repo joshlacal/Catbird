@@ -1310,6 +1310,9 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
         if ProcessInfo.processInfo.arguments.contains("--bluemoji-visual-test") {
           BluemojiVisualTestView()
         }
+        if ProcessInfo.processInfo.arguments.contains("--fixture-gallery") {
+          FixtureGalleryView()
+        }
       }
       #endif
       .onOpenURL { url in
