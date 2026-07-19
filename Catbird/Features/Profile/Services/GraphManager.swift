@@ -591,6 +591,98 @@ final class GraphManager {
     }
   }
 
+  // MARK: - List Block Methods
+
+  /// Blocks all accounts on a moderation list by creating an
+  /// app.bsky.graph.listblock record. Server-side membership changes
+  /// change which accounts are blocked over time.
+  /// - Parameter listUri: The URI of the list to block
+  /// - Returns: A boolean indicating success or failure
+  @discardableResult
+  func blockList(listUri: ATProtocolURI) async throws -> Bool {
+    // Ensure client exists
+    guard let client = atProtoClient else {
+      logger.error("ATProtoClient is nil, cannot block list")
+      throw GraphError.clientNotInitialized
+    }
+
+    logger.debug("Blocking list: \(listUri.uriString())")
+
+    do {
+      let userDID = try await client.getDid()
+      let record = ATProtocolValueContainer.knownType(
+        AppBskyGraphListblock(subject: listUri, createdAt: ATProtocolDate(date: Date()))
+      )
+
+      let input = ComAtprotoRepoCreateRecord.Input(
+        repo: try ATIdentifier(string: userDID),
+        collection: try NSID(nsidString: "app.bsky.graph.listblock"),
+        record: record
+      )
+
+      let (responseCode, _) = try await client.com.atproto.repo.createRecord(input: input)
+
+      guard responseCode >= 200 && responseCode < 300 else {
+        logger.error("Failed to block list with response code \(responseCode)")
+        return false
+      }
+
+      // Notify that graph has changed
+      NotificationCenter.default.post(name: NSNotification.Name("UserGraphChanged"), object: nil)
+
+      logger.debug("Successfully blocked list: \(listUri.uriString())")
+      return true
+    } catch {
+      logger.error("Error blocking list: \(error.localizedDescription)")
+      throw error
+    }
+  }
+
+  /// Removes a list block by deleting the app.bsky.graph.listblock record
+  /// (URI from list.viewer.blocked). Accounts blocked by direct records
+  /// remain blocked.
+  /// - Parameter listblockRecordUri: The URI of the listblock record to delete
+  /// - Returns: A boolean indicating success or failure
+  @discardableResult
+  func unblockList(listblockRecordUri: ATProtocolURI) async throws -> Bool {
+    // Ensure client exists
+    guard let client = atProtoClient else {
+      logger.error("ATProtoClient is nil, cannot unblock list")
+      throw GraphError.clientNotInitialized
+    }
+
+    // Parse the URI to get required components
+    // URI format: at://did:plc:abc123/app.bsky.graph.listblock/rkey
+    let repoString = listblockRecordUri.authority
+    guard let rkey = listblockRecordUri.recordKey else {
+      throw GraphManagerError.invalidBlockUri
+    }
+
+    do {
+      let input = ComAtprotoRepoDeleteRecord.Input(
+        repo: try ATIdentifier(string: repoString),
+        collection: try NSID(nsidString: "app.bsky.graph.listblock"),
+        rkey: try RecordKey(keyString: rkey)
+      )
+
+      let (responseCode, _) = try await client.com.atproto.repo.deleteRecord(input: input)
+
+      guard responseCode >= 200 && responseCode < 300 else {
+        logger.error("Failed to unblock list with response code \(responseCode)")
+        return false
+      }
+
+      // Notify that graph has changed
+      NotificationCenter.default.post(name: NSNotification.Name("UserGraphChanged"), object: nil)
+
+      logger.debug("Successfully unblocked list using URI")
+      return true
+    } catch {
+      logger.error("Error unblocking list: \(error.localizedDescription)")
+      throw error
+    }
+  }
+
   /// Checks if the current user has blocked a specific user
   /// - Parameter did: The DID of the user to check
   /// - Returns: True if blocked, false otherwise
@@ -1233,6 +1325,18 @@ extension AppState {
   @discardableResult
   func unblock(did: String) async throws -> Bool {
     try await graphManager.unblock(did: did)
+  }
+
+  /// Blocks all accounts on a moderation list
+  @discardableResult
+  func blockList(listUri: ATProtocolURI) async throws -> Bool {
+    try await graphManager.blockList(listUri: listUri)
+  }
+
+  /// Removes a list block
+  @discardableResult
+  func unblockList(listblockRecordUri: ATProtocolURI) async throws -> Bool {
+    try await graphManager.unblockList(listblockRecordUri: listblockRecordUri)
   }
 
   /// Checks if the current user is blocking a user
