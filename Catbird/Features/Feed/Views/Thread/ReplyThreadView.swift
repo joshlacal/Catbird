@@ -3,9 +3,10 @@ import Petrel
 import NukeUI
 
 struct ReplyThreadView: View {
+    @Environment(AppState.self) private var appState
     let reply: AppBskyFeedDefs.ReplyRef
     @Binding var path: NavigationPath
-    
+
     // Extract the actual post from the parent union
     private var parentPost: AppBskyFeedDefs.PostView? {
         if case .appBskyFeedDefsPostView(let post) = reply.parent {
@@ -80,6 +81,7 @@ struct ReplyThreadView: View {
                 variant: .feed,
                 path: $path
             )
+            .applyAppStateEnvironment(appState)
         }
     }
     

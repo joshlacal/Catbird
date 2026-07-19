@@ -127,6 +127,33 @@ struct ThreadBlockedItemsTests {
     #expect(nestedChild.post != nil)
   }
 
+  @Test("A blocked chain root still produces non-empty nested render input")
+  func blockedRootYieldsNestedRenderInput() throws {
+    // Closest testable seam to the SwiftUI render layer: `ReplyView` feeds the
+    // blocked root's nested wrappers through `ThreadReplyLayoutBuilder` to
+    // decide what to draw. If that input is non-empty, the shared
+    // `nestedRepliesSection` (invoked from every root arm) renders the subtree.
+    let mainPost = try makePostView(did: opDID, rkey: "main")
+    let blocked = try blockedItem(did: blockedDID, rkey: "blocked1", depth: 1)
+    let child = try postItem(did: opDID, rkey: "child1", depth: 2)
+
+    let result = buildReplyWrappers(items: [blocked, child], mainPost: mainPost)
+    let rootID = blocked.uri.uriString()
+    let nested = try #require(result.nested[rootID])
+
+    // Mirror ReplyView.nestedLayout's input computation exactly.
+    let layout = ThreadReplyLayoutBuilder.build(
+      rootID: rootID,
+      nestedItems: nested.map {
+        ThreadReplyLayoutInput(id: $0.id, parentID: $0.parentURI, hasUnloadedReplies: $0.hasReplies)
+      },
+      visibleLimit: ThreadReplyPresentationMetrics.maximumDepth(isEnabled: true) - 1
+    )
+
+    #expect(!layout.items.isEmpty)
+    #expect(layout.items.contains(where: { $0.id == child.uri.uriString() }))
+  }
+
   @Test("A pure-post thread groups identically with no tombstones (zero-diff behavior)")
   func purePostThreadUnchanged() throws {
     let mainPost = try makePostView(did: opDID, rkey: "main")
