@@ -33,8 +33,8 @@
       "kind": "remoteSourceControl",
       "location": "https://github.com/joshlacal/CatbirdMLSCore",
       "state": {
-        "revision": "8c348c4fe35378240409e0d69a078c4e51d374ae",
-        "version": "1.0.1"
+        "revision": "be5b3e919195a6b1ab4d4d18b3c895eb054bfebd",
+        "version": "1.0.2"
       }
     },
     {
@@ -105,8 +105,8 @@
       "kind": "remoteSourceControl",
       "location": "https://github.com/joshlacal/Petrel",
       "state": {
-        "revision": "a030556f853385e463cc7fc676c7bffd770bdfb9",
-        "version": "1.0.1"
+        "revision": "ab614033fe0e8c1ba11377226a39abc9296aa7d8",
+        "version": "1.0.2"
       }
     },
     {
@@ -123,8 +123,8 @@
       "kind": "remoteSourceControl",
       "location": "https://github.com/joshlacal/PetrelCatbird",
       "state": {
-        "revision": "12fc8d3453efbebafb75566743d14049eb20fef6",
-        "version": "1.0.1"
+        "revision": "e631c5c2df391613f41a284670abe8a38e57b186",
+        "version": "1.0.2"
       }
     },
     {

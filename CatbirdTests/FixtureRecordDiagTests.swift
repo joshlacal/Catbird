@@ -15,10 +15,7 @@ import Petrel
 /// Re-enable this test once the app resolves a Petrel version containing that fix.
 @Suite("Fixture record container decode (Petrel guard canary)")
 struct FixtureRecordDiagTests {
-  @Test(
-    "Every fixture post record decodes to a known AppBskyFeedPost",
-    .disabled("Blocked on Petrel PR #22 ($type framing round-trip guard) shipping as 1.0.2")
-  )
+  @Test("Every fixture post record decodes to a known AppBskyFeedPost")
   func everyPostRecordIsKnownType() throws {
     let posts = try #require(PreviewFixtures.postShapes?.posts)
     for post in posts {
