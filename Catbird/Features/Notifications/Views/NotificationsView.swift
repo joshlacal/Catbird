@@ -1071,3 +1071,34 @@ struct AvatarStack: View {
     )
   }
 }
+
+#Preview("NotificationCard rows — fixtures") {
+  FixturePreviewContent { appState in
+    let notifications = PreviewFixtures.notifications?.notifications ?? []
+    let wantedReasons = ["like", "follow", "repost", "reply", "mention", "quote"]
+    let groups: [GroupedNotification] = wantedReasons.compactMap { reason in
+      guard let notification = notifications.first(where: { $0.reason == reason }) else { return nil }
+      return GroupedNotification(
+        id: notification.uri.uriString(),
+        type: NotificationType(rawValue: reason) ?? .like,
+        notifications: [notification],
+        subjectPost: nil,
+        parentPost: nil,
+        pageNumber: 0
+      )
+    }
+    ScrollView {
+      VStack(alignment: .leading, spacing: 12) {
+        if groups.isEmpty {
+          Text("Run scripts/preview-fixtures/ to generate fixtures")
+        } else {
+          ForEach(groups) { group in
+            NotificationCard(group: group, onTap: { _ in }, path: .constant(NavigationPath()))
+          }
+        }
+      }
+      .padding()
+    }
+    .environment(appState)
+  }
+}

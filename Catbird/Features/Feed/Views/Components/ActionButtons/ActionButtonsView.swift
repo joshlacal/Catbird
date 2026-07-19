@@ -512,3 +512,18 @@ private struct ReplyZoomDestination: ViewModifier {
     )
   }
 }
+
+#Preview("ActionButtonsView — fixtures") {
+  FixturePreviewContent { appState in
+    if let post = PreviewFixtures.post(.textShort) {
+      ActionButtonsView(
+        post: post,
+        postViewModel: PostViewModel(post: post, appState: appState),
+        path: .constant(NavigationPath())
+      )
+      .padding()
+    } else {
+      Text("Run scripts/preview-fixtures/ to generate fixtures")
+    }
+  }
+}

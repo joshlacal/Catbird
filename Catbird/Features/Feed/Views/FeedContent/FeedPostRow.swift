@@ -118,6 +118,25 @@ struct FeedPostRow: View, Equatable, Identifiable {
 
 // MARK: - Preview Support
 
+#Preview("FeedPostRow — fixtures (repost)") {
+  FixturePreviewContent { appState in
+    if let feedViewPost = PreviewFixtures.repostFeedViewPost,
+       let cachedPost = CachedFeedViewPost(feedViewPost: feedViewPost) {
+      let viewModel = FeedPostViewModel(post: cachedPost, appState: appState)
+      NavigationStack {
+        FeedPostRow(
+          viewModel: viewModel,
+          navigationPath: .constant(NavigationPath()),
+          feedTypeIdentifier: "fixtures-preview"
+        )
+        .padding()
+      }
+    } else {
+      Text("Run scripts/preview-fixtures/ to generate fixtures")
+    }
+  }
+}
+
 //#Preview {
 //    @Previewable @Environment(AppState.self) var appState
 //    @State var navigationPath = NavigationPath()

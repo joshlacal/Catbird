@@ -283,3 +283,32 @@ private struct PostEmbedPreviewLoader: View {
     }
   }
 }
+
+#Preview("Post Embed — fixtures") {
+  FixturePreviewContent { appState in
+    ScrollView {
+      VStack(spacing: 16) {
+        fixtureEmbed(.images1, appState: appState)
+        fixtureEmbed(.external, appState: appState)
+        fixtureEmbed(.gallery6, appState: appState)
+      }
+      .padding()
+    }
+  }
+}
+
+@ViewBuilder
+private func fixtureEmbed(_ shape: PreviewFixtures.PostShape, appState: AppState) -> some View {
+  if let post = PreviewFixtures.post(shape), let embed = post.embed {
+    PostEmbed(
+      embed: embed,
+      labels: post.labels,
+      path: .constant(NavigationPath())
+    )
+    .environment(\.postID, post.cid.string)
+    .environment(appState)
+  } else {
+    Text("Fixture \(shape.rawValue) missing or has no embed")
+      .foregroundStyle(.secondary)
+  }
+}

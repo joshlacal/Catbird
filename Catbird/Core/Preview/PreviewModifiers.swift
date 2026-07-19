@@ -13,7 +13,7 @@ struct PreviewNetworkModeKey: EnvironmentKey {
 
 enum PreviewNetworkMode: String {
   case real     // Use actual Bluesky API
-  case mock     // Use mock responses (future)
+  case mock     // Use static fixture data, no auth/network (see PreviewFixtures)
   case offline  // No network calls
 }
 
@@ -40,6 +40,7 @@ extension EnvironmentValues {
 /// - toastManager, themeManager, fontManager
 struct AuthenticatedPreviewModifier: ViewModifier {
   let appState: AppState
+  var networkMode: PreviewNetworkMode = .real
 
   func body(content: Content) -> some View {
     content
@@ -50,7 +51,7 @@ struct AuthenticatedPreviewModifier: ViewModifier {
       .fontManager(appState.fontManager)
       .environment(\.toastManager, appState.toastManager)
       .environment(\.isPreviewMode, true)
-      .environment(\.previewNetworkMode, .real)
+      .environment(\.previewNetworkMode, networkMode)
   }
 }
 
@@ -63,16 +64,24 @@ extension View {
   /// falls back to the running app's session. Shows skeleton UI if neither
   /// is available.
   ///
+  /// Pass `mode: .mock` to skip auth entirely and resolve a fixture-backed AppState
+  /// (`PreviewContainer.fixtureAppState()`) instead — renders with zero credentials.
+  ///
   /// Usage:
   /// ```swift
   /// #Preview {
   ///   MyView()
   ///     .previewWithAuthenticatedState()
   /// }
+  ///
+  /// #Preview("MyView — fixtures") {
+  ///   MyView()
+  ///     .previewWithAuthenticatedState(mode: .mock)
+  /// }
   /// ```
   @MainActor
-  func previewWithAuthenticatedState() -> some View {
-    modifier(AsyncPreviewStateModifier())
+  func previewWithAuthenticatedState(mode: PreviewNetworkMode = .real) -> some View {
+    modifier(AsyncPreviewStateModifier(mode: mode))
   }
 
   /// Apply preview environment without authentication.
@@ -89,6 +98,7 @@ extension View {
 // MARK: - Async Loading Wrappers
 
 private struct AsyncPreviewStateModifier: ViewModifier {
+  var mode: PreviewNetworkMode = .real
   @State private var appState: AppState?
   @State private var isLoading = true
 
@@ -96,11 +106,16 @@ private struct AsyncPreviewStateModifier: ViewModifier {
     Group {
       if let appState {
         content
-          .modifier(AuthenticatedPreviewModifier(appState: appState))
+          .modifier(AuthenticatedPreviewModifier(appState: appState, networkMode: mode))
       } else if isLoading {
         PreviewLoadingView()
           .task {
-            appState = await PreviewContainer.shared.appState
+            switch mode {
+            case .mock:
+              appState = await PreviewContainer.fixtureAppState()
+            case .real, .offline:
+              appState = await PreviewContainer.shared.appState
+            }
             isLoading = false
           }
       } else {
@@ -144,7 +159,7 @@ private struct PreviewUnconfiguredView: View {
         .foregroundStyle(.tertiary)
       Text("Preview Not Configured")
         .font(.headline)
-      Text("Add credentials to PreviewSecrets.xcconfig\nSee PreviewSecrets.xcconfig.template for setup")
+      Text("Add credentials to PreviewSecrets.xcconfig for live data.\nOr use a fixture-backed preview (mode: .mock / PreviewFixtures) — those render without credentials.")
         .font(.caption)
         .multilineTextAlignment(.center)
         .foregroundStyle(.secondary)

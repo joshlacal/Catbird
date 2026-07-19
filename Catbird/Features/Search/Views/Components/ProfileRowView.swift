@@ -265,3 +265,18 @@ struct ProfileRowView: View {
     }
   }
 }
+
+#Preview("Profile Row — fixtures") {
+  FixturePreviewContent { _ in
+    NavigationStack {
+      List {
+        if let bot = PreviewFixtures.profileBot {
+          ProfileRowView(profile: bot, path: .constant(NavigationPath()))
+        }
+        if let real = PreviewFixtures.profileReal {
+          ProfileRowView(profile: real, path: .constant(NavigationPath()))
+        }
+      }
+    }
+  }
+}

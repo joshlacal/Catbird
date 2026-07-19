@@ -484,7 +484,46 @@ struct RecordEmbedView: View {
     }
     
     // MARK: - Helper Methods
-    
+
     // Note: Content label handling is now managed by ContentLabelManager
     // which provides proper user preference integration and age-based restrictions
+}
+
+#Preview("RecordEmbedView — fixtures (all ViewRecordUnion cases)") {
+  FixturePreviewContent { appState in
+    ScrollView {
+      VStack(alignment: .leading, spacing: 12) {
+        ForEach(
+          [
+            PreviewFixtures.PostShape.quotePost,
+            .quoteList,
+            .quoteFeedgen,
+            .quoteStarterpack,
+            .quoteBlocked,
+            .quoteDetached,
+            .quoteNotfound,
+          ], id: \.self
+        ) { shape in
+          if let post = PreviewFixtures.post(shape),
+             case .appBskyEmbedRecordView(let recordView) = post.embed {
+            VStack(alignment: .leading, spacing: 4) {
+              Text(shape.rawValue)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+              RecordEmbedView(
+                record: recordView.record,
+                labels: nil,
+                path: .constant(NavigationPath())
+              )
+            }
+          } else {
+            Text("Fixture \(shape.rawValue) missing or not a record embed")
+              .foregroundStyle(.secondary)
+          }
+        }
+      }
+      .padding()
+    }
+    .environment(appState)
+  }
 }

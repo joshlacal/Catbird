@@ -1109,3 +1109,22 @@ enum PostViewError {
     }
   }
 }
+
+#Preview("PostView — fixtures") {
+  FixturePreviewContent { appState in
+    if let post = PreviewFixtures.post(.images4) {
+      ScrollView {
+        PostView(
+          post: post,
+          grandparentAuthor: nil,
+          isParentPost: false,
+          isSelectable: true,
+          path: .constant(NavigationPath()),
+          appState: appState
+        )
+      }
+    } else {
+      Text("Run scripts/preview-fixtures/ to generate fixtures")
+    }
+  }
+}

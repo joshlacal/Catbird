@@ -244,3 +244,19 @@ struct LastMessagePreview: View {
     }
   }
 }
+
+#Preview("ConversationRow — fixtures") {
+  FixturePreviewContent { appState in
+    NavigationStack {
+      List {
+        if let convos = PreviewFixtures.chatConvos?.convos, !convos.isEmpty {
+          ForEach(convos, id: \.id) { convo in
+            ConversationRow(convo: convo, currentUserDID: appState.userDID)
+          }
+        } else {
+          Text("Run scripts/preview-fixtures/ to generate fixtures")
+        }
+      }
+    }
+  }
+}

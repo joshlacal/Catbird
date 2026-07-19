@@ -71,6 +71,44 @@ struct AsyncPreviewContent<Content: View>: View {
   }
 }
 
+/// Preview wrapper that resolves a fixture-backed AppState (no auth, no network) before
+/// rendering — the `.mock`-mode counterpart to `AsyncPreviewContent`. Use for fixture-first
+/// `#Preview` blocks that need an `AppState` (e.g. to construct a view model) but don't need
+/// live network data (that comes from `PreviewFixtures` directly).
+///
+/// Usage:
+///   #Preview("MyView — fixtures") {
+///     FixturePreviewContent { appState in
+///       if let post = PreviewFixtures.post(.textShort) {
+///         MyView(post: post, appState: appState)
+///       } else {
+///         Text("Run scripts/preview-fixtures/ to generate fixtures")
+///       }
+///     }
+///   }
+struct FixturePreviewContent<Content: View>: View {
+  @State private var appState: AppState?
+  let content: (AppState) -> Content
+
+  init(@ViewBuilder content: @escaping (AppState) -> Content) {
+    self.content = content
+  }
+
+  var body: some View {
+    Group {
+      if let appState {
+        content(appState)
+          .modifier(AuthenticatedPreviewModifier(appState: appState, networkMode: .mock))
+      } else {
+        ProgressView("Loading fixtures…")
+          .task {
+            appState = await PreviewContainer.fixtureAppState()
+          }
+      }
+    }
+  }
+}
+
 /// Preview wrapper that loads async data (e.g., API posts) before rendering.
 /// Usage:
 ///   AsyncPreviewDataContent { appState in
