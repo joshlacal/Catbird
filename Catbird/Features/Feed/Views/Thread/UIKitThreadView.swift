@@ -185,6 +185,10 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     case loadMoreParentsTrigger
     case parentPost(ParentPost)
     case mainPost(AppBskyFeedDefs.PostView)
+    /// Anchor slot when the thread's depth-0 post is blocked. The payload lives
+    /// on `threadManager.blockedAnchor`; the case is keyed by the anchor URI so
+    /// the diffable snapshot has a stable identity.
+    case blockedAnchor(String)
     case reply(ReplyWrapper)
     case showMoreRepliesButton
     case spacer
@@ -507,6 +511,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   private func registerCells() {
     collectionView.register(ParentPostCell.self, forCellWithReuseIdentifier: "ParentPostCell")
     collectionView.register(MainPostCell.self, forCellWithReuseIdentifier: "MainPostCell")
+    collectionView.register(BlockedAnchorCell.self, forCellWithReuseIdentifier: "BlockedAnchorCell")
     collectionView.register(ReplyCell.self, forCellWithReuseIdentifier: "ReplyCell")
     collectionView.register(LoadMoreCell.self, forCellWithReuseIdentifier: "LoadMoreCell")
     collectionView.register(ShowMoreRepliesCell.self, forCellWithReuseIdentifier: "ShowMoreRepliesCell")
@@ -677,6 +682,20 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
           appState: self.appState,
           path: self.path
         )
+        return cell
+
+      case .blockedAnchor:
+        let cell =
+          collectionView.dequeueReusableCell(withReuseIdentifier: "BlockedAnchorCell", for: indexPath)
+          as! BlockedAnchorCell
+        if let blocked = self.threadManager?.blockedAnchor {
+          cell.configure(
+            blocked: blocked,
+            anchorURI: self.postURI,
+            appState: self.appState,
+            path: self.path
+          )
+        }
         return cell
 
       case .reply(let replyWrapper):
@@ -936,6 +955,21 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       }
       
       replyWrappers = regularReplies
+    } else if case .appBskyUnspeccedDefsThreadItemBlocked = mainItem.value {
+      // Blocked anchor: the original post is hidden, but the AppView still
+      // returns its parents and replies. Keep them so the conversation stays
+      // reachable — the anchor slot renders a BlockedContentCard(.anchor).
+      mainPost = nil
+
+      let parentItems = threadData.thread.filter { $0.depth < 0 }.sorted { $0.depth < $1.depth }
+      parentPosts = collectParentPostsV2(from: parentItems)
+
+      let replyItems = threadData.thread.filter { $0.depth > 0 }
+      let grouped = buildReplyWrappers(items: replyItems, mainPost: nil)
+      self.nestedRepliesMap = grouped.nested
+      let topLevelReplies = grouped.topLevel
+      opThreadContinuations = topLevelReplies.filter { $0.isOpThread }
+      replyWrappers = topLevelReplies.filter { !$0.isOpThread }
     } else {
       parentPosts = []
       mainPost = nil
@@ -1027,9 +1061,11 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     let parentItems = parentPosts.map { Item.parentPost($0) }
     snapshot.appendItems(parentItems, toSection: .parentPosts)
 
-    // Add main post if available
+    // Add main post if available, else the blocked-anchor tombstone card.
     if let mainPost = mainPost {
       snapshot.appendItems([.mainPost(mainPost)], toSection: .mainPost)
+    } else if threadManager?.blockedAnchor != nil {
+      snapshot.appendItems([.blockedAnchor(postURI.uriString())], toSection: .mainPost)
     }
 
     // Add OP thread continuations first (these are part of OP's continued thread)
@@ -2609,6 +2645,81 @@ final class MainPostCell: UICollectionViewCell {
   }
 }
 
+/// Hosts the `BlockedContentCard(.anchor)` in the main-post slot when the
+/// thread's depth-0 post is blocked.
+@available(iOS 18.0, *)
+final class BlockedAnchorCell: UICollectionViewCell {
+  private var configuredIdentity: String?
+
+  override init(frame: CGRect) {
+    super.init(frame: frame)
+    isAccessibilityElement = false
+    contentView.isAccessibilityElement = false
+    contentView.shouldGroupAccessibilityChildren = true
+
+    let noAnim: [String: CAAction] = [
+      "bounds": NSNull(),
+      "position": NSNull(),
+      "frame": NSNull(),
+      "contents": NSNull(),
+      "onOrderIn": NSNull(),
+      "onOrderOut": NSNull()
+    ]
+    layer.actions = noAnim
+    contentView.layer.actions = noAnim
+  }
+
+  required init?(coder: NSCoder) {
+    fatalError("init(coder:) has not been implemented")
+  }
+
+  func configure(
+    blocked: AppBskyUnspeccedDefs.ThreadItemBlocked,
+    anchorURI: ATProtocolURI,
+    appState: AppState,
+    path: Binding<NavigationPath>
+  ) {
+    contentView.backgroundColor = UIColor(
+      Color.dynamicBackground(appState.themeManager, currentScheme: contentView.getCurrentColorScheme())
+    )
+
+    let identity = anchorURI.uriString() + "|" + blocked.author.did.didString()
+    guard contentConfiguration == nil || identity != configuredIdentity else { return }
+    configuredIdentity = identity
+
+    let content =
+      VStack(spacing: 0) {
+        WidthLimitedContainer(maxWidth: 600) {
+          BlockedContentCard(
+            relationship: BlockRelationship(threadItemBlocked: blocked),
+            authorDid: blocked.author.did.didString(),
+            postUri: anchorURI,
+            variant: .anchor,
+            path: path
+          )
+          .applyAppStateEnvironment(appState)
+          .padding(.horizontal, 6)
+          .padding(.vertical, 6)
+        }
+
+        Divider()
+          .padding(.bottom, 9)
+      }
+      .id(identity)
+
+    contentConfiguration = UIHostingConfiguration {
+      content.transaction { txn in txn.animation = nil }.fixedSize(horizontal: false, vertical: true)
+    }
+    .margins(.all, .zero)
+  }
+
+  override func prepareForReuse() {
+    super.prepareForReuse()
+    contentConfiguration = nil
+    configuredIdentity = nil
+  }
+}
+
 @available(iOS 18.0, *)
 final class ReplyCell: UICollectionViewCell {
   private var configuredIdentity: String?
@@ -3225,7 +3336,7 @@ struct ThreadViewControllerRepresentable: UIViewControllerRepresentable {
 /// the chain root can itself be a tombstone. Pure and side-effect free for tests.
 func buildReplyWrappers(
   items: [AppBskyUnspeccedGetPostThreadV2.ThreadItem],
-  mainPost: AppBskyFeedDefs.PostView
+  mainPost: AppBskyFeedDefs.PostView?
 ) -> (topLevel: [ReplyWrapper], nested: [String: [ReplyWrapper]]) {
   var topLevelReplies: [ReplyWrapper] = []
   var nestedMap: [String: [ReplyWrapper]] = [:]
@@ -3235,7 +3346,9 @@ func buildReplyWrappers(
     let id = item.uri.uriString()
     let wrapper: ReplyWrapper
     if case .appBskyUnspeccedDefsThreadItemPost(let threadItemPost) = item.value {
-      let isFromOP = threadItemPost.post.author.did.didString() == mainPost.author.did.didString()
+      // Optional-safe: with a blocked anchor there is no OP to compare against,
+      // so `mainPost == nil` yields `isFromOP == false`.
+      let isFromOP = mainPost?.author.did.didString() == threadItemPost.post.author.did.didString()
       wrapper = ReplyWrapper(
         id: id,
         threadItem: item,

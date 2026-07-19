@@ -30,6 +30,11 @@ final class ThreadManager: StateInvalidationSubscriber {
   /// The thread data once loaded
   var threadData: AppBskyUnspeccedGetPostThreadV2.Output?
 
+  /// The blocked anchor payload when the thread's depth-0 item is a blocked
+  /// post. A 200 response with a `threadItemBlocked` at depth 0 is a valid
+  /// (not error) state: the anchor is hidden but parents/replies still render.
+  var blockedAnchor: AppBskyUnspeccedDefs.ThreadItemBlocked?
+
   /// Hidden/other replies loaded via getPostThreadOtherV2
   var hiddenReplies: [AppBskyUnspeccedGetPostThreadOtherV2.ThreadItem] = []
 
@@ -122,6 +127,7 @@ final class ThreadManager: StateInvalidationSubscriber {
   func loadThread(uri: ATProtocolURI) async {
     isLoading = true
     error = nil
+    blockedAnchor = nil
     currentThreadURI = uri
 
     logger.debug("Loading thread: \(uri.uriString())")
@@ -159,6 +165,11 @@ final class ThreadManager: StateInvalidationSubscriber {
         // Store the thread data directly (no shadow merging needed with v2)
         self.threadData = output
 
+        // Detect a blocked anchor (200 with a blocked depth-0 item). This is a
+        // valid state, not an error — the views render the anchor tombstone card
+        // alongside whatever parents/replies the AppView returned.
+        self.blockedAnchor = Self.detectBlockedAnchor(in: output.thread)
+
         // Save thread posts to cache for instant display on future visits
         await cacheThreadPosts(output.thread)
       } else {
@@ -168,9 +179,12 @@ final class ThreadManager: StateInvalidationSubscriber {
             domain: "ThreadManager", code: 404,
             userInfo: [NSLocalizedDescriptionKey: "Post not found"])
         } else if responseCode == 403 {
+          // Genuine forbidden fetch (no body). A blocked *anchor* is NOT this
+          // case — it arrives as a 200 with a `threadItemBlocked` at depth 0 and
+          // is surfaced via `blockedAnchor`, not as an error.
           self.error = NSError(
             domain: "ThreadManager", code: 403,
-            userInfo: [NSLocalizedDescriptionKey: "Post is blocked"])
+            userInfo: [NSLocalizedDescriptionKey: "This post isn't available."])
         } else {
           self.error = NSError(
             domain: "ThreadManager", code: responseCode,
@@ -185,6 +199,20 @@ final class ThreadManager: StateInvalidationSubscriber {
     }
 
     isLoading = false
+  }
+
+  /// Detect a blocked anchor in a V2 thread: the depth-0 item is a
+  /// `threadItemBlocked`. Pure and side-effect free for unit testing.
+  /// - Returns: the blocked payload when the anchor is blocked, else `nil`.
+  static func detectBlockedAnchor(
+    in threadItems: [AppBskyUnspeccedGetPostThreadV2.ThreadItem]
+  ) -> AppBskyUnspeccedDefs.ThreadItemBlocked? {
+    guard let anchorItem = threadItems.first(where: { $0.depth == 0 }),
+      case .appBskyUnspeccedDefsThreadItemBlocked(let blocked) = anchorItem.value
+    else {
+      return nil
+    }
+    return blocked
   }
 
   /// Load hidden replies for a thread using getPostThreadOtherV2
@@ -471,6 +499,7 @@ final class ThreadManager: StateInvalidationSubscriber {
   @MainActor
   private func clearThreadData() async {
     threadData = nil
+    blockedAnchor = nil
     hiddenReplies = []
     currentThreadURI = nil
     error = nil

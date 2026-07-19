@@ -61,6 +61,7 @@ private struct SwiftUIThreadView: View {
     @State private var parentPosts: [ParentPost] = []
     @State private var mainPost: AppBskyFeedDefs.PostView?
     @State private var mainItemIsBlocked = false
+    @State private var blockedAnchorItem: AppBskyUnspeccedDefs.ThreadItemBlocked?
     @State private var mainItemIsNotFound = false
     @State private var replyWrappers: [ReplyWrapper] = []
     @State private var hasMoreParents = false
@@ -139,17 +140,15 @@ private struct SwiftUIThreadView: View {
                         mainPostSection(post)
                             .id(SwiftUIThreadView.mainPostID)
                             .padding(.bottom, 12)
-                    } else if mainItemIsBlocked {
-                        HStack {
-                            Image(systemName: "hand.raised")
-                                .foregroundColor(.red)
-                            Text("This post is from a blocked account.")
-                                .foregroundColor(.secondary)
-                            Spacer()
-                        }
-                        .padding()
-                        .background(Color.red.opacity(0.1))
-                        .cornerRadius(8)
+                    } else if let blocked = blockedAnchorItem {
+                        BlockedContentCard(
+                            relationship: BlockRelationship(threadItemBlocked: blocked),
+                            authorDid: blocked.author.did.didString(),
+                            postUri: postURI,
+                            variant: .anchor,
+                            path: $path
+                        )
+                        .applyAppStateEnvironment(appState)
                         .id(SwiftUIThreadView.mainPostID)
                         .padding(.bottom, 12)
                     } else if mainItemIsNotFound {
@@ -465,6 +464,7 @@ private struct SwiftUIThreadView: View {
             parentPosts = []
             mainPost = nil
             mainItemIsBlocked = false
+            blockedAnchorItem = nil
             mainItemIsNotFound = false
             replyWrappers = []
             hasMoreParents = false
@@ -476,18 +476,22 @@ private struct SwiftUIThreadView: View {
         case .appBskyUnspeccedDefsThreadItemPost(let itemPost):
             mainPost = itemPost.post
             mainItemIsBlocked = false
+            blockedAnchorItem = nil
             mainItemIsNotFound = false
-        case .appBskyUnspeccedDefsThreadItemBlocked:
+        case .appBskyUnspeccedDefsThreadItemBlocked(let blocked):
             mainPost = nil
             mainItemIsBlocked = true
+            blockedAnchorItem = blocked
             mainItemIsNotFound = false
         case .appBskyUnspeccedDefsThreadItemNotFound:
             mainPost = nil
             mainItemIsBlocked = false
+            blockedAnchorItem = nil
             mainItemIsNotFound = true
         default:
             mainPost = nil
             mainItemIsBlocked = false
+            blockedAnchorItem = nil
             mainItemIsNotFound = false
         }
 

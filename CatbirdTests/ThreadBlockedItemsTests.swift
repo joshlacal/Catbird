@@ -186,4 +186,33 @@ struct ThreadBlockedItemsTests {
     #expect(blockedWrapper.post == nil)
     #expect(result.nested[blockedLeaf.uri.uriString()]?.isEmpty == true)
   }
+
+  // MARK: Blocked anchor detection
+
+  @Test("A blocked depth-0 anchor is detected as a typed result (not an error)")
+  func detectsBlockedAnchor() throws {
+    let blockedAnchor = try blockedItem(did: blockedDID, rkey: "anchor", depth: 0)
+    let reply = try postItem(did: opDID, rkey: "reply1", depth: 1)
+
+    let detected = ThreadManager.detectBlockedAnchor(in: [blockedAnchor, reply])
+
+    let blocked = try #require(detected)
+    #expect(blocked.author.did.didString() == blockedDID)
+  }
+
+  @Test("A normal (post) anchor yields no blocked-anchor result")
+  func normalAnchorHasNoBlockedAnchor() throws {
+    let anchor = try postItem(did: opDID, rkey: "main", depth: 0)
+    let reply = try postItem(did: opDID, rkey: "reply1", depth: 1)
+
+    #expect(ThreadManager.detectBlockedAnchor(in: [anchor, reply]) == nil)
+  }
+
+  @Test("A blocked reply (depth > 0) is not mistaken for a blocked anchor")
+  func blockedReplyIsNotAnchor() throws {
+    let anchor = try postItem(did: opDID, rkey: "main", depth: 0)
+    let blockedReply = try blockedItem(did: blockedDID, rkey: "b1", depth: 1)
+
+    #expect(ThreadManager.detectBlockedAnchor(in: [anchor, blockedReply]) == nil)
+  }
 }
