@@ -14,14 +14,6 @@ struct ReplyThreadView: View {
         return nil
     }
     
-    // Extract blocked state if relevant
-    private var isParentBlocked: Bool {
-        if case .appBskyFeedDefsBlockedPost = reply.parent {
-            return true
-        }
-        return false
-    }
-    
     var body: some View {
         if let parent = parentPost {
             VStack(alignment: .leading, spacing: 0) {
@@ -80,11 +72,14 @@ struct ReplyThreadView: View {
                 }
                 .frame(height: 16)
             }
-        } else if isParentBlocked {
-            Text("Content from blocked user")
-                .appFont(AppTextRole.subheadline)
-                .foregroundStyle(.secondary)
-                .padding()
+        } else if case .appBskyFeedDefsBlockedPost(let blocked) = reply.parent {
+            BlockedContentCard(
+                relationship: BlockRelationship(blockedPost: blocked),
+                authorDid: blocked.author.did.didString(),
+                postUri: blocked.uri,
+                variant: .feed,
+                path: $path
+            )
         }
     }
     

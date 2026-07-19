@@ -59,7 +59,7 @@ private struct SwiftUIThreadView: View {
 
     // V2 types: ParentPost and ReplyWrapper from ThreadManager.swift
     @State private var parentPosts: [ParentPost] = []
-    @State private var mainPost: AppBskyFeedDefs.PostView? = nil
+    @State private var mainPost: AppBskyFeedDefs.PostView?
     @State private var mainItemIsBlocked = false
     @State private var mainItemIsNotFound = false
     @State private var replyWrappers: [ReplyWrapper] = []
@@ -294,18 +294,15 @@ private struct SwiftUIThreadView: View {
             .background(Color(platformColor: PlatformColor.platformSecondarySystemBackground).opacity(0.5))
             .cornerRadius(8)
 
-        case .appBskyUnspeccedDefsThreadItemBlocked:
-            HStack {
-                Image(systemName: "hand.raised")
-                    .foregroundColor(.red)
-                Text("Blocked post")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                Spacer()
-            }
-            .padding()
-            .background(Color.red.opacity(0.1))
-            .cornerRadius(8)
+        case .appBskyUnspeccedDefsThreadItemBlocked(let blocked):
+            BlockedContentCard(
+                relationship: BlockRelationship(threadItemBlocked: blocked),
+                authorDid: blocked.author.did.didString(),
+                postUri: threadItem.uri,
+                variant: .thread,
+                path: $path
+            )
+            .applyAppStateEnvironment(appState)
 
         default:
             HStack {
@@ -380,17 +377,15 @@ private struct SwiftUIThreadView: View {
             .background(Color.red.opacity(0.1))
             .cornerRadius(8)
 
-        case .appBskyUnspeccedDefsThreadItemBlocked:
-            HStack {
-                Image(systemName: "hand.raised")
-                    .foregroundColor(.red)
-                Text("Reply from blocked account")
-                    .foregroundColor(.secondary)
-                Spacer()
-            }
-            .padding()
-            .background(Color.red.opacity(0.1))
-            .cornerRadius(8)
+        case .appBskyUnspeccedDefsThreadItemBlocked(let blocked):
+            BlockedContentCard(
+                relationship: BlockRelationship(threadItemBlocked: blocked),
+                authorDid: blocked.author.did.didString(),
+                postUri: threadItem.uri,
+                variant: .thread,
+                path: $path
+            )
+            .applyAppStateEnvironment(appState)
 
         default:
             HStack {

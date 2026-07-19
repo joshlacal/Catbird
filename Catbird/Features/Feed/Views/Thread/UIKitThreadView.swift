@@ -28,7 +28,6 @@ extension UIView {
     }
 }
 
-
 // MARK: - Custom Thread Layout
 @available(iOS 18.0, *)
 final class ThreadCompositionalLayout: UICollectionViewCompositionalLayout {
@@ -458,7 +457,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     updateLink = UIUpdateLink(windowScene: windowScene)
     
     // Add action for coordinating smooth animations during updates
-    updateLink?.addAction(handler: { [weak self] link, info in
+    updateLink?.addAction(handler: { [weak self] _, _ in
       // Use UIUpdateLink for what it's designed for - coordinating with display refresh
       // Position restoration is handled separately using the proven ScrollPositionTracker pattern
     })
@@ -858,7 +857,19 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
 
     // V2 API returns a flat list of ThreadItems with depth indicators
     // Negative depth = parent posts, 0 = main post, positive = replies
-    
+
+    // Warm identity for every blocked author in the thread so tombstone cards
+    // can render handles/avatars without a per-card fetch stampede.
+    let blockedDids: [String] = threadData.thread.compactMap {
+      if case .appBskyUnspeccedDefsThreadItemBlocked(let blocked) = $0.value {
+        return blocked.author.did.didString()
+      }
+      return nil
+    }
+    if !blockedDids.isEmpty {
+      Task { await appState.blockedAuthorHydrator?.prefetch(dids: blockedDids) }
+    }
+
     // Find main post (depth = 0)
     guard let mainItem = threadData.thread.first(where: { $0.depth == 0 }) else {
       parentPosts = []
@@ -877,47 +888,14 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       
       // Collect reply posts (depth > 0) - Keep API order which has chains grouped together
       let replyItems = threadData.thread.filter { $0.depth > 0 }
-      
-      // Group replies into chains:
-      // - depth 1 = top-level reply to main post (starts a new chain)
-      // - depth 2+ = continuation of the current chain
-      var topLevelReplies: [ReplyWrapper] = []
-      var nestedMap: [String: [ReplyWrapper]] = [:]
-      var currentChainTopLevelURI: String? = nil
-      
-      for item in replyItems {
-        guard case .appBskyUnspeccedDefsThreadItemPost(let threadItemPost) = item.value else {
-          continue
-        }
-        
-        let id = item.uri.uriString()
-        let isFromOP = threadItemPost.post.author.did.didString() == mainPost!.author.did.didString()
-        let isOpThread = threadItemPost.opThread
-        let hasReplies = threadItemPost.moreReplies > 0
-        
-        let wrapper = ReplyWrapper(
-          id: id,
-          threadItem: item,
-          depth: item.depth,
-          isFromOP: isFromOP,
-          isOpThread: isOpThread,
-          hasReplies: hasReplies
-        )
-        
-        if item.depth == 1 {
-          // Top-level reply to main post - starts a new chain
-          topLevelReplies.append(wrapper)
-          currentChainTopLevelURI = id
-          // Initialize nested array for this chain
-          nestedMap[id] = []
-        } else if item.depth > 1, let chainRoot = currentChainTopLevelURI {
-          // Nested reply (depth 2+) - belongs to the current chain
-          nestedMap[chainRoot]?.append(wrapper)
-        }
-      }
-      
+
+      // Group replies into chains (pure logic extracted for unit testing).
+      // `threadItemPost.post` is the resolved main post here, so no force-unwrap.
+      let grouped = buildReplyWrappers(items: replyItems, mainPost: threadItemPost.post)
+      let topLevelReplies = grouped.topLevel
+
       // Store the nested replies map
-      self.nestedRepliesMap = nestedMap
+      self.nestedRepliesMap = grouped.nested
       
       // Separate OP thread continuations from regular replies (only depth-1)
       opThreadContinuations = topLevelReplies.filter { $0.isOpThread }
@@ -981,30 +959,39 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     var additionalReplies: [ReplyWrapper] = []
     
     for item in hiddenReplies {
-      guard case .appBskyUnspeccedDefsThreadItemPost(let threadItemPost) = item.value else {
-        continue
-      }
-      
       let id = item.uri.uriString()
-      
+
       // Skip if already in the main replies
       if existingURIs.contains(id) {
         continue
       }
-      
-      let isFromOP = threadItemPost.post.author.did.didString() == mainPost.author.did.didString()
-      let isOpThread = threadItemPost.opThread
-      let hasReplies = threadItemPost.moreReplies > 0
-      
-      // Convert to the v2 ThreadItem type by creating a compatible wrapper
-      // We create a v2 ThreadItem using the same underlying ThreadItemPost
-      let v2Value = AppBskyUnspeccedGetPostThreadV2.ThreadItemValueUnion.appBskyUnspeccedDefsThreadItemPost(threadItemPost)
+
+      // The "other" (hidden) thread endpoint only carries posts or unknown
+      // items. Convert to the v2 ThreadItem type; unknown items become
+      // tombstone wrappers instead of being silently dropped.
+      let v2Value: AppBskyUnspeccedGetPostThreadV2.ThreadItemValueUnion
+      let isFromOP: Bool
+      let isOpThread: Bool
+      let hasReplies: Bool
+      switch item.value {
+      case .appBskyUnspeccedDefsThreadItemPost(let threadItemPost):
+        v2Value = .appBskyUnspeccedDefsThreadItemPost(threadItemPost)
+        isFromOP = threadItemPost.post.author.did.didString() == mainPost.author.did.didString()
+        isOpThread = threadItemPost.opThread
+        hasReplies = threadItemPost.moreReplies > 0
+      case .unexpected(let container):
+        v2Value = .unexpected(container)
+        isFromOP = false
+        isOpThread = false
+        hasReplies = false
+      }
+
       let v2ThreadItem = AppBskyUnspeccedGetPostThreadV2.ThreadItem(
         uri: item.uri,
         depth: item.depth,
         value: v2Value
       )
-      
+
       let wrapper = ReplyWrapper(
         id: id,
         threadItem: v2ThreadItem,
@@ -2137,7 +2124,6 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     return parents
   }
 
-  
   // MARK: - State Invalidation Handling
   
   // Properties for optimistic updates
@@ -2490,8 +2476,7 @@ final class ParentPostCell: UICollectionViewCell {
     // Only annotate if the id is a real at-uri; synthetic ids (e.g. from
     // .unexpected thread items) can't be resolved and would cause ATProtocolError.
     if #available(iOS 26.0, *),
-      let entityURI = AppEntityAnnotationIdentifiers.postURI(parentPost.id)
-    {
+      let entityURI = AppEntityAnnotationIdentifiers.postURI(parentPost.id) {
       appEntityIdentifier = EntityIdentifier(for: PostEntity.self, identifier: entityURI)
     } else if #available(iOS 26.0, *) {
       appEntityIdentifier = nil
@@ -2568,8 +2553,7 @@ final class MainPostCell: UICollectionViewCell {
     let postIdentity = post.uri.uriString()
 
     if #available(iOS 26.0, *),
-      let entityURI = AppEntityAnnotationIdentifiers.postURI(postIdentity)
-    {
+      let entityURI = AppEntityAnnotationIdentifiers.postURI(postIdentity) {
       appEntityIdentifier = EntityIdentifier(for: PostEntity.self, identifier: entityURI)
     } else if #available(iOS 26.0, *) {
       appEntityIdentifier = nil
@@ -2657,8 +2641,7 @@ final class ReplyCell: UICollectionViewCell {
     path: Binding<NavigationPath>
   ) {
     if #available(iOS 26.0, *),
-      let entityURI = AppEntityAnnotationIdentifiers.postURI(replyWrapper.id)
-    {
+      let entityURI = AppEntityAnnotationIdentifiers.postURI(replyWrapper.id) {
       appEntityIdentifier = EntityIdentifier(for: PostEntity.self, identifier: entityURI)
     } else if #available(iOS 26.0, *) {
       appEntityIdentifier = nil
@@ -2984,10 +2967,15 @@ struct ParentPostView: View {
       )
       .applyAppStateEnvironment(appState)
 
-    case .appBskyUnspeccedDefsThreadItemBlocked:
-      Text("Blocked post")
-        .appFont(AppTextRole.subheadline)
-        .foregroundColor(.gray)
+    case .appBskyUnspeccedDefsThreadItemBlocked(let blocked):
+      BlockedContentCard(
+        relationship: BlockRelationship(threadItemBlocked: blocked),
+        authorDid: blocked.author.did.didString(),
+        postUri: parentPost.threadItem.uri,
+        variant: .thread,
+        path: $path
+      )
+      .applyAppStateEnvironment(appState)
 
     case .appBskyUnspeccedDefsThreadItemNoUnauthenticated:
       Text("Post not available (authentication required)")
@@ -3141,16 +3129,21 @@ struct ReplyView: View {
                   .padding(.vertical, 6)
                 }
                 
-              case .appBskyUnspeccedDefsThreadItemBlocked:
-                Text("Blocked reply")
-                  .appFont(AppTextRole.subheadline)
-                  .foregroundColor(.gray)
-                
+              case .appBskyUnspeccedDefsThreadItemBlocked(let blocked):
+                BlockedContentCard(
+                  relationship: BlockRelationship(threadItemBlocked: blocked),
+                  authorDid: blocked.author.did.didString(),
+                  postUri: nestedWrapper.threadItem.uri,
+                  variant: .thread,
+                  path: $path
+                )
+                .applyAppStateEnvironment(appState)
+
               case .appBskyUnspeccedDefsThreadItemNoUnauthenticated:
                 Text("Reply not available (authentication required)")
                   .appFont(AppTextRole.subheadline)
                   .foregroundColor(.gray)
-                
+
               case .unexpected(let unexpected):
                 Text("Unexpected reply type: \(unexpected.textRepresentation)")
                   .foregroundColor(.orange)
@@ -3168,10 +3161,15 @@ struct ReplyView: View {
       )
       .applyAppStateEnvironment(appState)
 
-    case .appBskyUnspeccedDefsThreadItemBlocked:
-      Text("Blocked reply")
-        .appFont(AppTextRole.subheadline)
-        .foregroundColor(.gray)
+    case .appBskyUnspeccedDefsThreadItemBlocked(let blocked):
+      BlockedContentCard(
+        relationship: BlockRelationship(threadItemBlocked: blocked),
+        authorDid: blocked.author.did.didString(),
+        postUri: replyWrapper.threadItem.uri,
+        variant: .thread,
+        path: $path
+      )
+      .applyAppStateEnvironment(appState)
 
     case .appBskyUnspeccedDefsThreadItemNoUnauthenticated:
       Text("Reply not available (authentication required)")
@@ -3199,6 +3197,64 @@ struct ThreadViewControllerRepresentable: UIViewControllerRepresentable {
   func updateUIViewController(_ uiViewController: ThreadViewController, context: Context) {
     // Update controller if needed
   }
+}
+
+// MARK: - Reply grouping
+
+/// Groups depth-ordered V2 reply `items` into top-level chains and their nested
+/// descendants, preserving API order.
+///
+/// - `depth == 1` starts a new chain (top-level reply to the main post).
+/// - `depth > 1` appends to the current chain root's nested list.
+///
+/// Blocked / not-found / no-auth items become neutral tombstone wrappers rather
+/// than being dropped, so a subtree under a blocked reply stays reachable and
+/// the chain root can itself be a tombstone. Pure and side-effect free for tests.
+func buildReplyWrappers(
+  items: [AppBskyUnspeccedGetPostThreadV2.ThreadItem],
+  mainPost: AppBskyFeedDefs.PostView
+) -> (topLevel: [ReplyWrapper], nested: [String: [ReplyWrapper]]) {
+  var topLevelReplies: [ReplyWrapper] = []
+  var nestedMap: [String: [ReplyWrapper]] = [:]
+  var currentChainTopLevelURI: String?
+
+  for item in items {
+    let id = item.uri.uriString()
+    let wrapper: ReplyWrapper
+    if case .appBskyUnspeccedDefsThreadItemPost(let threadItemPost) = item.value {
+      let isFromOP = threadItemPost.post.author.did.didString() == mainPost.author.did.didString()
+      wrapper = ReplyWrapper(
+        id: id,
+        threadItem: item,
+        depth: item.depth,
+        isFromOP: isFromOP,
+        isOpThread: threadItemPost.opThread,
+        hasReplies: threadItemPost.moreReplies > 0
+      )
+    } else {
+      // Tombstone wrapper for blocked / not-found / no-auth replies.
+      wrapper = ReplyWrapper(
+        id: id,
+        threadItem: item,
+        depth: item.depth,
+        isFromOP: false,
+        isOpThread: false,
+        hasReplies: false
+      )
+    }
+
+    if item.depth == 1 {
+      // Top-level reply to main post - starts a new chain.
+      topLevelReplies.append(wrapper)
+      currentChainTopLevelURI = id
+      nestedMap[id] = []
+    } else if item.depth > 1, let chainRoot = currentChainTopLevelURI {
+      // Nested reply (depth 2+) - belongs to the current chain.
+      nestedMap[chainRoot]?.append(wrapper)
+    }
+  }
+
+  return (topLevelReplies, nestedMap)
 }
 
 // MARK: - ReplyWrapper Extensions

@@ -51,24 +51,6 @@
 //            }
 //            .padding(.vertical, 3)
 //            .frame(maxWidth: 550, alignment: .leading)
-//            
-//        case .appBskyFeedDefsNotFoundPost(let notFoundPost):
-//            Text("Reply not found: \(notFoundPost.uri.uriString())")
-//                .foregroundColor(.red)
-//                
-//        case .appBskyFeedDefsBlockedPost(let blocked):
-//            BlockedPostView(blockedPost: blocked, path: $path)
-//                
-//        case .unexpected(let unexpected):
-//            Text("Unexpected reply type: \(unexpected.textRepresentation)")
-//                .foregroundColor(.orange)
-//                
-//        case .pending:
-//            EmptyView()
-//        
-//        case .appBskyFeedDefsDeepSkyBlockedPost(let blockedPost):
-//            Text("This reply was blocked: \(blockedPost.uri)")
-//                .foregroundColor(.red)
 //        }
 //    }
 //    
