@@ -185,6 +185,11 @@ final class AppState {
     /// Graph manager - handles social graph operations
     @ObservationIgnored var graphManager: GraphManager
 
+    /// Resolves blocked-author DIDs to profiles for the blocking UX (Task 4 UI).
+    /// Recreated alongside `graphManager` at every point the client is (re)established
+    /// so its cache never straddles two different `ATProtoClient` instances or accounts.
+    @ObservationIgnored private(set) var blockedAuthorHydrator: BlockedAuthorHydrator?
+
     /// URL handling for deep links
     @ObservationIgnored let urlHandler: URLHandler
 
@@ -454,6 +459,23 @@ final class AppState {
 
     // MARK: - Initialization
 
+    /// Builds a fresh `BlockedAuthorHydrator` whose fetcher reads `atProtoClient` at call
+    /// time (rather than capturing a client value), so it keeps working across token
+    /// refreshes. Callers still recreate the hydrator itself (new instance, empty cache)
+    /// at every point `graphManager` is recreated, so identity data never leaks across
+    /// accounts or straddles two different `ATProtoClient` instances.
+    private func makeBlockedAuthorHydrator() -> BlockedAuthorHydrator {
+        BlockedAuthorHydrator { [weak self] dids in
+            guard let client = self?.atProtoClient else { return [] }
+            let identifiers = try dids.map { try ATIdentifier(string: $0) }
+            let (responseCode, data) = try await client.app.bsky.actor.getProfiles(
+                input: AppBskyActorGetProfiles.Parameters(actors: identifiers)
+            )
+            guard (200 ... 299).contains(responseCode), let data else { return [] }
+            return data.profiles
+        }
+    }
+
     init(userDID: String, client: ATProtoClient) {
         self.userDID = userDID
         self.client = client
@@ -512,6 +534,10 @@ final class AppState {
 
         // Configure notification manager with app state reference (skip for FaultOrdering)
         notificationManager.configure(with: self)
+
+        // Initialize blocked-author identity hydrator now that `self` is fully
+        // initialized (its fetcher closure captures `self` weakly).
+        blockedAuthorHydrator = makeBlockedAuthorHydrator()
 
         // NOTE: Auth state observation removed in new architecture
         // Client is passed in already authenticated, no need to observe state changes
@@ -869,6 +895,7 @@ final class AppState {
         preferencesManager.updateClient(client)
         await notificationManager.updateClient(client)
         graphManager = GraphManager(atProtoClient: client)
+        blockedAuthorHydrator = makeBlockedAuthorHydrator()
         listManager.updateClient(client)
         listManager.updateAppState(self)
 
@@ -969,6 +996,9 @@ final class AppState {
 
         // Client is non-optional now, so we can use it directly
         graphManager = GraphManager(atProtoClient: client)
+        // Fresh hydrator (empty cache) so the previous account's blocked-author
+        // identities never leak into this one.
+        blockedAuthorHydrator = makeBlockedAuthorHydrator()
         listManager.updateClient(client)
         listManager.updateAppState(self)
 
@@ -2113,6 +2143,18 @@ final class AppState {
             }
         #endif
 
+        // GraphManager posts this whenever the viewer's block/mute graph changes
+        // (block, unblock, mute, unmute). Invalidate cached identities so a
+        // freshly (re-)blocked author is re-hydrated rather than served stale data.
+        NotificationCenter.default.addObserver(
+            forName: NSNotification.Name("UserGraphChanged"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            Task { await self.blockedAuthorHydrator?.invalidateAll() }
+        }
+
         logger.debug("Theme and font observation configured")
     }
 
@@ -2970,6 +3012,9 @@ final class AppState {
         postManager.updateClient(newClient)
         preferencesManager.updateClient(newClient)
         graphManager = GraphManager(atProtoClient: newClient)
+        // Token refresh / re-login: fresh hydrator so stale-token failures don't
+        // poison the identity cache for the (unchanged) account.
+        blockedAuthorHydrator = makeBlockedAuthorHydrator()
         listManager.updateClient(newClient)
 
         // Update notification manager (async operation)
