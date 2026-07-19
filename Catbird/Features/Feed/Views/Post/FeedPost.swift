@@ -133,7 +133,13 @@ struct FeedPost: View, Equatable {
         .foregroundColor(.secondary)
         .padding(.vertical, FeedPost.baseUnit * 2)
     case .appBskyFeedDefsBlockedPost(let blocked):
-      BlockedPostView(blockedPost: blocked, path: $path)
+      BlockedContentCard(
+        relationship: BlockRelationship(blockedPost: blocked),
+        authorDid: blocked.author.did.didString(),
+        postUri: blocked.uri,
+        variant: .feed,
+        path: $path
+      )
     case .unexpected:
       Text("Unexpected post type")
         .appFont(AppTextRole.caption)

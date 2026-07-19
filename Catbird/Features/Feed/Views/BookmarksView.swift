@@ -95,7 +95,7 @@ struct BookmarksView: View {
   // MARK: - Bookmarks List
   private var bookmarksListView: some View {
     List {
-      ForEach(Array(bookmarks.enumerated()), id: \.element.subject.uri) { index, bookmarkView in
+      ForEach(Array(bookmarks.enumerated()), id: \.element.subject.uri) { _, bookmarkView in
         bookmarkRowView(bookmarkView)
               .listRowBackground(Color.primaryBackground(themeManager: appState.themeManager, currentScheme: colorScheme))
 
@@ -149,7 +149,20 @@ struct BookmarksView: View {
       .listRowSeparator(.visible)
       .listRowInsets(EdgeInsets())
 
-    case .appBskyFeedDefsBlockedPost, .appBskyFeedDefsNotFoundPost:
+    case .appBskyFeedDefsBlockedPost(let blocked):
+      BlockedContentCard(
+        relationship: BlockRelationship(blockedPost: blocked),
+        authorDid: blocked.author.did.didString(),
+        postUri: blocked.uri,
+        variant: .feed,
+        path: $path
+      )
+      .padding(.top, BookmarksView.baseUnit * 3)
+      .padding(.horizontal, BookmarksView.baseUnit * 1.5)
+      .listRowSeparator(.hidden)
+      .listRowInsets(EdgeInsets())
+
+    case .appBskyFeedDefsNotFoundPost:
       VStack {
         HStack {
           Image(systemName: "exclamationmark.triangle")
@@ -163,7 +176,7 @@ struct BookmarksView: View {
       .background(Color.secondary.opacity(0.1))
       .cornerRadius(8)
       .listRowSeparator(.hidden)
-      
+
     case .unexpected:
       EmptyView()
 }

@@ -270,10 +270,8 @@ struct RecordEmbedView: View {
                             .appFont(AppTextRole.caption)
                             .foregroundStyle(.secondary)
                             .padding(.top, 6)
-                    case .appBskyEmbedRecordViewBlocked:
-                        Text("Quoting a blocked post")
-                            .appFont(AppTextRole.caption)
-                            .foregroundStyle(.secondary)
+                    case .appBskyEmbedRecordViewBlocked(let nestedBlocked):
+                        blockedView(nestedBlocked)
                             .padding(.top, 6)
                     case .appBskyFeedDefsGeneratorView(let generator):
                         Text("Quoting feed: \(generator.displayName)")
@@ -386,16 +384,13 @@ struct RecordEmbedView: View {
     
     @ViewBuilder
     private func blockedView(_ blocked: AppBskyEmbedRecord.ViewBlocked) -> some View {
-        HStack {
-            Image(systemName: "hand.raised")
-            Text("Content blocked")
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(platformColor: PlatformColor.platformSecondarySystemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        // Use fixed sizing to prevent layout jumps
-        .fixedSize(horizontal: false, vertical: true)
+        BlockedContentCard(
+            relationship: BlockRelationship(viewBlocked: blocked),
+            authorDid: blocked.author.did.didString(),
+            postUri: blocked.uri,
+            variant: .embedCompact,
+            path: $path
+        )
     }
     
     @ViewBuilder

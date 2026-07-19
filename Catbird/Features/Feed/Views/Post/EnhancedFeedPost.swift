@@ -291,19 +291,14 @@ struct EnhancedFeedPost: View, Equatable {
       }
 
     case .appBskyFeedDefsBlockedPost(let blocked):
-      HStack(alignment: .top, spacing: DesignTokens.Spacing.xs) {
-        AuthorAvatarColumn(
-          author: createPlaceholderAuthor(from: blocked.author),
-          isParentPost: true,
-          isAvatarLoaded: .constant(false),
-          path: $path
-        )
-
-        VStack(alignment: .leading, spacing: 0) {
-          BlockedPostView(blockedPost: blocked, path: $path)
-            .padding(.top, Self.baseUnit)
-        }
-      }
+      BlockedContentCard(
+        relationship: BlockRelationship(blockedPost: blocked),
+        authorDid: blocked.author.did.didString(),
+        postUri: blocked.uri,
+        variant: .feed,
+        path: $path
+      )
+      .padding(.top, Self.baseUnit)
 
     case .unexpected:
       Text("Unexpected post type")
@@ -343,25 +338,6 @@ struct EnhancedFeedPost: View, Equatable {
   }
 
   // MARK: - Placeholder Author Helpers
-  private func createPlaceholderAuthor(
-    from blockedAuthor: AppBskyFeedDefs.BlockedAuthor
-  ) -> AppBskyActorDefs.ProfileViewBasic {
-    let placeholderHandle = try! Handle(handleString: "blocked.user")
-    return AppBskyActorDefs.ProfileViewBasic(
-      did: blockedAuthor.did,
-      handle: placeholderHandle,
-      displayName: nil,
-      pronouns: nil, avatar: nil,
-      associated: nil,
-      viewer: blockedAuthor.viewer,
-      labels: nil,
-      createdAt: nil,
-      verification: nil,
-      status: nil,
-      debug: nil
-    )
-  }
-
   private func createPlaceholderAuthor(
     for uri: ATProtocolURI
   ) -> AppBskyActorDefs.ProfileViewBasic {

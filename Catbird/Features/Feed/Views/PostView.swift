@@ -286,7 +286,13 @@ var id: String {
   private func errorContentView(for error: PostViewError) -> some View {
     switch error {
     case .blocked(let blockedPost):
-      BlockedPostView(blockedPost: blockedPost, path: $path)
+      BlockedContentCard(
+        relationship: BlockRelationship(blockedPost: blockedPost),
+        authorDid: blockedPost.author.did.didString(),
+        postUri: blockedPost.uri,
+        variant: .feed,
+        path: $path
+      )
 
     case .notFound(let reason):
       PostNotFoundView(uri: post.uri, reason: reason, path: $path)
@@ -768,7 +774,7 @@ var id: String {
       let iBlockedThem = viewer.blocking != nil
       let theyBlockedMe = viewer.blockedBy == true
       
-      // Only show BlockedPostView in specific cases (e.g., thread continuity)
+      // Only show the blocked-content card in specific cases (e.g., thread continuity)
       // Most blocked content should be filtered out by FeedTuner
       if theyBlockedMe || (iBlockedThem && shouldShowBlockedContent()) {
         // Create a BlockedPost from the available data
