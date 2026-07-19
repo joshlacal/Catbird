@@ -207,7 +207,10 @@ struct UnifiedProfileView: View {
       .frame(maxWidth: .infinity, alignment: .leading)
       .background(Color.systemGroupedBackground)
       .clipShape(RoundedRectangle(cornerRadius: 10))
-      .accessibilityElement(children: .combine)
+      // `.contain` (not `.combine`) — the Unblock / View list Buttons must
+      // stay individually focusable and activatable by VoiceOver. `.combine`
+      // would merge them into one non-interactive element.
+      .accessibilityElement(children: .contain)
     }
   }
 
