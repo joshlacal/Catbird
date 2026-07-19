@@ -13,8 +13,6 @@ import Nuke
 import TipKit
 import SwiftData
 
-
-
 /// A unified profile view that handles both current user and other user profiles using SwiftUI
 struct UnifiedProfileView: View {
   private static let maxResponsiveContentWidth: CGFloat = 600
@@ -217,7 +215,6 @@ struct UnifiedProfileView: View {
       }
     }
   }
-
 
   // MARK: - New helper function for refreshing content
   private func refreshAllContent() async {
@@ -627,17 +624,11 @@ struct UnifiedProfileView: View {
   private var alertMessage: some View {
     if let profile = viewModel.profile {
       if isBlocking {
-        Text(
-          "Unblock @\(profile.handle)? They will be able to interact with you again. Note: previously-left conversations will NOT be rejoined — you'll need a fresh invite."
-        )
-      } else if !blockAffectedConvos.isEmpty {
-        let count = blockAffectedConvos.count
-        Text(
-          "Block @\(profile.handle)? You won't see each other's posts, and you'll leave \(count) shared conversation\(count == 1 ? "" : "s"). This can't be undone — unblocking will not rejoin the conversations."
-        )
+        Text(BlockConfirmation.unblockMessage(handle: profile.handle.description))
       } else {
         Text(
-          "Block @\(profile.handle)? You won't see each other's posts, and they won't be able to follow you."
+          BlockConfirmation.blockMessage(
+            handle: profile.handle.description, affectedConvoCount: blockAffectedConvos.count)
         )
       }
     }
@@ -1638,7 +1629,6 @@ struct ProfileHeader: View {
                         .lineLimit(nil)
                         .fixedSize(horizontal: false, vertical: true)
 
-                    
                     if let badgeKind = VerificationBadge.kind(for: profile.verification, did: profile.did) {
                         VerificationBadgeView(kind: badgeKind) {
                             verificationInfoKind = badgeKind
@@ -2229,7 +2219,7 @@ private extension View {
 #endif
 
 // MARK: - Preview
-//#Preview {
+// #Preview {
 //    @Previewable @Environment(AppState.self) var appState
 //  let appState = appState
 //    NavigationStack {
@@ -2241,7 +2231,7 @@ private extension View {
 //    )
 //  }
 //  .environment(appState)
-//}
+// }
 
 struct ProfileImageViewerView: View {
     let avatar: URI?
