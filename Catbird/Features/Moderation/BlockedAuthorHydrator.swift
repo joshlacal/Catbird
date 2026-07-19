@@ -16,6 +16,13 @@ actor BlockedAuthorHydrator {
   private var unresolvable: Set<String> = []
   private var queue: Set<String> = []
   private var flushTask: Task<Void, Never>?
+  /// Bumped by `invalidateAll()`. `flush()` awaits `fetchProfiles` per-chunk, which
+  /// reintroduces actor reentrancy — `invalidateAll()` can run between chunk N
+  /// completing and chunk N+1 starting, wiping chunk N's freshly-cached profiles
+  /// before `profile(for:)` observes them. A generation mismatch after a flush lets
+  /// `profile(for:)` tell "genuinely unresolved" apart from "wiped mid-flight" and
+  /// retry once instead of surfacing a spurious nil for a resolvable DID.
+  private var generation: UInt64 = 0
   private let logger = Logger(subsystem: "blue.catbird", category: "BlockedAuthorHydrator")
 
   init(coalesceNanos: UInt64 = 100_000_000, fetchProfiles: @escaping ProfilesFetcher) {
@@ -25,6 +32,18 @@ actor BlockedAuthorHydrator {
 
   func profile(for did: String) async -> AppBskyActorDefs.ProfileViewDetailed? {
     if let hit = cache[did] { return hit }
+    if unresolvable.contains(did) { return nil }
+    let observedGeneration = generation
+    queue.insert(did)
+    await currentFlushTask().value
+    if let hit = cache[did] { return hit }
+    guard generation != observedGeneration else {
+      // No invalidation raced this call — a genuine miss (unresolvable).
+      return nil
+    }
+    // invalidateAll() ran mid-flush and may have wiped a result that already
+    // landed for `did`. Retry once against the post-invalidation state rather
+    // than report nil for a DID that was actually resolvable.
     if unresolvable.contains(did) { return nil }
     queue.insert(did)
     await currentFlushTask().value
@@ -41,6 +60,7 @@ actor BlockedAuthorHydrator {
   func invalidateAll() {
     cache.removeAll()
     unresolvable.removeAll()
+    generation &+= 1
   }
 
   private func currentFlushTask() -> Task<Void, Never> {

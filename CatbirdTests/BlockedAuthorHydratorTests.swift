@@ -116,4 +116,81 @@ struct BlockedAuthorHydratorTests {
     #expect(batches.count == 2)
     #expect(batches.allSatisfy { $0.count <= 25 })
   }
+
+  @Test func exactly25DidsIsOneBatch() async {
+    let recorder = FetchRecorder()
+    let hydrator = BlockedAuthorHydrator(coalesceNanos: 1) { dids in
+      await recorder.record(dids)
+      return dids.map { self.makeProfile(did: $0, handle: "b.bsky.social") }
+    }
+    let dids = (0..<25).map { "did:plc:b\($0)" }
+    await hydrator.prefetch(dids: dids)
+    let batches = await recorder.batches
+    #expect(batches.count == 1)
+    #expect(batches[0].count == 25)
+  }
+
+  /// Reproduces the reentrancy window in `flush()`: it `await`s `fetchProfiles`
+  /// once per 25-DID chunk, so `invalidateAll()` can run on the actor between
+  /// chunk 1 completing (already cached) and chunk 2 starting. Without the fix,
+  /// callers awaiting `profile(for:)` for a chunk-1 DID observe the wiped cache
+  /// and return nil for a DID that was, in fact, resolvable. With the fix, a
+  /// generation mismatch after the flush triggers exactly one retry.
+  @Test func invalidateAllDuringMultiChunkFlushRetriesInsteadOfReturningNil() async {
+    actor Gate {
+      private var continuation: CheckedContinuation<Void, Never>?
+      private var isOpen = false
+      func wait() async {
+        if isOpen { return }
+        await withCheckedContinuation { continuation = $0 }
+      }
+      func open() {
+        isOpen = true
+        continuation?.resume()
+        continuation = nil
+      }
+    }
+
+    let recorder = FetchRecorder()
+    let chunk2Started = Gate()
+    let proceedWithChunk2 = Gate()
+
+    let hydrator = BlockedAuthorHydrator(coalesceNanos: 50_000_000) { dids in
+      await recorder.record(dids)
+      if await recorder.batches.count == 2 {
+        // Chunk 1 has already returned and `flush()` has cached its results.
+        // Signal the test, then hold here until the test has invalidated —
+        // this is the exact window the fix must survive.
+        await chunk2Started.open()
+        await proceedWithChunk2.wait()
+      }
+      return dids.map { self.makeProfile(did: $0, handle: "race.bsky.social") }
+    }
+
+    let dids = (0 ..< 30).map { "did:plc:race\($0)" }
+
+    // Ride 30 concurrent `profile(for:)` calls on the same coalesced flush so the
+    // calls under test are genuinely awaiting the flush that gets raced, not a
+    // later, already-settled one.
+    let resultsTask = Task {
+      await withTaskGroup(of: (String, Bool).self) { group in
+        for did in dids {
+          group.addTask { (did, await hydrator.profile(for: did) != nil) }
+        }
+        var resolved: [String: Bool] = [:]
+        for await (did, ok) in group { resolved[did] = ok }
+        return resolved
+      }
+    }
+
+    await chunk2Started.wait()
+    await hydrator.invalidateAll()   // races the in-flight multi-chunk flush
+    await proceedWithChunk2.open()
+
+    let resolved = await resultsTask.value
+    #expect(resolved.count == 30)
+    #expect(resolved.values.allSatisfy { $0 })   // no spurious nils from the race
+    // chunk 1 (25) + chunk 2 (5) + one retry batch for the wiped chunk-1 DIDs.
+    #expect(await recorder.batches.count == 3)
+  }
 }

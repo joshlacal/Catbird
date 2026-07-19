@@ -467,7 +467,12 @@ final class AppState {
     private func makeBlockedAuthorHydrator() -> BlockedAuthorHydrator {
         BlockedAuthorHydrator { [weak self] dids in
             guard let client = self?.atProtoClient else { return [] }
-            let identifiers = try dids.map { try ATIdentifier(string: $0) }
+            // Parse each DID independently: one malformed identifier in a batch must
+            // not fail the whole chunk and delay the other (valid) DIDs in it. A
+            // dropped identifier simply won't come back in `profiles`, and the
+            // hydrator's own flush logic marks it unresolvable from that.
+            let identifiers = dids.compactMap { try? ATIdentifier(string: $0) }
+            guard !identifiers.isEmpty else { return [] }
             let (responseCode, data) = try await client.app.bsky.actor.getProfiles(
                 input: AppBskyActorGetProfiles.Parameters(actors: identifiers)
             )
