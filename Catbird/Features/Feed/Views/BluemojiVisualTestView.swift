@@ -16,16 +16,31 @@
     // Verbatim text + facet of the organic post 3mqchxbzgqh2k.
     private static let text = "test test :test1: yay"
 
-    private static func facet() -> AppBskyRichtextFacet {
-      // ":test1:" occupies UTF-8 bytes 10..17 of "test test :test1: yay".
-      AppBskyRichtextFacet(
-        index: AppBskyRichtextFacet.ByteSlice(byteStart: 10, byteEnd: 17),
-        features: [.unexpected(.object([
-          "$type": .string("blue.moji.richtext.facet"),
-          "did": .string("did:plc:kmzpsik7s5y5fwu7nnkngfx4"),
-          "name": .string(":test1:")
-        ]))])
-    }
+    /// The facet JSON exactly as the AppView returns it, decoded through
+    /// Petrel — the same path production posts take. An unregistered `$type`
+    /// decodes as `.unexpected(.unknownType(_, .object(...)))`; hand-built
+    /// `.unexpected(.object(...))` fixtures previously masked that shape.
+    private static let facetJSON = Data("""
+      {
+        "features": [
+          {
+            "$type": "blue.moji.richtext.facet",
+            "alt": "test emoji",
+            "did": "did:plc:kmzpsik7s5y5fwu7nnkngfx4",
+            "formats": {
+              "$type": "blue.moji.richtext.facet#formats_v1",
+              "png_128": "bafkreid2gz6qqan76e5ixrw2tgrwof5aqhulxj2gqptryn7j7s4og5vepm",
+              "webp_128": "bafkreifei453knthohtbiwxllld676kpmanh6fny2wvdctkj5f745swpra"
+            },
+            "name": ":test1:"
+          }
+        ],
+        "index": {
+          "byteEnd": 17,
+          "byteStart": 10
+        }
+      }
+      """.utf8)
 
     var body: some View {
       ZStack {
@@ -40,9 +55,16 @@
         .padding()
       }
       .task {
+        let facet: AppBskyRichtextFacet
+        do {
+          facet = try JSONDecoder().decode(AppBskyRichtextFacet.self, from: Self.facetJSON)
+        } catch {
+          status = "⚠️ facet failed to decode: \(error)"
+          return
+        }
         let base = AttributedString(Self.text)
         let out = await renderer.enrich(
-          base, text: Self.text, facets: [Self.facet()], allowAdult: true)
+          base, text: Self.text, facets: [facet], allowAdult: true)
         rendered = out
         status = String(out.characters).contains("\u{FFFC}")
           ? "✅ glyph spliced into text"

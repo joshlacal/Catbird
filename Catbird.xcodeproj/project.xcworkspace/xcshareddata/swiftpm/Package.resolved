@@ -15,8 +15,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/joshlacal/BluemojiKit",
       "state" : {
-        "revision" : "2868b75a82e339ca164624896942fec95d8e2e23",
-        "version" : "1.0.0"
+        "revision" : "517cf9c8348d985af4d63c6cb47e781b5657be86",
+        "version" : "1.0.1"
       }
     },
     {

@@ -1732,7 +1732,7 @@
 			repositoryURL = "https://github.com/joshlacal/BluemojiKit";
 			requirement = {
 				kind = upToNextMajorVersion;
-				minimumVersion = 1.0.0;
+				minimumVersion = 1.0.1;
 			};
 		};
 		218B7A8A2D70B1AE0053987F /* XCRemoteSwiftPackageReference "LazyPager" */ = {
