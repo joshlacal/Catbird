@@ -23,7 +23,6 @@ struct BlockedContentCard: View {
   @State private var isRevealing = false
   @State private var revealFailed = false
   @State private var isConfirmingUnblock = false
-  @State private var unblockAffectedConvoCount = 0
   @State private var isUnblocking = false
   @State private var unblockSucceeded = false
   @State private var showIdentifier = false
@@ -166,12 +165,24 @@ struct BlockedContentCard: View {
     .accessibilityElement(children: .combine)
     .accessibilityLabel(accessibilityIdentityLabel)
     .accessibilityHint(relationship.direction == .youBlocked ? "Opens profile" : "")
+    .accessibilityActions {
+      // The disclosure button is swallowed by `.combine` above — expose its
+      // toggle as a discoverable, actuatable VoiceOver custom action instead.
+      if profile == nil, hydrationSettled {
+        Button(showIdentifier ? "Hide identifier" : "Show identifier") {
+          showIdentifier.toggle()
+        }
+      }
+    }
   }
 
   private var accessibilityIdentityLabel: String {
     if let profile {
       let name = profile.displayName.flatMap { $0.isEmpty ? nil : $0 } ?? ""
       return "\(name) @\(profile.handle.description). \(relationship.statusText)"
+    }
+    if showIdentifier {
+      return "Blocked account. Identifier \(authorDid). \(relationship.statusText)"
     }
     return "Blocked account. \(relationship.statusText)"
   }
@@ -210,6 +221,12 @@ struct BlockedContentCard: View {
         Button("Load post") { revealPost() }
           .appFont(AppTextRole.callout)
           .disabled(isRevealing)
+      } else if unblockSucceeded {
+        // No post to load (profile use, or reveal not applicable) — say so
+        // plainly rather than re-showing an "Unblock" action that would refire.
+        Text("Unblocked")
+          .appFont(AppTextRole.callout)
+          .foregroundStyle(.secondary)
       } else if relationship.canUnblockDirectly {
         Button {
           prepareUnblock()
@@ -273,12 +290,11 @@ struct BlockedContentCard: View {
   // MARK: Actions
 
   private func prepareUnblock() {
-    Task {
-      if let coord = appState.mlsBlockCoordinator {
-        unblockAffectedConvoCount = await coord.affectedConversations(for: authorDid).count
-      }
-      isConfirmingUnblock = true
-    }
+    // Synchronous: no async gap between tap and the alert becoming modal,
+    // so there's no window for a second tap to re-fire the mutation. The
+    // shared-conversation caveat is static copy in `BlockConfirmation`, not
+    // a live count, so no coordinator query is needed here.
+    isConfirmingUnblock = true
   }
 
   private func performUnblock() {
