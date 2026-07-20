@@ -90,8 +90,8 @@ struct ThreadViewMainPostView: View, Equatable {
             VStack(alignment: .leading, spacing: 0) {
                 
                 VStack(alignment: .leading, spacing: 0) {
-                    if case let .knownType(postObj) = post.record {
-                        if let feedPost = postObj as? AppBskyFeedPost {
+                    if case let .knownType(postObj) = post.record,
+                       let feedPost = postObj as? AppBskyFeedPost {
                             HStack(alignment: .center, spacing: 0) {
                                 authorAvatarColumn
                                 
@@ -125,7 +125,6 @@ struct ThreadViewMainPostView: View, Equatable {
                                                     RoundedRectangle(cornerRadius: 12)
                                                         .fill(Color.secondary.opacity(0.1))
                                                 )
-
 
                                         }
 
@@ -209,9 +208,12 @@ struct ThreadViewMainPostView: View, Equatable {
                                 .padding(Self.baseUnit * 3)
                                 .transaction { $0.animation = nil }
                                 .contentTransition(.identity)
-                        }
+                    } else {
+                        // Record failed typed decoding — show the tombstone
+                        // instead of silently rendering an empty main post.
+                        PostNotFoundView(uri: post.uri, reason: .parseError, path: $path)
                     }
-                    
+
                     PostStatsView(post: post, path: $path)
                         .padding(.top, Self.baseUnit * 3)
                         .padding(.horizontal, 6)
@@ -268,7 +270,6 @@ struct ThreadViewMainPostView: View, Equatable {
                 await setupContextMenu()
             }
         }
-        
         
     }
     
@@ -338,7 +339,6 @@ struct ThreadViewMainPostView: View, Equatable {
                     systemImage: viewModel.isBookmarked ? "bookmark.fill" : "bookmark"
                 )
             }
-            
             
             Divider()
             
