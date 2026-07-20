@@ -48,8 +48,12 @@ struct FAB: View {
     let showDraftsAction: () -> Void
     let takePhotoAction: () -> Void
     let recordVideoAction: () -> Void
+    let clearDraftAction: (() -> Void)?
     @Environment(\.colorScheme) var colorScheme
     @Environment(\.toastManager) private var toastManager
+    // When Reduce Transparency is on, the clear glass is swapped for the opaque
+    // `.regular` material so the white glyph keeps its contrast.
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     // Namespace for matched zoom transitions to the composer (provided by ContentView)
     @Environment(\.composerTransitionNamespace) private var composerNamespace
 
@@ -63,7 +67,8 @@ struct FAB: View {
         newPostAction: @escaping () -> Void,
         showDraftsAction: @escaping () -> Void,
         takePhotoAction: @escaping () -> Void,
-        recordVideoAction: @escaping () -> Void
+        recordVideoAction: @escaping () -> Void,
+        clearDraftAction: (() -> Void)? = nil
     ) {
         self.composeAction = composeAction
         self.feedsAction = feedsAction
@@ -73,6 +78,7 @@ struct FAB: View {
         self.showDraftsAction = showDraftsAction
         self.takePhotoAction = takePhotoAction
         self.recordVideoAction = recordVideoAction
+        self.clearDraftAction = clearDraftAction
     }
     
     var body: some View {
@@ -105,13 +111,17 @@ struct FAB: View {
                     Menu {
                         composeMenuItems
                     } label: {
+                        // The zoom source must sit on the rendered label, not on
+                        // the Menu wrapper: a source applied to the Menu itself
+                        // isn't recognized, and the composer sheet falls back to
+                        // a card slide instead of the Liquid Glass zoom.
                         composeButtonLabel
+                            .composerMatchedSource(namespace: composerNamespace)
                     } primaryAction: {
                         composeAction()
                     }
-                        .buttonStyle(.glassProminent)
                         .clipShape(Circle())
-                        .composerMatchedSource(namespace: composerNamespace)
+                        .composeGlass(reduceTransparency: reduceTransparency)
                         .accessibilityLabel(composeAccessibilityLabel)
                         .accessibilityHint(composeAccessibilityHint)
                 } else {
@@ -176,11 +186,39 @@ struct FAB: View {
 
     @ViewBuilder
     private var composeMenuItems: some View {
-        ForEach(FABQuickAction.productionMenuActions) { quickAction in
+        ForEach(availableQuickActions) { quickAction in
             Button {
                 perform(quickAction)
             } label: {
                 Label(quickAction.title, systemImage: quickAction.systemImage)
+            }
+        }
+
+        // Only offered while a working draft exists. Destructive, so it sits
+        // below a divider, away from the creation actions.
+        if hasMinimizedComposer, let clearDraftAction {
+            Divider()
+            Button(role: .destructive) {
+                clearDraftAction()
+            } label: {
+                Label("Clear Draft", systemImage: "trash")
+            }
+        }
+    }
+
+    /// Camera capture is iOS-only and unavailable on the Simulator, so those
+    /// actions are hidden rather than offered as dead menu items.
+    private var availableQuickActions: [FABQuickAction] {
+        FABQuickAction.productionMenuActions.filter { quickAction in
+            switch quickAction {
+            case .newPost, .browseDrafts:
+                return true
+            case .takePhoto, .recordVideo:
+                #if os(iOS)
+                return UIImagePickerController.isSourceTypeAvailable(.camera)
+                #else
+                return false
+                #endif
             }
         }
     }
@@ -233,6 +271,22 @@ struct FAB: View {
             : "Opens the post composer"
     }
 
+}
+
+@available(iOS 26.0, macOS 26.0, *)
+private extension View {
+    /// The compose FAB's Liquid Glass styling — deliberately identical to
+    /// `ChatFAB` so the two floating buttons match: accent-tinted `.clear`
+    /// glass that stays subtle over the feed, swapped for the opaque
+    /// `.regular` material when Reduce Transparency is enabled.
+    @ViewBuilder
+    func composeGlass(reduceTransparency: Bool) -> some View {
+        if reduceTransparency {
+            self.glassEffect(.regular.tint(.accentColor).interactive())
+        } else {
+            self.glassEffect(.clear.tint(.accentColor).interactive())
+        }
+    }
 }
 
 #Preview("FAB") {
