@@ -458,6 +458,9 @@ struct MainContentView: View {
                       await beginCameraCapture(.video)
                     }
                     #endif
+                  },
+                  clearDraftAction: {
+                    appState.composerDraftManager.clearDraft()
                   }
                 )
                 .padding(.bottom, 79)  // Tab bar (49) + spacing (30)
@@ -589,6 +592,9 @@ struct MainContentView: View {
                     await beginCameraCapture(.video)
                   }
                   #endif
+                },
+                clearDraftAction: {
+                  appState.composerDraftManager.clearDraft()
                 }
               )
               .padding(.bottom, 79)  // Tab bar (49) + spacing (30)
@@ -1026,7 +1032,6 @@ extension MainContentView {
   #endif
 }
 
-
 // MARK: - Conditional Navigation Transition Helper
 
 extension View {
@@ -1157,7 +1162,7 @@ private struct AppStateThemeModifier: ViewModifier {
 }
 
 #Preview("ContentView") {
-  AsyncPreviewContent { appState in
+  AsyncPreviewContent { _ in
     MainContentView(
       selectedTab: .constant(0),
       lastTappedTab: .constant(nil)

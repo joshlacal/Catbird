@@ -185,7 +185,7 @@ private extension View {
   @ViewBuilder
   func glassEffectCompatibility() -> some View {
       if #available(iOS 26.0, macOS 26.0, *) {
-      self.glassEffect(.regular.tint(.accentColor).interactive(), in: .capsule)
+      self.glassEffect(.clear.tint(.accentColor).interactive(), in: .capsule)
     } else {
       self
     }
