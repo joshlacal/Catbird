@@ -19,11 +19,16 @@ class SelectableSelfSizingTextView: UITextView {
   private func measuredHeight(for width: CGFloat) -> CGFloat? {
     guard width.isFinite, width > 0 else { return nil }
 
+    // Measure via TextKit 2 only. Touching `layoutManager` (even once) drops
+    // the view into TextKit 1 compatibility mode, which cannot render
+    // NSAdaptiveImageGlyph runs (inline Bluemoji/Genmoji draw as nothing).
+    guard let textLayoutManager = textContainer.textLayoutManager else { return nil }
+
     textContainer.size = CGSize(width: width, height: CGFloat.greatestFiniteMagnitude)
-    layoutManager.ensureLayout(for: textContainer)
+    textLayoutManager.ensureLayout(for: textLayoutManager.documentRange)
 
     // Get the used rect which accounts for all text content
-    let usedRect = layoutManager.usedRect(for: textContainer)
+    let usedRect = textLayoutManager.usageBoundsForTextContainer
 
     // Account for font descent and line spacing below the last line
     var additionalBottomSpace: CGFloat = 0
@@ -149,6 +154,7 @@ struct SelectableTextView: UIViewRepresentable {
     
     // Configure basic properties
     textView.isEditable = false
+    textView.supportsAdaptiveImageGlyph = true
     textView.isSelectable = true  // Enable text selection
     textView.isScrollEnabled = false
     textView.backgroundColor = .clear
@@ -192,7 +198,6 @@ struct SelectableTextView: UIViewRepresentable {
       "hidden": NSNull()
     ]
     textView.layer.actions = noAnim
-    textView.textContainer.layoutManager?.allowsNonContiguousLayout = false
 
     return textView
   }

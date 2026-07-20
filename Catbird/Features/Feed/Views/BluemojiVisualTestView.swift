@@ -48,7 +48,11 @@
         VStack(spacing: 28) {
           Text("Bluemoji Visual Test").font(.headline)
           Text("real post 3mqchxbzgqh2k").font(.caption2).foregroundStyle(.secondary)
+          Text("SwiftUI Text").font(.caption).foregroundStyle(.tertiary)
           Text(rendered).font(.system(size: 40))
+          Text("UIKit SelectableSelfSizingTextView").font(.caption).foregroundStyle(.tertiary)
+          HarnessSelectableText(attributedString: rendered)
+            .fixedSize(horizontal: false, vertical: true)
           Text(status).font(.footnote).foregroundStyle(.secondary)
             .accessibilityIdentifier("bluemoji-status")
         }
@@ -70,6 +74,36 @@
           ? "✅ glyph spliced into text"
           : "⚠️ fell back to alias text"
       }
+    }
+  }
+
+  /// Minimal wrapper around the production `SelectableSelfSizingTextView` so the
+  /// harness exercises the same UIKit text view posts use — TextKit 2 mode,
+  /// `supportsAdaptiveImageGlyph`, and the custom sizing overrides — without
+  /// `SelectableTextView`'s AppState environment requirements.
+  private struct HarnessSelectableText: UIViewRepresentable {
+    let attributedString: AttributedString
+
+    func makeUIView(context: Context) -> SelectableSelfSizingTextView {
+      let view = SelectableSelfSizingTextView()
+      view.isEditable = false
+      view.isSelectable = true
+      view.isScrollEnabled = false
+      view.supportsAdaptiveImageGlyph = true
+      view.backgroundColor = .clear
+      view.textContainer.lineFragmentPadding = 0
+      view.textContainerInset = .zero
+      return view
+    }
+
+    func updateUIView(_ view: SelectableSelfSizingTextView, context: Context) {
+      let text = NSMutableAttributedString(attributedString)
+      text.addAttribute(
+        .font, value: UIFont.systemFont(ofSize: 40),
+        range: NSRange(location: 0, length: text.length))
+      view.attributedText = text
+      view.textColor = .label
+      view.invalidateIntrinsicContentSize()
     }
   }
 #endif
