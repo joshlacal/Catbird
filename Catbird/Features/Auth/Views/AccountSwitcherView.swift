@@ -862,6 +862,16 @@ struct AccountSwitcherView: View {
       isLoading = false
     }
   }
+
+  private func cancelPendingAttemptBeforeCallback() async {
+    await appStateManager.authentication.cancelGatewayOAuthFlow()
+  }
+
+  private func cancelAuthenticationTaskAndPendingAttempt() {
+    Task { @MainActor in
+      await cancelPendingAttemptBeforeCallback()
+    }
+  }
 }
 
 // MARK: - Platform Modifiers
