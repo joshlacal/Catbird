@@ -353,6 +353,8 @@ final class PostManager {
         associated: nil,
         viewer: AppBskyActorDefs.ViewerState(
             muted: false,
+            mutedOnlyReposts: nil,
+            mutedOnlyQuoteposts: nil,
             mutedByList: nil,
             blockedBy: false,
             blocking: nil,

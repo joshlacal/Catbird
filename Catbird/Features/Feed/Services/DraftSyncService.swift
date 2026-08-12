@@ -406,7 +406,7 @@ final class DraftSyncService {
         let (status, data) = try await client.app.bsky.draft.createDraft(
           input: .init(draft: remote)
         )
-        guard (200...299).contains(status), let newRemoteId = data?.id else {
+        guard (200...299).contains(status), let newRemoteId = data?.id.description else {
           logger.warning("Draft create push failed - \(id.uuidString), status: \(status)")
           return
         }

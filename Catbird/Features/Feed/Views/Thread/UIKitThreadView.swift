@@ -2325,6 +2325,8 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       moreParents: false,
       moreReplies: 0,
       opThread: false,
+      opThreadPostIndex: nil,
+      opThreadPostCount: nil,
       hiddenByThreadgate: false,
       mutedByViewer: false
     )
