@@ -5,6 +5,7 @@
 
 import CoreGraphics
 import Testing
+import UIKit
 @testable import Catbird
 
 #if os(iOS)
@@ -63,6 +64,31 @@ struct ConcentricLiquidGlassDrawerTests {
     #expect(metrics.blurFraction(for: 0.5) == 0.5)
     #expect(metrics.blurFraction(for: 1) == 1.0)
     #expect(metrics.scrimOpacity(for: 1) == 0.18)
+  }
+
+  @MainActor
+  @Test("active backdrop animator stops before background scene teardown")
+  func activeBackdropAnimatorStopsBeforeBackgroundSceneTeardown() throws {
+    let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 402, height: 874))
+    let blurView = ProgressiveBlurUIView()
+    window.addSubview(blurView)
+    window.isHidden = false
+    blurView.fraction = 0.5
+
+    let storedAnimator = try #require(
+      Mirror(reflecting: blurView).children.first { $0.label == "animator" }?.value
+    )
+    let animator = try #require(
+      Mirror(reflecting: storedAnimator).children.first?.value as? UIViewPropertyAnimator
+    )
+    #expect(animator.state == .active)
+
+    NotificationCenter.default.post(
+      name: UIApplication.willResignActiveNotification,
+      object: nil
+    )
+
+    #expect(animator.state == .inactive)
   }
 
   @Test("readability tuning lets system glass carry the surface")

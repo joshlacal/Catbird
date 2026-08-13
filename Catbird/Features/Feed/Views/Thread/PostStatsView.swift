@@ -121,7 +121,7 @@ struct FlowLayout: Layout {
      struct Cache {
         var sizes: [CGSize] = []
         var maxItemWidth: CGFloat = 0
-        fileprivate var metrics: FlowMetrics?
+        fileprivate var metrics: FlowLayoutMetrics?
         var lastResolvedWidth: CGFloat?
     }
 
@@ -207,22 +207,63 @@ struct FlowLayout: Layout {
         return fallback
     }
 
-    private func metrics(forWidth width: CGFloat, cache: inout Cache) -> FlowMetrics {
+    private func metrics(forWidth width: CGFloat, cache: inout Cache) -> FlowLayoutMetrics {
         if let metrics = cache.metrics, metrics.width == width {
             return metrics
         }
 
         let adjustedWidth = max(width, cache.maxItemWidth)
-        let sizes = cache.sizes
+        let metrics = FlowLayoutMetrics.calculate(
+            sizes: cache.sizes,
+            availableWidth: adjustedWidth,
+            horizontalSpacing: horizontalSpacing,
+            verticalSpacing: verticalSpacing
+        )
 
-        var lines: [FlowMetrics.Line] = []
+        cache.metrics = metrics
+        cache.lastResolvedWidth = adjustedWidth
+        return metrics
+    }
+
+    private func horizontalOffset(for lineWidth: CGFloat, in containerWidth: CGFloat) -> CGFloat {
+        switch alignment {
+        case .leading:
+            return 0
+        case .center:
+            return max((containerWidth - lineWidth) / 2, 0)
+        case .trailing:
+            return max(containerWidth - lineWidth, 0)
+        }
+    }
+}
+
+struct FlowLayoutMetrics {
+    struct Line {
+        let range: Range<Int>
+        let width: CGFloat
+        let height: CGFloat
+    }
+
+    let width: CGFloat
+    let lines: [Line]
+    let size: CGSize
+
+    static func calculate(
+        sizes: [CGSize],
+        availableWidth: CGFloat,
+        horizontalSpacing: CGFloat,
+        verticalSpacing: CGFloat
+    ) -> FlowLayoutMetrics {
+        let adjustedWidth = max(availableWidth, sizes.map(\.width).max() ?? 0)
+
+        var lines: [Line] = []
         var lineStart = sizes.startIndex
         var currentLineWidth: CGFloat = 0
         var currentLineHeight: CGFloat = 0
 
         func appendLine(endingAt endIndex: Int) {
             guard endIndex > lineStart else { return }
-            let line = FlowMetrics.Line(
+            let line = Line(
                 range: lineStart..<endIndex,
                 width: currentLineWidth,
                 height: currentLineHeight
@@ -246,42 +287,14 @@ struct FlowLayout: Layout {
 
         appendLine(endingAt: sizes.endIndex)
 
-        let maxLineWidth = lines.map { $0.width }.max() ?? 0
         let totalHeight = lines.reduce(0) { $0 + $1.height } + verticalSpacing * CGFloat(max(lines.count - 1, 0))
 
-        let metrics = FlowMetrics(
+        return FlowLayoutMetrics(
             width: adjustedWidth,
             lines: lines,
-            size: CGSize(width: maxLineWidth, height: totalHeight)
+            size: CGSize(width: adjustedWidth, height: totalHeight)
         )
-
-        cache.metrics = metrics
-        cache.lastResolvedWidth = adjustedWidth
-        return metrics
     }
-
-    private func horizontalOffset(for lineWidth: CGFloat, in containerWidth: CGFloat) -> CGFloat {
-        switch alignment {
-        case .leading:
-            return 0
-        case .center:
-            return max((containerWidth - lineWidth) / 2, 0)
-        case .trailing:
-            return max(containerWidth - lineWidth, 0)
-        }
-    }
-}
-
-private struct FlowMetrics {
-    struct Line {
-        let range: Range<Int>
-        let width: CGFloat
-        let height: CGFloat
-    }
-
-    let width: CGFloat
-    let lines: [Line]
-    let size: CGSize
 }
 
 #Preview("PostStatsView") {

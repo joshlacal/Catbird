@@ -19,6 +19,7 @@
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>blue.catbird</string>
+				<string>catbird</string>
 			</array>
 		</dict>
 	</array>

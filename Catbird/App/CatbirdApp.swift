@@ -1354,7 +1354,7 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
                 appState.navigationManager.updateCurrentTab(2)
               }
             }
-          } else if url.scheme == "blue.catbird" && url.host == "e2e" {
+          } else if (url.scheme == "blue.catbird" || url.scheme == "catbird") && (url.host == "e2e" || url.host == "test") {
             // Handle E2E testing commands (only in E2E mode, iOS only)
             #if os(iOS)
             logger.error("[E2E-URL] Received E2E URL: \(url.absoluteString), isE2EMode: \(appStateManager.isE2EMode)")
@@ -2380,6 +2380,9 @@ private extension CatbirdApp {
     case "get-recovery-state", "get_recovery_state":
       await handleGetRecoveryState(params: params, manager: manager, logger: e2eLogger)
 
+    case "send-blob", "send_blob":
+      await handleSendBlob(params: params, manager: manager, logger: e2eLogger)
+
     default:
       e2eLogger.warning("[E2E] Unknown command: \(command)")
       await writeE2EResult(command: command, success: false, error: "Unknown command")
@@ -2635,6 +2638,193 @@ private extension CatbirdApp {
       await writeE2EResult(command: "send-message", success: false, error: error.localizedDescription)
     }
   }
+
+  private func handleSendBlob(params: [String: String], manager: AppStateManager, logger e2eLogger: Logger) async {
+    guard let appState = manager.lifecycle.appState else {
+      e2eLogger.error("[E2E-BLOB] Not authenticated")
+      await writeE2EResult(command: "send-blob", success: false, error: "Not authenticated")
+      return
+    }
+
+    guard let conversationManager = await appState.getMLSConversationManager() else {
+      e2eLogger.error("[E2E-BLOB] MLS not initialized")
+      await writeE2EResult(command: "send-blob", success: false, error: "MLS not initialized")
+      return
+    }
+
+    // 1. Resolve Target Conversation ID
+    let convoId: String
+    if let id = params["conversationId"] ?? params["convoId"], !id.isEmpty {
+      convoId = id
+    } else if let targetDID = params["targetDID"] ?? params["recipientDID"], !targetDID.isEmpty {
+      // Find existing conversation with target member
+      if let existing = conversationManager.conversations.values.first(where: { convo in
+        convo.members.contains(where: { $0.did.description == targetDID })
+      }) {
+        convoId = existing.groupId
+      } else {
+        do {
+          let targetMember = try DID(didString: targetDID)
+          let newConvo = try await conversationManager.createGroup(
+            initialMembers: [targetMember],
+            name: "E2E Blob DM"
+          )
+          convoId = newConvo.groupId
+        } catch {
+          e2eLogger.error("[E2E-BLOB] Failed to create conversation for \(targetDID): \(error.localizedDescription)")
+          await writeE2EResult(command: "send-blob", success: false, error: "Failed to resolve conversation: \(error.localizedDescription)")
+          return
+        }
+      }
+    } else {
+      e2eLogger.error("[E2E-BLOB] Missing conversationId or targetDID")
+      await writeE2EResult(command: "send-blob", success: false, error: "Missing conversationId or targetDID")
+      return
+    }
+
+    // 2. Resolve Raw Blob Plaintext Data
+    let rawData: Data
+    let mediaType = params["mediaType"]?.lowercased() ?? params["type"]?.lowercased() ?? "image"
+    var contentType = params["mimeType"] ?? params["contentType"] ?? (mediaType == "audio" ? "audio/mp4" : "image/png")
+    let width = Int(params["width"] ?? "100") ?? 100
+    let height = Int(params["height"] ?? "100") ?? 100
+
+    if let filePath = params["filePath"] ?? params["path"], !filePath.isEmpty {
+      do {
+        rawData = try Data(contentsOf: URL(fileURLWithPath: filePath))
+        e2eLogger.info("[E2E-BLOB] Loaded \(rawData.count) bytes from \(filePath)")
+      } catch {
+        e2eLogger.error("[E2E-BLOB] Failed to read file at \(filePath): \(error.localizedDescription)")
+        await writeE2EResult(command: "send-blob", success: false, error: "Failed to read file: \(error.localizedDescription)")
+        return
+      }
+    } else if let base64Str = params["base64"] ?? params["data"], !base64Str.isEmpty {
+      guard let decoded = Data(base64Encoded: base64Str) else {
+        e2eLogger.error("[E2E-BLOB] Invalid base64 data")
+        await writeE2EResult(command: "send-blob", success: false, error: "Invalid base64 data")
+        return
+      }
+      rawData = decoded
+      e2eLogger.info("[E2E-BLOB] Decoded \(rawData.count) bytes from base64")
+    } else {
+      // Generate synthetic 100x100 PNG test image
+      let size = CGSize(width: CGFloat(width), height: CGFloat(height))
+      let renderer = CrossPlatformImageRenderer(size: size)
+      let syntheticImage = renderer.image { ctx in
+        #if os(iOS)
+        UIColor.systemBlue.setFill()
+        UIRectFill(CGRect(origin: .zero, size: size))
+        #endif
+      }
+      #if os(iOS)
+      guard let pngData = syntheticImage?.pngData() else {
+        e2eLogger.error("[E2E-BLOB] Failed to generate synthetic PNG")
+        await writeE2EResult(command: "send-blob", success: false, error: "Failed to generate synthetic PNG")
+        return
+      }
+      rawData = pngData
+      #else
+      guard let pngData = syntheticImage?.pngImageData() else {
+        await writeE2EResult(command: "send-blob", success: false, error: "Failed to generate synthetic PNG")
+        return
+      }
+      rawData = pngData
+      #endif
+      contentType = "image/png"
+      e2eLogger.info("[E2E-BLOB] Generated synthetic PNG of size \(rawData.count) bytes")
+    }
+
+    let caption = params["caption"] ?? params["text"] ?? "E2E Blob Test Attachment"
+    let altText = params["altText"] ?? params["alt"]
+
+    // 3. Encrypt Blob via AES-256-GCM
+    let encrypted: BlobCrypto.EncryptedBlob
+    do {
+      encrypted = try BlobCrypto.encrypt(plaintext: rawData)
+      e2eLogger.info("[E2E-BLOB] Encrypted blob: ciphertext=\(encrypted.ciphertext.count)B sha256=\(encrypted.sha256.prefix(16))...")
+    } catch {
+      e2eLogger.error("[E2E-BLOB] Blob encryption failed: \(error.localizedDescription)")
+      await writeE2EResult(command: "send-blob", success: false, error: "Blob encryption failed: \(error.localizedDescription)")
+      return
+    }
+
+    // 4. Upload Ciphertext to Delivery Service
+    let blobId: String
+    do {
+      let (responseCode, output) = try await appState.client.blue.catbird.mlsChat.uploadBlob(
+        data: encrypted.ciphertext,
+        mimeType: "application/octet-stream",
+        stripMetadata: false,
+        params: .init(convoId: convoId)
+      )
+
+      guard (200...299).contains(responseCode), let output else {
+        let err = "Blob upload HTTP error \(responseCode)"
+        e2eLogger.error("[E2E-BLOB] \(err)")
+        await writeE2EResult(command: "send-blob", success: false, error: err)
+        return
+      }
+
+      blobId = output.blobId
+      e2eLogger.info("[E2E-BLOB] Uploaded blobId: \(blobId)")
+    } catch {
+      e2eLogger.error("[E2E-BLOB] Blob upload network error: \(error.localizedDescription)")
+      await writeE2EResult(command: "send-blob", success: false, error: "Blob upload error: \(error.localizedDescription)")
+      return
+    }
+
+    // 5. Construct Embed & Transmit MLS Message
+    let embed: MLSEmbedData
+    if mediaType == "audio" {
+      let audioEmbed = MLSAudioEmbed(
+        blobId: blobId,
+        key: encrypted.key,
+        iv: encrypted.iv,
+        sha256: encrypted.sha256,
+        contentType: contentType,
+        size: UInt64(rawData.count),
+        durationMs: UInt64(params["durationMs"].flatMap(Int.init) ?? 1000),
+        waveform: [0.5, 0.8, 0.4, 0.9, 0.2],
+        transcript: params["transcript"]
+      )
+      embed = .audio(audioEmbed)
+    } else {
+      let imageEmbed = MLSImageEmbed(
+        blobId: blobId,
+        key: encrypted.key,
+        iv: encrypted.iv,
+        sha256: encrypted.sha256,
+        contentType: contentType,
+        size: rawData.count,
+        width: width,
+        height: height,
+        altText: altText,
+        blurhash: nil
+      )
+      embed = .image(imageEmbed)
+    }
+
+    do {
+      let sendResult = try await conversationManager.sendMessage(
+        convoId: convoId,
+        plaintext: caption,
+        embed: embed
+      )
+      e2eLogger.info("[E2E-BLOB] Message with blob embed sent: msgId=\(sendResult.messageId) epoch=\(sendResult.epoch)")
+      await writeE2EResult(command: "send-blob", success: true, data: [
+        "messageId": sendResult.messageId,
+        "conversationId": convoId,
+        "blobId": blobId,
+        "blobSize": "\(rawData.count)",
+        "sha256": encrypted.sha256,
+        "epoch": "\(sendResult.epoch)",
+        "mediaType": mediaType
+      ])
+    } catch {
+      e2eLogger.error("[E2E-BLOB] Failed to send MLS message: \(error.localizedDescription)")
+      await writeE2EResult(command: "send-blob", success: false, error: "Send message failed: \(error.localizedDescription)")
+    }
+  }
   
   private func handleGetMessages(params: [String: String], manager: AppStateManager, logger e2eLogger: Logger) async {
     guard let conversationId = params["conversationId"] else {
@@ -2668,8 +2858,27 @@ private extension CatbirdApp {
         do {
           let decrypted = try await conversationManager.decryptMessage(messageView, source: "e2e-test")
           let payload = decrypted.payload
-          if payload.messageType == .text, let text = payload.text {
-            decryptedTexts.append(text)
+          if payload.messageType == .text {
+            let text = payload.text ?? ""
+            if let embed = payload.embed {
+              let prefix = text.isEmpty ? "" : "\(text) "
+              switch embed {
+              case .image(let img):
+                decryptedTexts.append("\(prefix)[image:\(img.blobId)]")
+              case .audio(let audio):
+                decryptedTexts.append("\(prefix)[audio:\(audio.blobId)]")
+              case .link(let link):
+                decryptedTexts.append("\(prefix)[link:\(link.url)]")
+              case .gif(let gif):
+                decryptedTexts.append("\(prefix)[gif:\(gif.tenorURL)]")
+              case .post(let post):
+                decryptedTexts.append("\(prefix)[post:\(post.uri)]")
+              case .unknown(let type):
+                decryptedTexts.append("\(prefix)[unknown:\(type)]")
+              }
+            } else if !text.isEmpty {
+              decryptedTexts.append(text)
+            }
           } else if payload.messageType == .reaction, let reaction = payload.reaction {
             decryptedTexts.append("[reaction:\(reaction.action):\(reaction.emoji) on \(reaction.messageId.prefix(8))]")
           }

@@ -374,8 +374,17 @@ final class ProgressiveBlurUIView: UIView {
     effectView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
     addSubview(effectView)
 
-    // Backgrounding the app removes the paused animator's in-flight
-    // animations, which would leave the blur stuck at a stale radius.
+    // Stop before background scene teardown. Waiting until the view detaches
+    // is too late when UIKit destroys the entire SwiftUI-hosted window graph.
+    NotificationCenter.default.addObserver(
+      self,
+      selector: #selector(teardownForInactivity),
+      name: UIApplication.willResignActiveNotification,
+      object: nil
+    )
+
+    // Rebuild after foregrounding because backgrounding removes the paused
+    // animator's in-flight animations.
     NotificationCenter.default.addObserver(
       self,
       selector: #selector(rebuildAfterForeground),
@@ -397,6 +406,10 @@ final class ProgressiveBlurUIView: UIView {
     } else {
       applyFraction()
     }
+  }
+
+  @objc private func teardownForInactivity() {
+    teardownAnimator()
   }
 
   @objc private func rebuildAfterForeground() {

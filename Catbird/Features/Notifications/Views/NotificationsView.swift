@@ -89,7 +89,7 @@ struct NotificationsView: View {
   @ViewBuilder
   private func navigationStack(using navigationPath: Binding<NavigationPath>) -> some View {
     NavigationStack(path: navigationPath) {
-      notificationContentWithHeader
+      notificationContent
         .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
         .navigationTitle("Notifications")
       #if os(iOS)
@@ -106,15 +106,8 @@ struct NotificationsView: View {
             }
           }
 
-          ToolbarItem(placement: notificationsTrailingPlacement) {
-            Button(action: {
-              Task {
-                await viewModel.refreshNotifications()
-              }
-            }) {
-              Image(systemName: "arrow.clockwise")
-                .imageScale(.medium)
-            }
+          ToolbarItem(placement: .principal) {
+            filterPicker
           }
 
           ToolbarItem(placement: .primaryAction) {
@@ -135,50 +128,23 @@ struct NotificationsView: View {
     }
   }
 
-  private var filterPicker: some View {
-    Picker("Filter", selection: $selectedFilter) {
-      Text("All").tag(NotificationsViewModel.NotificationFilter.all)
-      Text("Mentions").tag(NotificationsViewModel.NotificationFilter.mentions)
-    }
-    .pickerStyle(.segmented)
-    .frame(height: 36)
-    .frame(maxWidth: hSizeClass == .compact ? .infinity : 600)
-    .frame(maxWidth: .infinity, alignment: .center)
-    .padding(.horizontal, 16)
-    .padding(.vertical, 8)
-    .listRowInsets(EdgeInsets())
-    .listRowSeparator(.hidden)
-  }
-
   @ViewBuilder
-  private var notificationContentWithHeader: some View {
-    if let error = viewModel.error {
-        VStack(alignment: .center, spacing: DesignTokens.Spacing.none) {
-        filterPicker
-          .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
-        
-        ErrorStateView(
-          error: error,
-          context: "Failed to load notifications",
-          retryAction: { Task { await retryLoadNotifications() } }
-        )
+  private var filterPicker: some View {
+    if #available(anyAppleOS 27.0, *) {
+      Picker("Filter", selection: $selectedFilter) {
+        Text("All").tag(NotificationsViewModel.NotificationFilter.all)
+        Text("Mentions").tag(NotificationsViewModel.NotificationFilter.mentions)
       }
-    } else if viewModel.isLoading && viewModel.groupedNotifications.isEmpty {
-      VStack(spacing: DesignTokens.Spacing.none) {
-        filterPicker
-          .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
-        
-        loadingView
-      }
-    } else if viewModel.groupedNotifications.isEmpty {
-      VStack(spacing: DesignTokens.Spacing.none) {
-        filterPicker
-          .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
-        
-        emptyView
-      }
+      .buttonBorderShape(.capsule)
+      .pickerStyle(.tabs)
+      .frame(width: hSizeClass == .compact ? 220 : 280, height: 32)
     } else {
-      notificationsListWithHeader
+      Picker("Filter", selection: $selectedFilter) {
+        Text("All").tag(NotificationsViewModel.NotificationFilter.all)
+        Text("Mentions").tag(NotificationsViewModel.NotificationFilter.mentions)
+      }
+      .pickerStyle(.segmented)
+      .frame(width: hSizeClass == .compact ? 220 : 280, height: 32)
     }
   }
 
@@ -242,70 +208,12 @@ struct NotificationsView: View {
   }
 
   @ViewBuilder
-  private var notificationsListWithHeader: some View {
-    let navigationPath = appState.navigationManager.pathBinding(for: 2)
-    let indexedGroups = Array(viewModel.groupedNotifications.enumerated())
-
-    ScrollViewReader { _ in
-      List {
-        // Filter picker as the first list item
-        filterPicker
-          .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
-
-        ForEach(indexedGroups, id: \.element.id) { item in
-          let index = item.offset
-          let group = item.element
-          NotificationCard(
-            group: group,
-            onTap: { destination in
-              navigationPath.wrappedValue.append(destination)
-            }, path: navigationPath
-          )
-          .id(group.id)
-          .listRowSeparator(.visible)
-          .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
-          .alignmentGuide(.listRowSeparatorLeading) { _ in
-            0
-          }
-          .alignmentGuide(.listRowSeparatorTrailing) { dimension in dimension.width }
-          .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
-          .onAppear {
-            triggerLoadMoreNotificationsIfNeeded(currentIndex: index)
-          }
-        }
-
-        if viewModel.hasMoreNotifications {
-          HStack {
-            Spacer()
-            ProgressView()
-              .padding()
-            Spacer()
-          }
-          .id("loadingIndicator")
-          .listRowSeparator(.hidden)
-        }
-      }
-      .listStyle(.plain)
-      .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
-      .scrollPosition($scrollPosition)
-    }
-    .refreshable {
-      try? await viewModel.markNotificationsAsSeen()
-      await viewModel.refreshNotifications()
-    }
-  }
-
-  @ViewBuilder
   private var notificationsList: some View {
     let navigationPath = appState.navigationManager.pathBinding(for: 2)
     let indexedGroups = Array(viewModel.groupedNotifications.enumerated())
 
     ScrollViewReader { _ in
       List {
-//          .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
-//          .listRowSeparator(.hidden)
-//          .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
-
         ForEach(indexedGroups, id: \.element.id) { item in
           let index = item.offset
           let group = item.element
@@ -321,7 +229,7 @@ struct NotificationsView: View {
           .alignmentGuide(.listRowSeparatorLeading) { _ in
             0
           }
-          .alignmentGuide(.listRowSeparatorTrailing) { _ in 0 }
+          .alignmentGuide(.listRowSeparatorTrailing) { dimension in dimension.width }
           .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
           .onAppear {
             triggerLoadMoreNotificationsIfNeeded(currentIndex: index)
@@ -357,7 +265,6 @@ struct NotificationsView: View {
     }
   }
 
-  
   private func shouldLoadMoreNotifications(currentIndex: Int) -> Bool {
     let thresholdIndex = max(0, viewModel.groupedNotifications.count - 5)
     return currentIndex >= thresholdIndex && viewModel.hasMoreNotifications && !viewModel.isLoadingMore
