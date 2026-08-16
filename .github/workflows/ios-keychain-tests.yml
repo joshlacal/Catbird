@@ -36,6 +36,13 @@ jobs:
         run: |
           set -euo pipefail
 
+          expected_tests="$(grep -Ec '^[[:space:]]*func test' CatbirdTests/MLSKeychainManagerTests.swift)"
+          if [[ "$expected_tests" -eq 0 ]]; then
+            echo "No MLSKeychainManagerTests methods were discovered in source" >&2
+            exit 1
+          fi
+          echo "Expecting $expected_tests MLS keychain tests"
+
           simulator_name="$(xcrun simctl list devices available | awk -F '[()]' '/iPhone/ { print $1; exit }' | sed 's/[[:space:]]*$//')"
           if [[ -z "$simulator_name" ]]; then
             echo "No available iPhone simulator found" >&2
@@ -89,9 +96,9 @@ jobs:
           passed_tests="$(jq '[.. | objects | select(.nodeType == "Test Case" and ((.nodeIdentifier? // "") | contains("MLSKeychainManagerTests/")) and .result == "Passed")] | length' keychain-tests.json)"
           non_passed_tests="$(jq '[.. | objects | select(.nodeType == "Test Case" and ((.nodeIdentifier? // "") | contains("MLSKeychainManagerTests/")) and .result != "Passed")] | length' keychain-tests.json)"
           planned_tests="$(jq '[.. | objects | select(.nodeType == "Test Case")] | length' keychain-tests.json)"
-          echo "Keychain suite result: selectedTestCases=$suite_tests plannedTargetTestCases=$planned_tests passed=$passed_tests nonPassed=$non_passed_tests"
+          echo "Keychain suite result: selectedTestCases=$suite_tests expectedFromSource=$expected_tests plannedTargetTestCases=$planned_tests passed=$passed_tests nonPassed=$non_passed_tests"
 
-          if [[ "$suite_tests" -eq 0 || "$passed_tests" -ne "$suite_tests" || "$non_passed_tests" -ne 0 ]]; then
+          if [[ "$suite_tests" -ne "$expected_tests" || "$passed_tests" -ne "$expected_tests" || "$non_passed_tests" -ne 0 ]]; then
             echo "Keychain suite result evidence is incomplete or contains a non-Passed discovered Test Case" >&2
             exit 1
           fi
