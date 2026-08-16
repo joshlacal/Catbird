@@ -21,10 +21,12 @@ on:
 jobs:
   keychain-tests:
     runs-on: macos-14
+    permissions:
+      contents: read
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Resolve Swift packages
         run: xcodebuild -resolvePackageDependencies -project Catbird.xcodeproj -scheme Catbird
@@ -53,10 +55,12 @@ jobs:
           # access-group override. The MLSKeychainManager implementation and
           # accessibility attributes remain unchanged; no test is skipped.
           set +e
+          rm -rf keychain-tests.xcresult keychain-tests.log
           xcodebuild test \
             -project Catbird.xcodeproj \
             -scheme Catbird \
             -destination "$destination" \
+            -resultBundlePath keychain-tests.xcresult \
             -parallel-testing-enabled NO \
             -only-testing:CatbirdTests/MLSKeychainManagerTests \
             CODE_SIGNING_ALLOWED=NO \
@@ -68,15 +72,29 @@ jobs:
             exit "$xcode_status"
           fi
 
-          summary="$(grep -E 'Executed [0-9]+ tests?, with [0-9]+ failures?' keychain-tests.log | tail -1 || true)"
-          if [[ -z "$summary" ]]; then
-            echo "The keychain suite produced no XCTest execution summary" >&2
+          if [[ ! -d keychain-tests.xcresult ]]; then
+            echo "xcodebuild produced no xcresult bundle" >&2
             exit 1
           fi
-          executed="$(sed -E 's/.*Executed ([0-9]+) tests?, with ([0-9]+) failures?.*/\1/' <<< "$summary")"
-          failures="$(sed -E 's/.*Executed ([0-9]+) tests?, with ([0-9]+) failures?.*/\2/' <<< "$summary")"
-          if [[ "$executed" -ne "$expected_tests" || "$failures" -ne 0 ]]; then
-            echo "Keychain suite coverage mismatch: $summary (expected $expected_tests tests, 0 failures)" >&2
+
+          xcrun xcresulttool get test-results tests \
+            --path keychain-tests.xcresult \
+            --compact > keychain-tests.json
+          if ! jq empty keychain-tests.json; then
+            echo "xcresult test report was not valid JSON" >&2
             exit 1
           fi
-          echo "Keychain suite passed: $summary"
+
+          suite_tests="$(jq '[.. | objects | select(.nodeType == "Test Case")] | length' keychain-tests.json)"
+          missing_results="$(jq '[.. | objects | select(.nodeType == "Test Case" and (.result == null))] | length' keychain-tests.json)"
+          failed_tests="$(jq '[.. | objects | select(.nodeType == "Test Case" and .result == "Failed")] | length' keychain-tests.json)"
+          skipped_tests="$(jq '[.. | objects | select(.nodeType == "Test Case" and .result == "Skipped")] | length' keychain-tests.json)"
+          expected_failure_tests="$(jq '[.. | objects | select(.nodeType == "Test Case" and .result == "Expected Failure")] | length' keychain-tests.json)"
+          unknown_tests="$(jq '[.. | objects | select(.nodeType == "Test Case" and .result == "unknown")] | length' keychain-tests.json)"
+          echo "Keychain suite result: testCases=$suite_tests expectedFromSource=$expected_tests failed=$failed_tests skipped=$skipped_tests expectedFailures=$expected_failure_tests unknown=$unknown_tests"
+
+          if [[ "$suite_tests" -ne "$expected_tests" || "$missing_results" -ne 0 || "$failed_tests" -ne 0 || "$skipped_tests" -ne 0 || "$expected_failure_tests" -ne 0 || "$unknown_tests" -ne 0 ]]; then
+            echo "Keychain suite result evidence is incomplete or non-green" >&2
+            exit 1
+          fi
+          echo "Keychain suite passed: $suite_tests test cases; no failures, skips, expected failures, or unknown results"
