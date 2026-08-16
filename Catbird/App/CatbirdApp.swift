@@ -3363,10 +3363,10 @@ private extension CatbirdApp {
       } else {
         currentDeviceId = await conversationManager.mlsClient.getDeviceInfo(for: userDid)?.deviceId ?? "unknown"
       }
-      let (_, listOutput) = try await conversationManager.apiClient.client.blue.catbird.mlsChat.listDevices(
-        input: BlueCatbirdMlsChatListDevices.Parameters()
+      let (_, listOutput) = try await conversationManager.apiClient.client.blue.catbird.chat.getOwnDevices(
+        input: BlueCatbirdChatGetOwnDevices.Parameters()
       )
-      let currentDevicePackages = listOutput?.devices.first(where: { $0.deviceId == currentDeviceId })?.keyPackageCount ?? -1
+      let currentDevicePackages = listOutput?.items.first(where: { $0.device.deviceId == currentDeviceId })?.device.availablePackageCount ?? -1
 
       await writeE2EResult(command: "refresh-key-packages", success: true, data: [
         "userDid": userDid,
@@ -3464,20 +3464,20 @@ private extension CatbirdApp {
       }
 
       let stats = try await conversationManager.apiClient.getKeyPackageStats()
-      let (statusCode, listOutput) = try await conversationManager.apiClient.client.blue.catbird.mlsChat.listDevices(
-        input: BlueCatbirdMlsChatListDevices.Parameters()
+      let (statusCode, listOutput) = try await conversationManager.apiClient.client.blue.catbird.chat.getOwnDevices(
+        input: BlueCatbirdChatGetOwnDevices.Parameters()
       )
       guard statusCode == 200, let listOutput else {
         throw NSError(
           domain: "E2E",
           code: statusCode,
-          userInfo: [NSLocalizedDescriptionKey: "listDevices failed with HTTP \(statusCode)"]
+          userInfo: [NSLocalizedDescriptionKey: "getOwnDevices failed with HTTP \(statusCode)"]
         )
       }
 
-      let devices = listOutput.devices
-      let currentDevicePackages = devices.first(where: { $0.deviceId == currentDeviceId })?.keyPackageCount ?? -1
-      let deviceCounts = devices.map { "\($0.deviceId):\($0.keyPackageCount)" }.joined(separator: ",")
+      let devices = listOutput.items
+      let currentDevicePackages = devices.first(where: { $0.device.deviceId == currentDeviceId })?.device.availablePackageCount ?? -1
+      let deviceCounts = devices.map { "\($0.device.deviceId):\($0.device.availablePackageCount)" }.joined(separator: ",")
 
       await writeE2EResult(command: "keypackage-state", success: true, data: [
         "userDid": userDid,

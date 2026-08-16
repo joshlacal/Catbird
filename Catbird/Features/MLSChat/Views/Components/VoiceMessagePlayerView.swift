@@ -131,7 +131,7 @@ struct VoiceMessagePlayerView: View {
     voicePlayerLogger.info("[play] fetching blob \(audioData.blobId)")
     let encryptedData: Data
     do {
-      let (code, response) = try await appState.client.blue.catbird.mlsChat.getBlob(
+      let (code, response) = try await appState.client.blue.catbird.chat.getBlob(
         input: .init(blobId: audioData.blobId)
       )
       guard (200..<300).contains(code), let output = response else {

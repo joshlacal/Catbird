@@ -1,0 +1,82 @@
+name: iOS Keychain Tests
+
+on:
+  pull_request:
+    paths:
+      - "Catbird/**"
+      - "CatbirdTests/**"
+      - "Catbird.xcodeproj/**"
+      - "Package.resolved"
+      - ".github/workflows/ios-keychain-tests.yml"
+  push:
+    branches: [main, staging]
+    paths:
+      - "Catbird/**"
+      - "CatbirdTests/**"
+      - "Catbird.xcodeproj/**"
+      - "Package.resolved"
+      - ".github/workflows/ios-keychain-tests.yml"
+  workflow_dispatch:
+
+jobs:
+  keychain-tests:
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve Swift packages
+        run: xcodebuild -resolvePackageDependencies -project Catbird.xcodeproj -scheme Catbird
+
+      - name: Run the complete keychain suite
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          expected_tests="$(grep -Ec '^[[:space:]]*func test' CatbirdTests/MLSKeychainManagerTests.swift)"
+          if [[ "$expected_tests" -eq 0 ]]; then
+            echo "No MLSKeychainManagerTests methods were discovered in source" >&2
+            exit 1
+          fi
+          echo "Expecting $expected_tests MLS keychain tests"
+
+          simulator_name="$(xcrun simctl list devices available | awk -F '[()]' '/iPhone/ { print $1; exit }' | sed 's/[[:space:]]*$//')"
+          if [[ -z "$simulator_name" ]]; then
+            echo "No available iPhone simulator found" >&2
+            exit 1
+          fi
+          destination="platform=iOS Simulator,name=${simulator_name},OS=latest"
+          echo "Using destination: $destination"
+
+          # Simulator tests intentionally use the system keychain with no
+          # access-group override. The MLSKeychainManager implementation and
+          # accessibility attributes remain unchanged; no test is skipped.
+          set +e
+          xcodebuild test \
+            -project Catbird.xcodeproj \
+            -scheme Catbird \
+            -destination "$destination" \
+            -parallel-testing-enabled NO \
+            -only-testing:CatbirdTests/MLSKeychainManagerTests \
+            CODE_SIGNING_ALLOWED=NO \
+            | tee keychain-tests.log
+          xcode_status=${PIPESTATUS[0]}
+          set -e
+          if [[ "$xcode_status" -ne 0 ]]; then
+            echo "xcodebuild failed with status $xcode_status" >&2
+            exit "$xcode_status"
+          fi
+
+          summary="$(grep -E 'Executed [0-9]+ tests?, with [0-9]+ failures?' keychain-tests.log | tail -1 || true)"
+          if [[ -z "$summary" ]]; then
+            echo "The keychain suite produced no XCTest execution summary" >&2
+            exit 1
+          fi
+          executed="$(sed -E 's/.*Executed ([0-9]+) tests?, with ([0-9]+) failures?.*/\1/' <<< "$summary")"
+          failures="$(sed -E 's/.*Executed ([0-9]+) tests?, with ([0-9]+) failures?.*/\2/' <<< "$summary")"
+          if [[ "$executed" -ne "$expected_tests" || "$failures" -ne 0 ]]; then
+            echo "Keychain suite coverage mismatch: $summary (expected $expected_tests tests, 0 failures)" >&2
+            exit 1
+          fi
+          echo "Keychain suite passed: $summary"

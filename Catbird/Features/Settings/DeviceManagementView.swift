@@ -119,8 +119,30 @@ struct DeviceManagementView: View {
     }
 }
 
+/// The canonical chat inventory intentionally exposes protocol fields instead
+/// of the legacy display-only device metadata. Keep the view model's small
+/// presentation adapter local so the product flow can use the generated API
+/// without inventing fields in generated code.
+struct DeviceRowModel: Identifiable {
+    let deviceId: String
+    let deviceName: String
+    let deviceUUID: String?
+    let lastSeenAt: Date
+    let keyPackageCount: Int
+
+    var id: String { deviceId }
+
+    init(_ ownDevice: BlueCatbirdChatDefs.OwnDeviceView) {
+        deviceId = ownDevice.device.deviceId
+        deviceName = "Device \(ownDevice.device.deviceId.prefix(8))"
+        deviceUUID = nil
+        lastSeenAt = ownDevice.device.updatedAt.date
+        keyPackageCount = ownDevice.device.availablePackageCount
+    }
+}
+
 struct DeviceRow: View {
-    let device: BlueCatbirdMlsChatListDevices.DeviceInfo
+    let device: DeviceRowModel
     let isCurrentDevice: Bool
     let onDelete: () -> Void
 
@@ -142,7 +164,7 @@ struct DeviceRow: View {
                         }
                     }
 
-                    Text(formatDate(device.lastSeenAt.date))
+                    Text(formatDate(device.lastSeenAt))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -216,13 +238,13 @@ struct DeviceRow: View {
 final class DeviceManagementViewModel {
     private let logger = Logger(subsystem: "blue.catbird", category: "DeviceManagement")
 
-    var devices: [BlueCatbirdMlsChatListDevices.DeviceInfo] = []
+    var devices: [DeviceRowModel] = []
     var isLoading = false
     var error: Error?
     var deleteError: Error?
     var showDeleteConfirmation = false
     var showClearAllConfirmation = false
-    var deviceToDelete: BlueCatbirdMlsChatListDevices.DeviceInfo?
+    var deviceToDelete: DeviceRowModel?
     var currentDeviceId: String?
 
     private var appState: AppState?
@@ -273,8 +295,8 @@ final class DeviceManagementViewModel {
 
         do {
             logger.info("Loading devices...")
-            let (_, output) = try await client.blue.catbird.mlsChat.listDevices(input: .init())
-            devices = output?.devices ?? []
+            let (_, output) = try await client.blue.catbird.chat.getOwnDevices(input: .init())
+            devices = output?.items.map(DeviceRowModel.init) ?? []
             logger.info("Loaded \(self.devices.count) devices")
         } catch {
             logger.error("Failed to load devices: \(error.localizedDescription)")
@@ -285,7 +307,7 @@ final class DeviceManagementViewModel {
     }
 
     @MainActor
-    func deleteDevice(_ device: BlueCatbirdMlsChatListDevices.DeviceInfo) async {
+    func deleteDevice(_ device: DeviceRowModel) async {
         guard let client = appState?.client else {
             logger.error("No authenticated client available")
             return
