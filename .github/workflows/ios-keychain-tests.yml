@@ -86,15 +86,12 @@ jobs:
           fi
 
           suite_tests="$(jq '[.. | objects | select(.nodeType == "Test Case")] | length' keychain-tests.json)"
-          missing_results="$(jq '[.. | objects | select(.nodeType == "Test Case" and (.result == null))] | length' keychain-tests.json)"
-          failed_tests="$(jq '[.. | objects | select(.nodeType == "Test Case" and .result == "Failed")] | length' keychain-tests.json)"
-          skipped_tests="$(jq '[.. | objects | select(.nodeType == "Test Case" and .result == "Skipped")] | length' keychain-tests.json)"
-          expected_failure_tests="$(jq '[.. | objects | select(.nodeType == "Test Case" and .result == "Expected Failure")] | length' keychain-tests.json)"
-          unknown_tests="$(jq '[.. | objects | select(.nodeType == "Test Case" and .result == "unknown")] | length' keychain-tests.json)"
-          echo "Keychain suite result: testCases=$suite_tests expectedFromSource=$expected_tests failed=$failed_tests skipped=$skipped_tests expectedFailures=$expected_failure_tests unknown=$unknown_tests"
+          passed_tests="$(jq '[.. | objects | select(.nodeType == "Test Case" and .result == "Passed")] | length' keychain-tests.json)"
+          non_passed_tests="$(jq '[.. | objects | select(.nodeType == "Test Case" and .result != "Passed")] | length' keychain-tests.json)"
+          echo "Keychain suite result: testCases=$suite_tests expectedFromSource=$expected_tests passed=$passed_tests nonPassed=$non_passed_tests"
 
-          if [[ "$suite_tests" -ne "$expected_tests" || "$missing_results" -ne 0 || "$failed_tests" -ne 0 || "$skipped_tests" -ne 0 || "$expected_failure_tests" -ne 0 || "$unknown_tests" -ne 0 ]]; then
-            echo "Keychain suite result evidence is incomplete or non-green" >&2
+          if [[ "$suite_tests" -ne "$expected_tests" || "$passed_tests" -ne "$expected_tests" || "$non_passed_tests" -ne 0 ]]; then
+            echo "Keychain suite result evidence is incomplete or contains a non-Passed Test Case" >&2
             exit 1
           fi
-          echo "Keychain suite passed: $suite_tests test cases; no failures, skips, expected failures, or unknown results"
+          echo "Keychain suite passed: $suite_tests test cases; every Test Case result is exactly Passed"
