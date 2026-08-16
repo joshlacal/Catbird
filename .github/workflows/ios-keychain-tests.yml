@@ -81,11 +81,13 @@ jobs:
           # The xcresult test tree contains every planned test in the target,
           # including tests excluded by -only-testing. That is why a recursive
           # nodeType == "Test Case" count can be 139 while this suite has 26.
-          # Select the discovered XCTest cases by their source location instead
-          # of guessing from source text or counting excluded plan nodes.
-          suite_tests="$(jq '[.. | objects | select(.nodeType == "Test Case" and ((.sourceLocation.filePath? // "") | endswith("MLSKeychainManagerTests.swift")))] | length' keychain-tests.json)"
-          passed_tests="$(jq '[.. | objects | select(.nodeType == "Test Case" and ((.sourceLocation.filePath? // "") | endswith("MLSKeychainManagerTests.swift")) and .result == "Passed")] | length' keychain-tests.json)"
-          non_passed_tests="$(jq '[.. | objects | select(.nodeType == "Test Case" and ((.sourceLocation.filePath? // "") | endswith("MLSKeychainManagerTests.swift")) and .result != "Passed")] | length' keychain-tests.json)"
+          # Select the discovered XCTest/Swift Testing cases by their canonical
+          # nodeIdentifier instead of guessing from source text or counting
+          # excluded plan nodes. Xcode 27 does not populate sourceLocation for
+          # these nodes, while nodeIdentifier remains stable (Class/test()).
+          suite_tests="$(jq '[.. | objects | select(.nodeType == "Test Case" and ((.nodeIdentifier? // "") | contains("MLSKeychainManagerTests/")))] | length' keychain-tests.json)"
+          passed_tests="$(jq '[.. | objects | select(.nodeType == "Test Case" and ((.nodeIdentifier? // "") | contains("MLSKeychainManagerTests/")) and .result == "Passed")] | length' keychain-tests.json)"
+          non_passed_tests="$(jq '[.. | objects | select(.nodeType == "Test Case" and ((.nodeIdentifier? // "") | contains("MLSKeychainManagerTests/")) and .result != "Passed")] | length' keychain-tests.json)"
           planned_tests="$(jq '[.. | objects | select(.nodeType == "Test Case")] | length' keychain-tests.json)"
           echo "Keychain suite result: selectedTestCases=$suite_tests plannedTargetTestCases=$planned_tests passed=$passed_tests nonPassed=$non_passed_tests"
 
