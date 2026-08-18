@@ -63,7 +63,8 @@ jobs:
             -resultBundlePath keychain-tests.xcresult \
             -parallel-testing-enabled NO \
             -only-testing:CatbirdTests/MLSKeychainManagerTests \
-            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
             | tee keychain-tests.log
           xcode_status=${PIPESTATUS[0]}
           set -e

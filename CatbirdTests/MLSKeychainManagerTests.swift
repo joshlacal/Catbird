@@ -18,6 +18,7 @@ final class MLSKeychainManagerTests: XCTestCase {
     override func setUp() {
         super.setUp()
         keychainManager = MLSKeychainManager.shared
+        keychainManager.accessGroup = nil
         testConversationID = "test-conversation-\(UUID().uuidString)"
         testKeyPackageID = "test-keypackage-\(UUID().uuidString)"
     }
