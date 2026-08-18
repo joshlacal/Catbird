@@ -130,6 +130,7 @@ struct NotificationsView: View {
 
   @ViewBuilder
   private var filterPicker: some View {
+    #if compiler(>=6.2)
     if #available(anyAppleOS 27.0, *) {
       Picker("Filter", selection: $selectedFilter) {
         Text("All").tag(NotificationsViewModel.NotificationFilter.all)
@@ -146,6 +147,14 @@ struct NotificationsView: View {
       .pickerStyle(.segmented)
       .frame(width: hSizeClass == .compact ? 220 : 280, height: 32)
     }
+    #else
+    Picker("Filter", selection: $selectedFilter) {
+      Text("All").tag(NotificationsViewModel.NotificationFilter.all)
+      Text("Mentions").tag(NotificationsViewModel.NotificationFilter.mentions)
+    }
+    .pickerStyle(.segmented)
+    .frame(width: hSizeClass == .compact ? 220 : 280, height: 32)
+    #endif
   }
 
   @ViewBuilder
