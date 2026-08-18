@@ -43,12 +43,12 @@ jobs:
           fi
           echo "Expecting $expected_tests MLS keychain tests"
 
-          simulator_name="$(xcrun simctl list devices available | awk -F '[()]' '/iPhone/ { print $1; exit }' | sed 's/[[:space:]]*$//')"
-          if [[ -z "$simulator_name" ]]; then
+          simulator_id="$(xcrun simctl list devices available | awk -F '[()]' '/iPhone/ { print $2; exit }' | sed 's/[[:space:]]*$//')"
+          if [[ -z "$simulator_id" ]]; then
             echo "No available iPhone simulator found" >&2
             exit 1
           fi
-          destination="platform=iOS Simulator,name=${simulator_name},OS=latest"
+          destination="platform=iOS Simulator,id=${simulator_id}"
           echo "Using destination: $destination"
 
           # Simulator tests intentionally use the system keychain with no
