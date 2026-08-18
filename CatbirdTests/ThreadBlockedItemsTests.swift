@@ -76,6 +76,8 @@ struct ThreadBlockedItemsTests {
       moreParents: false,
       moreReplies: moreReplies,
       opThread: opThread,
+      opThreadPostIndex: nil,
+      opThreadPostCount: nil,
       hiddenByThreadgate: false,
       mutedByViewer: false
     )
