@@ -178,14 +178,62 @@ public enum AdaptiveGlassStyle {
     }
 }
 
+public struct AttributedTextSelection: Sendable, Equatable {
+    public struct RangeSet: Sendable, Equatable {
+        public var ranges: [Range<AttributedString.Index>]
+        public init(ranges: [Range<AttributedString.Index>] = []) {
+            self.ranges = ranges
+        }
+    }
+
+    public enum SelectionIndices: Sendable, Equatable {
+        case insertionPoint
+        case ranges(RangeSet)
+    }
+
+    public var range: NSRange?
+
+    public init() {
+        self.range = nil
+    }
+
+    public init(range: NSRange) {
+        self.range = range
+    }
+
+    public func indices(in text: AttributedString) -> SelectionIndices {
+        if let range = range,
+           let strRange = Range(range, in: String(text.characters)),
+           let start = AttributedString.Index(strRange.lowerBound, within: text),
+           let end = AttributedString.Index(strRange.upperBound, within: text) {
+            return .ranges(RangeSet(ranges: [start..<end]))
+        }
+        return .insertionPoint
+    }
+}
+
+public extension TextEditor {
+    init(text: Binding<AttributedString>, selection: Binding<AttributedTextSelection>) {
+        self.init(text: Binding(
+            get: { String(text.wrappedValue.characters) },
+            set: { text.wrappedValue = AttributedString($0) }
+        ))
+    }
+}
+
 public extension View {
     @ViewBuilder
-    func glassEffect(_ style: Glass = .regular) -> some View {
+    func glassEffect() -> some View {
         self
     }
 
     @ViewBuilder
-    func glassEffect<S: Shape>(_ style: Glass = .regular, in shape: S) -> some View {
+    func glassEffect(_ style: Glass) -> some View {
+        self
+    }
+
+    @ViewBuilder
+    func glassEffect<S: Shape>(_ style: Glass, in shape: S) -> some View {
         self
     }
 
