@@ -1242,31 +1242,31 @@ struct PostComposerView: View {
             
             let display = (displayText?.isEmpty == false) ? displayText : nil
             viewModel.insertLinkWithAttributedString(url: url, displayText: display, at: attrRange)
-            
-        } else {
-        #endif
-            // Legacy: apply NSAttributedString attributes or insert when at caret
-            let newAttributedText = RichTextFacetUtils.addOrInsertLinkFacet(
-                to: viewModel.richAttributedText,
-                url: url,
-                range: range,
-                displayText: displayText
-            )
-            viewModel.richAttributedText = newAttributedText
-            
-            // Update the plain text from the attributed text
-            viewModel.postText = newAttributedText.string
-            
-            // Maintain local tracking for older flow if needed
-            let effectiveRange = range.length == 0 ? NSRange(location: range.location, length: (displayText?.count ?? 0)) : range
-            let linkFacet = RichTextFacetUtils.LinkFacet(
-                range: effectiveRange,
-                url: url,
-                displayText: displayText ?? ""
-            )
-            linkFacets.append(linkFacet)
-            logger.debug("Composer.legacy linkFacets count=\(linkFacets.count)")
+            return
         }
+        #endif
+
+        // Legacy: apply NSAttributedString attributes or insert when at caret
+        let newAttributedText = RichTextFacetUtils.addOrInsertLinkFacet(
+            to: viewModel.richAttributedText,
+            url: url,
+            range: range,
+            displayText: displayText
+        )
+        viewModel.richAttributedText = newAttributedText
+        
+        // Update the plain text from the attributed text
+        viewModel.postText = newAttributedText.string
+        
+        // Maintain local tracking for older flow if needed
+        let effectiveRange = range.length == 0 ? NSRange(location: range.location, length: (displayText?.count ?? 0)) : range
+        let linkFacet = RichTextFacetUtils.LinkFacet(
+            range: effectiveRange,
+            url: url,
+            displayText: displayText ?? ""
+        )
+        linkFacets.append(linkFacet)
+        logger.debug("Composer.legacy linkFacets count=\(linkFacets.count)")
     }
     
     
