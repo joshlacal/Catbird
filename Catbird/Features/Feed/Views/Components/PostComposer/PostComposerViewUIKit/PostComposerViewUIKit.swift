@@ -255,6 +255,7 @@ struct PostComposerViewUIKit: View {
 
           // Trailing: Post button with glass effect
           ToolbarItem(placement: .primaryAction) {
+#if compiler(>=6.2)
             if #available(iOS 26.0, macOS 26.0, *) {
               Button(action: {
                 closePlusMenu()
@@ -274,6 +275,7 @@ struct PostComposerViewUIKit: View {
               .keyboardShortcut(.return, modifiers: .command)
               .accessibilityLabel(vm.isThreadMode ? "Post All" : "Post")
             } else {
+#endif
               Button(action: {
                 closePlusMenu()
                 submitAction(vm: vm)
@@ -293,8 +295,9 @@ struct PostComposerViewUIKit: View {
               .disabled(!canSubmit(vm: vm) || isSubmitting)
               .opacity(isSubmitting ? 0.7 : 1)
               .keyboardShortcut(.return, modifiers: .command)
-              .accessibilityLabel(vm.isThreadMode ? "Post All" : "Post")
+#if compiler(>=6.2)
             }
+#endif
           }
         }
         // Force toolbar re-render when drafts count changes

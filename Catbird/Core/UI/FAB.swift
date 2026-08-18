@@ -150,6 +150,7 @@ struct FAB: View {
     
     @ViewBuilder
     private var feedsButton: some View {
+#if compiler(>=6.2)
         if #available(iOS 26.0, macOS 26.0, *) {
 
         Button(action: feedsAction) {
@@ -173,6 +174,17 @@ struct FAB: View {
                     .contentShape(Circle())
             }
         }
+#else
+        Button(action: feedsAction) {
+            Image(systemName: "square.grid.3x3.square")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 30, height: 30)
+                .foregroundStyle(.primary)
+                .frame(width: circleSize, height: circleSize)
+                .contentShape(Circle())
+        }
+#endif
     }
     
     private var composeButtonLabel: some View {
