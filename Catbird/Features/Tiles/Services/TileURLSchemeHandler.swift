@@ -6,6 +6,7 @@ import WebKit
 
 /// Serves tile resources from local cache via a custom URL scheme
 /// Each tile gets a unique scheme (e.g., tile-{cid}://) for origin isolation
+#if compiler(>=6.2)
 @available(iOS 26.0, macOS 26.0, *)
 struct TileURLSchemeHandler: URLSchemeHandler {
   typealias TaskSequence = AsyncThrowingStream<URLSchemeTaskResult, Error>
@@ -62,3 +63,14 @@ struct TileURLSchemeHandler: URLSchemeHandler {
     return "tile-\(sanitized)"
   }
 }
+#else
+struct TileURLSchemeHandler {
+  init(resources: [String: CachedTileResource]) {}
+  static func scheme(for tileCID: String) -> String {
+    let sanitized = tileCID
+      .replacingOccurrences(of: ":", with: "")
+      .prefix(16)
+    return "tile-\(sanitized)"
+  }
+}
+#endif

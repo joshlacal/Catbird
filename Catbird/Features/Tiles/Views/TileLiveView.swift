@@ -6,6 +6,7 @@ import OSLog
 
 /// Renders a DASL Web Tile as a live, sandboxed WebView
 /// Uses WebKit for SwiftUI (iOS 26+) with full security isolation
+#if compiler(>=6.2)
 @available(iOS 26.0, macOS 26.0, *)
 struct TileLiveView: View {
   let tile: TileEmbedData
@@ -200,3 +201,16 @@ struct TileNavigationDecider: WebPage.NavigationDeciding {
     return .cancel
   }
 }
+#else
+struct TileLiveView: View {
+  let tile: TileEmbedData
+  let resources: [String: CachedTileResource]
+  var onDismiss: (() -> Void)?
+
+  var body: some View {
+    Text("Live tiles require iOS 26 or later")
+      .font(.caption2)
+      .foregroundStyle(.secondary)
+  }
+}
+#endif

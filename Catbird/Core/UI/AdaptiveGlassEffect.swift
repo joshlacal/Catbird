@@ -163,6 +163,15 @@ public struct ConcentricRectangle: Shape, Sendable {
     }
 }
 
+#if os(iOS)
+public class UIGlassEffect: UIVisualEffect {
+    public var tintColor: UIColor?
+    public var isInteractive: Bool = false
+    public override init() { super.init() }
+    public required init?(coder: NSCoder) { super.init(coder: coder) }
+}
+#endif
+
 public enum AdaptiveGlassStyle {
     case regular
     case secondary
