@@ -45,15 +45,15 @@ struct PostComposerView: View {
     // iOS 26+ AttributedString and TextEditor support (store as Any? to avoid availability on stored properties)
     @State private var attributedTextSelectionStorage: Any?
 
+    #if compiler(>=6.2)
     // Convenience accessors for iOS 26+
     @available(iOS 26.0, macOS 26.0, *)
     private var attributedTextSelection: AttributedTextSelection? {
         get { attributedTextSelectionStorage as? AttributedTextSelection }
         set { attributedTextSelectionStorage = newValue }
     }
+    #endif
 
-
-    
     // Audio recording state
     @State private var showingAudioRecorder = false
     @State private var showingAudioVisualizerPreview = false
@@ -77,13 +77,16 @@ struct PostComposerView: View {
             wrappedValue: PostComposerViewModel(parentPost: parentPost, quotedPost: quotedPost, appState: appState))
         self.onMinimize = onMinimize
         
+        #if compiler(>=6.2)
         if #available(iOS 26.0, macOS 26.0, *) {
             self._attributedTextSelectionStorage = State(wrappedValue: AttributedTextSelection())
         } else {
             self._attributedTextSelectionStorage = State(wrappedValue: nil)
         }
+        #else
+        self._attributedTextSelectionStorage = State(wrappedValue: nil)
+        #endif
     }
-    
     
     init(restoringFromDraft draft: PostComposerDraft, appState: AppState, onMinimize: ((PostComposerViewModel) -> Void)? = nil) {
         self.appState = appState
@@ -94,11 +97,15 @@ struct PostComposerView: View {
         self._viewModel = State(wrappedValue: viewModel)
         self.onMinimize = onMinimize
         
+        #if compiler(>=6.2)
         if #available(iOS 26.0, macOS 26.0, *) {
             self._attributedTextSelectionStorage = State(wrappedValue: AttributedTextSelection())
         } else {
             self._attributedTextSelectionStorage = State(wrappedValue: nil)
         }
+        #else
+        self._attributedTextSelectionStorage = State(wrappedValue: nil)
+        #endif
     }
     
     private var composerLeadingPlacement: ToolbarItemPlacement {
@@ -1021,6 +1028,7 @@ struct PostComposerView: View {
         .id("postComposerToolbar") // Stable identity to prevent SwiftUI from recreating
     }
     
+    #if compiler(>=6.2)
     @available(iOS 26.0, macOS 26.0, *)
     private var richTextFormattingButtons: some View {
         HStack(spacing: 12) {
@@ -1127,6 +1135,15 @@ struct PostComposerView: View {
             }
         }
     }
+    #else
+    private var isBoldSelected: Bool { false }
+    private var isItalicSelected: Bool { false }
+    private var isUnderlineSelected: Bool { false }
+    private func toggleBold() {}
+    private func toggleItalic() {}
+    private func toggleUnderline() {}
+    private func requestLinkCreation() {}
+    #endif
     
     // MARK: - Link Creation Methods
     
@@ -1209,6 +1226,7 @@ struct PostComposerView: View {
     private func addLinkFacet(url: URL, displayText: String?, range: NSRange) {
         logger.debug("Composer.addLinkFacet url=\(url.absoluteString) range=\(range.debugDescription)")
         
+        #if compiler(>=6.2)
         // Use modern approach for iOS 26+ and legacy approach for older versions
         if #available(iOS 26.0, macOS 26.0, *) {
             // Convert NSRange to AttributedString range
@@ -1226,6 +1244,7 @@ struct PostComposerView: View {
             viewModel.insertLinkWithAttributedString(url: url, displayText: display, at: attrRange)
             
         } else {
+        #endif
             // Legacy: apply NSAttributedString attributes or insert when at caret
             let newAttributedText = RichTextFacetUtils.addOrInsertLinkFacet(
                 to: viewModel.richAttributedText,

@@ -178,6 +178,14 @@ public class UIGlassEffect: UIVisualEffect {
 }
 #endif
 
+#if !compiler(>=6.2)
+public extension AttributedString {
+    func index(_ index: AttributedString.Index, offsetByCharacters offset: Int) -> AttributedString.Index {
+        self.characters.index(index, offsetBy: offset)
+    }
+}
+#endif
+
 public enum AdaptiveGlassStyle {
     case regular
     case secondary
