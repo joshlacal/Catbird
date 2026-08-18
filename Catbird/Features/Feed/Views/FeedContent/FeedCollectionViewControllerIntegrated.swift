@@ -340,10 +340,12 @@ import os
       collectionView.alwaysBounceVertical = true
       collectionView.keyboardDismissMode = .onDrag
       collectionView.showsVerticalScrollIndicator = true
+      #if compiler(>=6.2)
       if #available(iOS 26.0, *) {
         collectionView.topEdgeEffect.style = .soft
         collectionView.bottomEdgeEffect.style = .soft
       }
+      #endif
 
       // Performance optimizations
       collectionView.isPrefetchingEnabled = true

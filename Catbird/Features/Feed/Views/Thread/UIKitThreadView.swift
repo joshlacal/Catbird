@@ -132,10 +132,12 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
         
         // Let automatic content inset adjustment handle safe areas since we're edge-to-edge
         collectionView.contentInsetAdjustmentBehavior = .automatic
+        #if compiler(>=6.2)
         if #available(iOS 26.0, *) {
             collectionView.topEdgeEffect.style = .soft
             collectionView.bottomEdgeEffect.style = .soft
         }
+        #endif
 
         return collectionView
     }()

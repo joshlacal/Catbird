@@ -1069,11 +1069,15 @@ private extension View {
 
 private struct SoftScrollEdgeEffectModifier: ViewModifier {
   func body(content: Content) -> some View {
+    #if compiler(>=6.2)
     if #available(iOS 26.0, macOS 26.0, *) {
       content.scrollEdgeEffectStyle(.soft, for: .all)
     } else {
       content
     }
+    #else
+    content
+    #endif
   }
 }
 
