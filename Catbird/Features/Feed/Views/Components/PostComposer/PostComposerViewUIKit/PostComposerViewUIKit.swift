@@ -275,7 +275,6 @@ struct PostComposerViewUIKit: View {
               .keyboardShortcut(.return, modifiers: .command)
               .accessibilityLabel(vm.isThreadMode ? "Post All" : "Post")
             } else {
-#endif
               Button(action: {
                 closePlusMenu()
                 submitAction(vm: vm)
@@ -285,18 +284,33 @@ struct PostComposerViewUIKit: View {
                     .progressViewStyle(.circular)
                     .tint(.white)
                     .foregroundStyle(Color.white)
-
                 } else {
                   Image(systemName: "arrow.up")
-                        .foregroundStyle(Color.white)
-
+                    .foregroundStyle(Color.white)
                 }
               }
               .disabled(!canSubmit(vm: vm) || isSubmitting)
               .opacity(isSubmitting ? 0.7 : 1)
               .keyboardShortcut(.return, modifiers: .command)
-#if compiler(>=6.2)
             }
+#else
+            Button(action: {
+              closePlusMenu()
+              submitAction(vm: vm)
+            }) {
+              if isSubmitting {
+                ProgressView()
+                  .progressViewStyle(.circular)
+                  .tint(.white)
+                  .foregroundStyle(Color.white)
+              } else {
+                Image(systemName: "arrow.up")
+                  .foregroundStyle(Color.white)
+              }
+            }
+            .disabled(!canSubmit(vm: vm) || isSubmitting)
+            .opacity(isSubmitting ? 0.7 : 1)
+            .keyboardShortcut(.return, modifiers: .command)
 #endif
           }
         }

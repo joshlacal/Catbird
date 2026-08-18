@@ -526,7 +526,6 @@ struct Post: View, Equatable {
                 if #available(iOS 26.0, macOS 26.0, macCatalyst 26.0, *), TranslationError.notInstalled ~= error {
                     translationError = NSLocalizedString("On‑device translation languages aren’t installed. When prompted, allow the download and try again.", comment: "")
                 } else {
-                #endif
                     let errorMessage = error.localizedDescription
                     let nsError = error as NSError
                     let failureReason = nsError.localizedFailureReason ?? ""
@@ -539,7 +538,19 @@ struct Post: View, Equatable {
                     } else {
                         translationError = "Translation failed: \(fullErrorText.trimmingCharacters(in: .whitespaces))"
                     }
-                #if compiler(>=6.2)
+                }
+                #else
+                let errorMessage = error.localizedDescription
+                let nsError = error as NSError
+                let failureReason = nsError.localizedFailureReason ?? ""
+                let fullErrorText = "\(errorMessage) \(failureReason)"
+
+                if fullErrorText.contains("Offline models not available") || fullErrorText.localizedCaseInsensitiveContains("models not available") {
+                    translationError = NSLocalizedString("On‑device translation languages aren’t installed. Approve the download when prompted, then retry.", comment: "")
+                } else if fullErrorText.contains("network") || fullErrorText.contains("internet") {
+                    translationError = NSLocalizedString("Internet connection required to download translation models.", comment: "")
+                } else {
+                    translationError = "Translation failed: \(fullErrorText.trimmingCharacters(in: .whitespaces))"
                 }
                 #endif
                 isTranslating = false
