@@ -150,14 +150,18 @@ public struct GlassEffectTransition {
     public static let matchedGeometry = GlassEffectTransition()
 }
 
+public struct ConcentricCornerRadius: Sendable {
+    public static func fixed(_ value: CGFloat) -> ConcentricCornerRadius { ConcentricCornerRadius() }
+}
+
 public struct ConcentricCorners: Sendable {
-    public static func concentric(minimum: Any) -> ConcentricCorners { ConcentricCorners() }
+    public static func concentric(minimum: ConcentricCornerRadius) -> ConcentricCorners { ConcentricCorners() }
     public static func fixed(_ value: CGFloat) -> ConcentricCorners { ConcentricCorners() }
 }
 
 public struct ConcentricRectangle: Shape, Sendable {
     public init() {}
-    public init(corners: Any = (), isUniform: Bool = true) {}
+    public init(corners: ConcentricCorners = ConcentricCorners(), isUniform: Bool = true) {}
     public func path(in rect: CGRect) -> Path {
         RoundedRectangle(cornerRadius: 28, style: .continuous).path(in: rect)
     }
