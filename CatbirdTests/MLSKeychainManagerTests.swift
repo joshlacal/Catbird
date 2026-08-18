@@ -6,6 +6,7 @@
 //
 
 import XCTest
+import CatbirdMLSCore
 @testable import Catbird
 
 final class MLSKeychainManagerTests: XCTestCase {

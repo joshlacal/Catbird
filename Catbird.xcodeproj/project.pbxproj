@@ -216,7 +216,6 @@
 				MLSConversationListViewModelTests.swift,
 				MLSConversationManagerTests.swift,
 				MLSCryptoTests.swift,
-				MLSKeychainManagerTests.swift,
 				MLSKeyCleanupTests.swift,
 				MLSMessageOrderingTests.swift,
 				MLSModerationAPITests.swift,
