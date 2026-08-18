@@ -166,6 +166,8 @@ actor TopicSummaryService {
                         }
                     }
                 }
+        #else
+            return nil
         #endif
     }
 
