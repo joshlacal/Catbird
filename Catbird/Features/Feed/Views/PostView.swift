@@ -758,6 +758,9 @@ var id: String {
     let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
     return (message, true)
   }
+#else
+  @MainActor
+  private func summarizeCurrentThread() {}
 #endif
 
   /// Detect if the post has any error conditions
