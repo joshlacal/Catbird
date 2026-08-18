@@ -502,6 +502,7 @@ import os
         // Annotate the cell so Siri's 'View AppIntents Payload' walk can collect
         // onscreen PostEntity references. SwiftUI modifiers inside
         // UIHostingConfiguration are NOT collected; UIKit cell annotation is required.
+#if compiler(>=6.2)
         if #available(iOS 26.0, *) {
           if let entityURI = AppEntityAnnotationIdentifiers.postURI(for: post) {
             cell.appEntityIdentifier = EntityIdentifier(
@@ -510,6 +511,7 @@ import os
             cell.appEntityIdentifier = nil
           }
         }
+#endif
 
         // Remove cell state handler to reduce memory overhead
         cell.configurationUpdateHandler = nil
