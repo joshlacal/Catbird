@@ -20,6 +20,7 @@ import Testing
 
 @testable import Catbird
 
+#if os(iOS) && canImport(GeoToolbox)
 /// Fixture builders for the iOS 27-gated MessagesSchema runtime types.
 @available(iOS 27.0, *)
 private enum Fixtures {
@@ -71,10 +72,12 @@ private enum Fixtures {
     directory.membersByConvoID.mapValues { $0.map(\.did) }
   }
 }
+#endif
 
 @Suite("MessagesSchema recipient & conversation resolution")
 struct MessagesSchemaResolutionTests {
 
+#if os(iOS) && canImport(GeoToolbox)
   // MARK: - conversationID(matching:) — pure member-set matcher
 
   @Test func oneToOneConversationMatchesBySingleRecipient() {
@@ -219,6 +222,7 @@ struct MessagesSchemaResolutionTests {
       identifier: .unknown, name: .components(components), handle: nil, isMe: false)
     #expect(MessagesSchemaRuntime.spokenName(for: byComponents)?.contains("Sam") == true)
   }
+#endif
 
   @Test @MainActor func chatDraftHandoffConsumesMatchingDraftExactlyOnce() {
     ChatDraftHandoff.shared.store(
