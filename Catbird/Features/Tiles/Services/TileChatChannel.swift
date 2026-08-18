@@ -86,6 +86,7 @@ struct TileChatMessage: Codable, Sendable {
 
 // MARK: - TileChatBridge
 
+#if compiler(>=6.2)
 /// Bridges between the tile's JavaScript context and the native chat channel
 /// Injects a `tileChannel` API into the WebPage's content world
 @available(iOS 26.0, macOS 26.0, *)
@@ -135,3 +136,4 @@ final class TileChatBridge {
     }
   }
 }
+#endif
