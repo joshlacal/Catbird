@@ -151,10 +151,12 @@ public struct GlassEffectTransition {
 }
 
 public struct ConcentricCornerRadius: Sendable {
+    public init() {}
     public static func fixed(_ value: CGFloat) -> ConcentricCornerRadius { ConcentricCornerRadius() }
 }
 
 public struct ConcentricCorners: Sendable {
+    public init() {}
     public static func concentric(minimum: ConcentricCornerRadius) -> ConcentricCorners { ConcentricCorners() }
     public static func fixed(_ value: CGFloat) -> ConcentricCorners { ConcentricCorners() }
 }
