@@ -422,6 +422,7 @@ struct Post: View, Equatable {
             
             logger.debug("Translation status: \(String(describing: status)) for \(String(describing: normalizedSourceLanguage)) -> \(String(describing: normalizedTargetLanguage))")
             
+            #if compiler(>=6.2)
             if case .installed = status, #available(iOS 26.0, macOS 26.0, macCatalyst 26.0, *) {
                 // Models already downloaded — translate directly without triggering
                 // the .translationTask() modifier (which shows the system download UI).
@@ -430,6 +431,7 @@ struct Post: View, Equatable {
                 await performTranslation(session: session)
                 return
             }
+            #endif
 
             await MainActor.run {
                 switch status {
@@ -498,6 +500,7 @@ struct Post: View, Equatable {
                 isTranslating = false
             }
         } catch {
+            #if compiler(>=6.2)
             // If models aren’t installed, prompt and retry once.
             if #available(iOS 26.0, macOS 26.0, macCatalyst 26.0, *), TranslationError.notInstalled ~= error {
                 logger.debug("Translate threw notInstalled; retrying after prepareTranslation prompt…")
@@ -515,12 +518,15 @@ struct Post: View, Equatable {
                     // Fall through to unified error handling
                 }
             }
+            #endif
 
             logger.debug("Translation error: \(error.localizedDescription)")
             withAnimation {
+                #if compiler(>=6.2)
                 if #available(iOS 26.0, macOS 26.0, macCatalyst 26.0, *), TranslationError.notInstalled ~= error {
                     translationError = NSLocalizedString("On‑device translation languages aren’t installed. When prompted, allow the download and try again.", comment: "")
                 } else {
+                #endif
                     let errorMessage = error.localizedDescription
                     let nsError = error as NSError
                     let failureReason = nsError.localizedFailureReason ?? ""
@@ -533,6 +539,9 @@ struct Post: View, Equatable {
                     } else {
                         translationError = "Translation failed: \(fullErrorText.trimmingCharacters(in: .whitespaces))"
                     }
+                #if compiler(>=6.2)
+                }
+                #endif
                 }
                 isTranslating = false
             }
