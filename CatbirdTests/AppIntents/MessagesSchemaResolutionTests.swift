@@ -20,7 +20,7 @@ import Testing
 
 @testable import Catbird
 
-#if os(iOS) && canImport(GeoToolbox)
+#if os(iOS) && canImport(GeoToolbox) && compiler(>=7.0)
 /// Fixture builders for the iOS 27-gated MessagesSchema runtime types.
 @available(iOS 27.0, *)
 private enum Fixtures {
@@ -77,7 +77,7 @@ private enum Fixtures {
 @Suite("MessagesSchema recipient & conversation resolution")
 struct MessagesSchemaResolutionTests {
 
-#if os(iOS) && canImport(GeoToolbox)
+#if os(iOS) && canImport(GeoToolbox) && compiler(>=7.0)
   // MARK: - conversationID(matching:) — pure member-set matcher
 
   @Test func oneToOneConversationMatchesBySingleRecipient() {

@@ -2515,7 +2515,7 @@ final class ParentPostCell: UICollectionViewCell {
     // UIHostingConfiguration content aren't collected by the system.
     // Only annotate if the id is a real at-uri; synthetic ids (e.g. from
     // .unexpected thread items) can't be resolved and would cause ATProtocolError.
-#if compiler(>=6.2)
+#if compiler(>=7.0)
     if #available(iOS 26.0, *),
       let entityURI = AppEntityAnnotationIdentifiers.postURI(parentPost.id) {
       appEntityIdentifier = EntityIdentifier(for: PostEntity.self, identifier: entityURI)

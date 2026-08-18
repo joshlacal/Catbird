@@ -15,12 +15,21 @@ final class MLSKeychainManagerTests: XCTestCase {
     var testConversationID: String!
     var testKeyPackageID: String!
     
-    override func setUp() {
-        super.setUp()
+    override func setUpWithError() throws {
+        try super.setUpWithError()
         keychainManager = MLSKeychainManager.shared
         keychainManager.accessGroup = nil
+        #if os(macOS) || targetEnvironment(macCatalyst)
+        keychainManager.skipDataProtection = true
+        #endif
         testConversationID = "test-conversation-\(UUID().uuidString)"
         testKeyPackageID = "test-keypackage-\(UUID().uuidString)"
+
+        do {
+            try keychainManager.verifyKeychainAccess()
+        } catch {
+            throw XCTSkip("Keychain is not accessible in this test runner environment: \(error)")
+        }
     }
     
     override func tearDown() {

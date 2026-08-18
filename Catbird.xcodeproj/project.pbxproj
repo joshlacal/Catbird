@@ -1698,7 +1698,7 @@
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/joshlacal/Petrel";
 			requirement = {
-				kind = upToNextMinorVersion;
+				kind = upToNextMajorVersion;
 				minimumVersion = 1.0.7;
 			};
 		};

@@ -5,7 +5,7 @@
 //  iOS 27 Messages App Schema intents for Catbird MLS chat.
 //
 
-#if os(iOS) && canImport(GeoToolbox)
+#if os(iOS) && canImport(GeoToolbox) && compiler(>=7.0)
 
 import AppIntents
 import Foundation

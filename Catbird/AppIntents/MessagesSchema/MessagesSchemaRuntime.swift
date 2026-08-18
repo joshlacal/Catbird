@@ -7,7 +7,7 @@
 //  keys, storage, and recovery state.
 //
 
-#if os(iOS) && canImport(GeoToolbox)
+#if os(iOS) && canImport(GeoToolbox) && compiler(>=7.0)
 
 import AppIntents
 import CatbirdMLSCore
