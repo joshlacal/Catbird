@@ -104,8 +104,10 @@ struct ProfileEntityQuery: EntityQuery, EntityStringQuery {
 }
 
 
+#if compiler(>=6.2)
 @available(iOS 27.0, *)
 extension ProfileEntity: SyncableEntity {}
+#endif
 
 
 

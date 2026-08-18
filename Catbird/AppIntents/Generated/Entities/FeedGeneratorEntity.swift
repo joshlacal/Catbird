@@ -64,6 +64,8 @@ struct FeedGeneratorEntityQuery: EntityQuery, EntityStringQuery {
 }
 
 
+#if compiler(>=6.2)
 @available(iOS 27.0, *)
 extension FeedGeneratorEntity: SyncableEntity {}
+#endif
 

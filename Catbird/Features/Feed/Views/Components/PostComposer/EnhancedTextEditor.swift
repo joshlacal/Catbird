@@ -21,6 +21,7 @@ import AppKit
 
 // MARK: - iOS 26+ Native SwiftUI Implementation
 
+#if compiler(>=6.2)
 @available(iOS 26.0, macOS 26.0, *)
 struct ModernTextEditor: View {
     @Binding var attributedText: AttributedString
@@ -904,6 +905,7 @@ private struct LinksOnlyFormatting: AttributedTextFormattingDefinition {
         }
     }
 }
+#endif
 
 // MARK: - Legacy iOS < 26 Fallback
 
@@ -952,6 +954,7 @@ struct ModernEnhancedRichTextEditor: View {
     
     var body: some View {
         Group {
+            #if compiler(>=6.2)
             if #available(iOS 26.0, macOS 26.0, *) {
                 ModernTextEditorWrapper(
                     attributedText: Binding(
@@ -989,10 +992,22 @@ struct ModernEnhancedRichTextEditor: View {
                     onLinkCreationRequested: onLinkCreationRequested
                 )
             }
+            #else
+            LegacyTextEditor(
+                attributedText: $attributedText,
+                linkFacets: $linkFacets,
+                placeholder: placeholder,
+                onImagePasted: onImagePasted,
+                onGenmojiDetected: onGenmojiDetected,
+                onTextChanged: onTextChanged,
+                onLinkCreationRequested: onLinkCreationRequested
+            )
+            #endif
         }
     }
 }
 
+#if compiler(>=6.2)
 @available(iOS 26.0, macOS 26.0, *)
 private extension ModernEnhancedRichTextEditor {
     var modernSelectionBinding: Binding<AttributedTextSelection> {
@@ -1057,6 +1072,23 @@ struct EnhancedTextEditor: View {
         }
     }
 }
+#else
+struct EnhancedTextEditor: View {
+    @Binding var attributedText: AttributedString
+    @Binding var textSelection: AttributedTextSelection
+    
+    var placeholder: String = "What's on your mind?"
+    var onImagePasted: ((PlatformImage) -> Void)?
+    var onGenmojiDetected: (([Data]) -> Void)?
+    var onTextChanged: ((AttributedString) -> Void)?
+    var onLinkCreationRequested: ((String, NSRange) -> Void)?
+    
+    var body: some View {
+        Text("Enhanced text editor requires iOS 26+")
+            .foregroundColor(.secondary)
+    }
+}
+#endif
 
 // MARK: - Cross-Platform Image Type Alias
 

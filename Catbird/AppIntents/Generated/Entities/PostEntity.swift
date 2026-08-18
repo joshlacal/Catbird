@@ -98,8 +98,10 @@ struct PostEntityQuery: EntityQuery, EntityStringQuery {
 }
 
 
+#if compiler(>=6.2)
 @available(iOS 27.0, *)
 extension PostEntity: SyncableEntity {}
+#endif
 
 
 
