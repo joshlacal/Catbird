@@ -542,7 +542,6 @@ struct Post: View, Equatable {
                 #if compiler(>=6.2)
                 }
                 #endif
-                }
                 isTranslating = false
             }
         }
