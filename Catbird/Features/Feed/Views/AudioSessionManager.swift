@@ -113,11 +113,11 @@ final class AudioSessionManager: @unchecked Sendable {
         self.wasAudioPlayingBeforeInterruption = audioSession.isOtherAudioPlaying
 
         // Configure for playback that ducks but doesn't stop background audio
-        // Use allowBluetoothHFP and allowAirPlay for better audio support.
+        // Use allowBluetooth and allowAirPlay for better audio support.
         // IMPORTANT: Do not use .duckOthers to avoid attenuating/interrupting other audio apps.
         try audioSession.setCategory(
           .playback, mode: .moviePlayback,
-          options: [.mixWithOthers, .allowBluetoothHFP, .allowAirPlay]
+          options: [.mixWithOthers, .allowBluetooth, .allowAirPlay]
         )
         try audioSession.setActive(true)
         self.isActive = true
@@ -205,7 +205,7 @@ final class AudioSessionManager: @unchecked Sendable {
           try audioSession.setCategory(
             .playAndRecord,
             mode: .default,
-            options: [.defaultToSpeaker, .allowBluetoothHFP]
+            options: [.defaultToSpeaker, .allowBluetooth]
           )
           try audioSession.setActive(true)
           self.isActive = true
