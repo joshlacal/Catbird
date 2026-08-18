@@ -943,10 +943,12 @@ struct PostComposerView: View {
                     })
                 }
                 
+                #if compiler(>=6.2)
                 // Modern rich text formatting (iOS 26+)
                 if #available(iOS 26.0, macOS 26.0, *) {
                     richTextFormattingButtons
                 }
+                #endif
                 
                 // Menu
                 Menu {
@@ -1136,6 +1138,7 @@ struct PostComposerView: View {
         }
     }
     #else
+    private var richTextFormattingButtons: some View { EmptyView() }
     private var isBoldSelected: Bool { false }
     private var isItalicSelected: Bool { false }
     private var isUnderlineSelected: Bool { false }
