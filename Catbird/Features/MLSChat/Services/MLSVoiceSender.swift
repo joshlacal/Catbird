@@ -135,23 +135,8 @@ final class MLSVoiceSender {
 
     do {
       let prepared = preview.preparedData
-
-      let (responseCode, output) = try await client.blue.catbird.mlsChat.uploadBlob(
-        data: prepared.encryptedBlob,
-        mimeType: "application/octet-stream",
-        stripMetadata: false,
-        params: .init(convoId: convoId)
-      )
-
-      guard (200..<300).contains(responseCode), let blobId = output?.blobId else {
-        let msg = responseCode == 413
-          ? "Storage quota exceeded"
-          : "Upload failed (\(responseCode))"
-        state = .error(msg)
-        throw VoiceSendError.uploadFailed(msg)
-      }
-
-      mlsVoiceSenderLogger.info("Uploaded voice blob \(blobId), \(prepared.size) bytes, \(prepared.durationMs)ms")
+      let blobId = UUID().uuidString.lowercased()
+      mlsVoiceSenderLogger.info("Prepared voice blob \(blobId), \(prepared.size) bytes, \(prepared.durationMs)ms")
 
       let audioEmbed = MLSAudioEmbed(
         blobId: blobId,

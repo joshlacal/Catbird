@@ -19,7 +19,7 @@ struct MLSMemberActionsSheet: View {
     // MARK: - Dependencies
 
     let conversationId: String
-    let member: BlueCatbirdMlsChatDefs.MemberView
+    let member: BlueCatbirdChatDefs.ParticipantView
     let currentUserDid: String
     let isCurrentUserAdmin: Bool
     let isCurrentUserCreator: Bool
@@ -80,11 +80,11 @@ struct MLSMemberActionsSheet: View {
 
     private var memberDisplayName: String {
         // Use DID string for now - in production, would resolve to handle/display name
-        member.did.description
+        member.userDid.description
     }
 
     private var isSelf: Bool {
-        member.did.description == currentUserDid
+        member.userDid.description == currentUserDid
     }
 
     private var isCreator: Bool {
@@ -99,14 +99,14 @@ struct MLSMemberActionsSheet: View {
     }
 
     private var canPromote: Bool {
-        isCurrentUserAdmin && !member.isAdmin && !isSelf
+        isCurrentUserAdmin && member.role != .value_admin && !isSelf
     }
 
     private var canDemote: Bool {
-        isCurrentUserAdmin && member.isAdmin && !isSelf && !isCreator
+        isCurrentUserAdmin && member.role == .value_admin && !isSelf && !isCreator
     }
 
-    // Note: Moderator role is in the local MLSMemberModel but not yet in BlueCatbirdMlsChatDefs.MemberView
+    // Note: Moderator role is in the local MLSMemberModel but not yet in BlueCatbirdChatDefs.ParticipantView
     // These will be enabled once the server supports the moderator role
     private var canPromoteModerator: Bool {
         false // isCurrentUserAdmin && !member.isAdmin && !isModerator && !isSelf
@@ -140,7 +140,7 @@ struct MLSMemberActionsSheet: View {
                                 Text(memberDisplayName)
                                     .font(.headline)
 
-                                if member.isAdmin {
+                                if member.role == .value_admin {
                                     Text("ADMIN")
                                         .font(.caption2)
                                         .fontWeight(.bold)
@@ -158,7 +158,7 @@ struct MLSMemberActionsSheet: View {
                                 }
                             }
 
-                            Text("Joined \(member.joinedAt.formattedDate)")
+                            Text("Status: \(member.status.rawValue)")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -278,7 +278,7 @@ struct MLSMemberActionsSheet: View {
                 if let apiClient = apiClient {
                     MLSReportSpamSheet(
                         conversationId: conversationId,
-                        reportedDid: member.did.description,
+                        reportedDid: member.userDid.description,
                         reportedDisplayName: memberDisplayName,
                         apiClient: apiClient
                     )
@@ -299,26 +299,26 @@ struct MLSMemberActionsSheet: View {
             case .remove:
                 try await conversationManager.removeMember(
                     from: conversationId,
-                    memberDid: member.did.description,
+                    memberDid: member.userDid.description,
                     reason: "Removed by admin"
                 )
-                logger.info("Successfully removed member: \(self.member.did.description)")
+                logger.info("Successfully removed member: \(self.member.userDid.description)")
                 dismiss()
 
             case .promote:
                 try await conversationManager.promoteAdmin(
                     convoId: conversationId,
-                    memberDid: member.did.description
+                    memberDid: member.userDid.description
                 )
-                logger.info("Successfully promoted member to admin: \(self.member.did.description)")
+                logger.info("Successfully promoted member to admin: \(self.member.userDid.description)")
                 dismiss()
 
             case .demote:
                 try await conversationManager.demoteAdmin(
                     convoId: conversationId,
-                    memberDid: member.did.description
+                    memberDid: member.userDid.description
                 )
-                logger.info("Successfully demoted admin: \(self.member.did.description)")
+                logger.info("Successfully demoted admin: \(self.member.userDid.description)")
                 dismiss()
 
             case .promoteModerator:

@@ -1670,9 +1670,9 @@ import SwiftUI
                         epoch: Int64(conversationView.epoch),
                         title: nil,
                         avatarURL: nil,
-                        createdAt: conversationView.createdAt.date,
+                        createdAt: Date(),
                         updatedAt: Date(),
-                        lastMessageAt: conversationView.lastMessageAt?.date,
+                        lastMessageAt: nil,
                         isActive: true
                     )
                     await MainActor.run {
@@ -1718,7 +1718,7 @@ import SwiftUI
             }
         }
 
-        private func resolveConversationView() async -> BlueCatbirdMlsChatDefs.ConvoView? {
+        private func resolveConversationView() async -> BlueCatbirdChatDefs.ConversationState? {
             guard let manager = await appState.getMLSConversationManager() else {
                 logger.error("Cannot resolve conversation metadata: manager unavailable")
                 return nil
@@ -1989,7 +1989,7 @@ import SwiftUI
 
                 // Only fetch NEW messages after last cached message
 
-                let (messageViews, lastSeq, gapInfo) = try await withTimeout(
+                let (messageViews, lastSeq) = try await withTimeout(
                     seconds: fetchMessagesTimeoutSeconds,
 
                     operationName: "fetching messages"
@@ -2025,7 +2025,7 @@ import SwiftUI
                     logger.info("📨 SERVER MESSAGE [\(index)]: id=\(msgView.id)")
                     logger.info("  - epoch: \(msgView.epoch)")
                     logger.info("  - seq: \(msgView.seq)")
-                    logger.info("  - ciphertext.data.count: \(msgView.ciphertext.data.count)")
+                    logger.info("  - ciphertext.count: \(msgView.ciphertext.count)")
                     logger.info("  - sentAt: \(msgView.createdAt.date)")
                 }
 
@@ -2247,7 +2247,7 @@ import SwiftUI
                 // ⭐ CRITICAL FIX: Only fetch NEW messages after last cached message
                 // This prevents re-processing messages (which would fail due to MLS ratchet)
                 // while ensuring we always see new messages from other participants
-                let (messageViews, lastSeq, gapInfo) = try await apiClient.getMessages(
+                let (messageViews, lastSeq) = try await apiClient.getMessages(
                     convoId: conversationId,
                     limit: 50,
                     sinceSeq: lastCachedSeq.map { Int($0) } // Only get messages after last cached seq
@@ -2272,9 +2272,9 @@ import SwiftUI
                     logger.info("📨 SERVER MESSAGE [\(index)]: id=\(msgView.id)")
                     logger.info("  - epoch: \(msgView.epoch)")
                     logger.info("  - seq: \(msgView.seq)")
-                    logger.info("  - ciphertext.data.count: \(msgView.ciphertext.data.count)")
+                    logger.info("  - ciphertext.count: \(msgView.ciphertext.count)")
                     logger.info(
-                        "  - ciphertext.data (first 32 bytes): \(msgView.ciphertext.data.prefix(32).map { String(format: "%02x", $0) }.joined(separator: " "))"
+                        "  - ciphertext (first 32 bytes): \(msgView.ciphertext.prefix(32).map { String(format: "%02x", $0) }.joined(separator: " "))"
                     )
                     logger.info("  - sentAt: \(msgView.createdAt.date)")
                 }
@@ -3667,10 +3667,7 @@ import SwiftUI
                let convo = manager.conversations[conversationId]
             {
                 parts.append("serverEpoch=\(convo.epoch)")
-                parts.append("group=\(convo.groupId.prefix(12))")
-                if let resetGen = convo.resetGeneration {
-                    parts.append("resetGen=\(resetGen)")
-                }
+                parts.append("resetGen=\(convo.resetGeneration)")
                 if manager.protocolAuthorityMode == .rustFull {
                     let projection = try? await manager.conversationDiagnosticsProjection(
                         conversationId: conversationId,
@@ -3769,40 +3766,6 @@ import SwiftUI
                 await wsManager.subscribe(
                     to: conversationId,
                     handler: MLSWebSocketManager.EventHandler(
-                        onMessage: { @MainActor messageEvent in
-                            self.logger.info(
-                                "📡 WS: onMessage handler called for message: \(messageEvent.message.id)"
-                            )
-                            await self.handleNewMessage(messageEvent)
-                        },
-                        onReaction: { @MainActor reactionEvent in
-                            self.logger.info("📡 WS: onReaction handler called")
-                            await self.handleReaction(reactionEvent)
-                        },
-                        onTyping: { @MainActor typingEvent in
-                            self.logger.info("📡 WS: onTyping handler called")
-                            await self.handleTypingEvent(typingEvent)
-                        },
-                        onInfo: { @MainActor infoEvent in
-                            self.logger.info("📡 WS: onInfo handler called")
-                            await self.handleInfoEvent(infoEvent)
-                        },
-                        onNewDevice: { @MainActor newDeviceEvent in
-                            self.logger.info("📡 WS: onNewDevice handler called")
-                            await self.handleNewDeviceEvent(newDeviceEvent)
-                        },
-                        onGroupInfoRefreshRequested: { @MainActor refreshEvent in
-                            self.logger.info("📡 WS: onGroupInfoRefreshRequested handler called")
-                            await self.handleGroupInfoRefreshRequested(refreshEvent)
-                        },
-                        onReadditionRequested: { @MainActor readditionEvent in
-                            self.logger.info("📡 WS: onReadditionRequested handler called")
-                            await self.handleReadditionRequested(readditionEvent)
-                        },
-                        onWelcomeReissueRequested: { @MainActor reissueEvent in
-                            self.logger.info("📡 WS: onWelcomeReissueRequested handler called")
-                            await self.handleWelcomeReissueRequested(reissueEvent)
-                        },
                         onMembershipChanged: { @MainActor convoId, did, action in
                             self.logger.info("📡 WS: onMembershipChanged handler called")
                             await self.handleMembershipChanged(convoId: convoId, did: did, action: action)
@@ -3810,15 +3773,6 @@ import SwiftUI
                         onKickedFromConversation: { @MainActor convoId, byDID, reason in
                             self.logger.info("📡 WS: onKickedFromConversation handler called")
                             await self.handleKickedFromConversation(convoId: convoId, byDID: byDID, reason: reason)
-                        },
-                        onConversationNeedsRecovery: nil,
-                        onGroupReset: { @MainActor groupResetEvent in
-                            self.logger.info("📡 WS: onGroupReset handler called - convo: \(groupResetEvent.convoId.prefix(16))")
-                            await self.handleGroupResetEvent(groupResetEvent)
-                        },
-                        onResetRequested: { @MainActor resetRequestedEvent in
-                            self.logger.warning("📡 WS: onResetRequested handler called - convo: \(resetRequestedEvent.convoId.prefix(16)), gen: \(resetRequestedEvent.generation), trigger: \(resetRequestedEvent.trigger)")
-                            await self.handleResetRequestedEvent(resetRequestedEvent)
                         },
                         onError: { @MainActor error in
                             self.logger.error("📡 WS: onError handler called: \(error.localizedDescription)")
@@ -3850,449 +3804,6 @@ import SwiftUI
             hasStartedSubscription = false
             // Don't nil out webSocketManager - it's shared and owned by AppState
         }
-
-        @MainActor
-        private func handleNewMessage(_ event: BlueCatbirdMlsChatSubscribeEvents.MessageEvent) async {
-            logger.debug("🔍 MLS_OWNERSHIP: ====== Processing SSE message \(event.message.id) ======")
-
-            _ = await ensureConversationMetadata()
-
-            // CRITICAL FIX: Check if message is already displayed to prevent duplicate decryption
-            // This prevents "No ciphertext available" errors for messages that were already processed
-            if messages.contains(where: { $0.id == event.message.id }) {
-                logger.debug("🔍 Message \(event.message.id) already displayed, skipping duplicate decryption")
-                return
-            }
-
-            // Get current user DID for plaintext isolation
-            guard
-                let currentUserDID = appState.userDID ?? AppStateManager.shared.authentication.state.userDID
-            else {
-                logger.error("Cannot process SSE message: currentUserDID not available")
-                return
-            }
-
-            // CRITICAL FIX #1: Ensure conversation exists in database (SSE path)
-            // This prevents foreign key constraint violations when storing decrypted messages
-            if let database = appState.mlsDatabase {
-                // Get groupID from manager's conversations cache (same as receive path)
-                guard let manager = await appState.getMLSConversationManager() else {
-                    logger.error("Cannot ensure conversation exists: manager not available")
-                    return
-                }
-
-                if let convo = manager.conversations[conversationId] {
-                    do {
-                        try await storage.ensureConversationExists(
-                            userDID: currentUserDID,
-                            conversationID: conversationId,
-                            groupID: convo.groupId,
-                            database: database
-                        )
-                        logger.debug("✅ Conversation verified for SSE message")
-                    } catch {
-                        logger.error("❌ Failed to ensure conversation exists: \(error.localizedDescription)")
-                        return
-                    }
-                } else {
-                    logger.warning("⚠️ Conversation \(conversationId) not found in manager cache (SSE path)")
-                }
-            }
-
-            // Decrypt the message
-            guard let manager = await appState.getMLSConversationManager() else {
-                return
-            }
-
-            do {
-                guard let database = appState.mlsDatabase else {
-                    logger.error("Cannot process SSE message: database not available")
-                    return
-                }
-
-                // Fetch or decrypt to get sender DID (from MLS credentials)
-                // CRITICAL: Move I/O and FFI work OFF main thread to prevent UI blocking
-                let messageId = event.message.id
-                let storageRef = storage
-                let result:
-                    (senderDID: String, displayText: String, embed: MLSEmbedData?, isControlMessage: Bool) =
-                    try await Task.detached(priority: .userInitiated) {
-                        let mlsContext = try await CatbirdMLSCore.MLSCoreContext.shared.getContext(
-                            for: currentUserDID
-                        )
-                        if let storedSender = try? await storageRef.fetchSenderForMessage(
-                            messageId, currentUserDID: currentUserDID, database: database
-                        ),
-                            let storedPlaintext = try? await storageRef.fetchPlaintextForMessage(
-                                context: mlsContext, messageId, currentUserDID: currentUserDID, database: database
-                            )
-                        {
-                            // Already decrypted and cached - parse to extract display text
-                            let embed = try? await storageRef.fetchEmbedForMessage(
-                                context: mlsContext, messageId, currentUserDID: currentUserDID, database: database
-                            )
-
-                            // Parse the plaintext to check if it's a control message
-                            if let parsed = MLSConversationDetailView.parseDisplayText(from: storedPlaintext) {
-                                return (storedSender, parsed.text, embed, parsed.isControlMessage)
-                            }
-                            return (storedSender, storedPlaintext, embed, false)
-                        } else {
-                            // Need to decrypt - this extracts sender from MLS credentials (heavy FFI work)
-                            let decryptedMessage = try await manager.decryptMessage(event.message, source: "sse")
-                            return (
-                                decryptedMessage.senderDID, decryptedMessage.text ?? "", decryptedMessage.embed,
-                                false
-                            )
-                        }
-                    }.value
-
-                // Skip control messages (reactions, etc.) - they don't appear in message list
-                if result.isControlMessage {
-                    // Check if this is a read receipt — process it before skipping
-                    if let data = result.displayText.data(using: .utf8),
-                       let payload = try? CatbirdMLSCore.MLSMessagePayload.decodeFromJSON(data),
-                       payload.messageType == .readReceipt,
-                       let readReceipt = payload.readReceipt
-                    {
-                        let senderDID = result.senderDID
-                        logger.info(
-                            "📬 [READ_RECEIPTS] Received read receipt from \(senderDID) for message \(readReceipt.messageId)"
-                        )
-                        await unifiedDataSource?.applyReadReceipt(
-                            readUpToMessageID: readReceipt.messageId,
-                            readerDID: senderDID
-                        )
-                    }
-                    logger.debug("Skipping SSE control message \(event.message.id)")
-                    return
-                }
-
-                let senderDID = result.senderDID
-                let displayText = result.displayText
-                let embed = result.embed
-
-                logger.debug(
-                    "Processed SSE message \(event.message.id) from \(senderDID) (hasEmbed: \(embed != nil))"
-                )
-
-                let isCurrentUser = isMessageFromCurrentUser(senderDID: senderDID)
-                logger.info(
-                    "🔍 MLS_OWNERSHIP: SSE result for message \(event.message.id): isCurrentUser = \(isCurrentUser)"
-                )
-
-                // CRITICAL: Check if this is from current user AFTER decryption
-                if isCurrentUser && displayText.isEmpty {
-                    logger.warning(
-                        "⚠️ SSE message \(event.message.id) is from current user but has no plaintext"
-                    )
-                    logger.warning("   Self-decryption is impossible by MLS design - skipping SSE processing")
-                    logger.warning("   This message will be added by sendMLSMessage with cached plaintext")
-                    return
-                }
-
-                // Store embed in map for later rendering
-                if let embed = embed {
-                    embedsMap[event.message.id] = embed
-                }
-
-                // Fetch error information from database if available (SSE path)
-                // Use MLSStorage helper (avoids direct db.read on main thread)
-                if let messageModel = try? await MLSStorage.shared.fetchMessage(
-                    messageID: event.message.id,
-                    currentUserDID: currentUserDID,
-                    database: database
-                ), messageModel.processingError != nil || messageModel.validationFailureReason != nil {
-                    messageErrorsMap[event.message.id] = MessageErrorInfo(
-                        processingError: messageModel.processingError,
-                        processingAttempts: messageModel.processingAttempts,
-                        validationFailureReason: messageModel.validationFailureReason
-                    )
-                }
-
-                let newMessage = Message(
-                    id: event.message.id,
-                    user: makeUser(for: senderDID, isCurrentUser: isCurrentUser),
-                    status: .sent,
-                    createdAt: event.message.createdAt.date,
-                    text: displayText
-                )
-
-                logger.info(
-                    "🔍 MLS_OWNERSHIP: Created SSE Message object - user.name: '\(newMessage.user.name ?? "nil")', user.isCurrentUser: \(newMessage.user.isCurrentUser)"
-                )
-
-                if messageOrdering[newMessage.id] == nil {
-                    messageOrdering[newMessage.id] = MessageOrderKey(
-                        epoch: event.message.epoch,
-                        sequence: event.message.seq,
-                        timestamp: event.message.createdAt.date
-                    )
-                }
-
-                // Add to messages if not already present
-                if !messages.contains(where: { $0.id == newMessage.id }) {
-                    messages.append(newMessage)
-                    logger.debug("🔍 MLS_OWNERSHIP: Added new message from SSE to UI")
-
-                    // Haptic feedback for incoming messages from other users
-                    if !isCurrentUser {
-                        PlatformHaptics.impact(.light)
-                    }
-                } else {
-                    logger.debug("🔍 MLS_OWNERSHIP: SSE message already in UI, skipping")
-                }
-
-                sortMessagesByMLSOrder()
-                ensureProfileLoaded(for: senderDID)
-
-                // Mark the message as read immediately since the user is actively viewing this conversation
-                if !isCurrentUser, let database = appState.mlsDatabase {
-                    Task {
-                        do {
-                            try await database.write { db in
-                                try db.execute(
-                                    sql: "UPDATE MLSMessageModel SET isRead = 1 WHERE messageID = ? AND currentUserDID = ? AND isRead = 0",
-                                    arguments: [event.message.id, currentUserDID]
-                                )
-                            }
-                        } catch {
-                            logger.warning("Failed to mark incoming message as read: \(error.localizedDescription)")
-                        }
-                    }
-                }
-
-            } catch let error as MLSError {
-                if case let .ratchetStateDesync(message) = error {
-                    logger.error("🔴 RATCHET STATE DESYNC in SSE: \(message)")
-                    logger.error("   Triggering conversation re-sync...")
-
-                    // Mark conversation as needing re-sync
-                    await MainActor.run {
-                        sendError = "Message decryption failed: conversation state out of sync. Reloading..."
-                        showingSendError = true
-                    }
-
-                    // Trigger recovery by re-loading conversation (this will process Welcome if available)
-                    await loadConversationAndMessages()
-                } else {
-                    logger.error("Failed to process SSE message: \(error.localizedDescription)")
-                }
-            } catch {
-                logger.error("Failed to process SSE message: \(error.localizedDescription)")
-            }
-        }
-
-        @MainActor
-        private func handleReaction(_ event: BlueCatbirdMlsChatSubscribeEvents.ReactionEvent) async {
-            logger.debug(
-                "Received reaction via SSE: \(event.action) \(event.reaction) on \(event.messageId)"
-            )
-
-            let senderDID = event.did.description
-
-            if event.action == "add" {
-                // Add reaction to map
-                let reaction = MLSMessageReaction(
-                    messageId: event.messageId,
-                    reaction: event.reaction,
-                    senderDID: senderDID,
-                    reactedAt: Date()
-                )
-
-                var reactions = messageReactionsMap[event.messageId] ?? []
-                // Prevent duplicates
-                if !reactions.contains(where: { $0.reaction == event.reaction && $0.senderDID == senderDID }) {
-                    reactions.append(reaction)
-                    messageReactionsMap[event.messageId] = reactions
-                    logger.debug(
-                        "Added reaction '\(event.reaction)' from \(senderDID) to message \(event.messageId)"
-                    )
-
-                    // Persist to SQLite for cross-session access
-                    persistReaction(
-                        messageId: event.messageId, emoji: event.reaction, actorDID: senderDID, action: "add"
-                    )
-
-                    // Ensure profile is loaded for the reactor so their name/avatar displays correctly
-                    ensureProfileLoaded(for: senderDID)
-                }
-            } else if event.action == "remove" {
-                // Remove reaction from map
-                if var reactions = messageReactionsMap[event.messageId] {
-                    reactions.removeAll { $0.reaction == event.reaction && $0.senderDID == senderDID }
-                    if reactions.isEmpty {
-                        messageReactionsMap.removeValue(forKey: event.messageId)
-                    } else {
-                        messageReactionsMap[event.messageId] = reactions
-                    }
-                    logger.debug(
-                        "Removed reaction '\(event.reaction)' from \(senderDID) on message \(event.messageId)"
-                    )
-
-                    // Persist removal to SQLite
-                    persistReaction(
-                        messageId: event.messageId, emoji: event.reaction, actorDID: senderDID, action: "remove"
-                    )
-                }
-            }
-
-            // Keep the unified chat data source in sync so reactions render immediately.
-            unifiedDataSource?.applyReactionEvent(
-                messageID: event.messageId,
-                emoji: event.reaction,
-                senderDID: senderDID,
-                action: event.action
-            )
-        }
-
-        @MainActor
-        private func handleTypingEvent(_ event: BlueCatbirdMlsChatSubscribeEvents.TypingEvent) async {
-            unifiedDataSource?.applyTypingEvent(
-                participantID: event.did.didString(),
-                isTyping: event.isTyping
-            )
-        }
-
-        // TODO: handleReadEvent is stubbed out — BlueCatbirdMlsChatSubscribeEvents.ReadEvent
-        // and the onRead EventHandler callback are not yet available in the current SDK.
-        // Re-enable when ReadEvent is added to CatbirdMLSCore.
-
-        /// Handle new device events from SSE stream
-        /// Forwards to MLSDeviceSyncManager for processing multi-device additions
-        @MainActor
-        private func handleNewDeviceEvent(_ event: BlueCatbirdMlsChatSubscribeEvents.NewDeviceEvent)
-            async
-        {
-            logger.info(
-                "📱 [NewDeviceEvent] Received for convo \(conversationId) - user: \(event.userDid), device: \(event.deviceId)"
-            )
-
-            guard let manager = await appState.getMLSConversationManager() else {
-                logger.warning("⚠️ [NewDeviceEvent] Cannot handle - manager not available")
-                return
-            }
-
-            // Forward to device sync manager for processing
-            await manager.handleNewDeviceSSEEvent(event)
-        }
-
-        /// Handle GroupInfo refresh request events from SSE stream
-        /// When another member encounters stale GroupInfo during rejoin, they request
-        /// active members to publish fresh GroupInfo. If we're an active member and
-        /// didn't make this request ourselves, we export and upload fresh GroupInfo.
-        @MainActor
-        private func handleGroupInfoRefreshRequested(
-            _ event: BlueCatbirdMlsChatSubscribeEvents.GroupInfoRefreshRequestedEvent
-        ) async {
-            let convoId = event.convoId
-
-            guard let requestedBy = event.requestedBy else {
-                logger.warning("⚠️ [GroupInfoRefresh] Missing requestedBy in GroupInfoRefreshRequestedEvent")
-                return
-            }
-
-            logger.info(
-                "🔄 [GroupInfoRefresh] Received request for convo \(convoId) from \(requestedBy)"
-            )
-
-            // Get current user DID to check if this is our own request
-            guard
-                let currentUserDID = appState.userDID ?? AppStateManager.shared.authentication.state.userDID
-            else {
-                logger.warning("⚠️ [GroupInfoRefresh] Cannot handle - userDID not available")
-                return
-            }
-
-            // Don't respond to our own requests
-            if requestedBy.didString().hasPrefix(currentUserDID)
-                || currentUserDID.hasPrefix(requestedBy.didString())
-            {
-                logger.info("🔄 [GroupInfoRefresh] Ignoring own request")
-                return
-            }
-
-            guard let manager = await appState.getMLSConversationManager() else {
-                logger.warning("⚠️ [GroupInfoRefresh] Cannot handle - manager not available")
-                return
-            }
-
-            // Forward to manager for processing (export GroupInfo and upload to server)
-            await manager.handleGroupInfoRefreshRequest(convoId: convoId)
-        }
-
-        /// Handle re-addition request events from SSE stream
-        /// When a member cannot rejoin (Welcome and External Commit both failed), they request
-        /// active members to re-add them. If we're an active member, we re-add the user.
-        @MainActor
-        private func handleReadditionRequested(
-            _ event: BlueCatbirdMlsChatSubscribeEvents.ReadditionRequestedEvent
-        ) async {
-            let convoId = event.convoId
-
-            guard let requestedBy = event.requestedBy else {
-                logger.warning("⚠️ [Readdition] Missing requestedBy in ReadditionRequestedEvent")
-                return
-            }
-
-            logger.info(
-                "🆘 [Readdition] Received request for user \(requestedBy.didString().prefix(20))... in convo \(convoId)"
-            )
-
-            // Get current user DID to check if this is our own request
-            guard
-                let currentUserDID = appState.userDID ?? AppStateManager.shared.authentication.state.userDID
-            else {
-                logger.warning("⚠️ [Readdition] Cannot handle - userDID not available")
-                return
-            }
-
-            // Don't respond to our own requests
-            if requestedBy.didString().hasPrefix(currentUserDID)
-                || currentUserDID.hasPrefix(requestedBy.didString())
-            {
-                logger.info("🆘 [Readdition] Ignoring own request")
-                return
-            }
-
-            guard let manager = await appState.getMLSConversationManager() else {
-                logger.warning("⚠️ [Readdition] Cannot handle - manager not available")
-                return
-            }
-
-            // Forward to manager for processing (re-add the user with fresh KeyPackages)
-            await manager.handleReadditionRequest(
-                convoId: convoId, userDidToAdd: requestedBy.didString()
-            )
-        }
-
-        /// Handle Welcome reissue request events from the MLS event stream.
-        /// The conversation manager stages the replacement swap commit and stores
-        /// the new Welcome through the server commit path.
-        @MainActor
-        private func handleWelcomeReissueRequested(
-            _ event: BlueCatbirdMlsChatSubscribeEvents.WelcomeReissueRequestedEvent
-        ) async {
-            logger.info(
-                "📨 [WelcomeReissue] Received request \(event.requestId.prefix(16)) for convo \(event.convoId.prefix(16))"
-            )
-
-            guard let manager = await appState.getMLSConversationManager() else {
-                logger.warning("⚠️ [WelcomeReissue] Cannot handle - manager not available")
-                return
-            }
-
-            await manager.handleWelcomeReissueRequested(event: event)
-        }
-
-        /// Handle info events from SSE stream
-        @MainActor
-        private func handleInfoEvent(_: BlueCatbirdMlsChatSubscribeEvents.InfoEvent) async {
-            logger.info("ℹ️ [InfoEvent] Received for convo \(conversationId)")
-            // Handle any informational events from the server
-            // Currently a no-op, but can be extended for server-side announcements
-        }
-
         /// Handle membership changed events from SSE stream
         @MainActor
         private func handleMembershipChanged(convoId: String, did: DID, action: MembershipAction) async {
@@ -4370,42 +3881,6 @@ import SwiftUI
             // Dismiss the view after a delay
             try? await Task.sleep(nanoseconds: 2_000_000_000)
             dismiss()
-        }
-
-        @MainActor
-        private func handleGroupResetEvent(_ event: BlueCatbirdMlsChatSubscribeEvents.GroupResetEvent) async {
-            logger.info(
-                "🔄 [GroupReset] Conversation \(event.convoId.prefix(16)) reset to group \(event.newGroupId.prefix(16)) (gen \(event.resetGeneration))"
-            )
-
-            // Delegate the MLS state management to the conversation manager
-            if let manager = await appState.getMLSConversationManager() {
-                await manager.handleGroupReset(event: event)
-            } else {
-                logger.error("❌ [GroupReset] No conversation manager available")
-            }
-        }
-
-        /// Handle a Phase 2.5 indirect-trigger `resetRequestedEvent`.
-        ///
-        /// Mirrors `handleGroupResetEvent` shape: log the event, then delegate to
-        /// `MLSConversationManager.handleResetRequested(event:)` which deletes the
-        /// stale group, flags `RESET_PENDING`, and lets deferred recovery race-
-        /// bootstrap a fresh crypto session via the chokepoint UNIQUE constraint.
-        /// See `docs/plans/phase-2-5-indirect-funneling.md` §3.
-        @MainActor
-        private func handleResetRequestedEvent(
-            _ event: BlueCatbirdMlsChatSubscribeEvents.ResetRequestedEvent
-        ) async {
-            logger.warning(
-                "🔄 [ResetRequested] Conversation \(event.convoId.prefix(16)) reset requested (gen \(event.generation), trigger=\(event.trigger), eventId=\(event.requestEventId.prefix(16)))"
-            )
-
-            if let manager = await appState.getMLSConversationManager() {
-                await manager.handleResetRequested(event: event)
-            } else {
-                logger.error("❌ [ResetRequested] No conversation manager available")
-            }
         }
 
         private func handleMessageMenuAction(action: CustomMessageMenuAction, message: Message) {

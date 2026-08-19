@@ -13,12 +13,12 @@ import PetrelCatbird
 /// Represents a user's presence in an MLS conversation, grouping all their devices together
 struct MLSGroupedMember: Identifiable, Equatable {
     let userDid: String
-    let devices: [BlueCatbirdMlsChatDefs.MemberView]
+    let devices: [BlueCatbirdChatDefs.ParticipantView]
     let isAdmin: Bool
     let isCreator: Bool
     let firstJoinedAt: Date
 
     var id: String { userDid }
     var deviceCount: Int { devices.count }
-    var primaryDevice: BlueCatbirdMlsChatDefs.MemberView? { devices.first }
+    var primaryDevice: BlueCatbirdChatDefs.ParticipantView? { devices.first }
 }

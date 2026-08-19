@@ -82,11 +82,11 @@ final class MLSNewConversationViewModel {
     // MARK: - Combine
 
     private var cancellables = Set<AnyCancellable>()
-    private let conversationCreatedSubject = PassthroughSubject<BlueCatbirdMlsChatDefs.ConvoView, Never>()
+    private let conversationCreatedSubject = PassthroughSubject<BlueCatbirdChatDefs.ConversationState, Never>()
     private let errorSubject = PassthroughSubject<Error, Never>()
 
     /// Publisher for successful conversation creation
-    var conversationCreatedPublisher: AnyPublisher<BlueCatbirdMlsChatDefs.ConvoView, Never> {
+    var conversationCreatedPublisher: AnyPublisher<BlueCatbirdChatDefs.ConversationState, Never> {
         conversationCreatedSubject.eraseToAnyPublisher()
     }
 

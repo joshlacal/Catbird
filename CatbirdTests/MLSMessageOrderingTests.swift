@@ -111,22 +111,22 @@ final class MLSMessageOrderingTests: XCTestCase {
   }
 
   /// Create a test MessageView
-  private func makeTestMessage(
+  private func makeMessageView(
     id: String = UUID().uuidString,
     seq: Int64,
     epoch: Int64 = 0,
     convoId: String? = nil
-  ) -> BlueCatbirdMlsChatDefs.MessageView {
-    BlueCatbirdMlsChatDefs.MessageView(
+  ) -> BlueCatbirdChatDefs.ApplicationEntry {
+    BlueCatbirdChatDefs.ApplicationEntry(
       convoId: convoId ?? testConversationID,
+      id: id,
+      senderDid: (try? DID(didString: testUserDID)) ?? (try! DID(didString: "did:plc:testuser")),
+      senderDeviceDid: "device-1",
+      senderSeq: Int(seq),
+      ciphertext: Bytes(data: Data("Test message \(seq)".utf8)),
       epoch: Int(epoch),
       seq: Int(seq),
-      id: id,
-      senderDid: testUserDID,
-      sender: nil,
-      text: "Test message \(seq)",
-      embed: nil,
-      sentAt: Date().addingTimeInterval(-Double(seq) * 60).iso8601String
+      createdAt: ATProtocolDate(date: Date().addingTimeInterval(-Double(seq) * 60))
     )
   }
 
@@ -437,13 +437,12 @@ final class MLSMessageOrderingTests: XCTestCase {
     let decoder = JSONDecoder()
     decoder.dateDecodingStrategy = .iso8601
     let deserializedMessage = try decoder.decode(
-      BlueCatbirdMlsChatDefs.MessageView.self,
+      BlueCatbirdChatDefs.ApplicationEntry.self,
       from: buffered.messageViewJSON
     )
 
     XCTAssertEqual(deserializedMessage.id, message.id, "Deserialized message ID should match")
     XCTAssertEqual(deserializedMessage.seq, message.seq, "Deserialized sequence should match")
-    XCTAssertEqual(deserializedMessage.text, message.text, "Deserialized text should match")
   }
 
   // MARK: - flushBufferedMessages Tests

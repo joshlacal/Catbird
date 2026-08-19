@@ -165,9 +165,9 @@ struct MLSChatSettingsView: View {
 
     do {
       let settings = try await apiClient.getChatRequestSettings()
-      allowFollowersBypass = settings.allowFollowersBypass ?? false
-      allowFollowingBypass = settings.allowFollowingBypass ?? false
-      autoExpireDays = settings.autoExpireDays ?? 0
+      allowFollowersBypass = (settings["allowFollowersBypass"] == "true")
+      allowFollowingBypass = (settings["allowFollowingBypass"] == "true")
+      autoExpireDays = Int(settings["autoExpireDays"] ?? "") ?? 0
 
       if let conversationManager = await appState.getMLSConversationManager() {
         if let policy = await conversationManager.getChatPolicy() {

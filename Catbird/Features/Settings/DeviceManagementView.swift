@@ -272,8 +272,9 @@ final class DeviceManagementViewModel {
         for device in otherDevices {
             do {
                 logger.info("Deleting garbage device: \(device.deviceId)")
-                let input = BlueCatbirdMlsChatRemoveDevice.Input(deviceId: device.deviceId)
-                _ = try await client.blue.catbird.mlsChat.removeDevice(input: input)
+                if let conversationManager = await appState?.getMLSConversationManager() {
+                    _ = try? await conversationManager.deviceManager?.deleteDevice(for: appState?.userDID ?? "")
+                }
                 devices.removeAll { $0.deviceId == device.deviceId }
             } catch {
                 logger.error("Failed to delete garbage device \(device.deviceId): \(error.localizedDescription)")
@@ -316,17 +317,9 @@ final class DeviceManagementViewModel {
         do {
             logger.info("Deleting device: \(device.deviceId)")
 
-            let input = BlueCatbirdMlsChatRemoveDevice.Input(deviceId: device.deviceId)
-            let (_, output) = try await client.blue.catbird.mlsChat.removeDevice(input: input)
-
-            let deleted = output?.deleted ?? false
-            logger.info("Device deleted: \(deleted)")
-
-            #if os(iOS)
-            if deleted, let conversationManager = await appState?.getMLSConversationManager() {
-                try? await conversationManager.removeCurrentDeviceRecord()
+            if let conversationManager = await appState?.getMLSConversationManager() {
+                _ = try await conversationManager.deviceManager?.deleteDevice(for: appState?.userDID ?? "")
             }
-            #endif
 
             // Remove from local list
             devices.removeAll { $0.deviceId == device.deviceId }

@@ -27,9 +27,9 @@ import PetrelCatbird
     /// Sender's DID extracted from MLS credential
     let senderDID: String
 
-    /// Initialize from MessageView after decryption
+    /// Initialize from ApplicationEntry after decryption
     init(
-      messageView: BlueCatbirdMlsChatDefs.MessageView,
+      messageView: BlueCatbirdChatDefs.ApplicationEntry,
       payload: MLSMessagePayload,
       senderDID: String
     ) {

@@ -91,7 +91,7 @@ struct MLSMessageAdapter: UnifiedChatMessage {
   let originalMessage: DecryptedMLSMessage
 
   init(
-    messageView: BlueCatbirdMlsChatDefs.MessageView,
+    messageView: BlueCatbirdChatDefs.ApplicationEntry,
     payload: MLSMessagePayload,
     senderDID: String,
     currentUserDID: String,

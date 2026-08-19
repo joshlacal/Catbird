@@ -726,10 +726,8 @@ struct MLSNewConversationView: View {
             }
             let dids = didStrings.compactMap { try? DID(didString: $0) }
             if dids.count >= 2 {
-                let params = BlueCatbirdMlsChatCheckBlocks.Input(dids: dids)
-                let (_, output) = try await conversationManager.apiClient.client
-                    .blue.catbird.mlsChat.checkBlocks(input: params)
-                if let output, !output.blocks.isEmpty {
+                let (_, output) = try await conversationManager.apiClient.checkBlocks(dids: dids)
+                if let output, !output.isEmpty {
                     createBlockWarningMessage = "Can't create this conversation: a block relationship exists between two or more participants."
                     showCreateBlockWarning = true
                     currentStep = selectedParticipants.count == 1 ? .selectParticipants : .configure

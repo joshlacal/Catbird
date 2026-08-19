@@ -2408,8 +2408,8 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
       // Cross-process coordination uses MLSNotificationCoordinator.
 
       for message in result.messages {
-        // ciphertext is already Bytes (Data)
-        let ciphertextData = message.ciphertext.data
+        // ciphertext is already Data
+        let ciphertextData = message.ciphertext
 
         // Padding is stripped by catbird-mls process_message internally.
         let actualCiphertext = ciphertextData
@@ -2573,7 +2573,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
           }
 
           notificationLogger.debug(
-            "🔄 [FG] Processed message \(message.id.prefix(8)) (type: \(message.messageType?.rawValue ?? "unknown"))"
+            "🔄 [FG] Processed message \(message.id.prefix(8))"
           )
         } catch {
           let errorDescription = error.localizedDescription

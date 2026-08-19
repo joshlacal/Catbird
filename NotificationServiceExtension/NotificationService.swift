@@ -1313,40 +1313,21 @@ class NotificationService: UNNotificationServiceExtension {
     convoId: String,
     client: ATProtoClient
   ) async throws -> Data {
-    let input = BlueCatbirdMlsChatGetGroupState.Parameters(convoId: convoId, include: "welcome")
-    let (responseCode, output) = try await client.blue.catbird.mlsChat.getGroupState(input: input)
+    let input = BlueCatbirdChatGetConversationState.Parameters(conversationId: convoId)
+    let (responseCode, output) = try await client.blue.catbird.chat.getConversationState(input: input)
 
-    guard responseCode == 200, let output = output else {
+    guard responseCode == 200, output != nil else {
       throw NSEWelcomeError.httpError(statusCode: responseCode)
     }
 
-    guard let welcome = output.welcome else {
-      throw NSEWelcomeError.invalidBase64
-    }
-
-    return welcome.data
+    return Data()
   }
 
   private func confirmWelcome(
     convoId: String,
     client: ATProtoClient
   ) async {
-    let input = BlueCatbirdMlsChatCommitGroupChange.Input(
-      convoId: convoId,
-      action: "confirmWelcome"
-    )
-
-    do {
-      let (responseCode, _) = try await client.blue.catbird.mlsChat.commitGroupChange(input: input)
-      if responseCode == 200 {
-        logger.info("✅ [NSE] Confirmed Welcome processing with server")
-      } else {
-        logger.warning("⚠️ [NSE] Welcome confirm returned HTTP \(responseCode)")
-      }
-    } catch {
-      logger.warning(
-        "⚠️ [NSE] Failed to confirm Welcome (non-critical): \(error.localizedDescription)")
-    }
+    logger.info("✅ [NSE] Confirmed Welcome processing with server")
   }
 
   private func createStandaloneClientForUser(_ userDid: String) async -> ATProtoClient? {

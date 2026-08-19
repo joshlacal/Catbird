@@ -173,7 +173,7 @@ struct MLSAdminDashboardView: View {
     // MARK: - Overview Section
 
     @ViewBuilder
-    private func overviewSection(stats: BlueCatbirdMlsChatUpdateConvo.Output, viewModel: MLSAdminDashboardViewModel) -> some View {
+    private func overviewSection(stats: AdminStats, viewModel: MLSAdminDashboardViewModel) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Overview")
                 .font(.headline)
@@ -206,7 +206,7 @@ struct MLSAdminDashboardView: View {
     // MARK: - Key Package Section
 
     @ViewBuilder
-    private func keyPackageSection(stats: BlueCatbirdMlsChatPublishKeyPackages.Output, viewModel: MLSAdminDashboardViewModel) -> some View {
+    private func keyPackageSection(stats: EnhancedKeyPackageStats, viewModel: MLSAdminDashboardViewModel) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text("Key Package Health")
@@ -250,7 +250,7 @@ struct MLSAdminDashboardView: View {
     // MARK: - Member Activity Section
 
     @ViewBuilder
-    private func memberActivitySection(stats: BlueCatbirdMlsChatUpdateConvo.Output, viewModel: MLSAdminDashboardViewModel) -> some View {
+    private func memberActivitySection(stats: AdminStats, viewModel: MLSAdminDashboardViewModel) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Recent Activity")
                 .font(.headline)
@@ -263,16 +263,6 @@ struct MLSAdminDashboardView: View {
                         value: epoch,
                         icon: "number.circle.fill",
                         color: .blue
-                    )
-                }
-
-                if let policy = stats.policy {
-                    let maxMembers = policy.maxMembers
-                    ActivityRow(
-                        label: "Max Members",
-                        value: maxMembers,
-                        icon: "person.3.fill",
-                        color: .purple
                     )
                 }
             }

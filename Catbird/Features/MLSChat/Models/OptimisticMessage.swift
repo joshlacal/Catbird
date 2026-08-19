@@ -47,7 +47,7 @@ struct OptimisticMessage: Identifiable, Sendable {
 /// comes from MLSMessageModel cache and is displayed separately in the UI.
 enum DisplayMessage: Identifiable {
   case optimistic(OptimisticMessage)
-  case confirmed(BlueCatbirdMlsChatDefs.MessageView)
+  case confirmed(BlueCatbirdChatDefs.ApplicationEntry)
   case system(MLSSystemMessage)
 
   var id: String {

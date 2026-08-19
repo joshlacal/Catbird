@@ -33,8 +33,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/joshlacal/CatbirdMLSCore",
       "state" : {
-        "revision" : "9fd7cc9706cd99651947ffd08d8f7c4c1d43a7bb",
-        "version" : "1.1.5"
+        "revision" : "2ec74bcd74fa62e10bf73d22638532fe3eb9d14b",
+        "version" : "1.4.3"
       }
     },
     {

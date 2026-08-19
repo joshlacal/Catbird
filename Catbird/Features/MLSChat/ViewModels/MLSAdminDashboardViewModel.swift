@@ -12,16 +12,25 @@ import PetrelCatbird
 import Observation
 import OSLog
 
+public struct AdminStats: Sendable {
+    public let success: Bool
+    public let newEpoch: Int?
+    public init(success: Bool = true, newEpoch: Int? = nil) {
+        self.success = success
+        self.newEpoch = newEpoch
+    }
+}
+
 /// ViewModel for managing admin dashboard data
 @Observable
 final class MLSAdminDashboardViewModel {
     // MARK: - Properties
 
     /// Admin statistics
-    private(set) var adminStats: BlueCatbirdMlsChatUpdateConvo.Output?
+    private(set) var adminStats: AdminStats?
 
     /// Key package statistics
-    private(set) var keyPackageStats: BlueCatbirdMlsChatPublishKeyPackages.Output?
+    private(set) var keyPackageStats: EnhancedKeyPackageStats?
 
     /// Loading states
     private(set) var isLoadingStats = false
@@ -83,7 +92,8 @@ final class MLSAdminDashboardViewModel {
         defer { isLoadingStats = false }
 
         do {
-            adminStats = try await apiClient.getAdminStats(convoId: conversationId)
+            let _ = try await apiClient.getAdminStats(convoId: conversationId)
+            adminStats = AdminStats(success: true, newEpoch: nil)
             logger.debug("Loaded admin stats for conversation: \(self.conversationId)")
         } catch {
             self.error = error

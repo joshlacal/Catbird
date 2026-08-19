@@ -52,15 +52,10 @@ final class MLSReportSpamViewModel {
     errorMessage = nil
 
     do {
-      let did = try DID(didString: reportedDid)
-      let input = BlueCatbirdMlsChatReportSpam.Input(
+      let (responseCode, _) = try await apiClient.reportSpam(
         convoId: conversationId,
-        reportedDid: did,
+        reportedDid: reportedDid,
         reason: reason?.isEmpty == true ? nil : reason
-      )
-
-      let (responseCode, _) = try await apiClient.client.blue.catbird.mlsChat.reportSpam(
-        input: input
       )
 
       guard (200...299).contains(responseCode) else {

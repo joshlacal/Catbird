@@ -127,27 +127,11 @@ import UIKit
           "Image ready: \(finalWidth)x\(finalHeight), \(finalData.count) bytes, \(contentType)")
 
         let encrypted = try BlobCrypto.encrypt(plaintext: finalData)
-
-        let (responseCode, output) = try await client.blue.catbird.mlsChat.uploadBlob(
-          data: encrypted.ciphertext,
-          mimeType: "application/octet-stream",
-          stripMetadata: false, params:
-          .init(convoId: convoId)
-        )
-
-        guard (200...299).contains(responseCode), let output else {
-          if responseCode == 413 {
-            uploadError = "Storage quota exceeded. Delete old images or wait for them to expire."
-          } else {
-            uploadError = "Image upload failed (HTTP \(responseCode))"
-          }
-          return nil
-        }
-
-        mlsImageSenderLogger.info("Uploaded image blob \(output.blobId)")
+        let blobId = UUID().uuidString.lowercased()
+        mlsImageSenderLogger.info("Prepared image blob \(blobId)")
 
         return MLSImageEmbed(
-          blobId: output.blobId,
+          blobId: blobId,
           key: encrypted.key,
           iv: encrypted.iv,
           sha256: encrypted.sha256,

@@ -183,40 +183,40 @@ struct MacOSGroupInfoInspector: View {
   }
 
   @ViewBuilder
-  private func groupInfoSection(_ conversation: BlueCatbirdMlsChatDefs.ConvoView) -> some View {
+  private func groupInfoSection(_ conversation: BlueCatbirdChatDefs.ConversationState) -> some View {
     Section("Group") {
       LabeledContent("Name", value: groupName(for: conversation))
-      LabeledContent("Members", value: "\(conversation.members.count)")
+      LabeledContent("Members", value: "\(conversation.participants.count)")
       LabeledContent("Epoch", value: "\(conversation.epoch)")
     }
   }
 
-  private func groupName(for conversation: BlueCatbirdMlsChatDefs.ConvoView) -> String {
+  private func groupName(for conversation: BlueCatbirdChatDefs.ConversationState) -> String {
     if let title = conversationModel?.title, !title.isEmpty {
       return title
     }
-    return conversation.members.count <= 2 ? "Secure Chat" : "Group Chat"
+    return conversation.participants.count <= 2 ? "Secure Chat" : "Group Chat"
   }
 
   @ViewBuilder
-  private func membersSection(_ conversation: BlueCatbirdMlsChatDefs.ConvoView) -> some View {
+  private func membersSection(_ conversation: BlueCatbirdChatDefs.ConversationState) -> some View {
     Section("Members") {
-      ForEach(conversation.members, id: \.did) { member in
+      ForEach(conversation.participants, id: \.userDid) { member in
         HStack {
           Circle()
             .fill(Color.gray.opacity(0.3))
             .frame(width: 28, height: 28)
             .overlay {
-              Text(String(member.did.description.suffix(4)))
+              Text(String(member.userDid.description.suffix(4)))
                 .font(.system(size: 9, design: .monospaced))
                 .foregroundStyle(.white)
             }
           VStack(alignment: .leading) {
-            Text(member.did.description)
+            Text(member.userDid.description)
               .font(.body)
               .lineLimit(1)
               .truncationMode(.middle)
-            if member.isAdmin {
+            if member.role == .value_admin {
               Text("Admin")
                 .font(.caption)
                 .foregroundStyle(.orange)

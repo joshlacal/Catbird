@@ -2555,46 +2555,25 @@ final class AppState {
     @MainActor
     private func makeMLSGlobalWebSocketHandler() -> MLSWebSocketManager.EventHandler {
         MLSWebSocketManager.EventHandler(
-            onMessage: { [weak self] messageEvent in
+            onCanonicalConversationInventoryState: { [weak self] _ in
                 guard let self else { return }
-                self.logger.info("MLS WS [global]: message in \(messageEvent.message.convoId.prefix(8))")
                 await MainActor.run {
                     self.updateMLSUnreadCount()
                     self.stateInvalidationBus.notify(.mlsConversationListChanged)
                 }
             },
-            onReaction: { [weak self] _ in
+            onCanonicalConversationRemovalTombstone: { [weak self] _ in
                 guard let self else { return }
                 await MainActor.run {
+                    self.updateMLSUnreadCount()
                     self.stateInvalidationBus.notify(.mlsConversationListChanged)
                 }
             },
-            onGroupInfoRefreshRequested: { [weak self] event in
+            onCanonicalConversationCloseTombstone: { [weak self] _ in
                 guard let self else { return }
-                if let manager = await self.getMLSConversationManager() {
-                    await manager.handleGroupInfoRefreshRequest(convoId: event.convoId)
-                }
-            },
-            onReadditionRequested: { [weak self] event in
-                guard let self else { return }
-                guard let requestedBy = event.requestedBy else {
-                    self.logger.warning("MLS WS [global]: readdition request missing requestedBy")
-                    return
-                }
-                if let manager = await self.getMLSConversationManager() {
-                    await manager.handleReadditionRequest(
-                        convoId: event.convoId,
-                        userDidToAdd: requestedBy.didString()
-                    )
-                }
-            },
-            onWelcomeReissueRequested: { [weak self] event in
-                guard let self else { return }
-                self.logger.info(
-                    "MLS WS [global]: Welcome reissue requested for \(event.convoId.prefix(8)) request \(event.requestId.prefix(16))"
-                )
-                if let manager = await self.getMLSConversationManager() {
-                    await manager.handleWelcomeReissueRequested(event: event)
+                await MainActor.run {
+                    self.updateMLSUnreadCount()
+                    self.stateInvalidationBus.notify(.mlsConversationListChanged)
                 }
             },
             onMembershipChanged: { [weak self] convoId, did, action in
@@ -2615,27 +2594,6 @@ final class AppState {
             onConversationNeedsRecovery: { [weak self] convoId, reason in
                 guard let self else { return }
                 self.logger.warning("MLS WS [global]: recovery needed for \(convoId.prefix(8)): \(reason.rawValue)")
-            },
-            onGroupReset: { [weak self] event in
-                guard let self else { return }
-                if let manager = await self.getMLSConversationManager() {
-                    await manager.handleGroupReset(event: event)
-                }
-                await MainActor.run {
-                    self.stateInvalidationBus.notify(.mlsConversationListChanged)
-                }
-            },
-            onResetRequested: { [weak self] event in
-                guard let self else { return }
-                self.logger.warning(
-                    "MLS WS [global]: reset requested for \(event.convoId.prefix(8)) (gen \(event.generation), trigger=\(event.trigger), requestEventId=\(event.requestEventId.prefix(16)), cryptoSessionId=\(event.cryptoSessionId.prefix(16)))"
-                )
-                if let manager = await self.getMLSConversationManager() {
-                    await manager.handleResetRequested(event: event)
-                }
-                await MainActor.run {
-                    self.stateInvalidationBus.notify(.mlsConversationListChanged)
-                }
             },
             onReconnected: { [weak self] in
                 guard let self else { return }

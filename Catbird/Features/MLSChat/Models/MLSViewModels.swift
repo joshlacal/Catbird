@@ -95,11 +95,11 @@ struct MLSMemberViewModel: Identifiable {
 
 // MARK: - Server Model to ViewModel Conversion
 
-extension BlueCatbirdMlsChatDefs.ConvoView {
+extension BlueCatbirdChatDefs.ConversationState {
   func toViewModel(unreadCount: Int = 0) -> MLSConversationViewModel {
     // Split complex map to prevent type checker explosion
-    let participants: [MLSParticipantViewModel] = members.map { member in
-      let didStr = member.did.description
+    let participantVMs: [MLSParticipantViewModel] = participants.map { member in
+      let didStr = member.userDid.description
       let lastPart = didStr.split(separator: ":").last
       let handle = lastPart.map(String.init) ?? didStr
 
@@ -111,19 +111,17 @@ extension BlueCatbirdMlsChatDefs.ConvoView {
       )
     }
 
-    let lastMessageDate: Date? = lastMessageAt?.date
-
     return MLSConversationViewModel(
-      id: groupId,
-      // Phase F: ConvoView.metadata removed. Display title comes from
+      id: coordinates.conversationId,
+      // Phase F: Display title comes from
       // local GRDB cache populated by MLSConversationManager+Metadata.
       name: nil,
-      participants: participants,
+      participants: participantVMs,
       lastMessagePreview: nil,
-      lastMessageTimestamp: lastMessageDate,
+      lastMessageTimestamp: nil,
       unreadCount: unreadCount,
-      isGroupChat: members.count > 2,
-      groupId: groupId
+      isGroupChat: participants.count > 2,
+      groupId: coordinates.groupId.data.hexEncodedString()
     )
   }
 }

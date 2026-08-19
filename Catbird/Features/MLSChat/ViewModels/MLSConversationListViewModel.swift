@@ -20,7 +20,7 @@ final class MLSConversationListViewModel {
     // MARK: - Properties
 
     /// List of conversations
-    private(set) var conversations: [BlueCatbirdMlsChatDefs.ConvoView] = []
+    private(set) var conversations: [BlueCatbirdChatDefs.ConversationState] = []
 
     /// Loading state
     private(set) var isLoading = false
@@ -44,16 +44,12 @@ final class MLSConversationListViewModel {
     }
 
     /// Filtered conversations based on search
-    var filteredConversations: [BlueCatbirdMlsChatDefs.ConvoView] {
+    var filteredConversations: [BlueCatbirdChatDefs.ConversationState] {
         guard !searchQuery.isEmpty else { return conversations }
         let query = searchQuery.lowercased()
         return conversations.filter { convo in
-            // Phase F: ConvoView.metadata removed from the lexicon. Search
-            // by member DIDs only here; for title-based search, query the
-            // local GRDB cache (MLSConversationModel.title) — list views
-            // that show titles already render from that cache.
-            return convo.members.contains { member in
-                member.did.description.lowercased().contains(query)
+            return convo.participants.contains { member in
+                member.userDid.description.lowercased().contains(query)
             }
         }
     }
@@ -72,11 +68,11 @@ final class MLSConversationListViewModel {
     // MARK: - Combine
 
     private var cancellables = Set<AnyCancellable>()
-    private let conversationsSubject = PassthroughSubject<[BlueCatbirdMlsChatDefs.ConvoView], Never>()
+    private let conversationsSubject = PassthroughSubject<[BlueCatbirdChatDefs.ConversationState], Never>()
     private let errorSubject = PassthroughSubject<Error, Never>()
 
     /// Publisher for conversation updates
-    var conversationsPublisher: AnyPublisher<[BlueCatbirdMlsChatDefs.ConvoView], Never> {
+    var conversationsPublisher: AnyPublisher<[BlueCatbirdChatDefs.ConversationState], Never> {
         conversationsSubject.eraseToAnyPublisher()
     }
 
@@ -120,8 +116,8 @@ final class MLSConversationListViewModel {
             let expectedGen = MLSCoordinationAwareTask.captureGeneration()
             try MLSCoordinationAwareTask.validateGeneration(expectedGen)
 
-            let result: (convos: [BlueCatbirdMlsChatDefs.ConvoView], cursor: String?) = try await Task.detached(priority: .userInitiated) { [apiClient] in
-                try await apiClient.getConversations(
+            let result: (states: [BlueCatbirdChatDefs.ConversationState], cursor: String?) = try await Task.detached(priority: .userInitiated) { [apiClient] in
+                try await apiClient.getCanonicalConversationStates(
                     limit: 50,
                     cursor: nil
                 )
@@ -129,7 +125,7 @@ final class MLSConversationListViewModel {
 
             try MLSCoordinationAwareTask.validateGeneration(expectedGen)
 
-            conversations = result.convos
+            conversations = result.states
             cursor = result.cursor
             hasMore = result.cursor != nil
 
@@ -158,7 +154,7 @@ final class MLSConversationListViewModel {
             try MLSCoordinationAwareTask.validateGeneration(expectedGen)
 
             let result = try await Task.detached(priority: .userInitiated) { [apiClient, cursor] in
-                try await apiClient.getConversations(
+                try await apiClient.getCanonicalConversationStates(
                     limit: 50,
                     cursor: cursor
                 )
@@ -166,12 +162,12 @@ final class MLSConversationListViewModel {
 
             try MLSCoordinationAwareTask.validateGeneration(expectedGen)
 
-            conversations.append(contentsOf: result.convos)
+            conversations.append(contentsOf: result.states)
             self.cursor = result.cursor
             hasMore = result.cursor != nil
 
             conversationsSubject.send(conversations)
-            logger.debug("Loaded \(result.convos.count) more conversations")
+            logger.debug("Loaded \(result.states.count) more conversations")
         } catch is MLSCoordinationAwareTask.GenerationStaleError {
             logger.info("loadMoreConversations cancelled (account switch)")
         } catch {
@@ -194,15 +190,15 @@ final class MLSConversationListViewModel {
     /// Delete a conversation locally (leave handled by MLSConversationDetailViewModel)
     @MainActor
     func deleteConversationLocally(conversationId: String) {
-        conversations.removeAll { $0.groupId == conversationId }
+        conversations.removeAll { $0.groupId == conversationId || $0.conversationId == conversationId }
         conversationsSubject.send(conversations)
         logger.debug("Removed conversation \(conversationId) from local list")
     }
 
     /// Update conversation after changes
     @MainActor
-    func updateConversation(_ conversation: BlueCatbirdMlsChatDefs.ConvoView) {
-        if let index = conversations.firstIndex(where: { $0.groupId == conversation.groupId }) {
+    func updateConversation(_ conversation: BlueCatbirdChatDefs.ConversationState) {
+        if let index = conversations.firstIndex(where: { $0.groupId == conversation.groupId || $0.conversationId == conversation.conversationId }) {
             conversations[index] = conversation
             conversationsSubject.send(conversations)
             logger.debug("Updated conversation \(conversation.groupId)")
@@ -211,7 +207,7 @@ final class MLSConversationListViewModel {
 
     /// Add new conversation to the list
     @MainActor
-    func addConversation(_ conversation: BlueCatbirdMlsChatDefs.ConvoView) {
+    func addConversation(_ conversation: BlueCatbirdChatDefs.ConversationState) {
         // Add to beginning of list (most recent)
         conversations.insert(conversation, at: 0)
         conversationsSubject.send(conversations)
@@ -289,12 +285,12 @@ final class MLSConversationListViewModel {
             try MLSCoordinationAwareTask.validateGeneration(expectedGen)
 
             let result = try await Task.detached(priority: .userInitiated) { [apiClient] in
-                try await apiClient.getConversations(limit: 100, cursor: nil)
+                try await apiClient.getCanonicalConversationStates(limit: 100, cursor: nil)
             }.value
 
             try MLSCoordinationAwareTask.validateGeneration(expectedGen)
 
-            if let updatedConvo = result.convos.first(where: { $0.groupId == convoId }) {
+            if let updatedConvo = result.states.first(where: { $0.groupId == convoId || $0.conversationId == convoId }) {
                 updateConversation(updatedConvo)
                 logger.debug("Refreshed conversation \(convoId) after state change")
             }

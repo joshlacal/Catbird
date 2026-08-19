@@ -32,10 +32,10 @@ final class MLSConversationDetailViewModel {
     private(set) var conversationState: ConversationState = .loading
 
     /// Current conversation
-    private(set) var conversation: BlueCatbirdMlsChatDefs.ConvoView?
+    private(set) var conversation: BlueCatbirdChatDefs.ConversationState?
 
     /// Messages in the conversation
-    private(set) var messages: [BlueCatbirdMlsChatDefs.MessageView] = []
+    private(set) var messages: [BlueCatbirdChatDefs.ApplicationEntry] = []
 
     /// Optimistic messages (pending server confirmation)
     private(set) var optimisticMessages: [OptimisticMessage] = []
@@ -94,17 +94,17 @@ final class MLSConversationDetailViewModel {
     // MARK: - Combine
 
     private var cancellables = Set<AnyCancellable>()
-    private let messagesSubject = PassthroughSubject<[BlueCatbirdMlsChatDefs.MessageView], Never>()
-    private let conversationSubject = PassthroughSubject<BlueCatbirdMlsChatDefs.ConvoView, Never>()
+    private let messagesSubject = PassthroughSubject<[BlueCatbirdChatDefs.ApplicationEntry], Never>()
+    private let conversationSubject = PassthroughSubject<BlueCatbirdChatDefs.ConversationState, Never>()
     private let errorSubject = PassthroughSubject<Error, Never>()
 
     /// Publisher for message updates
-    var messagesPublisher: AnyPublisher<[BlueCatbirdMlsChatDefs.MessageView], Never> {
+    var messagesPublisher: AnyPublisher<[BlueCatbirdChatDefs.ApplicationEntry], Never> {
         messagesSubject.eraseToAnyPublisher()
     }
 
     /// Publisher for conversation updates
-    var conversationPublisher: AnyPublisher<BlueCatbirdMlsChatDefs.ConvoView, Never> {
+    var conversationPublisher: AnyPublisher<BlueCatbirdChatDefs.ConversationState, Never> {
         conversationSubject.eraseToAnyPublisher()
     }
 
@@ -178,7 +178,7 @@ final class MLSConversationDetailViewModel {
             if let cachedConvo = conversationManager.conversations[conversationId] {
                 conversation = cachedConvo
                 conversationSubject.send(cachedConvo)
-                logger.debug("🔍 [MEMBER_MGMT] Loaded conversation details from cache: \(self.conversationId), members count: \(cachedConvo.members.count)")
+                logger.debug("🔍 [MEMBER_MGMT] Loaded conversation details from cache: \(self.conversationId), members count: \(cachedConvo.participants.count)")
                 conversationState = .active
             } else {
                 // Fallback: sync with server and retry
@@ -198,7 +198,7 @@ final class MLSConversationDetailViewModel {
                 if let syncedConvo = conversationManager.conversations[conversationId] {
                     conversation = syncedConvo
                     conversationSubject.send(syncedConvo)
-                    logger.debug("🔍 [MEMBER_MGMT] Loaded conversation details after sync: \(self.conversationId), members count: \(syncedConvo.members.count)")
+                    logger.debug("🔍 [MEMBER_MGMT] Loaded conversation details after sync: \(self.conversationId), members count: \(syncedConvo.participants.count)")
                     conversationState = .active
                 } else {
                     throw MLSError.conversationNotFound
@@ -225,7 +225,7 @@ final class MLSConversationDetailViewModel {
             let expectedGen = MLSCoordinationAwareTask.captureGeneration()
             try MLSCoordinationAwareTask.validateGeneration(expectedGen)
 
-            let (messageViews, lastSeq, gapInfo) = try await apiClient.getMessages(
+            let (messageViews, lastSeq) = try await apiClient.getMessages(
                 convoId: conversationId,
                 limit: 50,
                 sinceSeq: nil
@@ -238,11 +238,6 @@ final class MLSConversationDetailViewModel {
             messages = messageViews
             messagesCursor = lastSeq
             hasMoreMessages = lastSeq != nil
-
-            // Log gap information if present
-            if let gaps = gapInfo, gaps.hasGaps {
-                logger.warning("⚠️ Detected \(gaps.missingSeqs.count) missing messages: \(gaps.missingSeqs)")
-            }
 
             messagesSubject.send(messages)
 
@@ -272,7 +267,7 @@ final class MLSConversationDetailViewModel {
             let expectedGen = MLSCoordinationAwareTask.captureGeneration()
             try MLSCoordinationAwareTask.validateGeneration(expectedGen)
 
-            let (messageViews, lastSeq, gapInfo) = try await apiClient.getMessages(
+            let (messageViews, lastSeq) = try await apiClient.getMessages(
                 convoId: conversationId,
                 limit: 50,
                 sinceSeq: sinceSeq
@@ -285,11 +280,6 @@ final class MLSConversationDetailViewModel {
             messages.append(contentsOf: messageViews)
             messagesCursor = lastSeq
             hasMoreMessages = lastSeq != nil
-
-            // Log gap information if present
-            if let gaps = gapInfo, gaps.hasGaps {
-                logger.warning("⚠️ Detected \(gaps.missingSeqs.count) missing messages: \(gaps.missingSeqs)")
-            }
 
             messagesSubject.send(messages)
 

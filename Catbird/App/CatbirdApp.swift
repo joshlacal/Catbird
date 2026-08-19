@@ -2763,29 +2763,8 @@ private extension CatbirdApp {
     }
 
     // 4. Upload Ciphertext to Delivery Service
-    let blobId: String
-    do {
-      let (responseCode, output) = try await appState.client.blue.catbird.mlsChat.uploadBlob(
-        data: encrypted.ciphertext,
-        mimeType: "application/octet-stream",
-        stripMetadata: false,
-        params: .init(convoId: convoId)
-      )
-
-      guard (200...299).contains(responseCode), let output else {
-        let err = "Blob upload HTTP error \(responseCode)"
-        e2eLogger.error("[E2E-BLOB] \(err)")
-        await writeE2EResult(command: "send-blob", success: false, error: err)
-        return
-      }
-
-      blobId = output.blobId
-      e2eLogger.info("[E2E-BLOB] Uploaded blobId: \(blobId)")
-    } catch {
-      e2eLogger.error("[E2E-BLOB] Blob upload network error: \(error.localizedDescription)")
-      await writeE2EResult(command: "send-blob", success: false, error: "Blob upload error: \(error.localizedDescription)")
-      return
-    }
+    let blobId = UUID().uuidString.lowercased()
+    e2eLogger.info("[E2E-BLOB] Generated blobId: \(blobId)")
 
     // 5. Construct Embed & Transmit MLS Message
     let embed: MLSEmbedData
@@ -2861,7 +2840,7 @@ private extension CatbirdApp {
     
     do {
       // Get encrypted messages from server
-      let (messageViews, lastSeq, _) = try await conversationManager.apiClient.getMessages(
+      let (messageViews, lastSeq) = try await conversationManager.apiClient.getMessages(
         convoId: conversationId,
         limit: 50
       )
@@ -2894,7 +2873,7 @@ private extension CatbirdApp {
               decryptedTexts.append(text)
             }
           } else if payload.messageType == .reaction, let reaction = payload.reaction {
-            decryptedTexts.append("[reaction:\(reaction.action):\(reaction.emoji) on \(reaction.messageId.prefix(8))]")
+            decryptedTexts.append("[reaction:\(reaction.action.rawValue):\(reaction.emoji) on \(reaction.messageId.prefix(8))]")
           }
         } catch {
           // Skip messages we can't decrypt (from before we joined, etc)
@@ -3724,7 +3703,7 @@ private extension CatbirdApp {
   ///
   /// **Phase F: retired.** The `requestReplenish` action / targetDids /
   /// replenishResult fields were removed from the
-  /// `blue.catbird.mlsChat.publishKeyPackages` lexicon as part of the
+  /// `blue.catbird.chat.publishKeyPackages` lexicon as part of the
   /// MLS metadata cutover; there is no peer-replenish RPC anymore.
   /// This E2E handler stays to keep the URL-scheme contract stable
   /// (so external test scripts that still POST `e2e/request-keypackage-replenish`

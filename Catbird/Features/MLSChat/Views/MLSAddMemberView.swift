@@ -247,10 +247,8 @@ struct MLSAddMemberView: View {
       didStrings.append(participant.id)
       let dids = didStrings.compactMap { try? DID(didString: $0) }
       if dids.count >= 2 {
-        let params = BlueCatbirdMlsChatCheckBlocks.Input(dids: dids)
-        let (_, output) = try await conversationManager.apiClient.client
-          .blue.catbird.mlsChat.checkBlocks(input: params)
-        if let output, !output.blocks.isEmpty {
+        let (_, output) = try await conversationManager.apiClient.checkBlocks(dids: dids)
+        if let output, !output.isEmpty {
           blockWarningMessage = "You can't add @\(participant.handle): a block relationship exists between this user and someone already in the conversation."
           showBlockWarning = true
           return

@@ -65,42 +65,16 @@ struct MLSSystemMessage: Identifiable, Sendable {
     self.infoText = infoText
   }
 
-  /// Create a system message from an InfoEvent
-  static func from(infoEvent: BlueCatbirdMlsChatSubscribeEvents.InfoEvent, conversationId: String) -> MLSSystemMessage {
+  /// Create a system message from a ResetRequestedEvent
+  static func from(resetRequestedEvent: BlueCatbirdChatDefs.ResetRequestedEvent) -> MLSSystemMessage {
     return MLSSystemMessage(
-      id: infoEvent.cursor,
-      conversationId: conversationId,
-      type: .infoMessage,
-      timestamp: Date(),
-      actorDID: nil,
-      targetDID: nil,
-      infoText: infoEvent.info
-    )
-  }
-
-  /// Create a system message from a GroupResetEvent
-  static func from(groupResetEvent: BlueCatbirdMlsChatSubscribeEvents.GroupResetEvent) -> MLSSystemMessage {
-    return MLSSystemMessage(
-      id: groupResetEvent.cursor,
-      conversationId: groupResetEvent.convoId,
+      id: resetRequestedEvent.resetRequestId,
+      conversationId: resetRequestedEvent.conversationId,
       type: .groupReset,
       timestamp: Date(),
-      actorDID: groupResetEvent.resetBy?.description,
-      targetDID: nil,
-      infoText: groupResetEvent.reason
-    )
-  }
-
-  /// Create a system message from a NewDeviceEvent
-  static func from(deviceEvent: BlueCatbirdMlsChatSubscribeEvents.NewDeviceEvent) -> MLSSystemMessage {
-    return MLSSystemMessage(
-      id: deviceEvent.cursor,
-      conversationId: deviceEvent.convoId,
-      type: .deviceAdded,
-      timestamp: Date(),
       actorDID: nil,
-      targetDID: deviceEvent.userDid.description,
-      infoText: deviceEvent.deviceName
+      targetDID: nil,
+      infoText: "Encryption was reset"
     )
   }
 }
