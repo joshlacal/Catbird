@@ -1468,6 +1468,15 @@ final class AppState {
         // Create new initialization task
         logger.info("MLS: 🆕 Starting new conversation manager initialization for user: \(userDid)")
         let initTask = Task<MLSConversationManager?, Never> { @MainActor in
+            guard !Task.isCancelled,
+                !MLSCoreContext.isSuspensionInProgress,
+                !MLSClient.isSuspensionInProgress
+            else {
+                logger.info("MLS: ⏸️ Initialization aborted before start — task cancelled or suspension in progress")
+                mlsServiceState.status = .notStarted
+                return nil
+            }
+
             guard let apiClient = await getMLSAPIClient() else {
                 logger.error("MLS: ❌ Cannot create conversation manager - failed to get API client")
                 let errorMsg = "Failed to get API client"
@@ -1490,8 +1499,25 @@ final class AppState {
                 }
             }
             if needsDatabaseSetup {
+                guard !Task.isCancelled,
+                    !MLSCoreContext.isSuspensionInProgress,
+                    !MLSClient.isSuspensionInProgress
+                else {
+                    logger.info("MLS: ⏸️ Initialization aborted before database setup — task cancelled or suspension in progress")
+                    mlsServiceState.status = .notStarted
+                    return nil
+                }
                 logger.info("MLS: 🔐 Lazily initializing MLS database for user: \(userDid)")
                 await setupMLSDatabase(for: userDid)
+            }
+
+            guard !Task.isCancelled,
+                !MLSCoreContext.isSuspensionInProgress,
+                !MLSClient.isSuspensionInProgress
+            else {
+                logger.info("MLS: ⏸️ Initialization aborted after database setup — task cancelled or suspension in progress")
+                mlsServiceState.status = .notStarted
+                return nil
             }
 
             // Ensure database is available after lazy initialization
@@ -1536,6 +1562,15 @@ final class AppState {
                         self?.mlsDatabase = pool
                     }
                 }
+            }
+
+            guard !Task.isCancelled,
+                !MLSCoreContext.isSuspensionInProgress,
+                !MLSClient.isSuspensionInProgress
+            else {
+                logger.info("MLS: ⏸️ Initialization aborted before manager.initialize — task cancelled or suspension in progress")
+                mlsServiceState.status = .notStarted
+                return nil
             }
 
             // Initialize the manager before storing and returning it
@@ -1724,6 +1759,18 @@ final class AppState {
     func stopMLSStreams() {
         if let manager = mlsConversationManagerStorage {
             manager.stopAllStreams()
+        }
+    }
+
+    /// Cancel any active in-flight MLS conversation manager initialization task.
+    /// Called when app is backgrounding or transitioning to inactive state to prevent 0xdead10cc.
+    @MainActor
+    func cancelMLSInitialization() {
+        if let task = mlsConversationManagerInitTask {
+            logger.info("MLS: 🛑 Cancelling active conversation manager initialization task for suspension")
+            task.cancel()
+            mlsConversationManagerInitTask = nil
+            mlsServiceState.status = .notStarted
         }
     }
 

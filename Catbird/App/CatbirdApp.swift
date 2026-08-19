@@ -1524,6 +1524,9 @@ private extension CatbirdApp {
     // Using MainActor.assumeIsolated because onChange runs on main thread.
     // ═══════════════════════════════════════════════════════════════════════════
     if newPhase == .inactive || newPhase == .background {
+      // Cancel any in-flight initialization task immediately before suspending
+      appStateManager.lifecycle.appState?.cancelMLSInitialization()
+
       // Block new MLS FFI work immediately while we transition to background.
       // Every entry path uses the coupled MLSClient lifecycle boundary, which
       // owns both client and Core admission gates.
@@ -1644,8 +1647,13 @@ private extension CatbirdApp {
         }
 
         guard let manager = suspensionOwner else {
+          if suspensionCloseClaim.claimNormalCloseIfCurrent() {
+            MLSClient.emergencyCloseAllContexts(
+              reason: "scenePhase active→\(String(describing: newPhase)) context-free"
+            )
+          }
           bgTask.end()
-          logger.warning("Skipping normal Rust close without the suspension-owning manager")
+          logger.warning("Closed context-free MLS contexts without the suspension-owning manager")
           return
         }
 
