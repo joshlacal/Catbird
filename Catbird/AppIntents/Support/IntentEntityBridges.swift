@@ -27,3 +27,11 @@ enum IntentEntityBridges {
     uri.recordKey ?? ""
   }
 }
+
+#if !compiler(>=7.0)
+import AppIntents
+
+@available(anyAppleOS 27.0, *)
+public protocol SyncableEntity {}
+#endif
+

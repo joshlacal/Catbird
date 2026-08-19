@@ -17,7 +17,7 @@ import PetrelCatbird
 import LinkPresentation
 import GeoToolbox
 
-@available(iOS 27.0, *)
+@available(anyAppleOS 27.0, *)
 enum MessagesSchemaRuntime {
   static func conversationManager() async throws -> MLSConversationManager {
     // Background intent launches run the app's init path, but lifecycle.appState

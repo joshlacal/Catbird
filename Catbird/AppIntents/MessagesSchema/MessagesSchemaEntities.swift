@@ -16,7 +16,7 @@ import PetrelCatbird
 import LinkPresentation
 import GeoToolbox
 
-@available(iOS 27.0, *)
+@available(anyAppleOS 27.0, *)
 @AppEnum(schema: .messages.conversationAttribute)
 enum CatbirdMessagesConversationAttribute: String, AppEnum {
   case mute
@@ -30,7 +30,7 @@ enum CatbirdMessagesConversationAttribute: String, AppEnum {
   ]
 }
 
-@available(iOS 27.0, *)
+@available(anyAppleOS 27.0, *)
 @AppEnum(schema: .messages.messageType)
 enum CatbirdMessagesMessageType: String, AppEnum {
   case text
@@ -48,7 +48,7 @@ enum CatbirdMessagesMessageType: String, AppEnum {
   ]
 }
 
-@available(iOS 27.0, *)
+@available(anyAppleOS 27.0, *)
 @AppEnum(schema: .messages.messageAttribute)
 enum CatbirdMessagesMessageAttribute: String, AppEnum {
   case none
@@ -58,7 +58,7 @@ enum CatbirdMessagesMessageAttribute: String, AppEnum {
   ]
 }
 
-@available(iOS 27.0, *)
+@available(anyAppleOS 27.0, *)
 @AppEnum(schema: .messages.messageEffect)
 enum CatbirdMessagesMessageEffect: String, AppEnum {
   case none
@@ -68,7 +68,7 @@ enum CatbirdMessagesMessageEffect: String, AppEnum {
   ]
 }
 
-@available(iOS 27.0, *)
+@available(anyAppleOS 27.0, *)
 @AppEnum(schema: .messages.customReaction)
 enum CatbirdMessagesCustomReaction: String, AppEnum {
   case like
@@ -88,13 +88,13 @@ enum CatbirdMessagesCustomReaction: String, AppEnum {
   ]
 }
 
-@available(iOS 27.0, *)
+@available(anyAppleOS 27.0, *)
 @UnionValue
 enum CatbirdMessagesReadReaction: Sendable {
   case customReaction(CatbirdMessagesCustomReaction)
 }
 
-@available(iOS 27.0, *)
+@available(anyAppleOS 27.0, *)
 @UnionValue
 enum CatbirdMessagesDestination: Sendable {
   case persons([IntentPerson])
@@ -102,7 +102,7 @@ enum CatbirdMessagesDestination: Sendable {
   case recipients([CatbirdMessagesPersonEntity])
 }
 
-@available(iOS 27.0, *)
+@available(anyAppleOS 27.0, *)
 @AppEntity(schema: .messages.customAttachment)
 struct CatbirdMessagesCustomAttachment: Identifiable, Hashable, Sendable {
   static var typeDisplayRepresentation = TypeDisplayRepresentation(name: "Catbird Attachment")
@@ -132,14 +132,14 @@ struct CatbirdMessagesCustomAttachment: Identifiable, Hashable, Sendable {
   }
 }
 
-@available(iOS 27.0, *)
+@available(anyAppleOS 27.0, *)
 struct CatbirdMessagesCustomAttachmentQuery: EntityQuery {
   func entities(for identifiers: [String]) async throws -> [CatbirdMessagesCustomAttachment] {
     return []
   }
 }
 
-@available(iOS 27.0, *)
+@available(anyAppleOS 27.0, *)
 @AppEntity(schema: .messages.conversation)
 struct CatbirdMessagesConversationEntity: Identifiable, Hashable, Sendable {
   static var typeDisplayRepresentation = TypeDisplayRepresentation(name: "Catbird Conversation")
@@ -190,7 +190,7 @@ struct CatbirdMessagesConversationEntity: Identifiable, Hashable, Sendable {
   }
 }
 
-@available(iOS 27.0, *)
+@available(anyAppleOS 27.0, *)
 struct CatbirdMessagesConversationQuery: EntityStringQuery {
   func entities(for identifiers: [String]) async throws -> [CatbirdMessagesConversationEntity] {
     let manager = try await MessagesSchemaRuntime.conversationManager()
@@ -230,7 +230,7 @@ struct CatbirdMessagesConversationQuery: EntityStringQuery {
   }
 }
 
-@available(iOS 27.0, *)
+@available(anyAppleOS 27.0, *)
 @AppEntity(schema: .messages.message)
 struct CatbirdMessagesMessageEntity: Identifiable, Hashable, Sendable {
   static var typeDisplayRepresentation = TypeDisplayRepresentation(name: "Catbird Message")
@@ -312,7 +312,7 @@ struct CatbirdMessagesMessageEntity: Identifiable, Hashable, Sendable {
   }
 }
 
-@available(iOS 27.0, *)
+@available(anyAppleOS 27.0, *)
 struct CatbirdMessagesMessageQuery: EntityStringQuery {
   func entities(for identifiers: [String]) async throws -> [CatbirdMessagesMessageEntity] {
     let manager = try await MessagesSchemaRuntime.conversationManager()
@@ -380,7 +380,7 @@ struct CatbirdMessagesMessageQuery: EntityStringQuery {
   }
 }
 
-@available(iOS 27.0, *)
+@available(anyAppleOS 27.0, *)
 @AppEntity(schema: .messages.messagePerson)
 struct CatbirdMessagesPersonEntity: Identifiable, Hashable, Sendable {
   static var typeDisplayRepresentation = TypeDisplayRepresentation(name: "Catbird Contact")
@@ -419,7 +419,7 @@ struct CatbirdMessagesPersonEntity: Identifiable, Hashable, Sendable {
 
 // Apple Intelligence can pass message entities to other apps and system
 // experiences when they're Transferable — export the message body as text.
-@available(iOS 27.0, *)
+@available(anyAppleOS 27.0, *)
 extension CatbirdMessagesMessageEntity: Transferable {
   static var transferRepresentation: some TransferRepresentation {
     ProxyRepresentation(exporting: { entity in
@@ -428,7 +428,7 @@ extension CatbirdMessagesMessageEntity: Transferable {
   }
 }
 
-@available(iOS 27.0, *)
+@available(anyAppleOS 27.0, *)
 struct CatbirdMessagesPersonQuery: EntityStringQuery {
   func entities(for identifiers: [String]) async throws -> [CatbirdMessagesPersonEntity] {
     let manager = try await MessagesSchemaRuntime.conversationManager()

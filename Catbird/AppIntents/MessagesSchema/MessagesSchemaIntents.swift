@@ -13,7 +13,7 @@ import GeoToolbox
 import Petrel
 import LinkPresentation
 
-@available(iOS 27.0, *)
+@available(anyAppleOS 27.0, *)
 @AppIntent(schema: .messages.draftMessage)
 struct CatbirdDraftMessageSchemaIntent {
   static var title: LocalizedStringResource = "Draft Catbird Message"
@@ -91,7 +91,7 @@ struct CatbirdDraftMessageSchemaIntent {
   }
 }
 
-@available(iOS 27.0, *)
+@available(anyAppleOS 27.0, *)
 @AppIntent(schema: .messages.sendMessage)
 struct CatbirdSendMessageSchemaIntent {
   static var title: LocalizedStringResource = "Send Catbird Message"
@@ -196,7 +196,7 @@ struct CatbirdSendMessageSchemaIntent {
   }
 }
 
-@available(iOS 27.0, *)
+@available(anyAppleOS 27.0, *)
 @AppIntent(schema: .messages.editSentMessage)
 struct CatbirdEditSentMessageSchemaIntent {
   static var title: LocalizedStringResource = "Edit Catbird Message"
@@ -220,7 +220,7 @@ struct CatbirdEditSentMessageSchemaIntent {
   }
 }
 
-@available(iOS 27.0, *)
+@available(anyAppleOS 27.0, *)
 @AppIntent(schema: .messages.unsendMessage)
 struct CatbirdUnsendMessageSchemaIntent {
   static var title: LocalizedStringResource = "Unsend Catbird Message"
@@ -239,7 +239,7 @@ struct CatbirdUnsendMessageSchemaIntent {
   }
 }
 
-@available(iOS 27.0, *)
+@available(anyAppleOS 27.0, *)
 @AppIntent(schema: .messages.setMessageReadStatus)
 struct CatbirdSetMessageReadStatusSchemaIntent {
   static var title: LocalizedStringResource = "Set Catbird Message Read Status"

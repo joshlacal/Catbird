@@ -132,8 +132,8 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
         
         // Let automatic content inset adjustment handle safe areas since we're edge-to-edge
         collectionView.contentInsetAdjustmentBehavior = .automatic
-        #if compiler(>=6.2)
-        if #available(iOS 26.0, *) {
+        #if compiler(>=7.0)
+        if #available(anyAppleOS 26.0, *) {
             collectionView.topEdgeEffect.style = .soft
             collectionView.bottomEdgeEffect.style = .soft
         }
@@ -2552,8 +2552,8 @@ final class ParentPostCell: UICollectionViewCell {
 
   override func prepareForReuse() {
     super.prepareForReuse()
-#if compiler(>=6.2)
-    if #available(iOS 26.0, *) {
+#if compiler(>=7.0)
+    if #available(anyAppleOS 26.0, *) {
       appEntityIdentifier = nil
     }
 #endif
@@ -2596,11 +2596,11 @@ final class MainPostCell: UICollectionViewCell {
   func configure(post: AppBskyFeedDefs.PostView, appState: AppState, path: Binding<NavigationPath>) {
     let postIdentity = post.uri.uriString()
 
-#if compiler(>=6.2)
-    if #available(iOS 26.0, *),
+#if compiler(>=7.0)
+    if #available(anyAppleOS 26.0, *),
       let entityURI = AppEntityAnnotationIdentifiers.postURI(postIdentity) {
       appEntityIdentifier = EntityIdentifier(for: PostEntity.self, identifier: entityURI)
-    } else if #available(iOS 26.0, *) {
+    } else if #available(anyAppleOS 26.0, *) {
       appEntityIdentifier = nil
     }
 #endif
@@ -2647,8 +2647,8 @@ final class MainPostCell: UICollectionViewCell {
 
   override func prepareForReuse() {
     super.prepareForReuse()
-#if compiler(>=6.2)
-    if #available(iOS 26.0, *) {
+#if compiler(>=7.0)
+    if #available(anyAppleOS 26.0, *) {
       appEntityIdentifier = nil
     }
 #endif
@@ -2763,11 +2763,11 @@ final class ReplyCell: UICollectionViewCell {
     appState: AppState,
     path: Binding<NavigationPath>
   ) {
-#if compiler(>=6.2)
-    if #available(iOS 26.0, *),
+#if compiler(>=7.0)
+    if #available(anyAppleOS 26.0, *),
       let entityURI = AppEntityAnnotationIdentifiers.postURI(replyWrapper.id) {
       appEntityIdentifier = EntityIdentifier(for: PostEntity.self, identifier: entityURI)
-    } else if #available(iOS 26.0, *) {
+    } else if #available(anyAppleOS 26.0, *) {
       appEntityIdentifier = nil
     }
 #endif
@@ -2812,8 +2812,8 @@ final class ReplyCell: UICollectionViewCell {
 
   override func prepareForReuse() {
     super.prepareForReuse()
-#if compiler(>=6.2)
-    if #available(iOS 26.0, *) {
+#if compiler(>=7.0)
+    if #available(anyAppleOS 26.0, *) {
       appEntityIdentifier = nil
     }
 #endif

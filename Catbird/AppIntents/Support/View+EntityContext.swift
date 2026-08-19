@@ -28,7 +28,7 @@ extension View {
   @ViewBuilder
   func entityContext(_ identifier: EntityIdentifier?) -> some View {
 #if compiler(>=7.0)
-    if #available(iOS 26.0, macOS 26.0, *) {
+    if #available(anyAppleOS 26.0, *) {
       self.appEntityIdentifier(identifier)
     } else {
       self
