@@ -13,6 +13,7 @@
 set -euo pipefail
 
 SIBLINGS_DIR="$(dirname "$CI_PRIMARY_REPOSITORY_PATH")"
+mkdir -p "$SIBLINGS_DIR"
 
 clone_sibling() {
   local repo="$1" ref="${2:-main}" visibility="${3:-public}" url
@@ -27,6 +28,7 @@ clone_sibling() {
     url="https://github.com/joshlacal/${repo}.git"
   fi
   echo "Cloning ${repo} @ ${ref}"
+  rm -rf "${SIBLINGS_DIR}/${repo}"
   git clone --quiet --depth 1 --branch "$ref" "$url" "${SIBLINGS_DIR}/${repo}"
 }
 

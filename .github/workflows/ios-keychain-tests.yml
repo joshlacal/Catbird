@@ -31,6 +31,13 @@ jobs:
       - name: Resolve Swift packages
         run: xcodebuild -resolvePackageDependencies -project Catbird.xcodeproj -scheme Catbird
 
+      - name: Setup CI Keychain
+        run: |
+          security create-keychain -p "" ci.keychain || true
+          security default-keychain -s ci.keychain
+          security unlock-keychain -p "" ci.keychain
+          security set-keychain-settings -t 3600 -u ci.keychain
+
       - name: Run the complete keychain suite
         shell: bash
         run: |
