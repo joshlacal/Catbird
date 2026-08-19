@@ -907,6 +907,10 @@ class NotificationService: UNNotificationServiceExtension {
     }
 
     // Emergency cleanup before system kills us
+    // CRITICAL: Interrupt all in-flight SQLite / Rust operations first to release locks immediately
+    MLSClient.interruptAllContexts()
+    MLSCoreContext.interruptAllContexts()
+
     // CRITICAL: NSE must use PASSIVE checkpoint — TRUNCATE from NSE while main app
     // has the DB open causes WAL corruption (two processes racing for exclusive WAL access).
     MLSClient.emergencyCloseAllContexts(reason: "NSE expiration cleanup")

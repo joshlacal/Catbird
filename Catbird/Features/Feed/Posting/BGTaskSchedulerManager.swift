@@ -105,12 +105,9 @@ enum BGTaskSchedulerManager {
     }
 
     Task {
-      defer {
-        bgTask.end()
-        GRDBSuspensionCoordinator.endBackgroundWork(reason: "Posting BGTask \(taskIdentifier)")
-      }
-
       let success = await retryWork.value
+      GRDBSuspensionCoordinator.endBackgroundWork(reason: "Posting BGTask \(taskIdentifier)")
+      bgTask.end()
       task.setTaskCompleted(success: success)
     }
   }

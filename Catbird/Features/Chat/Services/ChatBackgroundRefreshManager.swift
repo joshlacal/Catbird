@@ -102,12 +102,9 @@ enum ChatBackgroundRefreshManager {
     }
 
     Task {
-      defer {
-        bgTask.end()
-        GRDBSuspensionCoordinator.endBackgroundWork(reason: "Chat BGTask \(taskIdentifier)")
-      }
-
       let success = await refreshWork.value
+      GRDBSuspensionCoordinator.endBackgroundWork(reason: "Chat BGTask \(taskIdentifier)")
+      bgTask.end()
       task.setTaskCompleted(success: success)
     }
   }

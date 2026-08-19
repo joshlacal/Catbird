@@ -1706,16 +1706,16 @@
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/joshlacal/PetrelCatbird";
 			requirement = {
-				kind = exactVersion;
-				version = 1.1.0;
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.1.0;
 			};
 		};
 		2188669D300B606F00215DE7 /* XCRemoteSwiftPackageReference "CatbirdMLSCore" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/joshlacal/CatbirdMLSCore";
 			requirement = {
-				kind = exactVersion;
-				version = 1.1.0;
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.1.0;
 			};
 		};
 		218866A0300B61AC00215DE7 /* XCRemoteSwiftPackageReference "CatbirdBrand" */ = {

@@ -125,12 +125,9 @@ enum BackgroundCacheRefreshManager {
     }
 
     Task {
-      defer {
-        bgTask.end()
-        GRDBSuspensionCoordinator.endBackgroundWork(reason: "Cache BGTask \(taskIdentifier)")
-      }
-
       let success = await refreshWork.value
+      GRDBSuspensionCoordinator.endBackgroundWork(reason: "Cache BGTask \(taskIdentifier)")
+      bgTask.end()
       task.setTaskCompleted(success: success)
     }
   }
