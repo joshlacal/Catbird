@@ -268,7 +268,7 @@ actor MLSBackgroundRefreshManager {
         manager.suspendMLSOperations()
       },
       prepareRustRuntime: {
-        await manager.prepareRustRuntimeForSuspensionAfterDrain(timeout: 5)
+        true
       },
       closePreparedRuntime: {
         MLSClient.emergencyCloseAllContexts(reason: "MLS BGTask prepared completion")

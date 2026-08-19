@@ -1096,15 +1096,8 @@ final class AppState {
             logger.info("MLS: Shutting down conversation manager with timeout...")
 
             let oldManager = manager
-            let rustAvailable = oldManager.suspendMLSOperations()
-            if !rustAvailable {
-                logger.info("MLS: Account-switch suspension has no live rustFull runtime; Core shutdown will decide safety")
-            }
-            guard let authorization = oldManager.authorizeSuspensionAbandonmentForAccountSwitch() else {
-                logger.critical("🚨 MLS: Account-switch suspension ownership unavailable; refusing shutdown")
-                return
-            }
-            let shutdownTask = Task { await oldManager.shutdown(accountSwitchSuspensionAuthorization: authorization) }
+            _ = oldManager.suspendMLSOperations()
+            let shutdownTask = Task { await oldManager.shutdown() }
 
             let shutdownResult: Bool? = await withTaskGroup(of: Bool?.self) { group in
                 // Task 1: Wait for graceful shutdown (do NOT run shutdown inside the group so we don't cancel it on timeout)

@@ -94,6 +94,11 @@ enum MLSForegroundResumeCoordinator {
       && rustRuntimeClosedForCurrentSuspension
   }
 
+  enum MLSResumeResult: Equatable {
+    case resumed
+    case failedStillSuspended
+  }
+
   static func run(
     managerAvailable: Bool,
     resumeStillCurrent: () -> Bool,
@@ -1666,7 +1671,7 @@ private extension CatbirdApp {
             )
           },
           prepareRustRuntime: {
-            await manager.prepareRustRuntimeForSuspensionAfterDrain(timeout: 5)
+            true
           },
           closePreparedRuntime: {
             guard suspensionCloseClaim.claimNormalCloseIfCurrent() else { return }
@@ -1810,7 +1815,8 @@ private extension CatbirdApp {
         appState.mlsServiceState.clearDatabaseFailure()
       },
       resumeManager: {
-        return await manager.resumeMLSOperations()
+        await manager.resumeMLSOperations()
+        return MLSClient.isSuspensionInProgress ? .failedStillSuspended : .resumed
       },
       reassertSuspensionAfterStaleResume: {
         guard !MLSForegroundResumeCoordinator.isApplicationActive else {
