@@ -3566,7 +3566,7 @@ private extension CatbirdApp {
         currentDeviceId = await conversationManager.mlsClient.getDeviceInfo(for: userDid)?.deviceId ?? "unknown"
       }
       let (_, listOutput) = try await conversationManager.apiClient.client.blue.catbird.chat.getOwnDevices(
-        input: BlueCatbirdChatGetOwnDevices.Parameters()
+        input: BlueCatbirdChatGetOwnDevices.Parameters(actorDeviceId: currentDeviceId)
       )
       let currentDevicePackages = listOutput?.items.first(where: { $0.device.deviceId == currentDeviceId })?.device.availablePackageCount ?? -1
 
@@ -3667,7 +3667,7 @@ private extension CatbirdApp {
 
       let stats = try await conversationManager.apiClient.getKeyPackageStats()
       let (statusCode, listOutput) = try await conversationManager.apiClient.client.blue.catbird.chat.getOwnDevices(
-        input: BlueCatbirdChatGetOwnDevices.Parameters()
+        input: BlueCatbirdChatGetOwnDevices.Parameters(actorDeviceId: currentDeviceId)
       )
       guard statusCode == 200, let listOutput else {
         throw NSError(

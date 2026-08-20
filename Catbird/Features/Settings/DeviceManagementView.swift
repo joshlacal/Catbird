@@ -286,7 +286,10 @@ final class DeviceManagementViewModel {
 
     @MainActor
     func loadDevices() async {
-        guard let client = appState?.client else {
+        guard let client = appState?.client,
+              let appState,
+              let conversationManager = await appState.getMLSConversationManager()
+        else {
             logger.error("No authenticated client available")
             return
         }
@@ -296,7 +299,29 @@ final class DeviceManagementViewModel {
 
         do {
             logger.info("Loading devices...")
-            let (_, output) = try await client.blue.catbird.chat.getOwnDevices(input: .init())
+            let actorDeviceId: String
+            if conversationManager.protocolAuthorityMode == .rustFull {
+                guard let registered = try await conversationManager.registeredDeviceInfoForPushTokenRegistration() else {
+                    throw NSError(
+                        domain: "MLSDeviceManagement",
+                        code: 1,
+                        userInfo: [NSLocalizedDescriptionKey: "MLS device enrollment is not ready"]
+                    )
+                }
+                actorDeviceId = registered.deviceId
+            } else {
+                guard let registered = await conversationManager.mlsClient.getDeviceInfo(for: appState.userDID) else {
+                    throw NSError(
+                        domain: "MLSDeviceManagement",
+                        code: 1,
+                        userInfo: [NSLocalizedDescriptionKey: "MLS device enrollment is not ready"]
+                    )
+                }
+                actorDeviceId = registered.deviceId
+            }
+            let (_, output) = try await client.blue.catbird.chat.getOwnDevices(
+                input: .init(actorDeviceId: actorDeviceId)
+            )
             devices = output?.items.map(DeviceRowModel.init) ?? []
             logger.info("Loaded \(self.devices.count) devices")
         } catch {

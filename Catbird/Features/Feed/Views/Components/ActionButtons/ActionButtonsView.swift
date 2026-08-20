@@ -247,7 +247,7 @@ struct ActionButtonsView: View {
   private var repostMenu: some View {
     Group {
       #if os(iOS)
-      if #available(anyAppleOS 27.0, *) {
+      if #available(iOS 27.0, *) {
         repostDialogButton
       } else {
         repostMenuControl

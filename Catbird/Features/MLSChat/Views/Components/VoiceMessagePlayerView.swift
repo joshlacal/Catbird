@@ -130,9 +130,15 @@ struct VoiceMessagePlayerView: View {
     // Step 1: Fetch encrypted blob
     voicePlayerLogger.info("[play] fetching blob \(audioData.blobId)")
     let encryptedData: Data
+    guard let deviceId = await resolveActorDeviceId() else {
+      voicePlayerLogger.error("[play] device ID is not available")
+      loadError = "Device not registered"
+      isLoading = false
+      return
+    }
     do {
       let (code, response) = try await appState.client.blue.catbird.chat.getBlob(
-        input: .init(blobId: audioData.blobId)
+        input: .init(actorDeviceId: deviceId, blobId: audioData.blobId)
       )
       guard (200..<300).contains(code), let output = response else {
         voicePlayerLogger.error("[play] blob fetch failed: HTTP \(code)")
@@ -259,6 +265,35 @@ struct VoiceMessagePlayerView: View {
     wav.append(pcmData)
     return wav
   }
+  private func resolveActorDeviceId() async -> String? {
+    if let deviceUuid = try? MLSOrchestratorCredentialAdapter().getDeviceUuid(userDid: appState.userDID),
+       !deviceUuid.isEmpty, UUID(uuidString: deviceUuid) != nil {
+      return deviceUuid
+    }
+    if let conversationManager = await appState.getMLSConversationManager() {
+      if conversationManager.protocolAuthorityMode == .rustFull {
+        if let registered = try? await conversationManager.registeredDeviceInfoForPushTokenRegistration(),
+           !registered.deviceId.isEmpty, UUID(uuidString: registered.deviceId) != nil {
+          return registered.deviceId
+        }
+      } else {
+        if let registered = await conversationManager.mlsClient.getDeviceInfo(for: appState.userDID),
+           !registered.deviceId.isEmpty, UUID(uuidString: registered.deviceId) != nil {
+          return registered.deviceId
+        }
+      }
+    }
+    let normalizedUserDid = appState.userDID.trimmingCharacters(in: .whitespacesAndNewlines)
+    let sharedDefaults = UserDefaults(suiteName: "group.blue.catbird.shared") ?? .standard
+    if let data = sharedDefaults.data(forKey: "blue.catbird.mls.deviceInfoByUser"),
+       let decoded = try? JSONDecoder().decode([String: MLSDeviceManager.UserDeviceInfo].self, from: data),
+       let info = decoded[normalizedUserDid],
+       !info.deviceId.isEmpty, UUID(uuidString: info.deviceId) != nil {
+      return info.deviceId
+    }
+    return nil
+  }
+
 
   private func startProgressTimer() {
     progressTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in

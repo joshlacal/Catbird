@@ -8,13 +8,11 @@
 
 /* Begin PBXBuildFile section */
 		21094CF42EBD09010084BFBD /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = 21094CF32EBD09010084BFBD /* GRDB */; };
-		210BF26B2F841D6400C27A4B /* CatbirdMLSCore in Frameworks */ = {isa = PBXBuildFile; productRef = 210BF26A2F841D6400C27A4B /* CatbirdMLSCore */; };
-		210BF26E2F841D7700C27A4B /* Petrel in Frameworks */ = {isa = PBXBuildFile; productRef = 210BF26D2F841D7700C27A4B /* Petrel */; };
 		21196F592DC25F5B00662CC3 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 21196F102DC1115900662CC3 /* WidgetKit.framework */; };
 		21196F5A2DC25F5B00662CC3 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 21196F122DC1115900662CC3 /* SwiftUI.framework */; };
-		211DC2F82EA803CB00608AF4 /* Petrel in Frameworks */ = {isa = PBXBuildFile; productRef = 211DC2F72EA803CB00608AF4 /* Petrel */; };
+
 		212D4B462ED1FE740036E016 /* NotificationServiceExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 212D4B3F2ED1FE730036E016 /* NotificationServiceExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
-		212E943A2D61003F00D3E1DD /* Petrel in Frameworks */ = {isa = PBXBuildFile; productRef = 212E94392D61003F00D3E1DD /* Petrel */; };
+
 		212E94692D6183D600D3E1DD /* Nuke in Frameworks */ = {isa = PBXBuildFile; productRef = 212E94682D6183D600D3E1DD /* Nuke */; };
 		212E946B2D6183D600D3E1DD /* NukeExtensions in Frameworks */ = {isa = PBXBuildFile; productRef = 212E946A2D6183D600D3E1DD /* NukeExtensions */; };
 		212E946D2D6183D600D3E1DD /* NukeUI in Frameworks */ = {isa = PBXBuildFile; productRef = 212E946C2D6183D600D3E1DD /* NukeUI */; };
@@ -33,12 +31,12 @@
 		21A0C0DE300C0DE100000001 /* CatbirdMLSCore in Frameworks */ = {isa = PBXBuildFile; productRef = 21A0C0DE300C0DE100000002 /* CatbirdMLSCore */; };
 		21A0C0DE300C0DE100000003 /* PetrelCatbird in Frameworks */ = {isa = PBXBuildFile; productRef = 21A0C0DE300C0DE100000004 /* PetrelCatbird */; };
 		21AC6E642DD0E0E700251536 /* .swiftlint.yml in Resources */ = {isa = PBXBuildFile; fileRef = 21AC6E632DD0E0E700251536 /* .swiftlint.yml */; };
-		21BAB3512F9775AF00C94C69 /* CatbirdBrand in Frameworks */ = {isa = PBXBuildFile; productRef = 21BAB3502F9775AF00C94C69 /* CatbirdBrand */; };
+
 		21DDE5EF2DF4EDAF009E9825 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 21196F102DC1115900662CC3 /* WidgetKit.framework */; platformFilters = (ios, macos, ); };
 		21DDE5F02DF4EDAF009E9825 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 21196F122DC1115900662CC3 /* SwiftUI.framework */; };
-		21E0CFC82DE3B9F70008DDF1 /* Petrel in Frameworks */ = {isa = PBXBuildFile; productRef = 21A87CAC2D94390D0062F8E9 /* Petrel */; };
+
 		21E1082A2D70BE6F0030A71C /* OrderedCollections in Frameworks */ = {isa = PBXBuildFile; productRef = 21E108292D70BE6F0030A71C /* OrderedCollections */; };
-		21EBFE032EB53AB300E707B6 /* Petrel in Frameworks */ = {isa = PBXBuildFile; productRef = 21EBFE022EB53AB300E707B6 /* Petrel */; };
+
 		21FFA23B2EBB8450009825BD /* SQLCipher in Frameworks */ = {isa = PBXBuildFile; productRef = 21FFA23A2EBB8450009825BD /* SQLCipher */; };
 /* End PBXBuildFile section */
 
@@ -341,29 +339,22 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				21E0CFC82DE3B9F70008DDF1 /* Petrel in Frameworks */,
-				212E943A2D61003F00D3E1DD /* Petrel in Frameworks */,
 				21FFA23B2EBB8450009825BD /* SQLCipher in Frameworks */,
 				212E94692D6183D600D3E1DD /* Nuke in Frameworks */,
 				219E58052EBC27FF00C8D6F2 /* Foundation.framework in Frameworks */,
 				21E1082A2D70BE6F0030A71C /* OrderedCollections in Frameworks */,
-				211DC2F82EA803CB00608AF4 /* Petrel in Frameworks */,
 				212E946B2D6183D600D3E1DD /* NukeExtensions in Frameworks */,
 				21094CF42EBD09010084BFBD /* GRDB in Frameworks */,
-				21EBFE032EB53AB300E707B6 /* Petrel in Frameworks */,
 				218866A5300B678A00215DE7 /* BluemojiKit in Frameworks */,
-				210BF26E2F841D7700C27A4B /* Petrel in Frameworks */,
 				212E946D2D6183D600D3E1DD /* NukeUI in Frameworks */,
 				215ADE7F2E847268003F0DA4 /* Sentry-Dynamic in Frameworks */,
 				21886699300B5FE800215DE7 /* Petrel in Frameworks */,
 				219DA5B92EED838E00F717FA /* EmojiKit in Frameworks */,
-				210BF26B2F841D6400C27A4B /* CatbirdMLSCore in Frameworks */,
 				2188669C300B600600215DE7 /* PetrelCatbird in Frameworks */,
 				218B7A8C2D70B1AE0053987F /* LazyPager in Frameworks */,
 				219E58032EBC27F500C8D6F2 /* Security.framework in Frameworks */,
 				217ECDA92EB4268100BD113B /* Mantis in Frameworks */,
 				218866A2300B61AC00215DE7 /* CatbirdBrand in Frameworks */,
-				21BAB3512F9775AF00C94C69 /* CatbirdBrand in Frameworks */,
 				2188669F300B606F00215DE7 /* CatbirdMLSCore in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -469,9 +460,6 @@
 			buildRules = (
 			);
 			dependencies = (
-				218866AB300B69C000215DE7 /* PBXTargetDependency */,
-				218866A7300B67FC00215DE7 /* PBXTargetDependency */,
-				218866A9300B67FC00215DE7 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				21292B272F71F40C00DE8633 /* CatbirdFeedWidget */,
@@ -511,23 +499,16 @@
 			);
 			name = Catbird;
 			packageProductDependencies = (
-				212E94392D61003F00D3E1DD /* Petrel */,
 				212E94682D6183D600D3E1DD /* Nuke */,
 				212E946A2D6183D600D3E1DD /* NukeExtensions */,
 				212E946C2D6183D600D3E1DD /* NukeUI */,
 				218B7A8B2D70B1AE0053987F /* LazyPager */,
 				21E108292D70BE6F0030A71C /* OrderedCollections */,
-				21A87CAC2D94390D0062F8E9 /* Petrel */,
 				215ADE7E2E847268003F0DA4 /* Sentry-Dynamic */,
-				211DC2F72EA803CB00608AF4 /* Petrel */,
 				217ECDA82EB4268100BD113B /* Mantis */,
-				21EBFE022EB53AB300E707B6 /* Petrel */,
 				21FFA23A2EBB8450009825BD /* SQLCipher */,
 				21094CF32EBD09010084BFBD /* GRDB */,
 				219DA5B82EED838E00F717FA /* EmojiKit */,
-				210BF26A2F841D6400C27A4B /* CatbirdMLSCore */,
-				210BF26D2F841D7700C27A4B /* Petrel */,
-				21BAB3502F9775AF00C94C69 /* CatbirdBrand */,
 				21886698300B5FE800215DE7 /* Petrel */,
 				2188669B300B600600215DE7 /* PetrelCatbird */,
 				2188669E300B606F00215DE7 /* CatbirdMLSCore */,
@@ -671,9 +652,9 @@
 				21FFA2392EBB8450009825BD /* XCRemoteSwiftPackageReference "SQLCipher.swift" */,
 				21094CF22EBD09010084BFBD /* XCRemoteSwiftPackageReference "GRDB.swift" */,
 				219DA5B72EED838E00F717FA /* XCRemoteSwiftPackageReference "EmojiKit" */,
-				21886697300B5FE800215DE7 /* XCRemoteSwiftPackageReference "Petrel" */,
-				2188669A300B600600215DE7 /* XCRemoteSwiftPackageReference "PetrelCatbird" */,
-				2188669D300B606F00215DE7 /* XCRemoteSwiftPackageReference "CatbirdMLSCore" */,
+				21886697300B5FE800215DE7 /* XCLocalSwiftPackageReference "Petrel" */,
+				2188669A300B600600215DE7 /* XCLocalSwiftPackageReference "PetrelCatbird" */,
+				2188669D300B606F00215DE7 /* XCLocalSwiftPackageReference "CatbirdMLSCore" */,
 				218866A0300B61AC00215DE7 /* XCRemoteSwiftPackageReference "CatbirdBrand" */,
 				218866A3300B678A00215DE7 /* XCRemoteSwiftPackageReference "BluemojiKit" */,
 			);
@@ -858,18 +839,7 @@
 			target = 212E93FC2D60132700D3E1DD /* Catbird */;
 			targetProxy = 212E941C2D60132A00D3E1DD /* PBXContainerItemProxy */;
 		};
-		218866A7300B67FC00215DE7 /* PBXTargetDependency */ = {
-			isa = PBXTargetDependency;
-			productRef = 218866A6300B67FC00215DE7 /* PetrelCatbird */;
-		};
-		218866A9300B67FC00215DE7 /* PBXTargetDependency */ = {
-			isa = PBXTargetDependency;
-			productRef = 218866A8300B67FC00215DE7 /* CatbirdMLSCore */;
-		};
-		218866AB300B69C000215DE7 /* PBXTargetDependency */ = {
-			isa = PBXTargetDependency;
-			productRef = 218866AA300B69C000215DE7 /* GRDB */;
-		};
+
 		21B987832E65BD3800686783 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			platformFilter = ios;
@@ -1694,29 +1664,17 @@
 				minimumVersion = 1.7.5;
 			};
 		};
-		21886697300B5FE800215DE7 /* XCRemoteSwiftPackageReference "Petrel" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/joshlacal/Petrel";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 1.1.0;
-			};
+		21886697300B5FE800215DE7 /* XCLocalSwiftPackageReference "Petrel" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../Petrel;
 		};
-		2188669A300B600600215DE7 /* XCRemoteSwiftPackageReference "PetrelCatbird" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/joshlacal/PetrelCatbird";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 1.1.1;
-			};
+		2188669A300B600600215DE7 /* XCLocalSwiftPackageReference "PetrelCatbird" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../PetrelCatbird;
 		};
-		2188669D300B606F00215DE7 /* XCRemoteSwiftPackageReference "CatbirdMLSCore" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/joshlacal/CatbirdMLSCore";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 1.4.3;
-			};
+		2188669D300B606F00215DE7 /* XCLocalSwiftPackageReference "CatbirdMLSCore" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../CatbirdMLSCore;
 		};
 		218866A0300B61AC00215DE7 /* XCRemoteSwiftPackageReference "CatbirdBrand" */ = {
 			isa = XCRemoteSwiftPackageReference;
@@ -1774,22 +1732,7 @@
 			package = 21094CF22EBD09010084BFBD /* XCRemoteSwiftPackageReference "GRDB.swift" */;
 			productName = GRDB;
 		};
-		210BF26A2F841D6400C27A4B /* CatbirdMLSCore */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = CatbirdMLSCore;
-		};
-		210BF26D2F841D7700C27A4B /* Petrel */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = Petrel;
-		};
-		211DC2F72EA803CB00608AF4 /* Petrel */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = Petrel;
-		};
-		212E94392D61003F00D3E1DD /* Petrel */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = Petrel;
-		};
+
 		212E94682D6183D600D3E1DD /* Nuke */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 212E94672D6183D600D3E1DD /* XCRemoteSwiftPackageReference "Nuke" */;
@@ -1840,21 +1783,7 @@
 			package = 218866A3300B678A00215DE7 /* XCRemoteSwiftPackageReference "BluemojiKit" */;
 			productName = BluemojiKit;
 		};
-		218866A6300B67FC00215DE7 /* PetrelCatbird */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 2188669A300B600600215DE7 /* XCRemoteSwiftPackageReference "PetrelCatbird" */;
-			productName = PetrelCatbird;
-		};
-		218866A8300B67FC00215DE7 /* CatbirdMLSCore */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 2188669D300B606F00215DE7 /* XCRemoteSwiftPackageReference "CatbirdMLSCore" */;
-			productName = CatbirdMLSCore;
-		};
-		218866AA300B69C000215DE7 /* GRDB */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 21094CF22EBD09010084BFBD /* XCRemoteSwiftPackageReference "GRDB.swift" */;
-			productName = GRDB;
-		};
+
 		218B7A8B2D70B1AE0053987F /* LazyPager */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 218B7A8A2D70B1AE0053987F /* XCRemoteSwiftPackageReference "LazyPager" */;
@@ -1875,23 +1804,13 @@
 			package = 2188669A300B600600215DE7 /* XCRemoteSwiftPackageReference "PetrelCatbird" */;
 			productName = PetrelCatbird;
 		};
-		21A87CAC2D94390D0062F8E9 /* Petrel */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = Petrel;
-		};
-		21BAB3502F9775AF00C94C69 /* CatbirdBrand */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = CatbirdBrand;
-		};
+
 		21E108292D70BE6F0030A71C /* OrderedCollections */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 2194B3C42D70AA13004268BE /* XCRemoteSwiftPackageReference "swift-collections" */;
 			productName = OrderedCollections;
 		};
-		21EBFE022EB53AB300E707B6 /* Petrel */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = Petrel;
-		};
+
 		21FFA23A2EBB8450009825BD /* SQLCipher */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 21FFA2392EBB8450009825BD /* XCRemoteSwiftPackageReference "SQLCipher.swift" */;

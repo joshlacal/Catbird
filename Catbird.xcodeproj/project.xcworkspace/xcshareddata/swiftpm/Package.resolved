@@ -1,5 +1,5 @@
 {
-  "originHash" : "4da86e8d668dd84c897a50f23115def9e826f9448f0ced4f35c583f47dcad5b7",
+  "originHash" : "76be193ca8ab3598c8ee3c0ef609a0d8ef1fc76851d9719bf076db664afc5466",
   "pins" : [
     {
       "identity" : "adaptiveglyphkit",
@@ -26,15 +26,6 @@
       "state" : {
         "revision" : "695bad0204bd3d4850ba283ba0f7e843bf68aa13",
         "version" : "0.1.0"
-      }
-    },
-    {
-      "identity" : "catbirdmlscore",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/joshlacal/CatbirdMLSCore",
-      "state" : {
-        "revision" : "2ec74bcd74fa62e10bf73d22638532fe3eb9d14b",
-        "version" : "1.4.3"
       }
     },
     {
@@ -101,30 +92,12 @@
       }
     },
     {
-      "identity" : "petrel",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/joshlacal/Petrel",
-      "state" : {
-        "revision" : "b59b3d457d2c4796df27c58740a2528f1dd2bfa0",
-        "version" : "1.1.0"
-      }
-    },
-    {
       "identity" : "petrelbluemoji",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/joshlacal/PetrelBluemoji.git",
       "state" : {
         "revision" : "c2418e6041810cd1aed6334800bf00391b56b3e5",
         "version" : "0.1.1"
-      }
-    },
-    {
-      "identity" : "petrelcatbird",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/joshlacal/PetrelCatbird",
-      "state" : {
-        "revision" : "13c0f5b8a108955dd705b3d682b27303a0962c58",
-        "version" : "1.1.1"
       }
     },
     {

@@ -31,7 +31,7 @@ class NotificationService: UNNotificationServiceExtension {
   /// App Group suite name for shared storage
   private static let appGroupSuite = "group.blue.catbird.shared"
 
-  private static let mlsServiceDID = "did:web:mlschat.catbird.blue#atproto_mls"
+  private static let mlsServiceDID = "did:web:chat.catbird.blue#atproto_mls"
   private static let mlsServiceNamespace = "blue.catbird.mls"
 
   deinit {
@@ -1185,6 +1185,7 @@ class NotificationService: UNNotificationServiceExtension {
     case httpError(statusCode: Int)
     case invalidResponse
     case invalidBase64
+    case unregisteredDevice
 
     var errorDescription: String? {
       switch self {
@@ -1194,6 +1195,8 @@ class NotificationService: UNNotificationServiceExtension {
         return "Invalid response"
       case .invalidBase64:
         return "Invalid base64"
+      case .unregisteredDevice:
+        return "Unregistered device"
       }
     }
   }
@@ -1241,7 +1244,7 @@ class NotificationService: UNNotificationServiceExtension {
 
     do {
       logger.info("📩 [NSE] Fetching Welcome message for group: \(convoId.prefix(16))...")
-      let welcomeData = try await fetchWelcomeData(convoId: convoId, client: client)
+      let welcomeData = try await fetchWelcomeData(convoId: convoId, recipientDid: recipientDid, client: client)
       logger.info("📩 [NSE] Received Welcome message: \(welcomeData.count) bytes")
 
       try await MLSCoreContext.shared.ensureContext(for: recipientDid)
@@ -1309,11 +1312,31 @@ class NotificationService: UNNotificationServiceExtension {
     }
   }
 
+  private func resolveActorDeviceId(for userDid: String) -> String? {
+    if let deviceUuid = try? MLSOrchestratorCredentialAdapter().getDeviceUuid(userDid: userDid),
+       !deviceUuid.isEmpty, UUID(uuidString: deviceUuid) != nil {
+      return deviceUuid
+    }
+    let normalizedUserDid = userDid.trimmingCharacters(in: .whitespacesAndNewlines)
+    let sharedDefaults = UserDefaults(suiteName: Self.appGroupSuite) ?? UserDefaults.standard
+    if let data = sharedDefaults.data(forKey: "blue.catbird.mls.deviceInfoByUser"),
+       let decoded = try? JSONDecoder().decode([String: MLSDeviceManager.UserDeviceInfo].self, from: data),
+       let info = decoded[normalizedUserDid],
+       !info.deviceId.isEmpty, UUID(uuidString: info.deviceId) != nil {
+      return info.deviceId
+    }
+    return nil
+  }
+
   private func fetchWelcomeData(
     convoId: String,
+    recipientDid: String,
     client: ATProtoClient
   ) async throws -> Data {
-    let input = BlueCatbirdChatGetConversationState.Parameters(conversationId: convoId)
+    guard let deviceId = resolveActorDeviceId(for: recipientDid) else {
+      throw NSEWelcomeError.unregisteredDevice
+    }
+    let input = BlueCatbirdChatGetConversationState.Parameters(actorDeviceId: deviceId, conversationId: convoId)
     let (responseCode, output) = try await client.blue.catbird.chat.getConversationState(input: input)
 
     guard responseCode == 200, output != nil else {
