@@ -1242,7 +1242,11 @@ class NotificationService: UNNotificationServiceExtension {
 
     do {
       logger.info("📩 [NSE] Fetching Welcome message for group: \(convoId.prefix(16))...")
-      let welcomeData = try await fetchWelcomeData(convoId: convoId, client: client)
+      let welcomeData = try await fetchWelcomeData(
+        convoId: convoId,
+        recipientDid: recipientDid,
+        client: client
+      )
       logger.info("📩 [NSE] Received Welcome message: \(welcomeData.count) bytes")
 
       try await MLSCoreContext.shared.ensureContext(for: recipientDid)
@@ -1312,9 +1316,21 @@ class NotificationService: UNNotificationServiceExtension {
 
   private func fetchWelcomeData(
     convoId: String,
+    recipientDid: String,
     client: ATProtoClient
   ) async throws -> Data {
-    let input = BlueCatbirdChatGetConversationState.Parameters(conversationId: convoId)
+    guard
+      let actorDeviceId = try MLSOrchestratorCredentialAdapter()
+        .getDeviceUuid(userDid: recipientDid),
+      !actorDeviceId.isEmpty,
+      UUID(uuidString: actorDeviceId) != nil
+    else {
+      throw NSEWelcomeError.invalidResponse
+    }
+    let input = BlueCatbirdChatGetConversationState.Parameters(
+      actorDeviceId: actorDeviceId,
+      conversationId: convoId
+    )
     let (responseCode, output) = try await client.blue.catbird.chat.getConversationState(input: input)
 
     guard responseCode == 200, output != nil else {
