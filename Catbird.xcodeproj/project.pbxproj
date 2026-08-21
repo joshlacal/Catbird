@@ -652,9 +652,9 @@
 				21FFA2392EBB8450009825BD /* XCRemoteSwiftPackageReference "SQLCipher.swift" */,
 				21094CF22EBD09010084BFBD /* XCRemoteSwiftPackageReference "GRDB.swift" */,
 				219DA5B72EED838E00F717FA /* XCRemoteSwiftPackageReference "EmojiKit" */,
-				21886697300B5FE800215DE7 /* XCLocalSwiftPackageReference "Petrel" */,
-				2188669A300B600600215DE7 /* XCLocalSwiftPackageReference "PetrelCatbird" */,
-				2188669D300B606F00215DE7 /* XCLocalSwiftPackageReference "CatbirdMLSCore" */,
+				21886697300B5FE800215DE7 /* XCRemoteSwiftPackageReference "Petrel" */,
+				2188669A300B600600215DE7 /* XCRemoteSwiftPackageReference "PetrelCatbird" */,
+				2188669D300B606F00215DE7 /* XCRemoteSwiftPackageReference "CatbirdMLSCore" */,
 				218866A0300B61AC00215DE7 /* XCRemoteSwiftPackageReference "CatbirdBrand" */,
 				218866A3300B678A00215DE7 /* XCRemoteSwiftPackageReference "BluemojiKit" */,
 			);
@@ -1664,17 +1664,29 @@
 				minimumVersion = 1.7.5;
 			};
 		};
-		21886697300B5FE800215DE7 /* XCLocalSwiftPackageReference "Petrel" */ = {
-			isa = XCLocalSwiftPackageReference;
-			relativePath = ../Petrel;
+		21886697300B5FE800215DE7 /* XCRemoteSwiftPackageReference "Petrel" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/joshlacal/Petrel";
+			requirement = {
+				kind = revision;
+				revision = 2bfd941ae82ec5975032c2e6bdf1c0607dabd5d0;
+			};
 		};
-		2188669A300B600600215DE7 /* XCLocalSwiftPackageReference "PetrelCatbird" */ = {
-			isa = XCLocalSwiftPackageReference;
-			relativePath = ../PetrelCatbird;
+		2188669A300B600600215DE7 /* XCRemoteSwiftPackageReference "PetrelCatbird" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/joshlacal/PetrelCatbird";
+			requirement = {
+				kind = revision;
+				revision = 4b02d4544414bb2b7686cb5e2bc9ba4cae9da473;
+			};
 		};
-		2188669D300B606F00215DE7 /* XCLocalSwiftPackageReference "CatbirdMLSCore" */ = {
-			isa = XCLocalSwiftPackageReference;
-			relativePath = ../CatbirdMLSCore;
+		2188669D300B606F00215DE7 /* XCRemoteSwiftPackageReference "CatbirdMLSCore" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/joshlacal/CatbirdMLSCore";
+			requirement = {
+				kind = revision;
+				revision = bae0192b9d0e3dbae99c6c605f7b2b5c04717d8c;
+			};
 		};
 		218866A0300B61AC00215DE7 /* XCRemoteSwiftPackageReference "CatbirdBrand" */ = {
 			isa = XCRemoteSwiftPackageReference;

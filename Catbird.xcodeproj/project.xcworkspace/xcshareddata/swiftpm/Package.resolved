@@ -29,6 +29,14 @@
       }
     },
     {
+      "identity" : "catbirdmlscore",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/joshlacal/CatbirdMLSCore",
+      "state" : {
+        "revision" : "bae0192b9d0e3dbae99c6c605f7b2b5c04717d8c"
+      }
+    },
+    {
       "identity" : "cryptoswift",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/krzyzanowskim/CryptoSwift.git",
@@ -92,12 +100,28 @@
       }
     },
     {
+      "identity" : "petrel",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/joshlacal/Petrel",
+      "state" : {
+        "revision" : "2bfd941ae82ec5975032c2e6bdf1c0607dabd5d0"
+      }
+    },
+    {
       "identity" : "petrelbluemoji",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/joshlacal/PetrelBluemoji.git",
       "state" : {
         "revision" : "c2418e6041810cd1aed6334800bf00391b56b3e5",
         "version" : "0.1.1"
+      }
+    },
+    {
+      "identity" : "petrelcatbird",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/joshlacal/PetrelCatbird",
+      "state" : {
+        "revision" : "4b02d4544414bb2b7686cb5e2bc9ba4cae9da473"
       }
     },
     {
