@@ -68,6 +68,7 @@ struct DiagnosticsSettingsView: View {
     defer { isResetting = false }
 
     do {
+      await appState.prepareMLSStorageReset()
       try await MLSClient.shared.clearStorage(for: appState.userDID)
     } catch {
       self.error = error
