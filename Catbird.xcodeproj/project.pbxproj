@@ -10,9 +10,7 @@
 		21094CF42EBD09010084BFBD /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = 21094CF32EBD09010084BFBD /* GRDB */; };
 		21196F592DC25F5B00662CC3 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 21196F102DC1115900662CC3 /* WidgetKit.framework */; };
 		21196F5A2DC25F5B00662CC3 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 21196F122DC1115900662CC3 /* SwiftUI.framework */; };
-
 		212D4B462ED1FE740036E016 /* NotificationServiceExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 212D4B3F2ED1FE730036E016 /* NotificationServiceExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
-
 		212E94692D6183D600D3E1DD /* Nuke in Frameworks */ = {isa = PBXBuildFile; productRef = 212E94682D6183D600D3E1DD /* Nuke */; };
 		212E946B2D6183D600D3E1DD /* NukeExtensions in Frameworks */ = {isa = PBXBuildFile; productRef = 212E946A2D6183D600D3E1DD /* NukeExtensions */; };
 		212E946D2D6183D600D3E1DD /* NukeUI in Frameworks */ = {isa = PBXBuildFile; productRef = 212E946C2D6183D600D3E1DD /* NukeUI */; };
@@ -31,12 +29,9 @@
 		21A0C0DE300C0DE100000001 /* CatbirdMLSCore in Frameworks */ = {isa = PBXBuildFile; productRef = 21A0C0DE300C0DE100000002 /* CatbirdMLSCore */; };
 		21A0C0DE300C0DE100000003 /* PetrelCatbird in Frameworks */ = {isa = PBXBuildFile; productRef = 21A0C0DE300C0DE100000004 /* PetrelCatbird */; };
 		21AC6E642DD0E0E700251536 /* .swiftlint.yml in Resources */ = {isa = PBXBuildFile; fileRef = 21AC6E632DD0E0E700251536 /* .swiftlint.yml */; };
-
 		21DDE5EF2DF4EDAF009E9825 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 21196F102DC1115900662CC3 /* WidgetKit.framework */; platformFilters = (ios, macos, ); };
 		21DDE5F02DF4EDAF009E9825 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 21196F122DC1115900662CC3 /* SwiftUI.framework */; };
-
 		21E1082A2D70BE6F0030A71C /* OrderedCollections in Frameworks */ = {isa = PBXBuildFile; productRef = 21E108292D70BE6F0030A71C /* OrderedCollections */; };
-
 		21FFA23B2EBB8450009825BD /* SQLCipher in Frameworks */ = {isa = PBXBuildFile; productRef = 21FFA23A2EBB8450009825BD /* SQLCipher */; };
 /* End PBXBuildFile section */
 
@@ -839,7 +834,6 @@
 			target = 212E93FC2D60132700D3E1DD /* Catbird */;
 			targetProxy = 212E941C2D60132A00D3E1DD /* PBXContainerItemProxy */;
 		};
-
 		21B987832E65BD3800686783 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			platformFilter = ios;
@@ -1669,7 +1663,7 @@
 			repositoryURL = "https://github.com/joshlacal/Petrel";
 			requirement = {
 				kind = revision;
-				revision = 2bfd941ae82ec5975032c2e6bdf1c0607dabd5d0;
+				revision = 64c7574ebfb5e46b260aa1dd808802635ca38851;
 			};
 		};
 		2188669A300B600600215DE7 /* XCRemoteSwiftPackageReference "PetrelCatbird" */ = {
@@ -1677,7 +1671,7 @@
 			repositoryURL = "https://github.com/joshlacal/PetrelCatbird";
 			requirement = {
 				kind = revision;
-				revision = 4b02d4544414bb2b7686cb5e2bc9ba4cae9da473;
+				revision = 0ad6a297cb310cc466517000ed2fb59c01f757b6;
 			};
 		};
 		2188669D300B606F00215DE7 /* XCRemoteSwiftPackageReference "CatbirdMLSCore" */ = {
@@ -1685,7 +1679,7 @@
 			repositoryURL = "https://github.com/joshlacal/CatbirdMLSCore";
 			requirement = {
 				kind = revision;
-				revision = 9f1a4a036c1a1ba830449a51e7f60f12585412ff;
+				revision = dedd6ddbb3ef0b261f33d42b4e767a53e9b14ef4;
 			};
 		};
 		218866A0300B61AC00215DE7 /* XCRemoteSwiftPackageReference "CatbirdBrand" */ = {
@@ -1744,7 +1738,6 @@
 			package = 21094CF22EBD09010084BFBD /* XCRemoteSwiftPackageReference "GRDB.swift" */;
 			productName = GRDB;
 		};
-
 		212E94682D6183D600D3E1DD /* Nuke */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 212E94672D6183D600D3E1DD /* XCRemoteSwiftPackageReference "Nuke" */;
@@ -1795,7 +1788,6 @@
 			package = 218866A3300B678A00215DE7 /* XCRemoteSwiftPackageReference "BluemojiKit" */;
 			productName = BluemojiKit;
 		};
-
 		218B7A8B2D70B1AE0053987F /* LazyPager */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 218B7A8A2D70B1AE0053987F /* XCRemoteSwiftPackageReference "LazyPager" */;
@@ -1816,13 +1808,11 @@
 			package = 2188669A300B600600215DE7 /* XCRemoteSwiftPackageReference "PetrelCatbird" */;
 			productName = PetrelCatbird;
 		};
-
 		21E108292D70BE6F0030A71C /* OrderedCollections */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 2194B3C42D70AA13004268BE /* XCRemoteSwiftPackageReference "swift-collections" */;
 			productName = OrderedCollections;
 		};
-
 		21FFA23A2EBB8450009825BD /* SQLCipher */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 21FFA2392EBB8450009825BD /* XCRemoteSwiftPackageReference "SQLCipher.swift" */;

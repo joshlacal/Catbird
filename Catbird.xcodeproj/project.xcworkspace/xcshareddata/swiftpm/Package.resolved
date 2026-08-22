@@ -1,5 +1,5 @@
 {
-  "originHash" : "76be193ca8ab3598c8ee3c0ef609a0d8ef1fc76851d9719bf076db664afc5466",
+  "originHash" : "4da86e8d668dd84c897a50f23115def9e826f9448f0ced4f35c583f47dcad5b7",
   "pins" : [
     {
       "identity" : "adaptiveglyphkit",
@@ -33,7 +33,7 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/joshlacal/CatbirdMLSCore",
       "state" : {
-        "revision" : "9f1a4a036c1a1ba830449a51e7f60f12585412ff"
+        "revision" : "dedd6ddbb3ef0b261f33d42b4e767a53e9b14ef4"
       }
     },
     {
@@ -104,7 +104,7 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/joshlacal/Petrel",
       "state" : {
-        "revision" : "2bfd941ae82ec5975032c2e6bdf1c0607dabd5d0"
+        "revision" : "64c7574ebfb5e46b260aa1dd808802635ca38851"
       }
     },
     {
@@ -121,7 +121,7 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/joshlacal/PetrelCatbird",
       "state" : {
-        "revision" : "4b02d4544414bb2b7686cb5e2bc9ba4cae9da473"
+        "revision" : "0ad6a297cb310cc466517000ed2fb59c01f757b6"
       }
     },
     {
