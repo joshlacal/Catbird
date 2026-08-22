@@ -1117,6 +1117,15 @@ final class AppState {
             if shutdownResult == true {
                 logger.info("MLS: ✅ Conversation manager shutdown complete")
                 mlsConversationManagerStorage = nil
+                // The manager being discarded owns the two global suspension gates set by
+                // suspendMLSOperations() above, and resumeMLSOperations() on that same
+                // instance is their only releaser. Dropping the reference without releasing
+                // them latches both gates for the lifetime of the process: foreground resume
+                // finds no MLSContextFreeLifecycleSuspensionOwner to match and reports
+                // "gates remain closed", and every later getMLSConversationManager() aborts
+                // before start. Shutdown completion is the proof its FFI/DB handles are
+                // released, so this is the safe point to hand the gates back.
+                MLSClient.clearSuspensionFlag(reason: "manager discarded after graceful shutdown")
             } else {
                 if shutdownResult == nil {
                     logger.warning("⚠️ MLS: Shutdown still in progress after 8s")
@@ -1134,6 +1143,10 @@ final class AppState {
 
                     _ = await shutdownTask.value
                     try? await Task.sleep(nanoseconds: 500_000_000) // 500ms
+
+                    // Same release as the graceful branch: the old manager is fully drained,
+                    // so the gates it owned must not outlive it or this retry aborts too.
+                    MLSClient.clearSuspensionFlag(reason: "manager discarded after delayed shutdown")
 
                     guard self.userDID == userDIDAtSwitch else { return nil }
 
@@ -1589,6 +1602,7 @@ final class AppState {
         }
 
         mlsConversationManagerInitTask = initTask
+        let initStartedAt = Date()
 
         // CRITICAL FIX: Apply timeout to NEW task creation (not just existing task wait)
         // Without this, the init task can block indefinitely if FFI permit acquisition hangs
@@ -1607,10 +1621,22 @@ final class AppState {
         }
 
         if result == nil {
-            logger.warning("MLS: ⏰ New initialization task timed out after \(timeout)s")
-            initTask.cancel()
-            mlsConversationManagerInitTask = nil
-            mlsServiceState.status = .failed("Initialization timed out. Please tap retry.")
+            // Both group branches yield nil, so a fast abort/failure inside initTask is
+            // indistinguishable from the sleep winning. Only claim a timeout when the clock
+            // agrees; otherwise preserve the status and error the task already recorded,
+            // which name the real cause.
+            let elapsed = Date().timeIntervalSince(initStartedAt)
+            if elapsed >= timeout {
+                logger.warning("MLS: ⏰ New initialization task timed out after \(timeout)s")
+                initTask.cancel()
+                mlsConversationManagerInitTask = nil
+                mlsServiceState.status = .failed("Initialization timed out. Please tap retry.")
+            } else {
+                logger.warning(
+                    "MLS: ⚠️ Initialization produced no manager after \(String(format: "%.2f", elapsed))s - preserving recorded cause"
+                )
+                mlsConversationManagerInitTask = nil
+            }
         }
 
         return result
