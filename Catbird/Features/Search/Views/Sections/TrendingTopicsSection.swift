@@ -7,7 +7,6 @@
 
 import SwiftUI
 import Petrel
-import OSLog
 
 /// A section showing trending topics from the Bluesky network
 struct TrendingTopicsSection: View {
@@ -18,8 +17,8 @@ struct TrendingTopicsSection: View {
     let onSelect: (String) -> Void
     let onSeeAll: () -> Void
     let maxItems: Int
-    
-    private let logger = Logger(subsystem: "blue.catbird", category: "TrendingTopicsSection")
+    @State private var copilotTopic: AppBskyUnspeccedDefs.TrendView?
+    @State private var isShowingCopilot = false
     
     init(
         topics: [AppBskyUnspeccedDefs.TrendView],
@@ -61,10 +60,15 @@ struct TrendingTopicsSection: View {
                 topicsListView
             }
         }
-        // Prefetch summaries for visible topics (maxItems)
-        .task(id: topics.prefix(maxItems).map { $0.summaryIdentityKey }.joined(separator: ",")) {
-            if #available(iOS 26.0, macOS 26.0, *) {
-                await TopicSummaryService.shared.primeSummaries(for: Array(topics.prefix(maxItems)), appState: appState, max: maxItems)
+        .sheet(isPresented: $isShowingCopilot) {
+            if let topic = copilotTopic {
+                CatbirdCopilotSheet(
+                    context: .topic(
+                        name: topic.displayName,
+                        description: TrendingTopicPresentation.description(for: topic),
+                        link: topic.link
+                    )
+                )
             }
         }
     }
@@ -185,10 +189,11 @@ struct TrendingTopicsSection: View {
                     }
                     .padding(.top, 2)
 
-                    // Topic summary (iOS 26+ via Foundation Models). Hidden if unavailable.
-                    if #available(iOS 26.0, macOS 26.0, *) {
-                        TrendingTopicSummaryLine(topic: topic)
-                            .id(topic.summaryIdentityKey)
+                    if let description = TrendingTopicPresentation.description(for: topic) {
+                        Text(description)
+                            .appFont(AppTextRole.footnote)
+                            .foregroundColor(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
+                            .accessibilityLabel("Topic description")
                     }
                 }
                 
@@ -209,6 +214,14 @@ struct TrendingTopicsSection: View {
         }
         .buttonStyle(PlainButtonStyle())
         .contentShape(Rectangle())
+        .contextMenu {
+            Button {
+                copilotTopic = topic
+                isShowingCopilot = true
+            } label: {
+                Label("Ask Catbird", systemImage: "sparkles")
+            }
+        }
     }
     
     private func trendingBadge(status: String) -> some View {
@@ -308,86 +321,5 @@ struct TrendingTopicsSection: View {
         let words = category.components(separatedBy: "-")
         let capitalizedWords = words.map { $0.capitalized }
         return capitalizedWords.joined(separator: " ")
-    }
-}
-
-private extension AppBskyUnspeccedDefs.TrendView {
-    var summaryIdentityKey: String { "\(link)|\(displayName)" }
-}
-
-// MARK: - Summary Line Subview
-
-@available(iOS 26.0, macOS 26.0, *)
-private struct TrendingTopicSummaryLine: View {
-    @Environment(AppState.self) private var appState
-    @Environment(\.colorScheme) private var colorScheme
-
-    let topic: AppBskyUnspeccedDefs.TrendView
-
-    @State private var summary: String = ""
-    @State private var isLoading: Bool = false
-    @State private var isStreaming: Bool = false
-
-    private var taskID: String { topic.summaryIdentityKey }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            if !summary.isEmpty {
-                Text(summary)
-                    .appFont(AppTextRole.footnote)
-                    .foregroundColor(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
-                    .transition(.opacity)
-                    .accessibilityLabel("Topic summary")
-                    .animation(.easeInOut(duration: 0.2), value: summary)
-            } else if isLoading {
-                // Lightweight loading shimmer
-                RoundedRectangle(cornerRadius: 4)
-                    .fill(Color.dynamicSecondaryBackground(appState.themeManager, currentScheme: colorScheme))
-                    .frame(height: 15 * 3) // Approx. 3 lines
-                    .redacted(reason: .placeholder)
-            }
-        }
-        .task(id: taskID) {
-            // Avoid re-entrancy
-            guard !isLoading, summary.isEmpty else { return }
-            isLoading = true
-            defer { isLoading = false }
-
-            // Poll cache - prewarming should have already generated summaries
-            os_log("[SummaryUI] Checking cache for %{public}@", topic.displayName)
-            
-            // Wait briefly for prewarming to complete, then check cache
-            for attempt in 0..<10 {
-                if let cachedSummary = await TopicSummaryService.shared.getCachedSummary(for: topic) {
-                    await MainActor.run {
-                        summary = cachedSummary
-                    }
-                    os_log("[SummaryUI] Cache hit for %{public}@ on attempt %d", topic.displayName, attempt)
-                    return
-                }
-                
-                // Wait 100ms before next attempt (max 1 second total)
-                try? await Task.sleep(for: .milliseconds(100))
-            }
-            
-            // If still no cache after polling, fall back to streaming
-            os_log("[SummaryUI] Cache miss after polling for %{public}@, falling back to stream", topic.displayName)
-            if let stream = await TopicSummaryService.shared.streamSummary(for: topic, appState: appState) {
-                isStreaming = true
-                do {
-                    for try await partialText in stream {
-                        await MainActor.run {
-                            summary = partialText
-                        }
-                    }
-                } catch {
-                    os_log("[SummaryUI] Stream error for %{public}@: %{public}@", topic.displayName, error.localizedDescription)
-                }
-                isStreaming = false
-            }
-            
-            os_log("[SummaryUI] Row task end for %{public}@ -> %{public}@", topic.displayName, summary.isEmpty ? "<empty>" : summary)
-        }
-        .padding(.top, 6)
     }
 }

@@ -188,31 +188,14 @@ private struct InlineTopicSummaryLine: View {
     @Environment(AppState.self) private var appState
     @Environment(\.colorScheme) private var colorScheme
     let topic: AppBskyUnspeccedDefs.TrendView
-    @State private var summary: String?
-    @State private var isLoading = false
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if let summary {
-                Text(summary)
+            if let description = TrendingTopicPresentation.description(for: topic) {
+                Text(description)
                     .appFont(AppTextRole.footnote)
                     .foregroundColor(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
                     .lineLimit(5)
-                    .transition(.opacity)
-            } else if isLoading {
-                RoundedRectangle(cornerRadius: 4)
-                    .fill(Color.dynamicSecondaryBackground(appState.themeManager, currentScheme: colorScheme))
-                    .frame(height: 15 * 3)
-                    .redacted(reason: .placeholder)
-            }
-        }
-        .task(id: topic.link) {
-            guard !isLoading, summary == nil else { return }
-            isLoading = true
-            defer { isLoading = false }
-            if #available(iOS 26.0, macOS 26.0, *) {
-                let text = await TopicSummaryService.shared.summary(for: topic, appState: appState)
-                await MainActor.run { summary = text }
-
+                    .accessibilityLabel("Topic description")
             }
         }
         .padding(.top, 6)
