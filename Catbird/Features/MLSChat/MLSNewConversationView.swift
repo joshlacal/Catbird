@@ -689,10 +689,16 @@ struct MLSNewConversationView: View {
             do {
                 let did = try DID(didString: participantDid)
                 if let existingConvoId = try await conversationManager.findDirectConversation(with: did) {
-                    logger.info("Found existing 1:1 conversation: \(existingConvoId.prefix(16))...")
-                    dismiss()
-                    onNavigateToConversation?(existingConvoId)
-                    return
+                    let records = Array(conversationManager.conversations.values).map(
+                        MLSConversationIdentityBoundary.record(for:)
+                    )
+                    if let canonicalID = try? MLSConversationIdentityBoundary.resolve(existingConvoId, in: records) {
+                        logger.info("Found existing 1:1 conversation: \(canonicalID.prefix(16))...")
+                        dismiss()
+                        onNavigateToConversation?(canonicalID)
+                        return
+                    }
+                    logger.warning("Refusing unresolved existing 1:1 conversation route")
                 }
             } catch {
                 logger.warning("Failed to check for existing 1:1 conversation: \(error.localizedDescription)")
@@ -760,9 +766,29 @@ struct MLSNewConversationView: View {
             
             creationProgress = "Setting up secure group..."
             
-            // Create the conversation
-            await viewModel.createConversation()
-            
+            // Create the conversation and retain the stable identity for
+            // immediate navigation.  The raw MLS group ID remains crypto-only.
+            guard let createdConversation = await viewModel.createConversation() else {
+                if let error = viewModel.error { throw error }
+                throw MLSConversationIdentityBoundary.Error.unresolved("created conversation")
+            }
+            let stableConversationID = createdConversation.conversationId
+
+            // Seed the selected profile rows before the detail screen opens so
+            // the first render never falls back to a DID-only participant.
+            let seededProfiles = selectedParticipantDetails.values.map { participant in
+                MLSProfileEnricher.ProfileData(
+                    did: participant.id,
+                    handle: participant.handle,
+                    displayName: participant.displayName,
+                    avatarURL: participant.avatarURL
+                )
+            }
+            await appState.mlsProfileEnricher.seedFromDatabase(seededProfiles)
+
+            // Navigate using the canonical ID before the slower list refresh.
+            onNavigateToConversation?(stableConversationID)
+
             if let error = viewModel.error {
                 throw error
             }

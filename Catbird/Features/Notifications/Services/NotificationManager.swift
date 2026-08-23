@@ -1786,9 +1786,67 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
   /// For NON-ACTIVE users (account switch scenario), the sync loop is not
   /// running, so we must decrypt here using ephemeral database access.
   /// ═══════════════════════════════════════════════════════════════════════════
+  private func resolveMLSConversationRoute(
+    _ requestedID: String,
+    recipientDID: String
+  ) async -> (conversationID: String, groupID: Data)? {
+    do {
+      let models = try await CatbirdMLSCore.MLSGRDBManager.shared.read(for: recipientDID) { db in
+        try CatbirdMLSCore.MLSConversationModel
+          .filter(CatbirdMLSCore.MLSConversationModel.Columns.currentUserDID == recipientDID)
+          .fetchAll(db)
+      }
+      let records = models.map {
+        MLSConversationIdentityBoundary.Record(
+          conversationID: $0.conversationID,
+          groupID: $0.groupID.hexEncodedString()
+        )
+      }
+      guard let canonicalID = try? MLSConversationIdentityBoundary.resolve(requestedID, in: records),
+            let model = models.first(where: { $0.conversationID == canonicalID }) else {
+        return nil
+      }
+      return (canonicalID, model.groupID)
+    } catch {
+      notificationLogger.warning("Refusing unresolved MLS notification route: \(error.localizedDescription)")
+      return nil
+    }
+  }
+
   private func decryptAndPresentMLSNotification(
     ciphertext: String,
     convoId: String,
+    messageId: String,
+    recipientDid: String,
+    epoch: Int?,
+    seq: Int?,
+    originalNotification: UNNotification,
+    completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+  ) async {
+    guard let resolved = await resolveMLSConversationRoute(convoId, recipientDID: recipientDid) else {
+      notificationLogger.warning("Ignoring MLS notification with raw-only or unknown conversation route")
+      completionHandler([.banner, .sound])
+      return
+    }
+    await decryptAndPresentMLSNotificationResolved(
+      ciphertext: ciphertext,
+      convoId: resolved.conversationID,
+      groupID: resolved.groupID,
+      messageId: messageId,
+      recipientDid: recipientDid,
+      epoch: epoch,
+      seq: seq,
+      originalNotification: originalNotification,
+      completionHandler: completionHandler
+    )
+  }
+
+  /// Decrypt an already-resolved route. `groupID` is read from the stored
+  /// conversation row and is used only as the low-level MLS crypto identity.
+  private func decryptAndPresentMLSNotificationResolved(
+    ciphertext: String,
+    convoId: String,
+    groupID: Data,
     messageId: String,
     recipientDid: String,
     epoch: Int?,
@@ -2127,13 +2185,9 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
         return
       }
 
-      // Convert convoId to groupId
-      let groupIdData: Data
-      if let hexData = Data(hexEncoded: convoId) {
-        groupIdData = hexData
-      } else {
-        groupIdData = Data(convoId.utf8)
-      }
+      // The route is canonical; use the persisted group ID only for MLS
+      // crypto. Never reinterpret a stable conversation UUID as group bytes.
+      let groupIdData = groupID
 
       // Sync group state AND capture plaintext if target message is decrypted
       notificationLogger.info(
@@ -2142,6 +2196,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
       let targetCiphertext = ciphertextData
       let syncResult = await syncGroupStateForRecipient(
         convoId: convoId,
+        groupID: groupID,
         recipientDid: recipientDid,
         targetMessageId: messageId,
         targetEpoch: epoch,
@@ -2348,6 +2403,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
   /// - Returns: The decrypted plaintext if the target message was found and decrypted during sync, nil otherwise
   private func syncGroupStateForRecipient(
     convoId: String,
+    groupID: Data,
     recipientDid: String,
     targetMessageId: String,
     targetEpoch: Int?,
@@ -2369,10 +2425,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
       // Get MLS context for the recipient
       let context = try await CatbirdMLSCore.MLSCoreContext.shared.getContext(for: recipientDid)
 
-      guard let groupIdData = Data(hexEncoded: convoId) else {
-        notificationLogger.error("❌ [FG] Invalid convoId format for group sync")
-        return nil
-      }
+      let groupIdData = groupID
 
       // Check if the group exists locally
       var groupExists = await checkGroupExists(context: context, groupId: groupIdData)
@@ -2385,6 +2438,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
           apiClient: apiClient,
           context: context,
           convoId: convoId,
+          groupID: groupID,
           recipientDid: recipientDid
         )
 
@@ -2776,6 +2830,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
     apiClient: MLSAPIClient,
     context: CatbirdMLS.MlsContext,
     convoId: String,
+    groupID: Data,
     recipientDid: String
   ) async -> Bool {
     do {
@@ -2787,7 +2842,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
         for: convoId, userDID: recipientDid, timeout: .seconds(5))
 
       // Check if group appeared while we were waiting (processed by NSE)
-      if try context.groupExists(groupId: Data(hexEncoded: convoId) ?? Data()) {
+      if try context.groupExists(groupId: groupID) {
         notificationLogger.info(
           "✅ [FG] Group appeared after waiting for WelcomeGate - skipping processing")
         return true
@@ -2867,7 +2922,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
           notificationLogger.info(
             "ℹ️ [FG] Welcome expired for this group (410) - attempting External Commit fallback")
           do {
-            if let groupIdData = Data(hexEncoded: convoId), try context.groupExists(groupId: groupIdData) {
+            if try context.groupExists(groupId: groupID) {
               notificationLogger.info(
                 "⏭️ [FG] Group already exists locally after 410 - skipping External Commit")
               return true
@@ -2929,7 +2984,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
 
         // If we can't process Welcome, try joining via External Commit so we can decrypt immediately.
         do {
-          if let groupIdData = Data(hexEncoded: convoId), try context.groupExists(groupId: groupIdData) {
+            if try context.groupExists(groupId: groupID) {
             notificationLogger.info(
               "⏭️ [FG] Group already exists after NoMatchingKeyPackage - skipping External Commit")
             return true
@@ -3780,6 +3835,15 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
       return
     }
 
+    guard let resolved = await resolveMLSConversationRoute(
+      convoId,
+      recipientDID: currentAppState.userDID
+    ) else {
+      notificationLogger.warning("Refusing MLS notification navigation for unresolved route")
+      return
+    }
+    let canonicalConvoID = resolved.conversationID
+
     // Wait for MLS service to be ready (up to 10 seconds) after potential account switch
     // Increased timeout because account switching involves database setup
     let maxWaitTime: TimeInterval = 10.0
@@ -3821,7 +3885,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
 
       // CRITICAL FIX: Set targetMLSConversationId BEFORE switching tabs
       // This ensures the conversation list view can pick up the target even while still loading
-      currentAppState.navigationManager.targetMLSConversationId = convoId
+      currentAppState.navigationManager.targetMLSConversationId = canonicalConvoID
 
       // Switch to chat tab using the tab selection callback (this actually changes the tab)
       if let tabSelection = currentAppState.navigationManager.tabSelection {
@@ -3830,10 +3894,10 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
       currentAppState.navigationManager.updateCurrentTab(4)
 
       // Navigate to the specific MLS conversation
-      let destination = NavigationDestination.mlsConversation(convoId)
+      let destination = NavigationDestination.mlsConversation(canonicalConvoID)
       currentAppState.navigationManager.navigate(to: destination, in: 4)
 
-      notificationLogger.info("Successfully navigated to MLS conversation \(convoId.prefix(16))...")
+      notificationLogger.info("Successfully navigated to MLS conversation \(canonicalConvoID.prefix(16))...")
     }
   }
   #endif

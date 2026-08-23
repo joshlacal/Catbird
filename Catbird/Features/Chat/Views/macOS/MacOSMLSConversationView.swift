@@ -28,7 +28,9 @@ struct MacOSMLSConversationView: View {
 
   var body: some View {
     Group {
-      if let dataSource {
+      if !MLSConversationIdentityBoundary.isCanonicalStableID(conversationId) {
+        ContentUnavailableView("Conversation unavailable", systemImage: "lock.slash")
+      } else if let dataSource {
         ChatListView(
           dataSource: dataSource,
           navigationPath: $navigationPath,
@@ -102,6 +104,11 @@ struct MacOSMLSConversationView: View {
   private func initializeConversation() async {
     guard !isInitialized else { return }
     isInitialized = true
+
+    guard MLSConversationIdentityBoundary.isCanonicalStableID(conversationId) else {
+      logger.error("Refusing noncanonical macOS MLS route")
+      return
+    }
 
     guard let manager = await appState.getMLSConversationManager(timeout: 15.0) else {
       logger.error("Failed to get MLS conversation manager")

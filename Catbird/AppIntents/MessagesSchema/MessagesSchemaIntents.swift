@@ -210,8 +210,12 @@ struct CatbirdEditSentMessageSchemaIntent {
   func perform() async throws -> some IntentResult & ProvidesDialog {
     let text = try MessagesSchemaRuntime.text(from: content)
     let manager = try await MessagesSchemaRuntime.conversationManager()
+    let canonicalID = try await MessagesSchemaRuntime.resolveConversationID(
+      message.conversation.id,
+      manager: manager
+    )
     _ = try await manager.editMessage(
-      convoId: message.conversation.id,
+      convoId: canonicalID,
       messageId: message.id,
       newText: text
     )
@@ -230,8 +234,12 @@ struct CatbirdUnsendMessageSchemaIntent {
 
   func perform() async throws -> some IntentResult & ProvidesDialog {
     let manager = try await MessagesSchemaRuntime.conversationManager()
+    let canonicalID = try await MessagesSchemaRuntime.resolveConversationID(
+      message.conversation.id,
+      manager: manager
+    )
     _ = try await manager.unsendMessage(
-      convoId: message.conversation.id,
+      convoId: canonicalID,
       messageId: message.id
     )
 
@@ -252,8 +260,12 @@ struct CatbirdSetMessageReadStatusSchemaIntent {
 
   func perform() async throws -> some IntentResult & ProvidesDialog {
     let manager = try await MessagesSchemaRuntime.conversationManager()
+    let canonicalID = try await MessagesSchemaRuntime.resolveConversationID(
+      message.conversation.id,
+      manager: manager
+    )
     try await manager.setMessageReadStatus(
-      convoId: message.conversation.id,
+      convoId: canonicalID,
       messageId: message.id,
       read: isRead
     )

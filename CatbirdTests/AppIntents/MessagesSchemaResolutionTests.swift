@@ -47,19 +47,23 @@ private enum Fixtures {
       conversationID: id, currentUserDID: selfDID, groupID: Data([0x01]), title: title)
   }
 
-  /// convo-1: 1:1 with Alex. convo-2: titled group with Alex + Sam.
+  /// Two real v4 identities: the first is a 1:1 with Alex, the second is a
+  /// titled group with Alex + Sam.
   static func directory() -> MessagesSchemaRuntime.ChatDirectory {
     MessagesSchemaRuntime.ChatDirectory(
-      conversations: [conversation("convo-1"), conversation("convo-2", title: "Weekend Plans")],
+      conversations: [
+        conversation("550e8400-e29b-41d4-a716-446655440000"),
+        conversation("6ba7b810-9dad-41d1-80b4-00c04fd430c8", title: "Weekend Plans")
+      ],
       membersByConvoID: [
-        "convo-1": [
-          member(selfDID, convo: "convo-1", displayName: "Me"),
-          member(alexDID, convo: "convo-1", displayName: "Alex Rivera", handle: "alex.bsky.social"),
+        "550e8400-e29b-41d4-a716-446655440000": [
+          member(selfDID, convo: "550e8400-e29b-41d4-a716-446655440000", displayName: "Me"),
+          member(alexDID, convo: "550e8400-e29b-41d4-a716-446655440000", displayName: "Alex Rivera", handle: "alex.bsky.social"),
         ],
-        "convo-2": [
-          member(selfDID, convo: "convo-2", displayName: "Me"),
-          member(alexDID, convo: "convo-2", displayName: "Alex Rivera", handle: "alex.bsky.social"),
-          member(samDID, convo: "convo-2", displayName: "Sam Chen", handle: "sam.bsky.social"),
+        "6ba7b810-9dad-41d1-80b4-00c04fd430c8": [
+          member(selfDID, convo: "6ba7b810-9dad-41d1-80b4-00c04fd430c8", displayName: "Me"),
+          member(alexDID, convo: "6ba7b810-9dad-41d1-80b4-00c04fd430c8", displayName: "Alex Rivera", handle: "alex.bsky.social"),
+          member(samDID, convo: "6ba7b810-9dad-41d1-80b4-00c04fd430c8", displayName: "Sam Chen", handle: "sam.bsky.social"),
         ],
       ],
       currentUserDID: selfDID
@@ -86,10 +90,10 @@ struct MessagesSchemaResolutionTests {
     let match = MessagesSchemaRuntime.conversationID(
       matching: [Fixtures.alexDID],
       in: Fixtures.didsByConvo(directory),
-      conversationOrder: ["convo-1", "convo-2"],
+      conversationOrder: ["550e8400-e29b-41d4-a716-446655440000", "6ba7b810-9dad-41d1-80b4-00c04fd430c8"],
       selfDID: Fixtures.selfDID
     )
-    #expect(match == "convo-1")
+    #expect(match == "550e8400-e29b-41d4-a716-446655440000")
   }
 
   @Test func groupConversationMatchesByFullMemberSet() {
@@ -98,10 +102,10 @@ struct MessagesSchemaResolutionTests {
     let match = MessagesSchemaRuntime.conversationID(
       matching: [Fixtures.samDID, Fixtures.alexDID],  // order must not matter
       in: Fixtures.didsByConvo(directory),
-      conversationOrder: ["convo-1", "convo-2"],
+      conversationOrder: ["550e8400-e29b-41d4-a716-446655440000", "6ba7b810-9dad-41d1-80b4-00c04fd430c8"],
       selfDID: Fixtures.selfDID
     )
-    #expect(match == "convo-2")
+    #expect(match == "6ba7b810-9dad-41d1-80b4-00c04fd430c8")
   }
 
   @Test func matchingIsCaseInsensitiveAndExcludesSelf() {
@@ -110,10 +114,10 @@ struct MessagesSchemaResolutionTests {
     let match = MessagesSchemaRuntime.conversationID(
       matching: [Fixtures.alexDID.uppercased()],
       in: Fixtures.didsByConvo(directory),
-      conversationOrder: ["convo-1", "convo-2"],
+      conversationOrder: ["550e8400-e29b-41d4-a716-446655440000", "6ba7b810-9dad-41d1-80b4-00c04fd430c8"],
       selfDID: Fixtures.selfDID.uppercased()
     )
-    #expect(match == "convo-1")
+    #expect(match == "550e8400-e29b-41d4-a716-446655440000")
   }
 
   @Test func unknownMemberSetMatchesNothing() {
@@ -122,7 +126,7 @@ struct MessagesSchemaResolutionTests {
     let match = MessagesSchemaRuntime.conversationID(
       matching: [Fixtures.samDID],  // Sam only exists alongside Alex in convo-2
       in: Fixtures.didsByConvo(directory),
-      conversationOrder: ["convo-1", "convo-2"],
+      conversationOrder: ["550e8400-e29b-41d4-a716-446655440000", "6ba7b810-9dad-41d1-80b4-00c04fd430c8"],
       selfDID: Fixtures.selfDID
     )
     #expect(match == nil)
@@ -226,19 +230,18 @@ struct MessagesSchemaResolutionTests {
 
   @Test @MainActor func chatDraftHandoffConsumesMatchingDraftExactlyOnce() {
     ChatDraftHandoff.shared.store(
-      PendingChatDraft(conversationID: "convo-a", text: "Draft from Siri"))
+      PendingChatDraft(conversationID: "550e8400-e29b-41d4-a716-446655440000", text: "Draft from Siri"))
 
-    #expect(ChatDraftHandoff.shared.consume(for: "convo-b") == nil)
-    #expect(ChatDraftHandoff.shared.consume(for: "convo-a") == "Draft from Siri")
-    #expect(ChatDraftHandoff.shared.consume(for: "convo-a") == nil)
+    #expect(ChatDraftHandoff.shared.consume(for: "6ba7b810-9dad-41d1-80b4-00c04fd430c8") == nil)
+    #expect(ChatDraftHandoff.shared.consume(for: "550e8400-e29b-41d4-a716-446655440000") == "Draft from Siri")
+    #expect(ChatDraftHandoff.shared.consume(for: "550e8400-e29b-41d4-a716-446655440000") == nil)
   }
 
   @Test @MainActor func wildcardChatDraftTargetsNextConversation() {
     ChatDraftHandoff.shared.store(
       PendingChatDraft(conversationID: nil, text: "Choose a conversation"))
 
-    #expect(ChatDraftHandoff.shared.consume(for: "any-conversation") == "Choose a conversation")
-    #expect(ChatDraftHandoff.shared.consume(for: "another-conversation") == nil)
+    #expect(ChatDraftHandoff.shared.consume(for: "550e8400-e29b-41d4-a716-446655440000") == "Choose a conversation")
+    #expect(ChatDraftHandoff.shared.consume(for: "6ba7b810-9dad-41d1-80b4-00c04fd430c8") == nil)
   }
 }
-

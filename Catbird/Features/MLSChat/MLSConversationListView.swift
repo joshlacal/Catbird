@@ -192,10 +192,15 @@ struct MLSConversationListView: View {
         }
         .onChange(of: appState.navigationManager.targetMLSConversationId) { oldValue, newValue in
             // Handle deep-link navigation to a specific MLS conversation (e.g., from notification tap)
-            if let convoId = newValue, convoId != selectedConvoId {
+            if let requestedID = newValue,
+               let convoId = canonicalRoute(for: requestedID),
+               convoId != selectedConvoId {
                 logger.info("Deep-link navigation to MLS conversation: \(convoId.prefix(16))...")
                 selectedConvoId = convoId
                 // Clear the target after setting to avoid repeated navigation
+                appState.navigationManager.targetMLSConversationId = nil
+            } else if newValue != nil {
+                logger.warning("Refusing unresolved MLS deep-link route")
                 appState.navigationManager.targetMLSConversationId = nil
             }
         }
@@ -266,7 +271,9 @@ struct MLSConversationListView: View {
         }) {
             MLSChatRequestsView(onAcceptedConversation: { convoId in
                 await refreshConversations()
-                selectedConvoId = convoId
+                await MainActor.run {
+                    selectedConvoId = canonicalRoute(for: convoId)
+                }
             })
             .environment(appState)
             .applyAppStateEnvironment(appState)
@@ -301,9 +308,12 @@ struct MLSConversationListView: View {
             
             // NOTIFICATION FIX: Check if there's a pending deep-link conversation to navigate to
             // This handles the case where targetMLSConversationId was set before .task completed
-            if let pendingConvoId = appState.navigationManager.targetMLSConversationId {
-                logger.info("Found pending deep-link navigation to: \(pendingConvoId.prefix(16))...")
-                selectedConvoId = pendingConvoId
+            if let pendingConvoId = appState.navigationManager.targetMLSConversationId,
+               let canonicalID = canonicalRoute(for: pendingConvoId) {
+                logger.info("Found pending deep-link navigation to: \(canonicalID.prefix(16))...")
+                selectedConvoId = canonicalID
+                appState.navigationManager.targetMLSConversationId = nil
+            } else if appState.navigationManager.targetMLSConversationId != nil {
                 appState.navigationManager.targetMLSConversationId = nil
             }
         }
@@ -314,9 +324,13 @@ struct MLSConversationListView: View {
             
             // NOTIFICATION FIX: Also check for pending navigation on appear
             // This catches cases where the view is re-appearing with a pending target
-            if let pendingConvoId = appState.navigationManager.targetMLSConversationId, selectedConvoId != pendingConvoId {
-                logger.info("Found pending deep-link navigation on appear: \(pendingConvoId.prefix(16))...")
-                selectedConvoId = pendingConvoId
+            if let pendingConvoId = appState.navigationManager.targetMLSConversationId,
+               let canonicalID = canonicalRoute(for: pendingConvoId),
+               selectedConvoId != canonicalID {
+                logger.info("Found pending deep-link navigation on appear: \(canonicalID.prefix(16))...")
+                selectedConvoId = canonicalID
+                appState.navigationManager.targetMLSConversationId = nil
+            } else if appState.navigationManager.targetMLSConversationId != nil {
                 appState.navigationManager.targetMLSConversationId = nil
             }
         }
@@ -979,6 +993,20 @@ struct MLSConversationListView: View {
         }
     }
 
+    /// Resolve a notification/deep-link route against the rows currently
+    /// visible to this account.  A syntactically valid UUID that is not in the
+    /// local inventory is still rejected; callers must not manufacture a
+    /// crypto group route from it.
+    private func canonicalRoute(for requestedID: String) -> String? {
+        let records = conversations.map {
+            MLSConversationIdentityBoundary.Record(
+                conversationID: $0.conversationID,
+                groupID: $0.groupID.hexEncodedString()
+            )
+        }
+        return try? MLSConversationIdentityBoundary.resolve(requestedID, in: records)
+    }
+
     private var shouldShowEmptyStateOverlay: Bool {
         guard filteredConversations.isEmpty else { return false }
         guard !isInitializingMLS && !isLoadingConversations else { return false }
@@ -1027,28 +1055,72 @@ struct MLSConversationListView: View {
             return false
         }
 
+        let identityRecords = snapshot.conversations.map {
+            MLSConversationIdentityBoundary.Record(
+                conversationID: $0.conversationID,
+                groupID: $0.groupID.hexEncodedString()
+            )
+        }
+        guard let canonicalRecords = try? MLSConversationIdentityBoundary.canonicalize(identityRecords) else {
+            logger.warning("Refusing cached MLS snapshot with ambiguous identity rows")
+            Self.snapshotCacheByUserDID[appState.userDID] = nil
+            return false
+        }
+        let canonicalIDs = Set(canonicalRecords.map(\.conversationID))
+
         // Dedupe (List ForEach requires unique ids) and restore without animation:
         // a cached snapshot restored while a fresh load is in flight, or during an
         // account switch, must not drive an animated cross-dataset List diff —
         // that is what trips "Invalid Number Of Items In Section".
         var seenConvoIDs = Set<String>()
-        let dedupedConversations = snapshot.conversations.filter { seenConvoIDs.insert($0.conversationID).inserted }
+        let dedupedConversations = snapshot.conversations.filter {
+            canonicalIDs.contains($0.conversationID) && seenConvoIDs.insert($0.conversationID).inserted
+        }
+        func canonicalKey(_ requestedID: String) -> String? {
+            try? MLSConversationIdentityBoundary.resolve(requestedID, in: identityRecords)
+        }
+        var canonicalParticipants: [String: [MLSParticipantViewModel]] = [:]
+        for (requestedID, values) in snapshot.conversationParticipants {
+            guard let canonicalID = canonicalKey(requestedID) else { continue }
+            canonicalParticipants[canonicalID, default: []].append(contentsOf: values)
+        }
+        var canonicalUnreadCounts: [String: Int] = [:]
+        for (requestedID, count) in snapshot.conversationUnreadCounts {
+            guard let canonicalID = canonicalKey(requestedID) else { continue }
+            canonicalUnreadCounts[canonicalID, default: 0] += count
+        }
+        var canonicalLastMessages: [String: (senderDID: String, text: String)] = [:]
+        for (requestedID, value) in snapshot.conversationLastMessages {
+            guard let canonicalID = canonicalKey(requestedID) else { continue }
+            canonicalLastMessages[canonicalID] = value
+        }
+        var canonicalLatestActivity: [String: Date] = [:]
+        for (requestedID, value) in snapshot.conversationLatestActivity {
+            guard let canonicalID = canonicalKey(requestedID) else { continue }
+            canonicalLatestActivity[canonicalID] = max(canonicalLatestActivity[canonicalID] ?? .distantPast, value)
+        }
+        var canonicalMemberChanges: [String: MemberChangeInfo] = [:]
+        for (requestedID, value) in snapshot.recentMemberChanges {
+            guard let canonicalID = canonicalKey(requestedID) else { continue }
+            canonicalMemberChanges[canonicalID] = value
+        }
         var txn = Transaction()
         txn.disablesAnimations = true
         withTransaction(txn) {
             conversations = dedupedConversations
-            conversationParticipants = snapshot.conversationParticipants
-            conversationUnreadCounts = snapshot.conversationUnreadCounts
-            conversationLastMessages = snapshot.conversationLastMessages
-            conversationLatestActivity = snapshot.conversationLatestActivity
-            recentMemberChanges = snapshot.recentMemberChanges
+            conversationParticipants = canonicalParticipants
+            conversationUnreadCounts = canonicalUnreadCounts
+            conversationLastMessages = canonicalLastMessages
+            conversationLatestActivity = canonicalLatestActivity
+            recentMemberChanges = canonicalMemberChanges
             pendingChatRequestCount = snapshot.pendingChatRequestCount
             keyPackageStatus = snapshot.keyPackageStatus
         }
 
         if let cachedSelection = snapshot.selectedConversationId,
-           snapshot.conversations.contains(where: { $0.conversationID == cachedSelection }) {
-            selectedConvoId = cachedSelection
+           let canonicalSelection = canonicalKey(cachedSelection),
+           canonicalIDs.contains(canonicalSelection) {
+            selectedConvoId = canonicalSelection
         }
 
         return true
@@ -1134,19 +1206,56 @@ struct MLSConversationListView: View {
 
         do {
             // Use smart routing - auto-routes to lightweight Queue if needed
-            let (loadedConversations, membersByConvoID) = try await MLSStorage.shared.fetchConversationsWithMembersUsingSmartRouting(
+            let (loadedConversations, loadedMembersByConvoID) = try await MLSStorage.shared.fetchConversationsWithMembersUsingSmartRouting(
                 currentUserDID: userDID
             )
+
+            // Local rows can briefly contain the historical raw-group alias
+            // beside the canonical projection.  Canonicalize the complete
+            // snapshot before assigning anything to SwiftUI or a coordinator;
+            // malformed, raw-only, or ambiguous rows abort this refresh and
+            // leave the last known-good list visible.
+            let identityRecords = loadedConversations.map {
+                MLSConversationIdentityBoundary.Record(
+                    conversationID: $0.conversationID,
+                    groupID: $0.groupID.hexEncodedString()
+                )
+            }
+            let canonicalRecords = try MLSConversationIdentityBoundary.canonicalize(identityRecords)
+            let canonicalIDs = Set(canonicalRecords.map(\.conversationID))
+
+            var membersByConvoID: [String: [MLSMemberModel]] = [:]
+            for (requestedID, members) in loadedMembersByConvoID {
+                guard let canonicalID = try? MLSConversationIdentityBoundary.resolve(
+                    requestedID,
+                    in: identityRecords
+                ) else {
+                    continue
+                }
+                membersByConvoID[canonicalID, default: []].append(contentsOf: members)
+            }
             
             // Filter out pending chat requests - they should appear in the Requests view instead
-            let acceptedConversations = loadedConversations.filter { $0.requestState != .pendingInbound }
+            let acceptedConversations = loadedConversations.filter {
+                canonicalIDs.contains($0.conversationID) && $0.requestState != .pendingInbound
+            }
             
             // Batch query for unread counts (single query for all conversations)
-            let unreadCounts = try await MLSGRDBManager.shared.read(for: userDID) { db in
+            let rawUnreadCounts = try await MLSGRDBManager.shared.read(for: userDID) { db in
                 try MLSStorageHelpers.getUnreadCountsForAllConversationsSync(
                     from: db,
                     currentUserDID: userDID
                 )
+            }
+            var unreadCounts: [String: Int] = [:]
+            for (requestedID, count) in rawUnreadCounts {
+                guard let canonicalID = try? MLSConversationIdentityBoundary.resolve(
+                    requestedID,
+                    in: identityRecords
+                ) else {
+                    continue
+                }
+                unreadCounts[canonicalID, default: 0] += count
             }
 
             // Pull the per-DID MlsContext so the sync DB closure below can

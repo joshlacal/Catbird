@@ -2431,17 +2431,36 @@ final class AppState {
         Task {
             do {
                 // Use smart routing - auto-routes to lightweight Queue if needed
-                let unreadCounts = try await MLSGRDBManager.shared.read(for: userDID) { db in
-                    try MLSStorageHelpers.getUnreadCountsForAllConversationsSync(
+                let unreadCountTotal = try await MLSGRDBManager.shared.read(for: userDID) { db -> Int in
+                    let rawCounts = try MLSStorageHelpers.getUnreadCountsForAllConversationsSync(
                         from: db,
                         currentUserDID: self.userDID
                     )
+                    let models = try MLSConversationModel
+                        .filter(MLSConversationModel.Columns.currentUserDID == self.userDID)
+                        .fetchAll(db)
+                    let records = models.map {
+                        MLSConversationIdentityBoundary.Record(
+                            conversationID: $0.conversationID,
+                            groupID: $0.groupID.hexEncodedString()
+                        )
+                    }
+                    var canonicalCounts: [String: Int] = [:]
+                    for (requestedID, count) in rawCounts {
+                        guard let canonicalID = try? MLSConversationIdentityBoundary.resolve(
+                            requestedID,
+                            in: records
+                        ) else {
+                            continue
+                        }
+                        canonicalCounts[canonicalID, default: 0] += count
+                    }
+                    return canonicalCounts.values.reduce(0, +)
                 }
-                let newCount = unreadCounts.values.reduce(0, +)
                 await MainActor.run {
-                    if self.mlsUnreadCount != newCount {
-                        self.mlsUnreadCount = newCount
-                        self.logger.debug("MLS unread count updated: \(newCount)")
+                    if self.mlsUnreadCount != unreadCountTotal {
+                        self.mlsUnreadCount = unreadCountTotal
+                        self.logger.debug("MLS unread count updated: \(unreadCountTotal)")
                     }
                 }
             } catch {
@@ -2778,70 +2797,83 @@ final class AppState {
                 }
             }
 
-            // Map conversations from manager to view models with unread counts
-            let conversations = Array(manager.conversations.values).map { convo -> MLSConversationViewModel in
-                convo.toViewModel(unreadCount: unreadCounts[convo.groupId] ?? 0)
-            }
+            // The manager may still expose a legacy raw-group key while a
+            // projection is being refreshed.  The UI never uses that key as
+            // a route: only a proven canonical v4 row is admitted.
+            do {
+                let canonicalStates = try MLSConversationIdentityBoundary.canonicalize(
+                    Array(manager.conversations.values)
+                )
 
-            // Update UI immediately with basic conversation data
-            mlsConversations = conversations
-            mlsConversationsDidChange += 1
-            updateMLSUnreadCount()
+                // Map conversations from manager to view models with unread counts
+                // keyed by the stable conversation ID, never by the crypto group ID.
+                let conversations = canonicalStates.map { convo -> MLSConversationViewModel in
+                    convo.toViewModel(unreadCount: unreadCounts[convo.conversationId] ?? 0)
+                }
 
-            // Enrich participant data with Bluesky profiles off the main actor
-            if let client = atProtoClient {
-                Task.detached { [weak self] in
-                    guard let self else { return }
+                // Update UI immediately with basic conversation data
+                mlsConversations = conversations
+                mlsConversationsDidChange += 1
+                updateMLSUnreadCount()
 
-                    // Collect all unique participant DIDs
-                    let allDIDs = Array(Set(conversations.flatMap { conversation in
-                        conversation.participants.map { $0.id }
-                    }))
+                // Enrich participant data with Bluesky profiles off the main actor
+                if let client = atProtoClient {
+                    Task.detached { [weak self] in
+                        guard let self else { return }
 
-                    // Fetch all profiles at once (off main actor)
-                    // Pass userDID to persist profiles to database for NSE rich notifications
-                    let enrichedProfilesMap = await self.mlsProfileEnricher.ensureProfiles(
-                        for: allDIDs,
-                        using: client,
-                        currentUserDID: self.userDID
-                    )
+                        // Collect all unique participant DIDs
+                        let allDIDs = Array(Set(conversations.flatMap { conversation in
+                            conversation.participants.map { $0.id }
+                        }))
 
-                    // Update conversation participants with enriched profile data
-                    let enrichedConversations = conversations.map { conversation in
-                        let enrichedParticipants = conversation.participants.map { participant in
-                            if let profileData = enrichedProfilesMap[participant.id] {
-                                return MLSParticipantViewModel(
-                                    id: participant.id,
-                                    handle: profileData.handle,
-                                    displayName: profileData.displayName,
-                                    avatarURL: profileData.avatarURL
-                                )
+                        // Fetch all profiles at once (off main actor)
+                        // Pass userDID to persist profiles to database for NSE rich notifications
+                        let enrichedProfilesMap = await self.mlsProfileEnricher.ensureProfiles(
+                            for: allDIDs,
+                            using: client,
+                            currentUserDID: self.userDID
+                        )
+
+                        // Update conversation participants with enriched profile data
+                        let enrichedConversations = conversations.map { conversation in
+                            let enrichedParticipants = conversation.participants.map { participant in
+                                if let profileData = enrichedProfilesMap[participant.id] {
+                                    return MLSParticipantViewModel(
+                                        id: participant.id,
+                                        handle: profileData.handle,
+                                        displayName: profileData.displayName,
+                                        avatarURL: profileData.avatarURL
+                                    )
+                                }
+                                return participant
                             }
-                            return participant
+
+                            return MLSConversationViewModel(
+                                id: conversation.id,
+                                name: conversation.name,
+                                participants: enrichedParticipants,
+                                lastMessagePreview: conversation.lastMessagePreview,
+                                lastMessageTimestamp: conversation.lastMessageTimestamp,
+                                unreadCount: conversation.unreadCount,
+                                isGroupChat: conversation.isGroupChat,
+                                groupId: conversation.groupId
+                            )
                         }
 
-                        return MLSConversationViewModel(
-                            id: conversation.id,
-                            name: conversation.name,
-                            participants: enrichedParticipants,
-                            lastMessagePreview: conversation.lastMessagePreview,
-                            lastMessageTimestamp: conversation.lastMessageTimestamp,
-                            unreadCount: conversation.unreadCount,
-                            isGroupChat: conversation.isGroupChat,
-                            groupId: conversation.groupId
-                        )
-                    }
-
-                    // Update UI on main actor
-                    await MainActor.run {
-                        self.mlsConversations = enrichedConversations
-                        self.mlsConversationsDidChange += 1
-                        self.updateMLSUnreadCount()
+                        // Update UI on main actor
+                        await MainActor.run {
+                            self.mlsConversations = enrichedConversations
+                            self.mlsConversationsDidChange += 1
+                            self.updateMLSUnreadCount()
+                        }
                     }
                 }
-            }
 
-            logger.info("MLS: Synced \(self.mlsConversations.count) conversations from server")
+                logger.info("MLS: Synced \(self.mlsConversations.count) conversations from server")
+            } catch {
+                logger.error("MLS: refusing ambiguous conversation projection: \(error.localizedDescription)")
+                return
+            }
         } catch let sqlError as MLSSQLCipherError {
             // Handle specific SQLCipher errors
             switch sqlError {
@@ -2863,7 +2895,10 @@ final class AppState {
                         if let retryManager = await getMLSConversationManager() {
                             do {
                                 try await retryManager.syncWithServer()
-                                let conversations = Array(retryManager.conversations.values).map { $0.toViewModel() }
+                                let canonicalStates = try MLSConversationIdentityBoundary.canonicalize(
+                                    Array(retryManager.conversations.values)
+                                )
+                                let conversations = canonicalStates.map { $0.toViewModel() }
                                 mlsConversations = conversations
                                 mlsConversationsDidChange += 1
                                 updateMLSUnreadCount()
@@ -2893,7 +2928,10 @@ final class AppState {
                     if let retryManager = await getMLSConversationManager() {
                         do {
                             try await retryManager.syncWithServer()
-                            let conversations = Array(retryManager.conversations.values).map { $0.toViewModel() }
+                            let canonicalStates = try MLSConversationIdentityBoundary.canonicalize(
+                                Array(retryManager.conversations.values)
+                            )
+                            let conversations = canonicalStates.map { $0.toViewModel() }
                             mlsConversations = conversations
                             mlsConversationsDidChange += 1
                             updateMLSUnreadCount()

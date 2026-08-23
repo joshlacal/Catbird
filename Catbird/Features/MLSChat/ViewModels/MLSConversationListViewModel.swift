@@ -125,7 +125,12 @@ final class MLSConversationListViewModel {
 
             try MLSCoordinationAwareTask.validateGeneration(expectedGen)
 
-            conversations = result.states
+            // The inventory is an external routing boundary.  Collapse only
+            // an exact raw-group alias with its one canonical v4 row; any
+            // ambiguity or raw-only row fails closed and leaves the current
+            // list untouched.
+            let canonicalStates = try MLSConversationIdentityBoundary.canonicalize(result.states)
+            conversations = canonicalStates
             cursor = result.cursor
             hasMore = result.cursor != nil
 
@@ -162,7 +167,10 @@ final class MLSConversationListViewModel {
 
             try MLSCoordinationAwareTask.validateGeneration(expectedGen)
 
-            conversations.append(contentsOf: result.states)
+            let canonicalStates = try MLSConversationIdentityBoundary.canonicalize(
+                conversations + result.states
+            )
+            conversations = canonicalStates
             self.cursor = result.cursor
             hasMore = result.cursor != nil
 
@@ -190,28 +198,64 @@ final class MLSConversationListViewModel {
     /// Delete a conversation locally (leave handled by MLSConversationDetailViewModel)
     @MainActor
     func deleteConversationLocally(conversationId: String) {
-        conversations.removeAll { $0.groupId == conversationId || $0.conversationId == conversationId }
+        guard let canonicalID = try? MLSConversationIdentityBoundary.resolve(
+            conversationId,
+            in: conversations.map(MLSConversationIdentityBoundary.record(for:))
+        ) else {
+            logger.warning("Refusing to delete unresolved conversation route (conversationId, privacy: .private)")
+            return
+        }
+        conversations.removeAll { $0.conversationId == canonicalID }
         conversationsSubject.send(conversations)
-        logger.debug("Removed conversation \(conversationId) from local list")
+        logger.debug("Removed conversation \(canonicalID) from local list")
     }
 
     /// Update conversation after changes
     @MainActor
     func updateConversation(_ conversation: BlueCatbirdChatDefs.ConversationState) {
-        if let index = conversations.firstIndex(where: { $0.groupId == conversation.groupId || $0.conversationId == conversation.conversationId }) {
-            conversations[index] = conversation
+        do {
+            let combined = conversations + [conversation]
+            let canonicalStates = try MLSConversationIdentityBoundary.canonicalize(combined)
+            let canonicalID = try MLSConversationIdentityBoundary.resolve(
+                conversation.conversationId,
+                in: combined.map(MLSConversationIdentityBoundary.record(for:))
+            )
+            guard canonicalStates.contains(where: { $0.conversationId == canonicalID }) else {
+                return
+            }
+            conversations = canonicalStates
             conversationsSubject.send(conversations)
-            logger.debug("Updated conversation \(conversation.groupId)")
+            logger.debug("Updated conversation \(canonicalID)")
+        } catch {
+            self.error = error
+            errorSubject.send(error)
+            logger.error("Refused ambiguous conversation update: \(error.localizedDescription)")
         }
     }
 
     /// Add new conversation to the list
     @MainActor
     func addConversation(_ conversation: BlueCatbirdChatDefs.ConversationState) {
-        // Add to beginning of list (most recent)
-        conversations.insert(conversation, at: 0)
-        conversationsSubject.send(conversations)
-        logger.debug("Added new conversation \(conversation.groupId)")
+        do {
+            let combined = [conversation] + conversations
+            let canonicalStates = try MLSConversationIdentityBoundary.canonicalize(combined)
+            let canonicalID = try MLSConversationIdentityBoundary.resolve(
+                conversation.conversationId,
+                in: combined.map(MLSConversationIdentityBoundary.record(for:))
+            )
+            // Keep the new canonical row at the front while retaining the
+            // proven alias suppression and deterministic existing order.
+            guard let newState = canonicalStates.first(where: { $0.conversationId == canonicalID }) else {
+                return
+            }
+            conversations = [newState] + canonicalStates.filter { $0.conversationId != newState.conversationId }
+            conversationsSubject.send(conversations)
+            logger.debug("Added new conversation \(newState.conversationId)")
+        } catch {
+            self.error = error
+            errorSubject.send(error)
+            logger.error("Refused ambiguous conversation add: \(error.localizedDescription)")
+        }
     }
 
     // MARK: - Private Methods
@@ -290,10 +334,15 @@ final class MLSConversationListViewModel {
 
             try MLSCoordinationAwareTask.validateGeneration(expectedGen)
 
-            if let updatedConvo = result.states.first(where: { $0.groupId == convoId || $0.conversationId == convoId }) {
-                updateConversation(updatedConvo)
-                logger.debug("Refreshed conversation \(convoId) after state change")
+            let canonicalStates = try MLSConversationIdentityBoundary.canonicalize(result.states)
+            let routeRecords = (conversations + canonicalStates).map(MLSConversationIdentityBoundary.record(for:))
+            guard let canonicalID = try? MLSConversationIdentityBoundary.resolve(convoId, in: routeRecords),
+                  let updatedConvo = canonicalStates.first(where: { $0.conversationId == canonicalID }) else {
+                logger.warning("Refusing unresolved conversation refresh route (convoId, privacy: .private)")
+                return
             }
+            updateConversation(updatedConvo)
+            logger.debug("Refreshed conversation \(canonicalID) after state change")
         } catch is MLSCoordinationAwareTask.GenerationStaleError {
             logger.info("refreshSpecificConversation cancelled (account switch)")
         } catch {

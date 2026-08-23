@@ -14,7 +14,7 @@ final class MLSConversationDetailViewModelTests: XCTestCase {
     var viewModel: MLSConversationDetailViewModel!
     var mockAPIClient: MockMLSAPIClientDetail!
     var cancellables: Set<AnyCancellable>!
-    let testConversationId = "test-convo-123"
+    let testConversationId = "550e8400-e29b-41d4-a716-446655440000"
     
     override func setUp() async throws {
         try await super.setUp()
@@ -301,7 +301,7 @@ final class MLSConversationDetailViewModelTests: XCTestCase {
     private func createMockConversation() -> MLSConvoView {
         MLSConvoView(
             id: testConversationId,
-            groupId: "group-123",
+            groupId: "00112233445566778899aabbccddee01",
             creator: "did:plc:creator",
             members: [
                 MLSMemberView(did: "did:plc:member1", joinedAt: Date(), leafIndex: 0, credential: nil),
@@ -397,7 +397,7 @@ class MockMLSAPIClientDetail: MLSAPIClient {
         
         return MLSLeaveConvoResponse(
             commit: "mock-commit",
-            epoch: MLSEpochInfo(epoch: 2, groupId: "group-123", memberCount: 1, updatedAt: Date())
+            epoch: MLSEpochInfo(epoch: 2, groupId: "00112233445566778899aabbccddee01", memberCount: 1, updatedAt: Date())
         )
     }
 }

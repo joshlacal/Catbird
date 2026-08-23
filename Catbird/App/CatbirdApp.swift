@@ -475,8 +475,16 @@ struct CatbirdApp: App {
             
             // If we have a conversation manager, trigger a sync/catchup
             if let manager = await activeState.getMLSConversationManager() {
-                logger.info("Triggering catchup for conversation \(convoId)")
-                await manager.triggerCatchup(for: convoId)
+                guard let canonicalID = await self.resolveMLSConversationRoute(
+                  convoId,
+                  manager: manager
+                ) else {
+                  logger.warning("Refusing catchup for unresolved MLS conversation route")
+                  completionHandler(.noData)
+                  return
+                }
+                logger.info("Triggering catchup for conversation \(canonicalID)")
+                await manager.triggerCatchup(for: canonicalID)
                 completionHandler(.newData)
             } else {
                 completionHandler(.noData)
@@ -649,6 +657,7 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
       }
     }
     #endif
+
   }
 
   // MARK: - Schema Version Management
@@ -2554,6 +2563,34 @@ private extension CatbirdApp {
     }
   }
 
+  private func resolveE2EConversationID(
+    _ requestedID: String,
+    manager: MLSConversationManager
+  ) async throws -> String {
+    guard let userDID = manager.userDid else {
+      throw MLSConversationIdentityBoundary.Error.unresolved(requestedID)
+    }
+    let snapshot = try await manager.storage.fetchConversationsWithMembers(
+      currentUserDID: userDID,
+      database: manager.database
+    )
+    let records = snapshot.conversations.map {
+      MLSConversationIdentityBoundary.Record(
+        conversationID: $0.conversationID,
+        groupID: $0.groupID.hexEncodedString()
+      )
+    }
+    return try MLSConversationIdentityBoundary.resolve(requestedID, in: records)
+  }
+
+  private func canonicalE2EConversationIDs(
+    manager: MLSConversationManager
+  ) throws -> [String] {
+    try MLSConversationIdentityBoundary
+      .canonicalize(Array(manager.conversations.values))
+      .map(\.coordinates.conversationId)
+  }
+
   private func handleCreateConversation(params: [String: String], manager: AppStateManager, logger e2eLogger: Logger) async {
     guard let targetDID = params["targetDID"] else {
       e2eLogger.error("[E2E] create-conversation requires targetDID parameter")
@@ -2595,9 +2632,12 @@ private extension CatbirdApp {
         name: groupName
       )
       
-      e2eLogger.info("[E2E] Conversation created: \(conversation.groupId)")
+      guard MLSConversationIdentityBoundary.isCanonicalStableID(conversation.conversationId) else {
+        throw MLSConversationIdentityBoundary.Error.invalidStableID(conversation.conversationId)
+      }
+      e2eLogger.info("[E2E] Conversation created: \(conversation.conversationId)")
       await writeE2EResult(command: "create-conversation", success: true, data: [
-        "conversationId": conversation.groupId,
+        "conversationId": conversation.conversationId,
         "epoch": "\(conversation.epoch)"
       ])
       
@@ -2628,22 +2668,27 @@ private extension CatbirdApp {
         throw NSError(domain: "E2E", code: 1, userInfo: [NSLocalizedDescriptionKey: "MLS not initialized"])
       }
       
-      // Send the message (using correct API signature)
+      let canonicalConversationID = try await resolveE2EConversationID(
+        conversationId,
+        manager: conversationManager
+      )
+
+      // Send the message using the stable public route.
       let result = try await conversationManager.sendMessage(
-        convoId: conversationId,
+        convoId: canonicalConversationID,
         plaintext: text
       )
       
       e2eLogger.info("[E2E] Message sent: \(result.messageId)")
       MLSDiagnosticLogger.shared.logE2EMessageSent(
         correlationId: manager.e2eRunId ?? "unknown",
-        conversationId: conversationId,
+        conversationId: canonicalConversationID,
         contentPreview: String(text.prefix(20))
       )
       
       await writeE2EResult(command: "send-message", success: true, data: [
         "messageId": result.messageId,
-        "conversationId": conversationId,
+        "conversationId": canonicalConversationID,
         "epoch": "\(result.epoch)"
       ])
       
@@ -2669,13 +2714,19 @@ private extension CatbirdApp {
     // 1. Resolve Target Conversation ID
     let convoId: String
     if let id = params["conversationId"] ?? params["convoId"], !id.isEmpty {
-      convoId = id
+      do {
+        convoId = try await resolveE2EConversationID(id, manager: conversationManager)
+      } catch {
+        e2eLogger.error("[E2E-BLOB] Refusing unresolved conversation identity: \(error.localizedDescription)")
+        await writeE2EResult(command: "send-blob", success: false, error: error.localizedDescription)
+        return
+      }
     } else if let targetDID = params["targetDID"] ?? params["recipientDID"], !targetDID.isEmpty {
       // Find existing conversation with target member
       if let existing = conversationManager.conversations.values.first(where: { convo in
         convo.members.contains(where: { $0.did.description == targetDID })
       }) {
-        convoId = existing.groupId
+        convoId = existing.conversationId
       } else {
         do {
           let targetMember = try DID(didString: targetDID)
@@ -2683,7 +2734,7 @@ private extension CatbirdApp {
             initialMembers: [targetMember],
             name: "E2E Blob DM"
           )
-          convoId = newConvo.groupId
+          convoId = newConvo.conversationId
         } catch {
           e2eLogger.error("[E2E-BLOB] Failed to create conversation for \(targetDID): \(error.localizedDescription)")
           await writeE2EResult(command: "send-blob", success: false, error: "Failed to resolve conversation: \(error.localizedDescription)")
@@ -2839,9 +2890,13 @@ private extension CatbirdApp {
     }
     
     do {
+      let canonicalConversationID = try await resolveE2EConversationID(
+        conversationId,
+        manager: conversationManager
+      )
       // Get encrypted messages from server
       let (messageViews, lastSeq) = try await conversationManager.apiClient.getMessages(
-        convoId: conversationId,
+        convoId: canonicalConversationID,
         limit: 50
       )
       
@@ -2881,9 +2936,9 @@ private extension CatbirdApp {
         }
       }
       
-      e2eLogger.info("[E2E] Got \(messageViews.count) messages, decrypted \(decryptedTexts.count) for conversation \(conversationId)")
+      e2eLogger.info("[E2E] Got \(messageViews.count) messages, decrypted \(decryptedTexts.count) for conversation \(canonicalConversationID)")
       await writeE2EResult(command: "get-messages", success: true, data: [
-        "conversationId": conversationId,
+        "conversationId": canonicalConversationID,
         "totalMessages": "\(messageViews.count)",
         "decryptedCount": "\(decryptedTexts.count)",
         "lastSeq": "\(lastSeq ?? 0)",
@@ -2913,22 +2968,25 @@ private extension CatbirdApp {
     
     e2eLogger.info("[E2E] Got conversation manager, reading conversations")
     
-    // Get current MLS state from conversations dictionary
-    let conversations = conversationManager.conversations
-    
-    e2eLogger.info("[E2E] State dump: \(conversations.count) conversations")
-    MLSDiagnosticLogger.shared.logMLSStateDump(
-      conversationCount: conversations.count,
-      groupCount: conversations.count,
-      pendingMessages: 0
-    )
-    
-    e2eLogger.info("[E2E] Writing result file")
-    await writeE2EResult(command: "dump-state", success: true, data: [
-      "conversationCount": "\(conversations.count)",
-      "conversations": conversations.keys.joined(separator: ",")
-    ])
-    e2eLogger.info("[E2E] Dump state complete")
+    do {
+      let conversations = try canonicalE2EConversationIDs(manager: conversationManager)
+      e2eLogger.info("[E2E] State dump: \(conversations.count) conversations")
+      MLSDiagnosticLogger.shared.logMLSStateDump(
+        conversationCount: conversations.count,
+        groupCount: conversations.count,
+        pendingMessages: 0
+      )
+
+      e2eLogger.info("[E2E] Writing result file")
+      await writeE2EResult(command: "dump-state", success: true, data: [
+        "conversationCount": "\(conversations.count)",
+        "conversations": conversations.joined(separator: ",")
+      ])
+      e2eLogger.info("[E2E] Dump state complete")
+    } catch {
+      e2eLogger.error("[E2E-DUMP] Refusing ambiguous conversation state: \(error.localizedDescription)")
+      await writeE2EResult(command: "dump-state", success: false, error: error.localizedDescription)
+    }
   }
   
   private func handleSync(params: [String: String], manager: AppStateManager, logger e2eLogger: Logger) async {
@@ -2952,12 +3010,12 @@ private extension CatbirdApp {
       e2eLogger.info("[E2E-SYNC] Calling waitAndSyncWithServer (waits up to 60s for lock)...")
       try await conversationManager.waitAndSyncWithServer(maxWait: 60)
       
-      let conversations = conversationManager.conversations
+      let conversations = try canonicalE2EConversationIDs(manager: conversationManager)
       e2eLogger.info("[E2E-SYNC] Sync complete, \(conversations.count) conversations")
       
       await writeE2EResult(command: "sync", success: true, data: [
         "conversationCount": "\(conversations.count)",
-        "conversations": conversations.keys.joined(separator: ",")
+        "conversations": conversations.joined(separator: ",")
       ])
     } catch {
       e2eLogger.error("[E2E-SYNC] Sync failed: \(error.localizedDescription)")
@@ -2988,11 +3046,15 @@ private extension CatbirdApp {
         throw NSError(domain: "E2E", code: 1, userInfo: [NSLocalizedDescriptionKey: "MLS not initialized"])
       }
 
-      try await conversationManager.addMembers(convoId: conversationId, memberDids: [memberDID])
+      let canonicalConversationID = try await resolveE2EConversationID(
+        conversationId,
+        manager: conversationManager
+      )
+      try await conversationManager.addMembers(convoId: canonicalConversationID, memberDids: [memberDID])
 
       e2eLogger.info("[E2E] Member added successfully")
       await writeE2EResult(command: "add-member", success: true, data: [
-        "conversationId": conversationId,
+        "conversationId": canonicalConversationID,
         "memberDID": memberDID
       ])
     } catch {
@@ -3023,11 +3085,15 @@ private extension CatbirdApp {
         throw NSError(domain: "E2E", code: 1, userInfo: [NSLocalizedDescriptionKey: "MLS not initialized"])
       }
 
-      try await conversationManager.removeMember(from: conversationId, memberDid: memberDID, reason: reason)
+      let canonicalConversationID = try await resolveE2EConversationID(
+        conversationId,
+        manager: conversationManager
+      )
+      try await conversationManager.removeMember(from: canonicalConversationID, memberDid: memberDID, reason: reason)
 
       e2eLogger.info("[E2E] Member removed successfully")
       await writeE2EResult(command: "remove-member", success: true, data: [
-        "conversationId": conversationId,
+        "conversationId": canonicalConversationID,
         "memberDID": memberDID
       ])
     } catch {
@@ -3054,16 +3120,20 @@ private extension CatbirdApp {
         throw NSError(domain: "E2E", code: 1, userInfo: [NSLocalizedDescriptionKey: "MLS not initialized"])
       }
 
-      guard let convo = conversationManager.conversations[conversationId] else {
+      let canonicalConversationID = try await resolveE2EConversationID(
+        conversationId,
+        manager: conversationManager
+      )
+      guard let convo = conversationManager.conversations[canonicalConversationID] else {
         throw NSError(domain: "E2E", code: 2, userInfo: [NSLocalizedDescriptionKey: "Conversation not found"])
       }
 
       let memberDIDs = convo.members.map { $0.did.description }
       let adminDIDs = convo.members.filter { $0.isAdmin }.map { $0.did.description }
 
-      e2eLogger.info("[E2E] Listed \(memberDIDs.count) members for conversation \(conversationId)")
+      e2eLogger.info("[E2E] Listed \(memberDIDs.count) members for conversation \(canonicalConversationID)")
       await writeE2EResult(command: "list-members", success: true, data: [
-        "conversationId": conversationId,
+        "conversationId": canonicalConversationID,
         "memberCount": "\(memberDIDs.count)",
         "members": memberDIDs.joined(separator: ","),
         "admins": adminDIDs.joined(separator: ",")
@@ -3093,12 +3163,17 @@ private extension CatbirdApp {
         throw NSError(domain: "E2E", code: 1, userInfo: [NSLocalizedDescriptionKey: "MLS not initialized"])
       }
 
+      let canonicalConversationID = try await resolveE2EConversationID(
+        conversationId,
+        manager: conversationManager
+      )
+
       guard let userDid = conversationManager.userDid else {
         throw NSError(domain: "E2E", code: 3, userInfo: [NSLocalizedDescriptionKey: "No user DID"])
       }
 
       let messages = try await conversationManager.storage.fetchMessagesForConversation(
-        conversationId,
+        canonicalConversationID,
         currentUserDID: userDid,
         database: conversationManager.database,
         limit: 200
@@ -3110,9 +3185,9 @@ private extension CatbirdApp {
       }
       let matching = plaintexts.filter { $0.hasPrefix(contentPrefix) }
 
-      e2eLogger.info("[E2E] Found \(matching.count) messages matching prefix '\(contentPrefix)' in \(conversationId)")
+      e2eLogger.info("[E2E] Found \(matching.count) messages matching prefix '\(contentPrefix)' in \(canonicalConversationID)")
       await writeE2EResult(command: "check-message", success: true, data: [
-        "conversationId": conversationId,
+        "conversationId": canonicalConversationID,
         "contentPrefix": contentPrefix,
         "matchCount": "\(matching.count)",
         "totalMessages": "\(messages.count)",
@@ -3142,6 +3217,11 @@ private extension CatbirdApp {
         throw NSError(domain: "E2E", code: 1, userInfo: [NSLocalizedDescriptionKey: "MLS not initialized"])
       }
 
+      let canonicalConversationID = try await resolveE2EConversationID(
+        conversationId,
+        manager: conversationManager
+      )
+
       guard let userDid = conversationManager.userDid else {
         throw NSError(domain: "E2E", code: 3, userInfo: [NSLocalizedDescriptionKey: "No user DID"])
       }
@@ -3151,7 +3231,7 @@ private extension CatbirdApp {
 
       if conversationManager.protocolAuthorityMode == .rustFull {
         let projection = try await conversationManager.conversationDiagnosticsProjection(
-          conversationId: conversationId,
+          conversationId: canonicalConversationID,
           ensureReady: true
         )
         let epoch = projection.epoch ?? 0
@@ -3159,7 +3239,7 @@ private extension CatbirdApp {
           "[E2E] Rust epoch projection for \(conversationId): epoch=\(epoch), state=\(projection.recoveryState.rawValue), sendAllowed=\(projection.sendAllowed.map(String.init) ?? "nil")"
         )
         await writeE2EResult(command: "get-epoch", success: true, data: [
-          "conversationId": conversationId,
+          "conversationId": canonicalConversationID,
           "serverEpoch": "\(epoch)",
           "ffiEpoch": "\(epoch)",
           "recoveryState": projection.recoveryState.rawValue,
@@ -3168,7 +3248,7 @@ private extension CatbirdApp {
         return
       }
 
-      guard let convo = conversationManager.conversations[conversationId] else {
+      guard let convo = conversationManager.conversations[canonicalConversationID] else {
         throw NSError(domain: "E2E", code: 2, userInfo: [NSLocalizedDescriptionKey: "Conversation not found"])
       }
 
@@ -3180,9 +3260,9 @@ private extension CatbirdApp {
 
       // Use FFI epoch as the primary value since server epoch may lag
       let epoch = ffiEpoch > 0 ? ffiEpoch : UInt64(convo.epoch)
-      e2eLogger.info("[E2E] Epoch for \(conversationId): server=\(convo.epoch), ffi=\(ffiEpoch), reported=\(epoch)")
+      e2eLogger.info("[E2E] Epoch for \(canonicalConversationID): server=\(convo.epoch), ffi=\(ffiEpoch), reported=\(epoch)")
       await writeE2EResult(command: "get-epoch", success: true, data: [
-        "conversationId": conversationId,
+        "conversationId": canonicalConversationID,
         "serverEpoch": "\(epoch)",
         "ffiEpoch": "\(ffiEpoch)"
       ])
@@ -3227,6 +3307,18 @@ private extension CatbirdApp {
       return
     }
 
+    let canonicalConversationID: String
+    do {
+      canonicalConversationID = try await resolveE2EConversationID(
+        conversationId,
+        manager: conversationManager
+      )
+    } catch {
+      e2eLogger.error("[E2E-WIPE] Refusing unresolved conversation identity: \(error.localizedDescription)")
+      await writeE2EResult(command: "wipe-mls-state", success: false, error: error.localizedDescription)
+      return
+    }
+
     guard let userDid = conversationManager.userDid else {
       e2eLogger.error("[E2E-WIPE] No user DID")
       await writeE2EResult(command: "wipe-mls-state", success: false, error: "No user DID")
@@ -3236,7 +3328,7 @@ private extension CatbirdApp {
     if conversationManager.protocolAuthorityMode == .rustFull {
       do {
         guard let result = try await conversationManager.debugWipeLocalGroupForRecovery(
-          conversationId: conversationId
+          conversationId: canonicalConversationID
         ) else {
           await writeE2EResult(
             command: "wipe-mls-state",
@@ -3247,10 +3339,10 @@ private extension CatbirdApp {
         }
 
         e2eLogger.info(
-          "[E2E-WIPE] Rust debug wipe complete for \(conversationId.prefix(16)) deletedLocalGroup=\(result.deletedLocalGroup)"
+          "[E2E-WIPE] Rust debug wipe complete for \(canonicalConversationID.prefix(16)) deletedLocalGroup=\(result.deletedLocalGroup)"
         )
         await writeE2EResult(command: "wipe-mls-state", success: true, data: [
-          "conversationId": result.conversationId,
+          "conversationId": canonicalConversationID,
           "groupId": result.groupId ?? "",
           "groupIdPresent": result.groupId == nil ? "false" : "true",
           "deletedLocalGroup": result.deletedLocalGroup ? "true" : "false",
@@ -3265,22 +3357,22 @@ private extension CatbirdApp {
 
     do {
       let model = try await conversationManager.storage.fetchConversation(
-        conversationID: conversationId,
+        conversationID: canonicalConversationID,
         currentUserDID: userDid,
         database: conversationManager.database
       )
       let groupIdData: Data? = model?.groupID
-        ?? conversationManager.conversations[conversationId].flatMap { Data(hexEncoded: $0.groupId) }
+        ?? conversationManager.conversations[canonicalConversationID].flatMap { Data(hexEncoded: $0.groupId) }
 
       if let groupIdData {
         try? await conversationManager.mlsClient.deleteGroup(for: userDid, groupId: groupIdData)
-        e2eLogger.info("[E2E-WIPE] Deleted FFI group state for \(conversationId.prefix(16))")
+        e2eLogger.info("[E2E-WIPE] Deleted FFI group state for \(canonicalConversationID.prefix(16))")
       } else {
-        e2eLogger.warning("[E2E-WIPE] No groupId found for \(conversationId.prefix(16)) — proceeding with DB-only wipe")
+        e2eLogger.warning("[E2E-WIPE] No groupId found for \(canonicalConversationID.prefix(16)) — proceeding with DB-only wipe")
       }
 
-      conversationManager.conversations.removeValue(forKey: conversationId)
-      conversationManager.groupStates.removeValue(forKey: conversationId)
+      conversationManager.conversations.removeValue(forKey: canonicalConversationID)
+      conversationManager.groupStates.removeValue(forKey: canonicalConversationID)
 
       try await conversationManager.database.write { db in
         try db.execute(
@@ -3294,17 +3386,17 @@ private extension CatbirdApp {
                     updatedAt = ?
                 WHERE conversationID = ? AND currentUserDID = ?;
             """,
-          arguments: [Date(), conversationId, userDid]
+          arguments: [Date(), canonicalConversationID, userDid]
         )
       }
 
       if let recoveryManager = await conversationManager.mlsClient.recovery(for: userDid) {
-        await recoveryManager.clearRejoinTrackingAfterLocalStateLoss(convoId: conversationId)
+        await recoveryManager.clearRejoinTrackingAfterLocalStateLoss(convoId: canonicalConversationID)
       }
 
-      e2eLogger.info("[E2E-WIPE] Wipe complete for \(conversationId.prefix(16))")
+      e2eLogger.info("[E2E-WIPE] Wipe complete for \(canonicalConversationID.prefix(16))")
       await writeE2EResult(command: "wipe-mls-state", success: true, data: [
-        "conversationId": conversationId,
+        "conversationId": canonicalConversationID,
         "groupIdPresent": groupIdData != nil ? "true" : "false"
       ])
     } catch {
@@ -3359,6 +3451,18 @@ private extension CatbirdApp {
       return
     }
 
+    let canonicalConversationID: String
+    do {
+      canonicalConversationID = try await resolveE2EConversationID(
+        conversationId,
+        manager: conversationManager
+      )
+    } catch {
+      e2eLogger.error("[E2E-RECOVERY] Refusing unresolved conversation identity: \(error.localizedDescription)")
+      await writeE2EResult(command: "get-recovery-state", success: false, error: error.localizedDescription)
+      return
+    }
+
     guard let userDid = conversationManager.userDid else {
       await writeE2EResult(command: "get-recovery-state", success: false, error: "No user DID")
       return
@@ -3366,14 +3470,14 @@ private extension CatbirdApp {
 
     do {
       let model = try await conversationManager.storage.fetchConversation(
-        conversationID: conversationId,
+        conversationID: canonicalConversationID,
         currentUserDID: userDid,
         database: conversationManager.database
       )
 
       if conversationManager.protocolAuthorityMode == .rustFull {
         let projection = try await conversationManager.conversationDiagnosticsProjection(
-          conversationId: conversationId,
+          conversationId: canonicalConversationID,
           ensureReady: false
         )
 
@@ -3382,11 +3486,11 @@ private extension CatbirdApp {
         let generation = model?.pendingResetGeneration
 
         e2eLogger.info(
-          "[E2E-RECOVERY] rustFull \(conversationId.prefix(16)) state=\(externalName) epoch=\(epoch) generation=\(generation.map(String.init) ?? "nil")"
+          "[E2E-RECOVERY] rustFull \(canonicalConversationID.prefix(16)) state=\(externalName) epoch=\(epoch) generation=\(generation.map(String.init) ?? "nil")"
         )
 
         var data: [String: String] = [
-          "conversationId": conversationId,
+          "conversationId": canonicalConversationID,
           "state": externalName,
           "stateRaw": stateName,
           "epoch": "\(epoch)",
@@ -3402,7 +3506,7 @@ private extension CatbirdApp {
 
       let state: ConversationRecoveryState
       if let recoveryManager = await conversationManager.mlsClient.recovery(for: userDid) {
-        state = await recoveryManager.recoveryState(for: conversationId, model: model)
+        state = await recoveryManager.recoveryState(for: canonicalConversationID, model: model)
       } else {
         state = model?.persistedRecoveryState ?? .healthy
       }
@@ -3435,7 +3539,7 @@ private extension CatbirdApp {
       if let groupIdData = model?.groupID {
         epoch = (try? await conversationManager.mlsClient.getEpoch(
           for: userDid, groupId: groupIdData)) ?? UInt64(model?.epoch ?? 0)
-      } else if let convo = conversationManager.conversations[conversationId],
+      } else if let convo = conversationManager.conversations[canonicalConversationID],
                 let groupIdData = Data(hexEncoded: convo.groupId) {
         epoch = (try? await conversationManager.mlsClient.getEpoch(
           for: userDid, groupId: groupIdData)) ?? UInt64(convo.epoch)
@@ -3446,11 +3550,11 @@ private extension CatbirdApp {
       let generation = model?.pendingResetGeneration
 
       e2eLogger.info(
-        "[E2E-RECOVERY] \(conversationId.prefix(16)) state=\(externalName) epoch=\(epoch) generation=\(generation.map(String.init) ?? "nil")"
+        "[E2E-RECOVERY] \(canonicalConversationID.prefix(16)) state=\(externalName) epoch=\(epoch) generation=\(generation.map(String.init) ?? "nil")"
       )
 
       var data: [String: String] = [
-        "conversationId": conversationId,
+        "conversationId": canonicalConversationID,
         "state": externalName,
         "stateRaw": stateName,
         "epoch": "\(epoch)"
@@ -3528,13 +3632,22 @@ private extension CatbirdApp {
       return
     }
 
-    e2eLogger.info("[E2E] Force-deleting conversation \(convoId, privacy: .public)")
-    await conversationManager.forceDeleteConversation(convoId: convoId)
+    let canonicalConvoID: String
+    do {
+      canonicalConvoID = try await resolveE2EConversationID(convoId, manager: conversationManager)
+    } catch {
+      e2eLogger.error("[E2E] Refusing unresolved conversation identity: \(error.localizedDescription)")
+      await writeE2EResult(command: "force-delete-conversation", success: false, error: error.localizedDescription)
+      return
+    }
+
+    e2eLogger.info("[E2E] Force-deleting conversation \(canonicalConvoID, privacy: .public)")
+    await conversationManager.forceDeleteConversation(convoId: canonicalConvoID)
 
     let remaining = conversationManager.conversations.count
     e2eLogger.info("[E2E] Force delete complete - \(remaining) conversations remain")
     await writeE2EResult(command: "force-delete-conversation", success: true, data: [
-      "deletedConvoId": convoId,
+      "deletedConvoId": canonicalConvoID,
       "remainingConversations": "\(remaining)"
     ])
   }
@@ -4023,6 +4136,12 @@ extension CatbirdApp.AppDelegate {
       return
     }
 
+    guard let manager = await appState.getMLSConversationManager(),
+          let canonicalID = await resolveMLSConversationRoute(convoId, manager: manager) else {
+      logger.warning("Refusing navigation for unresolved MLS conversation route")
+      return
+    }
+
     // Wait for MLS service to be ready (up to 5 seconds)
     let maxWaitTime: TimeInterval = 5.0
     let checkInterval: TimeInterval = 0.2
@@ -4049,16 +4168,38 @@ extension CatbirdApp.AppDelegate {
       logger.warning("MLS service did not become ready within \(maxWaitTime)s, proceeding with navigation anyway")
     }
     
-    logger.info("📍 Navigating to MLS conversation: \(convoId.prefix(16))...")
+    logger.info("📍 Navigating to MLS conversation: \(canonicalID.prefix(16))...")
     
     // Switch to the chat tab (index 4) 
     appState.navigationManager.updateCurrentTab(4)
     
     // Navigate to the specific MLS conversation
-    let destination = NavigationDestination.mlsConversation(convoId)
+    let destination = NavigationDestination.mlsConversation(canonicalID)
     appState.navigationManager.navigate(to: destination, in: 4)
     
     logger.info("✅ Navigation to MLS conversation initiated")
+  }
+
+  private func resolveMLSConversationRoute(
+    _ requestedID: String,
+    manager: MLSConversationManager
+  ) async -> String? {
+    guard let userDID = manager.userDid else { return nil }
+    do {
+      let snapshot = try await manager.storage.fetchConversationsWithMembers(
+        currentUserDID: userDID,
+        database: manager.database
+      )
+      let records = snapshot.conversations.map {
+        MLSConversationIdentityBoundary.Record(
+          conversationID: $0.conversationID,
+          groupID: $0.groupID.hexEncodedString()
+        )
+      }
+      return try MLSConversationIdentityBoundary.resolve(requestedID, in: records)
+    } catch {
+      return nil
+    }
   }
 
   func userNotificationCenter(

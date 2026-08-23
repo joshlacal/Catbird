@@ -140,9 +140,9 @@ final class MLSConversationListViewModelTests: XCTestCase {
     func testSearchFiltersConversations() async {
         // Given
         let conversations = [
-            createMockConversation(id: "1", name: "Test Group"),
-            createMockConversation(id: "2", name: "Work Chat"),
-            createMockConversation(id: "3", name: "Test Team")
+            createMockConversation(id: stableID(for: 1), name: "Test Group"),
+            createMockConversation(id: stableID(for: 2), name: "Work Chat"),
+            createMockConversation(id: stableID(for: 3), name: "Test Team")
         ]
         mockAPIClient.mockConversations = conversations
         await viewModel.loadConversations()
@@ -240,28 +240,32 @@ final class MLSConversationListViewModelTests: XCTestCase {
         mockAPIClient.mockConversations = conversations
         await viewModel.loadConversations()
         
-        let newConvo = createMockConversation(id: "new-convo", name: "New Conversation")
+        let newConvo = createMockConversation(id: stableID(for: 99), name: "New Conversation")
         
         // When
         await viewModel.addConversation(newConvo)
         
         // Then
         XCTAssertEqual(viewModel.conversations.count, 3)
-        XCTAssertEqual(viewModel.conversations.first?.id, "new-convo")
+        XCTAssertEqual(viewModel.conversations.first?.id, stableID(for: 99))
     }
     
     // MARK: - Helper Methods
     
     private func createMockConversations(count: Int, startIndex: Int = 0) -> [MLSConvoView] {
         (startIndex..<(startIndex + count)).map { index in
-            createMockConversation(id: "convo-\(index)", name: "Conversation \(index)")
+            createMockConversation(id: stableID(for: index), name: "Conversation \(index)")
         }
+    }
+
+    private func stableID(for index: Int) -> String {
+        String(format: "550e8400-e29b-41d4-a716-44665544%04x", index)
     }
     
     private func createMockConversation(id: String, name: String) -> MLSConvoView {
         MLSConvoView(
             id: id,
-            groupId: "group-\(id)",
+            groupId: "00112233445566778899aabbccdd\(id.suffix(4))",
             creator: "did:plc:creator",
             members: [
                 MLSMemberView(did: "did:plc:member1", joinedAt: Date(), leafIndex: 0, credential: nil)

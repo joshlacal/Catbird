@@ -38,6 +38,13 @@ final class ChatDraftHandoff {
   /// wildcard draft), clearing it so it is applied exactly once.
   func consume(for conversationID: String) -> String? {
     guard let pending else { return nil }
+    guard MLSConversationIdentityBoundary.isCanonicalStableID(conversationID) else {
+      return nil
+    }
+    if let target = pending.conversationID,
+       !MLSConversationIdentityBoundary.isCanonicalStableID(target) {
+      return nil
+    }
     guard pending.conversationID == nil || pending.conversationID == conversationID else {
       return nil
     }
@@ -45,4 +52,3 @@ final class ChatDraftHandoff {
     return pending.text
   }
 }
-

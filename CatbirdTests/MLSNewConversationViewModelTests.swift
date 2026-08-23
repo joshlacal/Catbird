@@ -13,6 +13,8 @@ import PetrelCatbird
 
 @MainActor
 final class MLSNewConversationViewModelTests: XCTestCase {
+    private let testConversationID = "550e8400-e29b-41d4-a716-446655440000"
+
     var viewModel: MLSNewConversationViewModel!
     var mockConversationManager: MockMLSConversationManager!
     var cancellables: Set<AnyCancellable>!
@@ -164,7 +166,7 @@ final class MLSNewConversationViewModelTests: XCTestCase {
         
         let expectation = XCTestExpectation(description: "Conversation created")
         viewModel.conversationCreatedPublisher.sink { conversation in
-            XCTAssertEqual(conversation.id, "test-convo-id")
+            XCTAssertEqual(conversation.id, testConversationID)
             expectation.fulfill()
         }.store(in: &cancellables)
         
@@ -311,7 +313,7 @@ final class MLSNewConversationViewModelTests: XCTestCase {
         return BlueCatbirdChatDefs.ConversationState(
             conversationKind: .value_group,
             coordinates: BlueCatbirdChatDefs.ConversationCoordinates(
-                conversationId: "test-convo-id",
+                conversationId: testConversationID,
                 generation: 1,
                 stateVersion: 1,
                 groupId: Bytes(data: Data(hexEncoded: "abcdef0123456789") ?? Data()),
@@ -328,14 +330,14 @@ final class MLSNewConversationViewModelTests: XCTestCase {
             leaves: [],
             metadataSnapshot: BlueCatbirdChatDefs.MetadataSnapshot(
                 coordinate: BlueCatbirdChatDefs.MetadataCryptoContext(
-                    conversationId: Bytes(data: Data("test-convo-id".utf8)),
+                    conversationId: Bytes(data: Data(testConversationID.utf8)),
                     generation: 1,
                     groupId: Bytes(data: Data(hexEncoded: "abcdef0123456789") ?? Data()),
                     epoch: 1,
                     groupContextHash: Bytes(data: Data()),
                     confirmationTag: Bytes(data: Data())
                 ),
-                originTransitionId: "test-convo-id",
+                originTransitionId: testConversationID,
                 metadataVersion: 1,
                 nonce: Bytes(data: Data()),
                 ciphertext: Bytes(data: Data()),
@@ -348,7 +350,7 @@ final class MLSNewConversationViewModelTests: XCTestCase {
                     authorKeyId: "key-0",
                     signaturePublicKey: Bytes(data: Data()),
                     authGenerationAtOrigin: 1,
-                    originTransitionId: "test-convo-id",
+                    originTransitionId: testConversationID,
                     originSeq: 1,
                     roleAtOrigin: "admin",
                     deviceStatusAtOrigin: "active"

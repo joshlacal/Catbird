@@ -157,6 +157,9 @@ enum MessagesSchemaRuntime {
       conversationOrder: directory.conversations.map(\.conversationID),
       selfDID: directory.currentUserDID
     ) {
+      guard isCanonicalStableID(existing) else {
+        throw MLSConversationIdentityBoundary.Error.invalidStableID(existing)
+      }
       return existing
     }
 
@@ -165,7 +168,14 @@ enum MessagesSchemaRuntime {
       .map { $0.displayName.isEmpty ? $0.did : $0.displayName }
       .joined(separator: ", ")
     let newConvo = try await manager.createGroup(initialMembers: peerDIDs, name: name)
+    guard isCanonicalStableID(newConvo.conversationId) else {
+      throw MLSConversationIdentityBoundary.Error.invalidStableID(newConvo.conversationId)
+    }
     return newConvo.conversationId
+  }
+
+  private static func isCanonicalStableID(_ value: String) -> Bool {
+    MLSConversationIdentityBoundary.isCanonicalStableID(value)
   }
 
   // MARK: - Name directory (GRDB-backed, profile-enriched)
@@ -274,9 +284,31 @@ enum MessagesSchemaRuntime {
       currentUserDID: userDID,
       database: manager.database
     )
+    let identityRecords = result.conversations.map {
+      MLSConversationIdentityBoundary.Record(
+        conversationID: $0.conversationID,
+        groupID: $0.groupID.hexEncodedString()
+      )
+    }
+    let canonicalRecords = try MLSConversationIdentityBoundary.canonicalize(identityRecords)
+    let canonicalIDs = Set(canonicalRecords.map(\.conversationID))
+    let canonicalConversations = result.conversations.filter {
+      canonicalIDs.contains($0.conversationID)
+    }
+    var canonicalMembersByConvoID: [String: [MLSMemberModel]] = [:]
+    for (requestedID, members) in result.membersByConvoID {
+      guard let canonicalID = try? MLSConversationIdentityBoundary.resolve(
+        requestedID,
+        in: identityRecords
+      ) else {
+        continue
+      }
+      canonicalMembersByConvoID[canonicalID, default: []].append(contentsOf: members)
+    }
+
     var directory = ChatDirectory(
-      conversations: result.conversations,
-      membersByConvoID: result.membersByConvoID,
+      conversations: canonicalConversations,
+      membersByConvoID: canonicalMembersByConvoID,
       currentUserDID: userDID
     )
 
@@ -286,6 +318,27 @@ enum MessagesSchemaRuntime {
     let memberDIDs = Set(result.membersByConvoID.values.flatMap { $0.map(\.did) })
     directory.namesByDID = await ProfileNameCache.shared.resolve(dids: Array(memberDIDs))
     return directory
+  }
+
+  static func resolveConversationID(
+    _ requestedID: String,
+    in directory: ChatDirectory
+  ) throws -> String {
+    let records = directory.conversations.map {
+      MLSConversationIdentityBoundary.Record(
+        conversationID: $0.conversationID,
+        groupID: $0.groupID.hexEncodedString()
+      )
+    }
+    return try MLSConversationIdentityBoundary.resolve(requestedID, in: records)
+  }
+
+  static func resolveConversationID(
+    _ requestedID: String,
+    manager: MLSConversationManager
+  ) async throws -> String {
+    let directory = try await directory(manager: manager)
+    return try resolveConversationID(requestedID, in: directory)
   }
 
   static func personEntity(
@@ -319,7 +372,8 @@ enum MessagesSchemaRuntime {
   static func messageEntity(
     from message: MLSMessageModel,
     conversationTitle: String? = nil,
-    directory: ChatDirectory? = nil
+    directory: ChatDirectory? = nil,
+    conversationIDOverride: String? = nil
   ) -> CatbirdMessagesMessageEntity {
     let sender: CatbirdMessagesPersonEntity
     if let directory, let member = directory.member(withDID: message.senderID) {
@@ -331,7 +385,7 @@ enum MessagesSchemaRuntime {
     let preview = AttributedString("MLS Chat")
 
     let convoEntity = CatbirdMessagesConversationEntity(
-      id: message.conversationID,
+      id: conversationIDOverride ?? message.conversationID,
       recipients: [sender],
       displayName: conversationTitle ?? "Conversation",
       previewText: preview,

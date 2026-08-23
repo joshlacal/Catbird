@@ -107,7 +107,8 @@ final class MLSNewConversationViewModel {
 
     /// Create a new conversation
     @MainActor
-    func createConversation() async {
+    @discardableResult
+    func createConversation() async -> BlueCatbirdChatDefs.ConversationState? {
         guard isValid, !isCreating else {
             logger.warning("⚠️ createConversation called but validation failed - isValid: \(self.isValid), isCreating: \(self.isCreating)")
             
@@ -118,7 +119,7 @@ final class MLSNewConversationViewModel {
                 self.error = NSError(domain: "MLSNewConversation", code: 400, userInfo: [NSLocalizedDescriptionKey: errorMessage])
                 errorSubject.send(self.error!)
             }
-            return
+            return nil
         }
 
         isCreating = true
@@ -163,13 +164,20 @@ final class MLSNewConversationViewModel {
                 )
             }.value
 
-            logger.info("✅ [MLSNewConversationViewModel.createConversation] SUCCESS - convoId: \(convoView.groupId)")
+            guard MLSConversationIdentityBoundary.isCanonicalStableID(convoView.conversationId) else {
+                throw MLSConversationIdentityBoundary.Error.invalidStableID(convoView.conversationId)
+            }
+
+            logger.info("✅ [MLSNewConversationViewModel.createConversation] SUCCESS - conversationId: \(convoView.conversationId)")
 
             conversationCreatedSubject.send(convoView)
-            logger.debug("Created conversation: \(convoView.groupId)")
+            logger.debug("Created conversation: \(convoView.conversationId)")
 
             // Reset form
             reset()
+            isCreating = false
+            logger.info("🟦 [MLSNewConversationViewModel.createConversation] COMPLETE (isCreating = false)")
+            return convoView
         } catch {
             self.error = error
             errorSubject.send(error)
@@ -178,6 +186,7 @@ final class MLSNewConversationViewModel {
 
         isCreating = false
         logger.info("🟦 [MLSNewConversationViewModel.createConversation] COMPLETE (isCreating = false)")
+        return nil
     }
 
     /// Add a member to the conversation

@@ -132,9 +132,23 @@ final class MLSConversationDetailViewModel {
 
     // MARK: - Public Methods
 
+    @discardableResult
+    private func ensureCanonicalRoute() -> Bool {
+        guard MLSConversationIdentityBoundary.isCanonicalStableID(conversationId) else {
+            let routeError = MLSConversationIdentityBoundary.Error.invalidStableID(conversationId)
+            error = routeError
+            conversationState = .error(routeError.localizedDescription)
+            errorSubject.send(routeError)
+            logger.warning("Refusing noncanonical MLS conversation route (self.conversationId, privacy: .private)")
+            return false
+        }
+        return true
+    }
+
     /// Load conversation details and initial messages
     @MainActor
     func loadConversation() async {
+        guard ensureCanonicalRoute() else { return }
         guard !isLoadingConversation else { return }
 
         isLoadingConversation = true
@@ -155,6 +169,7 @@ final class MLSConversationDetailViewModel {
     /// Mark all messages in this conversation as read
     @MainActor
     func markMessagesAsRead() async {
+        guard ensureCanonicalRoute() else { return }
         guard let currentUserDID = conversationManager.currentUserDID else { return }
         do {
             let count = try await MLSStorageHelpers.markAllMessagesAsRead(
@@ -173,6 +188,7 @@ final class MLSConversationDetailViewModel {
     /// Load conversation details
     @MainActor
     private func loadConversationDetails() async {
+        guard ensureCanonicalRoute() else { return }
         do {
             // First try to get conversation from manager cache (most efficient)
             if let cachedConvo = conversationManager.conversations[conversationId] {
@@ -217,6 +233,7 @@ final class MLSConversationDetailViewModel {
     /// Load messages for the conversation
     @MainActor
     func loadMessages() async {
+        guard ensureCanonicalRoute() else { return }
         guard !isLoadingMessages else { return }
 
         isLoadingMessages = true
@@ -259,6 +276,7 @@ final class MLSConversationDetailViewModel {
     /// Load more messages (pagination)
     @MainActor
     func loadMoreMessages() async {
+        guard ensureCanonicalRoute() else { return }
         guard !isLoadingMessages, hasMoreMessages, let sinceSeq = messagesCursor else { return }
 
         isLoadingMessages = true
@@ -301,6 +319,7 @@ final class MLSConversationDetailViewModel {
     /// Send a message
     @MainActor
     func sendMessage(_ plaintext: String, embed: MLSEmbedData? = nil) async {
+        guard ensureCanonicalRoute() else { return }
         guard !isSendingMessage, !plaintext.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return
         }
@@ -391,6 +410,7 @@ final class MLSConversationDetailViewModel {
     /// Leave the conversation
     @MainActor
     func leaveConversation() async throws {
+        guard ensureCanonicalRoute() else { return }
         guard !isLeavingConversation else { return }
 
         isLeavingConversation = true
@@ -431,6 +451,7 @@ final class MLSConversationDetailViewModel {
     /// Retry sending a failed message
     @MainActor
     func retryMessage(_ optimisticId: UUID) async {
+        guard ensureCanonicalRoute() else { return }
         guard let index = optimisticMessages.firstIndex(where: { $0.id == optimisticId }),
               case .failed = optimisticMessages[index].state else {
             logger.warning("Cannot retry message: not found or not in failed state")

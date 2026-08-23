@@ -3,6 +3,7 @@ import CatbirdMLSCore
 import GRDB
 import OSLog
 import Petrel
+import PetrelCatbird
 import SwiftUI
 
 // MARK: - MLS List Change Observer
@@ -84,8 +85,16 @@ struct MacOSChatContentView: View {
       }
     }
     .onChange(of: appState.navigationManager.targetMLSConversationId) { _, newValue in
-      if let convoId = newValue, convoId != selectedConvoId {
-        selectedConvoId = convoId
+      guard let requestedID = newValue else { return }
+      Task { @MainActor in
+        guard let canonicalID = await canonicalMLSRoute(for: requestedID) else {
+          logger.warning("Refusing unresolved macOS MLS route")
+          appState.navigationManager.targetMLSConversationId = nil
+          return
+        }
+        if canonicalID != selectedConvoId {
+          selectedConvoId = canonicalID
+        }
         appState.navigationManager.targetMLSConversationId = nil
       }
     }
@@ -142,6 +151,17 @@ struct MacOSChatContentView: View {
     if mlsChatEnabledForCurrentAccount {
       Task { await loadMLSConversations() }
       startMLSPolling()
+    }
+
+    if let requestedID = appState.navigationManager.targetMLSConversationId {
+      Task { @MainActor in
+        guard let canonicalID = await canonicalMLSRoute(for: requestedID) else {
+          appState.navigationManager.targetMLSConversationId = nil
+          return
+        }
+        selectedConvoId = canonicalID
+        appState.navigationManager.targetMLSConversationId = nil
+      }
     }
   }
 
@@ -205,10 +225,37 @@ struct MacOSChatContentView: View {
       let (loadedConversations, membersByConvoID) = try await MLSStorage.shared
         .fetchConversationsWithMembersUsingSmartRouting(currentUserDID: userDID)
 
-      let acceptedConversations = loadedConversations.filter { $0.requestState != .pendingInbound }
+      let identityRecords = loadedConversations.map {
+        MLSConversationIdentityBoundary.Record(
+          conversationID: $0.conversationID,
+          groupID: $0.groupID.hexEncodedString()
+        )
+      }
+      let canonicalRecords = try MLSConversationIdentityBoundary.canonicalize(identityRecords)
+      let canonicalIDs = Set(canonicalRecords.map(\.conversationID))
+      let acceptedConversations = loadedConversations.filter {
+        canonicalIDs.contains($0.conversationID) && $0.requestState != .pendingInbound
+      }
 
-      let unreadCounts = try await MLSGRDBManager.shared.read(for: userDID) { db in
+      var canonicalMembersByConvoID: [String: [MLSMemberModel]] = [:]
+      for (requestedID, members) in membersByConvoID {
+        guard let canonicalID = try? MLSConversationIdentityBoundary.resolve(
+          requestedID,
+          in: identityRecords
+        ) else { continue }
+        canonicalMembersByConvoID[canonicalID, default: []].append(contentsOf: members)
+      }
+
+      let rawUnreadCounts = try await MLSGRDBManager.shared.read(for: userDID) { db in
         try MLSStorageHelpers.getUnreadCountsForAllConversationsSync(from: db, currentUserDID: userDID)
+      }
+      var unreadCounts: [String: Int] = [:]
+      for (requestedID, count) in rawUnreadCounts {
+        guard let canonicalID = try? MLSConversationIdentityBoundary.resolve(
+          requestedID,
+          in: identityRecords
+        ) else { continue }
+        unreadCounts[canonicalID, default: 0] += count
       }
 
       // Pull the per-DID MlsContext so the sync DB closure below can
@@ -290,7 +337,7 @@ struct MacOSChatContentView: View {
       // Build participants from DB-cached profiles
       var participants: [String: [MLSParticipantViewModel]] = [:]
       var dbProfiles: [MLSProfileEnricher.ProfileData] = []
-      for members in membersByConvoID.values {
+      for members in canonicalMembersByConvoID.values {
         for member in members where member.handle != nil || member.displayName != nil {
           dbProfiles.append(MLSProfileEnricher.ProfileData(
             did: member.did, handle: member.handle ?? "",
@@ -304,7 +351,7 @@ struct MacOSChatContentView: View {
         dbProfiles.map { (MLSProfileEnricher.canonicalDID($0.did), $0) },
         uniquingKeysWith: { first, _ in first }
       )
-      for (convoID, members) in membersByConvoID {
+      for (convoID, members) in canonicalMembersByConvoID {
         participants[convoID] = members.map { member in
           let canonicalDID = MLSProfileEnricher.canonicalDID(member.did)
           let profile = dbProfilesByDID[canonicalDID]
@@ -327,9 +374,17 @@ struct MacOSChatContentView: View {
       newState.isLoading = false
       coordinator.mlsState = newState
 
+      if let selectedConvoId,
+         !acceptedConversations.contains(where: { $0.conversationID == selectedConvoId }) {
+        self.selectedConvoId = nil
+      }
+
       // Background: enrich with network profiles
       Task {
-        await enrichMLSParticipantsFromNetwork(membersByConvoID: membersByConvoID, userDID: userDID)
+        await enrichMLSParticipantsFromNetwork(
+          membersByConvoID: canonicalMembersByConvoID,
+          userDID: userDID
+        )
       }
     } catch {
       logger.error("Failed to load MLS conversations: \(error)")
@@ -375,6 +430,22 @@ struct MacOSChatContentView: View {
       updatedState.participants = enrichedParticipants
       coordinator.mlsState = updatedState
     }
+  }
+
+  @MainActor
+  private func canonicalMLSRoute(for requestedID: String) async -> String? {
+    let userDID = appState.userDID
+    guard let snapshot = try? await MLSStorage.shared
+      .fetchConversationsWithMembersUsingSmartRouting(currentUserDID: userDID) else {
+      return nil
+    }
+    let records = snapshot.conversations.map {
+      MLSConversationIdentityBoundary.Record(
+        conversationID: $0.conversationID,
+        groupID: $0.groupID.hexEncodedString()
+      )
+    }
+    return try? MLSConversationIdentityBoundary.resolve(requestedID, in: records)
   }
 
   // MARK: - MLS Polling

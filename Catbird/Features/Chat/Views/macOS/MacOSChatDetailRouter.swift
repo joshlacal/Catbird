@@ -41,19 +41,20 @@ struct MacOSChatDetailRouter: View {
         MacOSBlueskyConversationView(convoId: convoId)
           .id(convoId)
       case .mls:
-        MacOSMLSConversationView(conversationId: convoId)
-          .id(convoId)
+        if MLSConversationIdentityBoundary.isCanonicalStableID(convoId) {
+          MacOSMLSConversationView(conversationId: convoId)
+            .id(convoId)
+        } else {
+          ContentUnavailableView("Conversation unavailable", systemImage: "lock.slash")
+        }
       }
     } else if let convoId = selectedConvoId {
-      // Deep-link before coordinator has loaded — route by id shape so MLS
-      // deep links don't open the Bluesky detail view
-      if UnifiedConversation.idLooksLikeMLSConversation(convoId) {
-        MacOSMLSConversationView(conversationId: convoId)
-          .id(convoId)
-      } else {
-        MacOSBlueskyConversationView(convoId: convoId)
-          .id(convoId)
-      }
+      // A selected MLS route must come from the canonicalized coordinator
+      // snapshot. Never infer a chat type from an arbitrary ID shape.
+      let title = MLSConversationIdentityBoundary.isCanonicalStableID(convoId)
+        ? "Conversation is loading"
+        : "Conversation unavailable"
+      ContentUnavailableView(title, systemImage: "lock.slash")
     } else {
       EmptyConversationView()
     }

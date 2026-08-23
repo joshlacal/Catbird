@@ -199,7 +199,9 @@ struct CatbirdMessagesConversationQuery: EntityStringQuery {
       uniqueKeysWithValues: directory.conversations.map { ($0.conversationID, $0) })
 
     return identifiers.compactMap { id in
-      byID[id].map { MessagesSchemaRuntime.conversationEntity(model: $0, directory: directory) }
+      guard let canonicalID = try? MessagesSchemaRuntime.resolveConversationID(id, in: directory),
+            let model = byID[canonicalID] else { return nil }
+      return MessagesSchemaRuntime.conversationEntity(model: model, directory: directory)
     }
   }
 
@@ -323,10 +325,20 @@ struct CatbirdMessagesMessageQuery: EntityStringQuery {
     var entities: [CatbirdMessagesMessageEntity] = []
     for identifier in identifiers {
       let message = try await MessagesSchemaRuntime.fetchMessage(identifier, manager: manager)
-      let title = byID[message.conversationID].map { directory.title(for: $0) }
+      guard let canonicalID = try? MessagesSchemaRuntime.resolveConversationID(
+        message.conversationID,
+        in: directory
+      ) else {
+        continue
+      }
+      let title = byID[canonicalID].map { directory.title(for: $0) }
       entities.append(
         MessagesSchemaRuntime.messageEntity(
-          from: message, conversationTitle: title, directory: directory)
+          from: message,
+          conversationTitle: title,
+          directory: directory,
+          conversationIDOverride: canonicalID
+        )
       )
     }
     return entities
@@ -371,7 +383,8 @@ struct CatbirdMessagesMessageQuery: EntityStringQuery {
             MessagesSchemaRuntime.messageEntity(
               from: message,
               conversationTitle: directory.title(for: convo),
-              directory: directory)
+              directory: directory,
+              conversationIDOverride: convo.conversationID)
           )
         }
       }

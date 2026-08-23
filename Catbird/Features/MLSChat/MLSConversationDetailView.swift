@@ -929,11 +929,18 @@ import SwiftUI
         }
 
         var body: some View {
-            contentWithNavigation
-                .task {
-                    MLSActiveConversationTracker.shared.setActive(conversationId)
-                    await setupView()
-                }
+            if !MLSConversationIdentityBoundary.isCanonicalStableID(conversationId) {
+                ContentUnavailableView(
+                    "Conversation unavailable",
+                    systemImage: "lock.slash",
+                    description: Text("This secure conversation has no valid stable identity.")
+                )
+            } else {
+                contentWithNavigation
+                    .task {
+                        MLSActiveConversationTracker.shared.setActive(conversationId)
+                        await setupView()
+                    }
                 .onDisappear {
                     MLSActiveConversationTracker.shared.setInactive(conversationId)
                     isViewActive = false
@@ -968,7 +975,7 @@ import SwiftUI
                         Task { await unifiedDataSource?.refreshRecoveryState() }
                     }
                 }
-                .onReceive(
+                    .onReceive(
                     NotificationCenter.default.publisher(
                         for: Notification.Name("MLSDeliveryAckReceived")
                     )
@@ -977,7 +984,8 @@ import SwiftUI
                           convoId == conversationId
                     else { return }
                     Task { @MainActor in await refreshDeliveryStates() }
-                }
+                    }
+            }
         }
 
         @ViewBuilder
@@ -1114,6 +1122,10 @@ import SwiftUI
         }
 
         private func setupView() async {
+            guard MLSConversationIdentityBoundary.isCanonicalStableID(conversationId) else {
+                logger.error("Refusing to initialize detail view for noncanonical route")
+                return
+            }
             isViewActive = true
             if viewModel == nil {
                 guard let dependencies = await resolveSetupDependencies()
@@ -1664,7 +1676,7 @@ import SwiftUI
 
                 if let groupData = Data(hexEncoded: conversationView.groupId) {
                     let synthesized = MLSConversationModel(
-                        conversationID: conversationView.groupId,
+                        conversationID: conversationId,
                         currentUserDID: currentUserDID,
                         groupID: groupData,
                         epoch: Int64(conversationView.epoch),
