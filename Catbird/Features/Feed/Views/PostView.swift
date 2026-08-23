@@ -81,6 +81,7 @@ struct PostView: View, Equatable, Identifiable {
   @State private var showBlockConfirmation = false
   @State private var showMuteUserConfirmation = false
   @State private var showMuteThreadConfirmation = false
+  @State private var isShowingCopilot = false
 
   // MARK: - Computed Properties
 var id: String {
@@ -204,6 +205,9 @@ var id: String {
         onRetry: canRetryThreadSummary ? { summarizeCurrentThread() } : nil,
         post: postState.currentPost
       )
+    }
+    .sheet(isPresented: $isShowingCopilot) {
+      CatbirdCopilotSheet(context: copilotContext)
     }
     .alert("Delete Post", isPresented: $showDeleteConfirmation) {
       Button("Cancel", role: .cancel) { }
@@ -365,6 +369,14 @@ var id: String {
   // Post menu (three dots)
   private var postEllipsisMenuView: some View {
     Menu {
+      Button {
+        isShowingCopilot = true
+      } label: {
+        Label("Ask Catbird", systemImage: "sparkles")
+      }
+
+      Divider()
+
       // Only show "Add to List" for other users' posts
       if postState.currentPost.author.did.didString() != postState.currentUserDid {
         Button(action: {
@@ -493,6 +505,21 @@ var id: String {
         .accessibilityAddTraits(.isButton)
         
     }
+  }
+
+  private var copilotContext: CopilotContext {
+    let text: String
+    if case .knownType(let record) = postState.currentPost.record,
+       let feedPost = record as? AppBskyFeedPost {
+      text = feedPost.text
+    } else {
+      text = ""
+    }
+    return .post(
+      uri: postState.currentPost.uri.uriString(),
+      authorDID: postState.currentPost.author.did.didString(),
+      text: text
+    )
   }
 
   // Reply indicator text

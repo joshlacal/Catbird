@@ -160,6 +160,17 @@ struct SettingsView: View {
                         .foregroundStyle(.orange)
                 }
             }
+
+            NavigationLink {
+                SmartFiltersSettingsView()
+            } label: {
+                Label {
+                    Text("Smart Filters")
+                } icon: {
+                    Image(systemName: "sparkles.rectangle.stack.fill")
+                        .foregroundStyle(.purple)
+                }
+            }
             
             Button {
                 appState.onboardingManager.resetAllOnboarding()
@@ -651,4 +662,3 @@ extension Bundle {
     SettingsView()
   }
 }
-

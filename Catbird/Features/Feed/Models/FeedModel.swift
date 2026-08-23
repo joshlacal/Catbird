@@ -710,11 +710,36 @@ final class FeedModel: StateInvalidationSubscriber {
     let tunerSettings = await getFilterSettings()
     let slices = await feedTuner.tune(fetchedPosts, filterSettings: tunerSettings)
     logger.debug("🔍 processAndFilterPosts: FeedTuner returned \(slices.count) slices")
+
+    // Smart Filters are intentionally scoped to Home in v0. Non-candidates pay
+    // only the DID-index lookup; semantic misses remain visible while classified.
+    let smartFilterDecisions: [String: FeedFilterDecision]
+    if feedType == .timeline {
+      smartFilterDecisions = await SmartFilterCoordinator.shared.decisions(
+        for: slices,
+        accountDID: appState.userDID
+      )
+    } else {
+      smartFilterDecisions = [:]
+    }
+    let visibleSlices = slices.filter { slice in
+      if case .hidden = smartFilterDecisions[slice.id] { return false }
+      return true
+    }
     
     // Convert slices to cached posts
     let feedKey = cacheKey(for: feedType.identifier)
-    let newCachedPosts = slices.compactMap { slice in
-      return CachedFeedViewPost(from: slice, feedType: feedKey)
+    let newCachedPosts = visibleSlices.compactMap { slice in
+      let cached = CachedFeedViewPost(from: slice, feedType: feedKey)
+      switch smartFilterDecisions[slice.id] {
+      case .collapsed(let ruleID):
+        cached?.smartFilterCollapseRuleID = ruleID.uuidString
+      case .pending:
+        cached?.isSmartFilterPending = true
+      default:
+        break
+      }
+      return cached
     }
 
     let activeFilters = filterSettings.activeFilters

@@ -48,6 +48,11 @@ final class CachedFeedViewPost: Identifiable {
     /// Indicates if this is a temporary/optimistic post that hasn't been confirmed by the server
     @Transient var isTemporary: Bool = false
 
+    /// Runtime-only Smart Filter state. Pending classifications deliberately
+    /// persist as ordinary visible posts if the cache is written to disk.
+    @Transient var smartFilterCollapseRuleID: String?
+    @Transient var isSmartFilterPending: Bool = false
+
     /// Cached decoded FeedViewPost to avoid repeated JSON decoding
     @Transient private var _cachedFeedViewPost: AppBskyFeedDefs.FeedViewPost?
 

@@ -28,6 +28,8 @@ struct UnifiedProfileView: View {
   @State private var isShowingBlockConfirmation = false
   @State private var isShowingMuteConfirmation = false
   @State private var isShowingAddToListSheet = false
+  @State private var isShowingCopilot = false
+  @State private var isShowingSmartFilterEditor = false
   @State private var isBlocking = false
   /// Conversations the current user would auto-leave if they block this profile.
   /// Populated just before presenting the block-confirmation alert so the
@@ -1043,6 +1045,25 @@ struct UnifiedProfileView: View {
         )
       }
     }
+    .sheet(isPresented: $isShowingCopilot) {
+      if let profile = viewModel.profile {
+        CatbirdCopilotSheet(
+          context: .profile(
+            did: profile.did.didString(),
+            handle: profile.handle.description,
+            displayName: profile.displayName
+          )
+        )
+      }
+    }
+    .sheet(isPresented: $isShowingSmartFilterEditor) {
+      if let profile = viewModel.profile {
+        SmartFilterEditorSheet(
+          targetActorDID: profile.did.didString(),
+          actorName: "@\(profile.handle.description)"
+        )
+      }
+    }
     .toolbar {
       if let profile = viewModel.profile {
         ToolbarItem(placement: .principal) {
@@ -1145,6 +1166,20 @@ struct UnifiedProfileView: View {
           }
         } else {
           // Regular user options
+          Button {
+            isShowingCopilot = true
+          } label: {
+            Label("Ask Catbird", systemImage: "sparkles")
+          }
+
+          Button {
+            isShowingSmartFilterEditor = true
+          } label: {
+            Label("Filter Posts…", systemImage: "line.3.horizontal.decrease.circle")
+          }
+
+          Divider()
+
           Button {
             showAddToListSheet(profile)
           } label: {

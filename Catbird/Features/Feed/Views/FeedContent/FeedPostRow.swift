@@ -28,19 +28,54 @@ struct FeedPostRow: View, Equatable, Identifiable {
     var feedTypeIdentifier: String
     var tracksVisibilityForFeedback: Bool = true
     @Environment(AppState.self) private var appState
+    @State private var isSmartFilterRevealed = false
+    @State private var isPendingIndicatorVisible = true
     
     // MARK: - Body
     
     var body: some View {
         VStack(spacing: 0) {
-            EnhancedFeedPost(
-                cachedPost: viewModel.post,
-                path: $navigationPath
-            )
-            .equatable()
-            .contentShape(Rectangle())
-            .onTapGesture {
-                viewModel.navigateToPost(navigationPath: $navigationPath)
+            if viewModel.post.smartFilterCollapseRuleID != nil && !isSmartFilterRevealed {
+                HStack(spacing: 12) {
+                    Image(systemName: "line.3.horizontal.decrease.circle")
+                        .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Collapsed by Smart Filter")
+                            .appFont(AppTextRole.subheadline.weight(.semibold))
+                        Text("This is a private rule on your device.")
+                            .appFont(AppTextRole.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Show") { isSmartFilterRevealed = true }
+                        .buttonStyle(.bordered)
+                }
+                .padding()
+                .accessibilityElement(children: .combine)
+            } else {
+                EnhancedFeedPost(
+                    cachedPost: viewModel.post,
+                    path: $navigationPath
+                )
+                .equatable()
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    viewModel.navigateToPost(navigationPath: $navigationPath)
+                }
+                .overlay(alignment: .topTrailing) {
+                    if viewModel.post.isSmartFilterPending && isPendingIndicatorVisible {
+                        Image(systemName: "sparkles")
+                            .appFont(AppTextRole.caption2)
+                            .foregroundStyle(.tertiary)
+                            .padding(8)
+                            .accessibilityLabel("Smart Filter classification pending")
+                    }
+                }
+                .task(id: viewModel.post.isSmartFilterPending) {
+                    guard viewModel.post.isSmartFilterPending else { return }
+                    try? await Task.sleep(for: .seconds(3))
+                    isPendingIndicatorVisible = false
+                }
             }
             
             // Full-width divider
