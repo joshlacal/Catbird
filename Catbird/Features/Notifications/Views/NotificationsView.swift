@@ -130,7 +130,7 @@ struct NotificationsView: View {
 
   @ViewBuilder
   private var filterPicker: some View {
-    #if compiler(>=6.2)
+    #if compiler(>=6.4)
     if #available(anyAppleOS 27.0, *) {
       Picker("Filter", selection: $selectedFilter) {
         Text("All").tag(NotificationsViewModel.NotificationFilter.all)

@@ -80,7 +80,7 @@ struct ConcentricBannerClip: ViewModifier {
     content
       .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
       .onGeometryChange(for: CGFloat.self) { proxy in
-        #if compiler(>=6.2)
+        #if compiler(>=6.4)
         if #available(anyAppleOS 27.0, *),
           let radii = proxy.concentricCornerRadii
         {
