@@ -257,11 +257,6 @@ struct ContactSearchList: View {
             }
             .disabled(!isAvailable)
             .opacity(isAvailable ? 1.0 : 0.6)
-            .task {
-              if showMLSStatus && participantOptInStatus[did] == nil {
-                await checkMLSOptIn(for: did)
-              }
-            }
           }
         }
       }
