@@ -324,8 +324,9 @@ struct MLSImageView: View {
   // MARK: - Loading
 
   private func loadImage() async {
-    // Check cache first
-    if let cached = await MLSImageCache.shared.get(blobId: imageEmbed.blobId) {
+    let userDID = appState.userDID
+    // Check cache first (partitioned by user DID)
+    if let cached = await MLSImageCache.shared.get(blobId: imageEmbed.blobId, userDID: userDID) {
       image = cached
       logImageDimensions(decoded: cached, source: "cache")
       // Run SCA on cached image too (respects app-level toggle)
@@ -381,9 +382,8 @@ struct MLSImageView: View {
 
       logImageDimensions(decoded: decodedImage, source: "network", payloadBytes: plaintext.count)
 
-      // Cache
-      await MLSImageCache.shared.put(blobId: imageEmbed.blobId, imageData: plaintext)
-
+      // Cache (partitioned by user DID)
+      await MLSImageCache.shared.put(blobId: imageEmbed.blobId, userDID: userDID, imageData: plaintext)
       // SensitiveContentAnalysis check (respects app-level toggle)
       #if os(iOS)
       if appState.appSettings.sensitiveContentScanningEnabled, let cgImage = decodedImage.cgImage {

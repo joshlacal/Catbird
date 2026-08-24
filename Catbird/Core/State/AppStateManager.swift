@@ -511,11 +511,11 @@ final class AppStateManager {
   ///   This prevents auto-triggering re-authentication on the login screen.
   func logout(isManual: Bool = true) async {
     logger.info("🚪 Logging out (isManual: \(isManual))")
-
-    if let currentUserDID = lifecycle.userDID,
-      let currentState = authenticatedStates[currentUserDID]
-    {
-      await currentState.prepareMLSStorageReset()
+    if let currentUserDID = lifecycle.userDID {
+      if let currentState = authenticatedStates[currentUserDID] {
+        await currentState.prepareMLSStorageReset()
+      }
+      await MLSImageCache.shared.purge(for: currentUserDID)
     }
 
     // Clear auth manager session - pass isManual to control re-auth behavior
@@ -653,10 +653,10 @@ final class AppStateManager {
     await transitionToAuthenticated(userDID: userDID)
   }
 
-  /// Remove a specific account's state from cache
+  /// Remove a specific account completely and destroy all persisted MLS data
   /// - Parameter userDID: The DID of the account to remove
   func removeAccount(_ userDID: String) async {
-    logger.info("🗑️ Removing account state: \(userDID)")
+    logger.info("🗑️ Removing account state and completely destroying MLS data: \(userDID)")
 
     // CRITICAL FIX: Properly cleanup MLS resources before removing
     if let appState = authenticatedStates[userDID] {
@@ -669,6 +669,12 @@ final class AppStateManager {
 
     authenticatedStates.removeValue(forKey: userDID)
     accessOrder.removeAll { $0 == userDID }
+
+    // Purge decrypted image cache for this user
+    await MLSImageCache.shared.purge(for: userDID)
+
+    // Completely destroy all MLS databases, WAL/SHM files, Keychain materials, credentials, and preferences
+    await MLSClient.shared.destroyStorageCompletely(for: userDID)
 
     // Update widget account list after removal
     writeAccountsToAppGroup()

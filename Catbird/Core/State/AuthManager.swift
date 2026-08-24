@@ -1424,21 +1424,24 @@ final class AuthenticationManager: AuthProgressDelegate {
     )
   }
 
-  /// Remove an account completely (including stored handle)
+  /// Remove an account completely (including stored handle and on-disk/keychain MLS data)
   @MainActor
   func removeAccount(did: String) async {
-    logger.info("Removing account: \(did)")
+    logger.info("Removing account completely: \(did)")
 
     removeStoredHandle(for: did)
 
     if let client = client {
       do {
         try await client.removeAccount(did: did)
-        logger.info("Account removed successfully")
+        logger.info("Account removed successfully from client")
       } catch {
-        logger.error("Error removing account: \(error.localizedDescription)")
+        logger.error("Error removing account from client: \(error.localizedDescription)")
       }
     }
+
+    // Clean up cached AppState and completely destroy all persistent MLS files, databases, and Keychain materials
+    await AppStateManager.shared.removeAccount(did)
 
     await refreshAvailableAccounts()
   }
