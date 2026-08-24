@@ -217,6 +217,125 @@ enum MLSConversationIdentityBoundary {
     }
   }
 
+  struct LiveListTransformationResult: Equatable, Sendable {
+    let conversations: [MLSConversationModel]
+    let membersByConvoID: [String: [MLSMemberModel]]
+    let unreadCounts: [String: Int]
+    let lastMessages: [String: (senderDID: String, text: String)]
+    let latestActivityByConvo: [String: Date]
+
+    static func == (lhs: LiveListTransformationResult, rhs: LiveListTransformationResult) -> Bool {
+      guard lhs.conversations == rhs.conversations,
+            lhs.membersByConvoID == rhs.membersByConvoID,
+            lhs.unreadCounts == rhs.unreadCounts,
+            lhs.latestActivityByConvo == rhs.latestActivityByConvo,
+            lhs.lastMessages.keys == rhs.lastMessages.keys else {
+        return false
+      }
+      return lhs.lastMessages.allSatisfy { k, v in
+        rhs.lastMessages[k]?.senderDID == v.senderDID && rhs.lastMessages[k]?.text == v.text
+      }
+    }
+  }
+
+  static func record(for conversation: MLSConversationModel) -> Record {
+    Record(
+      conversationID: conversation.conversationID,
+      groupID: conversation.groupID.hexEncodedString()
+    )
+  }
+
+  static func canonicalize(
+    _ conversations: [MLSConversationModel]
+  ) throws -> [MLSConversationModel] {
+    let records = conversations.map(record(for:))
+    let canonicalRecords = try canonicalize(records)
+    let canonicalIDs = Set(canonicalRecords.map(\.conversationID))
+    var emitted = Set<String>()
+    return conversations.filter { conversation in
+      let id = conversation.conversationID
+      return canonicalIDs.contains(id) && emitted.insert(id).inserted
+    }
+  }
+
+  /// Canonicalizes raw conversation records and associated side maps for live list display.
+  /// Any raw-only, non-canonical, or ambiguous conversation row is excluded, and side maps
+  /// are re-keyed to canonical conversation IDs with excluded keys stripped.
+  static func canonicalizeLiveList(
+    conversations: [MLSConversationModel],
+    membersByConvoID: [String: [MLSMemberModel]] = [:],
+    rawUnreadCounts: [String: Int] = [:],
+    lastMessages: [String: (senderDID: String, text: String)] = [:],
+    latestActivityByConvo: [String: Date] = [:]
+  ) -> LiveListTransformationResult? {
+    let identityRecords = conversations.map(record(for:))
+    guard let canonicalRecords = try? canonicalize(identityRecords) else {
+      logger.warning("Refusing live MLS conversation list with ambiguous identity rows")
+      return nil
+    }
+    let canonicalIDs = Set(canonicalRecords.map(\.conversationID))
+
+    for conversation in conversations {
+      if !canonicalIDs.contains(conversation.conversationID) {
+        let reason = !isCanonicalStableID(conversation.conversationID)
+          ? "non-canonical conversation ID"
+          : "unresolved or ambiguous identity mapping"
+        logger.warning("Excluding non-canonical MLS conversation row from live list: conversationID=\(conversation.conversationID, privacy: .public), groupID=\(conversation.groupID.hexEncodedString(), privacy: .public), reason=\(reason, privacy: .public)")
+      }
+    }
+
+    func canonicalKey(_ requestedID: String) -> String? {
+      try? resolve(requestedID, in: identityRecords)
+    }
+
+    let accepted = conversations.filter {
+      canonicalIDs.contains($0.conversationID) && $0.requestState != .pendingInbound
+    }
+
+    var canonicalLatestActivity: [String: Date] = [:]
+    for (requestedID, date) in latestActivityByConvo {
+      guard let canonicalID = canonicalKey(requestedID), canonicalIDs.contains(canonicalID) else { continue }
+      canonicalLatestActivity[canonicalID] = max(canonicalLatestActivity[canonicalID] ?? .distantPast, date)
+    }
+
+    let sorted = accepted.sorted { lhs, rhs in
+      let lhsDate = canonicalLatestActivity[lhs.conversationID] ?? lhs.createdAt
+      let rhsDate = canonicalLatestActivity[rhs.conversationID] ?? rhs.createdAt
+      return lhsDate > rhsDate
+    }
+
+    var seenConvoIDs = Set<String>()
+    let deduped = sorted.filter {
+      canonicalIDs.contains($0.conversationID) && seenConvoIDs.insert($0.conversationID).inserted
+    }
+
+    var canonicalMembers: [String: [MLSMemberModel]] = [:]
+    for (requestedID, members) in membersByConvoID {
+      guard let canonicalID = canonicalKey(requestedID), canonicalIDs.contains(canonicalID) else { continue }
+      canonicalMembers[canonicalID, default: []].append(contentsOf: members)
+    }
+
+    var canonicalUnread: [String: Int] = [:]
+    for (requestedID, count) in rawUnreadCounts {
+      guard let canonicalID = canonicalKey(requestedID), canonicalIDs.contains(canonicalID) else { continue }
+      canonicalUnread[canonicalID, default: 0] += count
+    }
+
+    var canonicalLastMsgs: [String: (senderDID: String, text: String)] = [:]
+    for (requestedID, msg) in lastMessages {
+      guard let canonicalID = canonicalKey(requestedID), canonicalIDs.contains(canonicalID) else { continue }
+      canonicalLastMsgs[canonicalID] = msg
+    }
+
+    return LiveListTransformationResult(
+      conversations: deduped,
+      membersByConvoID: canonicalMembers,
+      unreadCounts: canonicalUnread,
+      lastMessages: canonicalLastMsgs,
+      latestActivityByConvo: canonicalLatestActivity
+    )
+  }
+
   private static func isNormalizedHex(_ value: String) -> Bool {
     let scalars = Array(value.unicodeScalars)
     guard !scalars.isEmpty, scalars.count.isMultiple(of: 2), value == value.lowercased() else {

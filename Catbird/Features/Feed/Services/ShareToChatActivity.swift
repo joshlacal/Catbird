@@ -1015,13 +1015,46 @@ import CatbirdMLSCore
         let (loadedConversations, membersByConvoID) = try await MLSStorage.shared.fetchConversationsWithMembersUsingSmartRouting(
           currentUserDID: userDID
         )
+        let identityRecords = loadedConversations.map {
+          MLSConversationIdentityBoundary.Record(
+            conversationID: $0.conversationID,
+            groupID: $0.groupID.hexEncodedString()
+          )
+        }
+        guard let canonicalRecords = try? MLSConversationIdentityBoundary.canonicalize(identityRecords) else {
+          logger.warning("Refusing live MLS conversations with ambiguous identity rows")
+          conversations = []
+          return
+        }
+        let canonicalIDs = Set(canonicalRecords.map(\.conversationID))
 
-        conversations = loadedConversations
+        for conversation in loadedConversations {
+          if !canonicalIDs.contains(conversation.conversationID) {
+            let reason = !MLSConversationIdentityBoundary.isCanonicalStableID(conversation.conversationID)
+              ? "non-canonical conversation ID"
+              : "unresolved or ambiguous identity mapping"
+            logger.warning("Excluding non-canonical MLS conversation row from share list: conversationID=\(conversation.conversationID, privacy: .public), groupID=\(conversation.groupID.hexEncodedString(), privacy: .public), reason=\(reason, privacy: .public)")
+          }
+        }
+
+        func canonicalKey(_ requestedID: String) -> String? {
+          try? MLSConversationIdentityBoundary.resolve(requestedID, in: identityRecords)
+        }
+
+        var canonicalMembersByConvoID: [String: [MLSMemberModel]] = [:]
+        for (requestedID, members) in membersByConvoID {
+          guard let canonicalID = canonicalKey(requestedID), canonicalIDs.contains(canonicalID) else { continue }
+          canonicalMembersByConvoID[canonicalID, default: []].append(contentsOf: members)
+        }
+
+        var seenConvoIDs = Set<String>()
+        conversations = loadedConversations.filter {
+          canonicalIDs.contains($0.conversationID) && seenConvoIDs.insert($0.conversationID).inserted
+        }
         logger.info("Loaded \(self.conversations.count) MLS conversations for sharing")
 
         // Load participants (no additional DB queries needed)
-        await loadConversationParticipants(membersByConvoID: membersByConvoID, userDID: userDID)
-
+        await loadConversationParticipants(membersByConvoID: canonicalMembersByConvoID, userDID: userDID)
       } catch {
         logger.error("Failed to load MLS conversations: \(error)")
         conversations = []

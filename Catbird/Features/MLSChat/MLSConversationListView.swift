@@ -1221,41 +1221,23 @@ struct MLSConversationListView: View {
                     groupID: $0.groupID.hexEncodedString()
                 )
             }
-            let canonicalRecords = try MLSConversationIdentityBoundary.canonicalize(identityRecords)
+            guard let canonicalRecords = try? MLSConversationIdentityBoundary.canonicalize(identityRecords) else {
+                logger.warning("Refusing live MLS conversations with ambiguous identity rows")
+                return
+            }
             let canonicalIDs = Set(canonicalRecords.map(\.conversationID))
 
-            var membersByConvoID: [String: [MLSMemberModel]] = [:]
-            for (requestedID, members) in loadedMembersByConvoID {
-                guard let canonicalID = try? MLSConversationIdentityBoundary.resolve(
-                    requestedID,
-                    in: identityRecords
-                ) else {
-                    continue
-                }
-                membersByConvoID[canonicalID, default: []].append(contentsOf: members)
-            }
-            
-            // Filter out pending chat requests - they should appear in the Requests view instead
+            // Filter out pending chat requests and non-canonical rows for message previews
             let acceptedConversations = loadedConversations.filter {
                 canonicalIDs.contains($0.conversationID) && $0.requestState != .pendingInbound
             }
-            
+
             // Batch query for unread counts (single query for all conversations)
             let rawUnreadCounts = try await MLSGRDBManager.shared.read(for: userDID) { db in
                 try MLSStorageHelpers.getUnreadCountsForAllConversationsSync(
                     from: db,
                     currentUserDID: userDID
                 )
-            }
-            var unreadCounts: [String: Int] = [:]
-            for (requestedID, count) in rawUnreadCounts {
-                guard let canonicalID = try? MLSConversationIdentityBoundary.resolve(
-                    requestedID,
-                    in: identityRecords
-                ) else {
-                    continue
-                }
-                unreadCounts[canonicalID, default: 0] += count
             }
 
             // Pull the per-DID MlsContext so the sync DB closure below can
@@ -1329,29 +1311,23 @@ struct MLSConversationListView: View {
                 return (previews, latestActivity)
             }
 
-            await MainActor.run {
-                // Sort by actual latest message timestamp from the messages table,
-                // falling back to conversation createdAt for empty conversations
-                let sortedConversations = acceptedConversations.sorted { lhs, rhs in
-                    let lhsDate = latestActivityByConvo[lhs.conversationID] ?? lhs.createdAt
-                    let rhsDate = latestActivityByConvo[rhs.conversationID] ?? rhs.createdAt
-                    return lhsDate > rhsDate
-                }
-                // Deduplicate by conversationID. `conversations` backs a SwiftUI
-                // `List { ForEach }` keyed on MLSConversationModel.id (== conversationID);
-                // any duplicate id makes UICollectionView assert with
-                // "Invalid Number Of Items In Section". The table PKs conversationID so
-                // this is normally a no-op, but the list must be guaranteed unique here.
-                var seenConvoIDs = Set<String>()
-                let dedupedConversations = sortedConversations.filter { seenConvoIDs.insert($0.conversationID).inserted }
+            guard let transformResult = MLSConversationIdentityBoundary.canonicalizeLiveList(
+                conversations: loadedConversations,
+                membersByConvoID: loadedMembersByConvoID,
+                rawUnreadCounts: rawUnreadCounts,
+                lastMessages: lastMessages,
+                latestActivityByConvo: latestActivityByConvo
+            ) else {
+                return
+            }
 
-                // Only update state if data actually changed to avoid SwiftUI flickering
-                let convoIDs = dedupedConversations.map(\.conversationID)
+            await MainActor.run {
+                let convoIDs = transformResult.conversations.map(\.conversationID)
                 let existingIDs = conversations.map(\.conversationID)
-                let countsChanged = unreadCounts != conversationUnreadCounts
-                let activityChanged = latestActivityByConvo != conversationLatestActivity
-                let messagesChanged = lastMessages.keys != conversationLastMessages.keys
-                    || lastMessages.contains { key, val in conversationLastMessages[key]?.text != val.text || conversationLastMessages[key]?.senderDID != val.senderDID }
+                let countsChanged = transformResult.unreadCounts != conversationUnreadCounts
+                let activityChanged = transformResult.latestActivityByConvo != conversationLatestActivity
+                let messagesChanged = transformResult.lastMessages.keys != conversationLastMessages.keys
+                    || transformResult.lastMessages.contains { key, val in conversationLastMessages[key]?.text != val.text || conversationLastMessages[key]?.senderDID != val.senderDID }
 
                 if convoIDs != existingIDs || countsChanged || messagesChanged || activityChanged {
                     // Apply the bulk swap without animation. When this async refresh
@@ -1362,22 +1338,22 @@ struct MLSConversationListView: View {
                     var txn = Transaction()
                     txn.disablesAnimations = true
                     withTransaction(txn) {
-                        conversations = dedupedConversations
-                        conversationUnreadCounts = unreadCounts
-                        conversationLastMessages = lastMessages
-                        conversationLatestActivity = latestActivityByConvo
+                        conversations = transformResult.conversations
+                        conversationUnreadCounts = transformResult.unreadCounts
+                        conversationLastMessages = transformResult.lastMessages
+                        conversationLatestActivity = transformResult.latestActivityByConvo
                     }
                     cacheCurrentSnapshot()
                 }
 
-                if selectedConvoId != nil, !acceptedConversations.contains(where: { $0.conversationID == selectedConvoId }) {
+                if selectedConvoId != nil, !transformResult.conversations.contains(where: { $0.conversationID == selectedConvoId }) {
                     selectedConvoId = nil
                 }
             }
             logger.info("Loaded \(loadedConversations.count) conversations from encrypted database")
 
             // Load members and enrich with profiles (no additional DB queries needed)
-            await loadConversationParticipants(membersByConvoID: membersByConvoID, userDID: userDID)
+            await loadConversationParticipants(membersByConvoID: transformResult.membersByConvoID, userDID: userDID)
 
         } catch {
             logger.error("Failed to load conversations: \(error)")

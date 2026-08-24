@@ -1,3 +1,4 @@
+import CatbirdMLSCore
 import Foundation
 import PetrelCatbird
 import Testing
@@ -140,5 +141,123 @@ struct MLSConversationIdentityBoundaryTests {
     #expect(throws: MLSConversationIdentityError.self) {
       try MLSConversationIdentityBoundary.canonicalize(ambiguousStableID)
     }
+  }
+
+  @Test("live load transformation excludes non-canonical rows and cleans side maps")
+  func liveLoadTransformationExcludesNoncanonicalRowsAndSideMaps() throws {
+    let healthyID1 = "550e8400-e29b-41d4-a716-446655440000"
+    let healthyGroup1Data = Data([0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff])
+    let healthyGroup1 = healthyGroup1Data.hexEncodedString()
+
+    let healthyID2 = "6ba7b810-9dad-41d1-80b4-00c04fd430c8"
+    let healthyGroup2Data = Data([0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00])
+    let healthyGroup2 = healthyGroup2Data.hexEncodedString()
+
+    let rawOnlyGroupData = Data([0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00, 0x11])
+    let rawOnlyGroupID = rawOnlyGroupData.hexEncodedString()
+
+    let date1 = Date(timeIntervalSince1970: 1000)
+    let date2 = Date(timeIntervalSince1970: 2000)
+    let datePhantom = Date(timeIntervalSince1970: 3000)
+
+    let convo1 = MLSConversationModel(
+      conversationID: healthyID1,
+      currentUserDID: "did:plc:alice",
+      groupID: healthyGroup1Data,
+      createdAt: date1
+    )
+    let phantomConvo = MLSConversationModel(
+      conversationID: rawOnlyGroupID,
+      currentUserDID: "did:plc:alice",
+      groupID: rawOnlyGroupData,
+      createdAt: datePhantom
+    )
+    let convo2 = MLSConversationModel(
+      conversationID: healthyID2,
+      currentUserDID: "did:plc:alice",
+      groupID: healthyGroup2Data,
+      createdAt: date2
+    )
+
+    let loadedConversations = [convo1, phantomConvo, convo2]
+
+    let rawUnreadCounts = [
+      healthyID1: 2,
+      rawOnlyGroupID: 5,
+      healthyID2: 1
+    ]
+
+    let rawLastMessages = [
+      healthyID1: (senderDID: "did:plc:bob", text: "Hello Alice"),
+      rawOnlyGroupID: (senderDID: "did:plc:phantom", text: "Ghost message"),
+      healthyID2: (senderDID: "did:plc:charlie", text: "Meeting at 3")
+    ]
+
+    let rawLatestActivity = [
+      healthyID1: date1,
+      rawOnlyGroupID: datePhantom,
+      healthyID2: date2
+    ]
+
+    let member1 = MLSMemberModel(
+      memberID: "m1",
+      conversationID: healthyID1,
+      currentUserDID: "did:plc:alice",
+      did: "did:plc:bob",
+      leafIndex: 0
+    )
+    let memberPhantom = MLSMemberModel(
+      memberID: "m2",
+      conversationID: rawOnlyGroupID,
+      currentUserDID: "did:plc:alice",
+      did: "did:plc:phantom",
+      leafIndex: 0
+    )
+    let member2 = MLSMemberModel(
+      memberID: "m3",
+      conversationID: healthyID2,
+      currentUserDID: "did:plc:alice",
+      did: "did:plc:charlie",
+      leafIndex: 0
+    )
+
+    let loadedMembers = [
+      healthyID1: [member1],
+      rawOnlyGroupID: [memberPhantom],
+      healthyID2: [member2]
+    ]
+
+    guard let result = MLSConversationIdentityBoundary.canonicalizeLiveList(
+      conversations: loadedConversations,
+      membersByConvoID: loadedMembers,
+      rawUnreadCounts: rawUnreadCounts,
+      lastMessages: rawLastMessages,
+      latestActivityByConvo: rawLatestActivity
+    ) else {
+      Issue.record("Expected canonicalizeLiveList to succeed")
+      return
+    }
+
+    // 1. Excluded non-canonical phantom row from conversations list
+    #expect(result.conversations.count == 2)
+    #expect(result.conversations.map(\.conversationID) == [healthyID2, healthyID1]) // sorted by activity (date2 > date1)
+    #expect(!result.conversations.contains { $0.conversationID == rawOnlyGroupID })
+
+    // 2. Side maps have stripped the phantom row
+    #expect(result.unreadCounts[rawOnlyGroupID] == nil)
+    #expect(result.unreadCounts[healthyID1] == 2)
+    #expect(result.unreadCounts[healthyID2] == 1)
+
+    #expect(result.lastMessages[rawOnlyGroupID] == nil)
+    #expect(result.lastMessages[healthyID1]?.text == "Hello Alice")
+    #expect(result.lastMessages[healthyID2]?.text == "Meeting at 3")
+
+    #expect(result.latestActivityByConvo[rawOnlyGroupID] == nil)
+    #expect(result.latestActivityByConvo[healthyID1] == date1)
+    #expect(result.latestActivityByConvo[healthyID2] == date2)
+
+    #expect(result.membersByConvoID[rawOnlyGroupID] == nil)
+    #expect(result.membersByConvoID[healthyID1]?.count == 1)
+    #expect(result.membersByConvoID[healthyID2]?.count == 1)
   }
 }

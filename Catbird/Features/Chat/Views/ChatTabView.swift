@@ -571,10 +571,48 @@ struct ChatTabView: View {
       let (loadedConversations, membersByConvoID) = try await MLSStorage.shared
         .fetchConversationsWithMembersUsingSmartRouting(currentUserDID: userDID)
 
-      let acceptedConversations = loadedConversations.filter { $0.requestState != .pendingInbound }
+      let identityRecords = loadedConversations.map {
+        MLSConversationIdentityBoundary.Record(
+          conversationID: $0.conversationID,
+          groupID: $0.groupID.hexEncodedString()
+        )
+      }
+      guard let canonicalRecords = try? MLSConversationIdentityBoundary.canonicalize(identityRecords) else {
+        logger.warning("Refusing live MLS conversations with ambiguous identity rows")
+        return
+      }
+      let canonicalIDs = Set(canonicalRecords.map(\.conversationID))
 
-      let unreadCounts = try await MLSGRDBManager.shared.read(for: userDID) { db in
+      for conversation in loadedConversations {
+        if !canonicalIDs.contains(conversation.conversationID) {
+          let reason = !MLSConversationIdentityBoundary.isCanonicalStableID(conversation.conversationID)
+            ? "non-canonical conversation ID"
+            : "unresolved or ambiguous identity mapping"
+          logger.warning("Excluding non-canonical MLS conversation row from live list: conversationID=\(conversation.conversationID, privacy: .public), groupID=\(conversation.groupID.hexEncodedString(), privacy: .public), reason=\(reason, privacy: .public)")
+        }
+      }
+
+      func canonicalKey(_ requestedID: String) -> String? {
+        try? MLSConversationIdentityBoundary.resolve(requestedID, in: identityRecords)
+      }
+
+      let acceptedConversations = loadedConversations.filter {
+        canonicalIDs.contains($0.conversationID) && $0.requestState != .pendingInbound
+      }
+
+      var canonicalMembersByConvoID: [String: [MLSMemberModel]] = [:]
+      for (requestedID, members) in membersByConvoID {
+        guard let canonicalID = canonicalKey(requestedID), canonicalIDs.contains(canonicalID) else { continue }
+        canonicalMembersByConvoID[canonicalID, default: []].append(contentsOf: members)
+      }
+
+      let rawUnreadCounts = try await MLSGRDBManager.shared.read(for: userDID) { db in
         try MLSStorageHelpers.getUnreadCountsForAllConversationsSync(from: db, currentUserDID: userDID)
+      }
+      var unreadCounts: [String: Int] = [:]
+      for (requestedID, count) in rawUnreadCounts {
+        guard let canonicalID = canonicalKey(requestedID), canonicalIDs.contains(canonicalID) else { continue }
+        unreadCounts[canonicalID, default: 0] += count
       }
 
       // Pull the per-DID MlsContext so the sync DB closure below can
@@ -642,10 +680,26 @@ struct ChatTabView: View {
         return (previews, latestActivity)
       }
 
+      var canonicalLatestActivity: [String: Date] = [:]
+      for (requestedID, date) in latestActivityByConvo {
+        guard let canonicalID = canonicalKey(requestedID), canonicalIDs.contains(canonicalID) else { continue }
+        canonicalLatestActivity[canonicalID] = max(canonicalLatestActivity[canonicalID] ?? .distantPast, date)
+      }
+
+      var canonicalLastMessages: [String: MLSLastMessagePreview] = [:]
+      for (requestedID, msg) in lastMessages {
+        guard let canonicalID = canonicalKey(requestedID), canonicalIDs.contains(canonicalID) else { continue }
+        canonicalLastMessages[canonicalID] = msg
+      }
+
       let sortedConversations = acceptedConversations.sorted { lhs, rhs in
-        let lhsDate = latestActivityByConvo[lhs.conversationID] ?? lhs.createdAt
-        let rhsDate = latestActivityByConvo[rhs.conversationID] ?? rhs.createdAt
+        let lhsDate = canonicalLatestActivity[lhs.conversationID] ?? lhs.createdAt
+        let rhsDate = canonicalLatestActivity[rhs.conversationID] ?? rhs.createdAt
         return lhsDate > rhsDate
+      }
+      var seenConvoIDs = Set<String>()
+      let dedupedConversations = sortedConversations.filter {
+        canonicalIDs.contains($0.conversationID) && seenConvoIDs.insert($0.conversationID).inserted
       }
 
       guard coordinatorAccountDID == userDID else {
@@ -656,7 +710,7 @@ struct ChatTabView: View {
       // Build participants from DB-cached profiles
       var participants: [String: [MLSParticipantViewModel]] = [:]
       var dbProfiles: [MLSProfileEnricher.ProfileData] = []
-      for members in membersByConvoID.values {
+      for members in canonicalMembersByConvoID.values {
         for member in members where member.handle != nil || member.displayName != nil {
           dbProfiles.append(MLSProfileEnricher.ProfileData(
             did: member.did, handle: member.handle ?? "",
@@ -670,7 +724,7 @@ struct ChatTabView: View {
         dbProfiles.map { (MLSProfileEnricher.canonicalDID($0.did), $0) },
         uniquingKeysWith: { first, _ in first }
       )
-      for (convoID, members) in membersByConvoID {
+      for (convoID, members) in canonicalMembersByConvoID {
         participants[convoID] = members.map { member in
           let canonicalDID = MLSProfileEnricher.canonicalDID(member.did)
           let profile = dbProfilesByDID[canonicalDID]
@@ -685,17 +739,17 @@ struct ChatTabView: View {
 
       // Single state assignment to avoid flicker
       var newState = MLSConversationListState()
-      newState.conversations = sortedConversations
+      newState.conversations = dedupedConversations
       newState.participants = participants
       newState.unreadCounts = unreadCounts
-      newState.lastMessages = lastMessages
-      newState.latestActivity = latestActivityByConvo
+      newState.lastMessages = canonicalLastMessages
+      newState.latestActivity = canonicalLatestActivity
       newState.isLoading = false
       coordinator.mlsState = newState
 
       // Background: enrich with network profiles
       Task {
-        await enrichMLSParticipantsFromNetwork(membersByConvoID: membersByConvoID, userDID: userDID)
+        await enrichMLSParticipantsFromNetwork(membersByConvoID: canonicalMembersByConvoID, userDID: userDID)
       }
     } catch {
       logger.error("Failed to load MLS conversations: \(error)")
