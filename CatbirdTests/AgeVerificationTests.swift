@@ -1,474 +1,393 @@
 import Testing
 import Foundation
+import Petrel
+import SwiftData
+#if canImport(UIKit)
+import UIKit
+#endif
 @testable import Catbird
 
-@MainActor
+@Suite("AgeVerificationTests")
 struct AgeVerificationTests {
-    
-    // MARK: - Age Group Calculation Tests
-    
-    @Test("Age group calculation for adult (18+)")
-    func testAdultAgeGroupCalculation() async {
-        let ageVerificationManager = AgeVerificationManager()
-        
-        // Test 18 years old (exactly)
-        let eighteenYearsAgo = Calendar.current.date(byAdding: .year, value: -18, to: Date())!
-        let result = await ageVerificationManager.completeAgeVerification(birthDate: eighteenYearsAgo)
-        
-        #expect(result == true)
-        #expect(ageVerificationManager.currentAgeGroup == .adult)
-        #expect(ageVerificationManager.canAccessAdultContent() == true)
-        #expect(ageVerificationManager.requiresParentalConsent() == false)
+
+    // MARK: - Core Pure Policy Decisions (Step 1)
+
+    @Test("Unknown signal permits ordinary use and keeps mature content hidden")
+    func testUnknownSignalDecisions() {
+        #expect(AgePolicy.decision(for: .unknown, context: .ordinaryUse) == .allow)
+        #expect(AgePolicy.decision(for: .unknown, context: .matureContent) == .hideSensitiveContent)
     }
-    
-    @Test("Age group calculation for teen (13-17)")
-    func testTeenAgeGroupCalculation() async {
-        let ageVerificationManager = AgeVerificationManager()
-        
-        // Test 16 years old
-        let sixteenYearsAgo = Calendar.current.date(byAdding: .year, value: -16, to: Date())!
-        let result = await ageVerificationManager.completeAgeVerification(birthDate: sixteenYearsAgo)
-        
-        #expect(result == true)
-        #expect(ageVerificationManager.currentAgeGroup == .teen)
-        #expect(ageVerificationManager.canAccessAdultContent() == false)
-        #expect(ageVerificationManager.requiresParentalConsent() == false)
-    }
-    
-    @Test("Age group calculation for under 13")
-    func testUnder13AgeGroupCalculation() async {
-        let ageVerificationManager = AgeVerificationManager()
-        
-        // Test 10 years old
-        let tenYearsAgo = Calendar.current.date(byAdding: .year, value: -10, to: Date())!
-        let result = await ageVerificationManager.completeAgeVerification(birthDate: tenYearsAgo)
-        
-        #expect(result == true)
-        #expect(ageVerificationManager.currentAgeGroup == .under13)
-        #expect(ageVerificationManager.canAccessAdultContent() == false)
-        #expect(ageVerificationManager.requiresParentalConsent() == true)
-    }
-    
-    // MARK: - Content Policy Tests
-    
-    @Test("Adult content policy for different age groups")
-    func testAdultContentPolicyByAge() async {
-        // Test adult (18+)
-        let adultManager = AgeVerificationManager()
-        let adultBirthDate = Calendar.current.date(byAdding: .year, value: -25, to: Date())!
-        await adultManager.completeAgeVerification(birthDate: adultBirthDate)
-        
-        let adultDefaults = adultManager.getAgeAppropriateContentDefaults()
-        #expect(adultDefaults.adultContentEnabled == true)
-        
-        // Verify NSFW content label
-        let adultNsfwPref = adultDefaults.contentLabelPrefs.first { $0.label == "nsfw" }
-        #expect(adultNsfwPref?.visibility == ContentVisibility.show.rawValue)
-        
-        // Test teen (13-17)
-        let teenManager = AgeVerificationManager()
-        let teenBirthDate = Calendar.current.date(byAdding: .year, value: -16, to: Date())!
-        await teenManager.completeAgeVerification(birthDate: teenBirthDate)
-        
-        let teenDefaults = teenManager.getAgeAppropriateContentDefaults()
-        #expect(teenDefaults.adultContentEnabled == false)
-        
-        // Verify NSFW content is hidden for teens
-        let teenNsfwPref = teenDefaults.contentLabelPrefs.first { $0.label == "nsfw" }
-        #expect(teenNsfwPref?.visibility == ContentVisibility.hide.rawValue)
-    }
-    
-    @Test("Suggestive content policy for different age groups")
-    func testSuggestiveContentPolicyByAge() async {
-        // Test adult - should allow suggestive content
-        let adultManager = AgeVerificationManager()
-        let adultBirthDate = Calendar.current.date(byAdding: .year, value: -25, to: Date())!
-        await adultManager.completeAgeVerification(birthDate: adultBirthDate)
-        
-        let adultDefaults = adultManager.getAgeAppropriateContentDefaults()
-        let adultSuggestivePref = adultDefaults.contentLabelPrefs.first { $0.label == "suggestive" }
-        #expect(adultSuggestivePref?.visibility == ContentVisibility.show.rawValue)
-        
-        // Test teen - should allow suggestive content with warnings
-        let teenManager = AgeVerificationManager()
-        let teenBirthDate = Calendar.current.date(byAdding: .year, value: -16, to: Date())!
-        await teenManager.completeAgeVerification(birthDate: teenBirthDate)
-        
-        let teenDefaults = teenManager.getAgeAppropriateContentDefaults()
-        let teenSuggestivePref = teenDefaults.contentLabelPrefs.first { $0.label == "suggestive" }
-        #expect(teenSuggestivePref?.visibility == ContentVisibility.warn.rawValue)
-        
-        // Test under 13 - should hide suggestive content
-        let childManager = AgeVerificationManager()
-        let childBirthDate = Calendar.current.date(byAdding: .year, value: -10, to: Date())!
-        await childManager.completeAgeVerification(birthDate: childBirthDate)
-        
-        let childDefaults = childManager.getAgeAppropriateContentDefaults()
-        let childSuggestivePref = childDefaults.contentLabelPrefs.first { $0.label == "suggestive" }
-        #expect(childSuggestivePref?.visibility == ContentVisibility.hide.rawValue)
-    }
-    
-    // MARK: - Content Filter Manager Integration Tests
-    
-    @Test("Age-appropriate visibility overrides user preferences")
-    func testAgeAppropriateVisibilityOverride() {
-        let teenManager = AgeVerificationManager()
-        
-        // Simulate teen trying to set adult content to "show"
-        let teenBirthDate = Calendar.current.date(byAdding: .year, value: -16, to: Date())!
-        Task {
-            await teenManager.completeAgeVerification(birthDate: teenBirthDate)
-        }
-        
-        // Create preference that would normally allow adult content
-        let userPreferences = [
-            ContentLabelPreference(labelerDid: nil, label: "nsfw", visibility: "show")
-        ]
-        
-        // Age verification should override this for teens
-        let effectiveVisibility = ContentFilterManager.getAgeAppropriateVisibility(
-            label: "nsfw",
-            preferences: userPreferences,
-            ageVerificationManager: teenManager
+
+    @Test("Platform signal requiring age check without age band is unavailable due to consent")
+    func testPlatformAgeCheckRequiredWithoutBand() {
+        let signal = PlatformAgeSignal(
+            requirement: .ageCheckRequired,
+            ageBand: nil,
+            significantChangeConsentRequired: false
         )
-        
-        #expect(effectiveVisibility == .hide)
+        #expect(AgePolicy.decision(for: .platform(signal), context: .ordinaryUse) == .unavailableDueToConsent)
+        #expect(AgePolicy.decision(for: .platform(signal), context: .matureContent) == .unavailableDueToConsent)
     }
-    
-    @Test("Adult users can set their own preferences")
-    func testAdultUserPreferencesRespected() {
-        let adultManager = AgeVerificationManager()
-        
-        // Simulate adult setting adult content to "warn"
-        let adultBirthDate = Calendar.current.date(byAdding: .year, value: -25, to: Date())!
-        Task {
-            await adultManager.completeAgeVerification(birthDate: adultBirthDate)
-        }
-        
-        let userPreferences = [
-            ContentLabelPreference(labelerDid: nil, label: "nsfw", visibility: "warn")
-        ]
-        
-        // Adult preferences should be respected
-        let effectiveVisibility = ContentFilterManager.getAgeAppropriateVisibility(
-            label: "nsfw",
-            preferences: userPreferences,
-            ageVerificationManager: adultManager
+
+    @Test("Significant change consent requirement renders ordinary use unavailable")
+    func testSignificantChangeConsentRequired() {
+        let signal = PlatformAgeSignal(
+            requirement: .none,
+            ageBand: .adult,
+            significantChangeConsentRequired: true
         )
-        
-        #expect(effectiveVisibility == .warn)
+        #expect(AgePolicy.decision(for: .platform(signal), context: .ordinaryUse) == .unavailableDueToConsent)
+        #expect(AgePolicy.decision(for: .platform(signal), context: .matureContent) == .unavailableDueToConsent)
     }
-    
-    // MARK: - Verification State Tests
-    
-    @Test("Initial verification state is unknown")
-    func testInitialVerificationState() {
-        let ageVerificationManager = AgeVerificationManager()
-        
-        #expect(ageVerificationManager.verificationState == .unknown)
-        #expect(ageVerificationManager.needsAgeVerification == false)
-        #expect(ageVerificationManager.currentAgeGroup == .unknown)
-    }
-    
-    @Test("Verification state changes correctly during process")
-    func testVerificationStateFlow() async {
-        let ageVerificationManager = AgeVerificationManager()
-        
-        // Start verification
-        await ageVerificationManager.startAgeVerification()
-        #expect(ageVerificationManager.verificationState == .inProgress)
-        
-        // Complete verification
-        let birthDate = Calendar.current.date(byAdding: .year, value: -20, to: Date())!
-        let result = await ageVerificationManager.completeAgeVerification(birthDate: birthDate)
-        
-        #expect(result == true)
-        #expect(ageVerificationManager.verificationState == .completed)
-        #expect(ageVerificationManager.needsAgeVerification == false)
-    }
-    
-    // MARK: - Edge Case Tests
-    
-    @Test("Handle edge cases for birth dates")
-    func testBirthDateEdgeCases() async {
-        let ageVerificationManager = AgeVerificationManager()
-        
-        // Test exactly 18 years old (birthday today)
-        let exactlyEighteen = Calendar.current.date(byAdding: .year, value: -18, to: Date())!
-        await ageVerificationManager.completeAgeVerification(birthDate: exactlyEighteen)
-        
-        #expect(ageVerificationManager.currentAgeGroup == .adult)
-        #expect(ageVerificationManager.canAccessAdultContent() == true)
-        
-        // Test one day before 18th birthday
-        let dayBeforeEighteen = Calendar.current.date(byAdding: .day, value: 1, to: exactlyEighteen)!
-        let teenManager = AgeVerificationManager()
-        await teenManager.completeAgeVerification(birthDate: dayBeforeEighteen)
-        
-        #expect(teenManager.currentAgeGroup == .teen)
-        #expect(teenManager.canAccessAdultContent() == false)
-    }
-    
-    @Test("Content visibility enum cases work correctly")
-    func testContentVisibilityEnum() {
-        #expect(ContentVisibility.show.rawValue == "show")
-        #expect(ContentVisibility.warn.rawValue == "warn")
-        #expect(ContentVisibility.hide.rawValue == "hide")
-        
-        #expect(ContentVisibility(rawValue: "show") == .show)
-        #expect(ContentVisibility(rawValue: "warn") == .warn)
-        #expect(ContentVisibility(rawValue: "hide") == .hide)
-        #expect(ContentVisibility(rawValue: "invalid") == nil)
-    }
-    
-    // MARK: - Age Calculation Tests
-    
-    @Test("Current age calculation works correctly")
-    func testCurrentAgeCalculation() async {
-        let ageVerificationManager = AgeVerificationManager()
-        
-        // Create a birth date for someone who should be exactly 20 years old
-        let twentyYearsAgo = Calendar.current.date(byAdding: .year, value: -20, to: Date())!
-        await ageVerificationManager.completeAgeVerification(birthDate: twentyYearsAgo)
-        
-        let currentAge = await ageVerificationManager.getCurrentAge()
-        #expect(currentAge == 20)
-    }
-    
-    // MARK: - Integration with Content Categories Tests
-    
-    @Test("All content categories have appropriate age restrictions")
-    func testContentCategoryAgeRestrictions() {
-        let categories = ContentCategory.allCategories
-        #expect(categories.count == 4) // adult, suggestive, violent, nudity
-        
-        // Verify all categories have proper keys
-        let expectedKeys = ["nsfw", "suggestive", "graphic", "nudity"]
-        let actualKeys = categories.map { $0.visibilityKey }
-        
-        for expectedKey in expectedKeys {
-            #expect(actualKeys.contains(expectedKey))
-        }
-    }
-}
 
-// MARK: - Mock Preferences Manager for Testing
-
-class MockPreferencesManager: PreferencesManager {
-    private var mockBirthDate: Date?
-    private var shouldFailOperations = false
-    
-    func setMockBirthDate(_ date: Date?) {
-        mockBirthDate = date
-    }
-    
-    func setShouldFailOperations(_ shouldFail: Bool) {
-        shouldFailOperations = shouldFail
-    }
-    
-    override func getPreferences() async throws -> Preferences {
-        if shouldFailOperations {
-            throw NSError(domain: "MockError", code: 1, userInfo: [NSLocalizedDescriptionKey: "Mock error"])
-        }
-        
-        return Preferences(birthDate: mockBirthDate)
-    }
-    
-    override func setBirthDate(_ date: Date?) async throws {
-        if shouldFailOperations {
-            throw NSError(domain: "MockError", code: 1, userInfo: [NSLocalizedDescriptionKey: "Mock error"])
-        }
-        
-        mockBirthDate = date
-    }
-}
-
-// MARK: - Additional Integration Tests
-
-@MainActor
-struct AgeVerificationIntegrationTests {
-    
-    @Test("Age verification manager integrates with mock preferences")
-    func testAgeVerificationWithMockPreferences() async {
-        let mockPreferencesManager = MockPreferencesManager()
-        let ageVerificationManager = AgeVerificationManager(preferencesManager: mockPreferencesManager)
-        
-        // Initially no birth date
-        await ageVerificationManager.checkAgeVerificationStatus()
-        #expect(ageVerificationManager.needsAgeVerification == true)
-        #expect(ageVerificationManager.verificationState == .required)
-        
-        // Set birth date for adult
-        let adultBirthDate = Calendar.current.date(byAdding: .year, value: -25, to: Date())!
-        mockPreferencesManager.setMockBirthDate(adultBirthDate)
-        
-        await ageVerificationManager.checkAgeVerificationStatus()
-        #expect(ageVerificationManager.needsAgeVerification == false)
-        #expect(ageVerificationManager.verificationState == .completed)
-        #expect(ageVerificationManager.currentAgeGroup == .adult)
-    }
-    
-    @Test("Error handling works correctly")
-    func testErrorHandling() async {
-        let mockPreferencesManager = MockPreferencesManager()
-        mockPreferencesManager.setShouldFailOperations(true)
-        
-        let ageVerificationManager = AgeVerificationManager(preferencesManager: mockPreferencesManager)
-        
-        await ageVerificationManager.checkAgeVerificationStatus()
-        
-        #expect(ageVerificationManager.verificationState == .failed("Mock error"))
-        #expect(ageVerificationManager.needsAgeVerification == true)
-        #expect(ageVerificationManager.contentPolicy.adultContentAllowed == false) // Safe default
-    }
-}
-
-// MARK: - Migration Scenario Tests
-
-@MainActor
-struct AgeVerificationMigrationTests {
-    
-    @Test("Existing user without birth date is prompted for verification")
-    func testExistingUserMigrationFlow() async {
-        let mockPreferencesManager = MockPreferencesManager()
-        
-        // Simulate existing user with no birth date set
-        mockPreferencesManager.setMockBirthDate(nil)
-        
-        let ageVerificationManager = AgeVerificationManager(preferencesManager: mockPreferencesManager)
-        
-        await ageVerificationManager.checkAgeVerificationStatus()
-        
-        // Should require verification for existing users without birth date
-        #expect(ageVerificationManager.needsAgeVerification == true)
-        #expect(ageVerificationManager.verificationState == .required)
-        #expect(ageVerificationManager.currentAgeGroup == .unknown)
-        #expect(ageVerificationManager.contentPolicy.adultContentAllowed == false) // Safe default
-    }
-    
-    @Test("Existing user with birth date continues normally")
-    func testExistingUserWithBirthDate() async {
-        let mockPreferencesManager = MockPreferencesManager()
-        
-        // Simulate existing user with birth date already set (adult)
-        let adultBirthDate = Calendar.current.date(byAdding: .year, value: -25, to: Date())!
-        mockPreferencesManager.setMockBirthDate(adultBirthDate)
-        
-        let ageVerificationManager = AgeVerificationManager(preferencesManager: mockPreferencesManager)
-        
-        await ageVerificationManager.checkAgeVerificationStatus()
-        
-        // Should not require verification for existing users with birth date
-        #expect(ageVerificationManager.needsAgeVerification == false)
-        #expect(ageVerificationManager.verificationState == .completed)
-        #expect(ageVerificationManager.currentAgeGroup == .adult)
-        #expect(ageVerificationManager.contentPolicy.adultContentAllowed == true)
-    }
-    
-    @Test("Migration preserves user's existing content preferences where appropriate")
-    func testMigrationPreservesUserPreferences() async {
-        // Simulate existing adult user with custom content preferences
-        let mockPreferencesManager = MockPreferencesManager()
-        let adultBirthDate = Calendar.current.date(byAdding: .year, value: -25, to: Date())!
-        mockPreferencesManager.setMockBirthDate(adultBirthDate)
-        
-        let ageVerificationManager = AgeVerificationManager(preferencesManager: mockPreferencesManager)
-        
-        // Simulate user who had custom preferences before age verification
-        let existingUserPreferences = [
-            ContentLabelPreference(labelerDid: nil, label: "nsfw", visibility: "warn"),
-            ContentLabelPreference(labelerDid: nil, label: "suggestive", visibility: "show")
-        ]
-        
-        await ageVerificationManager.checkAgeVerificationStatus()
-        
-        // Adult users should retain their preferences
-        #expect(ageVerificationManager.currentAgeGroup == .adult)
-        #expect(ageVerificationManager.canAccessAdultContent() == true)
-        
-        // Their existing preferences should be respected
-        let effectiveNsfwVisibility = ContentFilterManager.getAgeAppropriateVisibility(
-            label: "nsfw",
-            preferences: existingUserPreferences,
-            ageVerificationManager: ageVerificationManager
+    @Test("Adult platform band never enables mature content at policy level")
+    func testAdultBandNeverEnablesMatureContent() {
+        let signalNone = PlatformAgeSignal(
+            requirement: .none,
+            ageBand: .adult,
+            significantChangeConsentRequired: false
         )
-        
-        #expect(effectiveNsfwVisibility == .warn) // Respects user's choice
-    }
-    
-    @Test("Migration applies age restrictions for minor accounts retroactively")
-    func testMigrationAppliesMinorRestrictions() async {
-        // Simulate existing teen user with permissive preferences (that shouldn't have been allowed)
-        let mockPreferencesManager = MockPreferencesManager()
-        let teenBirthDate = Calendar.current.date(byAdding: .year, value: -16, to: Date())!
-        mockPreferencesManager.setMockBirthDate(teenBirthDate)
-        
-        let ageVerificationManager = AgeVerificationManager(preferencesManager: mockPreferencesManager)
-        
-        // Simulate dangerous preferences that might have existed before age verification
-        let dangerousPreferences = [
-            ContentLabelPreference(labelerDid: nil, label: "nsfw", visibility: "show") // Should be overridden
-        ]
-        
-        await ageVerificationManager.checkAgeVerificationStatus()
-        
-        // Teen should be identified correctly
-        #expect(ageVerificationManager.currentAgeGroup == .teen)
-        #expect(ageVerificationManager.canAccessAdultContent() == false)
-        
-        // Age restrictions should override previous unsafe preferences
-        let effectiveVisibility = ContentFilterManager.getAgeAppropriateVisibility(
-            label: "nsfw",
-            preferences: dangerousPreferences,
-            ageVerificationManager: ageVerificationManager
+        #expect(AgePolicy.decision(for: .platform(signalNone), context: .ordinaryUse) == .allow)
+        #expect(AgePolicy.decision(for: .platform(signalNone), context: .matureContent) == .hideSensitiveContent)
+
+        let signalRequired = PlatformAgeSignal(
+            requirement: .ageCheckRequired,
+            ageBand: .adult,
+            significantChangeConsentRequired: false
         )
-        
-        #expect(effectiveVisibility == .hide) // Override for safety
+        #expect(AgePolicy.decision(for: .platform(signalRequired), context: .ordinaryUse) == .allow)
+        #expect(AgePolicy.decision(for: .platform(signalRequired), context: .matureContent) == .hideSensitiveContent)
     }
-    
-    @Test("Migration handles corrupt or invalid birth date data")
-    func testMigrationHandlesCorruptData() async {
-        let mockPreferencesManager = MockPreferencesManager()
-        
-        // Simulate corrupted birth date (far in the future)
-        let corruptBirthDate = Calendar.current.date(byAdding: .year, value: 10, to: Date())!
-        mockPreferencesManager.setMockBirthDate(corruptBirthDate)
-        
-        let ageVerificationManager = AgeVerificationManager(preferencesManager: mockPreferencesManager)
-        
-        await ageVerificationManager.checkAgeVerificationStatus()
-        
-        // Should treat corrupt data as requiring fresh verification
-        #expect(ageVerificationManager.needsAgeVerification == true)
-        #expect(ageVerificationManager.verificationState == .required)
-        #expect(ageVerificationManager.contentPolicy.adultContentAllowed == false) // Safe default
+
+    @Test("Under 13 coarse age band denies ordinary use and mature content")
+    func testUnder13BandDeniesAccess() {
+        let signal = PlatformAgeSignal(
+            requirement: .none,
+            ageBand: .under13,
+            significantChangeConsentRequired: false
+        )
+        #expect(AgePolicy.decision(for: .platform(signal), context: .ordinaryUse) == .deny)
+        #expect(AgePolicy.decision(for: .platform(signal), context: .matureContent) == .deny)
     }
-    
-    @Test("App startup flow integrates age verification check correctly")
-    func testAppStartupIntegration() async {
-        let mockPreferencesManager = MockPreferencesManager()
-        let ageVerificationManager = AgeVerificationManager(preferencesManager: mockPreferencesManager)
-        
-        // Simulate app startup with no birth date
-        mockPreferencesManager.setMockBirthDate(nil)
-        
-        await ageVerificationManager.checkAgeVerificationStatus()
-        
-        // Should be in required state after startup check
-        #expect(ageVerificationManager.verificationState == .required)
-        #expect(ageVerificationManager.needsAgeVerification == true)
-        
-        // Complete verification during app use
-        let adultBirthDate = Calendar.current.date(byAdding: .year, value: -20, to: Date())!
-        let success = await ageVerificationManager.completeAgeVerification(birthDate: adultBirthDate)
-        
-        #expect(success == true)
-        #expect(ageVerificationManager.verificationState == .completed)
-        #expect(ageVerificationManager.needsAgeVerification == false)
-        
-        // Subsequent app startups should not require verification
-        await ageVerificationManager.checkAgeVerificationStatus()
-        #expect(ageVerificationManager.verificationState == .completed)
-        #expect(ageVerificationManager.needsAgeVerification == false)
+
+    @Test("Teen coarse age band permits ordinary use and hides mature content")
+    func testTeenBandPermitsOrdinaryUse() {
+        let signal = PlatformAgeSignal(
+            requirement: .none,
+            ageBand: .teen,
+            significantChangeConsentRequired: false
+        )
+        #expect(AgePolicy.decision(for: .platform(signal), context: .ordinaryUse) == .allow)
+        #expect(AgePolicy.decision(for: .platform(signal), context: .matureContent) == .hideSensitiveContent)
+    }
+
+    // MARK: - Provider Restriction Decisions & Operation Scoping
+
+    @Test("Provider restriction without handoff results in deny")
+    func testProviderRestrictionWithoutHandoff() throws {
+        let providerDID = try DID(didString: "did:plc:z72i7hdynmk6r22z27h6tvur")
+        let restriction = ProviderRestriction(
+            provider: providerDID,
+            operation: .generalContent,
+            reason: .ageRestricted,
+            handoff: nil
+        )
+        #expect(AgePolicy.decision(for: .provider(restriction), context: .ordinaryUse) == .deny)
+        #expect(AgePolicy.decision(for: .provider(restriction), context: .matureContent) == .deny)
+    }
+
+    @Test("Provider restriction with trusted handoff yields requireProviderVerification")
+    func testProviderRestrictionWithTrustedHandoff() throws {
+        let providerDID = try DID(didString: "did:plc:z72i7hdynmk6r22z27h6tvur")
+        let handoffURL = try #require(URL(string: "https://auth.example.com/verify?user=123"))
+        let handoff = try #require(TrustedHandoff(url: handoffURL, isProviderOwned: { $0.host == "auth.example.com" }))
+
+        let restriction = ProviderRestriction(
+            provider: providerDID,
+            operation: .generalContent,
+            reason: .ageAssuranceRequired,
+            handoff: handoff
+        )
+        #expect(AgePolicy.decision(for: .provider(restriction), context: .ordinaryUse) == .requireProviderVerification(handoff))
+    }
+
+    @Test("Direct messaging provider restriction affects only direct messaging and not ordinary or mature content")
+    func testDirectMessagingRestrictionScoping() throws {
+        let providerDID = try DID(didString: "did:plc:z72i7hdynmk6r22z27h6tvur")
+        let handoffURL = try #require(URL(string: "https://auth.example.com/verify-dm"))
+        let handoff = try #require(TrustedHandoff(url: handoffURL, isProviderOwned: { $0.host == "auth.example.com" }))
+
+        let dmRestriction = ProviderRestriction(
+            provider: providerDID,
+            operation: .directMessaging,
+            reason: .ageAssuranceRequired,
+            handoff: handoff
+        )
+
+        // Must NOT block ordinary use or mature content
+        #expect(AgePolicy.decision(for: .provider(dmRestriction), context: .ordinaryUse) == .allow)
+        #expect(AgePolicy.decision(for: .provider(dmRestriction), context: .matureContent) == .hideSensitiveContent)
+        #expect(AgePolicy.decision(for: .provider(dmRestriction), context: .operation(.generalContent)) == .allow)
+        #expect(AgePolicy.decision(for: .provider(dmRestriction), context: .operation(.groupMessaging)) == .allow)
+
+        // MUST block direct messaging operation
+        #expect(AgePolicy.decision(for: .provider(dmRestriction), context: .operation(.directMessaging)) == .requireProviderVerification(handoff))
+
+        let dmRestrictionNoHandoff = ProviderRestriction(
+            provider: providerDID,
+            operation: .directMessaging,
+            reason: .ageRestricted,
+            handoff: nil
+        )
+        #expect(AgePolicy.decision(for: .provider(dmRestrictionNoHandoff), context: .ordinaryUse) == .allow)
+        #expect(AgePolicy.decision(for: .provider(dmRestrictionNoHandoff), context: .matureContent) == .hideSensitiveContent)
+        #expect(AgePolicy.decision(for: .provider(dmRestrictionNoHandoff), context: .operation(.directMessaging)) == .deny)
+    }
+
+    @Test("General content provider restriction blocks all operations")
+    func testGeneralContentRestrictionBlocksAll() throws {
+        let providerDID = try DID(didString: "did:plc:z72i7hdynmk6r22z27h6tvur")
+        let restriction = ProviderRestriction(
+            provider: providerDID,
+            operation: .generalContent,
+            reason: .ageRestricted,
+            handoff: nil
+        )
+
+        #expect(AgePolicy.decision(for: .provider(restriction), context: .ordinaryUse) == .deny)
+        #expect(AgePolicy.decision(for: .provider(restriction), context: .matureContent) == .deny)
+        #expect(AgePolicy.decision(for: .provider(restriction), context: .operation(.generalContent)) == .deny)
+        #expect(AgePolicy.decision(for: .provider(restriction), context: .operation(.directMessaging)) == .deny)
+        #expect(AgePolicy.decision(for: .provider(restriction), context: .operation(.groupMessaging)) == .deny)
+        #expect(AgePolicy.decision(for: .provider(restriction), context: .operation(.custom("customOp"))) == .deny)
+    }
+
+    // MARK: - Trusted Handoff Validation Tests
+
+    @Test("TrustedHandoff rejects non-HTTPS schemes")
+    func testTrustedHandoffRejectsHTTP() {
+        let httpURL = URL(string: "http://auth.example.com/verify")!
+        let handoff = TrustedHandoff(url: httpURL, isProviderOwned: { _ in true })
+        #expect(handoff == nil)
+    }
+
+    @Test("TrustedHandoff rejects unverified provider ownership")
+    func testTrustedHandoffRejectsUnverifiedHost() {
+        let httpsURL = URL(string: "https://evil.com/verify")!
+        let handoff = TrustedHandoff(url: httpsURL, isProviderOwned: { $0.host == "auth.example.com" })
+        #expect(handoff == nil)
+    }
+
+    @Test("TrustedHandoff accepts HTTPS URL matching provider ownership predicate")
+    func testTrustedHandoffAcceptsValid() {
+        let httpsURL = URL(string: "https://auth.example.com/verify")!
+        let handoff = TrustedHandoff(url: httpsURL, isProviderOwned: { $0.host == "auth.example.com" })
+        #expect(handoff != nil)
+        #expect(handoff?.url == httpsURL)
+    }
+
+    // MARK: - Privacy Boundary / Data Model Invariants
+
+    @Test("AgeBand exposes only coarse bounds and no exact age or birth date")
+    func testAgeBandCoarseBoundsOnly() {
+        let band = AgeBand(lowerBound: 13, upperBound: 17)
+        #expect(band.lowerBound == 13)
+        #expect(band.upperBound == 17)
+        #expect(band.isUnder13 == false)
+        #expect(band.isAdult == false)
+
+        let under13 = AgeBand.under13
+        #expect(under13.isUnder13 == true)
+        #expect(under13.isAdult == false)
+
+        let adult = AgeBand.adult
+        #expect(adult.isUnder13 == false)
+        #expect(adult.isAdult == true)
+    }
+
+    @Test("Pre-iOS 26.2 or unavailable preflight signal is neutral")
+    func testNeutralPlatformSignal() {
+        let neutralSignal = PlatformAgeSignal(
+            requirement: .none,
+            ageBand: nil,
+            significantChangeConsentRequired: false
+        )
+        #expect(AgePolicy.decision(for: .platform(neutralSignal), context: .ordinaryUse) == .allow)
+        #expect(AgePolicy.decision(for: .platform(neutralSignal), context: .matureContent) == .hideSensitiveContent)
+    }
+
+    // MARK: - Injected Regulatory Checking & Launch Preflight Behavioral Tests
+
+    final class SpyAgeRegulatoryChecker: AgeRegulatoryChecking, @unchecked Sendable {
+        private let lock = NSLock()
+        private var _preflightCount: Int = 0
+        private var _agePromptCount: Int = 0
+        private var preflightContinuations: [CheckedContinuation<Void, Never>] = []
+
+        var stubbedSignal: PlatformAgeSignal = .none
+
+        var preflightCount: Int {
+            lock.lock()
+            defer { lock.unlock() }
+            return _preflightCount
+        }
+
+        var agePromptCount: Int {
+            lock.lock()
+            defer { lock.unlock() }
+            return _agePromptCount
+        }
+
+        func preflight() async -> PlatformAgeSignal {
+            lock.lock()
+            _preflightCount += 1
+            let continuations = preflightContinuations
+            preflightContinuations.removeAll()
+            lock.unlock()
+            for cont in continuations {
+                cont.resume()
+            }
+            return stubbedSignal
+        }
+
+        func waitForPreflight() async {
+            await withCheckedContinuation { continuation in
+                lock.lock()
+                if _preflightCount > 0 {
+                    lock.unlock()
+                    continuation.resume()
+                } else {
+                    preflightContinuations.append(continuation)
+                    lock.unlock()
+                }
+            }
+        }
+
+        #if canImport(UIKit)
+        @MainActor
+        func requestAgeBand(from viewController: UIViewController) async throws -> AgeBand? {
+            lock.lock()
+            _agePromptCount += 1
+            lock.unlock()
+            return stubbedSignal.ageBand
+        }
+        #endif
+    }
+
+    @Test("AppState launch preflight executes passively with injected regulatory checker")
+    @MainActor
+    func testAppStateLaunchPreflightIntegration() async {
+        let spy = SpyAgeRegulatoryChecker()
+        let stubbedSignal = PlatformAgeSignal(
+            requirement: .ageCheckRequired,
+            ageBand: .teen,
+            significantChangeConsentRequired: false
+        )
+        spy.stubbedSignal = stubbedSignal
+
+        let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
+        let appState = AppState(
+            userDID: "did:plc:testuser1234567890ab",
+            client: client,
+            regulatoryChecker: spy
+        )
+
+        // Wait deterministically for preflight to execute
+        await spy.waitForPreflight()
+
+        // Yield to let the MainActor task update AppState.platformAgeSignal
+        for _ in 0..<50 {
+            if appState.platformAgeSignal == stubbedSignal {
+                break
+            }
+            await Task.yield()
+        }
+
+        #expect(spy.preflightCount == 1)
+        #expect(spy.agePromptCount == 0)
+        #expect(appState.platformAgeSignal == stubbedSignal)
+        #expect(AgePolicy.decision(for: .platform(appState.platformAgeSignal), context: .ordinaryUse) == .allow)
+        #expect(AgePolicy.decision(for: .platform(appState.platformAgeSignal), context: .matureContent) == .hideSensitiveContent)
+    }
+
+    @Test("AppState account-eviction cleanup resets platformAgeSignal to none")
+    @MainActor
+    func testAppStateCleanupResetsPlatformAgeSignal() async {
+        let spy = SpyAgeRegulatoryChecker()
+        let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
+        let appState = AppState(
+            userDID: "did:plc:testuser1234567890ab",
+            client: client,
+            regulatoryChecker: spy
+        )
+
+        let coarseSignal = PlatformAgeSignal(
+            requirement: .ageCheckRequired,
+            ageBand: .adult,
+            significantChangeConsentRequired: false
+        )
+        appState.platformAgeSignal = coarseSignal
+        #expect(appState.platformAgeSignal == coarseSignal)
+
+        // Real account-eviction cleanup path (without calling refreshAfterAccountSwitch)
+        appState.cleanup()
+
+        #expect(appState.platformAgeSignal == .none)
+    }
+
+    @Test("Injected platform age signal updates policy decision correctly")
+    func testInjectedPlatformAgeSignalPolicy() {
+        let requiredSignal = PlatformAgeSignal(
+            requirement: .ageCheckRequired,
+            ageBand: nil,
+            significantChangeConsentRequired: false
+        )
+        let decision = AgePolicy.decision(for: .platform(requiredSignal), context: .ordinaryUse)
+        #expect(decision == .unavailableDueToConsent)
+    }
+
+    @Test("Preferences SwiftData model round-trips correctly without age data")
+    func testPreferencesPersistenceRoundTrip() throws {
+        let schema = Schema([Preferences.self])
+        let configuration = ModelConfiguration(
+            "PreferencesTest",
+            schema: schema,
+            isStoredInMemoryOnly: true,
+            cloudKitDatabase: .none
+        )
+        let container = try ModelContainer(for: schema, configurations: [configuration])
+        let context = ModelContext(container)
+        let initialPrefs = Preferences(
+            accountDID: "did:plc:testuser12345",
+            savedFeeds: ["at://did:plc:feed1", "at://did:plc:feed2"],
+            pinnedFeeds: ["following", "at://did:plc:feed1"],
+            adultContentEnabled: true,
+            interests: ["swift", "atproto"],
+            primaryLanguage: "ja",
+            contentLanguages: ["ja", "en"],
+            hideVerificationBadges: true
+        )
+
+        context.insert(initialPrefs)
+        try context.save()
+
+        let fetched = try context.fetch(FetchDescriptor<Preferences>(
+            predicate: #Predicate<Preferences> { $0.accountDID == "did:plc:testuser12345" }
+        ))
+
+        #expect(fetched.count == 1)
+        guard let loaded = fetched.first else {
+            Issue.record("Expected to find stored preferences")
+            return
+        }
+
+        #expect(loaded.accountDID == "did:plc:testuser12345")
+        #expect(loaded.savedFeeds == ["at://did:plc:feed1", "at://did:plc:feed2"])
+        #expect(loaded.pinnedFeeds == ["following", "at://did:plc:feed1"])
+        #expect(loaded.adultContentEnabled == true)
+        #expect(loaded.interests == ["swift", "atproto"])
+        #expect(loaded.primaryLanguage == "ja")
+        #expect(loaded.contentLanguages == ["ja", "en"])
+        #expect(loaded.hideVerificationBadges == true)
     }
 }
