@@ -133,16 +133,8 @@ struct NavigationHandler {
     // .environment(appState) // Already available via @Environment
 
     case .mlsConversation(let convoId):
-      if MLSConversationIdentityBoundary.isCanonicalStableID(convoId) {
-        MLSConversationDetailView(conversationId: convoId)
-          .id(convoId)  // Use stable conversation ID for view identity
-      } else {
-        ContentUnavailableView(
-          "Conversation unavailable",
-          systemImage: "lock.slash",
-          description: Text("This secure conversation has no valid stable identity.")
-        )
-      }
+      MLSConversationDetailView(conversationId: convoId)
+        .id(convoId)  // Use conversation ID for view identity
 
     case .chatTab:
       ChatTabView(

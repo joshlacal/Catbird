@@ -1,7 +1,7 @@
 import CatbirdMLSCore
 import Foundation
+import OSLog
 import PetrelCatbird
-
 /// The app-facing identity boundary for MLS conversations.
 ///
 /// A conversation ID is a public routing key and is deliberately different
@@ -9,6 +9,8 @@ import PetrelCatbird
 /// accepted here is an exact, lower-case group-hex alias which has one and
 /// only one v4 canonical conversation row in the same group.
 enum MLSConversationIdentityBoundary {
+  private static let logger = Logger(subsystem: "blue.catbird", category: "MLSConversationIdentityBoundary")
+
   /// A validated stable route.  Raw strings remain at the persistence/API
   /// edges, but callers can carry this value after the identity gate without
   /// accidentally treating a group ID as a public conversation route.
@@ -116,9 +118,13 @@ enum MLSConversationIdentityBoundary {
     return StableID(rawValue: match.conversationID)!
   }
 
-  /// Drop an alias only when it is proven to be the exact raw group alias for
-  /// a group with one canonical row.  Any malformed, raw-only, or ambiguous
-  /// group fails the complete operation and leaves its input untouched.
+  /// Normalize a snapshot of conversation records into canonical stable routes.
+  /// A raw group alias is collapsed into its single canonical row.  Any raw-only
+  /// group or malformed non-canonical row is excluded from the result with a
+  /// diagnostic log, so healthy conversations are not withheld.
+  /// Ambiguous mappings (one stable ID mapping multiple groups, or one group
+  /// mapping multiple canonical rows) represent cryptographic and routing integrity
+  /// violations and fail the operation globally.
   static func canonicalize(_ records: [Record]) throws -> [Record] {
     guard !records.isEmpty else { return [] }
 
@@ -127,15 +133,13 @@ enum MLSConversationIdentityBoundary {
     for record in records {
       let groupID = record.groupID.lowercased()
       guard isNormalizedHex(groupID) else {
-        throw Error.invalidStableID(record.conversationID)
+        logger.warning("Excluding MLS record with invalid group ID hex: conversationID=\(record.conversationID, privacy: .public), groupID=\(record.groupID, privacy: .public)")
+        continue
       }
       normalized.append(Record(conversationID: record.conversationID, groupID: groupID))
     }
 
-    var groups: [String: [Record]] = [:]
-    for record in normalized {
-      groups[record.groupID, default: []].append(record)
-    }
+    guard !normalized.isEmpty else { return [] }
 
     // A stable ID must never identify two different groups, even if each
     // group independently has one canonical row.
@@ -144,7 +148,13 @@ enum MLSConversationIdentityBoundary {
       stableIDGroups[record.conversationID, default: []].insert(record.groupID)
     }
     for (stableID, groupIDs) in stableIDGroups where groupIDs.count > 1 {
+      logger.error("Ambiguous stable ID mapping multiple groups: stableID=\(stableID, privacy: .public), groupIDs=\(groupIDs, privacy: .public)")
       throw Error.ambiguous(stableID)
+    }
+
+    var groups: [String: [Record]] = [:]
+    for record in normalized {
+      groups[record.groupID, default: []].append(record)
     }
 
     var result: [Record] = []
@@ -152,21 +162,25 @@ enum MLSConversationIdentityBoundary {
     for (groupID, rows) in groups {
       let canonical = rows.filter { isCanonicalStableID($0.conversationID) }
       guard canonical.count <= 1 else {
+        logger.error("Ambiguous group with multiple canonical stable IDs: groupID=\(groupID, privacy: .public), count=\(canonical.count)")
         throw Error.ambiguous(groupID)
       }
 
       // Every noncanonical value is allowed only if it is exactly the
       // normalized raw group hex.  Uppercase, compact UUIDs, UUIDv1, and
-      // arbitrary strings are not aliases.
+      // arbitrary strings are excluded per-row rather than failing the whole list.
       for row in rows where !isCanonicalStableID(row.conversationID) {
-        guard row.conversationID == groupID else {
-          throw Error.invalidStableID(row.conversationID)
+        if row.conversationID != groupID {
+          logger.warning("Excluding row with non-canonical conversation ID not matching group hex: conversationID=\(row.conversationID, privacy: .public), groupID=\(groupID, privacy: .public)")
         }
       }
 
       guard let canonicalRow = canonical.first else {
-        throw Error.rawOnly(groupID)
+        // Raw-only group (e.g. phantom row left by failed create). Exclude it.
+        logger.warning("Excluding raw-only MLS group with no canonical stable ID: groupID=\(groupID, privacy: .public)")
+        continue
       }
+
       if emittedStableIDs.insert(canonicalRow.conversationID).inserted {
         result.append(canonicalRow)
       }

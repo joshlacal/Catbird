@@ -125,10 +125,9 @@ final class MLSConversationListViewModel {
 
             try MLSCoordinationAwareTask.validateGeneration(expectedGen)
 
-            // The inventory is an external routing boundary.  Collapse only
-            // an exact raw-group alias with its one canonical v4 row; any
-            // ambiguity or raw-only row fails closed and leaves the current
-            // list untouched.
+            // The inventory is an external routing boundary.  Collapse
+            // exact raw-group aliases with their canonical v4 rows and exclude
+            // any raw-only or malformed rows while preserving valid states.
             let canonicalStates = try MLSConversationIdentityBoundary.canonicalize(result.states)
             conversations = canonicalStates
             cursor = result.cursor

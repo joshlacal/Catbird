@@ -930,11 +930,19 @@ import SwiftUI
 
         var body: some View {
             if !MLSConversationIdentityBoundary.isCanonicalStableID(conversationId) {
-                ContentUnavailableView(
-                    "Conversation unavailable",
-                    systemImage: "lock.slash",
-                    description: Text("This secure conversation has no valid stable identity.")
-                )
+                ContentUnavailableView {
+                    Label("Conversation unavailable", systemImage: "lock.slash")
+                } description: {
+                    Text("This secure conversation has no valid stable identity.")
+                } actions: {
+                    Button("Back to conversations") {
+                        dismiss()
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+                .onAppear {
+                    logger.error("Opened detail view for noncanonical conversation ID: \(conversationId, privacy: .public)")
+                }
             } else {
                 contentWithNavigation
                     .task {

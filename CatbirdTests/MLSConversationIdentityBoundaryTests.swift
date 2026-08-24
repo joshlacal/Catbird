@@ -30,33 +30,115 @@ struct MLSConversationIdentityBoundaryTests {
     #expect(try MLSConversationIdentityBoundary.canonicalize(records).map(\.conversationID) == [canonicalID])
   }
 
-  @Test("raw-only, unrelated stable, noncanonical, and ambiguous identities fail closed")
-  func rejectionCases() {
-    let rawOnly = [MLSConversationIdentityBoundary.Record(conversationID: groupID, groupID: groupID)]
+  @Test("a list with healthy canonical rows and a raw-only alias returns the healthy rows and excludes the alias")
+  func rawOnlyAliasExcludedWhileHealthyRowsSurvive() throws {
+    let healthyID1 = "550e8400-e29b-41d4-a716-446655440000"
+    let healthyGroup1 = "00112233445566778899aabbccddeeff"
+    let healthyID2 = "6ba7b810-9dad-41d1-80b4-00c04fd430c8"
+    let healthyGroup2 = "112233445566778899aabbccddeeff00"
+    let rawOnlyGroup = "2233445566778899aabbccddeeff0011"
+
+    let records = [
+      MLSConversationIdentityBoundary.Record(conversationID: healthyID1, groupID: healthyGroup1),
+      MLSConversationIdentityBoundary.Record(conversationID: rawOnlyGroup, groupID: rawOnlyGroup),
+      MLSConversationIdentityBoundary.Record(conversationID: healthyID2, groupID: healthyGroup2),
+    ]
+
+    let canonical = try MLSConversationIdentityBoundary.canonicalize(records)
+    #expect(canonical.map(\.conversationID) == [healthyID1, healthyID2])
+    #expect(!canonical.contains { $0.conversationID == rawOnlyGroup })
+    #expect(!canonical.contains { $0.groupID == rawOnlyGroup })
+  }
+
+  @Test("raw group id never appears in any canonicalized output")
+  func rawGroupIDNeverEscapes() throws {
+    let rawOnlyGroup = "2233445566778899aabbccddeeff0011"
+    let records = [
+      MLSConversationIdentityBoundary.Record(conversationID: rawOnlyGroup, groupID: rawOnlyGroup),
+    ]
+
+    let canonical = try MLSConversationIdentityBoundary.canonicalize(records)
+    #expect(canonical.isEmpty)
+  }
+
+  @Test("a malformed non-canonical row is excluded while healthy rows survive")
+  func noncanonicalRowExcludedWhileHealthyRowsSurvive() throws {
+    let healthyID = "550e8400-e29b-41d4-a716-446655440000"
+    let healthyGroup = "00112233445566778899aabbccddeeff"
+    let malformedID = "550E8400-E29B-41D4-A716-446655440000" // uppercase UUID
+    let malformedGroup = "112233445566778899aabbccddeeff00"
+
+    let records = [
+      MLSConversationIdentityBoundary.Record(conversationID: healthyID, groupID: healthyGroup),
+      MLSConversationIdentityBoundary.Record(conversationID: malformedID, groupID: malformedGroup),
+    ]
+
+    let canonical = try MLSConversationIdentityBoundary.canonicalize(records)
+    #expect(canonical.map(\.conversationID) == [healthyID])
+  }
+
+  @Test("resolveID throws for unresolvable, raw-only, noncanonical, or unknown requests")
+  func resolveIDRejectionCases() {
+    let rawOnlyGroup = "2233445566778899aabbccddeeff0011"
+    let rawOnlyRecords = [
+      MLSConversationIdentityBoundary.Record(conversationID: rawOnlyGroup, groupID: rawOnlyGroup)
+    ]
+
+    // Route lookup for a raw-only group throws unresolved
     #expect(throws: MLSConversationIdentityError.self) {
-      try MLSConversationIdentityBoundary.resolve(groupID, in: rawOnly)
+      try MLSConversationIdentityBoundary.resolve(rawOnlyGroup, in: rawOnlyRecords)
     }
 
-    let unrelated = [
-      MLSConversationIdentityBoundary.Record(conversationID: canonicalID, groupID: "ffeeddccbbaa99887766554433221100")
+    let healthyID = "550e8400-e29b-41d4-a716-446655440000"
+    let healthyGroup = "00112233445566778899aabbccddeeff"
+    let records = [
+      MLSConversationIdentityBoundary.Record(conversationID: healthyID, groupID: healthyGroup)
     ]
+
+    // Non-canonical request format throws invalidStableID
     #expect(throws: MLSConversationIdentityError.self) {
-      try MLSConversationIdentityBoundary.resolve(groupID, in: unrelated)
+      try MLSConversationIdentityBoundary.resolve("NOT-A-VALID-ID", in: records)
     }
 
-    let noncanonical = [
-      MLSConversationIdentityBoundary.Record(conversationID: "550E8400-e29b-41d4-a716-446655440000", groupID: groupID)
-    ]
+    // Uppercase UUID request throws invalidStableID
     #expect(throws: MLSConversationIdentityError.self) {
-      try MLSConversationIdentityBoundary.canonicalize(noncanonical)
+      try MLSConversationIdentityBoundary.resolve(healthyID.uppercased(), in: records)
     }
 
-    let ambiguous = [
-      MLSConversationIdentityBoundary.Record(conversationID: canonicalID, groupID: groupID),
-      MLSConversationIdentityBoundary.Record(conversationID: "6ba7b810-9dad-41d1-80b4-00c04fd430c8", groupID: groupID)
+    // Unknown canonical UUID throws unresolved
+    #expect(throws: MLSConversationIdentityError.self) {
+      try MLSConversationIdentityBoundary.resolve("6ba7b810-9dad-41d1-80b4-00c04fd430c8", in: records)
+    }
+
+    // Unrelated group ID throws unresolved
+    #expect(throws: MLSConversationIdentityError.self) {
+      try MLSConversationIdentityBoundary.resolve("ffeeddccbbaa99887766554433221100", in: records)
+    }
+  }
+
+  @Test("ambiguous identities fail closed globally")
+  func ambiguousIdentitiesFailGlobally() {
+    let canonicalID1 = "550e8400-e29b-41d4-a716-446655440000"
+    let canonicalID2 = "6ba7b810-9dad-41d1-80b4-00c04fd430c8"
+    let groupID1 = "00112233445566778899aabbccddeeff"
+    let groupID2 = "112233445566778899aabbccddeeff00"
+
+    // One group with two canonical rows
+    let ambiguousGroup = [
+      MLSConversationIdentityBoundary.Record(conversationID: canonicalID1, groupID: groupID1),
+      MLSConversationIdentityBoundary.Record(conversationID: canonicalID2, groupID: groupID1)
     ]
     #expect(throws: MLSConversationIdentityError.self) {
-      try MLSConversationIdentityBoundary.canonicalize(ambiguous)
+      try MLSConversationIdentityBoundary.canonicalize(ambiguousGroup)
+    }
+
+    // One stable ID mapping two different groups
+    let ambiguousStableID = [
+      MLSConversationIdentityBoundary.Record(conversationID: canonicalID1, groupID: groupID1),
+      MLSConversationIdentityBoundary.Record(conversationID: canonicalID1, groupID: groupID2)
+    ]
+    #expect(throws: MLSConversationIdentityError.self) {
+      try MLSConversationIdentityBoundary.canonicalize(ambiguousStableID)
     }
   }
 }
