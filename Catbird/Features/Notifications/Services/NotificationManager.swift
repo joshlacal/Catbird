@@ -4008,8 +4008,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
   @MainActor
   func handlePush(
     _ userInfo: [AnyHashable: Any],
-    circleNotificationsModel: CircleNotificationsModel? = nil,
-    activeAccountCheck: (@MainActor () -> String?)? = nil
+    circleNotificationsModel: CircleNotificationsModel? = nil
   ) async {
     guard let kind = userInfo["kind"] as? String, kind == "circle_activity" else {
       return
@@ -4028,14 +4027,8 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
       return
     }
 
-    let dispatchActiveDID: String? = {
-      if let customCheck = activeAccountCheck {
-        return customCheck()
-      }
-      return AppStateManager.shared.lifecycle.userDID
-    }()
-
-    guard let dispatchActiveDID, dispatchActiveDID == targetDID else {
+    guard let dispatchActiveDID = AppStateManager.shared.lifecycle.userDID,
+          dispatchActiveDID == targetDID else {
       notificationLogger.debug("Skipping generic circle push: target account is not active in lifecycle")
       return
     }
@@ -4052,9 +4045,6 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
 
     do {
       try await targetModel.refresh(activeAccountCheck: { [weak appState] in
-        if let customCheck = activeAccountCheck {
-          return customCheck()
-        }
         if circleNotificationsModel == nil {
           guard appState != nil else { return nil }
         }

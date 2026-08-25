@@ -875,17 +875,26 @@ struct CircleFeedModelTests {
     )
     await cache.purge(accountDID: "did:plc:alice")
 
-    // Assert departing cache removed
+    // Assert departing cache removed and sibling present before releasing stale snapshot
     #expect(await cache.page(accountDID: "did:plc:alice", space: familyCircle.uri) == nil)
+    let bobCachedBefore = await cache.page(accountDID: "did:plc:bob", space: familyCircle.uri)
+    #expect(bobCachedBefore != nil)
+    #expect(bobCachedBefore?.items.count == 1)
 
-    // Release gate allowing the cache read to complete
+    // Release gate allowing the cache read to complete returning the captured stale snapshot
     await gate.release()
     _ = try? await loadTask.value
 
-    // Model items must be empty and model marked permanently invalidated
+    // Model items must be empty and model marked permanently invalidated (stale snapshot discarded)
     #expect(model.items.isEmpty)
     #expect(model.cursor == nil)
     #expect(model.isInvalidated)
+    #expect(await cache.page(accountDID: "did:plc:alice", space: familyCircle.uri) == nil)
+
+    // Subsequent load or refresh calls cannot resurrect data
+    try? await model.load()
+    #expect(model.items.isEmpty)
+    #expect(model.cursor == nil)
     #expect(await cache.page(accountDID: "did:plc:alice", space: familyCircle.uri) == nil)
 
     // Sibling account (Bob) state must remain in cache

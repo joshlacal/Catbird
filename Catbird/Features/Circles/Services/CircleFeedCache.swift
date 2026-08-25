@@ -35,16 +35,17 @@ final class CircleFeedCache: @unchecked Sendable {
   }
 
   func page(accountDID: String, space: SpaceRef?) async -> CircleFeedPage? {
+    let spaceURI = space.map { $0.description }
+    let cachedPage = lock.withLock {
+      pages[Key(accountDID: accountDID, spaceURI: spaceURI)]
+    }
     #if DEBUG
     let hook = lock.withLock { onPageFetch }
     if let hook {
       await hook()
     }
     #endif
-    let spaceURI = space.map { $0.description }
-    return lock.withLock {
-      pages[Key(accountDID: accountDID, spaceURI: spaceURI)]
-    }
+    return cachedPage
   }
 
   /// Purge every cached page for an account (called on switch, logout, removal).

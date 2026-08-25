@@ -13,6 +13,16 @@ enum AuthState: Equatable {
   case authenticated(userDID: String)
   case error(message: String)
 
+  /// Finite case label for safe, content-free logging
+  var caseLabel: String {
+    switch self {
+    case .initializing: return "initializing"
+    case .unauthenticated: return "unauthenticated"
+    case .authenticating: return "authenticating"
+    case .authenticated: return "authenticated"
+    case .error: return "error"
+    }
+  }
   /// Helper computed property to easily check if authenticated
   var isAuthenticated: Bool {
     if case .authenticated = self {
@@ -378,7 +388,7 @@ final class AuthenticationManager: AuthProgressDelegate {
   func updateState(_ newState: AuthState) {
     guard newState != state else { return }
     logger.debug(
-      "Updating auth state: \(String(describing: self.state)) -> \(String(describing: newState))")
+      "Updating auth state: \(self.state.caseLabel) -> \(newState.caseLabel)")
     self.state = newState
     // Emit synchronously - no Task wrapper to eliminate race windows
     stateSubject.continuation.yield(newState)
@@ -516,7 +526,7 @@ final class AuthenticationManager: AuthProgressDelegate {
         await MainActor.run {
           updateState(.authenticated(userDID: userDid))
           logger.info("Auth state updated to authenticated via proper channels")
-          logger.info("Current state after update: \(String(describing: self.state))")
+          logger.info("Current state after update: \(self.state.caseLabel)")
         }
       } catch {
         logger.error("Error fetching user identity: \(error.localizedDescription)")
@@ -995,14 +1005,14 @@ final class AuthenticationManager: AuthProgressDelegate {
   func handleCallback(_ url: URL) async throws {
     logger.info("🔗 [CALLBACK] Processing OAuth callback")
     logger.debug("🔗 [CALLBACK] URL scheme: \(url.scheme ?? "none"), host: \(url.host ?? "none")")
-    logger.debug("🔗 [CALLBACK] Current state: \(String(describing: self.state))")
+    logger.debug("🔗 [CALLBACK] Current state: \(self.state.caseLabel)")
     updateState(.authenticating(progress: .exchangingTokens))
 
     if case .authenticating = state {
       logger.debug("✅ [CALLBACK] State is .authenticating as expected")
     } else {
       logger.warning(
-        "⚠️ [CALLBACK] Received callback in unexpected state: \(String(describing: self.state))")
+        "⚠️ [CALLBACK] Received callback in unexpected state: \(self.state.caseLabel)")
     }
 
     guard let client = client else {
@@ -1674,7 +1684,7 @@ final class AuthenticationManager: AuthProgressDelegate {
     let targetDID = try validatedUserDID(did, source: "switchToAccount.request")
 
     logger.info("🔄 [AUTHMAN-SWITCH] Starting switchToAccount for DID: \(targetDID)")
-    logger.debug("🔄 [AUTHMAN-SWITCH] Current state: \(String(describing: self.state))")
+    logger.debug("🔄 [AUTHMAN-SWITCH] Current state: \(self.state.caseLabel)")
 
     // ═══════════════════════════════════════════════════════════════════════════
     // CRITICAL FIX (2024-12): Prevent re-entrancy during account switching

@@ -3,7 +3,7 @@ import Petrel
 import PetrelCatbird
 import Testing
 @testable import Catbird
-@Suite("Composer chips strip visibility")
+@Suite("Composer chips strip visibility", .serialized)
 struct ComposerChipsStripTests {
   @Test func hiddenWhenNothingIsSet() {
     #expect(!ComposerChipsStrip.isVisible(

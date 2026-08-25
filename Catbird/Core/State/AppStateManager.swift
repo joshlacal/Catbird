@@ -352,17 +352,16 @@ final class AppStateManager {
       logger.info("✅ AuthManager switched successfully")
     } catch {
       logger.error("❌ Failed to switch AuthManager: \(error.localizedDescription)")
-      lifecycle = .unauthenticated
+      await recoverFromSwitchFailure()
       return
     }
 
     // Now get the client for the target account
     guard let client = authManager.client else {
       logger.error("❌ Cannot transition to authenticated - no client available after switch")
-      lifecycle = .unauthenticated
+      await recoverFromSwitchFailure()
       return
     }
-
     let appState: AppState
     let isCachedAccount: Bool
 
@@ -560,27 +559,41 @@ final class AppStateManager {
       return
     }
 
-    do {
-      try await MLSAccountSwitchSerializer.shared.serialize { [weak self] in
-        guard let self = self else { return }
-        await self.performSwitchAccount(to: userDID, withDraft: draft)
-      }
-    } catch {
-      logger.error("❌ Failed to perform serialized account switch: \(error.localizedDescription)")
-    }
-  }
-
-  private func performSwitchAccount(to userDID: String, withDraft draft: PostComposerDraft? = nil) async {
-    logger.info("🔄 Switching to account: \(userDID)")
-    
     let previousUserDID = lifecycle.userDID
-
-
     // Reset Circle server capability flag during account switch
     CircleFeatureFlags.serverCapability(enabled: false)
     // Synchronously enter a lifecycle state with no authenticated DID before first await
     lifecycle = .launching
-    // CRITICAL FIX: Signal account switch FIRST, before ANY other work
+
+    do {
+      try await MLSAccountSwitchSerializer.shared.serialize { [weak self] in
+        guard let self = self else { return }
+        await self.performSwitchAccount(to: userDID, previousUserDID: previousUserDID, withDraft: draft)
+      }
+    } catch {
+      logger.error("❌ Failed to perform serialized account switch: \(error.localizedDescription)")
+      await recoverFromSwitchFailure()
+    }
+  }
+
+  private func recoverFromSwitchFailure() async {
+    if case let .authenticated(authDID) = authManager.state, let client = authManager.client {
+      authenticatedStates.removeValue(forKey: authDID)
+      let newAppState = AppState(userDID: authDID, client: client)
+      authenticatedStates[authDID] = newAppState
+      updateAccessOrder(authDID)
+      lifecycle = .authenticated(newAppState)
+    } else {
+      lifecycle = .unauthenticated
+    }
+  }
+
+  private func performSwitchAccount(
+    to userDID: String,
+    previousUserDID: String?,
+    withDraft draft: PostComposerDraft? = nil
+  ) async {
+    logger.info("🔄 Switching to account: \(userDID)")
     // ═══════════════════════════════════════════════════════════════════════════
     // This tells the NSE to skip decryption for BOTH the old and new user during
     // the entire switch window. Without this, the NSE can race in and access

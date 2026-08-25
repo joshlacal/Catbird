@@ -3,7 +3,7 @@ import SwiftUI
 import Testing
 @testable import Catbird
 
-@Suite("Recovered settings runtime wiring")
+@Suite("Recovered settings runtime wiring", .serialized)
 struct SettingsRuntimeWiringTests {
   @Test("Required alt text exposes an actionable composer reason")
   func missingAltTextReason() {

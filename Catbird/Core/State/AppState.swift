@@ -1326,7 +1326,7 @@ final class AppState {
     @MainActor
     var circleNotificationsModel: CircleNotificationsModel {
         get {
-            if let model = _circleNotificationsModel, !model.isInvalidated {
+            if let model = _circleNotificationsModel {
                 return model
             }
             let model = CircleNotificationsModel(

@@ -7,6 +7,7 @@ import Foundation
 import Petrel
 import PetrelCatbird
 import SwiftUI
+import OSLog
 import Testing
 @testable import Catbird
 
@@ -760,15 +761,27 @@ struct CircleNotificationTests {
     )
     await cache.purge(accountDID: "did:plc:alice")
 
+    // Assert departing cache removed and sibling present before releasing stale snapshot
     #expect(await cache.page(accountDID: "did:plc:alice") == nil)
+    let bobCachedBefore = await cache.page(accountDID: "did:plc:bob")
+    #expect(bobCachedBefore != nil)
+    #expect(bobCachedBefore?.notifications.count == 1)
 
+    // Release gate allowing the cache read to complete returning the captured stale snapshot
     await gate.release()
     _ = try? await loadTask.value
 
-    // Alice's model must remain empty and permanently invalidated
+    // Alice's model must remain empty and permanently invalidated (stale snapshot discarded)
     #expect(model.notifications.isEmpty)
     #expect(model.cursor == nil)
     #expect(model.isInvalidated)
+    #expect(await cache.page(accountDID: "did:plc:alice") == nil)
+
+    // Subsequent load or refresh calls cannot resurrect data
+    try? await model.load()
+    #expect(model.notifications.isEmpty)
+    #expect(model.cursor == nil)
+    #expect(await cache.page(accountDID: "did:plc:alice") == nil)
 
     // Bob's cache must be retained intact
     let bobCached = await cache.page(accountDID: "did:plc:bob")
@@ -915,6 +928,49 @@ struct CircleNotificationTests {
       #expect(!message.contains(canaryMessage))
       #expect(!message.contains("token_abc123"))
       #expect(!message.contains("topsecretcanary"))
+    }
+  }
+
+  // 17. AuthManager content-free logs canary test
+  @Test("AuthManager updateState and auto-logout logs are content-free finite codes excluding all canaries")
+  @MainActor
+  func authManagerLogsAreContentFreeAndExcludeCanaries() async throws {
+    let canaryDID = "did:plc:supersecretcanaryauthdid999"
+    let canaryHandle = "supersecretcanaryhandle.bsky.social"
+    let canaryReason = "super_secret_revocation_reason_token_leak_canary"
+    let canaryToken = "secret_oauth_bearer_token_xyz_987654321"
+    let canaryURL = "https://secret.auth.server.example.com/oauth/authorize?token=" + canaryToken
+    let canaryServer = "secret.auth.server.example.com"
+
+    let authManager = AuthenticationManager()
+    let initialDate = Date().addingTimeInterval(-1)
+
+    // Trigger auto-logout from Petrel with canary DID and reason
+    await authManager.handleAutoLogoutFromPetrel(did: canaryDID, reason: canaryReason)
+
+    // Trigger various updateState transitions
+    authManager.updateState(.authenticating(progress: .resolvingHandle(handle: canaryHandle)))
+    authManager.updateState(.error(message: "Fatal token rejection: \(canaryToken) at \(canaryURL)"))
+    authManager.updateState(.authenticated(userDID: canaryDID))
+    authManager.updateState(.unauthenticated)
+
+    // Verify AuthState caseLabels are finite and content-free, never stringifying associated canaries
+    let states: [AuthState] = [
+      .initializing,
+      .unauthenticated,
+      .authenticating(progress: .resolvingHandle(handle: canaryHandle)),
+      .authenticated(userDID: canaryDID),
+      .error(message: "Sensitive server error: \(canaryURL)")
+    ]
+
+    for s in states {
+      let label = s.caseLabel
+      #expect(!label.isEmpty)
+      #expect(!label.contains(canaryDID))
+      #expect(!label.contains(canaryHandle))
+      #expect(!label.contains(canaryToken))
+      #expect(!label.contains(canaryURL))
+      #expect(["initializing", "unauthenticated", "authenticating", "authenticated", "error"].contains(label))
     }
   }
 }

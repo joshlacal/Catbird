@@ -37,16 +37,17 @@ final class CircleNotificationCache: @unchecked Sendable {
   }
 
   func page(accountDID: String) async -> CircleNotificationPage? {
+    let cachedPage: CircleNotificationPage? = lock.withLock {
+      guard let entry = store[accountDID] else { return nil }
+      return CircleNotificationPage(notifications: entry.notifications, cursor: entry.cursor)
+    }
     #if DEBUG
     let hook = lock.withLock { onPageFetch }
     if let hook {
       await hook()
     }
     #endif
-    return lock.withLock {
-      guard let entry = store[accountDID] else { return nil }
-      return CircleNotificationPage(notifications: entry.notifications, cursor: entry.cursor)
-    }
+    return cachedPage
   }
 
   /// Purge every cached notification for an account (called on switch, logout, removal).
