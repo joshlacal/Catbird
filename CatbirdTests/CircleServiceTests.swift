@@ -93,7 +93,7 @@ actor RecordingCircleTransport: CircleTransport {
   }
 }
 
-@Suite("Circle service boundary")
+@Suite("Circle service boundary", .serialized)
 struct CircleServiceTests {
   @Test("AppView failure remains a Circle error and never calls the public endpoint")
   func appViewFailureRemainsACircleError() async throws {

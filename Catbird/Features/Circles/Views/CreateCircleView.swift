@@ -86,12 +86,12 @@ struct CreateCircleView: View {
                   Text("Operation ID: \(retryID.uuidString)")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+                  Button("Retry") {
+                    Task { try? await vm.retry(operationID: retryID) }
+                  }
+                  .buttonStyle(.bordered)
+                  .accessibilityLabel("Retry failed creation")
                 }
-                Button("Retry") {
-                  Task { try? await vm.retry(operationID: retryID) }
-                }
-                .buttonStyle(.bordered)
-                .accessibilityLabel("Retry failed creation")
               }
             }
           case .complete:

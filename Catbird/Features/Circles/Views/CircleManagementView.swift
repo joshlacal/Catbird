@@ -253,12 +253,12 @@ struct CircleManagementView: View {
             Text("Operation ID: \(retryID.uuidString)")
               .font(.caption2)
               .foregroundStyle(.secondary)
+            Button("Retry") {
+              Task { try? await vm.retry(operationID: retryID) }
+            }
+            .buttonStyle(.bordered)
+            .accessibilityLabel("Retry failed operation")
           }
-          Button("Retry") {
-            Task { try? await vm.retry(operationID: retryID) }
-          }
-          .buttonStyle(.bordered)
-          .accessibilityLabel("Retry failed operation")
         }
       }
     case .complete, .idle:

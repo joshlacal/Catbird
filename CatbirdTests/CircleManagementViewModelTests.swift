@@ -220,7 +220,7 @@ actor ManagementRecordingCircleTransport: CircleTransport {
   }
 }
 
-@Suite("Circle Management ViewModel and Disclosures")
+@Suite("Circle Management ViewModel and Disclosures", .serialized)
 @MainActor
 struct CircleManagementViewModelTests {
   let ownerDID = try! DID(didString: "did:plc:owner123")
@@ -607,5 +607,33 @@ struct CircleManagementViewModelTests {
     #expect(model.state == .failed(message: CircleError.upstreamUnavailable.localizedDescription, retryOperationID: nil))
     #expect(!model.canRetry)
     #expect(model.state.retryOperationID == nil)
+  }
+
+  @Test func circleManagementStateRetryPolicyForNilAndNonNilOperationIDs() {
+    let idleState = CircleManagementState.idle
+    #expect(!idleState.canRetry)
+    #expect(idleState.retryOperationID == nil)
+
+    let submittingState = CircleManagementState.submitting
+    #expect(!submittingState.canRetry)
+    #expect(submittingState.retryOperationID == nil)
+
+    let completeState = CircleManagementState.complete
+    #expect(!completeState.canRetry)
+    #expect(completeState.retryOperationID == nil)
+
+    let failedNoIDState = CircleManagementState.failed(message: "Network error", retryOperationID: nil)
+    #expect(!failedNoIDState.canRetry)
+    #expect(failedNoIDState.retryOperationID == nil)
+
+    let testUUID = UUID()
+    let failedWithIDState = CircleManagementState.failed(message: "Server failed", retryOperationID: testUUID)
+    #expect(failedWithIDState.canRetry)
+    #expect(failedWithIDState.retryOperationID == testUUID)
+
+    let pendingOp = CircleOperation(id: testUUID.uuidString, status: .value_pending, space: ownerCircle.uri, error: nil)
+    let pendingState = CircleManagementState.pending(pendingOp)
+    #expect(pendingState.canRetry)
+    #expect(pendingState.retryOperationID == testUUID)
   }
 }

@@ -43,7 +43,7 @@ final class CircleFeedModel {
       NotificationCenter.default.addObserver(
         forName: .circleMuteStateChanged,
         object: nil,
-        queue: .main
+        queue: nil
       ) { [weak self] notification in
         guard let self else { return }
         let targetAccountDID = notification.userInfo?["accountDID"] as? String ?? ""
