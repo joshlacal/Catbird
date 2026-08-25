@@ -352,10 +352,7 @@ final class AppStateManager {
       logger.info("✅ AuthManager switched successfully")
     } catch {
       logger.error("❌ Failed to switch AuthManager: \(error.localizedDescription)")
-      // If we were mid-account-switch, keep the current authenticated lifecycle instead of logging out.
-      if !wasAuthenticated {
-        lifecycle = .unauthenticated
-      }
+      lifecycle = .unauthenticated
       return
     }
 
@@ -518,12 +515,19 @@ final class AppStateManager {
   func logout(isManual: Bool = true) async {
     logger.info("🚪 Logging out (isManual: \(isManual))")
     if let currentUserDID = lifecycle.userDID {
+      NotificationCenter.default.post(
+        name: .circleAccountInvalidated,
+        object: nil,
+        userInfo: ["accountDID": currentUserDID]
+      )
       if let currentState = authenticatedStates[currentUserDID] {
         await currentState.prepareMLSStorageReset()
+        currentState.cleanup()
       }
+      authenticatedStates.removeValue(forKey: currentUserDID)
+      accessOrder.removeAll { $0 == currentUserDID }
       await MLSImageCache.shared.purge(for: currentUserDID)
     }
-
     // Clear auth manager session - pass isManual to control re-auth behavior
     await authManager.logout(isManual: isManual)
 
@@ -574,7 +578,8 @@ final class AppStateManager {
 
     // Reset Circle server capability flag during account switch
     CircleFeatureFlags.serverCapability(enabled: false)
-    // ═══════════════════════════════════════════════════════════════════════════
+    // Synchronously enter a lifecycle state with no authenticated DID before first await
+    lifecycle = .launching
     // CRITICAL FIX: Signal account switch FIRST, before ANY other work
     // ═══════════════════════════════════════════════════════════════════════════
     // This tells the NSE to skip decryption for BOTH the old and new user during

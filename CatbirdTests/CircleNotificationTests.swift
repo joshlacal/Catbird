@@ -108,7 +108,16 @@ struct CircleNotificationTests {
   @Test("Generic push triggers authenticated refresh, updates model and cache without rendering payload")
   @MainActor
   func genericPushTriggersAuthenticatedRefreshWithoutRenderingPayload() async throws {
+    let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
+    let appState = AppState(userDID: "did:plc:alice", client: client)
+    let previousLifecycle = AppStateManager.shared.lifecycle
+    AppStateManager.shared.setLifecycleForTesting(.authenticated(appState))
+    defer {
+      AppStateManager.shared.setLifecycleForTesting(previousLifecycle)
+    }
+
     let manager = NotificationManager()
+    manager.configure(with: appState)
     let cache = CircleNotificationCache()
     let notif = makeNotification(id: "n1", reason: .value_reply, circle: familyCircle)
     let page = CircleNotificationPage(notifications: [notif], cursor: "cursor_after_push")
@@ -121,6 +130,7 @@ struct CircleNotificationTests {
       accountDID: "did:plc:alice",
       cache: cache
     )
+    appState.circleNotificationsModel = model
 
     // Generic push with extra sensitive metadata that must not be rendered/retained
     let pushPayload: [AnyHashable: Any] = [
@@ -170,10 +180,20 @@ struct CircleNotificationTests {
   @Test("Generic push handles refresh failure gracefully without throwing or leaking private IDs")
   @MainActor
   func genericPushHandlesRefreshFailureGracefully() async {
+    let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
+    let appState = AppState(userDID: "did:plc:alice", client: client)
+    let previousLifecycle = AppStateManager.shared.lifecycle
+    AppStateManager.shared.setLifecycleForTesting(.authenticated(appState))
+    defer {
+      AppStateManager.shared.setLifecycleForTesting(previousLifecycle)
+    }
+
     let manager = NotificationManager()
+    manager.configure(with: appState)
     let service = RecordingCircleNotificationService()
     await service.setError(CircleError.accessExpired)
     let model = CircleNotificationsModel(service: service, accountDID: "did:plc:alice")
+    appState.circleNotificationsModel = model
 
     await manager.handlePush(["kind": "circle_activity"], circleNotificationsModel: model)
     #expect(model.error == .accessExpired)
@@ -364,6 +384,7 @@ struct CircleNotificationTests {
   @Test("Circle deletion for another account does not purge active model")
   @MainActor
   func circleDeletionForAnotherAccountDoesNotPurge() async throws {
+    let aliceTestDID = "did:plc:alice_del_isolation"
     let notifFamily = makeNotification(id: "n1", reason: .value_reply, circle: familyCircle)
     let page = CircleNotificationPage(notifications: [notifFamily], cursor: nil)
     let service = RecordingCircleNotificationService()
@@ -371,7 +392,7 @@ struct CircleNotificationTests {
 
     let model = CircleNotificationsModel(
       service: service,
-      accountDID: "did:plc:alice",
+      accountDID: aliceTestDID,
       cache: CircleNotificationCache()
     )
     try await model.load()
@@ -381,7 +402,7 @@ struct CircleNotificationTests {
       name: .circleDeleted,
       object: nil,
       userInfo: [
-        "accountDID": "did:plc:bob",
+        "accountDID": "did:plc:bob_del_isolation",
         "spaceURI": familyCircle.uri.uriString()
       ]
     )
@@ -477,11 +498,21 @@ struct CircleNotificationTests {
     #expect(model.notifications.count == 1)
   }
 
-  // 13. Barrier test: Generic push mid-request account switch discards mutation before model and cache
-  @Test("Generic push mid-request account switch discards mutation before model and cache")
+  // 13. Barrier test: Generic push mid-request account switch with production lifecycle discards mutation
+  @Test("Generic push mid-request account switch with production lifecycle discards mutation")
   @MainActor
   func genericPushMidRequestAccountSwitchDiscardsMutation() async throws {
+    let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
+    let aliceAppState = AppState(userDID: "did:plc:alice", client: client)
+    let bobAppState = AppState(userDID: "did:plc:bob", client: client)
+
+    let previousLifecycle = AppStateManager.shared.lifecycle
+    AppStateManager.shared.setLifecycleForTesting(.authenticated(aliceAppState))
+    defer {
+      AppStateManager.shared.setLifecycleForTesting(previousLifecycle)
+    }
     let manager = NotificationManager()
+    manager.configure(with: aliceAppState)
     let cache = CircleNotificationCache()
     let notif = makeNotification(id: "n1", reason: .value_reply, circle: familyCircle)
     let page = CircleNotificationPage(notifications: [notif], cursor: "cursor_alice")
@@ -494,29 +525,131 @@ struct CircleNotificationTests {
       accountDID: "did:plc:alice",
       cache: cache
     )
+    aliceAppState.circleNotificationsModel = model
 
-    final class ActiveAccountBox: @unchecked Sendable {
-      var did: String
-      init(_ did: String) { self.did = did }
-    }
-    let activeAccount = ActiveAccountBox("did:plc:alice")
-
-    // Simulate account switch while refresh is suspended in network call
+    let gate = AsyncGate()
     await service.setOnRefresh {
-      activeAccount.did = "did:plc:bob"
+      await service.setOnRefresh(nil)
+      await gate.enter()
     }
 
-    await manager.handlePush(
-      ["kind": "circle_activity"],
-      circleNotificationsModel: model,
-      activeAccountCheck: { activeAccount.did }
-    )
+    let pushTask = Task { @MainActor in
+      await manager.handlePush(["kind": "circle_activity"])
+    }
 
-    // Because account switched to bob before refresh applied, alice's model and cache must remain empty/unmodified
+    await gate.awaitEntry()
+
+    // Switch lifecycle in AppStateManager to Bob and invalidate Alice
+    AppStateManager.shared.setLifecycleForTesting(.authenticated(bobAppState))
+    NotificationCenter.default.post(
+      name: .circleAccountInvalidated,
+      object: nil,
+      userInfo: ["accountDID": "did:plc:alice"]
+    )
+    await cache.purge(accountDID: "did:plc:alice")
+
+    #expect(await cache.page(accountDID: "did:plc:alice") == nil)
+
+    await gate.release()
+    await pushTask.value
+
+    // Because lifecycle switched to bob during await, alice's model and cache must remain empty and invalidated
     #expect(model.notifications.isEmpty)
     #expect(model.cursor == nil)
+    #expect(model.isInvalidated)
     let cachedAlice = await cache.page(accountDID: "did:plc:alice")
     #expect(cachedAlice == nil)
+  }
+
+  @Test("Generic push with nil/launching/unauthenticated lifecycle discards before mutation")
+  @MainActor
+  func genericPushWithNilOrUnauthenticatedLifecycleDiscardsBeforeMutation() async throws {
+    let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
+    let aliceAppState = AppState(userDID: "did:plc:alice", client: client)
+
+    let previousLifecycle = AppStateManager.shared.lifecycle
+    defer {
+      AppStateManager.shared.setLifecycleForTesting(previousLifecycle)
+    }
+
+    let manager = NotificationManager()
+    manager.configure(with: aliceAppState)
+    let cache = CircleNotificationCache()
+    let notif = makeNotification(id: "n1", reason: .value_reply, circle: familyCircle)
+    let page = CircleNotificationPage(notifications: [notif], cursor: "cursor_alice")
+
+    let service = RecordingCircleNotificationService()
+    await service.setPages([page])
+
+    let model = CircleNotificationsModel(
+      service: service,
+      accountDID: "did:plc:alice",
+      cache: cache
+    )
+    aliceAppState.circleNotificationsModel = model
+
+    // 1. Launching
+    AppStateManager.shared.setLifecycleForTesting(.launching)
+    await manager.handlePush(["kind": "circle_activity"])
+    #expect(await service.refreshCount == 0)
+    #expect(model.notifications.isEmpty)
+
+    // 2. Unauthenticated
+    AppStateManager.shared.setLifecycleForTesting(.unauthenticated)
+    await manager.handlePush(["kind": "circle_activity"])
+    #expect(await service.refreshCount == 0)
+    #expect(model.notifications.isEmpty)
+  }
+
+  @Test("Generic push with weak AppState loss discards before mutation")
+  @MainActor
+  func genericPushWithWeakAppStateLossDiscardsBeforeMutation() async throws {
+    let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
+    var localAppState: AppState? = AppState(userDID: "did:plc:alice", client: client)
+
+    let previousLifecycle = AppStateManager.shared.lifecycle
+    AppStateManager.shared.setLifecycleForTesting(.authenticated(localAppState!))
+    defer {
+      AppStateManager.shared.setLifecycleForTesting(previousLifecycle)
+    }
+
+    let manager = NotificationManager()
+    manager.configure(with: localAppState!)
+    let cache = CircleNotificationCache()
+    let notif = makeNotification(id: "n1", reason: .value_reply, circle: familyCircle)
+    let page = CircleNotificationPage(notifications: [notif], cursor: "cursor_alice")
+
+    let service = RecordingCircleNotificationService()
+    await service.setPages([page])
+
+    let model = CircleNotificationsModel(
+      service: service,
+      accountDID: "did:plc:alice",
+      cache: cache
+    )
+    localAppState?.circleNotificationsModel = model
+
+    let gate = AsyncGate()
+    await service.setOnRefresh {
+      await service.setOnRefresh(nil)
+      await gate.enter()
+    }
+
+    let pushTask = Task { @MainActor in
+      await manager.handlePush(["kind": "circle_activity"])
+    }
+
+    await gate.awaitEntry()
+
+    // Deallocate localAppState during the in-flight suspended refresh
+    AppStateManager.shared.setLifecycleForTesting(.unauthenticated)
+    localAppState = nil
+
+    await gate.release()
+    await pushTask.value
+
+    #expect(model.notifications.isEmpty)
+    #expect(model.cursor == nil)
   }
 
   // 14. Barrier test: In-flight notification load overlapped with account purge does not resurrect notifications
@@ -589,6 +722,166 @@ struct CircleNotificationTests {
     #expect(model.notifications.isEmpty)
   }
 
+  // 17. Barrier test: In-flight notification cache restore overlapped with account invalidation discards old cache and retains sibling
+  @Test("Barrier test: in-flight notification cache restore overlapped with account invalidation discards old cache and retains sibling")
+  @MainActor
+  func inFlightNotificationCacheRestoreOverlappedWithAccountInvalidationDiscardsOldCacheAndRetainsSibling() async throws {
+    let cache = CircleNotificationCache()
+    let notifAlice = makeNotification(id: "n_alice", reason: .value_reply, circle: familyCircle)
+    let notifBob = makeNotification(id: "n_bob", reason: .value_reply, circle: familyCircle)
+
+    await cache.store(CircleNotificationPage(notifications: [notifAlice], cursor: "cur_alice"), accountDID: "did:plc:alice")
+    await cache.store(CircleNotificationPage(notifications: [notifBob], cursor: "cur_bob"), accountDID: "did:plc:bob")
+
+    let service = RecordingCircleNotificationService()
+    let model = CircleNotificationsModel(
+      service: service,
+      accountDID: "did:plc:alice",
+      cache: cache,
+      activeDIDProvider: { "did:plc:alice" }
+    )
+
+    let gate = AsyncGate()
+    await cache.setOnPageFetch {
+      await cache.setOnPageFetch(nil)
+      await gate.enter()
+    }
+
+    let loadTask = Task { @MainActor in
+      try await model.load()
+    }
+
+    await gate.awaitEntry()
+
+    NotificationCenter.default.post(
+      name: .circleAccountInvalidated,
+      object: nil,
+      userInfo: ["accountDID": "did:plc:alice"]
+    )
+    await cache.purge(accountDID: "did:plc:alice")
+
+    #expect(await cache.page(accountDID: "did:plc:alice") == nil)
+
+    await gate.release()
+    _ = try? await loadTask.value
+
+    // Alice's model must remain empty and permanently invalidated
+    #expect(model.notifications.isEmpty)
+    #expect(model.cursor == nil)
+    #expect(model.isInvalidated)
+
+    // Bob's cache must be retained intact
+    let bobCached = await cache.page(accountDID: "did:plc:bob")
+    #expect(bobCached != nil)
+    #expect(bobCached?.notifications.count == 1)
+    #expect(bobCached?.notifications.first?.id == "n_bob")
+  }
+
+  // 18. Barrier test: In-flight notification network refresh overlapped with account switch discards old response and retains sibling
+  @Test("Barrier test: in-flight notification network refresh overlapped with account switch discards old response and retains sibling")
+  @MainActor
+  func inFlightNotificationNetworkRefreshOverlappedWithAccountSwitchDiscardsOldResponseAndRetainsSibling() async throws {
+    let cache = CircleNotificationCache()
+    let notifAlice = makeNotification(id: "n_alice", reason: .value_reply, circle: familyCircle)
+    let notifBob = makeNotification(id: "n_bob", reason: .value_reply, circle: familyCircle)
+
+    await cache.store(CircleNotificationPage(notifications: [notifBob], cursor: "cur_bob"), accountDID: "did:plc:bob")
+
+    let service = RecordingCircleNotificationService()
+    await service.setPages([CircleNotificationPage(notifications: [notifAlice], cursor: "cur_alice")])
+
+    final class ActiveAccountHolder: @unchecked Sendable {
+      var did: String = "did:plc:alice"
+    }
+    let activeHolder = ActiveAccountHolder()
+
+    let model = CircleNotificationsModel(
+      service: service,
+      accountDID: "did:plc:alice",
+      cache: cache,
+      activeDIDProvider: { activeHolder.did }
+    )
+
+    let gate = AsyncGate()
+    await service.setOnRefresh {
+      await service.setOnRefresh(nil)
+      await gate.enter()
+    }
+
+    let refreshTask = Task { @MainActor in
+      try await model.refresh()
+    }
+
+    await gate.awaitEntry()
+
+    // Simulate account switch to Bob
+    activeHolder.did = "did:plc:bob"
+    NotificationCenter.default.post(
+      name: .circleAccountInvalidated,
+      object: nil,
+      userInfo: ["accountDID": "did:plc:alice"]
+    )
+    await cache.purge(accountDID: "did:plc:alice")
+
+    #expect(await cache.page(accountDID: "did:plc:alice") == nil)
+
+    await gate.release()
+    _ = try? await refreshTask.value
+
+    // Alice's model must remain empty and invalidated
+    #expect(model.notifications.isEmpty)
+    #expect(model.cursor == nil)
+    #expect(model.isInvalidated)
+
+    // Alice's cache must be empty
+    let aliceCached = await cache.page(accountDID: "did:plc:alice")
+    #expect(aliceCached == nil)
+
+    // Bob's cache must be retained intact
+    let bobCached = await cache.page(accountDID: "did:plc:bob")
+    #expect(bobCached != nil)
+    #expect(bobCached?.notifications.count == 1)
+    #expect(bobCached?.notifications.first?.id == "n_bob")
+  }
+
+  @Test("Invalidated CircleNotificationsModel permanently rejects all new operations")
+  @MainActor
+  func invalidatedCircleNotificationsModelPermanentlyRejectsOperations() async throws {
+    let notif = makeNotification(id: "n1", reason: .value_reply, circle: familyCircle)
+    let page = CircleNotificationPage(notifications: [notif], cursor: "cursor_1")
+
+    let service = RecordingCircleNotificationService()
+    await service.setPages([page])
+
+    let model = CircleNotificationsModel(
+      service: service,
+      accountDID: "did:plc:alice",
+      cache: CircleNotificationCache()
+    )
+
+    NotificationCenter.default.post(
+      name: .circleAccountInvalidated,
+      object: nil,
+      userInfo: ["accountDID": "did:plc:alice"]
+    )
+
+    #expect(model.isInvalidated)
+
+    // Try load -> fails closed immediately
+    try await model.load()
+    #expect(model.notifications.isEmpty)
+    #expect(await service.listNotificationsCalls.isEmpty)
+
+    // Try refresh -> fails closed immediately
+    try await model.refresh()
+    #expect(model.notifications.isEmpty)
+    #expect(await service.refreshCount == 0)
+
+    // Try loadMore -> fails closed immediately
+    try await model.loadMore()
+    #expect(model.notifications.isEmpty)
+  }
+
   // 16. Content-free error message canary test
   @Test("CircleNotificationsSection error UI renders content-free category text and never leaks canaries")
   func errorUIRendersContentFreeCategoryTextAndNeverLeaksCanaries() {
@@ -623,5 +916,41 @@ struct CircleNotificationTests {
       #expect(!message.contains("token_abc123"))
       #expect(!message.contains("topsecretcanary"))
     }
+  }
+}
+
+fileprivate actor AsyncGate {
+  private var enteredContinuations: [CheckedContinuation<Void, Never>] = []
+  private var releaseContinuations: [CheckedContinuation<Void, Never>] = []
+  private var isEntered = false
+  private var isReleased = false
+
+  func enter() async {
+    isEntered = true
+    for continuation in enteredContinuations {
+      continuation.resume()
+    }
+    enteredContinuations.removeAll()
+
+    if !isReleased {
+      await withCheckedContinuation { continuation in
+        releaseContinuations.append(continuation)
+      }
+    }
+  }
+
+  func awaitEntry() async {
+    if isEntered { return }
+    await withCheckedContinuation { continuation in
+      enteredContinuations.append(continuation)
+    }
+  }
+
+  func release() {
+    isReleased = true
+    for continuation in releaseContinuations {
+      continuation.resume()
+    }
+    releaseContinuations.removeAll()
   }
 }

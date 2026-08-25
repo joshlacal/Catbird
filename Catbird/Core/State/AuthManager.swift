@@ -270,26 +270,22 @@ final class AuthenticationManager: AuthProgressDelegate {
     // This prevents the "death spiral" where dozens of parallel network requests all
     // fail and each tries to trigger logout simultaneously.
     if isHandlingAuthExpiration {
-      logger.warning(
-        "Already handling auth expiration, skipping duplicate trigger (reason: \(reason ?? "nil"))")
+      logger.warning("AUTH_AUTO_LOGOUT_DUPLICATE_TRIGGER")
       return
     }
 
-    logger.error("Auto logout from Petrel: did=\(did ?? "nil") reason=\(reason ?? "nil")")
+    logger.error("AUTH_AUTO_LOGOUT_TRIGGERED")
 
     // Mark that we're handling an expiration to block further triggers
     isHandlingAuthExpiration = true
 
     if let did {
       expiredAccountInfo = makeExpiredAccountInfo(for: did)
-      logger.info(
-        "Stored expired account info for automatic re-authentication: \(self.expiredAccountInfo?.loginHandle ?? did)")
+      logger.info("AUTH_AUTO_LOGOUT_EXPIRED_ACCOUNT_STORED")
     }
 
-    Task {
-      if case .authenticated(let appState) = AppStateManager.shared.lifecycle {
-        await appState.notificationManager.cleanupNotifications(previousClient: client)
-      }
+    if case .authenticated(let appState) = AppStateManager.shared.lifecycle {
+      await appState.notificationManager.cleanupNotifications(previousClient: client)
     }
 
     // Clear handle if this was the active account (check before state change)
@@ -300,8 +296,21 @@ final class AuthenticationManager: AuthProgressDelegate {
         false
       }
 
-    updateState(.unauthenticated)
+    let departingDID = did ?? state.userDID
+    if let departingDID {
+      NotificationCenter.default.post(
+        name: .circleAccountInvalidated,
+        object: nil,
+        userInfo: ["accountDID": departingDID]
+      )
+    }
 
+    updateState(.unauthenticated)
+    if let departingDID {
+      await CircleFeedCache.shared.purge(accountDID: departingDID)
+      await CircleMediaLoader.shared.purge(accountDID: departingDID)
+      await CircleNotificationCache.shared.purge(accountDID: departingDID)
+    }
     client = nil
 
     if wasActiveAccount {
@@ -321,15 +330,14 @@ final class AuthenticationManager: AuthProgressDelegate {
         case "invalid_token":
           return "Your session token is no longer valid. Please sign in again."
         default:
-          return reason.map { "Signed out: \($0). Please sign in again." }
-            ?? "You were signed out. Please sign in again."
+          return "You were signed out. Please sign in again."
         }
       }()
       pendingAuthAlert = AuthAlert(title: "Signed Out", message: reasonText)
     } else {
       // Clear any existing alert so it doesn't block the sheet
       pendingAuthAlert = nil
-      logger.info("Skipping alert - expiredAccountInfo is set, will auto-trigger re-auth flow")
+      logger.info("AUTH_AUTO_LOGOUT_SKIP_ALERT_REAUTH")
     }
   }
 
@@ -1204,6 +1212,13 @@ final class AuthenticationManager: AuthProgressDelegate {
     isAuthenticationCancelled = false
     updateState(.unauthenticated)
 
+    if let departingDID {
+      NotificationCenter.default.post(
+        name: .circleAccountInvalidated,
+        object: nil,
+        userInfo: ["accountDID": departingDID]
+      )
+    }
     // Cleanup notifications before logging out
     Task {
       if case .authenticated(let appState) = AppStateManager.shared.lifecycle {
@@ -1439,8 +1454,13 @@ final class AuthenticationManager: AuthProgressDelegate {
   func removeAccount(did: String) async {
     logger.info("Removing account completely: \(did)")
 
-    removeStoredHandle(for: did)
+    NotificationCenter.default.post(
+      name: .circleAccountInvalidated,
+      object: nil,
+      userInfo: ["accountDID": did]
+    )
 
+    removeStoredHandle(for: did)
     if let client = client {
       do {
         try await client.removeAccount(did: did)
@@ -1781,6 +1801,11 @@ final class AuthenticationManager: AuthProgressDelegate {
     // Purge memory-only Circle caches for the previous account so the target
     // account never reuses the prior account's permissioned responses.
     if let previousDID = state.userDID, previousDID != targetDID {
+      NotificationCenter.default.post(
+        name: .circleAccountInvalidated,
+        object: nil,
+        userInfo: ["accountDID": previousDID]
+      )
       await CircleFeedCache.shared.purge(accountDID: previousDID)
       await CircleMediaLoader.shared.purge(accountDID: previousDID)
       await CircleNotificationCache.shared.purge(accountDID: previousDID)

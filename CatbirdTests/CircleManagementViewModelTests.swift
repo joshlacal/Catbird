@@ -334,8 +334,10 @@ struct CircleManagementViewModelTests {
   }
 
   @Test func mutingCircleImmediatelyRemovesSpaceFromActiveUnifiedFeedWhilePreservingDirectDetail() async throws {
-    await CircleFeedCache.shared.purge(accountDID: "did:plc:alice")
-    await CircleFeedCache.shared.purge(accountDID: "did:plc:bob")
+    let aliceDID = "did:plc:alice_mute_test"
+    let bobDID = "did:plc:bob_mute_test"
+    await CircleFeedCache.shared.purge(accountDID: aliceDID)
+    await CircleFeedCache.shared.purge(accountDID: bobDID)
     let transport = ManagementRecordingCircleTransport()
     let service = CircleService(transport: transport)
 
@@ -346,22 +348,22 @@ struct CircleManagementViewModelTests {
     await transport.setMockFeedItems([familyItem, workItem])
 
     // Active loaded unified feed model for Alice
-    let aliceUnified = CircleFeedModel(service: service, space: nil, accountDID: "did:plc:alice")
+    let aliceUnified = CircleFeedModel(service: service, space: nil, accountDID: aliceDID)
     try await aliceUnified.load()
     #expect(aliceUnified.items.count == 2)
 
     // Active loaded direct detail feed model for Alice
-    let aliceDetail = CircleFeedModel(service: service, space: familyCircle.uri, accountDID: "did:plc:alice")
+    let aliceDetail = CircleFeedModel(service: service, space: familyCircle.uri, accountDID: aliceDID)
     try await aliceDetail.load()
     #expect(aliceDetail.items.count == 1)
 
     // Active loaded unified feed model for Bob (different account)
-    let bobUnified = CircleFeedModel(service: service, space: nil, accountDID: "did:plc:bob")
+    let bobUnified = CircleFeedModel(service: service, space: nil, accountDID: bobDID)
     try await bobUnified.load()
     #expect(bobUnified.items.count == 2)
 
     // Alice mutes Family Circle
-    let managementVM = CircleManagementViewModel(circle: familyCircle, service: service, userDID: "did:plc:alice")
+    let managementVM = CircleManagementViewModel(circle: familyCircle, service: service, userDID: aliceDID)
     try await managementVM.setMuted(true)
 
     // Alice's active unified feed immediately has Family removed (only Work remains)
@@ -375,7 +377,7 @@ struct CircleManagementViewModelTests {
     #expect(bobUnified.items.count == 2)
 
     // Memory cache for Alice's unified feed is purged of Family Space
-    let cachedPage = await CircleFeedCache.shared.page(accountDID: "did:plc:alice", space: nil)
+    let cachedPage = await CircleFeedCache.shared.page(accountDID: aliceDID, space: nil)
     #expect(cachedPage?.items.count == 1)
     #expect(cachedPage?.items.first?.circle.uri == workCircle.uri)
   }
@@ -534,6 +536,10 @@ struct CircleManagementViewModelTests {
 
     let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
     let appState = AppState(userDID: ownerDID.didString(), client: client)
+    let previousLifecycle = AppStateManager.shared.lifecycle
+    AppStateManager.shared.setLifecycleForTesting(.authenticated(appState))
+    defer { AppStateManager.shared.setLifecycleForTesting(previousLifecycle) }
+
     let transport = ManagementRecordingCircleTransport()
     appState.circleService = CircleService(transport: transport)
 

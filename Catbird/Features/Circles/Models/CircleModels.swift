@@ -379,4 +379,9 @@ public extension Notification.Name {
   /// Posted when a Circle Space is deleted and confirmed `.complete` by the server.
   /// `userInfo` contains `accountDID` (String) and `spaceURI` (String).
   static let circleDeleted = Notification.Name("CircleDeleted")
+
+  /// Posted when an account is logged out, switched away from, or removed.
+  /// Synchronously invalidates loaded Circle models for the departing DID and increments their generation.
+  /// `userInfo` contains `accountDID` (String).
+  static let circleAccountInvalidated = Notification.Name("CircleAccountInvalidated")
 }

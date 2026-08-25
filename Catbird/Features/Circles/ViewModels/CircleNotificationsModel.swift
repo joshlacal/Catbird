@@ -20,22 +20,28 @@ final class CircleNotificationsModel {
   private(set) var isLoading: Bool = false
   private(set) var isRefreshing: Bool = false
   private(set) var error: CircleError?
-
+  private(set) var isInvalidated: Bool = false
   let service: any CircleNotificationServiceProtocol
   let accountDID: String
   private let cache: CircleNotificationCache
+  private let activeDIDProvider: (@MainActor () -> String?)?
   private var currentGeneration: Int = 0
+  @ObservationIgnored private var muteObserver: NSObjectProtocol?
+  @ObservationIgnored private var deleteObserver: NSObjectProtocol?
+  @ObservationIgnored private var accountInvalidatedObserver: NSObjectProtocol?
 
   init(
     service: any CircleNotificationServiceProtocol,
     accountDID: String = "",
-    cache: CircleNotificationCache = .shared
+    cache: CircleNotificationCache = .shared,
+    activeDIDProvider: (@MainActor () -> String?)? = nil
   ) {
     self.service = service
     self.accountDID = accountDID
     self.cache = cache
+    self.activeDIDProvider = activeDIDProvider
 
-    NotificationCenter.default.addObserver(
+    self.muteObserver = NotificationCenter.default.addObserver(
       forName: .circleMuteStateChanged,
       object: nil,
       queue: nil
@@ -52,7 +58,7 @@ final class CircleNotificationsModel {
       self.handleMuteStateChangedSync(space: space)
     }
 
-    NotificationCenter.default.addObserver(
+    self.deleteObserver = NotificationCenter.default.addObserver(
       forName: .circleDeleted,
       object: nil,
       queue: nil
@@ -68,11 +74,46 @@ final class CircleNotificationsModel {
       }
       self.handleCircleDeletedSync(space: space)
     }
+
+    self.accountInvalidatedObserver = NotificationCenter.default.addObserver(
+      forName: .circleAccountInvalidated,
+      object: nil,
+      queue: nil
+    ) { [weak self] notification in
+      guard let self else { return }
+      let targetAccountDID = notification.userInfo?["accountDID"] as? String ?? ""
+      guard targetAccountDID.isEmpty || targetAccountDID == self.accountDID else {
+        return
+      }
+      self.handleAccountInvalidatedSync()
+    }
+  }
+
+  deinit {
+    if let muteObserver {
+      NotificationCenter.default.removeObserver(muteObserver)
+    }
+    if let deleteObserver {
+      NotificationCenter.default.removeObserver(deleteObserver)
+    }
+    if let accountInvalidatedObserver {
+      NotificationCenter.default.removeObserver(accountInvalidatedObserver)
+    }
+  }
+
+  private func resolveActiveDID(override: (@MainActor () -> String?)?) -> String? {
+    if let override {
+      return override()
+    }
+    if let provider = activeDIDProvider {
+      return provider()
+    }
+    return accountDID
   }
 
   /// Initial load or cache restore.
-  func load(activeAccountCheck: (@Sendable () -> String?)? = nil) async throws {
-    guard !isLoading else { return }
+  func load(activeAccountCheck: (@MainActor () -> String?)? = nil) async throws {
+    guard !isInvalidated, !isLoading else { return }
     isLoading = true
     defer { isLoading = false }
 
@@ -81,11 +122,10 @@ final class CircleNotificationsModel {
 
     // Restore from memory cache first if empty
     if notifications.isEmpty, let cached = await cache.page(accountDID: accountDID) {
-      guard requestGeneration == self.currentGeneration,
-            requestAccountDID == self.accountDID else {
-        return
-      }
-      if let check = activeAccountCheck, let currentDID = check(), currentDID != requestAccountDID {
+      guard !self.isInvalidated,
+            requestGeneration == self.currentGeneration,
+            let activeDID = resolveActiveDID(override: activeAccountCheck),
+            activeDID == requestAccountDID else {
         return
       }
       self.notifications = cached.notifications.filter { !($0.circle.muted ?? false) }
@@ -95,11 +135,10 @@ final class CircleNotificationsModel {
     do {
       let page = try await service.listNotifications(cursor: nil)
 
-      guard requestGeneration == self.currentGeneration,
-            requestAccountDID == self.accountDID else {
-        return
-      }
-      if let check = activeAccountCheck, let currentDID = check(), currentDID != requestAccountDID {
+      guard !self.isInvalidated,
+            requestGeneration == self.currentGeneration,
+            let activeDID = resolveActiveDID(override: activeAccountCheck),
+            activeDID == requestAccountDID else {
         return
       }
 
@@ -110,11 +149,10 @@ final class CircleNotificationsModel {
       let storedPage = CircleNotificationPage(notifications: self.notifications, cursor: self.cursor)
       await cache.store(storedPage, accountDID: accountDID)
     } catch {
-      guard requestGeneration == self.currentGeneration,
-            requestAccountDID == self.accountDID else {
-        return
-      }
-      if let check = activeAccountCheck, let currentDID = check(), currentDID != requestAccountDID {
+      guard !self.isInvalidated,
+            requestGeneration == self.currentGeneration,
+            let activeDID = resolveActiveDID(override: activeAccountCheck),
+            activeDID == requestAccountDID else {
         return
       }
       let typedError = circleError(from: error)
@@ -124,8 +162,8 @@ final class CircleNotificationsModel {
   }
 
   /// Pull-to-refresh or push-triggered refresh.
-  func refresh(activeAccountCheck: (@Sendable () -> String?)? = nil) async throws {
-    guard !isRefreshing else { return }
+  func refresh(activeAccountCheck: (@MainActor () -> String?)? = nil) async throws {
+    guard !isInvalidated, !isRefreshing else { return }
     isRefreshing = true
     defer { isRefreshing = false }
 
@@ -135,11 +173,10 @@ final class CircleNotificationsModel {
     do {
       let page = try await service.refresh()
 
-      guard requestGeneration == self.currentGeneration,
-            requestAccountDID == self.accountDID else {
-        return
-      }
-      if let check = activeAccountCheck, let currentDID = check(), currentDID != requestAccountDID {
+      guard !self.isInvalidated,
+            requestGeneration == self.currentGeneration,
+            let activeDID = resolveActiveDID(override: activeAccountCheck),
+            activeDID == requestAccountDID else {
         return
       }
 
@@ -150,11 +187,10 @@ final class CircleNotificationsModel {
       let storedPage = CircleNotificationPage(notifications: self.notifications, cursor: self.cursor)
       await cache.store(storedPage, accountDID: accountDID)
     } catch {
-      guard requestGeneration == self.currentGeneration,
-            requestAccountDID == self.accountDID else {
-        return
-      }
-      if let check = activeAccountCheck, let currentDID = check(), currentDID != requestAccountDID {
+      guard !self.isInvalidated,
+            requestGeneration == self.currentGeneration,
+            let activeDID = resolveActiveDID(override: activeAccountCheck),
+            activeDID == requestAccountDID else {
         return
       }
       let typedError = circleError(from: error)
@@ -164,8 +200,8 @@ final class CircleNotificationsModel {
   }
 
   /// Paging load for infinite scroll.
-  func loadMore(activeAccountCheck: (@Sendable () -> String?)? = nil) async throws {
-    guard let currentCursor = cursor, !currentCursor.isEmpty, !isLoading else { return }
+  func loadMore(activeAccountCheck: (@MainActor () -> String?)? = nil) async throws {
+    guard !isInvalidated, let currentCursor = cursor, !currentCursor.isEmpty, !isLoading else { return }
     isLoading = true
     defer { isLoading = false }
 
@@ -175,11 +211,10 @@ final class CircleNotificationsModel {
     do {
       let nextPage = try await service.listNotifications(cursor: currentCursor)
 
-      guard requestGeneration == self.currentGeneration,
-            requestAccountDID == self.accountDID else {
-        return
-      }
-      if let check = activeAccountCheck, let currentDID = check(), currentDID != requestAccountDID {
+      guard !self.isInvalidated,
+            requestGeneration == self.currentGeneration,
+            let activeDID = resolveActiveDID(override: activeAccountCheck),
+            activeDID == requestAccountDID else {
         return
       }
 
@@ -194,11 +229,10 @@ final class CircleNotificationsModel {
       let updatedPage = CircleNotificationPage(notifications: self.notifications, cursor: self.cursor)
       await cache.store(updatedPage, accountDID: accountDID)
     } catch {
-      guard requestGeneration == self.currentGeneration,
-            requestAccountDID == self.accountDID else {
-        return
-      }
-      if let check = activeAccountCheck, let currentDID = check(), currentDID != requestAccountDID {
+      guard !self.isInvalidated,
+            requestGeneration == self.currentGeneration,
+            let activeDID = resolveActiveDID(override: activeAccountCheck),
+            activeDID == requestAccountDID else {
         return
       }
       let typedError = circleError(from: error)
@@ -209,6 +243,7 @@ final class CircleNotificationsModel {
 
   /// Purge notifications for a specific Space (membership removal or Space deletion).
   func purge(space: SpaceRef) async {
+    guard !isInvalidated else { return }
     currentGeneration += 1
     notifications.removeAll(where: { $0.circle.uri == space })
     cursor = nil
@@ -218,6 +253,7 @@ final class CircleNotificationsModel {
 
   /// Purge notifications for the active account (logout or account removal).
   func purgeAccount() async {
+    guard !isInvalidated else { return }
     currentGeneration += 1
     notifications.removeAll()
     cursor = nil
@@ -227,6 +263,7 @@ final class CircleNotificationsModel {
 
   /// Purges in-memory cached notifications for a muted Circle Space.
   func purgeMutedCircle(_ space: SpaceRef) async {
+    guard !isInvalidated else { return }
     currentGeneration += 1
     notifications.removeAll(where: { $0.circle.uri.uriString() == space.uriString() })
     await cache.purgeMutedSpace(accountDID: accountDID, space: space)
@@ -248,5 +285,14 @@ final class CircleNotificationsModel {
     Task { [accountDID, cache] in
       await cache.purge(accountDID: accountDID, space: space)
     }
+  }
+
+  /// Synchronous purge for `.circleAccountInvalidated` lifecycle notification.
+  private func handleAccountInvalidatedSync() {
+    isInvalidated = true
+    currentGeneration += 1
+    notifications.removeAll()
+    cursor = nil
+    error = nil
   }
 }

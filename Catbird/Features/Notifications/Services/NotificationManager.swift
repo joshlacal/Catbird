@@ -4009,7 +4009,7 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
   func handlePush(
     _ userInfo: [AnyHashable: Any],
     circleNotificationsModel: CircleNotificationsModel? = nil,
-    activeAccountCheck: (@Sendable () -> String?)? = nil
+    activeAccountCheck: (@MainActor () -> String?)? = nil
   ) async {
     guard let kind = userInfo["kind"] as? String, kind == "circle_activity" else {
       return
@@ -4017,9 +4017,26 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
 
     notificationLogger.info("Processing generic circle_activity push")
 
-    let activeAccountDID = circleNotificationsModel?.accountDID ?? appState?.userDID ?? ""
-    guard !activeAccountDID.isEmpty else {
-      notificationLogger.debug("Skipping generic circle push: no active account")
+    let targetDID = circleNotificationsModel?.accountDID ?? appState?.userDID ?? ""
+    guard !targetDID.isEmpty else {
+      notificationLogger.debug("Skipping generic circle push: no target account")
+      return
+    }
+
+    if circleNotificationsModel == nil && appState == nil {
+      notificationLogger.debug("Skipping generic circle push: appState is nil")
+      return
+    }
+
+    let dispatchActiveDID: String? = {
+      if let customCheck = activeAccountCheck {
+        return customCheck()
+      }
+      return AppStateManager.shared.lifecycle.userDID
+    }()
+
+    guard let dispatchActiveDID, dispatchActiveDID == targetDID else {
+      notificationLogger.debug("Skipping generic circle push: target account is not active in lifecycle")
       return
     }
 
@@ -4028,13 +4045,24 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
       return
     }
 
-    let targetDID = activeAccountDID
+    guard !targetModel.isInvalidated else {
+      notificationLogger.debug("Skipping generic circle push: target model is invalidated")
+      return
+    }
+
     do {
       try await targetModel.refresh(activeAccountCheck: { [weak appState] in
         if let customCheck = activeAccountCheck {
           return customCheck()
         }
-        return appState?.userDID ?? targetDID
+        if circleNotificationsModel == nil {
+          guard appState != nil else { return nil }
+        }
+        guard let currentLifecycleDID = AppStateManager.shared.lifecycle.userDID,
+              currentLifecycleDID == targetDID else {
+          return nil
+        }
+        return currentLifecycleDID
       })
     } catch {
       // Handle errors explicitly without private identifiers

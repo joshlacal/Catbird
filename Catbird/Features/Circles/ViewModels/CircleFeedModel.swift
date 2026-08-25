@@ -22,25 +22,32 @@ final class CircleFeedModel {
   private(set) var accessState: CircleAccessState = .active
   private(set) var isLoading: Bool = false
   private(set) var error: CircleError?
-
+  private(set) var isInvalidated: Bool = false
   let service: CircleService
   let space: SpaceRef?
   let accountDID: String
   private let cache: CircleFeedCache
+  private let activeDIDProvider: (@MainActor () -> String?)?
   private var currentGeneration: Int = 0
+  @ObservationIgnored private var muteObserver: NSObjectProtocol?
+  @ObservationIgnored private var deleteObserver: NSObjectProtocol?
+  @ObservationIgnored private var accountInvalidatedObserver: NSObjectProtocol?
+
   init(
     service: CircleService,
     space: SpaceRef? = nil,
     accountDID: String = "",
-    cache: CircleFeedCache = .shared
+    cache: CircleFeedCache = .shared,
+    activeDIDProvider: (@MainActor () -> String?)? = nil
   ) {
     self.service = service
     self.space = space
     self.accountDID = accountDID
     self.cache = cache
+    self.activeDIDProvider = activeDIDProvider
 
     if space == nil {
-      NotificationCenter.default.addObserver(
+      self.muteObserver = NotificationCenter.default.addObserver(
         forName: .circleMuteStateChanged,
         object: nil,
         queue: nil
@@ -58,7 +65,7 @@ final class CircleFeedModel {
       }
     }
 
-    NotificationCenter.default.addObserver(
+    self.deleteObserver = NotificationCenter.default.addObserver(
       forName: .circleDeleted,
       object: nil,
       queue: nil
@@ -74,11 +81,46 @@ final class CircleFeedModel {
       }
       self.handleCircleDeletedSync(space: deletedSpace)
     }
+
+    self.accountInvalidatedObserver = NotificationCenter.default.addObserver(
+      forName: .circleAccountInvalidated,
+      object: nil,
+      queue: nil
+    ) { [weak self] notification in
+      guard let self else { return }
+      let targetAccountDID = notification.userInfo?["accountDID"] as? String ?? ""
+      guard targetAccountDID.isEmpty || targetAccountDID == self.accountDID else {
+        return
+      }
+      self.handleAccountInvalidatedSync()
+    }
+  }
+
+  deinit {
+    if let muteObserver {
+      NotificationCenter.default.removeObserver(muteObserver)
+    }
+    if let deleteObserver {
+      NotificationCenter.default.removeObserver(deleteObserver)
+    }
+    if let accountInvalidatedObserver {
+      NotificationCenter.default.removeObserver(accountInvalidatedObserver)
+    }
+  }
+
+  private func resolveActiveDID(override: (@MainActor () -> String?)? = nil) -> String? {
+    if let override {
+      return override()
+    }
+    if let provider = activeDIDProvider {
+      return provider()
+    }
+    return accountDID
   }
 
   /// Initial load or pull-to-refresh. Restores memory cache if items are empty.
-  func load() async throws {
-    guard !isLoading else { return }
+  func load(activeAccountCheck: (@MainActor () -> String?)? = nil) async throws {
+    guard !isInvalidated, !isLoading else { return }
     isLoading = true
     defer { isLoading = false }
 
@@ -87,8 +129,10 @@ final class CircleFeedModel {
     let requestSpace = space
     // Restore from memory cache first if empty
     if items.isEmpty, let cachedPage = await cache.page(accountDID: accountDID, space: space) {
-      guard requestGeneration == self.currentGeneration,
-            requestAccountDID == self.accountDID,
+      guard !self.isInvalidated,
+            requestGeneration == self.currentGeneration,
+            let activeDID = resolveActiveDID(override: activeAccountCheck),
+            activeDID == requestAccountDID,
             requestSpace == self.space else {
         return
       }
@@ -103,8 +147,10 @@ final class CircleFeedModel {
     do {
       let page = try await service.getFeed(space: space, cursor: nil)
 
-      guard requestGeneration == self.currentGeneration,
-            requestAccountDID == self.accountDID,
+      guard !self.isInvalidated,
+            requestGeneration == self.currentGeneration,
+            let activeDID = resolveActiveDID(override: activeAccountCheck),
+            activeDID == requestAccountDID,
             requestSpace == self.space else {
         return
       }
@@ -120,8 +166,10 @@ final class CircleFeedModel {
       let storedPage = CircleFeedPage(items: self.items, cursor: self.cursor)
       await cache.store(storedPage, accountDID: accountDID, space: space)
     } catch {
-      guard requestGeneration == self.currentGeneration,
-            requestAccountDID == self.accountDID,
+      guard !self.isInvalidated,
+            requestGeneration == self.currentGeneration,
+            let activeDID = resolveActiveDID(override: activeAccountCheck),
+            activeDID == requestAccountDID,
             requestSpace == self.space else {
         return
       }
@@ -145,8 +193,8 @@ final class CircleFeedModel {
   }
 
   /// Paging load for infinite scroll.
-  func loadMore() async throws {
-    guard let currentCursor = cursor, !currentCursor.isEmpty, !isLoading else { return }
+  func loadMore(activeAccountCheck: (@MainActor () -> String?)? = nil) async throws {
+    guard !isInvalidated, let currentCursor = cursor, !currentCursor.isEmpty, !isLoading else { return }
     isLoading = true
     defer { isLoading = false }
     let requestGeneration = currentGeneration
@@ -155,8 +203,10 @@ final class CircleFeedModel {
 
     do {
       let nextPage = try await service.getFeed(space: space, cursor: currentCursor)
-      guard requestGeneration == self.currentGeneration,
-            requestAccountDID == self.accountDID,
+      guard !self.isInvalidated,
+            requestGeneration == self.currentGeneration,
+            let activeDID = resolveActiveDID(override: activeAccountCheck),
+            activeDID == requestAccountDID,
             requestSpace == self.space else {
         return
       }
@@ -175,8 +225,10 @@ final class CircleFeedModel {
       let updatedPage = CircleFeedPage(items: self.items, cursor: self.cursor)
       await cache.store(updatedPage, accountDID: accountDID, space: space)
     } catch {
-      guard requestGeneration == self.currentGeneration,
-            requestAccountDID == self.accountDID,
+      guard !self.isInvalidated,
+            requestGeneration == self.currentGeneration,
+            let activeDID = resolveActiveDID(override: activeAccountCheck),
+            activeDID == requestAccountDID,
             requestSpace == self.space else {
         return
       }
@@ -197,9 +249,9 @@ final class CircleFeedModel {
       throw typedError
     }
   }
-
   /// Purges in-memory cached posts and images for an unavailable Space.
   func purgeUnavailableSpace(_ space: SpaceRef) async {
+    guard !isInvalidated else { return }
     currentGeneration += 1
     items.removeAll(where: { $0.circle.uri == space })
     await cache.purge(accountDID: accountDID, space: space)
@@ -212,6 +264,7 @@ final class CircleFeedModel {
 
   /// Purges in-memory cached posts for a muted Circle Space from unified feed.
   func purgeMutedCircle(_ space: SpaceRef) {
+    guard !isInvalidated else { return }
     if self.space == nil {
       currentGeneration += 1
       items.removeAll(where: { $0.circle.uri.uriString() == space.uriString() })
@@ -237,5 +290,14 @@ final class CircleFeedModel {
         await cache.purge(accountDID: accountDID, space: deletedSpace)
       }
     }
+  }
+
+  /// Synchronous purge for `.circleAccountInvalidated` lifecycle notification.
+  private func handleAccountInvalidatedSync() {
+    isInvalidated = true
+    currentGeneration += 1
+    items.removeAll()
+    cursor = nil
+    error = nil
   }
 }

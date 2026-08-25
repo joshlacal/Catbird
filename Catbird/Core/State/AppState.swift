@@ -766,7 +766,9 @@ final class AppState {
         mlsConversationManagerStorage = nil
         mlsWebSocketManagerStorage = nil
         mlsAPIClientStorage = nil
-
+        _circleNotificationsModel = nil
+        _circleNotificationService = nil
+        _circleService = nil
         // Perform async cleanup in background task
         Task {
             // Stop all WebSocket subscriptions FIRST and WAIT for completion
@@ -1324,12 +1326,13 @@ final class AppState {
     @MainActor
     var circleNotificationsModel: CircleNotificationsModel {
         get {
-            if let _circleNotificationsModel {
-                return _circleNotificationsModel
+            if let model = _circleNotificationsModel, !model.isInvalidated {
+                return model
             }
             let model = CircleNotificationsModel(
                 service: circleNotificationService,
-                accountDID: userDID
+                accountDID: userDID,
+                activeDIDProvider: { AppStateManager.shared.lifecycle.userDID }
             )
             _circleNotificationsModel = model
             return model
@@ -1346,17 +1349,15 @@ final class AppState {
         let targetDID = self.userDID
         do {
             let caps = try await circleService.capabilities()
-            if let activeDID = AppStateManager.shared.lifecycle.userDID {
-                guard activeDID == targetDID else {
-                    logger.info("Circle capability probe discarded for inactive account: \(targetDID)")
-                    return
-                }
+            guard let activeDID = AppStateManager.shared.lifecycle.userDID, activeDID == targetDID else {
+                logger.info("Circle capability probe discarded for inactive account: \(targetDID)")
+                return
             }
             CircleFeatureFlags.serverCapability(enabled: caps.enabled)
             logger.info("Circle capability probe succeeded for \(targetDID): enabled=\(caps.enabled)")
         } catch {
-            if let activeDID = AppStateManager.shared.lifecycle.userDID {
-                guard activeDID == targetDID else { return }
+            guard let activeDID = AppStateManager.shared.lifecycle.userDID, activeDID == targetDID else {
+                return
             }
             CircleFeatureFlags.serverCapability(enabled: false)
             logger.debug("Circle capability probe failed for \(targetDID): \(error.localizedDescription)")

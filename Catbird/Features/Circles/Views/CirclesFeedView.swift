@@ -62,7 +62,8 @@ struct CirclesFeedView: View {
       if model == nil {
         let newModel = CircleFeedModel(
           service: appState.circleService,
-          accountDID: appState.userDID ?? ""
+          accountDID: appState.userDID ?? "",
+          activeDIDProvider: { AppStateManager.shared.lifecycle.userDID }
         )
         self.model = newModel
         do {

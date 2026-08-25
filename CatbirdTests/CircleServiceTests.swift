@@ -136,9 +136,9 @@ struct CircleServiceTests {
 
     let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
     let appState = AppState(userDID: "did:plc:alice", client: client)
+    let previousLifecycle = AppStateManager.shared.lifecycle
     AppStateManager.shared.setLifecycleForTesting(.authenticated(appState))
-    defer { AppStateManager.shared.setLifecycleForTesting(.unauthenticated) }
-
+    defer { AppStateManager.shared.setLifecycleForTesting(previousLifecycle) }
     let transport = RecordingCircleTransport()
     appState.circleService = CircleService(transport: transport)
 
@@ -154,9 +154,9 @@ struct CircleServiceTests {
 
     let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
     let appState = AppState(userDID: "did:plc:alice", client: client)
+    let previousLifecycle = AppStateManager.shared.lifecycle
     AppStateManager.shared.setLifecycleForTesting(.authenticated(appState))
-    defer { AppStateManager.shared.setLifecycleForTesting(.unauthenticated) }
-
+    defer { AppStateManager.shared.setLifecycleForTesting(previousLifecycle) }
     let transport = RecordingCircleTransport(error: CircleError.unsupportedPDS)
     appState.circleService = CircleService(transport: transport)
 
@@ -176,9 +176,9 @@ struct CircleServiceTests {
 
     // If active account in lifecycle is different, the result must be discarded
     let activeAppState = AppState(userDID: "did:plc:active_account", client: client)
+    let previousLifecycle = AppStateManager.shared.lifecycle
     AppStateManager.shared.setLifecycleForTesting(.authenticated(activeAppState))
-    defer { AppStateManager.shared.setLifecycleForTesting(.unauthenticated) }
-
+    defer { AppStateManager.shared.setLifecycleForTesting(previousLifecycle) }
     await staleAppState.probeCircleCapabilities()
     #expect(!CircleFeatureFlags.isEnabled)
   }

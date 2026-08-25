@@ -61,7 +61,8 @@ struct CircleDetailView: View {
         let newModel = CircleFeedModel(
           service: appState.circleService,
           space: circle.uri,
-          accountDID: appState.userDID ?? ""
+          accountDID: appState.userDID ?? "",
+          activeDIDProvider: { AppStateManager.shared.lifecycle.userDID }
         )
         self.model = newModel
         do {

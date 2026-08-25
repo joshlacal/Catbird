@@ -270,9 +270,9 @@ struct CircleFeedModelTests {
     let model = CircleFeedModel(
       service: service,
       space: CircleTestFixtures.familyURI,
-      accountDID: "did:plc:alice"
+      accountDID: "did:plc:alice",
+      cache: CircleFeedCache()
     )
-
     try await model.load()
 
     #expect(model.items.count == 1)
@@ -383,7 +383,7 @@ struct CircleFeedModelTests {
     let service = CircleService(transport: transport)
     let model = CircleFeedModel(
       service: service,
-      accountDID: "did:plc:alice",
+      accountDID: "did:plc:alice_purge_unavailable",
       cache: cache
     )
 
@@ -833,5 +833,204 @@ struct CircleFeedModelTests {
 
     // In-flight response was discarded due to generation increment on mute; items remain empty (or clean)
     #expect(!model.items.contains(where: { $0.circle.uri == familyCircle.uri }))
+  }
+
+  @Test("Barrier test: in-flight cache restore overlapped with account invalidation discards old cache and retains sibling")
+  func inFlightCacheRestoreOverlappedWithAccountInvalidationDiscardsOldCacheAndRetainsSibling() async throws {
+    let familyCircle = CircleTestFixtures.family
+    let itemFamily = makeFeedItem(circle: familyCircle, rkey: "post_family", text: "Family post")
+    let itemBob = makeFeedItem(circle: familyCircle, rkey: "post_bob", text: "Bob post")
+
+    let cache = CircleFeedCache()
+    await cache.store(CircleFeedPage(items: [itemFamily], cursor: "cursor_alice"), accountDID: "did:plc:alice", space: familyCircle.uri)
+    await cache.store(CircleFeedPage(items: [itemBob], cursor: "cursor_bob"), accountDID: "did:plc:bob", space: familyCircle.uri)
+
+    let transport = MockCircleTransport(feedItems: [])
+    let service = CircleService(transport: transport)
+
+    let model = CircleFeedModel(
+      service: service,
+      space: familyCircle.uri,
+      accountDID: "did:plc:alice",
+      cache: cache,
+      activeDIDProvider: { "did:plc:alice" }
+    )
+
+    let gate = AsyncGate()
+    await cache.setOnPageFetch {
+      await cache.setOnPageFetch(nil)
+      await gate.enter()
+    }
+    let loadTask = Task { @MainActor in
+      try await model.load()
+    }
+
+    await gate.awaitEntry()
+
+    // Production lifecycle invalidation & cache purge
+    NotificationCenter.default.post(
+      name: .circleAccountInvalidated,
+      object: nil,
+      userInfo: ["accountDID": "did:plc:alice"]
+    )
+    await cache.purge(accountDID: "did:plc:alice")
+
+    // Assert departing cache removed
+    #expect(await cache.page(accountDID: "did:plc:alice", space: familyCircle.uri) == nil)
+
+    // Release gate allowing the cache read to complete
+    await gate.release()
+    _ = try? await loadTask.value
+
+    // Model items must be empty and model marked permanently invalidated
+    #expect(model.items.isEmpty)
+    #expect(model.cursor == nil)
+    #expect(model.isInvalidated)
+    #expect(await cache.page(accountDID: "did:plc:alice", space: familyCircle.uri) == nil)
+
+    // Sibling account (Bob) state must remain in cache
+    let bobCached = await cache.page(accountDID: "did:plc:bob", space: familyCircle.uri)
+    #expect(bobCached != nil)
+    #expect(bobCached?.items.count == 1)
+    #expect(bobCached?.items.first?.post.post.uri == itemBob.post.post.uri)
+  }
+
+  @Test("Barrier test: in-flight feed network refresh overlapped with account switch discards old response and retains sibling")
+  func inFlightFeedNetworkRefreshOverlappedWithAccountSwitchDiscardsOldResponseAndRetainsSibling() async throws {
+    let familyCircle = CircleTestFixtures.family
+    let itemAlice = makeFeedItem(circle: familyCircle, rkey: "post_alice", text: "Alice post")
+    let itemBob = makeFeedItem(circle: familyCircle, rkey: "post_bob", text: "Bob post")
+
+    let cache = CircleFeedCache()
+    await cache.store(CircleFeedPage(items: [itemBob], cursor: "cursor_bob"), accountDID: "did:plc:bob", space: familyCircle.uri)
+
+    let transport = MockCircleTransport(feedItems: [itemAlice])
+    let service = CircleService(transport: transport)
+
+    final class ActiveAccountHolder: @unchecked Sendable {
+      var did: String = "did:plc:alice"
+    }
+    let activeHolder = ActiveAccountHolder()
+
+    let model = CircleFeedModel(
+      service: service,
+      space: familyCircle.uri,
+      accountDID: "did:plc:alice",
+      cache: cache,
+      activeDIDProvider: { activeHolder.did }
+    )
+
+    let gate = AsyncGate()
+    await transport.setOnGetFeed {
+      await transport.setOnGetFeed(nil)
+      await gate.enter()
+    }
+    let loadTask = Task { @MainActor in
+      try await model.load()
+    }
+
+    await gate.awaitEntry()
+
+    // While suspended in network call, simulate account switch to Bob
+    activeHolder.did = "did:plc:bob"
+    NotificationCenter.default.post(
+      name: .circleAccountInvalidated,
+      object: nil,
+      userInfo: ["accountDID": "did:plc:alice"]
+    )
+    await cache.purge(accountDID: "did:plc:alice")
+
+    // Assert departing cache removed
+    #expect(await cache.page(accountDID: "did:plc:alice", space: familyCircle.uri) == nil)
+
+    await gate.release()
+    _ = try? await loadTask.value
+
+    // Alice's model must remain empty and invalidated
+    #expect(model.items.isEmpty)
+    #expect(model.cursor == nil)
+    #expect(model.isInvalidated)
+
+    // Alice's cache must be empty
+    let aliceCached = await cache.page(accountDID: "did:plc:alice", space: familyCircle.uri)
+    #expect(aliceCached == nil)
+
+    // Bob's cache must be retained intact
+    let bobCached = await cache.page(accountDID: "did:plc:bob", space: familyCircle.uri)
+    #expect(bobCached != nil)
+    #expect(bobCached?.items.count == 1)
+    #expect(bobCached?.items.first?.post.post.uri == itemBob.post.post.uri)
+  }
+
+  @Test("Invalidated CircleFeedModel permanently rejects all new operations")
+  func invalidatedCircleFeedModelPermanentlyRejectsOperations() async throws {
+    let familyCircle = CircleTestFixtures.family
+    let itemAlice = makeFeedItem(circle: familyCircle, rkey: "post_alice", text: "Alice post")
+    let transport = MockCircleTransport(feedItems: [itemAlice])
+    let service = CircleService(transport: transport)
+    let cache = CircleFeedCache()
+
+    let model = CircleFeedModel(
+      service: service,
+      space: familyCircle.uri,
+      accountDID: "did:plc:alice",
+      cache: cache,
+      activeDIDProvider: { "did:plc:alice" }
+    )
+
+    // Invalidate model
+    NotificationCenter.default.post(
+      name: .circleAccountInvalidated,
+      object: nil,
+      userInfo: ["accountDID": "did:plc:alice"]
+    )
+
+    #expect(model.isInvalidated)
+
+    // Try load -> fails closed immediately
+    try await model.load()
+    #expect(model.items.isEmpty)
+    #expect(await transport.feedCallCount == 0)
+
+    // Try loadMore -> fails closed immediately
+    try await model.loadMore()
+    #expect(model.items.isEmpty)
+    #expect(await transport.feedCallCount == 0)
+  }
+}
+
+fileprivate actor AsyncGate {
+  private var enteredContinuations: [CheckedContinuation<Void, Never>] = []
+  private var releaseContinuations: [CheckedContinuation<Void, Never>] = []
+  private var isEntered = false
+  private var isReleased = false
+
+  func enter() async {
+    isEntered = true
+    for continuation in enteredContinuations {
+      continuation.resume()
+    }
+    enteredContinuations.removeAll()
+
+    if !isReleased {
+      await withCheckedContinuation { continuation in
+        releaseContinuations.append(continuation)
+      }
+    }
+  }
+
+  func awaitEntry() async {
+    if isEntered { return }
+    await withCheckedContinuation { continuation in
+      enteredContinuations.append(continuation)
+    }
+  }
+
+  func release() {
+    isReleased = true
+    for continuation in releaseContinuations {
+      continuation.resume()
+    }
+    releaseContinuations.removeAll()
   }
 }
