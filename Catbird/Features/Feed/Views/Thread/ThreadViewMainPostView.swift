@@ -385,10 +385,12 @@ struct ThreadViewMainPostView: View, Equatable {
                 Label("Block User", systemImage: "exclamationmark.octagon")
             }
             
-            Button(action: {
-                Task { await contextMenuViewModel.muteThread() }
-            }) {
-                Label("Mute Thread", systemImage: "bubble.left.and.bubble.right.fill")
+            if case .public = visibilityContext {
+                Button(action: {
+                    Task { await contextMenuViewModel.muteThread() }
+                }) {
+                    Label("Mute Thread", systemImage: "bubble.left.and.bubble.right.fill")
+                }
             }
             
             // Use currentUserDid and post

@@ -524,6 +524,9 @@ final class AppStateManager {
     // Transition to unauthenticated
     lifecycle = .unauthenticated
 
+
+    // Reset Circle server capability flag on logout
+    CircleFeatureFlags.serverCapability(enabled: false)
     // Update widget account list after logout
     writeAccountsToAppGroup()
 
@@ -562,6 +565,9 @@ final class AppStateManager {
     
     let previousUserDID = lifecycle.userDID
 
+
+    // Reset Circle server capability flag during account switch
+    CircleFeatureFlags.serverCapability(enabled: false)
     // ═══════════════════════════════════════════════════════════════════════════
     // CRITICAL FIX: Signal account switch FIRST, before ANY other work
     // ═══════════════════════════════════════════════════════════════════════════

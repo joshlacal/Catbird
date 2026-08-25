@@ -33,14 +33,18 @@ final class CircleManagementViewModel {
   let userDID: String
   let isCreating: Bool
 
-  private var lastAttemptedAction: (@MainActor () async throws -> CircleOperation?)?
-
   init(circle: CircleSummary, service: CircleService, userDID: String = "") {
     self.circle = circle
     self.service = service
     self.userDID = userDID
     self.name = circle.name
     self.isCreating = false
+    let isOwner = !userDID.isEmpty && circle.owner.didString() == userDID
+    if isOwner, let circleMembers = circle.members {
+      self.members = circleMembers
+    } else {
+      self.members = []
+    }
   }
 
   init(service: CircleService, userDID: String = "") {
@@ -53,7 +57,8 @@ final class CircleManagementViewModel {
       name: "",
       owner: ownerDID,
       accessState: .value_active,
-      muted: false
+      muted: false,
+      members: nil
     )
     self.service = service
     self.userDID = userDID
@@ -67,6 +72,21 @@ final class CircleManagementViewModel {
     return circle.owner.didString() == userDID
   }
 
+  /// Authoritatively loads the member roster for owners.
+  func loadMembers() async {
+    guard canManageMembers else { return }
+    do {
+      let page = try await service.listCircles(cursor: nil)
+      if let current = page.circles.first(where: { $0.uri == circle.uri }) {
+        self.circle = current
+        if let currentMembers = current.members {
+          self.members = currentMembers
+        }
+      }
+    } catch {
+      // Preserve existing in-memory members on network failure
+    }
+  }
   /// Whether this Circle is muted by the active member.
   var isMuted: Bool {
     circle.muted ?? false
@@ -159,10 +179,6 @@ final class CircleManagementViewModel {
       finalDIDs = members
     }
 
-    lastAttemptedAction = { [weak self] in
-      try await self?.createCircle(name: validName, memberDIDs: finalDIDs)
-    }
-
     state = .submitting
     do {
       let operation = try await service.createCircle(name: validName, memberDIDs: finalDIDs)
@@ -187,10 +203,6 @@ final class CircleManagementViewModel {
       let error = CircleError.invalidParameter("Circle cannot exceed 150 unique members")
       state = .failed(message: error.localizedDescription, retryOperationID: nil)
       throw error
-    }
-
-    lastAttemptedAction = { [weak self] in
-      try await self?.addMember(did: did)
     }
 
     state = .submitting
@@ -218,10 +230,6 @@ final class CircleManagementViewModel {
       throw error
     }
 
-    lastAttemptedAction = { [weak self] in
-      try await self?.removeMember(did: did)
-    }
-
     state = .submitting
     do {
       let operation = try await service.updateMember(space: circle.uri, memberDID: did, action: .remove)
@@ -245,10 +253,6 @@ final class CircleManagementViewModel {
       throw error
     }
 
-    lastAttemptedAction = { [weak self] in
-      try await self?.deleteCircle()
-    }
-
     state = .submitting
     do {
       let operation = try await service.deleteCircle(space: circle.uri)
@@ -270,7 +274,8 @@ final class CircleManagementViewModel {
         name: circle.name,
         owner: circle.owner,
         accessState: circle.accessState,
-        muted: updatedMuted
+        muted: updatedMuted,
+        members: circle.members
       )
     } catch {
       let cError = circleError(from: error)
@@ -279,10 +284,44 @@ final class CircleManagementViewModel {
     }
   }
 
-  /// Retries the last attempted operation.
+  /// Retries the named or currently pending/failed operation without duplicating submissions.
   func retry(operationID: UUID? = nil) async throws {
-    if let lastAttemptedAction {
-      _ = try await lastAttemptedAction()
+    let targetID: String?
+    if let operationID {
+      targetID = operationID.uuidString.lowercased()
+    } else {
+      switch state {
+      case .pending(let op):
+        targetID = op.id
+      case .failed(_, let retryID):
+        targetID = retryID?.uuidString.lowercased()
+      default:
+        targetID = nil
+      }
+    }
+
+    guard let opID = targetID, !opID.isEmpty else { return }
+
+    state = .submitting
+    do {
+      let op = try await service.retryOperation(id: opID)
+      handleOperation(op)
+    } catch {
+      let cError = circleError(from: error)
+      state = .failed(message: cError.localizedDescription, retryOperationID: UUID(uuidString: opID))
+      throw cError
+    }
+  }
+
+  /// Read-only status consultation for an in-flight operation.
+  func checkStatus(operationID: String) async throws {
+    do {
+      let op = try await service.getOperation(id: operationID)
+      handleOperation(op)
+    } catch {
+      let cError = circleError(from: error)
+      state = .failed(message: cError.localizedDescription, retryOperationID: UUID(uuidString: operationID))
+      throw cError
     }
   }
 

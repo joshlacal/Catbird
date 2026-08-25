@@ -23,7 +23,8 @@ extension BlueCatbirdCircleDefs.CircleSummary: @retroactive Equatable {
     lhs.name == rhs.name &&
     lhs.owner == rhs.owner &&
     lhs.accessState == rhs.accessState &&
-    lhs.muted == rhs.muted
+    lhs.muted == rhs.muted &&
+    lhs.members == rhs.members
   }
 }
 
@@ -333,6 +334,8 @@ protocol CircleTransport: Sendable {
   func deletePost(uri: ATProtocolURI, circle: CircleSummary) async throws
   func deleteLike(uri: ATProtocolURI, circle: CircleSummary) async throws
   func deleteCircle(space: SpaceRef) async throws -> CircleOperation
+  func getOperation(id: String) async throws -> CircleOperation
+  func retryOperation(id: String) async throws -> CircleOperation
 }
 
 /// Maps a generated `BlueCatbirdCircle*` error (or gateway/network error) to a

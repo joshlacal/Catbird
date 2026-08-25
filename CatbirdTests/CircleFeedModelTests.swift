@@ -162,6 +162,12 @@ struct CircleFeedModelTests {
     func deleteCircle(space: SpaceRef) async throws -> CircleOperation {
       CircleOperation(id: "op-del", status: .value_complete, space: space, error: nil)
     }
+    func getOperation(id: String) async throws -> CircleOperation {
+      CircleOperation(id: id, status: .value_complete, space: nil, error: nil)
+    }
+    func retryOperation(id: String) async throws -> CircleOperation {
+      CircleOperation(id: id, status: .value_complete, space: nil, error: nil)
+    }
   }
 
   // MARK: - Helpers

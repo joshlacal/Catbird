@@ -14,9 +14,14 @@ struct CircleAudiencePicker: View {
   @Environment(AppState.self) private var appState
   @State private var loadedCircles: [CircleSummary] = []
 
+  /// Filters an array of Circles to only those in the active access state.
+  public static func filterActiveCircles(_ circles: [CircleSummary]) -> [CircleSummary] {
+    circles.filter { $0.accessState == .value_active }
+  }
+
   private var activeCircles: [CircleSummary] {
     let source = !circles.isEmpty ? circles : loadedCircles
-    return source.filter { $0.accessState == .value_active }
+    return Self.filterActiveCircles(source)
   }
 
   var body: some View {

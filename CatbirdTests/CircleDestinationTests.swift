@@ -161,6 +161,16 @@ actor DestinationRecordingCircleTransport: CircleTransport {
     if let error { throw error }
     return CircleOperation(id: UUID().uuidString, status: .value_complete, space: space, error: nil)
   }
+
+  func getOperation(id: String) async throws -> CircleOperation {
+    if let error { throw error }
+    return CircleOperation(id: id, status: .value_complete, space: nil, error: nil)
+  }
+
+  func retryOperation(id: String) async throws -> CircleOperation {
+    if let error { throw error }
+    return CircleOperation(id: id, status: .value_complete, space: nil, error: nil)
+  }
 }
 
 @Suite("Circle destination and composer routing")

@@ -39,4 +39,18 @@ struct CircleFeedCacheIsolationTests {
     #expect(await cache.page(accountDID: "did:plc:alice", space: CircleTestFixtures.familyURI) == nil)
     #expect(await cache.page(accountDID: "did:plc:alice", space: CircleTestFixtures.workURI) != nil)
   }
+
+  @Test("Purging muted Space from unified removes only items for that Space")
+  func purgeMutedSpaceFromUnified() async {
+    let cache = CircleFeedCache()
+    let item1 = CircleTestFixtures.makeFeedItem(circle: CircleTestFixtures.family, rkey: "1", text: "Hello")
+    let item2 = CircleTestFixtures.makeFeedItem(circle: CircleTestFixtures.work, rkey: "2", text: "World")
+    let page = CircleFeedPage(items: [item1, item2], cursor: nil)
+    await cache.store(page, accountDID: "did:plc:alice", space: nil)
+
+    await cache.purgeMutedSpaceFromUnified(accountDID: "did:plc:alice", space: CircleTestFixtures.familyURI)
+    let unified = await cache.page(accountDID: "did:plc:alice", space: nil)
+    #expect(unified?.items.count == 1)
+    #expect(unified?.items.first?.circle.uri == CircleTestFixtures.workURI)
+  }
 }

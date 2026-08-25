@@ -47,17 +47,26 @@ final class CircleFeedModel {
 
     // Restore from memory cache first if empty
     if items.isEmpty, let cachedPage = await cache.page(accountDID: accountDID, space: space) {
-      self.items = cachedPage.items
+      if space == nil {
+        self.items = cachedPage.items.filter { !($0.circle.muted ?? false) }
+      } else {
+        self.items = cachedPage.items
+      }
       self.cursor = cachedPage.cursor
     }
 
     do {
       let page = try await service.getFeed(space: space, cursor: nil)
-      self.items = page.items
+      if space == nil {
+        self.items = page.items.filter { !($0.circle.muted ?? false) }
+      } else {
+        self.items = page.items
+      }
       self.cursor = page.cursor
       self.accessState = .active
       self.error = nil
-      await cache.store(page, accountDID: accountDID, space: space)
+      let storedPage = CircleFeedPage(items: self.items, cursor: self.cursor)
+      await cache.store(storedPage, accountDID: accountDID, space: space)
     } catch {
       let typedError = circleError(from: error)
       self.error = typedError
@@ -87,8 +96,13 @@ final class CircleFeedModel {
     do {
       let nextPage = try await service.getFeed(space: space, cursor: currentCursor)
       let existingURIs = Set(self.items.map { $0.post.post.uri.uriString() })
-      let newItems = nextPage.items.filter { !existingURIs.contains($0.post.post.uri.uriString()) }
-      self.items.append(contentsOf: newItems)
+      let filteredNewItems: [BlueCatbirdCircleDefs.FeedItem]
+      if space == nil {
+        filteredNewItems = nextPage.items.filter { !($0.circle.muted ?? false) && !existingURIs.contains($0.post.post.uri.uriString()) }
+      } else {
+        filteredNewItems = nextPage.items.filter { !existingURIs.contains($0.post.post.uri.uriString()) }
+      }
+      self.items.append(contentsOf: filteredNewItems)
       self.cursor = nextPage.cursor
       self.error = nil
 
@@ -121,6 +135,14 @@ final class CircleFeedModel {
     await CircleMediaLoader.shared.purge(accountDID: accountDID, space: space)
     if self.space == space {
       self.accessState = .removed
+    }
+  }
+
+  /// Purges in-memory cached posts for a muted Circle Space from unified feed.
+  func purgeMutedCircle(_ space: SpaceRef) async {
+    if self.space == nil {
+      items.removeAll(where: { $0.circle.uri == space })
+      await cache.purgeMutedSpaceFromUnified(accountDID: accountDID, space: space)
     }
   }
 }

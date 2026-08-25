@@ -52,6 +52,7 @@ struct CircleManagementView: View {
             userDID: appState.userDID ?? ""
           )
           self.viewModel = vm
+          await vm.loadMembers()
         }
       }
       .sheet(isPresented: $showingAddMemberSheet) {
@@ -77,8 +78,14 @@ struct CircleManagementView: View {
       ) {
         Button("Delete Circle", role: .destructive) {
           Task {
-            _ = try? await viewModel?.deleteCircle()
-            dismiss()
+            do {
+              let op = try await viewModel?.deleteCircle()
+              if op?.status == .value_complete {
+                dismiss()
+              }
+            } catch {
+              // Errors are surfaced in viewModel.state -> operationStateSection
+            }
           }
         }
         Button("Cancel", role: .cancel) {}

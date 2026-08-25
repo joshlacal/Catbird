@@ -178,6 +178,10 @@ final class PostContextMenuViewModel {
     }
 
     func muteThread() async {
+        guard case .public = visibilityContext else {
+            logger.debug("muteThread skipped: private circle post context")
+            return
+        }
         let input = AppBskyGraphMuteThread.Input(root: post.uri)
         do {
             let responseCode = try await appState.atProtoClient?.app.bsky.graph.muteThread(input: input)

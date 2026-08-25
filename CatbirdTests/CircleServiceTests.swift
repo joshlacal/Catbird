@@ -80,6 +80,14 @@ actor RecordingCircleTransport: CircleTransport {
     try throwIfConfigured()
     return CircleOperation(id: UUID().uuidString, status: .value_complete, space: space, error: nil)
   }
+  func getOperation(id: String) async throws -> CircleOperation {
+    try throwIfConfigured()
+    return CircleOperation(id: id, status: .value_complete, space: nil, error: nil)
+  }
+  func retryOperation(id: String) async throws -> CircleOperation {
+    try throwIfConfigured()
+    return CircleOperation(id: id, status: .value_complete, space: nil, error: nil)
+  }
 }
 
 @Suite("Circle service boundary")
@@ -125,15 +133,78 @@ enum CircleTestFixtures {
 
   static let family = BlueCatbirdCircleDefs.CircleSummary(
     uri: familyURI, name: "Family", owner: alice,
-    accessState: .value_active, muted: nil
+    accessState: .value_active, muted: nil, members: nil
   )
   static let work = BlueCatbirdCircleDefs.CircleSummary(
     uri: workURI, name: "Work", owner: alice,
-    accessState: .value_active, muted: nil
+    accessState: .value_active, muted: nil, members: nil
   )
 
   static let draft = CirclePostDraft(
     text: "Hello circle",
     langs: [LanguageCodeContainer(languageCode: "en")]
   )
+
+  static func makePostView(
+    uri: ATProtocolURI,
+    authorDID: DID = alice,
+    text: String = "Hello circle"
+  ) -> AppBskyFeedDefs.PostView {
+    let author = AppBskyActorDefs.ProfileViewBasic(
+      did: authorDID,
+      handle: try! Handle(handleString: "author.test"),
+      displayName: "Author",
+      pronouns: nil,
+      avatar: nil,
+      associated: nil,
+      viewer: nil,
+      labels: nil,
+      createdAt: nil,
+      verification: nil,
+      status: nil,
+      debug: nil
+    )
+    return AppBskyFeedDefs.PostView(
+      uri: uri,
+      cid: CID.fromDAGCBOR(Data("cid-test".utf8)),
+      author: author,
+      record: .knownType(
+        AppBskyFeedPost(
+          text: text,
+          entities: nil,
+          facets: nil,
+          reply: nil,
+          embed: nil,
+          langs: nil,
+          labels: nil,
+          tags: nil,
+          createdAt: ATProtocolDate(date: Date())
+        )
+      ),
+      embed: nil,
+      bookmarkCount: nil,
+      replyCount: 0,
+      repostCount: 0,
+      likeCount: 0,
+      quoteCount: nil,
+      indexedAt: ATProtocolDate(date: Date()),
+      viewer: nil,
+      labels: nil,
+      threadgate: nil,
+      debug: nil
+    )
+  }
+
+  static func makeFeedItem(circle: CircleSummary, rkey: String = "post1", text: String = "Hello") -> BlueCatbirdCircleDefs.FeedItem {
+    let postURI = try! ATProtocolURI(uriString: "\(circle.uri.uriString())/app.bsky.feed.post/\(rkey)")
+    let postView = makePostView(uri: postURI, authorDID: circle.owner, text: text)
+    let feedViewPost = AppBskyFeedDefs.FeedViewPost(
+      post: postView,
+      reply: nil,
+      reason: nil,
+      feedContext: nil,
+      reqId: nil
+    )
+    return BlueCatbirdCircleDefs.FeedItem(post: feedViewPost, circle: circle)
+  }
 }

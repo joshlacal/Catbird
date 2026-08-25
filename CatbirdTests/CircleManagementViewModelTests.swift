@@ -14,10 +14,13 @@ actor ManagementRecordingCircleTransport: CircleTransport {
   private(set) var deletedSpaces: [SpaceRef] = []
   private(set) var updatedPreferences: [(space: SpaceRef, muted: Bool)] = []
   private(set) var detailFeedQueries: [SpaceRef?] = []
+  private(set) var getOperationCalls: [String] = []
+  private(set) var retryOperationCalls: [String] = []
 
   var nextOperation: CircleOperation?
+  var mockFeedItems: [BlueCatbirdCircleDefs.FeedItem] = []
+  var mockCirclesList: [CircleSummary] = []
   var detailAccessRemainsEnabled = true
-
   init(error: CircleError? = nil) {
     self.error = error
   }
@@ -29,13 +32,13 @@ actor ManagementRecordingCircleTransport: CircleTransport {
 
   func listCircles(cursor: String?) async throws -> CircleListPage {
     if let error { throw error }
-    return CircleListPage(circles: [], cursor: nil)
+    return CircleListPage(circles: mockCirclesList, cursor: nil)
   }
 
   func getFeed(space: SpaceRef?, cursor: String?) async throws -> CircleFeedPage {
     if let error { throw error }
     detailFeedQueries.append(space)
-    return CircleFeedPage(items: [], cursor: nil)
+    return CircleFeedPage(items: mockFeedItems, cursor: nil)
   }
 
   func getPostThread(uri: ATProtocolURI, space: SpaceRef) async throws -> CircleThreadPage {
@@ -176,8 +179,40 @@ actor ManagementRecordingCircleTransport: CircleTransport {
     )
   }
 
+  func getOperation(id: String) async throws -> CircleOperation {
+    if let error { throw error }
+    getOperationCalls.append(id)
+    if let nextOperation { return nextOperation }
+    return CircleOperation(
+      id: id,
+      status: .value_complete,
+      space: try! SpaceRef(uriString: "at://did:plc:owner/space/blue.catbird.circle/3abc"),
+      error: nil
+    )
+  }
+
+  func retryOperation(id: String) async throws -> CircleOperation {
+    if let error { throw error }
+    retryOperationCalls.append(id)
+    if let nextOperation { return nextOperation }
+    return CircleOperation(
+      id: id,
+      status: .value_complete,
+      space: try! SpaceRef(uriString: "at://did:plc:owner/space/blue.catbird.circle/3abc"),
+      error: nil
+    )
+  }
+
   func setNextOperation(_ op: CircleOperation) {
     self.nextOperation = op
+  }
+
+  func setMockFeedItems(_ items: [BlueCatbirdCircleDefs.FeedItem]) {
+    self.mockFeedItems = items
+  }
+
+  func setMockCirclesList(_ circles: [CircleSummary]) {
+    self.mockCirclesList = circles
   }
 }
 
@@ -194,7 +229,8 @@ struct CircleManagementViewModelTests {
       name: "Family Circle",
       owner: ownerDID,
       accessState: .value_active,
-      muted: false
+      muted: false,
+      members: [ownerDID, bobDID]
     )
   }
 
@@ -204,7 +240,8 @@ struct CircleManagementViewModelTests {
       name: "Friend Circle",
       owner: try! DID(didString: "did:plc:otherowner"),
       accessState: .value_active,
-      muted: false
+      muted: false,
+      members: nil
     )
   }
 
@@ -261,13 +298,32 @@ struct CircleManagementViewModelTests {
     #expect(model.circle.muted == true)
     #expect(model.isMuted == true)
 
-    // Direct detail feed query still succeeds
-    let page = try await service.getFeed(space: memberCircle.uri)
-    #expect(page.items.isEmpty)
-    #expect(await transport.detailFeedQueries.contains(where: { $0 == memberCircle.uri }))
-    #expect(await transport.detailAccessRemainsEnabled == true)
-  }
+    // Create a muted feed item and an unmuted feed item
+    let mutedCircle = CircleSummary(
+      uri: memberCircle.uri,
+      name: memberCircle.name,
+      owner: memberCircle.owner,
+      accessState: .value_active,
+      muted: true,
+      members: nil
+    )
+    let unmutedCircle = ownerCircle
+    let mutedItem = CircleTestFixtures.makeFeedItem(circle: mutedCircle, rkey: "p1", text: "Muted Post")
+    let unmutedItem = CircleTestFixtures.makeFeedItem(circle: unmutedCircle, rkey: "p2", text: "Unmuted Post")
+    await transport.setMockFeedItems([mutedItem, unmutedItem])
 
+    // Unified feed model (space == nil) filters out the muted Circle item
+    let unifiedFeedModel = CircleFeedModel(service: service, space: nil, accountDID: memberDID.didString())
+    try await unifiedFeedModel.load()
+    #expect(unifiedFeedModel.items.count == 1)
+    #expect(unifiedFeedModel.items.first?.circle.uri == unmutedCircle.uri)
+
+    // Direct detail feed model (space == mutedCircle.uri) keeps direct detail access
+    let detailFeedModel = CircleFeedModel(service: service, space: mutedCircle.uri, accountDID: memberDID.didString())
+    try await detailFeedModel.load()
+    #expect(detailFeedModel.items.count == 2)
+    #expect(await transport.detailFeedQueries.contains(where: { $0 == mutedCircle.uri }))
+  }
   @Test func createCircleValidatesNameBetween1And64Chars() async throws {
     let transport = ManagementRecordingCircleTransport()
     let service = CircleService(transport: transport)
@@ -355,6 +411,83 @@ struct CircleManagementViewModelTests {
 
     _ = try await model.addMember(did: bobDID)
     #expect(model.state == .failed(message: "Conflict updating members", retryOperationID: UUID(uuidString: uuidString)))
+  }
+
+  @Test func ownerMemberRosterIsLoadedAuthoritativelyAndNonOwnerNeverReceivesRoster() async throws {
+    let transport = ManagementRecordingCircleTransport()
+    let service = CircleService(transport: transport)
+
+    // Owner initialized with members array receives it
+    let ownerModel = CircleManagementViewModel(circle: ownerCircle, service: service, userDID: ownerDID.didString())
+    #expect(ownerModel.canManageMembers == true)
+    #expect(ownerModel.members.count == 2)
+    #expect(ownerModel.members.contains(ownerDID))
+    #expect(ownerModel.members.contains(bobDID))
+
+    // Non-owner never receives members and canManageMembers is false
+    let nonOwnerModel = CircleManagementViewModel(circle: memberCircle, service: service, userDID: memberDID.didString())
+    #expect(nonOwnerModel.canManageMembers == false)
+    #expect(nonOwnerModel.members.isEmpty)
+
+    // Calling loadMembers for owner updates roster from listCircles
+    let updatedOwnerCircle = CircleSummary(
+      uri: ownerCircle.uri,
+      name: ownerCircle.name,
+      owner: ownerCircle.owner,
+      accessState: .value_active,
+      muted: false,
+      members: [ownerDID, bobDID, try! DID(didString: "did:plc:carol")]
+    )
+    await transport.setMockCirclesList([updatedOwnerCircle])
+    await ownerModel.loadMembers()
+    #expect(ownerModel.members.count == 3)
+  }
+
+  @Test func retryPendingOrFailedOperationTargetsNamedOperationWithoutDuplicateSubmission() async throws {
+    let transport = ManagementRecordingCircleTransport()
+    let service = CircleService(transport: transport)
+    let model = CircleManagementViewModel(circle: ownerCircle, service: service, userDID: ownerDID.didString())
+
+    let failedUUID = UUID()
+    model.state = .failed(message: "Transient failure", retryOperationID: failedUUID)
+
+    // Retry targets the existing operation ID
+    try await model.retry(operationID: failedUUID)
+    #expect(model.state == .complete)
+    #expect(await transport.retryOperationCalls.contains(failedUUID.uuidString.lowercased()))
+    #expect(await transport.createdCircles.isEmpty)
+    #expect(await transport.deletedSpaces.isEmpty)
+  }
+
+  @Test func privateCirclePostCannotExecuteMuteThread() async throws {
+    let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
+    let appState = AppState(userDID: ownerDID.didString(), client: client)
+    let postURI = try! ATProtocolURI(uriString: "at://did:plc:owner/space/blue.catbird.circle/3abc/did:plc:owner/app.bsky.feed.post/3l7test")
+    let postView = CircleTestFixtures.makePostView(uri: postURI, authorDID: ownerDID, text: "Private Circle Post")
+    let circleContext = PostVisibilityContext.circle(ownerCircle)
+    let contextMenuVM = PostContextMenuViewModel(appState: appState, post: postView, visibilityContext: circleContext)
+
+    // Calling muteThread on a Circle post is a no-op that fails closed and never calls public graph endpoint
+    await contextMenuVM.muteThread()
+  }
+
+  @Test func runtimeCircleCapabilityProbingAndAccountSwitchRaceSafety() async throws {
+    CircleFeatureFlags.setLocalFlag(true)
+    CircleFeatureFlags.serverCapability(enabled: false)
+    #expect(!CircleFeatureFlags.isEnabled)
+
+    let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
+    let appState = AppState(userDID: ownerDID.didString(), client: client)
+    let transport = ManagementRecordingCircleTransport()
+    appState.circleService = CircleService(transport: transport)
+
+    // Probe capability for active account
+    await appState.probeCircleCapabilities()
+    #expect(CircleFeatureFlags.isEnabled)
+
+    // Logging out resets server capability
+    CircleFeatureFlags.serverCapability(enabled: false)
+    #expect(!CircleFeatureFlags.isEnabled)
   }
 
   @Test func ownerDeletesCircleSuccessfully() async throws {

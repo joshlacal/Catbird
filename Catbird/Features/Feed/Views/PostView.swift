@@ -474,16 +474,18 @@ var id: String {
         }
       }
 
-      Button(action: {
-        if DestructiveActionConfirmation.shouldConfirm(
-          isEnabled: appState.appSettings.confirmBeforeActions
-        ) {
-          showMuteThreadConfirmation = true
-        } else {
-          Task { await contextMenuViewModel.muteThread() }
+      if case .public = visibilityContext {
+        Button(action: {
+          if DestructiveActionConfirmation.shouldConfirm(
+            isEnabled: appState.appSettings.confirmBeforeActions
+          ) {
+            showMuteThreadConfirmation = true
+          } else {
+            Task { await contextMenuViewModel.muteThread() }
+          }
+        }) {
+          Label("Mute Thread", systemImage: "bubble.left.and.bubble.right.fill")
         }
-      }) {
-        Label("Mute Thread", systemImage: "bubble.left.and.bubble.right.fill")
       }
       
       // Only show hide/report for other users' posts

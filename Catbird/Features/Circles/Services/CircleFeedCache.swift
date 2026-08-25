@@ -35,4 +35,13 @@ actor CircleFeedCache {
   func purge(accountDID: String, space: SpaceRef) {
     pages.removeValue(forKey: Key(accountDID: accountDID, spaceURI: space.description))
   }
+
+  /// Purge cached posts for a muted Space from the unified feed cache (space: nil).
+  func purgeMutedSpaceFromUnified(accountDID: String, space: SpaceRef) {
+    let key = Key(accountDID: accountDID, spaceURI: nil)
+    if let unifiedPage = pages[key] {
+      let filteredItems = unifiedPage.items.filter { $0.circle.uri != space }
+      pages[key] = CircleFeedPage(items: filteredItems, cursor: unifiedPage.cursor)
+    }
+  }
 }

@@ -244,6 +244,22 @@ actor GatewayCircleTransport: CircleTransport {
     guard let output else { throw CircleError.invalidResponse }
     return output
   }
+
+  func getOperation(id: String) async throws -> CircleOperation {
+    let (_, output) = try await client.blue.catbird.circle.getOperation(
+      input: BlueCatbirdCircleGetOperation.Parameters(id: id)
+    )
+    guard let output else { throw CircleError.invalidResponse }
+    return output
+  }
+
+  func retryOperation(id: String) async throws -> CircleOperation {
+    let (_, output) = try await client.blue.catbird.circle.retryOperation(
+      input: BlueCatbirdCircleRetryOperation.Input(id: id)
+    )
+    guard let output else { throw CircleError.invalidResponse }
+    return output
+  }
 }
 
 /// Typed Circle client boundary. Holds a transport (production gateway or test
@@ -318,5 +334,13 @@ actor CircleService {
 
   func deleteCircle(space: SpaceRef) async throws -> CircleOperation {
     try await transport.deleteCircle(space: space)
+  }
+
+  func getOperation(id: String) async throws -> CircleOperation {
+    try await transport.getOperation(id: id)
+  }
+
+  func retryOperation(id: String) async throws -> CircleOperation {
+    try await transport.retryOperation(id: id)
   }
 }

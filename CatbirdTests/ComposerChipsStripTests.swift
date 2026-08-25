@@ -54,17 +54,19 @@ struct ComposerChipsStripTests {
       name: "Expired Circle",
       owner: CircleTestFixtures.alice,
       accessState: .value_expired,
-      muted: nil
+      muted: nil,
+      members: nil
     )
     let removed = BlueCatbirdCircleDefs.CircleSummary(
       uri: try! SpaceRef(uriString: "at://did:plc:alice/space/blue.catbird.circle/removed"),
       name: "Removed Circle",
       owner: CircleTestFixtures.alice,
       accessState: .value_removed,
-      muted: nil
+      muted: nil,
+      members: nil
     )
     let all = [active, expired, removed]
-    let filtered = all.filter { $0.accessState == .value_active }
+    let filtered = CircleAudiencePicker.filterActiveCircles(all)
     #expect(filtered.count == 1)
     #expect(filtered.first?.name == "Family")
   }
