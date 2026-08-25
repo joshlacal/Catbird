@@ -76,6 +76,10 @@ actor RecordingCircleTransport: CircleTransport {
   func deleteLike(uri: ATProtocolURI, circle: CircleSummary) async throws {
     try throwIfConfigured()
   }
+  func deleteCircle(space: SpaceRef) async throws -> CircleOperation {
+    try throwIfConfigured()
+    return CircleOperation(id: UUID().uuidString, status: .value_complete, space: space, error: nil)
+  }
 }
 
 @Suite("Circle service boundary")

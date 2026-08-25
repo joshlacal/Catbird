@@ -14,6 +14,7 @@ struct CircleDetailView: View {
   @Binding var path: NavigationPath
   @State private var model: CircleFeedModel?
   @State private var errorMessage: String?
+  @State private var showingManagementSheet = false
 
   init(circle: CircleSummary, path: Binding<NavigationPath>) {
     self.circle = circle
@@ -41,6 +42,20 @@ struct CircleDetailView: View {
     #if os(iOS)
     .navigationBarTitleDisplayMode(.inline)
     #endif
+    .toolbar {
+      ToolbarItem(placement: .primaryAction) {
+        Button {
+          showingManagementSheet = true
+        } label: {
+          Image(systemName: "ellipsis.circle")
+        }
+        .accessibilityLabel("Circle settings and members")
+        .accessibilityHint("Opens Circle settings, muting, and member controls")
+      }
+    }
+    .sheet(isPresented: $showingManagementSheet) {
+      CircleManagementView(circle: circle)
+    }
     .task {
       if model == nil {
         let newModel = CircleFeedModel(

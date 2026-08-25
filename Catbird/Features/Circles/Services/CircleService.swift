@@ -236,6 +236,14 @@ actor GatewayCircleTransport: CircleTransport {
       throw CircleError.spaceWriteRejected("unexpected applyWrites result")
     }
   }
+
+  func deleteCircle(space: SpaceRef) async throws -> CircleOperation {
+    let (_, output) = try await client.blue.catbird.circle.deleteCircle(
+      input: BlueCatbirdCircleDeleteCircle.Input(space: space)
+    )
+    guard let output else { throw CircleError.invalidResponse }
+    return output
+  }
 }
 
 /// Typed Circle client boundary. Holds a transport (production gateway or test
@@ -306,5 +314,9 @@ actor CircleService {
 
   func deleteLike(uri: ATProtocolURI, circle: CircleSummary) async throws {
     try await transport.deleteLike(uri: uri, circle: circle)
+  }
+
+  func deleteCircle(space: SpaceRef) async throws -> CircleOperation {
+    try await transport.deleteCircle(space: space)
   }
 }

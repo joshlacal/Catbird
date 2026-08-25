@@ -27,6 +27,15 @@ extension BlueCatbirdCircleDefs.CircleSummary: @retroactive Equatable {
   }
 }
 
+extension BlueCatbirdCircleDefs.Operation: @retroactive Equatable {
+  public static func == (lhs: BlueCatbirdCircleDefs.Operation, rhs: BlueCatbirdCircleDefs.Operation) -> Bool {
+    lhs.id == rhs.id &&
+    lhs.status == rhs.status &&
+    lhs.space == rhs.space &&
+    lhs.error == rhs.error
+  }
+}
+
 /// The single immutable audience for a Circle-capable post.
 ///
 /// A post targets exactly one destination: Public or one named Circle. No
@@ -247,6 +256,8 @@ public enum CircleError: Error, LocalizedError, Equatable {
   case missingLikeUri
   case networkError(String)
   case spaceWriteRejected(String)
+  case notAuthorized
+  case invalidParameter(String)
 
   public static func == (lhs: CircleError, rhs: CircleError) -> Bool {
     switch (lhs, rhs) {
@@ -261,6 +272,8 @@ public enum CircleError: Error, LocalizedError, Equatable {
     case (.missingLikeUri, .missingLikeUri): return true
     case (.networkError(let l), .networkError(let r)): return l == r
     case (.spaceWriteRejected(let l), .spaceWriteRejected(let r)): return l == r
+    case (.notAuthorized, .notAuthorized): return true
+    case (.invalidParameter(let l), .invalidParameter(let r)): return l == r
     default: return false
     }
   }
@@ -289,6 +302,10 @@ public enum CircleError: Error, LocalizedError, Equatable {
       return "Network error: \(message)"
     case .spaceWriteRejected(let message):
       return "Circle write rejected: \(message)"
+    case .notAuthorized:
+      return "You are not authorized to perform this operation."
+    case .invalidParameter(let message):
+      return message
     }
   }
 }
@@ -315,6 +332,7 @@ protocol CircleTransport: Sendable {
   func like(post: AppBskyFeedDefs.PostView, circle: CircleSummary) async throws -> ATProtocolURI
   func deletePost(uri: ATProtocolURI, circle: CircleSummary) async throws
   func deleteLike(uri: ATProtocolURI, circle: CircleSummary) async throws
+  func deleteCircle(space: SpaceRef) async throws -> CircleOperation
 }
 
 /// Maps a generated `BlueCatbirdCircle*` error (or gateway/network error) to a

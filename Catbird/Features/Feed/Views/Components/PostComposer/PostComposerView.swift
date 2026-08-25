@@ -352,39 +352,14 @@ struct PostComposerView: View {
 
     @ViewBuilder
     private var destinationPickerSection: some View {
-        HStack {
-            Menu {
-                Button(action: {
-                    viewModel.selectDestination(.public)
-                }) {
-                    Label("Public", systemImage: "globe")
-                }
-            } label: {
-                HStack(spacing: 4) {
-                    switch viewModel.destination {
-                    case .public:
-                        Image(systemName: "globe")
-                        Text("Public")
-                    case .circle(let circle):
-                        Image(systemName: "person.2.fill")
-                        Text(circle.name)
-                    }
-                    if viewModel.canChangeDestination && !isSubmitting {
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 10, weight: .semibold))
-                    }
-                }
-                .font(.subheadline)
-                .foregroundStyle(viewModel.destination == .public ? Color.secondary : Color.accentColor)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(Color.secondarySystemBackground)
-                .clipShape(Capsule())
-            }
-            .disabled(!viewModel.canChangeDestination || isSubmitting)
-
-            Spacer()
-        }
+        CircleAudiencePicker(
+            selectedDestination: Binding(
+                get: { viewModel.destination },
+                set: { viewModel.selectDestination($0) }
+            ),
+            isReplyLocked: viewModel.isReplyLockedToCircle,
+            isSubmitting: isSubmitting
+        )
     }
     
     @ViewBuilder

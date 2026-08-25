@@ -256,7 +256,12 @@ struct ThreadViewMainPostView: View, Equatable {
             }
             // Present the report form when showingReportView is true
             .sheet(isPresented: $showingReportView) {
-                if let client = appState.atProtoClient {
+                if case .circle(let circle) = visibilityContext {
+                    CircleReportView(
+                        post: post,
+                        circle: circle
+                    )
+                } else if let client = appState.atProtoClient {
                     let reportingService = ReportingService(client: client)
                     let subject = contextMenuViewModel.createReportSubject()
                     let description = contextMenuViewModel.getReportDescription()

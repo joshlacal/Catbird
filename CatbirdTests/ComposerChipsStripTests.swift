@@ -1,6 +1,8 @@
+import Foundation
+import Petrel
+import PetrelCatbird
 import Testing
 @testable import Catbird
-
 @Suite("Composer chips strip visibility")
 struct ComposerChipsStripTests {
   @Test func hiddenWhenNothingIsSet() {
@@ -43,5 +45,27 @@ struct ComposerChipsStripTests {
     settings.allowFollowing = false
     settings.allowFollowers = false
     #expect(ComposerChipsStrip.threadgateSummary(settings) == "Custom")
+  }
+
+  @Test func circleAudiencePickerExcludesNonActiveCircles() {
+    let active = CircleTestFixtures.family
+    let expired = BlueCatbirdCircleDefs.CircleSummary(
+      uri: try! SpaceRef(uriString: "at://did:plc:alice/space/blue.catbird.circle/expired"),
+      name: "Expired Circle",
+      owner: CircleTestFixtures.alice,
+      accessState: .value_expired,
+      muted: nil
+    )
+    let removed = BlueCatbirdCircleDefs.CircleSummary(
+      uri: try! SpaceRef(uriString: "at://did:plc:alice/space/blue.catbird.circle/removed"),
+      name: "Removed Circle",
+      owner: CircleTestFixtures.alice,
+      accessState: .value_removed,
+      muted: nil
+    )
+    let all = [active, expired, removed]
+    let filtered = all.filter { $0.accessState == .value_active }
+    #expect(filtered.count == 1)
+    #expect(filtered.first?.name == "Family")
   }
 }

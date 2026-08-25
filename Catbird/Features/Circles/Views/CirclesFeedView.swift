@@ -13,6 +13,7 @@ struct CirclesFeedView: View {
   @Binding var path: NavigationPath
   @State private var model: CircleFeedModel?
   @State private var errorMessage: String?
+  @State private var showingCreateCircleSheet = false
 
   init(path: Binding<NavigationPath>) {
     self._path = path
@@ -40,9 +41,23 @@ struct CirclesFeedView: View {
       }
     }
     .navigationTitle("Circles")
-    #if os(iOS)
+#if os(iOS)
     .navigationBarTitleDisplayMode(.inline)
-    #endif
+#endif
+    .toolbar {
+      ToolbarItem(placement: .primaryAction) {
+        Button {
+          showingCreateCircleSheet = true
+        } label: {
+          Image(systemName: "plus")
+        }
+        .accessibilityLabel("Create Circle")
+        .accessibilityHint("Opens sheet to create a new named Circle")
+      }
+    }
+    .sheet(isPresented: $showingCreateCircleSheet) {
+      CreateCircleView()
+    }
     .task {
       if model == nil {
         let newModel = CircleFeedModel(

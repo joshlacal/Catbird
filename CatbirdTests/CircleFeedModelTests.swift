@@ -159,6 +159,9 @@ struct CircleFeedModelTests {
 
     func deletePost(uri: ATProtocolURI, circle: CircleSummary) async throws {}
     func deleteLike(uri: ATProtocolURI, circle: CircleSummary) async throws {}
+    func deleteCircle(space: SpaceRef) async throws -> CircleOperation {
+      CircleOperation(id: "op-del", status: .value_complete, space: space, error: nil)
+    }
   }
 
   // MARK: - Helpers

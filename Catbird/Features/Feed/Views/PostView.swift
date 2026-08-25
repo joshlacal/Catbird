@@ -180,7 +180,12 @@ var id: String {
       threadSummaryTask = nil
     }
     .sheet(isPresented: $postState.showingReportView) {
-      if let client = appState.atProtoClient {
+      if case .circle(let circle) = visibilityContext {
+        CircleReportView(
+          post: postState.currentPost,
+          circle: circle
+        )
+      } else if let client = appState.atProtoClient {
         let reportingService = ReportingService(client: client)
         let subject = contextMenuViewModel.createReportSubject()
         let description = contextMenuViewModel.getReportDescription()

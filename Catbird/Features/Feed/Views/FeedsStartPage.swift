@@ -517,6 +517,106 @@ struct FeedsStartPage: View {
   }
 
   @ViewBuilder
+  private var circlesFeedEntry: some View {
+    if CircleFeatureFlags.isEnabled {
+      Button {
+        guard !isEditingFeeds else { return }
+        #if os(iOS)
+        PlatformHaptics.rigid()
+        #endif
+        appState.navigationManager.navigate(to: .circlesFeed)
+        isDrawerOpen = false
+      } label: {
+        HStack(spacing: 21) {
+          ZStack {
+            HStack {
+              Image(systemName: "person.2.circle.fill")
+                .font(.system(size: 28))
+                .foregroundStyle(Color.accentColor)
+
+              VStack(alignment: .leading, spacing: 2) {
+                Text("Circles")
+                  .padding(.leading, 6)
+                  .appFont(AppTextRole.headline)
+                  .foregroundStyle(drawerPrimaryTextColor)
+                  .multilineTextAlignment(.leading)
+                  .frame(maxWidth: .infinity, alignment: .leading)
+                Text("Private feeds and spaces")
+                  .padding(.leading, 6)
+                  .appFont(AppTextRole.caption)
+                  .foregroundStyle(drawerSecondaryTextColor)
+                  .multilineTextAlignment(.leading)
+                  .frame(maxWidth: .infinity, alignment: .leading)
+              }
+
+              Spacer()
+
+              Image(systemName: "chevron.right")
+                .appFont(AppTextRole.caption)
+                .foregroundColor(drawerSecondaryTextColor)
+            }
+          }
+          .padding(12)
+          .background {
+            if !inSideDrawer {
+              RoundedRectangle(cornerRadius: cardCornerRadius)
+                .fill(.ultraThinMaterial)
+            }
+          }
+          .modifier(LaunchpadGlassChip(cornerRadius: cardCornerRadius, isEnabled: inSideDrawer))
+          .contentShape(RoundedRectangle(cornerRadius: cardCornerRadius, style: .continuous))
+        }
+      }
+      .buttonStyle(PlainButtonStyle())
+      .padding(.vertical, 4)
+      .accessibilityLabel("Circles")
+      .accessibilityHint("Opens Circles feed and closes drawer")
+      .accessibilityAddTraits(.isButton)
+    } else {
+      // Disabled explanatory entry when local flag is on but PDS unsupported
+      HStack(spacing: 21) {
+        ZStack {
+          HStack {
+            Image(systemName: "person.2.circle")
+              .font(.system(size: 28))
+              .foregroundStyle(.secondary)
+
+            VStack(alignment: .leading, spacing: 2) {
+              Text("Circles")
+                .padding(.leading, 6)
+                .appFont(AppTextRole.headline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+              Text("Circles requires a PDS that supports ATProto Spaces")
+                .padding(.leading, 6)
+                .appFont(AppTextRole.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            Spacer()
+          }
+        }
+        .padding(12)
+        .background {
+          if !inSideDrawer {
+            RoundedRectangle(cornerRadius: cardCornerRadius)
+              .fill(.ultraThinMaterial.opacity(0.5))
+          }
+        }
+        .modifier(LaunchpadGlassChip(cornerRadius: cardCornerRadius, isEnabled: inSideDrawer))
+        .contentShape(RoundedRectangle(cornerRadius: cardCornerRadius, style: .continuous))
+      }
+      .padding(.vertical, 4)
+      .disabled(true)
+      .accessibilityLabel("Circles, unsupported")
+      .accessibilityHint("Circles requires a PDS that supports ATProto Spaces")
+    }
+  }
+
+  @ViewBuilder
   private func defaultFeedIcon(iconSize: CGFloat) -> some View {
     Group {
       if let feedURI = defaultFeed,
@@ -1454,6 +1554,9 @@ struct FeedsStartPage: View {
 
               // Big default feed button as first feed in hierarchy
               bigDefaultFeedButton
+              if CircleFeatureFlags.localFlag {
+                  circlesFeedEntry
+              }
 
               // Pinned feeds section - continue the hierarchy
               if !filteredPinnedFeeds.isEmpty {

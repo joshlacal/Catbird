@@ -156,6 +156,11 @@ actor DestinationRecordingCircleTransport: CircleTransport {
     if let error { throw error }
     deletedLikes.append((uri: uri, circle: circle))
   }
+
+  func deleteCircle(space: SpaceRef) async throws -> CircleOperation {
+    if let error { throw error }
+    return CircleOperation(id: UUID().uuidString, status: .value_complete, space: space, error: nil)
+  }
 }
 
 @Suite("Circle destination and composer routing")
