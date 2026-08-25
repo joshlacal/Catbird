@@ -1282,9 +1282,19 @@ final class AppState {
         client
     }
 
+    @ObservationIgnored private var _circleService: CircleService?
+
     /// Circle service using the current authenticated client
     var circleService: CircleService {
-        CircleService(transport: GatewayCircleTransport(client: client))
+        get {
+            if let _circleService {
+                return _circleService
+            }
+            return CircleService(transport: GatewayCircleTransport(client: client))
+        }
+        set {
+            _circleService = newValue
+        }
     }
 
     #if canImport(FoundationModels)

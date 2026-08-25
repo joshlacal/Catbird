@@ -614,8 +614,8 @@ struct PostComposerViewUIKit: View {
         },
         onThreadAction: { 
           pcUIKitLogger.info("PostComposerViewUIKit: Thread action triggered - isThreadMode: \(viewModel?.isThreadMode ?? false)")
+          guard let vm = viewModel, vm.destination == .public else { return }
           withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
-            guard let vm = viewModel else { return }
             // Properly enter thread mode and add a new entry,
             // mirroring the legacy behavior.
             if vm.isThreadMode {
@@ -625,8 +625,10 @@ struct PostComposerViewUIKit: View {
             } else {
               pcUIKitLogger.debug("PostComposerViewUIKit: Entering thread mode and adding first entry")
               vm.enterThreadMode()
-              vm.addNewThreadEntry()
-              activeEditorFocusID = UUID()
+              if vm.isThreadMode {
+                vm.addNewThreadEntry()
+                activeEditorFocusID = UUID()
+              }
             }
           }
         },

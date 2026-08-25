@@ -123,7 +123,7 @@ struct ActionButtonsView: View {
       }
       .accessibilityIdentifier("replyButton")
         .accessibilityLabel("Reply. Replies count: \(post.replyCount ?? 0)")
-      .disabled(post.viewer?.replyDisabled ?? false)
+      .disabled((post.viewer?.replyDisabled ?? false) || !viewModel.capabilities.canReply)
       // Subtle glass and mark as the matched transition source for this post
       .padding(.vertical, isBig ? 3 : 2)
       .padding(.horizontal, isBig ? 6 : 5)
@@ -133,8 +133,8 @@ struct ActionButtonsView: View {
       Spacer()
 
       repostMenu
+      .disabled(!viewModel.capabilities.canRepost && !viewModel.capabilities.canQuote)
       .accessibilityIdentifier("repostButton")
-
       Spacer()
 
       // Like Button
@@ -162,9 +162,9 @@ struct ActionButtonsView: View {
           await MainActor.run { interactionState.animateLike = false }
         }
       }
-        .accessibilityIdentifier("likeButton")
-        .accessibilityLabel(interactionState.isLiked ? "Unlike. Like count: \(interactionState.likeCount)" : "Like. Like count: \(interactionState.likeCount)")
-        
+      .disabled(!viewModel.capabilities.canLike)
+      .accessibilityIdentifier("likeButton")
+      .accessibilityLabel(interactionState.isLiked ? "Unlike. Like count: \(interactionState.likeCount)" : "Like. Like count: \(interactionState.likeCount)")
       Spacer()
 
       // Share Button (system share sheet only)
@@ -180,8 +180,9 @@ struct ActionButtonsView: View {
           await viewModel.share(post: post)
         }
       }
+      .disabled(!viewModel.capabilities.canPublicShare)
       .accessibilityIdentifier("shareButton")
-        .accessibilityLabel("Share")
+      .accessibilityLabel("Share")
     }
     .font(isBig ? .title3 : .callout)
     .frame(height: isBig ? 54 : 45)
@@ -277,10 +278,12 @@ struct ActionButtonsView: View {
       isPresented: $showingRepostOptions,
       titleVisibility: .hidden
     ) {
-      Button(repostActionTitle) {
-        handleRepostToggle()
+      if viewModel.capabilities.canRepost {
+        Button(repostActionTitle) {
+          handleRepostToggle()
+        }
       }
-      if !(post.viewer?.embeddingDisabled ?? false) {
+      if viewModel.capabilities.canQuote && !(post.viewer?.embeddingDisabled ?? false) {
         Button("Quote Post") {
           handleQuotePost()
         }
@@ -291,21 +294,26 @@ struct ActionButtonsView: View {
 
   private var repostMenuControl: some View {
     Menu {
-      Button {
-        handleRepostToggle()
-      } label: {
-        Label(repostActionTitle, systemImage: "arrow.2.squarepath")
+      if viewModel.capabilities.canRepost {
+        Button {
+          handleRepostToggle()
+        } label: {
+          Label(repostActionTitle, systemImage: "arrow.2.squarepath")
+        }
       }
 
-      Button {
-        handleQuotePost()
-      } label: {
-        Label("Quote Post", systemImage: "quote.bubble")
+      if viewModel.capabilities.canQuote {
+        Button {
+          handleQuotePost()
+        } label: {
+          Label("Quote Post", systemImage: "quote.bubble")
+        }
+        .disabled(post.viewer?.embeddingDisabled ?? false)
       }
-      .disabled(post.viewer?.embeddingDisabled ?? false)
     } label: {
       repostLabel
     }
+    .disabled(!viewModel.capabilities.canRepost && !viewModel.capabilities.canQuote)
     .id("repost-\(post.uri.uriString())")
   }
 

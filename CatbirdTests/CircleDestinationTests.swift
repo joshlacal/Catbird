@@ -1,6 +1,7 @@
 import Foundation
 import Petrel
 import PetrelCatbird
+import SwiftUI
 import Testing
 @testable import Catbird
 
@@ -143,8 +144,17 @@ actor DestinationRecordingCircleTransport: CircleTransport {
     return try ATProtocolURI(uriString: "\(circle.uri.uriString())/app.bsky.feed.like/testlike123")
   }
 
+  private(set) var deletedPosts: [(uri: ATProtocolURI, circle: CircleSummary)] = []
+  private(set) var deletedLikes: [(uri: ATProtocolURI, circle: CircleSummary)] = []
+
   func deletePost(uri: ATProtocolURI, circle: CircleSummary) async throws {
     if let error { throw error }
+    deletedPosts.append((uri: uri, circle: circle))
+  }
+
+  func deleteLike(uri: ATProtocolURI, circle: CircleSummary) async throws {
+    if let error { throw error }
+    deletedLikes.append((uri: uri, circle: circle))
   }
 }
 
@@ -478,7 +488,7 @@ struct CircleDestinationTests {
     #expect(publicCaps.canPublicShare == true)
   }
 
-  @Test("PostViewModel dispatches Circle like and delete through CircleService")
+  @Test("PostViewModel dispatches Circle like and deleteLike through CircleService and unlike proves deleteLike")
   @MainActor
   func postViewModelDispatchesCircleLikeAndDeleteThroughCircleService() async throws {
     let family = CircleTestFixtures.family
@@ -487,9 +497,9 @@ struct CircleDestinationTests {
 
     let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
     let appState = AppState(userDID: "did:plc:testuser", client: client)
+    appState.circleService = service
 
-    let vm = PostViewModel(post: circlePost, appState: appState)
-    vm.visibilityContext = .circle(family)
+    let vm = PostViewModel(post: circlePost, appState: appState, visibilityContext: .circle(family))
 
     #expect(vm.capabilities.canRepost == false)
     #expect(vm.capabilities.canQuote == false)
@@ -500,5 +510,285 @@ struct CircleDestinationTests {
 
     let quoteResult = try await vm.createQuotePost(text: "Quote attempt")
     #expect(quoteResult == false)
+
+    // Like the post -> should call CircleService.like
+    let likeSuccess = try await vm.toggleLike()
+    #expect(likeSuccess == true)
+    #expect(vm.isLiked == true)
+
+    // Now unlike the post -> must call deleteLike (NOT deletePost) with circle summary
+    let unlikeSuccess = try await vm.toggleLike()
+    #expect(unlikeSuccess == true)
+    #expect(vm.isLiked == false)
+
+    let deletedLikes = await transport.deletedLikes
+    let deletedPosts = await transport.deletedPosts
+    #expect(deletedLikes.count == 1)
+    #expect(deletedPosts.count == 0)
+    #expect(deletedLikes.first?.circle == family)
+    #expect(deletedLikes.first?.uri.uriString().contains("app.bsky.feed.like") == true)
+  }
+
+  @Test("Unliking a circle post with missing like URI throws missingLikeUri typed error")
+  @MainActor
+  func unlikingCirclePostWithMissingLikeUriThrowsTypedError() async throws {
+    let family = CircleTestFixtures.family
+    let transport = DestinationRecordingCircleTransport()
+    let service = CircleService(transport: transport)
+    let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
+    let appState = AppState(userDID: "did:plc:testuser", client: client)
+    appState.circleService = service
+
+    let vm = PostViewModel(post: circlePost, appState: appState, visibilityContext: .circle(family))
+    // Artificially simulate wasLiked being true without likeUri
+    vm.setLikedStateForTesting(isLiked: true, likeUri: nil)
+
+    await #expect(throws: CircleError.self) {
+      try await vm.toggleLike()
+    }
+  }
+
+  @Test("Constructors and factories pass explicit visibility context and forward to delete/action call sites")
+  @MainActor
+  func constructorsAndFactoriesPassExplicitVisibilityContext() async throws {
+    let family = CircleTestFixtures.family
+    let transport = DestinationRecordingCircleTransport()
+    let service = CircleService(transport: transport)
+
+    let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
+    let appState = AppState(userDID: "did:plc:testuser", client: client)
+    appState.circleService = service
+
+    let feedViewPost = AppBskyFeedDefs.FeedViewPost(
+      post: circlePost,
+      reply: nil,
+      reason: nil,
+      feedContext: nil,
+      reqId: nil
+    )
+    let feedItem = BlueCatbirdCircleDefs.FeedItem(
+      post: feedViewPost,
+      circle: family
+    )
+
+    // PostViewModel factory from FeedItem
+    let vmFromItem = PostViewModel.forCircleItem(feedItem, appState: appState)
+    #expect(vmFromItem.visibilityContext == .circle(family))
+    #expect(vmFromItem.capabilities.canRepost == false)
+    #expect(vmFromItem.capabilities.canQuote == false)
+    #expect(vmFromItem.capabilities.canPublicShare == false)
+
+    // PostViewModel factory from PostView + circle
+    let vmFromPost = PostViewModel.forCircle(post: circlePost, circle: family, appState: appState)
+    #expect(vmFromPost.visibilityContext == .circle(family))
+
+    // PostContextMenuViewModel factory & delete dispatch
+    let menuVm = PostContextMenuViewModel.forCircleItem(feedItem, appState: appState)
+    #expect(menuVm.visibilityContext == .circle(family))
+    await menuVm.deletePost()
+    let deletedPosts = await transport.deletedPosts
+    #expect(deletedPosts.count == 1)
+    #expect(deletedPosts.first?.uri == circlePost.uri)
+    #expect(deletedPosts.first?.circle == family)
+
+    // PostView factory from FeedItem
+    let binding = Binding.constant(NavigationPath())
+    let rowView = PostView.circleRow(item: feedItem, path: binding, appState: appState)
+    #expect(rowView.visibilityContext == .circle(family))
+
+    let detailView = PostView.circleDetail(post: circlePost, circle: family, path: binding, appState: appState)
+    #expect(detailView.visibilityContext == .circle(family))
+
+    let threadView = ThreadView.circleThread(uri: circlePost.uri, circle: family, path: binding)
+    #expect(threadView.visibilityContext == .circle(family))
+  }
+
+  @Test("Circle destination blocks RichEditor onThreadAction and addNewThreadEntry fails closed without wiping text")
+  @MainActor
+  func circleDestinationBlocksAddNewThreadEntryAndFailsClosed() async throws {
+    let family = CircleTestFixtures.family
+    let model = await composer(destination: .circle(family))
+    model.postText = "My important private circle draft"
+
+    // Calling enterThreadMode should no-op
+    model.enterThreadMode()
+    #expect(model.isThreadMode == false)
+    #expect(model.postText == "My important private circle draft")
+
+    // Calling addNewThreadEntry should fail closed and NOT clear postText or add thread posts
+    model.addNewThreadEntry()
+    #expect(model.isThreadMode == false)
+    #expect(model.postText == "My important private circle draft")
+    #expect(model.threadEntries.count == 1)
+  }
+
+  @Test("ActionButtonViewModel respects Circle capabilities")
+  @MainActor
+  func actionButtonsViewModelRespectsCircleCapabilities() async throws {
+    let family = CircleTestFixtures.family
+    let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
+    let appState = AppState(userDID: "did:plc:testuser", client: client)
+
+    let postVm = PostViewModel(post: circlePost, appState: appState, visibilityContext: .circle(family))
+    let actionVm = ActionButtonViewModel(postId: circlePost.uri.uriString(), postViewModel: postVm, appState: appState)
+
+    #expect(actionVm.capabilities.canRepost == false)
+    #expect(actionVm.capabilities.canQuote == false)
+    #expect(actionVm.capabilities.canPublicShare == false)
+    #expect(actionVm.capabilities.canReply == true)
+    #expect(actionVm.capabilities.canLike == true)
+
+    let quoteResult = try await actionVm.createQuotePost(text: "Quote")
+    #expect(quoteResult == false)
+  }
+
+  @Test("iOS ThreadViewController and representable propagate visibilityContext and default to public")
+  @MainActor
+  func iosThreadViewControllerAndRepresentablePropagateVisibilityContext() async throws {
+    let family = CircleTestFixtures.family
+    let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
+    let appState = AppState(userDID: "did:plc:testuser", client: client)
+    let binding = Binding.constant(NavigationPath())
+
+    if #available(iOS 18.0, *) {
+      // Default initialization is public
+      let defaultController = ThreadViewController(appState: appState, postURI: circlePost.uri, path: binding)
+      #expect(defaultController.visibilityContext == .public)
+
+      // Explicit circle initialization retains circle visibility context
+      let circleController = ThreadViewController(
+        appState: appState,
+        postURI: circlePost.uri,
+        path: binding,
+        visibilityContext: .circle(family)
+      )
+      #expect(circleController.visibilityContext == .circle(family))
+
+      // ThreadViewControllerRepresentable default vs circle
+      let defaultRepresentable = ThreadViewControllerRepresentable(postURI: circlePost.uri, path: binding)
+      #expect(defaultRepresentable.visibilityContext == .public)
+
+      let circleRepresentable = ThreadViewControllerRepresentable(
+        postURI: circlePost.uri,
+        path: binding,
+        visibilityContext: .circle(family)
+      )
+      #expect(circleRepresentable.visibilityContext == .circle(family))
+    }
+  }
+
+  @Test("iOS thread cells and views propagate circle visibilityContext to PostView and PostViewModel action routing")
+  @MainActor
+  func iosThreadCellsAndViewsPropagateVisibilityContextToPostViewModels() async throws {
+    let family = CircleTestFixtures.family
+    let transport = DestinationRecordingCircleTransport()
+    let service = CircleService(transport: transport)
+    let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
+    let appState = AppState(userDID: "did:plc:testuser", client: client)
+    appState.circleService = service
+    let binding = Binding.constant(NavigationPath())
+
+    // 1. ParentPostView with circle visibility context vs default public
+    let threadItemPost = AppBskyUnspeccedDefs.ThreadItemPost(
+      post: circlePost,
+      moreParents: false,
+      moreReplies: 0,
+      opThread: false,
+      opThreadPostIndex: nil,
+      opThreadPostCount: nil,
+      hiddenByThreadgate: false,
+      mutedByViewer: false
+    )
+    let parentPost = ParentPost(
+      id: circlePost.uri.uriString(),
+      threadItem: AppBskyUnspeccedGetPostThreadV2.ThreadItem(
+        uri: circlePost.uri,
+        depth: 0,
+        value: .appBskyUnspeccedDefsThreadItemPost(threadItemPost)
+      ),
+      grandparentAuthor: nil
+    )
+
+    let defaultParentView = ParentPostView(parentPost: parentPost, path: binding, appState: appState)
+    #expect(defaultParentView.visibilityContext == .public)
+
+    let circleParentView = ParentPostView(
+      parentPost: parentPost,
+      path: binding,
+      appState: appState,
+      visibilityContext: .circle(family)
+    )
+    #expect(circleParentView.visibilityContext == .circle(family))
+
+    // 2. ReplyView with circle visibility context vs default public
+    let replyWrapper = ReplyWrapper(
+      id: circlePost.uri.uriString(),
+      threadItem: AppBskyUnspeccedGetPostThreadV2.ThreadItem(
+        uri: circlePost.uri,
+        depth: 1,
+        value: .appBskyUnspeccedDefsThreadItemPost(threadItemPost)
+      ),
+      depth: 1,
+      isFromOP: false,
+      isOpThread: false,
+      hasReplies: false
+    )
+
+    let defaultReplyView = ReplyView(
+      replyWrapper: replyWrapper,
+      opAuthorID: "did:plc:alice",
+      nestedReplies: [],
+      path: binding,
+      appState: appState
+    )
+    #expect(defaultReplyView.visibilityContext == .public)
+
+    let circleReplyView = ReplyView(
+      replyWrapper: replyWrapper,
+      opAuthorID: "did:plc:alice",
+      nestedReplies: [],
+      path: binding,
+      appState: appState,
+      visibilityContext: .circle(family)
+    )
+    #expect(circleReplyView.visibilityContext == .circle(family))
+
+    // 3. ThreadViewMainPostView with circle visibility creates PostViewModel routing to CircleService
+    let mainPostView = ThreadViewMainPostView(
+      post: circlePost,
+      showLine: false,
+      path: binding,
+      appState: appState,
+      visibilityContext: .circle(family)
+    )
+    #expect(mainPostView.visibilityContext == .circle(family))
+
+    // 4. PostView with circle visibility context initializes PostViewModel with disabled public capabilities and Circle routing
+    let postView = PostView(
+      post: circlePost,
+      grandparentAuthor: nil,
+      isParentPost: false,
+      isSelectable: false,
+      path: binding,
+      appState: appState,
+      visibilityContext: .circle(family)
+    )
+    #expect(postView.visibilityContext == .circle(family))
+
+    // Verify PostViewModel action routing under .circle context
+    let vm = PostViewModel(post: circlePost, appState: appState, visibilityContext: .circle(family))
+    #expect(vm.visibilityContext == .circle(family))
+    #expect(vm.capabilities.canRepost == false)
+    #expect(vm.capabilities.canQuote == false)
+    #expect(vm.capabilities.canPublicShare == false)
+    #expect(vm.capabilities.canLike == true)
+
+    let likeResult = try await vm.toggleLike()
+    #expect(likeResult == true)
+    let unlikeResult = try await vm.toggleLike()
+    #expect(unlikeResult == true)
+    let deletedLikes = await transport.deletedLikes
+    #expect(deletedLikes.count == 1)
+    #expect(deletedLikes.first?.circle == family)
   }
 }

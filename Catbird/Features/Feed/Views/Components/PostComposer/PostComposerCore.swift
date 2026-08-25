@@ -48,6 +48,7 @@ extension PostComposerViewModel {
     // MARK: - Thread Management
 
     func addThreadPost() {
+        guard isThreadMode, destination == .public else { return }
         threadEntries.append(ThreadEntry())
         currentThreadIndex = threadEntries.count - 1
         isThread = threadEntries.count > 1
@@ -249,6 +250,7 @@ extension PostComposerViewModel {
     // MARK: - Thread Management
 
     func addNewThreadEntry() {
+        guard isThreadMode, destination == .public else { return }
         // Save current state to current thread entry before switching
         updateCurrentThreadEntry()
         addThreadPost()

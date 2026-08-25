@@ -209,6 +209,7 @@ enum CircleError: Error, LocalizedError {
   case authRequired
   case clientNotInitialized
   case invalidResponse
+  case missingLikeUri
   case networkError(Error)
   case spaceWriteRejected(String)
 
@@ -230,6 +231,8 @@ enum CircleError: Error, LocalizedError {
       return "The network client is not initialized."
     case .invalidResponse:
       return "The Circle service returned an invalid response."
+    case .missingLikeUri:
+      return "Cannot unlike: missing like URI."
     case .networkError(let error):
       return "Network error: \(error.localizedDescription)"
     case .spaceWriteRejected(let message):
@@ -259,6 +262,7 @@ protocol CircleTransport: Sendable {
   func publishPost(destination: CircleSummary, draft: CirclePostDraft) async throws -> ATProtocolURI
   func like(post: AppBskyFeedDefs.PostView, circle: CircleSummary) async throws -> ATProtocolURI
   func deletePost(uri: ATProtocolURI, circle: CircleSummary) async throws
+  func deleteLike(uri: ATProtocolURI, circle: CircleSummary) async throws
 }
 
 /// Maps a generated `BlueCatbirdCircle*` error (or gateway/network error) to a

@@ -68,6 +68,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   private var appState: AppState
   private let postURI: ATProtocolURI
   private var path: Binding<NavigationPath>
+  let visibilityContext: PostVisibilityContext
 
   private var threadManager: ThreadManager?
   private var isLoading = true
@@ -238,10 +239,16 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   }
 
   // MARK: - Initialization
-  init(appState: AppState, postURI: ATProtocolURI, path: Binding<NavigationPath>) {
+  init(
+    appState: AppState,
+    postURI: ATProtocolURI,
+    path: Binding<NavigationPath>,
+    visibilityContext: PostVisibilityContext = .public
+  ) {
     self.appState = appState
     self.postURI = postURI
     self.path = path
+    self.visibilityContext = visibilityContext
     super.init(nibName: nil, bundle: nil)
     
     // Subscribe to state invalidation events for reply updates
@@ -671,7 +678,8 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
         cell.configure(
           parentPost: parentPost,
           appState: self.appState,
-          path: self.path
+          path: self.path,
+          visibilityContext: self.visibilityContext
         )
         return cell
 
@@ -682,7 +690,8 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
         cell.configure(
           post: post,
           appState: self.appState,
-          path: self.path
+          path: self.path,
+          visibilityContext: self.visibilityContext
         )
         return cell
 
@@ -713,7 +722,8 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
           nestedReplies: nestedReplies,
           opAuthorID: self.mainPost?.author.did.didString() ?? "",
           appState: self.appState,
-          path: self.path
+          path: self.path,
+          visibilityContext: self.visibilityContext
         )
         return cell
         
@@ -2505,7 +2515,12 @@ final class ParentPostCell: UICollectionViewCell {
     fatalError("init(coder:) has not been implemented")
   }
 
-  func configure(parentPost: ParentPost, appState: AppState, path: Binding<NavigationPath>) {
+  func configure(
+    parentPost: ParentPost,
+    appState: AppState,
+    path: Binding<NavigationPath>,
+    visibilityContext: PostVisibilityContext = .public
+  ) {
     // Set themed background color
       contentView.backgroundColor = UIColor(
         Color.dynamicBackground(appState.themeManager, currentScheme: contentView.getCurrentColorScheme())
@@ -2529,7 +2544,8 @@ final class ParentPostCell: UICollectionViewCell {
         ParentPostView(
           parentPost: parentPost,
           path: path,
-          appState: appState
+          appState: appState,
+          visibilityContext: visibilityContext
         )
         .padding(.horizontal, 3)
         .padding(.vertical, 3)
@@ -2593,7 +2609,12 @@ final class MainPostCell: UICollectionViewCell {
     fatalError("init(coder:) has not been implemented")
   }
 
-  func configure(post: AppBskyFeedDefs.PostView, appState: AppState, path: Binding<NavigationPath>) {
+  func configure(
+    post: AppBskyFeedDefs.PostView,
+    appState: AppState,
+    path: Binding<NavigationPath>,
+    visibilityContext: PostVisibilityContext = .public
+  ) {
     let postIdentity = post.uri.uriString()
 
 #if compiler(>=7.0)
@@ -2618,7 +2639,8 @@ final class MainPostCell: UICollectionViewCell {
             post: post,
             showLine: false,
             path: path,
-            appState: appState
+            appState: appState,
+            visibilityContext: visibilityContext
           )
           .equatable()
           .padding(.horizontal, 6)
@@ -2761,7 +2783,8 @@ final class ReplyCell: UICollectionViewCell {
     nestedReplies: [ReplyWrapper],
     opAuthorID: String, 
     appState: AppState,
-    path: Binding<NavigationPath>
+    path: Binding<NavigationPath>,
+    visibilityContext: PostVisibilityContext = .public
   ) {
 #if compiler(>=7.0)
     if #available(anyAppleOS 26.0, *),
@@ -2785,7 +2808,8 @@ final class ReplyCell: UICollectionViewCell {
             opAuthorID: opAuthorID,
             nestedReplies: nestedReplies,
             path: path,
-            appState: appState
+            appState: appState,
+            visibilityContext: visibilityContext
           )
           .padding(.horizontal, 10)
         }
@@ -3068,6 +3092,7 @@ struct ParentPostView: View {
   let parentPost: ParentPost
   @Binding var path: NavigationPath
   var appState: AppState
+  var visibilityContext: PostVisibilityContext = .public
 
   var body: some View {
     switch parentPost.threadItem.value {
@@ -3079,7 +3104,8 @@ struct ParentPostView: View {
         isSelectable: false,
         path: $path,
         appState: appState,
-        hasVisibleThreadContext: true
+        hasVisibleThreadContext: true,
+        visibilityContext: visibilityContext
       )
       .contentShape(Rectangle())
       .onTapGesture {
@@ -3123,6 +3149,7 @@ struct ReplyView: View {
   let nestedReplies: [ReplyWrapper]  // Nested replies for this post
   @Binding var path: NavigationPath
   var appState: AppState
+  var visibilityContext: PostVisibilityContext = .public
 
   private var isThreadedRepliesMode: Bool {
     appState.appSettings.threadedReplies
@@ -3179,7 +3206,8 @@ struct ReplyView: View {
           path: $path,
           appState: appState,
           hasVisibleThreadContext: true,
-          avatarScale: .regular
+          avatarScale: .regular,
+          visibilityContext: visibilityContext
         )
         .contentShape(Rectangle())
         .onTapGesture {
@@ -3247,7 +3275,8 @@ struct ReplyView: View {
               avatarScale: ThreadReplyPresentationMetrics.avatarScale(
                 forDepth: nestedWrapper.depth,
                 isEnabled: isThreadedRepliesMode
-              )
+              ),
+              visibilityContext: visibilityContext
             )
             .contentShape(Rectangle())
             .onTapGesture { path.append(NavigationDestination.post(nestedPost.post.uri)) }
@@ -3329,11 +3358,22 @@ struct ThreadViewControllerRepresentable: UIViewControllerRepresentable {
   @Environment(AppState.self) private var appState: AppState
   let postURI: ATProtocolURI
   @Binding var path: NavigationPath
+  let visibilityContext: PostVisibilityContext
 
-  func makeUIViewController(context: Context) -> ThreadViewController {
-    return ThreadViewController(appState: appState, postURI: postURI, path: $path)
+  init(postURI: ATProtocolURI, path: Binding<NavigationPath>, visibilityContext: PostVisibilityContext = .public) {
+    self.postURI = postURI
+    self._path = path
+    self.visibilityContext = visibilityContext
   }
 
+  func makeUIViewController(context: Context) -> ThreadViewController {
+    return ThreadViewController(
+      appState: appState,
+      postURI: postURI,
+      path: $path,
+      visibilityContext: visibilityContext
+    )
+  }
   func updateUIViewController(_ uiViewController: ThreadViewController, context: Context) {
     // Update controller if needed
   }

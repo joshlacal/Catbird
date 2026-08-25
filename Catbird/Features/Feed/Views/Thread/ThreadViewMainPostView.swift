@@ -10,6 +10,7 @@ struct ThreadViewMainPostView: View, Equatable {
     let post: AppBskyFeedDefs.PostView
     let showLine: Bool
     let appState: AppState
+    let visibilityContext: PostVisibilityContext
     @Binding var path: NavigationPath
     @Environment(\.colorScheme) var colorScheme
     @State private var viewModel: PostViewModel
@@ -37,15 +38,19 @@ struct ThreadViewMainPostView: View, Equatable {
     }()
     
     init(
-        post: AppBskyFeedDefs.PostView, showLine: Bool, path: Binding<NavigationPath>,
-        appState: AppState
+        post: AppBskyFeedDefs.PostView,
+        showLine: Bool,
+        path: Binding<NavigationPath>,
+        appState: AppState,
+        visibilityContext: PostVisibilityContext = .public
     ) {
         self.post = post
         self.showLine = showLine
         self._path = path
-        _viewModel = State(initialValue: PostViewModel(post: post, appState: appState))
-        _contextMenuViewModel = State(initialValue: PostContextMenuViewModel(appState: appState, post: post))
         self.appState = appState
+        self.visibilityContext = visibilityContext
+        _viewModel = State(initialValue: PostViewModel(post: post, appState: appState, visibilityContext: visibilityContext))
+        _contextMenuViewModel = State(initialValue: PostContextMenuViewModel(appState: appState, post: post, visibilityContext: visibilityContext))
     }
     
     private var authorAvatarColumn: some View {
@@ -253,7 +258,7 @@ struct ThreadViewMainPostView: View, Equatable {
             .alert("Delete Post", isPresented: $showDeleteConfirmation) {
                 Button("Cancel", role: .cancel) { }
                 Button("Delete", role: .destructive) {
-                    Task { await contextMenuViewModel.deletePost() }
+                    Task { await contextMenuViewModel.deletePost(visibilityContext: visibilityContext) }
                 }
             } message: {
                 Text("Are you sure you want to delete this post? This action cannot be undone.")

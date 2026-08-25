@@ -7,6 +7,7 @@
 
 import SwiftUI
 import Petrel
+import PetrelCatbird
 import Observation
 import OSLog
 
@@ -15,6 +16,7 @@ final class PostContextMenuViewModel {
     let appState: AppState
     let post: AppBskyFeedDefs.PostView
     let allowsThreadSummary: Bool
+    let visibilityContext: PostVisibilityContext
     
     private let logger = Logger(subsystem: "blue.catbird", category: "PostContextMenu")
     
@@ -34,15 +36,18 @@ final class PostContextMenuViewModel {
     init(
         appState: AppState,
         post: AppBskyFeedDefs.PostView,
-        allowsThreadSummary: Bool = false
+        allowsThreadSummary: Bool = false,
+        visibilityContext: PostVisibilityContext = .public
     ) {
         self.appState = appState
         self.post = post
         self.allowsThreadSummary = allowsThreadSummary
+        self.visibilityContext = visibilityContext
     }
 
-    func deletePost(visibilityContext: PostVisibilityContext = .public) async {
-        switch visibilityContext {
+    func deletePost(visibilityContext: PostVisibilityContext? = nil) async {
+        let effectiveContext = visibilityContext ?? self.visibilityContext
+        switch effectiveContext {
         case .public:
             let did = appState.userDID
             do {
@@ -287,5 +292,34 @@ final class PostContextMenuViewModel {
     /// Returns a description of the post for reporting purposes
     func getReportDescription() -> String {
         return "Post by @\(post.author.handle)"
+    }
+}
+
+extension PostContextMenuViewModel {
+    public static func forCircleItem(
+        _ item: BlueCatbirdCircleDefs.FeedItem,
+        appState: AppState,
+        allowsThreadSummary: Bool = false
+    ) -> PostContextMenuViewModel {
+        PostContextMenuViewModel(
+            appState: appState,
+            post: item.post.post,
+            allowsThreadSummary: allowsThreadSummary,
+            visibilityContext: .circle(item.circle)
+        )
+    }
+
+    public static func forCircle(
+        post: AppBskyFeedDefs.PostView,
+        circle: CircleSummary,
+        appState: AppState,
+        allowsThreadSummary: Bool = false
+    ) -> PostContextMenuViewModel {
+        PostContextMenuViewModel(
+            appState: appState,
+            post: post,
+            allowsThreadSummary: allowsThreadSummary,
+            visibilityContext: .circle(circle)
+        )
     }
 }

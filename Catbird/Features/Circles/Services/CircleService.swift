@@ -210,6 +210,32 @@ actor GatewayCircleTransport: CircleTransport {
       throw CircleError.spaceWriteRejected("unexpected applyWrites result")
     }
   }
+
+  func deleteLike(uri: ATProtocolURI, circle: CircleSummary) async throws {
+    let did = try await client.getDid()
+    let rkey = uri.recordKey ?? ""
+
+    let delete = ComAtprotoSpaceApplyWrites.Delete(
+      collection: try NSID(nsidString: "app.bsky.feed.like"),
+      rkey: try RecordKey(keyString: rkey)
+    )
+
+    let input = ComAtprotoSpaceApplyWrites.Input(
+      space: circle.uri,
+      repo: try DID(didString: did),
+      validate: true,
+      writes: [ComAtprotoSpaceApplyWrites.InputWritesUnion(delete)]
+    )
+
+    let (_, output) = try await client.com.atproto.space.applyWrites(input: input)
+    guard let result = output?.results?.first else { throw CircleError.spaceWriteRejected("no result") }
+    switch result {
+    case .comAtprotoSpaceApplyWritesDeleteResult:
+      return
+    case .comAtprotoSpaceApplyWritesCreateResult, .comAtprotoSpaceApplyWritesUpdateResult, .unexpected:
+      throw CircleError.spaceWriteRejected("unexpected applyWrites result")
+    }
+  }
 }
 
 /// Typed Circle client boundary. Holds a transport (production gateway or test
@@ -276,5 +302,9 @@ actor CircleService {
 
   func deletePost(uri: ATProtocolURI, circle: CircleSummary) async throws {
     try await transport.deletePost(uri: uri, circle: circle)
+  }
+
+  func deleteLike(uri: ATProtocolURI, circle: CircleSummary) async throws {
+    try await transport.deleteLike(uri: uri, circle: circle)
   }
 }

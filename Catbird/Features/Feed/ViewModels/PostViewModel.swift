@@ -7,9 +7,9 @@
 
 import Foundation
 import Petrel
+import PetrelCatbird
 import Observation
 import OSLog
-
 /// ViewModel for managing post state and interactions
 @Observable
 final class PostViewModel {
@@ -44,10 +44,12 @@ final class PostViewModel {
 
     /// Visibility context for the post (public or circle)
     var visibilityContext: PostVisibilityContext = .public
+    private let authorDid: String?
 
     /// Capabilities available for this post given its visibility context
     var capabilities: PostCapabilities {
-        PostCapabilities.forContext(visibilityContext)
+        let isAuthor = authorDid != nil && authorDid == appState.userDID
+        return PostCapabilities.forContext(visibilityContext, isAuthor: isAuthor)
     }
     private var initializationTask: Task<Void, Never>?
     
@@ -61,10 +63,20 @@ final class PostViewModel {
     ///   - postId: The URI string of the post
     ///   - postCid: The CID of the post
     ///   - appState: The app state
-    init(postId: String, postCid: CID, appState: AppState) {
+    ///   - authorDid: Optional author DID of the post
+    ///   - visibilityContext: The visibility context of the post
+    init(
+        postId: String,
+        postCid: CID,
+        appState: AppState,
+        authorDid: String? = nil,
+        visibilityContext: PostVisibilityContext = .public
+    ) {
         self.postId = postId
         self.postCid = postCid
         self.appState = appState
+        self.authorDid = authorDid
+        self.visibilityContext = visibilityContext
         
         // Check initial state from post shadow manager
         Task {
@@ -73,11 +85,17 @@ final class PostViewModel {
     }
     
     /// Convenience initializer from a post view
-    convenience init(post: AppBskyFeedDefs.PostView, appState: AppState) {
+    convenience init(
+        post: AppBskyFeedDefs.PostView,
+        appState: AppState,
+        visibilityContext: PostVisibilityContext = .public
+    ) {
         self.init(
             postId: post.uri.uriString(),
             postCid: post.cid,
-            appState: appState
+            appState: appState,
+            authorDid: post.author.did.didString(),
+            visibilityContext: visibilityContext
         )
         
         // Initialize shadow state from the server's post data
@@ -379,10 +397,11 @@ final class PostViewModel {
                         shadow.likeUri = nil
                     }
                 case let .circle(circle):
-                    if let uri = likeUri {
-                        let service = appState.circleService
-                        try await service.deletePost(uri: uri, circle: circle)
+                    guard let uri = likeUri else {
+                        throw CircleError.missingLikeUri
                     }
+                    let service = appState.circleService
+                    try await service.deleteLike(uri: uri, circle: circle)
                     self.likeUri = nil
                     await appState.postShadowManager.updateShadow(forUri: postId) { shadow in
                         shadow.likeUri = nil
@@ -664,5 +683,37 @@ final class PostViewModel {
         case missingClient
         case unableToFindRecordKey
         case requestFailed
+    }
+
+    #if DEBUG
+    func setLikedStateForTesting(isLiked: Bool, likeUri: ATProtocolURI?) {
+        self.isLiked = isLiked
+        self.likeUri = likeUri
+    }
+    #endif
+}
+
+extension PostViewModel {
+    public static func forCircleItem(
+        _ item: BlueCatbirdCircleDefs.FeedItem,
+        appState: AppState
+    ) -> PostViewModel {
+        PostViewModel(
+            post: item.post.post,
+            appState: appState,
+            visibilityContext: .circle(item.circle)
+        )
+    }
+
+    public static func forCircle(
+        post: AppBskyFeedDefs.PostView,
+        circle: CircleSummary,
+        appState: AppState
+    ) -> PostViewModel {
+        PostViewModel(
+            post: post,
+            appState: appState,
+            visibilityContext: .circle(circle)
+        )
     }
 }

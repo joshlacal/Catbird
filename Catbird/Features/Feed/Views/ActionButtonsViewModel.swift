@@ -20,9 +20,13 @@ import SwiftUI
     /// The post view model that handles actual interactions
     private let postViewModel: PostViewModel
     
+    /// Capabilities for interaction based on post visibility context
+    var capabilities: PostCapabilities {
+        postViewModel.capabilities
+    }
+    
     /// Reference to the app state
     let appState: AppState
-    
     // MARK: - Initialization
     
     /// Initialize the view model

@@ -15,12 +15,23 @@ struct ThreadView: View {
     @Environment(AppState.self) private var appState: AppState
     let postURI: ATProtocolURI
     @Binding var path: NavigationPath
+    let visibilityContext: PostVisibilityContext
+    
+    init(
+        postURI: ATProtocolURI,
+        path: Binding<NavigationPath>,
+        visibilityContext: PostVisibilityContext = .public
+    ) {
+        self.postURI = postURI
+        self._path = path
+        self.visibilityContext = visibilityContext
+    }
     
     var body: some View {
         #if os(iOS)
-        UIKitThreadViewWrapper(postURI: postURI, path: $path, appState: appState)
+        UIKitThreadViewWrapper(postURI: postURI, path: $path, appState: appState, visibilityContext: visibilityContext)
         #elseif os(macOS)
-        SwiftUIThreadView(postURI: postURI, path: $path)
+        SwiftUIThreadView(postURI: postURI, path: $path, visibilityContext: visibilityContext)
         #endif
     }
 }
@@ -31,9 +42,10 @@ private struct UIKitThreadViewWrapper: View {
     let postURI: ATProtocolURI
     @Binding var path: NavigationPath
     let appState: AppState
+    let visibilityContext: PostVisibilityContext
     
     var body: some View {
-        ThreadViewControllerRepresentable(postURI: postURI, path: $path)
+        ThreadViewControllerRepresentable(postURI: postURI, path: $path, visibilityContext: visibilityContext)
           .ignoresSafeArea()
             .applyAppStateEnvironment(appState)
     }
@@ -48,7 +60,7 @@ private struct SwiftUIThreadView: View {
     @Environment(\.modelContext) private var modelContext
     let postURI: ATProtocolURI
     @Binding var path: NavigationPath
-
+    let visibilityContext: PostVisibilityContext
     @State private var threadManager: ThreadManager?
     @State private var isLoading = true
     @State private var hasInitialized = false
@@ -227,7 +239,8 @@ private struct SwiftUIThreadView: View {
                 post: post,
                 showLine: false,
                 path: $path,
-                appState: appState
+                appState: appState,
+                visibilityContext: visibilityContext
             )
             .padding(.vertical, 8)
 
@@ -267,9 +280,9 @@ private struct SwiftUIThreadView: View {
                 isSelectable: false,
                 path: $path,
                 appState: appState,
-                hasVisibleThreadContext: true
+                hasVisibleThreadContext: true,
+                visibilityContext: visibilityContext
             )
-            .contentShape(Rectangle())
             .onTapGesture {
                 path.append(NavigationDestination.post(itemPost.post.uri))
             }
@@ -332,9 +345,9 @@ private struct SwiftUIThreadView: View {
                     isSelectable: false,
                     path: $path,
                     appState: appState,
-                    hasVisibleThreadContext: wrapper.hasReplies
+                    hasVisibleThreadContext: wrapper.hasReplies,
+                    visibilityContext: visibilityContext
                 )
-                .contentShape(Rectangle())
                 .onTapGesture {
                     path.append(NavigationDestination.post(itemPost.post.uri))
                 }
@@ -583,6 +596,21 @@ struct NavigationTitleDisplayModeModifier: ViewModifier {
         content
         #endif
     }
+}
+
+extension ThreadView {
+  /// Minimal production Circle thread factory.
+  public static func circleThread(
+    uri: ATProtocolURI,
+    circle: CircleSummary,
+    path: Binding<NavigationPath>
+  ) -> ThreadView {
+    ThreadView(
+      postURI: uri,
+      path: path,
+      visibilityContext: .circle(circle)
+    )
+  }
 }
 
 #Preview("ThreadView") {

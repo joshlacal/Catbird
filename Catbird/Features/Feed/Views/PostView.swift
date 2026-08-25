@@ -10,6 +10,7 @@ import Nuke
 import NukeUI
 import Observation
 import Petrel
+import PetrelCatbird
 import SwiftUI
 
 // Define the consolidated state model
@@ -61,9 +62,9 @@ struct PostView: View, Equatable, Identifiable {
   let isToYou: Bool
   let hasVisibleThreadContext: Bool
   let avatarScale: PostAvatarScale
+  let visibilityContext: PostVisibilityContext
   @Binding var path: NavigationPath
   @Environment(\.feedPostID) private var feedPostID
-
   // MARK: - State
   @State private var postState: PostState  // Consolidated state
   @State private var contextMenuViewModel: PostContextMenuViewModel
@@ -112,7 +113,8 @@ var id: String {
     appState: AppState,
     isToYou: Bool = false,
     hasVisibleThreadContext: Bool = false,
-    avatarScale: PostAvatarScale = .regular
+    avatarScale: PostAvatarScale = .regular,
+    visibilityContext: PostVisibilityContext = .public
   ) {
     self.post = post
     self.grandparentAuthor = grandparentAuthor
@@ -122,18 +124,19 @@ var id: String {
     self.isToYou = isToYou
     self.hasVisibleThreadContext = hasVisibleThreadContext
     self.avatarScale = avatarScale
+    self.visibilityContext = visibilityContext
 
     // Initialize states
     _postState = State(initialValue: PostState(post: post))  // Initialize consolidated state
-    _viewModel = State(initialValue: PostViewModel(post: post, appState: appState))
+    _viewModel = State(initialValue: PostViewModel(post: post, appState: appState, visibilityContext: visibilityContext))
     _contextMenuViewModel = State(
       initialValue: PostContextMenuViewModel(
         appState: appState,
         post: post,
-        allowsThreadSummary: (hasVisibleThreadContext || isParentPost) && (post.replyCount ?? 0) > 0
+        allowsThreadSummary: (hasVisibleThreadContext || isParentPost) && (post.replyCount ?? 0) > 0,
+        visibilityContext: visibilityContext
       ))
   }
-
   // MARK: - Body
   var body: some View {
     HStack(alignment: .top, spacing: DesignTokens.Spacing.xs) {
@@ -212,7 +215,7 @@ var id: String {
     .alert("Delete Post", isPresented: $showDeleteConfirmation) {
       Button("Cancel", role: .cancel) { }
       Button("Delete", role: .destructive) {
-        Task { await contextMenuViewModel.deletePost() }
+        Task { await contextMenuViewModel.deletePost(visibilityContext: visibilityContext) }
       }
     } message: {
       Text("Are you sure you want to delete this post? This action cannot be undone.")
@@ -1129,6 +1132,54 @@ enum PostViewError {
     case permissionDenied
 }
 
+
+extension PostView {
+  /// Minimal production Circle row factory from a generated `BlueCatbirdCircleDefs.FeedItem`.
+  public static func circleRow(
+    item: BlueCatbirdCircleDefs.FeedItem,
+    path: Binding<NavigationPath>,
+    appState: AppState,
+    isParentPost: Bool = false,
+    isSelectable: Bool = true,
+    avatarScale: PostAvatarScale = .regular
+  ) -> PostView {
+    PostView(
+      post: item.post.post,
+      grandparentAuthor: nil,
+      isParentPost: isParentPost,
+      isSelectable: isSelectable,
+      path: path,
+      appState: appState,
+      avatarScale: avatarScale,
+      visibilityContext: .circle(item.circle)
+    )
+  }
+
+  /// Minimal production Circle detail factory.
+  public static func circleDetail(
+    post: AppBskyFeedDefs.PostView,
+    circle: CircleSummary,
+    path: Binding<NavigationPath>,
+    appState: AppState,
+    grandparentAuthor: AppBskyActorDefs.ProfileViewBasic? = nil,
+    isParentPost: Bool = false,
+    isSelectable: Bool = true,
+    hasVisibleThreadContext: Bool = false,
+    avatarScale: PostAvatarScale = .regular
+  ) -> PostView {
+    PostView(
+      post: post,
+      grandparentAuthor: grandparentAuthor,
+      isParentPost: isParentPost,
+      isSelectable: isSelectable,
+      path: path,
+      appState: appState,
+      hasVisibleThreadContext: hasVisibleThreadContext,
+      avatarScale: avatarScale,
+      visibilityContext: .circle(circle)
+    )
+  }
+}
 #Preview("PostView") {
   AsyncPreviewDataContent { appState in
     await PreviewData.firstPostView(from: appState)

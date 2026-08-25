@@ -73,6 +73,9 @@ actor RecordingCircleTransport: CircleTransport {
   func deletePost(uri: ATProtocolURI, circle: CircleSummary) async throws {
     try throwIfConfigured()
   }
+  func deleteLike(uri: ATProtocolURI, circle: CircleSummary) async throws {
+    try throwIfConfigured()
+  }
 }
 
 @Suite("Circle service boundary")
@@ -98,6 +101,15 @@ struct CircleServiceTests {
     #expect(page.items.isEmpty)
     let state = try await service.activate(space: CircleTestFixtures.family.uri)
     #expect(state == .active)
+  }
+
+  @Test("CircleService deleteLike forwards to transport and stays Circle scoped")
+  func circleServiceDeleteLikeForwardsToTransport() async throws {
+    let transport = RecordingCircleTransport()
+    let service = CircleService(transport: transport)
+    let likeURI = try ATProtocolURI(uriString: "\(CircleTestFixtures.familyURI.uriString())/app.bsky.feed.like/testlike456")
+    try await service.deleteLike(uri: likeURI, circle: CircleTestFixtures.family)
+    #expect(await transport.publicEndpointCallCount == 0)
   }
 }
 
