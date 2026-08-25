@@ -213,6 +213,19 @@ struct SettingsRuntimeWiringTests {
     #expect(!HapticsPolicy.isEnabled(disableHaptics: true))
   }
 
+  @Test("Logged-out visibility preserves unrelated self-labels")
+  func loggedOutVisibilityLabels() {
+    let source = ["porn", "!no-unauthenticated", "graphic-media"]
+    #expect(
+      LoggedOutVisibilitySelfLabels.reconciled(source, isVisible: true)
+        == ["porn", "graphic-media"]
+    )
+    #expect(
+      LoggedOutVisibilitySelfLabels.reconciled(source, isVisible: false)
+        == ["porn", "graphic-media", "!no-unauthenticated"]
+    )
+  }
+
   @Test("Circle enablement requires both the local flag and the server capability")
   func circleFlagsRequireBothGates() {
     CircleFeatureFlags.setLocalFlag(true)
