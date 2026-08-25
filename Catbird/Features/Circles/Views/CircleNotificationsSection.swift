@@ -32,7 +32,7 @@ struct CircleNotificationsSection: View {
                 .enhancedAppSubheadline()
                 .fontWeight(.medium)
                 .foregroundColor(.primary)
-              Text(error.localizedDescription)
+              Text(contentFreeErrorMessage(for: error))
                 .enhancedAppCaption()
                 .foregroundColor(.secondary)
             }
@@ -96,6 +96,29 @@ struct CircleNotificationsSection: View {
     case .value_invite:
       navigationPath.wrappedValue.append(NavigationDestination.circleDetail(notification.circle))
     }
+  }
+
+  static func contentFreeErrorMessage(for error: CircleError) -> String {
+    switch error {
+    case .upstreamUnavailable:
+      return "Circle service is temporarily unavailable."
+    case .accessRemoved:
+      return "Access to Circle activity was removed."
+    case .accessExpired:
+      return "Circle access expired. Please reauthorize."
+    case .unsupportedPDS, .protocolRevisionMismatch:
+      return "Circle features are not supported by this server."
+    case .authRequired:
+      return "Authentication required to view Circle activity."
+    case .notAuthorized:
+      return "Not authorized to view Circle activity."
+    case .networkError, .clientNotInitialized, .invalidResponse, .missingLikeUri, .spaceWriteRejected, .invalidParameter:
+      return "Unable to load Circle activity. Please check your connection and try again."
+    }
+  }
+
+  private func contentFreeErrorMessage(for error: CircleError) -> String {
+    Self.contentFreeErrorMessage(for: error)
   }
 }
 

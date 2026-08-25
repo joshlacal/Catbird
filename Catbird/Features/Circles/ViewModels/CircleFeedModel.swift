@@ -84,8 +84,14 @@ final class CircleFeedModel {
 
     let requestGeneration = currentGeneration
     let requestAccountDID = accountDID
+    let requestSpace = space
     // Restore from memory cache first if empty
     if items.isEmpty, let cachedPage = await cache.page(accountDID: accountDID, space: space) {
+      guard requestGeneration == self.currentGeneration,
+            requestAccountDID == self.accountDID,
+            requestSpace == self.space else {
+        return
+      }
       if space == nil {
         self.items = cachedPage.items.filter { !($0.circle.muted ?? false) }
       } else {
@@ -98,7 +104,8 @@ final class CircleFeedModel {
       let page = try await service.getFeed(space: space, cursor: nil)
 
       guard requestGeneration == self.currentGeneration,
-            requestAccountDID == self.accountDID else {
+            requestAccountDID == self.accountDID,
+            requestSpace == self.space else {
         return
       }
 
@@ -114,7 +121,8 @@ final class CircleFeedModel {
       await cache.store(storedPage, accountDID: accountDID, space: space)
     } catch {
       guard requestGeneration == self.currentGeneration,
-            requestAccountDID == self.accountDID else {
+            requestAccountDID == self.accountDID,
+            requestSpace == self.space else {
         return
       }
       let typedError = circleError(from: error)
@@ -143,11 +151,13 @@ final class CircleFeedModel {
     defer { isLoading = false }
     let requestGeneration = currentGeneration
     let requestAccountDID = accountDID
+    let requestSpace = space
 
     do {
       let nextPage = try await service.getFeed(space: space, cursor: currentCursor)
       guard requestGeneration == self.currentGeneration,
-            requestAccountDID == self.accountDID else {
+            requestAccountDID == self.accountDID,
+            requestSpace == self.space else {
         return
       }
 
@@ -166,7 +176,8 @@ final class CircleFeedModel {
       await cache.store(updatedPage, accountDID: accountDID, space: space)
     } catch {
       guard requestGeneration == self.currentGeneration,
-            requestAccountDID == self.accountDID else {
+            requestAccountDID == self.accountDID,
+            requestSpace == self.space else {
         return
       }
       let typedError = circleError(from: error)
@@ -202,6 +213,7 @@ final class CircleFeedModel {
   /// Purges in-memory cached posts for a muted Circle Space from unified feed.
   func purgeMutedCircle(_ space: SpaceRef) {
     if self.space == nil {
+      currentGeneration += 1
       items.removeAll(where: { $0.circle.uri.uriString() == space.uriString() })
       Task { [accountDID, cache] in
         await cache.purgeMutedSpaceFromUnified(accountDID: accountDID, space: space)

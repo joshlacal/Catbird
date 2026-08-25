@@ -17,6 +17,8 @@ actor RecordingCircleNotificationService: CircleNotificationServiceProtocol {
   private(set) var listNotificationsCalls: [String?] = []
   var pagesToReturn: [CircleNotificationPage] = []
   var errorToThrow: Error?
+  var onListNotifications: (@Sendable () async -> Void)?
+  var onRefresh: (@Sendable () async -> Void)?
 
   func setPages(_ pages: [CircleNotificationPage]) {
     self.pagesToReturn = pages
@@ -26,7 +28,18 @@ actor RecordingCircleNotificationService: CircleNotificationServiceProtocol {
     self.errorToThrow = error
   }
 
+  func setOnListNotifications(_ action: (@Sendable () async -> Void)?) {
+    self.onListNotifications = action
+  }
+
+  func setOnRefresh(_ action: (@Sendable () async -> Void)?) {
+    self.onRefresh = action
+  }
+
   func listNotifications(cursor: String?) async throws -> CircleNotificationPage {
+    if let onListNotifications {
+      await onListNotifications()
+    }
     listNotificationsCalls.append(cursor)
     if let errorToThrow {
       throw errorToThrow
@@ -39,6 +52,9 @@ actor RecordingCircleNotificationService: CircleNotificationServiceProtocol {
 
   func refresh() async throws -> CircleNotificationPage {
     refreshCount += 1
+    if let onRefresh {
+      await onRefresh()
+    }
     return try await listNotifications(cursor: nil)
   }
 }
@@ -459,5 +475,153 @@ struct CircleNotificationTests {
     try await model.refresh()
     #expect(model.error == nil)
     #expect(model.notifications.count == 1)
+  }
+
+  // 13. Barrier test: Generic push mid-request account switch discards mutation before model and cache
+  @Test("Generic push mid-request account switch discards mutation before model and cache")
+  @MainActor
+  func genericPushMidRequestAccountSwitchDiscardsMutation() async throws {
+    let manager = NotificationManager()
+    let cache = CircleNotificationCache()
+    let notif = makeNotification(id: "n1", reason: .value_reply, circle: familyCircle)
+    let page = CircleNotificationPage(notifications: [notif], cursor: "cursor_alice")
+
+    let service = RecordingCircleNotificationService()
+    await service.setPages([page])
+
+    let model = CircleNotificationsModel(
+      service: service,
+      accountDID: "did:plc:alice",
+      cache: cache
+    )
+
+    final class ActiveAccountBox: @unchecked Sendable {
+      var did: String
+      init(_ did: String) { self.did = did }
+    }
+    let activeAccount = ActiveAccountBox("did:plc:alice")
+
+    // Simulate account switch while refresh is suspended in network call
+    await service.setOnRefresh {
+      activeAccount.did = "did:plc:bob"
+    }
+
+    await manager.handlePush(
+      ["kind": "circle_activity"],
+      circleNotificationsModel: model,
+      activeAccountCheck: { activeAccount.did }
+    )
+
+    // Because account switched to bob before refresh applied, alice's model and cache must remain empty/unmodified
+    #expect(model.notifications.isEmpty)
+    #expect(model.cursor == nil)
+    let cachedAlice = await cache.page(accountDID: "did:plc:alice")
+    #expect(cachedAlice == nil)
+  }
+
+  // 14. Barrier test: In-flight notification load overlapped with account purge does not resurrect notifications
+  @Test("In-flight notification load overlapped with account purge does not resurrect notifications")
+  @MainActor
+  func inFlightNotificationLoadOverlappedWithAccountPurgeDoesNotResurrect() async throws {
+    let cache = CircleNotificationCache()
+    let notif = makeNotification(id: "n1", reason: .value_reply, circle: familyCircle)
+    let page = CircleNotificationPage(notifications: [notif], cursor: "cursor_1")
+
+    let service = RecordingCircleNotificationService()
+    await service.setPages([page])
+
+    let model = CircleNotificationsModel(
+      service: service,
+      accountDID: "did:plc:alice",
+      cache: cache
+    )
+
+    // Overlap: during listNotifications await, trigger account purge
+    await service.setOnListNotifications {
+      await MainActor.run {
+        Task {
+          await model.purgeAccount()
+        }
+      }
+    }
+
+    try await model.load()
+
+    // Notifications must remain empty because purge bumped generation
+    #expect(model.notifications.isEmpty)
+    #expect(model.cursor == nil)
+  }
+
+  // 15. Barrier test: In-flight notification load overlapped with space deletion does not resurrect space notifications
+  @Test("In-flight notification load overlapped with space deletion does not resurrect space notifications")
+  @MainActor
+  func inFlightNotificationLoadOverlappedWithSpaceDeletionDoesNotResurrect() async throws {
+    let cache = CircleNotificationCache()
+    let notifFamily = makeNotification(id: "n_fam", reason: .value_reply, circle: familyCircle)
+    let page = CircleNotificationPage(notifications: [notifFamily], cursor: "cursor_1")
+
+    let service = RecordingCircleNotificationService()
+    await service.setPages([page])
+
+    let model = CircleNotificationsModel(
+      service: service,
+      accountDID: "did:plc:alice",
+      cache: cache
+    )
+
+    // Overlap: during listNotifications await, trigger .circleDeleted notification
+    await service.setOnListNotifications {
+      await MainActor.run {
+        NotificationCenter.default.post(
+          name: .circleDeleted,
+          object: nil,
+          userInfo: [
+            "accountDID": "did:plc:alice",
+            "spaceURI": self.familyCircle.uri.uriString()
+          ]
+        )
+      }
+    }
+
+    try await model.load()
+
+    // Family notifications must remain removed
+    #expect(model.notifications.isEmpty)
+  }
+
+  // 16. Content-free error message canary test
+  @Test("CircleNotificationsSection error UI renders content-free category text and never leaks canaries")
+  func errorUIRendersContentFreeCategoryTextAndNeverLeaksCanaries() {
+    let canaryServerURL = "https://sensitive.internal.server.net/v1/api"
+    let canaryDID = "did:plc:topsecretcanary12345"
+    let canarySpace = "at://did:plc:canary/space/blue.catbird.circle/secretspace"
+    let canaryMessage = "Internal database constraint violation at row 42 for token_abc123"
+
+    let testErrors: [CircleError] = [
+      .networkError("\(canaryServerURL)/\(canaryDID)"),
+      .spaceWriteRejected("\(canarySpace) -> \(canaryMessage)"),
+      .invalidParameter("Canary secret parameter \(canaryDID)"),
+      .upstreamUnavailable,
+      .accessRemoved,
+      .accessExpired,
+      .unsupportedPDS,
+      .protocolRevisionMismatch,
+      .authRequired,
+      .notAuthorized,
+      .clientNotInitialized,
+      .invalidResponse,
+      .missingLikeUri
+    ]
+
+    for error in testErrors {
+      let message = CircleNotificationsSection.contentFreeErrorMessage(for: error)
+      #expect(!message.isEmpty)
+      #expect(!message.contains(canaryServerURL))
+      #expect(!message.contains(canaryDID))
+      #expect(!message.contains(canarySpace))
+      #expect(!message.contains(canaryMessage))
+      #expect(!message.contains("token_abc123"))
+      #expect(!message.contains("topsecretcanary"))
+    }
   }
 }

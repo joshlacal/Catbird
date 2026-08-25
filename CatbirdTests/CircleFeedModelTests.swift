@@ -21,6 +21,7 @@ struct CircleFeedModelTests {
     var lastQueriedCursor: String?
     var feedCallCount: Int = 0
     var errorToThrow: (any Error)?
+    var onGetFeed: (@Sendable () async -> Void)?
     var mediaData: Data = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAKeyNrvgAAAABJRU5ErkJggg==")!
     var lastMediaSpace: SpaceRef?
     var lastMediaAuthorDID: DID?
@@ -47,6 +48,9 @@ struct CircleFeedModelTests {
       self.nextCursor = cursor
     }
 
+    func setOnGetFeed(_ action: (@Sendable () async -> Void)?) {
+      self.onGetFeed = action
+    }
     func capabilities() async throws -> CircleCapability {
       CircleCapability(enabled: true, protocolRevision: "2026-08", supportsImages: true)
     }
@@ -56,6 +60,9 @@ struct CircleFeedModelTests {
     }
 
     func getFeed(space: SpaceRef?, cursor: String?) async throws -> CircleFeedPage {
+      if let onGetFeed {
+        await onGetFeed()
+      }
       if let errorToThrow { throw errorToThrow }
       feedCallCount += 1
       lastQueriedSpace = space
@@ -755,5 +762,76 @@ struct CircleFeedModelTests {
     await model.purgeUnavailableSpace(familyCircle.uri)
     #expect(model.items.isEmpty)
     #expect(model.accessState == .removed)
+  }
+
+  @Test("Barrier test: in-flight getFeed overlapped with space deletion does not resurrect deleted space")
+  func inFlightFeedLoadOverlappedWithCircleDeletedDoesNotResurrect() async throws {
+    let familyCircle = CircleTestFixtures.family
+    let itemFamily = makeFeedItem(
+      circle: familyCircle,
+      rkey: "post_family",
+      text: "Family post"
+    )
+    let transport = MockCircleTransport(feedItems: [itemFamily])
+    let service = CircleService(transport: transport)
+    let cache = CircleFeedCache()
+
+    let model = CircleFeedModel(
+      service: service,
+      space: familyCircle.uri,
+      accountDID: "did:plc:alice",
+      cache: cache
+    )
+
+    // Hook getFeed so that during the network call, a .circleDeleted notification is posted
+    await transport.setOnGetFeed {
+      await MainActor.run {
+        NotificationCenter.default.post(
+          name: .circleDeleted,
+          object: nil,
+          userInfo: [
+            "accountDID": "did:plc:alice",
+            "spaceURI": familyCircle.uri.uriString()
+          ]
+        )
+      }
+    }
+
+    try await model.load()
+
+    // The in-flight response must be discarded because generation changed during the request
+    #expect(model.items.isEmpty)
+    #expect(model.accessState == .removed)
+  }
+
+  @Test("Barrier test: in-flight unified feed load overlapped with mute does not resurrect muted circle")
+  func inFlightUnifiedFeedLoadOverlappedWithMuteDoesNotResurrect() async throws {
+    let familyCircle = CircleTestFixtures.family
+    let workCircle = CircleTestFixtures.work
+    let itemFamily = makeFeedItem(circle: familyCircle, rkey: "post_family", text: "Family post")
+    let itemWork = makeFeedItem(circle: workCircle, rkey: "post_work", text: "Work post")
+
+    let transport = MockCircleTransport(feedItems: [itemFamily, itemWork])
+    let service = CircleService(transport: transport)
+    let cache = CircleFeedCache()
+
+    let model = CircleFeedModel(
+      service: service,
+      space: nil,
+      accountDID: "did:plc:alice",
+      cache: cache
+    )
+
+    // Hook getFeed so that during the network call, familyCircle is muted
+    await transport.setOnGetFeed {
+      await MainActor.run {
+        model.purgeMutedCircle(familyCircle.uri)
+      }
+    }
+
+    try await model.load()
+
+    // In-flight response was discarded due to generation increment on mute; items remain empty (or clean)
+    #expect(!model.items.contains(where: { $0.circle.uri == familyCircle.uri }))
   }
 }

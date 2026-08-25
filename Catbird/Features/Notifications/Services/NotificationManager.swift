@@ -4008,7 +4008,8 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
   @MainActor
   func handlePush(
     _ userInfo: [AnyHashable: Any],
-    circleNotificationsModel: CircleNotificationsModel? = nil
+    circleNotificationsModel: CircleNotificationsModel? = nil,
+    activeAccountCheck: (@Sendable () -> String?)? = nil
   ) async {
     guard let kind = userInfo["kind"] as? String, kind == "circle_activity" else {
       return
@@ -4027,13 +4028,14 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
       return
     }
 
+    let targetDID = activeAccountDID
     do {
-      try await targetModel.refresh()
-      // If account changes while awaiting, discard
-      if let currentDID = appState?.userDID, !currentDID.isEmpty, currentDID != activeAccountDID {
-        notificationLogger.info("Discarded generic circle push refresh: account changed during refresh")
-        return
-      }
+      try await targetModel.refresh(activeAccountCheck: { [weak appState] in
+        if let customCheck = activeAccountCheck {
+          return customCheck()
+        }
+        return appState?.userDID ?? targetDID
+      })
     } catch {
       // Handle errors explicitly without private identifiers
       notificationLogger.error("Generic circle push refresh failed")

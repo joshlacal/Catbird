@@ -49,8 +49,7 @@ final class CircleManagementViewModel {
   let service: CircleService
   let userDID: String
   let isCreating: Bool
-  private var isManagingDelete: Bool = false
-  private var lastDeleteOperationID: String?
+  private var pendingDeleteOperationID: String?
   init(circle: CircleSummary, service: CircleService, userDID: String = "") {
     self.circle = circle
     self.service = service
@@ -205,7 +204,7 @@ final class CircleManagementViewModel {
     state = .submitting
     do {
       let operation = try await service.createCircle(name: validName, memberDIDs: finalDIDs)
-      handleOperation(operation)
+      await handleOperation(operation)
       return operation
     } catch {
       let cError = circleError(from: error)
@@ -231,7 +230,7 @@ final class CircleManagementViewModel {
     state = .submitting
     do {
       let operation = try await service.updateMember(space: circle.uri, memberDID: did, action: .add)
-      handleOperation(operation)
+      await handleOperation(operation)
       if operation.status == .value_complete {
         if !members.contains(where: { $0.didString() == did.didString() }) {
           members.append(did)
@@ -256,7 +255,7 @@ final class CircleManagementViewModel {
     state = .submitting
     do {
       let operation = try await service.updateMember(space: circle.uri, memberDID: did, action: .remove)
-      handleOperation(operation)
+      await handleOperation(operation)
       if operation.status == .value_complete {
         members.removeAll(where: { $0.didString() == did.didString() })
       }
@@ -276,24 +275,10 @@ final class CircleManagementViewModel {
       throw error
     }
     state = .submitting
-    isManagingDelete = true
     do {
       let operation = try await service.deleteCircle(space: circle.uri)
-      lastDeleteOperationID = operation.id
-      handleOperation(operation)
-      if operation.status == .value_complete {
-        await CircleFeedCache.shared.purge(accountDID: userDID, space: circle.uri)
-        await CircleMediaLoader.shared.purge(accountDID: userDID, space: circle.uri)
-        await CircleNotificationCache.shared.purge(accountDID: userDID, space: circle.uri)
-        NotificationCenter.default.post(
-          name: .circleDeleted,
-          object: nil,
-          userInfo: [
-            "accountDID": userDID,
-            "spaceURI": circle.uri.uriString()
-          ]
-        )
-      }
+      pendingDeleteOperationID = operation.id
+      await handleOperation(operation)
       return operation
     } catch {
       let cError = circleError(from: error)
@@ -354,7 +339,7 @@ final class CircleManagementViewModel {
     state = .submitting
     do {
       let op = try await service.retryOperation(id: opID)
-      handleOperation(op)
+      await handleOperation(op)
     } catch {
       let cError = circleError(from: error)
       state = .failed(message: cError.localizedDescription, retryOperationID: UUID(uuidString: opID))
@@ -366,7 +351,7 @@ final class CircleManagementViewModel {
   func checkStatus(operationID: String) async throws {
     do {
       let op = try await service.getOperation(id: operationID)
-      handleOperation(op)
+      await handleOperation(op)
     } catch {
       let cError = circleError(from: error)
       state = .failed(message: cError.localizedDescription, retryOperationID: UUID(uuidString: operationID))
@@ -374,24 +359,23 @@ final class CircleManagementViewModel {
     }
   }
 
-  private func handleOperation(_ operation: CircleOperation) {
+  private func handleOperation(_ operation: CircleOperation) async {
     switch operation.status {
     case .value_complete:
       state = .complete
-      if isManagingDelete || lastDeleteOperationID == operation.id {
-        Task { [userDID, circle] in
-          await CircleFeedCache.shared.purge(accountDID: userDID, space: circle.uri)
-          await CircleMediaLoader.shared.purge(accountDID: userDID, space: circle.uri)
-          await CircleNotificationCache.shared.purge(accountDID: userDID, space: circle.uri)
-          NotificationCenter.default.post(
-            name: .circleDeleted,
-            object: nil,
-            userInfo: [
-              "accountDID": userDID,
-              "spaceURI": circle.uri.uriString()
-            ]
-          )
-        }
+      if let delID = pendingDeleteOperationID, delID == operation.id {
+        pendingDeleteOperationID = nil
+        await CircleFeedCache.shared.purge(accountDID: userDID, space: circle.uri)
+        await CircleMediaLoader.shared.purge(accountDID: userDID, space: circle.uri)
+        await CircleNotificationCache.shared.purge(accountDID: userDID, space: circle.uri)
+        NotificationCenter.default.post(
+          name: .circleDeleted,
+          object: nil,
+          userInfo: [
+            "accountDID": userDID,
+            "spaceURI": circle.uri.uriString()
+          ]
+        )
       }
     case .value_pending:
       state = .pending(operation)

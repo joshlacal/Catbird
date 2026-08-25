@@ -71,7 +71,7 @@ final class CircleNotificationsModel {
   }
 
   /// Initial load or cache restore.
-  func load() async throws {
+  func load(activeAccountCheck: (@Sendable () -> String?)? = nil) async throws {
     guard !isLoading else { return }
     isLoading = true
     defer { isLoading = false }
@@ -81,6 +81,13 @@ final class CircleNotificationsModel {
 
     // Restore from memory cache first if empty
     if notifications.isEmpty, let cached = await cache.page(accountDID: accountDID) {
+      guard requestGeneration == self.currentGeneration,
+            requestAccountDID == self.accountDID else {
+        return
+      }
+      if let check = activeAccountCheck, let currentDID = check(), currentDID != requestAccountDID {
+        return
+      }
       self.notifications = cached.notifications.filter { !($0.circle.muted ?? false) }
       self.cursor = cached.cursor
     }
@@ -90,6 +97,9 @@ final class CircleNotificationsModel {
 
       guard requestGeneration == self.currentGeneration,
             requestAccountDID == self.accountDID else {
+        return
+      }
+      if let check = activeAccountCheck, let currentDID = check(), currentDID != requestAccountDID {
         return
       }
 
@@ -104,6 +114,9 @@ final class CircleNotificationsModel {
             requestAccountDID == self.accountDID else {
         return
       }
+      if let check = activeAccountCheck, let currentDID = check(), currentDID != requestAccountDID {
+        return
+      }
       let typedError = circleError(from: error)
       self.error = typedError
       throw typedError
@@ -111,7 +124,7 @@ final class CircleNotificationsModel {
   }
 
   /// Pull-to-refresh or push-triggered refresh.
-  func refresh() async throws {
+  func refresh(activeAccountCheck: (@Sendable () -> String?)? = nil) async throws {
     guard !isRefreshing else { return }
     isRefreshing = true
     defer { isRefreshing = false }
@@ -126,6 +139,9 @@ final class CircleNotificationsModel {
             requestAccountDID == self.accountDID else {
         return
       }
+      if let check = activeAccountCheck, let currentDID = check(), currentDID != requestAccountDID {
+        return
+      }
 
       self.notifications = page.notifications.filter { !($0.circle.muted ?? false) }
       self.cursor = page.cursor
@@ -138,6 +154,9 @@ final class CircleNotificationsModel {
             requestAccountDID == self.accountDID else {
         return
       }
+      if let check = activeAccountCheck, let currentDID = check(), currentDID != requestAccountDID {
+        return
+      }
       let typedError = circleError(from: error)
       self.error = typedError
       throw typedError
@@ -145,7 +164,7 @@ final class CircleNotificationsModel {
   }
 
   /// Paging load for infinite scroll.
-  func loadMore() async throws {
+  func loadMore(activeAccountCheck: (@Sendable () -> String?)? = nil) async throws {
     guard let currentCursor = cursor, !currentCursor.isEmpty, !isLoading else { return }
     isLoading = true
     defer { isLoading = false }
@@ -158,6 +177,9 @@ final class CircleNotificationsModel {
 
       guard requestGeneration == self.currentGeneration,
             requestAccountDID == self.accountDID else {
+        return
+      }
+      if let check = activeAccountCheck, let currentDID = check(), currentDID != requestAccountDID {
         return
       }
 
@@ -174,6 +196,9 @@ final class CircleNotificationsModel {
     } catch {
       guard requestGeneration == self.currentGeneration,
             requestAccountDID == self.accountDID else {
+        return
+      }
+      if let check = activeAccountCheck, let currentDID = check(), currentDID != requestAccountDID {
         return
       }
       let typedError = circleError(from: error)
@@ -202,12 +227,14 @@ final class CircleNotificationsModel {
 
   /// Purges in-memory cached notifications for a muted Circle Space.
   func purgeMutedCircle(_ space: SpaceRef) async {
+    currentGeneration += 1
     notifications.removeAll(where: { $0.circle.uri.uriString() == space.uriString() })
     await cache.purgeMutedSpace(accountDID: accountDID, space: space)
   }
 
   /// Non-isolated synchronous trigger for NotificationCenter handler.
   private func handleMuteStateChangedSync(space: SpaceRef) {
+    currentGeneration += 1
     notifications.removeAll(where: { $0.circle.uri.uriString() == space.uriString() })
     Task { [accountDID, cache] in
       await cache.purgeMutedSpace(accountDID: accountDID, space: space)

@@ -25,6 +25,10 @@ actor ManagementRecordingCircleTransport: CircleTransport {
     self.error = error
   }
 
+  func setError(_ error: CircleError?) {
+    self.error = error
+  }
+
   func capabilities() async throws -> CircleCapability {
     if let error { throw error }
     return CircleCapability(enabled: true, protocolRevision: "0.1.0", supportsImages: true)
@@ -641,27 +645,39 @@ struct CircleManagementViewModelTests {
 
   // MARK: - Lifecycle Event Tests
 
-  @Test func deleteCircleCompleteOutcomePostsCircleDeletedNotification() async throws {
-    var receivedNotification: Notification?
+  @Test func deleteCircleCompleteOutcomePostsCircleDeletedNotificationExactlyOnce() async throws {
+    final class NotificationCapture: @unchecked Sendable {
+      var count = 0
+      var accountDID: String?
+      var spaceURI: String?
+    }
+    let capture = NotificationCapture()
     let observer = NotificationCenter.default.addObserver(
       forName: .circleDeleted,
       object: nil,
       queue: nil
     ) { note in
-      receivedNotification = note
+      capture.count += 1
+      capture.accountDID = note.userInfo?["accountDID"] as? String
+      capture.spaceURI = note.userInfo?["spaceURI"] as? String
     }
     defer { NotificationCenter.default.removeObserver(observer) }
 
     let transport = ManagementRecordingCircleTransport()
     let service = CircleService(transport: transport)
     let model = CircleManagementViewModel(circle: ownerCircle, service: service, userDID: ownerDID.didString())
-
     let op = try await model.deleteCircle()
     #expect(op?.status == .value_complete)
 
-    #expect(receivedNotification != nil)
-    #expect(receivedNotification?.userInfo?["accountDID"] as? String == ownerDID.didString())
-    #expect(receivedNotification?.userInfo?["spaceURI"] as? String == ownerCircle.uri.uriString())
+    // Emits exactly once on immediate complete
+    #expect(capture.count == 1)
+    #expect(capture.accountDID == ownerDID.didString())
+    #expect(capture.spaceURI == ownerCircle.uri.uriString())
+
+    // Subsequent unrelated operation completion cannot emit another delete notification
+    let newMemberDID = try! DID(didString: "did:plc:member99")
+    _ = try await model.addMember(did: newMemberDID)
+    #expect(capture.count == 1)
   }
 
   @Test func deleteCirclePendingOrFailedOutcomeEmitsNoNotification() async throws {
@@ -690,6 +706,76 @@ struct CircleManagementViewModelTests {
 
     let op = try await model.deleteCircle()
     #expect(op?.status == .value_pending)
+    #expect(notificationCount == 0)
+  }
+
+  @Test func deleteCirclePendingThenRetryCompleteEmitsExactlyOnce() async throws {
+    var notificationCount = 0
+    let observer = NotificationCenter.default.addObserver(
+      forName: .circleDeleted,
+      object: nil,
+      queue: nil
+    ) { _ in
+      notificationCount += 1
+    }
+    defer { NotificationCenter.default.removeObserver(observer) }
+
+    let transport = ManagementRecordingCircleTransport()
+    let deleteUUID = UUID()
+    let pendingOp = CircleOperation(
+      id: deleteUUID.uuidString,
+      status: .value_pending,
+      space: ownerCircle.uri,
+      error: nil
+    )
+    await transport.setNextOperation(pendingOp)
+
+    let service = CircleService(transport: transport)
+    let model = CircleManagementViewModel(circle: ownerCircle, service: service, userDID: ownerDID.didString())
+
+    let op = try await model.deleteCircle()
+    #expect(op?.status == .value_pending)
+    #expect(notificationCount == 0)
+
+    // Retry for the same delete operation completes
+    let completeOp = CircleOperation(
+      id: deleteUUID.uuidString,
+      status: .value_complete,
+      space: ownerCircle.uri,
+      error: nil
+    )
+    await transport.setNextOperation(completeOp)
+    try await model.retry(operationID: deleteUUID)
+
+    #expect(notificationCount == 1)
+    #expect(model.state == .complete)
+  }
+
+  @Test func unrelatedOperationAfterFailedDeleteDoesNotEmitDeleteNotification() async throws {
+    var notificationCount = 0
+    let observer = NotificationCenter.default.addObserver(
+      forName: .circleDeleted,
+      object: nil,
+      queue: nil
+    ) { _ in
+      notificationCount += 1
+    }
+    defer { NotificationCenter.default.removeObserver(observer) }
+
+    let transport = ManagementRecordingCircleTransport(error: CircleError.upstreamUnavailable)
+    let service = CircleService(transport: transport)
+    let model = CircleManagementViewModel(circle: ownerCircle, service: service, userDID: ownerDID.didString())
+
+    await #expect(throws: CircleError.self) {
+      try await model.deleteCircle()
+    }
+    #expect(notificationCount == 0)
+
+    // Now perform addMember which completes successfully
+    await transport.setError(nil)
+    let newMemberDID = try! DID(didString: "did:plc:member99")
+    _ = try await model.addMember(did: newMemberDID)
+
     #expect(notificationCount == 0)
   }
 }
