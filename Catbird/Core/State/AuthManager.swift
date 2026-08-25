@@ -1209,6 +1209,12 @@ final class AuthenticationManager: AuthProgressDelegate {
       }
     }
 
+    // Purge memory-only Circle caches for the logged-out account so a future
+    // login never reuses a previous account's permissioned responses.
+    if let userDID = state.userDID {
+      await CircleFeedCache.shared.purge(accountDID: userDID)
+    }
+
     // Note: AppStateManager calls this method, so we don't call back to avoid infinite loop
 
     if let client = client {
@@ -1442,6 +1448,9 @@ final class AuthenticationManager: AuthProgressDelegate {
 
     // Clean up cached AppState and completely destroy all persistent MLS files, databases, and Keychain materials
     await AppStateManager.shared.removeAccount(did)
+
+    // Purge memory-only Circle caches for the removed account.
+    await CircleFeedCache.shared.purge(accountDID: did)
 
     await refreshAvailableAccounts()
   }
@@ -1762,6 +1771,12 @@ final class AuthenticationManager: AuthProgressDelegate {
         logger.critical("🚨 [AUTHMAN-SWITCH] MLS cleanup timed out after 10s - forcing ahead with switch")
         // Don't abort - force ahead. User can restart if MLS is broken.
       }
+    }
+
+    // Purge memory-only Circle caches for the previous account so the target
+    // account never reuses the prior account's permissioned responses.
+    if let previousDID = state.userDID, previousDID != targetDID {
+      await CircleFeedCache.shared.purge(accountDID: previousDID)
     }
 
     // Prewarm the target account's database now that the previous account is fully drained.

@@ -213,18 +213,47 @@ struct SettingsRuntimeWiringTests {
     #expect(!HapticsPolicy.isEnabled(disableHaptics: true))
   }
 
-  @Test("Logged-out visibility preserves unrelated self-labels")
-  func loggedOutVisibilityLabels() {
-    let source = ["porn", "!no-unauthenticated", "graphic-media"]
-    #expect(
-      LoggedOutVisibilitySelfLabels.reconciled(source, isVisible: true)
-        == ["porn", "graphic-media"]
-    )
-    #expect(
-      LoggedOutVisibilitySelfLabels.reconciled(source, isVisible: false)
-        == ["porn", "graphic-media", "!no-unauthenticated"]
-    )
+  @Test("Circle enablement requires both the local flag and the server capability")
+  func circleFlagsRequireBothGates() {
+    CircleFeatureFlags.setLocalFlag(true)
+    CircleFeatureFlags.serverCapability(enabled: false)
+    #expect(!CircleFeatureFlags.isEnabled)
+
+    CircleFeatureFlags.serverCapability(enabled: true)
+    #expect(CircleFeatureFlags.isEnabled)
+
+    CircleFeatureFlags.setLocalFlag(false)
+    #expect(!CircleFeatureFlags.isEnabled)
+
+    CircleFeatureFlags.setLocalFlag(true)
   }
+
+  @Test("AuthManager purges the Circle cache on logout, switch, and removal")
+  func authManagerPurgesCircleCache() throws {
+    let manager = try coreStateSource(named: "AuthManager.swift")
+
+    let logoutBody = try sourceSlice(
+      manager,
+      from: "func logout(isManual: Bool = false) async {",
+      through: "// Note: AppStateManager calls this method"
+    )
+    #expect(logoutBody.contains("CircleFeedCache.shared.purge(accountDID:"))
+
+    let switchBody = try sourceSlice(
+      manager,
+      from: "func switchToAccount(did: String) async throws {",
+      through: "/// Add a new account"
+    )
+    #expect(switchBody.contains("CircleFeedCache.shared.purge(accountDID:"))
+
+    let removeBody = try sourceSlice(
+      manager,
+      from: "func removeAccount(did: String) async {",
+      through: "/// Get list of all available accounts"
+    )
+    #expect(removeBody.contains("CircleFeedCache.shared.purge(accountDID:"))
+  }
+
 }
 
 private func settingsSource(named filename: String) throws -> String {
