@@ -17,14 +17,27 @@ enum CircleFeatureFlags {
 
   /// True only when the local flag and the last-seen server capability agree.
   static var isEnabled: Bool {
-    localFlag && serverEnabled
+    #if DEBUG
+    if ProcessInfo.processInfo.arguments.contains("--circles-unsupported-pds") {
+      return false
+    }
+    if ProcessInfo.processInfo.arguments.contains("--circles-server-capable") {
+      return localFlag
+    }
+    #endif
+    return localFlag && serverEnabled
   }
 
   static var localFlag: Bool {
+    #if DEBUG
+    if ProcessInfo.processInfo.arguments.contains("--enable-circles") ||
+       ProcessInfo.processInfo.environment["ENABLE_CIRCLES"] == "1" {
+      return true
+    }
+    #endif
     guard defaults.object(forKey: enabledKey) != nil else { return false }
     return defaults.bool(forKey: enabledKey)
   }
-
   static func setLocalFlag(_ enabled: Bool) {
     defaults.set(enabled, forKey: enabledKey)
   }

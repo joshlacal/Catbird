@@ -130,6 +130,65 @@ enum AuthProgress: Equatable, Sendable {
     }
   }
 }
+/// Log handler interface for AuthenticationManager
+public protocol AuthLogHandler: Sendable {
+  func log(level: OSLogType, message: String)
+}
+
+/// Default production log handler that logs to OSLog
+public struct DefaultAuthLogHandler: AuthLogHandler {
+  private let osLogger: Logger
+
+  public init(osLogger: Logger = Logger(subsystem: "blue.catbird", category: "Authentication")) {
+    self.osLogger = osLogger
+  }
+
+  public func log(level: OSLogType, message: String) {
+    switch level {
+    case .debug:
+      osLogger.debug("\(message, privacy: .public)")
+    case .info:
+      osLogger.info("\(message, privacy: .public)")
+    case .error:
+      osLogger.error("\(message, privacy: .public)")
+    case .fault:
+      osLogger.fault("\(message, privacy: .public)")
+    default:
+      osLogger.log("\(message, privacy: .public)")
+    }
+    AuthenticationManager.capturedLogHook?(message)
+  }
+}
+
+/// Logger wrapper for AuthenticationManager providing drop-in compatibility with OSLog Logger calls
+struct AuthLogger: Sendable {
+  let handler: any AuthLogHandler
+
+  init(handler: any AuthLogHandler = DefaultAuthLogHandler()) {
+    self.handler = handler
+  }
+
+  func debug(_ message: String) {
+    handler.log(level: .debug, message: message)
+  }
+
+  func info(_ message: String) {
+    handler.log(level: .info, message: message)
+  }
+
+  func warning(_ message: String) {
+    handler.log(level: .default, message: message)
+  }
+
+  func error(_ message: String) {
+    handler.log(level: .error, message: message)
+  }
+
+  func critical(_ message: String) {
+    handler.log(level: .fault, message: message)
+  }
+}
+
 
 /// Handles all authentication-related operations with a clean state machine approach
 @Observable
@@ -137,8 +196,11 @@ final class AuthenticationManager: AuthProgressDelegate {
   static let gatewayURL = CatbirdGatewayConfiguration.current.origin
 
   // MARK: - Properties
+  /// Optional capture hook for privacy testing of auth logs.
+  /// When non-nil, every message logged by AuthenticationManager is forwarded to this closure.
+  nonisolated(unsafe) static var capturedLogHook: (@Sendable (String) -> Void)?
 
-  private let logger = Logger(subsystem: "blue.catbird", category: "Authentication")
+  private let logger: AuthLogger
 
   // Authentication timeout configuration
   private let authenticationTimeout: TimeInterval = 60.0  // 60 seconds
@@ -250,7 +312,8 @@ final class AuthenticationManager: AuthProgressDelegate {
 
   // MARK: - Initialization
 
-  init() {
+  init(logHandler: any AuthLogHandler = DefaultAuthLogHandler()) {
+    self.logger = AuthLogger(handler: logHandler)
     logger.debug("AuthenticationManager initialized")
 
     // Configure biometric authentication asynchronously off the main actor
@@ -398,7 +461,7 @@ final class AuthenticationManager: AuthProgressDelegate {
   private func validatedUserDID(_ rawDID: String, source: String) throws -> String {
     let did = rawDID.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !did.isEmpty, did.hasPrefix("did:") else {
-      logger.critical("🚨 [\(source)] Invalid DID encountered: '\(rawDID, privacy: .private)'")
+      logger.critical("🚨 [\(source)] Invalid DID encountered")
       throw AuthError.invalidUserDID
     }
     return did

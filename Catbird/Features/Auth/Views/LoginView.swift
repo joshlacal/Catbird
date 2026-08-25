@@ -352,7 +352,7 @@ struct LoginView: View {
             } else if case .authenticated(let userDID) = newValue {
                 // Successfully authenticated - transition to authenticated state
                 Task {
-                    await appStateManager.transitionToAuthenticated(userDID: userDID)
+                    try? await appStateManager.transitionToAuthenticated(userDID: userDID)
                 }
                 isLoggingIn = false
                 loginProgress = .idle

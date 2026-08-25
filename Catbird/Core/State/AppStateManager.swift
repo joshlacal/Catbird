@@ -29,6 +29,26 @@ enum ModelContainerState {
     return false
   }
 }
+enum AccountSwitchError: LocalizedError, Equatable {
+  case invalidDID
+  case databaseDrainFailed
+  case authSwitchFailed(String)
+  case clientUnavailable
+
+  var errorDescription: String? {
+    switch self {
+    case .invalidDID:
+      return "Invalid account identifier"
+    case .databaseDrainFailed:
+      return "Failed to close previous account database"
+    case .authSwitchFailed(let msg):
+      return "AuthManager failed to switch: \(msg)"
+    case .clientUnavailable:
+      return "Client not available after switch"
+    }
+  }
+}
+
 
 /// Lightweight Sendable wrapper so we can hand AppState instances to async tasks safely
 private struct CachedAppStateContext: @unchecked Sendable {
@@ -65,6 +85,9 @@ final class AppStateManager {
   func setLifecycleForTesting(_ newLifecycle: AppLifecycle) {
     self.lifecycle = newLifecycle
   }
+  #if DEBUG
+  nonisolated(unsafe) static var databaseDrainOverride: (@Sendable (String, TimeInterval) async -> Bool)?
+  #endif
   #endif
 
   /// Observes auth state changes and keeps lifecycle in sync (e.g. session expiry → login/reauth)
@@ -196,8 +219,13 @@ final class AppStateManager {
         try await authManager.loginWithPasswordForE2E(identifier: user, password: pass, pdsURL: pdsURL)
         if case .authenticated(let userDID) = authManager.state {
           logger.info("[E2E] Auto-login successful for: \(userDID)")
-          await transitionToAuthenticated(userDID: userDID)
-          MLSDiagnosticLogger.shared.logMLSReady(userDID: userDID)
+          do {
+            try await transitionToAuthenticated(userDID: userDID)
+            MLSDiagnosticLogger.shared.logMLSReady(userDID: userDID)
+          } catch {
+            logger.error("[E2E] Transition failed: \(error)")
+            lifecycle = .unauthenticated
+          }
         } else {
           logger.error("[E2E] Login completed but auth state is not authenticated")
           lifecycle = .unauthenticated
@@ -217,7 +245,12 @@ final class AppStateManager {
     // Check if we have an authenticated session
     if case .authenticated(let userDID) = authManager.state {
       logger.info("✅ Found authenticated session for: \(userDID)")
-      await transitionToAuthenticated(userDID: userDID)
+      do {
+        try await transitionToAuthenticated(userDID: userDID)
+      } catch {
+        logger.error("Failed to transition to authenticated state: \(error.localizedDescription)")
+        await recoverFromSwitchFailure()
+      }
     } else {
       logger.info("ℹ️ No authenticated session - transitioning to unauthenticated")
       lifecycle = .unauthenticated
@@ -237,7 +270,12 @@ final class AppStateManager {
         case .authenticated(let userDID):
           guard self.lifecycle.userDID != userDID else { continue }
           self.logger.info("🔔 Auth became authenticated for: \(userDID) - transitioning")
-          await self.transitionToAuthenticated(userDID: userDID)
+          do {
+            try await self.transitionToAuthenticated(userDID: userDID)
+          } catch {
+            self.logger.error("🔔 Failed to transition: \(error.localizedDescription)")
+            await self.recoverFromSwitchFailure()
+          }
 
         case .unauthenticated:
           guard self.lifecycle != .unauthenticated else { continue }
@@ -272,7 +310,7 @@ final class AppStateManager {
   /// Transition to authenticated state with a specific user
   /// Creates or retrieves AppState for the user and updates lifecycle
   /// - Parameter userDID: The DID of the user to authenticate as
-  func transitionToAuthenticated(userDID: String) async {
+  func transitionToAuthenticated(userDID: String) async throws {
     guard let userDID = normalizedUserDID(userDID) else {
       logger.critical(
         "🚨 Refusing authenticated transition for invalid DID: \(userDID, privacy: .private)")
@@ -282,7 +320,7 @@ final class AppStateManager {
           "Catbird received an invalid account identifier and blocked authentication to protect account data."
       )
       lifecycle = .unauthenticated
-      return
+      throw AccountSwitchError.invalidDID
     }
 
     logger.info("🔐 Transitioning to authenticated state for: \(userDID)")
@@ -306,8 +344,9 @@ final class AppStateManager {
     if let previousUserDID = lifecycle.userDID, previousUserDID != userDID {
       logger.info("🔒 Closing previous account's MLS database before switch: \(previousUserDID.prefix(20))")
       
-      // Prepare the previous AppState for storage reset if it exists
-      if let previousAppState = authenticatedStates[previousUserDID] {
+      // Evict and prepare the previous AppState for storage reset if it exists
+      if let previousAppState = authenticatedStates.removeValue(forKey: previousUserDID) {
+        accessOrder.removeAll { $0 == previousUserDID }
         #if os(iOS)
         // FIX #5: Stop all streams and pause sync BEFORE database closure
         previousAppState.stopMLSStreams()
@@ -330,17 +369,27 @@ final class AppStateManager {
           logger.critical("🚨 [transitionToAuthenticated] MLS shutdown timed out - forcing ahead")
         }
         #endif
+        previousAppState.cleanup()
       }
       
       // Ensure the database is fully closed and checkpointed
+      #if DEBUG
+      let closeSuccess: Bool
+      if let override = AppStateManager.databaseDrainOverride {
+        closeSuccess = await override(previousUserDID, 5.0)
+      } else {
+        closeSuccess = await MLSGRDBManager.shared.closeDatabaseAndDrain(for: previousUserDID, timeout: 5.0)
+      }
+      #else
       let closeSuccess = await MLSGRDBManager.shared.closeDatabaseAndDrain(for: previousUserDID, timeout: 5.0)
+      #endif
       if !closeSuccess {
         logger.critical("🚨 Previous database drain failed - aborting account transition to prevent corruption")
         authManager.pendingAuthAlert = AuthenticationManager.AuthAlert(
           title: "Restart Required",
           message: "Catbird couldn’t safely close the encrypted database for the previous account. Please restart the app and try switching again."
         )
-        return
+        throw AccountSwitchError.databaseDrainFailed
       }
     }
 
@@ -352,15 +401,13 @@ final class AppStateManager {
       logger.info("✅ AuthManager switched successfully")
     } catch {
       logger.error("❌ Failed to switch AuthManager: \(error.localizedDescription)")
-      await recoverFromSwitchFailure()
-      return
+      throw AccountSwitchError.authSwitchFailed(error.localizedDescription)
     }
 
     // Now get the client for the target account
     guard let client = authManager.client else {
       logger.error("❌ Cannot transition to authenticated - no client available after switch")
-      await recoverFromSwitchFailure()
-      return
+      throw AccountSwitchError.clientUnavailable
     }
     let appState: AppState
     let isCachedAccount: Bool
@@ -568,7 +615,7 @@ final class AppStateManager {
     do {
       try await MLSAccountSwitchSerializer.shared.serialize { [weak self] in
         guard let self = self else { return }
-        await self.performSwitchAccount(to: userDID, previousUserDID: previousUserDID, withDraft: draft)
+        try await self.performSwitchAccount(to: userDID, previousUserDID: previousUserDID, withDraft: draft)
       }
     } catch {
       logger.error("❌ Failed to perform serialized account switch: \(error.localizedDescription)")
@@ -592,7 +639,7 @@ final class AppStateManager {
     to userDID: String,
     previousUserDID: String?,
     withDraft draft: PostComposerDraft? = nil
-  ) async {
+  ) async throws {
     logger.info("🔄 Switching to account: \(userDID)")
     // ═══════════════════════════════════════════════════════════════════════════
     // This tells the NSE to skip decryption for BOTH the old and new user during
@@ -631,7 +678,8 @@ final class AppStateManager {
         defer { endStorageMaintenance(for: oldUserDID) }
         
         // Get the old AppState and properly shutdown its MLS resources
-        if let oldState = authenticatedStates[oldUserDID] {
+        if let oldState = authenticatedStates.removeValue(forKey: oldUserDID) {
+          accessOrder.removeAll { $0 == oldUserDID }
           logger.info("MLS: Initiating graceful shutdown for previous account")
 
           // DEFENSIVE TIMEOUT: Wrap MLS shutdown in 5-second timeout to prevent account switch hangs
@@ -661,6 +709,12 @@ final class AppStateManager {
           } else {
             logger.critical("🚨 MLS shutdown timed out after 5s - forcing ahead with account switch")
           }
+          oldState.cleanup()
+        }
+      #else
+        if let oldState = authenticatedStates.removeValue(forKey: oldUserDID) {
+          accessOrder.removeAll { $0 == oldUserDID }
+          oldState.cleanup()
         }
       #endif
       
@@ -680,7 +734,7 @@ final class AppStateManager {
     isTransitioning = false
 
     // Transition to the authenticated account
-    await transitionToAuthenticated(userDID: userDID)
+    try await transitionToAuthenticated(userDID: userDID)
   }
 
   /// Remove a specific account completely and destroy all persisted MLS data
