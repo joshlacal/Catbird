@@ -780,7 +780,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       isLoading = true
 
       threadManager = ThreadManager(appState: appState)
-      await threadManager?.loadThread(uri: postURI)
+      await threadManager?.loadThread(uri: postURI, visibilityContext: visibilityContext, circleService: appState.circleService)
 
       // Check if the thread has no parent posts
       if let threadData = threadManager?.threadData {

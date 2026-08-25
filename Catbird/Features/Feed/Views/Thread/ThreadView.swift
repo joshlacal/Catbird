@@ -451,7 +451,7 @@ private struct SwiftUIThreadView: View {
 
         threadManager = ThreadManager(appState: appState)
         threadManager?.setModelContext(modelContext)
-        await threadManager?.loadThread(uri: postURI)
+        await threadManager?.loadThread(uri: postURI, visibilityContext: visibilityContext, circleService: appState.circleService)
 
         processThreadData()
         logger.debug("loadInitialThread: Completed. Parents: \(parentPosts.count)")

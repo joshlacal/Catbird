@@ -123,6 +123,22 @@ struct NavigationHandler {
         .toolbarTitleDisplayMode(.large)
         #endif
         .id("activitySubscriptions")
+    case .circlePost(let uri, let circle):
+      ThreadView(postURI: uri, path: path, visibilityContext: .circle(circle))
+        .ignoresSafeArea()
+        #if os(iOS)
+        .toolbarTitleDisplayMode(.inline)
+        #endif
+        .navigationTitle(circle.name)
+        .id(uri.uriString())
+
+    case .circlesFeed:
+      CirclesFeedView(path: path)
+        .id("circlesFeed")
+
+    case .circleDetail(let circle):
+      CircleDetailView(circle: circle, path: path)
+        .id(circle.uri.description)
 
     #if os(iOS)
     case .conversation(let convoId):
@@ -222,6 +238,12 @@ struct NavigationHandler {
       return "Bookmarks"
     case .activitySubscriptions:
       return "Activity Alerts"
+    case .circlePost(_, let circle):
+      return circle.name
+    case .circlesFeed:
+      return "Circles"
+    case .circleDetail(let circle):
+      return circle.name
     #if os(iOS)
     case .conversation:
       // Title might be dynamic based on convo, but NavigationHandler provides a static one
@@ -307,6 +329,12 @@ struct NavigationHandler {
       return "person.2.badge.gearshape"
     case .activitySubscriptions:
         return "bell.badge"
+    case .circlePost:
+        return "person.2.circle"
+    case .circlesFeed:
+        return "person.2.circle.fill"
+    case .circleDetail:
+        return "person.2.circle"
     }
   }
 }

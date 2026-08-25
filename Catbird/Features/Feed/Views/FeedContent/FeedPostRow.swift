@@ -27,10 +27,24 @@ struct FeedPostRow: View, Equatable, Identifiable {
     @Binding var navigationPath: NavigationPath
     var feedTypeIdentifier: String
     var tracksVisibilityForFeedback: Bool = true
+    var visibilityContext: PostVisibilityContext = .public
     @Environment(AppState.self) private var appState
     @State private var isSmartFilterRevealed = false
     @State private var isPendingIndicatorVisible = true
-    
+
+    init(
+        viewModel: FeedPostViewModel,
+        navigationPath: Binding<NavigationPath>,
+        feedTypeIdentifier: String,
+        tracksVisibilityForFeedback: Bool = true,
+        visibilityContext: PostVisibilityContext = .public
+    ) {
+        self.viewModel = viewModel
+        self._navigationPath = navigationPath
+        self.feedTypeIdentifier = feedTypeIdentifier
+        self.tracksVisibilityForFeedback = tracksVisibilityForFeedback
+        self.visibilityContext = visibilityContext
+    }
     // MARK: - Body
     
     var body: some View {

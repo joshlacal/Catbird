@@ -20,6 +20,9 @@ enum NavigationDestination: Hashable {
     case postQuotes(String) // postUri
     case bookmarks
     case activitySubscriptions
+    case circlePost(ATProtocolURI, CircleSummary)
+    case circlesFeed
+    case circleDetail(CircleSummary)
     #if os(iOS)
     case conversation(String) // convoId
     case mlsConversation(String) // MLS secure conversation ID
@@ -76,6 +79,15 @@ enum NavigationDestination: Hashable {
             hasher.combine("bookmarks")
         case .activitySubscriptions:
             hasher.combine("activitySubscriptions")
+        case .circlePost(let uri, let circle):
+            hasher.combine("circlePost")
+            hasher.combine(uri.uriString())
+            hasher.combine(circle.uri)
+        case .circlesFeed:
+            hasher.combine("circlesFeed")
+        case .circleDetail(let circle):
+            hasher.combine("circleDetail")
+            hasher.combine(circle.uri)
         #if os(iOS)
         case .conversation(let convoId):
             hasher.combine("conversation")
@@ -125,6 +137,12 @@ enum NavigationDestination: Hashable {
             return true
         case (.activitySubscriptions, .activitySubscriptions):
             return true
+        case (.circlePost(let lUri, let lCircle), .circlePost(let rUri, let rCircle)):
+            return lUri.uriString() == rUri.uriString() && lCircle == rCircle
+        case (.circlesFeed, .circlesFeed):
+            return true
+        case (.circleDetail(let lCircle), .circleDetail(let rCircle)):
+            return lCircle == rCircle
         #if os(iOS)
         case (.conversation(let lhsId), .conversation(let rhsId)):
             return lhsId == rhsId

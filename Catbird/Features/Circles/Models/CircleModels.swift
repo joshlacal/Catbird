@@ -59,7 +59,7 @@ public struct PostSubmission: Sendable, Equatable {
 
 /// Access state of a Circle Space, surfaced as an explicit transition rather
 /// than being inferred from URI shape in rendering code.
-enum CircleAccessState: String, Sendable {
+public enum CircleAccessState: String, Sendable {
   case active
   case expired
   case removed
@@ -68,10 +68,16 @@ enum CircleAccessState: String, Sendable {
 
 /// A single page of hydrated Circle feed items. Circle identity lives beside
 /// every hydrated post; consumers never infer privacy from URI shape.
-struct CircleFeedPage: Sendable {
-  let items: [BlueCatbirdCircleDefs.FeedItem]
-  let cursor: String?
+public struct CircleFeedPage: Sendable {
+  public let items: [BlueCatbirdCircleDefs.FeedItem]
+  public let cursor: String?
+
+  public init(items: [BlueCatbirdCircleDefs.FeedItem], cursor: String?) {
+    self.items = items
+    self.cursor = cursor
+  }
 }
+
 
 /// Page of Circles owned or joined by the active account.
 struct CircleListPage: Sendable {
@@ -160,9 +166,16 @@ struct CirclePostDraft: Sendable {
 }
 
 /// Visibility context of a post (public network or a private Circle Space).
-public enum PostVisibilityContext: Equatable, Hashable, Sendable {
+public enum PostVisibilityContext: Equatable, Hashable, Sendable, CustomStringConvertible {
   case `public`
   case circle(BlueCatbirdCircleDefs.CircleSummary)
+
+  public var description: String {
+    switch self {
+    case .public: return "public"
+    case .circle(let circle): return "circle(\(circle.name))"
+    }
+  }
 }
 
 /// Capability matrix for interactions on a post based on its visibility context.
@@ -173,6 +186,28 @@ public struct PostCapabilities: Equatable, Sendable {
   public let canRepost: Bool
   public let canQuote: Bool
   public let canPublicShare: Bool
+
+  public var canSharePublicly: Bool {
+    canPublicShare
+  }
+
+  public static let circle = PostCapabilities(
+    canReply: true,
+    canLike: true,
+    canDelete: false,
+    canRepost: false,
+    canQuote: false,
+    canPublicShare: false
+  )
+
+  public static let `public` = PostCapabilities(
+    canReply: true,
+    canLike: true,
+    canDelete: false,
+    canRepost: true,
+    canQuote: true,
+    canPublicShare: true
+  )
 
   public static func forContext(_ context: PostVisibilityContext, isAuthor: Bool = false) -> PostCapabilities {
     switch context {
@@ -200,7 +235,7 @@ public struct PostCapabilities: Equatable, Sendable {
 
 /// Errors raised by the Circle transport. These remain Circle-scoped and are
 /// never swallowed or redirected to the public path.
-enum CircleError: Error, LocalizedError {
+public enum CircleError: Error, LocalizedError, Equatable {
   case upstreamUnavailable
   case accessRemoved
   case accessExpired
@@ -210,10 +245,27 @@ enum CircleError: Error, LocalizedError {
   case clientNotInitialized
   case invalidResponse
   case missingLikeUri
-  case networkError(Error)
+  case networkError(String)
   case spaceWriteRejected(String)
 
-  var errorDescription: String? {
+  public static func == (lhs: CircleError, rhs: CircleError) -> Bool {
+    switch (lhs, rhs) {
+    case (.upstreamUnavailable, .upstreamUnavailable): return true
+    case (.accessRemoved, .accessRemoved): return true
+    case (.accessExpired, .accessExpired): return true
+    case (.unsupportedPDS, .unsupportedPDS): return true
+    case (.protocolRevisionMismatch, .protocolRevisionMismatch): return true
+    case (.authRequired, .authRequired): return true
+    case (.clientNotInitialized, .clientNotInitialized): return true
+    case (.invalidResponse, .invalidResponse): return true
+    case (.missingLikeUri, .missingLikeUri): return true
+    case (.networkError(let l), .networkError(let r)): return l == r
+    case (.spaceWriteRejected(let l), .spaceWriteRejected(let r)): return l == r
+    default: return false
+    }
+  }
+
+  public var errorDescription: String? {
     switch self {
     case .upstreamUnavailable:
       return "The Circle service is temporarily unavailable."
@@ -233,8 +285,8 @@ enum CircleError: Error, LocalizedError {
       return "The Circle service returned an invalid response."
     case .missingLikeUri:
       return "Cannot unlike: missing like URI."
-    case .networkError(let error):
-      return "Network error: \(error.localizedDescription)"
+    case .networkError(let message):
+      return "Network error: \(message)"
     case .spaceWriteRejected(let message):
       return "Circle write rejected: \(message)"
     }
@@ -295,5 +347,5 @@ func circleError(from error: any Error) -> CircleError {
     }
   }
 
-  return .networkError(error)
+  return .networkError(error.localizedDescription)
 }

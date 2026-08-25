@@ -14,7 +14,7 @@ import SwiftUI
 struct GalleryEmbedView: View {
   let gallery: AppBskyEmbedGallery.View
   let shouldBlur: Bool
-
+  var visibilityContext: PostVisibilityContext = .public
   @State private var isBlurred: Bool
   @State private var selectedImage: AppBskyEmbedImages.ViewImage?
   @State private var currentIndex: Int = 0 {
@@ -43,6 +43,18 @@ struct GalleryEmbedView: View {
   init(gallery: AppBskyEmbedGallery.View, shouldBlur: Bool) {
     self.gallery = gallery
     self.shouldBlur = shouldBlur
+    self.visibilityContext = .public
+    self._isBlurred = State(initialValue: shouldBlur)
+  }
+
+  init(
+    gallery: AppBskyEmbedGallery.View,
+    shouldBlur: Bool,
+    visibilityContext: PostVisibilityContext
+  ) {
+    self.gallery = gallery
+    self.shouldBlur = shouldBlur
+    self.visibilityContext = visibilityContext
     self._isBlurred = State(initialValue: shouldBlur)
   }
 
@@ -84,8 +96,12 @@ struct GalleryEmbedView: View {
       if images.isEmpty {
         EmptyView()
       } else if images.count <= 4 {
-        // Counts 1-4 behave exactly like the images embed (grid + lightbox + blur)
-        ViewImageGridView(viewImages: images, shouldBlur: shouldBlur)
+        if case .circle(let circle) = visibilityContext {
+          circleGrid(images: images, circle: circle)
+        } else {
+          // Counts 1-4 behave exactly like the images embed (grid + lightbox + blur)
+          ViewImageGridView(viewImages: images, shouldBlur: shouldBlur)
+        }
       } else {
         carousel(images: images)
       }
@@ -134,34 +150,43 @@ struct GalleryEmbedView: View {
         .fill(Color.gray.opacity(0.1))
         .frame(width: width, height: height)
 
-      LazyImage(request: ImageLoadingManager.imageRequest(
-        for: URL(string: image.thumb.uriString()) ?? URL(string: "about:blank")!,
-        targetSize: CGSize(width: width, height: height)
-      )) { state in
-        if let loadedImage = state.image {
-          loadedImage
-            .resizable()
-            .aspectRatio(contentMode: .fill)
-            .frame(width: width, height: height)
-            .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
-            .modifier(StrongBlurOverlayModifier(isBlurred: isBlurred, cornerRadius: Self.cornerRadius))
-            .contentShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
-            .matchedTransitionSource(id: image.id, in: imageTransition) { source in
-              source
-                .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
-            }
-        } else if state.error != nil {
-          Image(systemName: "photo")
-            .aspectRatio(contentMode: .fit)
-            .frame(width: width * 0.3, height: height * 0.3)
-            .foregroundStyle(.secondary)
-        } else {
-          ProgressView()
-            .scaleEffect(0.7)
+      if case .circle(let circle) = visibilityContext {
+        CircleMediaView(
+          viewImage: image,
+          circle: circle,
+          shouldBlur: isBlurred
+        )
+        .frame(width: width, height: height)
+        .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
+      } else {
+        LazyImage(request: ImageLoadingManager.imageRequest(
+          for: URL(string: image.thumb.uriString()) ?? URL(string: "about:blank")!,
+          targetSize: CGSize(width: width, height: height)
+        )) { state in
+          if let loadedImage = state.image {
+            loadedImage
+              .resizable()
+              .aspectRatio(contentMode: .fill)
+              .frame(width: width, height: height)
+              .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
+              .modifier(StrongBlurOverlayModifier(isBlurred: isBlurred, cornerRadius: Self.cornerRadius))
+              .contentShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
+              .matchedTransitionSource(id: image.id, in: imageTransition) { source in
+                source
+                  .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
+              }
+          } else if state.error != nil {
+            Image(systemName: "photo")
+              .aspectRatio(contentMode: .fit)
+              .frame(width: width * 0.3, height: height * 0.3)
+              .foregroundStyle(.secondary)
+          } else {
+            ProgressView()
+              .scaleEffect(0.7)
+          }
         }
+        .pipeline(ImageLoadingManager.shared.pipeline)
       }
-      .pipeline(ImageLoadingManager.shared.pipeline)
-
       if total > 1 {
         Text("\(index + 1)/\(total)")
           .appFont(AppTextRole.caption2)
@@ -218,6 +243,29 @@ struct GalleryEmbedView: View {
     )
     .onAppear {
       activeTransitionID = initialImage.id
+    }
+  }
+  // MARK: - Circle Grid
+
+  @ViewBuilder
+  private func circleGrid(images: [AppBskyEmbedImages.ViewImage], circle: CircleSummary) -> some View {
+    if images.count == 1, let first = images.first {
+      CircleMediaView(
+        viewImage: first,
+        circle: circle,
+        shouldBlur: shouldBlur
+      )
+    } else {
+      LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 4) {
+        ForEach(Array(images.enumerated()), id: \.element.id) { _, img in
+          CircleMediaView(
+            viewImage: img,
+            circle: circle,
+            shouldBlur: shouldBlur
+          )
+          .frame(minHeight: 120)
+        }
+      }
     }
   }
 }

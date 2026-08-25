@@ -122,17 +122,33 @@ final class ThreadManager: StateInvalidationSubscriber {
   }
 
   /// Load a thread by its URI
-  /// - Parameter uri: The post URI to load
-  @MainActor
-  func loadThread(uri: ATProtocolURI) async {
+  func loadThread(
+    uri: ATProtocolURI,
+    visibilityContext: PostVisibilityContext = .public,
+    circleService: CircleService? = nil
+  ) async {
     isLoading = true
     error = nil
     blockedAnchor = nil
     currentThreadURI = uri
 
-    logger.debug("Loading thread: \(uri.uriString())")
+    logger.debug("Loading thread: \(uri.uriString()) (context: \(visibilityContext))")
 
-    // Check if we have cached data (just for logging/optimization hints)
+    if case .circle(let circle) = visibilityContext {
+      let service = circleService ?? appState.circleService
+      do {
+        let threadPage = try await service.getPostThread(uri: uri, space: circle.uri)
+        let threadItems = Self.flattenThreadViewPost(threadPage.thread)
+        let output = AppBskyUnspeccedGetPostThreadV2.Output(thread: threadItems, hasOtherReplies: false)
+        self.threadData = output
+        self.blockedAnchor = nil
+        isLoading = false
+      } catch {
+        self.error = circleError(from: error)
+        isLoading = false
+      }
+      return
+    }
     let hasCached = await hasCachedThread(uri: uri)
     if hasCached {
       logger.info("📦 Cache exists for this thread - will refresh with fresh data")
@@ -470,6 +486,98 @@ final class ThreadManager: StateInvalidationSubscriber {
       // Other events don't affect thread views
       break
     }
+  }
+  /// Flattens a hierarchical `AppBskyFeedDefs.ThreadViewPost` into a V2-style `[ThreadItem]`
+  /// with explicit depth values (negative for parents, 0 for anchor, positive for replies).
+  public static func flattenThreadViewPost(_ root: AppBskyFeedDefs.ThreadViewPost) -> [AppBskyUnspeccedGetPostThreadV2.ThreadItem] {
+    var items: [AppBskyUnspeccedGetPostThreadV2.ThreadItem] = []
+
+    // Parents (traverse parent chain upwards)
+    var parents: [AppBskyFeedDefs.PostView] = []
+    var currentParent = root.parent
+    while let p = currentParent {
+      switch p {
+      case .appBskyFeedDefsThreadViewPost(let parentThreadPost):
+        parents.append(parentThreadPost.post)
+        currentParent = parentThreadPost.parent
+      default:
+        currentParent = nil
+      }
+    }
+
+    // Parents are closest-first in loop, so reverse them so most distant ancestor is first (depth -N)
+    for (index, parentPost) in parents.reversed().enumerated() {
+      let depth = -(parents.count - index)
+      let threadItemPost = AppBskyUnspeccedDefs.ThreadItemPost(
+        post: parentPost,
+        moreParents: false,
+        moreReplies: 0,
+        opThread: false,
+        opThreadPostIndex: nil,
+        opThreadPostCount: nil,
+        hiddenByThreadgate: false,
+        mutedByViewer: false
+      )
+      items.append(
+        AppBskyUnspeccedGetPostThreadV2.ThreadItem(
+          uri: parentPost.uri,
+          depth: depth,
+          value: .appBskyUnspeccedDefsThreadItemPost(threadItemPost)
+        )
+      )
+    }
+
+    // Anchor post (depth 0)
+    let anchorItemPost = AppBskyUnspeccedDefs.ThreadItemPost(
+      post: root.post,
+      moreParents: false,
+      moreReplies: root.replies?.count ?? 0,
+      opThread: true,
+      opThreadPostIndex: nil,
+      opThreadPostCount: nil,
+      hiddenByThreadgate: false,
+      mutedByViewer: false
+    )
+    items.append(
+      AppBskyUnspeccedGetPostThreadV2.ThreadItem(
+        uri: root.post.uri,
+        depth: 0,
+        value: .appBskyUnspeccedDefsThreadItemPost(anchorItemPost)
+      )
+    )
+
+    // Replies (recursively traverse replies)
+    func addReplies(from replies: [AppBskyFeedDefs.ThreadViewPostRepliesUnion]?, currentDepth: Int) {
+      guard let replies else { return }
+      for replyUnion in replies {
+        switch replyUnion {
+        case .appBskyFeedDefsThreadViewPost(let replyPost):
+          let replyItemPost = AppBskyUnspeccedDefs.ThreadItemPost(
+            post: replyPost.post,
+            moreParents: false,
+            moreReplies: replyPost.replies?.count ?? 0,
+            opThread: false,
+            opThreadPostIndex: nil,
+            opThreadPostCount: nil,
+            hiddenByThreadgate: false,
+            mutedByViewer: false
+          )
+          items.append(
+            AppBskyUnspeccedGetPostThreadV2.ThreadItem(
+              uri: replyPost.post.uri,
+              depth: currentDepth,
+              value: .appBskyUnspeccedDefsThreadItemPost(replyItemPost)
+            )
+          )
+          addReplies(from: replyPost.replies, currentDepth: currentDepth + 1)
+        default:
+          break
+        }
+      }
+    }
+    addReplies(from: root.replies, currentDepth: 1)
+
+    return items
   }
   
   /// Check if a URI is related to the current thread

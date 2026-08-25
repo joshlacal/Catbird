@@ -16,6 +16,7 @@ struct PostEmbed: View {
     let embed: AppBskyFeedDefs.PostViewEmbedUnion
     let labels: [ComAtprotoLabelDefs.Label]?
     @Binding var path: NavigationPath
+    var visibilityContext: PostVisibilityContext = .public
     @ObservationIgnored
     @Environment(AppState.self) private var appState
     @Environment(\.appSettings) private var appSettings
@@ -23,7 +24,18 @@ struct PostEmbed: View {
     @Environment(\.themeManager) private var themeManager
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.postID) private var postID
-    
+
+    init(
+        embed: AppBskyFeedDefs.PostViewEmbedUnion,
+        labels: [ComAtprotoLabelDefs.Label]?,
+        path: Binding<NavigationPath>,
+        visibilityContext: PostVisibilityContext = .public
+    ) {
+        self.embed = embed
+        self.labels = labels
+        self._path = path
+        self.visibilityContext = visibilityContext
+    }
     // MARK: - Constants
     private static let cornerRadius: CGFloat = 10
     private static let spacing: CGFloat = 8
@@ -66,10 +78,14 @@ struct PostEmbed: View {
             labels: labels,
             contentType: "image"
         ) {
-            ViewImageGridView(
-                viewImages: imagesView.images,
-                shouldBlur: false // We're handling blur at the ContentLabelManager level now
-            )
+            if case .circle(let circle) = visibilityContext {
+                circleImageGridView(imagesView: imagesView, circle: circle)
+            } else {
+                ViewImageGridView(
+                    viewImages: imagesView.images,
+                    shouldBlur: false // We're handling blur at the ContentLabelManager level now
+                )
+            }
         }
         .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
     }
@@ -82,7 +98,8 @@ struct PostEmbed: View {
         ) {
             GalleryEmbedView(
                 gallery: galleryView,
-                shouldBlur: false // We're handling blur at the ContentLabelManager level now
+                shouldBlur: false, // We're handling blur at the ContentLabelManager level now
+                visibilityContext: visibilityContext
             )
         }
         .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
@@ -131,10 +148,14 @@ struct PostEmbed: View {
                     labels: labels,
                     contentType: "image"
                 ) {
-                    ViewImageGridView(
-                        viewImages: imagesView.images,
-                        shouldBlur: false // We're handling blur at the ContentLabelManager level now
-                    )
+                    if case .circle(let circle) = visibilityContext {
+                        circleImageGridView(imagesView: imagesView, circle: circle)
+                    } else {
+                        ViewImageGridView(
+                            viewImages: imagesView.images,
+                            shouldBlur: false // We're handling blur at the ContentLabelManager level now
+                        )
+                    }
                 }
                 .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
 
@@ -145,11 +166,11 @@ struct PostEmbed: View {
                 ) {
                     GalleryEmbedView(
                         gallery: galleryView,
-                        shouldBlur: false // We're handling blur at the ContentLabelManager level now
+                        shouldBlur: false, // We're handling blur at the ContentLabelManager level now
+                        visibilityContext: visibilityContext
                     )
                 }
                 .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
-
             case .appBskyEmbedExternalView(let externalView):
                 ContentLabelManager(
                     labels: labels,
@@ -239,6 +260,29 @@ struct PostEmbed: View {
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
+    }
+
+    @ViewBuilder
+    private func circleImageGridView(imagesView: AppBskyEmbedImages.View, circle: CircleSummary) -> some View {
+        let images = imagesView.images
+        if images.count == 1, let first = images.first {
+            CircleMediaView(
+                viewImage: first,
+                circle: circle,
+                shouldBlur: false
+            )
+        } else {
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 4) {
+                ForEach(Array(images.enumerated()), id: \.element.id) { _, img in
+                    CircleMediaView(
+                        viewImage: img,
+                        circle: circle,
+                        shouldBlur: false
+                    )
+                    .frame(minHeight: 120)
+                }
+            }
+        }
     }
     
     // MARK: - Helper Methods

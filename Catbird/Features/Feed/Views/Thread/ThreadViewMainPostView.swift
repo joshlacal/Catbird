@@ -163,7 +163,23 @@ struct ThreadViewMainPostView: View, Equatable {
                             
                             .frame(height: 60, alignment: .center)
                             .padding(.bottom, 3)
-                            
+
+                            if case .circle(let circle) = visibilityContext {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "person.2.circle.fill")
+                                        .font(.caption)
+                                        .foregroundStyle(Color.accentColor)
+                                    Text("Circle · \(circle.name)")
+                                        .appSubheadline()
+                                        .fontWeight(.medium)
+                                        .foregroundStyle(Color.accentColor)
+                                }
+                                .padding(.horizontal, 6)
+                                .padding(.bottom, 4)
+                                .accessibilityElement(children: .combine)
+                                .accessibilityLabel("Circle: \(circle.name)")
+                            }
+
                             if !feedPost.text.isEmpty {
                                 // Reuse Post component to unify selectable text + translation
                                 Post(
@@ -200,12 +216,11 @@ struct ThreadViewMainPostView: View, Equatable {
                             //                  .padding(.trailing, 6)
                             //              }
                             if let embed = post.embed {
-                                    PostEmbed(embed: embed, labels: post.labels, path: $path)
+                                    PostEmbed(embed: embed, labels: post.labels, path: $path, visibilityContext: visibilityContext)
                                         .padding(.vertical, 6)
                                         .padding(.leading, 6)
                                         .padding(.trailing, 6)
                             }
-                            
                             Text(Self.dateTimeFormatter.string(from: feedPost.createdAt.date))
                                 .appSubheadline()
                                 .textScale(.secondary)

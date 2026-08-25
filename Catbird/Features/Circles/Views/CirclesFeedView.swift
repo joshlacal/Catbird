@@ -1,0 +1,172 @@
+//
+//  CirclesFeedView.swift
+//  Catbird
+//
+
+import SwiftUI
+import Petrel
+import PetrelCatbird
+
+/// View displaying the unified feed of all Circles the user belongs to.
+struct CirclesFeedView: View {
+  @Environment(AppState.self) private var appState
+  @Binding var path: NavigationPath
+  @State private var model: CircleFeedModel?
+  @State private var errorMessage: String?
+
+  init(path: Binding<NavigationPath>) {
+    self._path = path
+  }
+
+  var body: some View {
+    Group {
+      if let model {
+        switch model.accessState {
+        case .active:
+          if model.items.isEmpty && !model.isLoading {
+            emptyStateView
+          } else {
+            feedListView(model: model)
+          }
+        case .expired:
+          accessExpiredView(model: model)
+        case .removed:
+          accessRemovedView(model: model)
+        case .unsupported:
+          unsupportedView
+        }
+      } else {
+        ProgressView("Loading Circles...")
+      }
+    }
+    .navigationTitle("Circles")
+    #if os(iOS)
+    .navigationBarTitleDisplayMode(.inline)
+    #endif
+    .task {
+      if model == nil {
+        let newModel = CircleFeedModel(
+          service: appState.circleService,
+          accountDID: appState.userDID ?? ""
+        )
+        self.model = newModel
+        do {
+          try await newModel.load()
+        } catch {
+          self.errorMessage = error.localizedDescription
+        }
+      }
+    }
+  }
+
+  // MARK: - Feed List
+
+  @ViewBuilder
+  private func feedListView(model: CircleFeedModel) -> some View {
+    ScrollView {
+      LazyVStack(spacing: 0) {
+        if let error = model.error {
+          errorBanner(error: error, model: model)
+        }
+
+        ForEach(Array(model.items.enumerated()), id: \.element.post.post.uri) { index, item in
+          PostView.circleRow(
+            item: item,
+            path: $path,
+            appState: appState
+          )
+          .onAppear {
+            if index >= model.items.count - 3 {
+              Task {
+                try? await model.loadMore()
+              }
+            }
+          }
+
+          Divider()
+        }
+
+        if model.isLoading && !model.items.isEmpty {
+          ProgressView()
+            .padding()
+        }
+      }
+    }
+    .refreshable {
+      try? await model.load()
+    }
+  }
+
+  // MARK: - State Views
+
+  private var emptyStateView: some View {
+    ContentUnavailableView {
+      Label("No Posts in Circles", systemImage: "person.2.circle")
+    } description: {
+      Text("Posts shared to your private Circles will appear here.")
+    } actions: {
+      Button("Refresh") {
+        Task {
+          try? await model?.load()
+        }
+      }
+      .buttonStyle(.bordered)
+    }
+  }
+
+  @ViewBuilder
+  private func accessExpiredView(model: CircleFeedModel) -> some View {
+    ContentUnavailableView {
+      Label("Access Expired", systemImage: "lock.badge.clock")
+    } description: {
+      Text("Your session or access token for this Circle has expired. Reauthorize to continue.")
+    } actions: {
+      Button("Reauthorize") {
+        Task {
+          try? await model.load()
+        }
+      }
+      .buttonStyle(.borderedProminent)
+    }
+  }
+
+  @ViewBuilder
+  private func accessRemovedView(model: CircleFeedModel) -> some View {
+    ContentUnavailableView {
+      Label("Circle Unavailable", systemImage: "person.crop.circle.badge.xmark")
+    } description: {
+      Text("Your access to this Circle was removed or the Circle is no longer available.")
+    }
+  }
+
+  private var unsupportedView: some View {
+    ContentUnavailableView {
+      Label("Circles Unsupported", systemImage: "exclamationmark.triangle")
+    } description: {
+      Text("This server does not support Spaces protocol for private Circles.")
+    }
+  }
+
+  @ViewBuilder
+  private func errorBanner(error: CircleError, model: CircleFeedModel) -> some View {
+    HStack {
+      Image(systemName: "exclamationmark.circle.fill")
+        .foregroundStyle(.orange)
+      Text(error.localizedDescription)
+        .font(.caption)
+        .lineLimit(2)
+      Spacer()
+      Button("Retry") {
+        Task {
+          try? await model.load()
+        }
+      }
+      .buttonStyle(.bordered)
+      .controlSize(.small)
+    }
+    .padding(10)
+    .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+    .padding(.horizontal)
+    .padding(.top, 8)
+  }
+}

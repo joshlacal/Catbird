@@ -347,6 +347,22 @@ var id: String {
         }
         .padding(.horizontal, PostView.baseUnit)
 
+        if case .circle(let circle) = visibilityContext {
+          HStack(spacing: 4) {
+            Image(systemName: "person.2.circle.fill")
+              .font(.caption2)
+              .foregroundStyle(Color.accentColor)
+            Text("Circle · \(circle.name)")
+              .appCaption()
+              .fontWeight(.medium)
+              .foregroundStyle(Color.accentColor)
+          }
+          .padding(.horizontal, PostView.baseUnit)
+          .padding(.top, 2)
+          .accessibilityElement(children: .combine)
+          .accessibilityLabel("Circle: \(circle.name)")
+        }
+
         if let grandparentAuthor = grandparentAuthor {
           replyIndicatorView(grandparentAuthor: grandparentAuthor)
             .textScale(.secondary)
@@ -563,7 +579,7 @@ var id: String {
   private func embedContent(
     _ embed: AppBskyFeedDefs.PostViewEmbedUnion, labels: [ComAtprotoLabelDefs.Label]?
   ) -> some View {
-    PostEmbed(embed: embed, labels: labels, path: $path)
+    PostEmbed(embed: embed, labels: labels, path: $path, visibilityContext: visibilityContext)
       .environment(\.postID, id)
       .padding(.trailing, PostView.baseUnit * 2)
   }
