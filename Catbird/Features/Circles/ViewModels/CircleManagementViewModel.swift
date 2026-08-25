@@ -49,7 +49,8 @@ final class CircleManagementViewModel {
   let service: CircleService
   let userDID: String
   let isCreating: Bool
-
+  private var isManagingDelete: Bool = false
+  private var lastDeleteOperationID: String?
   init(circle: CircleSummary, service: CircleService, userDID: String = "") {
     self.circle = circle
     self.service = service
@@ -274,15 +275,24 @@ final class CircleManagementViewModel {
       state = .failed(message: error.localizedDescription, retryOperationID: nil)
       throw error
     }
-
     state = .submitting
+    isManagingDelete = true
     do {
       let operation = try await service.deleteCircle(space: circle.uri)
+      lastDeleteOperationID = operation.id
       handleOperation(operation)
       if operation.status == .value_complete {
         await CircleFeedCache.shared.purge(accountDID: userDID, space: circle.uri)
         await CircleMediaLoader.shared.purge(accountDID: userDID, space: circle.uri)
         await CircleNotificationCache.shared.purge(accountDID: userDID, space: circle.uri)
+        NotificationCenter.default.post(
+          name: .circleDeleted,
+          object: nil,
+          userInfo: [
+            "accountDID": userDID,
+            "spaceURI": circle.uri.uriString()
+          ]
+        )
       }
       return operation
     } catch {
@@ -368,6 +378,21 @@ final class CircleManagementViewModel {
     switch operation.status {
     case .value_complete:
       state = .complete
+      if isManagingDelete || lastDeleteOperationID == operation.id {
+        Task { [userDID, circle] in
+          await CircleFeedCache.shared.purge(accountDID: userDID, space: circle.uri)
+          await CircleMediaLoader.shared.purge(accountDID: userDID, space: circle.uri)
+          await CircleNotificationCache.shared.purge(accountDID: userDID, space: circle.uri)
+          NotificationCenter.default.post(
+            name: .circleDeleted,
+            object: nil,
+            userInfo: [
+              "accountDID": userDID,
+              "spaceURI": circle.uri.uriString()
+            ]
+          )
+        }
+      }
     case .value_pending:
       state = .pending(operation)
     case .value_failed:

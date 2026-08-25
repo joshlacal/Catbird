@@ -371,8 +371,12 @@ func circleError(from error: any Error) -> CircleError {
   return .networkError(error.localizedDescription)
 }
 
-extension Notification.Name {
+public extension Notification.Name {
   /// Posted when a Circle's mute state is updated.
   /// `userInfo` contains `accountDID` (String) and `spaceURI` (String).
   static let circleMuteStateChanged = Notification.Name("CircleMuteStateChanged")
+
+  /// Posted when a Circle Space is deleted and confirmed `.complete` by the server.
+  /// `userInfo` contains `accountDID` (String) and `spaceURI` (String).
+  static let circleDeleted = Notification.Name("CircleDeleted")
 }

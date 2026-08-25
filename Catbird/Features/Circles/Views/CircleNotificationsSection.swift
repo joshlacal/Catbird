@@ -20,8 +20,44 @@ struct CircleNotificationsSection: View {
 
   var body: some View {
     let model = appState.circleNotificationsModel
-    if !model.notifications.isEmpty {
+    if !model.notifications.isEmpty || model.error != nil {
       Section {
+        if let error = model.error {
+          HStack(alignment: .center, spacing: 12) {
+            Image(systemName: "exclamationmark.triangle.fill")
+              .foregroundColor(.orange)
+              .imageScale(.medium)
+            VStack(alignment: .leading, spacing: 2) {
+              Text("Unable to load Circle activity")
+                .enhancedAppSubheadline()
+                .fontWeight(.medium)
+                .foregroundColor(.primary)
+              Text(error.localizedDescription)
+                .enhancedAppCaption()
+                .foregroundColor(.secondary)
+            }
+            Spacer()
+            Button {
+              Task {
+                do {
+                  try await model.refresh()
+                } catch {
+                  // Error is recorded in model.error
+                }
+              }
+            } label: {
+              Text("Retry")
+                .enhancedAppCaption()
+                .fontWeight(.semibold)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+          }
+          .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+          .listRowSeparator(.visible)
+          .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
+        }
+
         ForEach(model.notifications, id: \.id) { notification in
           CircleNotificationRow(
             notification: notification,

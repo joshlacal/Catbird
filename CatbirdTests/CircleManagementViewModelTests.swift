@@ -330,6 +330,8 @@ struct CircleManagementViewModelTests {
   }
 
   @Test func mutingCircleImmediatelyRemovesSpaceFromActiveUnifiedFeedWhilePreservingDirectDetail() async throws {
+    await CircleFeedCache.shared.purge(accountDID: "did:plc:alice")
+    await CircleFeedCache.shared.purge(accountDID: "did:plc:bob")
     let transport = ManagementRecordingCircleTransport()
     let service = CircleService(transport: transport)
 
@@ -635,5 +637,59 @@ struct CircleManagementViewModelTests {
     let pendingState = CircleManagementState.pending(pendingOp)
     #expect(pendingState.canRetry)
     #expect(pendingState.retryOperationID == testUUID)
+  }
+
+  // MARK: - Lifecycle Event Tests
+
+  @Test func deleteCircleCompleteOutcomePostsCircleDeletedNotification() async throws {
+    var receivedNotification: Notification?
+    let observer = NotificationCenter.default.addObserver(
+      forName: .circleDeleted,
+      object: nil,
+      queue: nil
+    ) { note in
+      receivedNotification = note
+    }
+    defer { NotificationCenter.default.removeObserver(observer) }
+
+    let transport = ManagementRecordingCircleTransport()
+    let service = CircleService(transport: transport)
+    let model = CircleManagementViewModel(circle: ownerCircle, service: service, userDID: ownerDID.didString())
+
+    let op = try await model.deleteCircle()
+    #expect(op?.status == .value_complete)
+
+    #expect(receivedNotification != nil)
+    #expect(receivedNotification?.userInfo?["accountDID"] as? String == ownerDID.didString())
+    #expect(receivedNotification?.userInfo?["spaceURI"] as? String == ownerCircle.uri.uriString())
+  }
+
+  @Test func deleteCirclePendingOrFailedOutcomeEmitsNoNotification() async throws {
+    var notificationCount = 0
+    let observer = NotificationCenter.default.addObserver(
+      forName: .circleDeleted,
+      object: nil,
+      queue: nil
+    ) { _ in
+      notificationCount += 1
+    }
+    defer { NotificationCenter.default.removeObserver(observer) }
+
+    let transport = ManagementRecordingCircleTransport()
+    let pendingUUID = UUID()
+    let pendingOp = CircleOperation(
+      id: pendingUUID.uuidString,
+      status: .value_pending,
+      space: ownerCircle.uri,
+      error: nil
+    )
+    await transport.setNextOperation(pendingOp)
+
+    let service = CircleService(transport: transport)
+    let model = CircleManagementViewModel(circle: ownerCircle, service: service, userDID: ownerDID.didString())
+
+    let op = try await model.deleteCircle()
+    #expect(op?.status == .value_pending)
+    #expect(notificationCount == 0)
   }
 }

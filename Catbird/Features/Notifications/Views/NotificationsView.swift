@@ -36,7 +36,11 @@ struct NotificationsView: View {
           async let publicRefresh: Void = viewModel.refreshNotifications()
           async let circleRefresh: Void = {
             if CircleFeatureFlags.isEnabled {
-              try? await appState.circleNotificationsModel.refresh()
+              do {
+                try await appState.circleNotificationsModel.refresh()
+              } catch {
+                // Handled in model.error; isolated from public notifications state
+              }
             }
           }()
           _ = await (publicRefresh, circleRefresh)
@@ -53,7 +57,11 @@ struct NotificationsView: View {
           }()
           async let circleRefresh: Void = {
             if CircleFeatureFlags.isEnabled {
-              try? await appState.circleNotificationsModel.refresh()
+              do {
+                try await appState.circleNotificationsModel.refresh()
+              } catch {
+                // Handled in model.error; isolated from public notifications state
+              }
             }
           }()
           _ = await (publicRefresh, circleRefresh)
@@ -69,7 +77,11 @@ struct NotificationsView: View {
         await viewModel.loadNotifications()
       }
       if CircleFeatureFlags.isEnabled {
-        try? await appState.circleNotificationsModel.load()
+        do {
+          try await appState.circleNotificationsModel.load()
+        } catch {
+          // Handled in model.error; isolated from public notifications state
+        }
       }
 
       // Force widget update when notifications view appears
@@ -308,7 +320,11 @@ struct NotificationsView: View {
       async let publicRefresh: Void = viewModel.refreshNotifications()
       async let circleRefresh: Void = {
         if CircleFeatureFlags.isEnabled {
-          try? await appState.circleNotificationsModel.refresh()
+          do {
+            try await appState.circleNotificationsModel.refresh()
+          } catch {
+            // Handled in model.error; isolated from public notifications state
+          }
         }
       }()
       _ = await (publicRefresh, circleRefresh)

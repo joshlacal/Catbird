@@ -4,7 +4,7 @@ import PetrelCatbird
 import Testing
 @testable import Catbird
 
-@Suite("Circle feed cache isolation")
+@Suite("Circle feed cache isolation", .serialized)
 struct CircleFeedCacheIsolationTests {
   static func makeProfile(did: DID = CircleTestFixtures.alice, handle: String = "alice.test", displayName: String = "Alice") -> AppBskyActorDefs.ProfileViewBasic {
     AppBskyActorDefs.ProfileViewBasic(

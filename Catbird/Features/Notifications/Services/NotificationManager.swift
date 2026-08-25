@@ -4003,12 +4003,12 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
   // MARK: - Circle Push Notifications
 
   /// Handles generic Circle push notifications (`kind == circle_activity`).
-  /// Ignores all payload content/IDs, performs one authenticated refresh for the exact active account,
-  /// and does not render or store the push dictionary.
+  /// Ignores all payload content/IDs, performs one authenticated refresh for the exact active account's model,
+  /// applying page+cursor to model and CircleNotificationCache, and does not render or store the push dictionary.
   @MainActor
   func handlePush(
     _ userInfo: [AnyHashable: Any],
-    circleService: (any CircleNotificationServiceProtocol)? = nil
+    circleNotificationsModel: CircleNotificationsModel? = nil
   ) async {
     guard let kind = userInfo["kind"] as? String, kind == "circle_activity" else {
       return
@@ -4016,11 +4016,27 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
 
     notificationLogger.info("Processing generic circle_activity push")
 
-    if let circleService {
-      _ = try? await circleService.refresh()
-    } else if let appState, !appState.userDID.isEmpty {
-      let service = appState.circleNotificationService
-      _ = try? await service.refresh()
+    let activeAccountDID = circleNotificationsModel?.accountDID ?? appState?.userDID ?? ""
+    guard !activeAccountDID.isEmpty else {
+      notificationLogger.debug("Skipping generic circle push: no active account")
+      return
+    }
+
+    guard let targetModel = circleNotificationsModel ?? appState?.circleNotificationsModel else {
+      notificationLogger.debug("Skipping generic circle push: no Circle notifications model")
+      return
+    }
+
+    do {
+      try await targetModel.refresh()
+      // If account changes while awaiting, discard
+      if let currentDID = appState?.userDID, !currentDID.isEmpty, currentDID != activeAccountDID {
+        notificationLogger.info("Discarded generic circle push refresh: account changed during refresh")
+        return
+      }
+    } catch {
+      // Handle errors explicitly without private identifiers
+      notificationLogger.error("Generic circle push refresh failed")
     }
   }
 }

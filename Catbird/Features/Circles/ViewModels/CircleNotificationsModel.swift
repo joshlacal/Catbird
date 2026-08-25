@@ -42,7 +42,7 @@ final class CircleNotificationsModel {
     ) { [weak self] notification in
       guard let self else { return }
       let targetAccountDID = notification.userInfo?["accountDID"] as? String ?? ""
-      guard targetAccountDID.isEmpty || self.accountDID.isEmpty || targetAccountDID == self.accountDID else {
+      guard targetAccountDID.isEmpty || targetAccountDID == self.accountDID else {
         return
       }
       guard let spaceURIString = notification.userInfo?["spaceURI"] as? String,
@@ -50,6 +50,23 @@ final class CircleNotificationsModel {
         return
       }
       self.handleMuteStateChangedSync(space: space)
+    }
+
+    NotificationCenter.default.addObserver(
+      forName: .circleDeleted,
+      object: nil,
+      queue: nil
+    ) { [weak self] notification in
+      guard let self else { return }
+      let targetAccountDID = notification.userInfo?["accountDID"] as? String ?? ""
+      guard targetAccountDID.isEmpty || targetAccountDID == self.accountDID else {
+        return
+      }
+      guard let spaceURIString = notification.userInfo?["spaceURI"] as? String,
+            let space = try? SpaceRef(uriString: spaceURIString) else {
+        return
+      }
+      self.handleCircleDeletedSync(space: space)
     }
   }
 
@@ -194,6 +211,15 @@ final class CircleNotificationsModel {
     notifications.removeAll(where: { $0.circle.uri.uriString() == space.uriString() })
     Task { [accountDID, cache] in
       await cache.purgeMutedSpace(accountDID: accountDID, space: space)
+    }
+  }
+
+  /// Synchronous purge for `.circleDeleted` lifecycle notification.
+  private func handleCircleDeletedSync(space: SpaceRef) {
+    currentGeneration += 1
+    notifications.removeAll(where: { $0.circle.uri.uriString() == space.uriString() })
+    Task { [accountDID, cache] in
+      await cache.purge(accountDID: accountDID, space: space)
     }
   }
 }

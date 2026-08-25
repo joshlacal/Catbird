@@ -9,7 +9,7 @@ import Petrel
 import PetrelCatbird
 import Testing
 @testable import Catbird
-@Suite("Circle feed model and media loading")
+@Suite("Circle feed model and media loading", .serialized)
 @MainActor
 struct CircleFeedModelTests {
   // MARK: - Test Transport Double
@@ -642,5 +642,118 @@ struct CircleFeedModelTests {
       authorDID: nil
     )
     #expect(mediaViewWithoutAuthor == nil)
+  }
+  // MARK: - Lifecycle Purge & Generation Guard Tests
+
+  @Test("Unified feed synchronously purges deleted Space on lifecycle event and retains siblings")
+  func unifiedFeedSynchronouslyPurgesDeletedSpaceOnLifecycleEvent() async throws {
+    let familyCircle = CircleTestFixtures.family
+    let workCircle = CircleTestFixtures.work
+
+    let itemFamily = makeFeedItem(
+      circle: familyCircle,
+      rkey: "post_family",
+      text: "Family post"
+    )
+    let itemWork = makeFeedItem(
+      circle: workCircle,
+      rkey: "post_work",
+      text: "Work post"
+    )
+    let transport = MockCircleTransport(feedItems: [itemFamily, itemWork])
+    let service = CircleService(transport: transport)
+    let cache = CircleFeedCache()
+
+    let model = CircleFeedModel(
+      service: service,
+      space: nil, // Unified feed
+      accountDID: "did:plc:alice",
+      cache: cache
+    )
+
+    try await model.load()
+    #expect(model.items.count == 2)
+
+    // Post .circleDeleted lifecycle event for familyCircle
+    NotificationCenter.default.post(
+      name: .circleDeleted,
+      object: nil,
+      userInfo: [
+        "accountDID": "did:plc:alice",
+        "spaceURI": familyCircle.uri.uriString()
+      ]
+    )
+
+    // Synchronously purged on MainActor
+    #expect(model.items.count == 1)
+    #expect(model.items.first?.circle.uri == workCircle.uri)
+
+    // Sibling Space retained in cache
+    try await Task.sleep(nanoseconds: 10_000_000)
+    let cachedFamily = await cache.page(accountDID: "did:plc:alice", space: familyCircle.uri)
+    #expect(cachedFamily == nil)
+  }
+
+  @Test("Detail feed transitions to removed state on lifecycle event for that Space")
+  func detailFeedMarksRemovedOnLifecycleEventForSameSpace() async throws {
+    let familyCircle = CircleTestFixtures.family
+    let itemFamily = makeFeedItem(
+      circle: familyCircle,
+      rkey: "post_family",
+      text: "Family post"
+    )
+    let transport = MockCircleTransport(feedItems: [itemFamily])
+    let service = CircleService(transport: transport)
+    let cache = CircleFeedCache()
+
+    let model = CircleFeedModel(
+      service: service,
+      space: familyCircle.uri,
+      accountDID: "did:plc:alice",
+      cache: cache
+    )
+
+    try await model.load()
+    #expect(model.items.count == 1)
+    #expect(model.accessState == .active)
+
+    // Post .circleDeleted for familyCircle
+    NotificationCenter.default.post(
+      name: .circleDeleted,
+      object: nil,
+      userInfo: [
+        "accountDID": "did:plc:alice",
+        "spaceURI": familyCircle.uri.uriString()
+      ]
+    )
+
+    #expect(model.items.isEmpty)
+    #expect(model.accessState == .removed)
+    #expect(model.cursor == nil)
+  }
+
+  @Test("Stale in-flight feed load cannot resurrect purged items after deletion")
+  func staleFeedRequestCannotResurrectPurgedSpaceAfterDeletion() async throws {
+    let familyCircle = CircleTestFixtures.family
+    let itemFamily = makeFeedItem(
+      circle: familyCircle,
+      rkey: "post_family",
+      text: "Family post"
+    )
+    let transport = MockCircleTransport(feedItems: [itemFamily])
+    let service = CircleService(transport: transport)
+    let cache = CircleFeedCache()
+
+    let model = CircleFeedModel(
+      service: service,
+      space: familyCircle.uri,
+      accountDID: "did:plc:alice",
+      cache: cache
+    )
+
+    // Purge Space (increments generation)
+    await model.purgeUnavailableSpace(familyCircle.uri)
+    #expect(model.items.isEmpty)
+    #expect(model.accessState == .removed)
   }
 }

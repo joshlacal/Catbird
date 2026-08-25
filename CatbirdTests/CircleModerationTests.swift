@@ -137,7 +137,7 @@ actor ModerationRecordingCircleTransport: CircleTransport {
 }
 
 
-@Suite("Circle Moderation and Private Reporting")
+@Suite("Circle Moderation and Private Reporting", .serialized)
 struct CircleModerationTests {
   let privatePostURI = try! ATProtocolURI(uriString: "at://did:plc:alice/space/blue.catbird.circle/3abc/app.bsky.feed.post/post123")
   let family = CircleTestFixtures.family

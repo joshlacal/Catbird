@@ -88,15 +88,45 @@ struct CircleNotificationTests {
     )
   }
 
-  // 1. Generic push triggers authenticated refresh without rendering payload
-  @Test("Generic push triggers authenticated refresh without rendering payload")
+  // 1. Generic push triggers authenticated refresh, updates model and cache without rendering payload
+  @Test("Generic push triggers authenticated refresh, updates model and cache without rendering payload")
   @MainActor
-  func genericPushTriggersAuthenticatedRefreshWithoutRenderingPayload() async {
+  func genericPushTriggersAuthenticatedRefreshWithoutRenderingPayload() async throws {
     let manager = NotificationManager()
+    let cache = CircleNotificationCache()
+    let notif = makeNotification(id: "n1", reason: .value_reply, circle: familyCircle)
+    let page = CircleNotificationPage(notifications: [notif], cursor: "cursor_after_push")
+
     let service = RecordingCircleNotificationService()
-    await manager.handlePush(["kind": "circle_activity"], circleService: service)
+    await service.setPages([page])
+
+    let model = CircleNotificationsModel(
+      service: service,
+      accountDID: "did:plc:alice",
+      cache: cache
+    )
+
+    // Generic push with extra sensitive metadata that must not be rendered/retained
+    let pushPayload: [AnyHashable: Any] = [
+      "kind": "circle_activity",
+      "extra_secret_field": "confidential_token_12345",
+      "subject_text": "Secret message body"
+    ]
+
+    await manager.handlePush(pushPayload, circleNotificationsModel: model)
+
     let refreshCount = await service.refreshCount
     #expect(refreshCount == 1)
+
+    // Verify model was refreshed and updated with page+cursor
+    #expect(model.notifications.count == 1)
+    #expect(model.notifications.first?.id == "n1")
+    #expect(model.cursor == "cursor_after_push")
+
+    // Verify cache was updated
+    let cached = await cache.page(accountDID: "did:plc:alice")
+    #expect(cached?.notifications.count == 1)
+    #expect(cached?.cursor == "cursor_after_push")
   }
 
   // 2. Generic push with no authenticated service performs no refresh
@@ -104,8 +134,8 @@ struct CircleNotificationTests {
   @MainActor
   func genericPushWithNoAuthenticatedServicePerformsNoRefresh() async {
     let manager = NotificationManager()
-    // No appState and circleService is nil -> no refresh, no crash
-    await manager.handlePush(["kind": "circle_activity"], circleService: nil)
+    // No appState and circleNotificationsModel is nil -> no refresh, no crash
+    await manager.handlePush(["kind": "circle_activity"], circleNotificationsModel: nil)
   }
 
   // 3. Public push unchanged
@@ -114,9 +144,23 @@ struct CircleNotificationTests {
   func publicPushUnchanged() async {
     let manager = NotificationManager()
     let service = RecordingCircleNotificationService()
-    await manager.handlePush(["uri": "at://did:plc:xyz/app.bsky.feed.post/123", "type": "reply"], circleService: service)
+    let model = CircleNotificationsModel(service: service, accountDID: "did:plc:alice")
+    await manager.handlePush(["uri": "at://did:plc:xyz/app.bsky.feed.post/123", "type": "reply"], circleNotificationsModel: model)
     let refreshCount = await service.refreshCount
     #expect(refreshCount == 0)
+  }
+
+  // 3b. Generic push handles refresh failure gracefully without leaking identifiers
+  @Test("Generic push handles refresh failure gracefully without throwing or leaking private IDs")
+  @MainActor
+  func genericPushHandlesRefreshFailureGracefully() async {
+    let manager = NotificationManager()
+    let service = RecordingCircleNotificationService()
+    await service.setError(CircleError.accessExpired)
+    let model = CircleNotificationsModel(service: service, accountDID: "did:plc:alice")
+
+    await manager.handlePush(["kind": "circle_activity"], circleNotificationsModel: model)
+    #expect(model.error == .accessExpired)
   }
 
   // 4. Private / public store separation
@@ -257,8 +301,8 @@ struct CircleNotificationTests {
     #expect(await cache.page(accountDID: "did:plc:alice") == nil)
   }
 
-  // 9. Space deletion purges Space notifications and feed
-  @Test("Space deletion purges Space notifications across cache and model")
+  // 9. Space deletion lifecycle event purges Space notifications across cache and model synchronously
+  @Test("Space deletion lifecycle event purges Space notifications across cache and model synchronously")
   @MainActor
   func spaceDeletionPurgesSpaceNotificationsAndFeed() async throws {
     let cache = CircleNotificationCache()
@@ -279,15 +323,55 @@ struct CircleNotificationTests {
     try await model.load()
     #expect(model.notifications.count == 2)
 
-    await model.purge(space: familyCircle.uri)
+    // Post .circleDeleted lifecycle notification confirming server complete deletion
+    NotificationCenter.default.post(
+      name: .circleDeleted,
+      object: nil,
+      userInfo: [
+        "accountDID": "did:plc:alice",
+        "spaceURI": familyCircle.uri.uriString()
+      ]
+    )
+
+    // Model purges synchronously on the main actor
     #expect(model.notifications.count == 1)
     #expect(model.notifications.first?.circle.uri == workCircle.uri)
 
+    // Sibling Space retained in cache
+    try await Task.sleep(nanoseconds: 10_000_000)
     let remainingInCache = await cache.page(accountDID: "did:plc:alice")
     #expect(remainingInCache?.notifications.count == 1)
     #expect(remainingInCache?.notifications.first?.circle.uri == workCircle.uri)
   }
 
+  // 9b. Lifecycle event for different account does not purge model
+  @Test("Circle deletion for another account does not purge active model")
+  @MainActor
+  func circleDeletionForAnotherAccountDoesNotPurge() async throws {
+    let notifFamily = makeNotification(id: "n1", reason: .value_reply, circle: familyCircle)
+    let page = CircleNotificationPage(notifications: [notifFamily], cursor: nil)
+    let service = RecordingCircleNotificationService()
+    await service.setPages([page])
+
+    let model = CircleNotificationsModel(
+      service: service,
+      accountDID: "did:plc:alice",
+      cache: CircleNotificationCache()
+    )
+    try await model.load()
+    #expect(model.notifications.count == 1)
+
+    NotificationCenter.default.post(
+      name: .circleDeleted,
+      object: nil,
+      userInfo: [
+        "accountDID": "did:plc:bob",
+        "spaceURI": familyCircle.uri.uriString()
+      ]
+    )
+
+    #expect(model.notifications.count == 1)
+  }
   // 10. Stale request cannot resurrect purged state
   @Test("Stale in-flight request cannot resurrect purged state")
   @MainActor
@@ -347,5 +431,33 @@ struct CircleNotificationTests {
       navigationPath.append(NavigationDestination.circleDetail(inviteNotif.circle))
     }
     #expect(navigationPath.count == initialCount + 1)
+  }
+  // 12. CircleNotificationsModel error recording and retry recovery
+  @Test("Model records typed error on refresh failure and clears on successful retry")
+  @MainActor
+  func modelRecordsErrorOnFailureAndClearsOnRetry() async throws {
+    let service = RecordingCircleNotificationService()
+    await service.setError(CircleError.networkError("Connection dropped"))
+
+    let model = CircleNotificationsModel(
+      service: service,
+      accountDID: "did:plc:alice",
+      cache: CircleNotificationCache()
+    )
+
+    await #expect(throws: CircleError.self) {
+      try await model.load()
+    }
+    #expect(model.error == .networkError("Connection dropped"))
+    #expect(model.notifications.isEmpty)
+
+    // Clear error and provide a valid page for retry
+    await service.setError(nil)
+    let notif = makeNotification(id: "n1", reason: .value_reply, circle: familyCircle)
+    await service.setPages([CircleNotificationPage(notifications: [notif], cursor: nil)])
+
+    try await model.refresh()
+    #expect(model.error == nil)
+    #expect(model.notifications.count == 1)
   }
 }

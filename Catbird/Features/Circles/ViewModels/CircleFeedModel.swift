@@ -27,7 +27,7 @@ final class CircleFeedModel {
   let space: SpaceRef?
   let accountDID: String
   private let cache: CircleFeedCache
-
+  private var currentGeneration: Int = 0
   init(
     service: CircleService,
     space: SpaceRef? = nil,
@@ -47,7 +47,7 @@ final class CircleFeedModel {
       ) { [weak self] notification in
         guard let self else { return }
         let targetAccountDID = notification.userInfo?["accountDID"] as? String ?? ""
-        guard targetAccountDID.isEmpty || self.accountDID.isEmpty || targetAccountDID == self.accountDID else {
+        guard targetAccountDID.isEmpty || targetAccountDID == self.accountDID else {
           return
         }
         guard let spaceURIString = notification.userInfo?["spaceURI"] as? String,
@@ -57,13 +57,33 @@ final class CircleFeedModel {
         self.purgeMutedCircle(space)
       }
     }
+
+    NotificationCenter.default.addObserver(
+      forName: .circleDeleted,
+      object: nil,
+      queue: nil
+    ) { [weak self] notification in
+      guard let self else { return }
+      let targetAccountDID = notification.userInfo?["accountDID"] as? String ?? ""
+      guard targetAccountDID.isEmpty || targetAccountDID == self.accountDID else {
+        return
+      }
+      guard let spaceURIString = notification.userInfo?["spaceURI"] as? String,
+            let deletedSpace = try? SpaceRef(uriString: spaceURIString) else {
+        return
+      }
+      self.handleCircleDeletedSync(space: deletedSpace)
+    }
   }
 
   /// Initial load or pull-to-refresh. Restores memory cache if items are empty.
   func load() async throws {
+    guard !isLoading else { return }
     isLoading = true
     defer { isLoading = false }
 
+    let requestGeneration = currentGeneration
+    let requestAccountDID = accountDID
     // Restore from memory cache first if empty
     if items.isEmpty, let cachedPage = await cache.page(accountDID: accountDID, space: space) {
       if space == nil {
@@ -76,6 +96,12 @@ final class CircleFeedModel {
 
     do {
       let page = try await service.getFeed(space: space, cursor: nil)
+
+      guard requestGeneration == self.currentGeneration,
+            requestAccountDID == self.accountDID else {
+        return
+      }
+
       if space == nil {
         self.items = page.items.filter { !($0.circle.muted ?? false) }
       } else {
@@ -87,6 +113,10 @@ final class CircleFeedModel {
       let storedPage = CircleFeedPage(items: self.items, cursor: self.cursor)
       await cache.store(storedPage, accountDID: accountDID, space: space)
     } catch {
+      guard requestGeneration == self.currentGeneration,
+            requestAccountDID == self.accountDID else {
+        return
+      }
       let typedError = circleError(from: error)
       self.error = typedError
       switch typedError {
@@ -111,9 +141,16 @@ final class CircleFeedModel {
     guard let currentCursor = cursor, !currentCursor.isEmpty, !isLoading else { return }
     isLoading = true
     defer { isLoading = false }
+    let requestGeneration = currentGeneration
+    let requestAccountDID = accountDID
 
     do {
       let nextPage = try await service.getFeed(space: space, cursor: currentCursor)
+      guard requestGeneration == self.currentGeneration,
+            requestAccountDID == self.accountDID else {
+        return
+      }
+
       let existingURIs = Set(self.items.map { $0.post.post.uri.uriString() })
       let filteredNewItems: [BlueCatbirdCircleDefs.FeedItem]
       if space == nil {
@@ -128,8 +165,11 @@ final class CircleFeedModel {
       let updatedPage = CircleFeedPage(items: self.items, cursor: self.cursor)
       await cache.store(updatedPage, accountDID: accountDID, space: space)
     } catch {
+      guard requestGeneration == self.currentGeneration,
+            requestAccountDID == self.accountDID else {
+        return
+      }
       let typedError = circleError(from: error)
-      self.error = typedError
       switch typedError {
       case .accessExpired:
         self.accessState = .expired
@@ -149,6 +189,7 @@ final class CircleFeedModel {
 
   /// Purges in-memory cached posts and images for an unavailable Space.
   func purgeUnavailableSpace(_ space: SpaceRef) async {
+    currentGeneration += 1
     items.removeAll(where: { $0.circle.uri == space })
     await cache.purge(accountDID: accountDID, space: space)
     await CircleMediaLoader.shared.purge(accountDID: accountDID, space: space)
@@ -164,6 +205,24 @@ final class CircleFeedModel {
       items.removeAll(where: { $0.circle.uri.uriString() == space.uriString() })
       Task { [accountDID, cache] in
         await cache.purgeMutedSpaceFromUnified(accountDID: accountDID, space: space)
+      }
+    }
+  }
+
+  /// Synchronous purge for `.circleDeleted` lifecycle notification.
+  private func handleCircleDeletedSync(space deletedSpace: SpaceRef) {
+    currentGeneration += 1
+    if self.space == nil {
+      items.removeAll(where: { $0.circle.uri.uriString() == deletedSpace.uriString() })
+      Task { [accountDID, cache] in
+        await cache.purge(accountDID: accountDID, space: deletedSpace)
+      }
+    } else if self.space?.uriString() == deletedSpace.uriString() {
+      items.removeAll()
+      accessState = .removed
+      cursor = nil
+      Task { [accountDID, cache] in
+        await cache.purge(accountDID: accountDID, space: deletedSpace)
       }
     }
   }

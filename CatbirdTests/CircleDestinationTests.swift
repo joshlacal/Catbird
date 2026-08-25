@@ -173,7 +173,7 @@ actor DestinationRecordingCircleTransport: CircleTransport {
   }
 }
 
-@Suite("Circle destination and composer routing")
+@Suite("Circle destination and composer routing", .serialized)
 struct CircleDestinationTests {
 
   @MainActor
