@@ -1213,6 +1213,7 @@ final class AuthenticationManager: AuthProgressDelegate {
     // login never reuses a previous account's permissioned responses.
     if let userDID = state.userDID {
       await CircleFeedCache.shared.purge(accountDID: userDID)
+      await CircleMediaLoader.shared.purge(accountDID: userDID)
     }
 
     // Note: AppStateManager calls this method, so we don't call back to avoid infinite loop
@@ -1451,7 +1452,7 @@ final class AuthenticationManager: AuthProgressDelegate {
 
     // Purge memory-only Circle caches for the removed account.
     await CircleFeedCache.shared.purge(accountDID: did)
-
+    await CircleMediaLoader.shared.purge(accountDID: did)
     await refreshAvailableAccounts()
   }
 
@@ -1777,6 +1778,7 @@ final class AuthenticationManager: AuthProgressDelegate {
     // account never reuses the prior account's permissioned responses.
     if let previousDID = state.userDID, previousDID != targetDID {
       await CircleFeedCache.shared.purge(accountDID: previousDID)
+      await CircleMediaLoader.shared.purge(accountDID: previousDID)
     }
 
     // Prewarm the target account's database now that the previous account is fully drained.

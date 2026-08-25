@@ -17,6 +17,7 @@ struct PostEmbed: View {
     let labels: [ComAtprotoLabelDefs.Label]?
     @Binding var path: NavigationPath
     var visibilityContext: PostVisibilityContext = .public
+    var authorDID: DID? = nil
     @ObservationIgnored
     @Environment(AppState.self) private var appState
     @Environment(\.appSettings) private var appSettings
@@ -29,12 +30,14 @@ struct PostEmbed: View {
         embed: AppBskyFeedDefs.PostViewEmbedUnion,
         labels: [ComAtprotoLabelDefs.Label]?,
         path: Binding<NavigationPath>,
-        visibilityContext: PostVisibilityContext = .public
+        visibilityContext: PostVisibilityContext = .public,
+        authorDID: DID? = nil
     ) {
         self.embed = embed
         self.labels = labels
         self._path = path
         self.visibilityContext = visibilityContext
+        self.authorDID = authorDID
     }
     // MARK: - Constants
     private static let cornerRadius: CGFloat = 10
@@ -99,7 +102,8 @@ struct PostEmbed: View {
             GalleryEmbedView(
                 gallery: galleryView,
                 shouldBlur: false, // We're handling blur at the ContentLabelManager level now
-                visibilityContext: visibilityContext
+                visibilityContext: visibilityContext,
+                authorDID: authorDID
             )
         }
         .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
@@ -269,6 +273,7 @@ struct PostEmbed: View {
             CircleMediaView(
                 viewImage: first,
                 circle: circle,
+                authorDID: authorDID,
                 shouldBlur: false
             )
         } else {
@@ -277,6 +282,7 @@ struct PostEmbed: View {
                     CircleMediaView(
                         viewImage: img,
                         circle: circle,
+                        authorDID: authorDID,
                         shouldBlur: false
                     )
                     .frame(minHeight: 120)
@@ -314,7 +320,8 @@ private struct PostEmbedPreviewLoader: View {
         PostEmbed(
           embed: data.embed,
           labels: data.post.labels,
-          path: .constant(NavigationPath())
+          path: .constant(NavigationPath()),
+          authorDID: data.post.author.did
         )
         .environment(\.postID, data.post.cid.string)
         .padding()

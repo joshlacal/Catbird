@@ -394,7 +394,7 @@ struct CircleFeedModelTests {
       cid: cid
     )
 
-    #expect(image != nil)
+    #expect(image.size.width > 0)
     #expect(await transport.mediaCallCount == 1)
 
     // Calling again returns cached image without hitting transport again
@@ -404,7 +404,7 @@ struct CircleFeedModelTests {
       authorDID: CircleTestFixtures.alice,
       cid: cid
     )
-    #expect(cachedImage != nil)
+    #expect(cachedImage.size.width > 0)
     #expect(await transport.mediaCallCount == 1)
 
     // Purge account
@@ -418,5 +418,118 @@ struct CircleFeedModelTests {
       cid: cid
     )
     #expect(await transport.mediaCallCount == 2)
+  }
+
+  @Test("Member authored Circle image binds member author DID and rejects nil without owner fallback")
+  func memberAuthoredCircleImageBindsMemberAuthorDIDAndNotCircleOwner() async throws {
+    let circle = CircleTestFixtures.family
+    let memberDID = try! DID(didString: "did:plc:bob-member")
+    let cid = CID.fromDAGCBOR(Data("cid-member-image".utf8))
+    let viewImage = AppBskyEmbedImages.ViewImage(
+      thumb: URI(uriString: "https://example.com/blob/\(cid.description)"),
+      fullsize: URI(uriString: "https://example.com/blob/\(cid.description)"),
+      alt: "Member image",
+      aspectRatio: nil
+    )
+
+    // 1. Initializing with explicit member author DID binds to member, not circle owner
+    let mediaView = CircleMediaView(
+      viewImage: viewImage,
+      circle: circle,
+      authorDID: memberDID
+    )
+    #expect(mediaView != nil)
+    #expect(mediaView?.authorDID == memberDID)
+    #expect(mediaView?.authorDID != circle.owner)
+
+    // 2. Initializing with nil authorDID fails closed (returns nil) — never falls back to circle.owner
+    let nilAuthorView = CircleMediaView(
+      viewImage: viewImage,
+      circle: circle,
+      authorDID: nil
+    )
+    #expect(nilAuthorView == nil)
+
+    // 3. Transport receives member author DID
+    let transport = MockCircleTransport()
+    let service = CircleService(transport: transport)
+    let loader = CircleMediaLoader(service: service)
+
+    _ = try await loader.image(
+      accountDID: "did:plc:viewer",
+      space: circle.uri,
+      authorDID: memberDID,
+      cid: cid
+    )
+    #expect(await transport.mediaCallCount == 1)
+    #expect(await transport.lastMediaAuthorDID == memberDID)
+    #expect(await transport.lastMediaAuthorDID != circle.owner)
+  }
+
+  @Test("Lifecycle purge clears CircleMediaLoader cache for previous/removed account only")
+  func lifecyclePurgeClearsCircleMediaCacheForLoggedOutSwitchedAndRemovedAccount() async throws {
+    let transport = MockCircleTransport()
+    let service = CircleService(transport: transport)
+    let loader = CircleMediaLoader(service: service)
+
+    let cid = CID.fromDAGCBOR(Data("cid-lifecycle-image".utf8))
+
+    // Pre-populate cache for Account 1 and Account 2
+    _ = try await loader.image(
+      accountDID: "did:plc:account1",
+      space: CircleTestFixtures.familyURI,
+      authorDID: CircleTestFixtures.alice,
+      cid: cid
+    )
+    _ = try await loader.image(
+      accountDID: "did:plc:account2",
+      space: CircleTestFixtures.familyURI,
+      authorDID: CircleTestFixtures.alice,
+      cid: cid
+    )
+    #expect(await transport.mediaCallCount == 2)
+
+    // 1. Purge Account 1 (as on logout or removal)
+    await loader.purge(accountDID: "did:plc:account1")
+
+    // Account 1 must re-fetch from transport (mediaCallCount increments)
+    _ = try await loader.image(
+      accountDID: "did:plc:account1",
+      space: CircleTestFixtures.familyURI,
+      authorDID: CircleTestFixtures.alice,
+      cid: cid
+    )
+    #expect(await transport.mediaCallCount == 3)
+
+    // Account 2 must hit memory cache (mediaCallCount does NOT increment)
+    _ = try await loader.image(
+      accountDID: "did:plc:account2",
+      space: CircleTestFixtures.familyURI,
+      authorDID: CircleTestFixtures.alice,
+      cid: cid
+    )
+    #expect(await transport.mediaCallCount == 3)
+
+    // 2. Purge Account 2 (as on switch away)
+    await loader.purge(accountDID: "did:plc:account2")
+
+    // Account 2 must re-fetch from transport
+    _ = try await loader.image(
+      accountDID: "did:plc:account2",
+      space: CircleTestFixtures.familyURI,
+      authorDID: CircleTestFixtures.alice,
+      cid: cid
+    )
+    #expect(await transport.mediaCallCount == 4)
+
+    // 3. Purge all clears everything
+    await loader.purgeAll()
+    _ = try await loader.image(
+      accountDID: "did:plc:account1",
+      space: CircleTestFixtures.familyURI,
+      authorDID: CircleTestFixtures.alice,
+      cid: cid
+    )
+    #expect(await transport.mediaCallCount == 5)
   }
 }

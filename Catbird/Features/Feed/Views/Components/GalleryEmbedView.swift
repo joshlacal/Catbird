@@ -15,6 +15,7 @@ struct GalleryEmbedView: View {
   let gallery: AppBskyEmbedGallery.View
   let shouldBlur: Bool
   var visibilityContext: PostVisibilityContext = .public
+  var authorDID: DID? = nil
   @State private var isBlurred: Bool
   @State private var selectedImage: AppBskyEmbedImages.ViewImage?
   @State private var currentIndex: Int = 0 {
@@ -44,17 +45,20 @@ struct GalleryEmbedView: View {
     self.gallery = gallery
     self.shouldBlur = shouldBlur
     self.visibilityContext = .public
+    self.authorDID = nil
     self._isBlurred = State(initialValue: shouldBlur)
   }
 
   init(
     gallery: AppBskyEmbedGallery.View,
     shouldBlur: Bool,
-    visibilityContext: PostVisibilityContext
+    visibilityContext: PostVisibilityContext,
+    authorDID: DID? = nil
   ) {
     self.gallery = gallery
     self.shouldBlur = shouldBlur
     self.visibilityContext = visibilityContext
+    self.authorDID = authorDID
     self._isBlurred = State(initialValue: shouldBlur)
   }
 
@@ -154,6 +158,7 @@ struct GalleryEmbedView: View {
         CircleMediaView(
           viewImage: image,
           circle: circle,
+          authorDID: authorDID,
           shouldBlur: isBlurred
         )
         .frame(width: width, height: height)
@@ -253,6 +258,7 @@ struct GalleryEmbedView: View {
       CircleMediaView(
         viewImage: first,
         circle: circle,
+        authorDID: authorDID,
         shouldBlur: shouldBlur
       )
     } else {
@@ -261,6 +267,7 @@ struct GalleryEmbedView: View {
           CircleMediaView(
             viewImage: img,
             circle: circle,
+            authorDID: authorDID,
             shouldBlur: shouldBlur
           )
           .frame(minHeight: 120)

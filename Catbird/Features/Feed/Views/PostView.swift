@@ -579,7 +579,13 @@ var id: String {
   private func embedContent(
     _ embed: AppBskyFeedDefs.PostViewEmbedUnion, labels: [ComAtprotoLabelDefs.Label]?
   ) -> some View {
-    PostEmbed(embed: embed, labels: labels, path: $path, visibilityContext: visibilityContext)
+    PostEmbed(
+      embed: embed,
+      labels: labels,
+      path: $path,
+      visibilityContext: visibilityContext,
+      authorDID: post.author.did
+    )
       .environment(\.postID, id)
       .padding(.trailing, PostView.baseUnit * 2)
   }

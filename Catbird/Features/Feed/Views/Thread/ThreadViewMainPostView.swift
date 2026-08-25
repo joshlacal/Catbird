@@ -216,7 +216,13 @@ struct ThreadViewMainPostView: View, Equatable {
                             //                  .padding(.trailing, 6)
                             //              }
                             if let embed = post.embed {
-                                    PostEmbed(embed: embed, labels: post.labels, path: $path, visibilityContext: visibilityContext)
+                                    PostEmbed(
+                                        embed: embed,
+                                        labels: post.labels,
+                                        path: $path,
+                                        visibilityContext: visibilityContext,
+                                        authorDID: post.author.did
+                                    )
                                         .padding(.vertical, 6)
                                         .padding(.leading, 6)
                                         .padding(.trailing, 6)

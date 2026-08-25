@@ -56,13 +56,14 @@ struct CircleMediaView: View {
   init?(
     viewImage: AppBskyEmbedImages.ViewImage,
     circle: CircleSummary,
-    authorDID: DID? = nil,
+    authorDID: DID?,
     contentMode: ContentMode = .fill,
     cornerRadius: CGFloat = 10,
     shouldBlur: Bool = false
   ) {
+    guard let authorDID else { return nil }
     self.space = circle.uri
-    self.authorDID = authorDID ?? circle.owner
+    self.authorDID = authorDID
     self.altText = viewImage.alt.isEmpty ? nil : viewImage.alt
     self.contentMode = contentMode
     self.cornerRadius = cornerRadius
@@ -78,6 +79,25 @@ struct CircleMediaView: View {
     let cidString = Self.extractCID(from: viewImage.fullsize.uriString()) ?? Self.extractCID(from: viewImage.thumb.uriString())
     guard let cidString else { return nil }
     self.cid = (try? CID.parse(cidString)) ?? CID.fromBlob(Data(cidString.utf8))
+  }
+
+  /// Convenience initializer with non-optional author DID.
+  init?(
+    viewImage: AppBskyEmbedImages.ViewImage,
+    circle: CircleSummary,
+    authorDID: DID,
+    contentMode: ContentMode = .fill,
+    cornerRadius: CGFloat = 10,
+    shouldBlur: Bool = false
+  ) {
+    self.init(
+      viewImage: viewImage,
+      circle: circle,
+      authorDID: Optional(authorDID),
+      contentMode: contentMode,
+      cornerRadius: cornerRadius,
+      shouldBlur: shouldBlur
+    )
   }
 
   var body: some View {
