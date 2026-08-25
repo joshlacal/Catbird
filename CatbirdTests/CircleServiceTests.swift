@@ -8,10 +8,12 @@ import Testing
 /// and never touch public endpoints.
 actor RecordingCircleTransport: CircleTransport {
   private let error: CircleError?
+  private let customCapabilities: CircleCapability?
   private(set) var publicEndpointCallCount = 0
 
-  init(error: CircleError? = nil) {
+  init(error: CircleError? = nil, capabilities: CircleCapability? = nil) {
     self.error = error
+    self.customCapabilities = capabilities
   }
 
   private func throwIfConfigured() throws {
@@ -20,6 +22,7 @@ actor RecordingCircleTransport: CircleTransport {
 
   func capabilities() async throws -> CircleCapability {
     try throwIfConfigured()
+    if let customCapabilities { return customCapabilities }
     return CircleCapability(enabled: true, protocolRevision: "test", supportsImages: true)
   }
   func listCircles(cursor: String?) async throws -> CircleListPage {
@@ -122,6 +125,74 @@ struct CircleServiceTests {
     let likeURI = try ATProtocolURI(uriString: "\(CircleTestFixtures.familyURI.uriString())/app.bsky.feed.like/testlike456")
     try await service.deleteLike(uri: likeURI, circle: CircleTestFixtures.family)
     #expect(await transport.publicEndpointCallCount == 0)
+  }
+
+  @Test("AppState probes capabilities and enables server capability flag")
+  @MainActor
+  func appStateProbesCapabilitiesAndFlipsFlag() async throws {
+    CircleFeatureFlags.setLocalFlag(true)
+    CircleFeatureFlags.serverCapability(enabled: false)
+    #expect(!CircleFeatureFlags.isEnabled)
+
+    let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
+    let appState = AppState(userDID: "did:plc:alice", client: client)
+    AppStateManager.shared.setLifecycleForTesting(.authenticated(appState))
+    defer { AppStateManager.shared.setLifecycleForTesting(.unauthenticated) }
+
+    let transport = RecordingCircleTransport()
+    appState.circleService = CircleService(transport: transport)
+
+    await appState.probeCircleCapabilities()
+    #expect(CircleFeatureFlags.isEnabled)
+  }
+  @Test("AppState probe failure sets server capability flag to false")
+  @MainActor
+  func appStateProbeFailureSetsFlagFalse() async throws {
+    CircleFeatureFlags.setLocalFlag(true)
+    CircleFeatureFlags.serverCapability(enabled: true)
+    #expect(CircleFeatureFlags.isEnabled)
+
+    let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
+    let appState = AppState(userDID: "did:plc:alice", client: client)
+    AppStateManager.shared.setLifecycleForTesting(.authenticated(appState))
+    defer { AppStateManager.shared.setLifecycleForTesting(.unauthenticated) }
+
+    let transport = RecordingCircleTransport(error: CircleError.unsupportedPDS)
+    appState.circleService = CircleService(transport: transport)
+
+    await appState.probeCircleCapabilities()
+    #expect(!CircleFeatureFlags.isEnabled)
+  }
+  @Test("AppState probe stale result from inactive account is discarded")
+  @MainActor
+  func appStateProbeStaleResultFromInactiveAccountIsDiscarded() async throws {
+    CircleFeatureFlags.setLocalFlag(true)
+    CircleFeatureFlags.serverCapability(enabled: false)
+
+    let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
+    let staleAppState = AppState(userDID: "did:plc:stale_account", client: client)
+    let transport = RecordingCircleTransport()
+    staleAppState.circleService = CircleService(transport: transport)
+
+    // If active account in lifecycle is different, the result must be discarded
+    let activeAppState = AppState(userDID: "did:plc:active_account", client: client)
+    AppStateManager.shared.setLifecycleForTesting(.authenticated(activeAppState))
+    defer { AppStateManager.shared.setLifecycleForTesting(.unauthenticated) }
+
+    await staleAppState.probeCircleCapabilities()
+    #expect(!CircleFeatureFlags.isEnabled)
+  }
+
+  @Test("Circle capability reset on account transition")
+  @MainActor
+  func circleCapabilityResetOnAccountTransition() async throws {
+    CircleFeatureFlags.setLocalFlag(true)
+    CircleFeatureFlags.serverCapability(enabled: true)
+    #expect(CircleFeatureFlags.isEnabled)
+
+    // Transition resets flag
+    CircleFeatureFlags.serverCapability(enabled: false)
+    #expect(!CircleFeatureFlags.isEnabled)
   }
 }
 

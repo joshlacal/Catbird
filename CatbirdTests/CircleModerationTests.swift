@@ -136,6 +136,7 @@ actor ModerationRecordingCircleTransport: CircleTransport {
   }
 }
 
+
 @Suite("Circle Moderation and Private Reporting")
 struct CircleModerationTests {
   let privatePostURI = try! ATProtocolURI(uriString: "at://did:plc:alice/space/blue.catbird.circle/3abc/app.bsky.feed.post/post123")
@@ -187,5 +188,16 @@ struct CircleModerationTests {
     #expect(reports[1].reason == .other)
     #expect(reports[1].details == "Other policy violation")
     #expect(await transport.publicEndpointCallCount == 0)
+  }
+
+  @Test func muteThreadIsNeverInvokedForCircleVisibilityContext() async throws {
+    let client = await ATProtoClient(baseURL: URL(string: "https://invalid.example.com")!)
+    let appState = AppState(userDID: "did:plc:alice", client: client)
+    let postView = CircleTestFixtures.makePostView(uri: privatePostURI, authorDID: try! DID(didString: "did:plc:alice"), text: "Private Circle Post")
+    let circleContext = PostVisibilityContext.circle(family)
+    let contextMenuVM = PostContextMenuViewModel(appState: appState, post: postView, visibilityContext: circleContext)
+
+    await contextMenuVM.muteThread()
+    #expect(appState.toastManager.currentToast == nil)
   }
 }

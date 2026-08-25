@@ -61,6 +61,12 @@ final class AppStateManager {
   /// Current application lifecycle state
   private(set) var lifecycle: AppLifecycle = .launching
 
+  #if DEBUG
+  func setLifecycleForTesting(_ newLifecycle: AppLifecycle) {
+    self.lifecycle = newLifecycle
+  }
+  #endif
+
   /// Observes auth state changes and keeps lifecycle in sync (e.g. session expiry → login/reauth)
   @ObservationIgnored
   private var authStateObservationTask: Task<Void, Never>? = nil

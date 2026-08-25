@@ -38,6 +38,10 @@ actor ManagementRecordingCircleTransport: CircleTransport {
   func getFeed(space: SpaceRef?, cursor: String?) async throws -> CircleFeedPage {
     if let error { throw error }
     detailFeedQueries.append(space)
+    if let space {
+      let filtered = mockFeedItems.filter { $0.circle.uri == space }
+      return CircleFeedPage(items: filtered, cursor: nil)
+    }
     return CircleFeedPage(items: mockFeedItems, cursor: nil)
   }
 
@@ -321,8 +325,53 @@ struct CircleManagementViewModelTests {
     // Direct detail feed model (space == mutedCircle.uri) keeps direct detail access
     let detailFeedModel = CircleFeedModel(service: service, space: mutedCircle.uri, accountDID: memberDID.didString())
     try await detailFeedModel.load()
-    #expect(detailFeedModel.items.count == 2)
+    #expect(detailFeedModel.items.count == 1)
     #expect(await transport.detailFeedQueries.contains(where: { $0 == mutedCircle.uri }))
+  }
+
+  @Test func mutingCircleImmediatelyRemovesSpaceFromActiveUnifiedFeedWhilePreservingDirectDetail() async throws {
+    let transport = ManagementRecordingCircleTransport()
+    let service = CircleService(transport: transport)
+
+    let familyCircle = CircleTestFixtures.family
+    let workCircle = CircleTestFixtures.work
+    let familyItem = CircleTestFixtures.makeFeedItem(circle: familyCircle, rkey: "fam1", text: "Family Post")
+    let workItem = CircleTestFixtures.makeFeedItem(circle: workCircle, rkey: "work1", text: "Work Post")
+    await transport.setMockFeedItems([familyItem, workItem])
+
+    // Active loaded unified feed model for Alice
+    let aliceUnified = CircleFeedModel(service: service, space: nil, accountDID: "did:plc:alice")
+    try await aliceUnified.load()
+    #expect(aliceUnified.items.count == 2)
+
+    // Active loaded direct detail feed model for Alice
+    let aliceDetail = CircleFeedModel(service: service, space: familyCircle.uri, accountDID: "did:plc:alice")
+    try await aliceDetail.load()
+    #expect(aliceDetail.items.count == 1)
+
+    // Active loaded unified feed model for Bob (different account)
+    let bobUnified = CircleFeedModel(service: service, space: nil, accountDID: "did:plc:bob")
+    try await bobUnified.load()
+    #expect(bobUnified.items.count == 2)
+
+    // Alice mutes Family Circle
+    let managementVM = CircleManagementViewModel(circle: familyCircle, service: service, userDID: "did:plc:alice")
+    try await managementVM.setMuted(true)
+
+    // Alice's active unified feed immediately has Family removed (only Work remains)
+    #expect(aliceUnified.items.count == 1)
+    #expect(aliceUnified.items.first?.circle.uri == workCircle.uri)
+
+    // Alice's active direct detail feed remains fully visible
+    #expect(aliceDetail.items.count == 1)
+    #expect(aliceDetail.items.first?.circle.uri == familyCircle.uri)
+    // Bob's active unified feed is untouched
+    #expect(bobUnified.items.count == 2)
+
+    // Memory cache for Alice's unified feed is purged of Family Space
+    let cachedPage = await CircleFeedCache.shared.page(accountDID: "did:plc:alice", space: nil)
+    #expect(cachedPage?.items.count == 1)
+    #expect(cachedPage?.items.first?.circle.uri == workCircle.uri)
   }
   @Test func createCircleValidatesNameBetween1And64Chars() async throws {
     let transport = ManagementRecordingCircleTransport()
@@ -460,7 +509,7 @@ struct CircleManagementViewModelTests {
   }
 
   @Test func privateCirclePostCannotExecuteMuteThread() async throws {
-    let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
+    let client = await ATProtoClient(baseURL: URL(string: "https://invalid.example.com")!)
     let appState = AppState(userDID: ownerDID.didString(), client: client)
     let postURI = try! ATProtocolURI(uriString: "at://did:plc:owner/space/blue.catbird.circle/3abc/did:plc:owner/app.bsky.feed.post/3l7test")
     let postView = CircleTestFixtures.makePostView(uri: postURI, authorDID: ownerDID, text: "Private Circle Post")
@@ -469,6 +518,7 @@ struct CircleManagementViewModelTests {
 
     // Calling muteThread on a Circle post is a no-op that fails closed and never calls public graph endpoint
     await contextMenuVM.muteThread()
+    #expect(appState.toastManager.currentToast == nil)
   }
 
   @Test func runtimeCircleCapabilityProbingAndAccountSwitchRaceSafety() async throws {
@@ -490,14 +540,72 @@ struct CircleManagementViewModelTests {
     #expect(!CircleFeatureFlags.isEnabled)
   }
 
-  @Test func ownerDeletesCircleSuccessfully() async throws {
+  @Test func deleteCircleCompleteOutcomePermitsDismissalAndMarksComplete() async throws {
     let transport = ManagementRecordingCircleTransport()
     let service = CircleService(transport: transport)
     let model = CircleManagementViewModel(circle: ownerCircle, service: service, userDID: ownerDID.didString())
 
-    _ = try await model.deleteCircle()
+    let op = try await model.deleteCircle()
+    #expect(op?.status == .value_complete)
     #expect(model.state == .complete)
+    #expect(!model.canRetry)
+    #expect(model.state.retryOperationID == nil)
     #expect(await transport.deletedSpaces.count == 1)
     #expect(await transport.deletedSpaces.first == ownerCircle.uri)
+  }
+
+  @Test func deleteCirclePendingOutcomeLeavesStatePendingWithRetryID() async throws {
+    let transport = ManagementRecordingCircleTransport()
+    let pendingUUID = UUID()
+    let pendingOp = CircleOperation(
+      id: pendingUUID.uuidString,
+      status: .value_pending,
+      space: ownerCircle.uri,
+      error: nil
+    )
+    await transport.setNextOperation(pendingOp)
+
+    let service = CircleService(transport: transport)
+    let model = CircleManagementViewModel(circle: ownerCircle, service: service, userDID: ownerDID.didString())
+
+    let op = try await model.deleteCircle()
+    #expect(op?.status == .value_pending)
+    #expect(model.state == .pending(pendingOp))
+    #expect(model.canRetry)
+    #expect(model.state.retryOperationID == pendingUUID)
+  }
+
+  @Test func deleteCircleReturnedFailedOutcomePreservesUUIDForRetry() async throws {
+    let transport = ManagementRecordingCircleTransport()
+    let failedUUID = UUID()
+    let failedOp = CircleOperation(
+      id: failedUUID.uuidString,
+      status: .value_failed,
+      space: ownerCircle.uri,
+      error: "Space quota exceeded"
+    )
+    await transport.setNextOperation(failedOp)
+
+    let service = CircleService(transport: transport)
+    let model = CircleManagementViewModel(circle: ownerCircle, service: service, userDID: ownerDID.didString())
+
+    let op = try await model.deleteCircle()
+    #expect(op?.status == .value_failed)
+    #expect(model.state == .failed(message: "Space quota exceeded", retryOperationID: failedUUID))
+    #expect(model.canRetry)
+    #expect(model.state.retryOperationID == failedUUID)
+  }
+
+  @Test func deleteCircleThrownErrorSetsFailedWithNilRetryIDAndDisablesNamedRetry() async throws {
+    let transport = ManagementRecordingCircleTransport(error: CircleError.upstreamUnavailable)
+    let service = CircleService(transport: transport)
+    let model = CircleManagementViewModel(circle: ownerCircle, service: service, userDID: ownerDID.didString())
+
+    await #expect(throws: CircleError.self) {
+      try await model.deleteCircle()
+    }
+    #expect(model.state == .failed(message: CircleError.upstreamUnavailable.localizedDescription, retryOperationID: nil))
+    #expect(!model.canRetry)
+    #expect(model.state.retryOperationID == nil)
   }
 }

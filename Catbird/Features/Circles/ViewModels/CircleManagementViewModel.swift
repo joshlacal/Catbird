@@ -16,6 +16,23 @@ enum CircleManagementState: Equatable, Sendable {
   case pending(CircleOperation)
   case complete
   case failed(message: String, retryOperationID: UUID?)
+
+  /// The operation UUID available for generated retryOperation, if any.
+  var retryOperationID: UUID? {
+    switch self {
+    case .pending(let op):
+      return UUID(uuidString: op.id)
+    case .failed(_, let retryID):
+      return retryID
+    default:
+      return nil
+    }
+  }
+
+  /// Whether a named operation retry is available.
+  var canRetry: Bool {
+    retryOperationID != nil
+  }
 }
 
 /// View model for creating Circles and managing members/settings of an existing Circle.
@@ -70,6 +87,11 @@ final class CircleManagementViewModel {
     guard !isCreating else { return true }
     guard !userDID.isEmpty else { return false }
     return circle.owner.didString() == userDID
+  }
+
+  /// Whether a named operation retry is actionable for the current state.
+  var canRetry: Bool {
+    state.canRetry
   }
 
   /// Authoritatively loads the member roster for owners.
@@ -277,6 +299,17 @@ final class CircleManagementViewModel {
         muted: updatedMuted,
         members: circle.members
       )
+      if updatedMuted {
+        await CircleFeedCache.shared.purgeMutedSpaceFromUnified(accountDID: userDID, space: circle.uri)
+        NotificationCenter.default.post(
+          name: .circleMuteStateChanged,
+          object: nil,
+          userInfo: [
+            "accountDID": userDID,
+            "spaceURI": circle.uri.uriString()
+          ]
+        )
+      }
     } catch {
       let cError = circleError(from: error)
       state = .failed(message: cError.localizedDescription, retryOperationID: nil)

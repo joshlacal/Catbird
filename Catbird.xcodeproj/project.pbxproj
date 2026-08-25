@@ -1678,7 +1678,7 @@
 			repositoryURL = "https://github.com/joshlacal/CatbirdMLSCore";
 			requirement = {
 				kind = revision;
-				revision = dcdc4eaed7e73de33729e9a4ca9e46ac9479cf46;
+				revision = ed245de566478c114b0025c7a4cbbdc611b2f55f;
 			};
 		};
 		218866A0300B61AC00215DE7 /* XCRemoteSwiftPackageReference "CatbirdBrand" */ = {

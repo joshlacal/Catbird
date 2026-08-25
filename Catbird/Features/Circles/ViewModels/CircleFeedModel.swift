@@ -38,6 +38,25 @@ final class CircleFeedModel {
     self.space = space
     self.accountDID = accountDID
     self.cache = cache
+
+    if space == nil {
+      NotificationCenter.default.addObserver(
+        forName: .circleMuteStateChanged,
+        object: nil,
+        queue: .main
+      ) { [weak self] notification in
+        guard let self else { return }
+        let targetAccountDID = notification.userInfo?["accountDID"] as? String ?? ""
+        guard targetAccountDID.isEmpty || self.accountDID.isEmpty || targetAccountDID == self.accountDID else {
+          return
+        }
+        guard let spaceURIString = notification.userInfo?["spaceURI"] as? String,
+              let space = try? SpaceRef(uriString: spaceURIString) else {
+          return
+        }
+        self.purgeMutedCircle(space)
+      }
+    }
   }
 
   /// Initial load or pull-to-refresh. Restores memory cache if items are empty.
@@ -139,10 +158,12 @@ final class CircleFeedModel {
   }
 
   /// Purges in-memory cached posts for a muted Circle Space from unified feed.
-  func purgeMutedCircle(_ space: SpaceRef) async {
+  func purgeMutedCircle(_ space: SpaceRef) {
     if self.space == nil {
-      items.removeAll(where: { $0.circle.uri == space })
-      await cache.purgeMutedSpaceFromUnified(accountDID: accountDID, space: space)
+      items.removeAll(where: { $0.circle.uri.uriString() == space.uriString() })
+      Task { [accountDID, cache] in
+        await cache.purgeMutedSpaceFromUnified(accountDID: accountDID, space: space)
+      }
     }
   }
 }
