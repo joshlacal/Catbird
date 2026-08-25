@@ -33,7 +33,7 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/joshlacal/CatbirdMLSCore",
       "state" : {
-        "revision" : "959f412823d920115006375b8e6cbae7ecf1f9d9"
+        "revision" : "dcdc4eaed7e73de33729e9a4ca9e46ac9479cf46"
       }
     },
     {
@@ -121,7 +121,7 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/joshlacal/PetrelCatbird",
       "state" : {
-        "revision" : "c7f668ff3189682ef0e62e9c22afa9ace7909b87"
+        "revision" : "e74b958a1c0f4a9f09482fbd7f618111bb2fe6a2"
       }
     },
     {

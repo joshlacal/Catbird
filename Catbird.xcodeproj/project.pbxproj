@@ -1670,7 +1670,7 @@
 			repositoryURL = "https://github.com/joshlacal/PetrelCatbird";
 			requirement = {
 				kind = revision;
-				revision = c7f668ff3189682ef0e62e9c22afa9ace7909b87;
+				revision = e74b958a1c0f4a9f09482fbd7f618111bb2fe6a2;
 			};
 		};
 		2188669D300B606F00215DE7 /* XCRemoteSwiftPackageReference "CatbirdMLSCore" */ = {
@@ -1678,7 +1678,7 @@
 			repositoryURL = "https://github.com/joshlacal/CatbirdMLSCore";
 			requirement = {
 				kind = revision;
-				revision = 959f412823d920115006375b8e6cbae7ecf1f9d9;
+				revision = dcdc4eaed7e73de33729e9a4ca9e46ac9479cf46;
 			};
 		};
 		218866A0300B61AC00215DE7 /* XCRemoteSwiftPackageReference "CatbirdBrand" */ = {

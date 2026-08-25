@@ -2,6 +2,31 @@ import Foundation
 import Petrel
 import PetrelCatbird
 
+/// Typealias for the generated Circle summary representation.
+public typealias CircleSummary = BlueCatbirdCircleDefs.CircleSummary
+
+extension SpaceRef: @retroactive Equatable, @retroactive Hashable {
+  public static func == (lhs: SpaceRef, rhs: SpaceRef) -> Bool {
+    lhs.spaceDID == rhs.spaceDID && lhs.spaceType == rhs.spaceType && lhs.skey == rhs.skey
+  }
+
+  public func hash(into hasher: inout Hasher) {
+    hasher.combine(spaceDID)
+    hasher.combine(spaceType)
+    hasher.combine(skey)
+  }
+}
+
+extension BlueCatbirdCircleDefs.CircleSummary: @retroactive Equatable {
+  public static func == (lhs: BlueCatbirdCircleDefs.CircleSummary, rhs: BlueCatbirdCircleDefs.CircleSummary) -> Bool {
+    lhs.uri == rhs.uri &&
+    lhs.name == rhs.name &&
+    lhs.owner == rhs.owner &&
+    lhs.accessState == rhs.accessState &&
+    lhs.muted == rhs.muted
+  }
+}
+
 /// The single immutable audience for a Circle-capable post.
 ///
 /// A post targets exactly one destination: Public or one named Circle. No
@@ -156,7 +181,7 @@ enum CircleError: Error, LocalizedError {
 /// reads never appear on this seam, so a Circle failure cannot fall back to
 /// the public repo.
 protocol CircleTransport: Sendable {
-  var publicEndpointCallCount: Int { get }
+  var publicEndpointCallCount: Int { get async }
 
   func capabilities() async throws -> CircleCapability
   func listCircles(cursor: String?) async throws -> CircleListPage
