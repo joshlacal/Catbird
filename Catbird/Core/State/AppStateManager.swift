@@ -209,6 +209,22 @@ final class AppStateManager {
       MLSDiagnosticLogger.shared.logE2EModeStarted(runId: runId)
     }
 
+    #if DEBUG
+    if isE2EMode, ProcessInfo.processInfo.arguments.contains("--e2e-fixture-account") {
+      let fixtureDID = "did:plc:alicee2efixture"
+      authManager.updateState(.authenticated(userDID: fixtureDID))
+      do {
+        try await transitionToAuthenticated(userDID: fixtureDID)
+        MLSDiagnosticLogger.shared.logMLSReady(userDID: fixtureDID)
+      } catch {
+        logger.error("[E2E] Fixture transition failed: \(error)")
+        lifecycle = .unauthenticated
+      }
+      startAuthStateObservationIfNeeded()
+      return
+    }
+    #endif
+
     // E2E mode with credentials: prioritize fresh login over saved sessions
     // This ensures deterministic test behavior regardless of keychain state
     if isE2EMode, let user = e2eUser, let pass = e2ePass {
@@ -310,7 +326,7 @@ final class AppStateManager {
   /// Transition to authenticated state with a specific user
   /// Creates or retrieves AppState for the user and updates lifecycle
   /// - Parameter userDID: The DID of the user to authenticate as
-  func transitionToAuthenticated(userDID: String) async throws {
+  func transitionToAuthenticated(userDID: String, previousUserDID: String? = nil) async throws {
     guard let userDID = normalizedUserDID(userDID) else {
       logger.critical(
         "🚨 Refusing authenticated transition for invalid DID: \(userDID, privacy: .private)")
@@ -336,17 +352,17 @@ final class AppStateManager {
     isTransitioning = true
     defer { isTransitioning = false }
 
-    let wasAuthenticated = lifecycle.userDID != nil
+    let effectivePreviousDID = previousUserDID ?? lifecycle.userDID
     
     // OOM FIX: Close the previous account's database BEFORE switching
     // This prevents the race condition where two databases are open simultaneously
     // with potential key mismatch or WAL corruption
-    if let previousUserDID = lifecycle.userDID, previousUserDID != userDID {
-      logger.info("🔒 Closing previous account's MLS database before switch: \(previousUserDID.prefix(20))")
+    if let oldUserDID = effectivePreviousDID, oldUserDID != userDID {
+      logger.info("🔒 Closing previous account's MLS database before switch: \(oldUserDID.prefix(20))")
       
       // Evict and prepare the previous AppState for storage reset if it exists
-      if let previousAppState = authenticatedStates.removeValue(forKey: previousUserDID) {
-        accessOrder.removeAll { $0 == previousUserDID }
+      if let previousAppState = authenticatedStates.removeValue(forKey: oldUserDID) {
+        accessOrder.removeAll { $0 == oldUserDID }
         #if os(iOS)
         // FIX #5: Stop all streams and pause sync BEFORE database closure
         previousAppState.stopMLSStreams()
@@ -376,12 +392,12 @@ final class AppStateManager {
       #if DEBUG
       let closeSuccess: Bool
       if let override = AppStateManager.databaseDrainOverride {
-        closeSuccess = await override(previousUserDID, 5.0)
+        closeSuccess = await override(oldUserDID, 5.0)
       } else {
-        closeSuccess = await MLSGRDBManager.shared.closeDatabaseAndDrain(for: previousUserDID, timeout: 5.0)
+        closeSuccess = await MLSGRDBManager.shared.closeDatabaseAndDrain(for: oldUserDID, timeout: 5.0)
       }
       #else
-      let closeSuccess = await MLSGRDBManager.shared.closeDatabaseAndDrain(for: previousUserDID, timeout: 5.0)
+      let closeSuccess = await MLSGRDBManager.shared.closeDatabaseAndDrain(for: oldUserDID, timeout: 5.0)
       #endif
       if !closeSuccess {
         logger.critical("🚨 Previous database drain failed - aborting account transition to prevent corruption")
@@ -659,66 +675,11 @@ final class AppStateManager {
       MLSCoordinationStore.shared.updatePhase(.active)
     }
 
-    // Set transition flag to prevent operations during switch
-    isTransitioning = true
-    
-    // CRITICAL FIX: Properly shutdown MLS resources for the OLD account BEFORE switching
-    // This prevents:
-    // 1. SQLite database exhaustion from unclosed connections
-    // 2. Race conditions where old managers continue polling with wrong account
-    // 3. Account mismatch errors in MLS sync operations
-    // 4. HMAC check failures from using wrong encryption key
     if let oldUserDID = previousUserDID, oldUserDID != userDID {
-      logger.info("MLS: 🛑 Preparing to shutdown MLS for previous user \(oldUserDID)")
-      
       #if os(iOS)
-        // Mark old user as under storage maintenance to block any new DB access.
-        // Keep this flag set for the full duration of the switch (including transitionToAuthenticated).
-        beginStorageMaintenance(for: oldUserDID)
-        defer { endStorageMaintenance(for: oldUserDID) }
-        
-        // Get the old AppState and properly shutdown its MLS resources
-        if let oldState = authenticatedStates.removeValue(forKey: oldUserDID) {
-          accessOrder.removeAll { $0 == oldUserDID }
-          logger.info("MLS: Initiating graceful shutdown for previous account")
-
-          // DEFENSIVE TIMEOUT: Wrap MLS shutdown in 5-second timeout to prevent account switch hangs
-          // If prepareMLSStorageReset() never completes, we proceed anyway - better a degraded MLS
-          // state than a frozen app. The user can restart if MLS is broken.
-          let shutdownCompleted = await withTaskGroup(of: Bool.self) { group in
-            group.addTask { @MainActor in
-              // FIX #5: Stop all streams and pause sync BEFORE database closure
-              // This prevents new events from hitting the closing database
-              self.logger.info("MLS: 🛑 Stopping all network streams for old account")
-              oldState.stopMLSStreams()
-
-              await oldState.prepareMLSStorageReset()
-              return true
-            }
-            group.addTask {
-              try? await Task.sleep(nanoseconds: 5_000_000_000) // 5 seconds
-              return false
-            }
-            let result = await group.next() ?? false
-            group.cancelAll()
-            return result
-          }
-
-          if shutdownCompleted {
-            logger.info("MLS: ✅ Previous account MLS shutdown complete")
-          } else {
-            logger.critical("🚨 MLS shutdown timed out after 5s - forcing ahead with account switch")
-          }
-          oldState.cleanup()
-        }
-      #else
-        if let oldState = authenticatedStates.removeValue(forKey: oldUserDID) {
-          accessOrder.removeAll { $0 == oldUserDID }
-          oldState.cleanup()
-        }
+      beginStorageMaintenance(for: oldUserDID)
+      defer { endStorageMaintenance(for: oldUserDID) }
       #endif
-      
-      logger.info("MLS: SQLite storage for previous user \(oldUserDID) is automatically persisted")
     }
 
     // Store draft for transfer
@@ -727,14 +688,8 @@ final class AppStateManager {
       logger.info("📝 Stored composer draft for transfer - Text length: \(draft.postText.count)")
     }
 
-    // CRITICAL: Clear isTransitioning BEFORE calling transitionToAuthenticated.
-    // transitionToAuthenticated has a guard `!isTransitioning` that returns early if true.
-    // The MLS shutdown work above is complete, so it's safe to clear the flag now.
-    // transitionToAuthenticated will set its own isTransitioning flag with a defer to clear it.
-    isTransitioning = false
-
-    // Transition to the authenticated account
-    try await transitionToAuthenticated(userDID: userDID)
+    // Transition to the authenticated account with explicit previousUserDID
+    try await transitionToAuthenticated(userDID: userDID, previousUserDID: previousUserDID)
   }
 
   /// Remove a specific account completely and destroy all persisted MLS data

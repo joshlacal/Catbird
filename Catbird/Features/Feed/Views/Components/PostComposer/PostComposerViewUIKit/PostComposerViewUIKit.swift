@@ -385,6 +385,17 @@ struct PostComposerViewUIKit: View {
           // Show a single editor instance.
           // In thread mode, the active editor is rendered inside threadEntriesSection.
           if !vm.isThreadMode {
+            if CircleFeatureFlags.isEnabled {
+              CircleAudiencePicker(
+                selectedDestination: Binding(
+                  get: { vm.destination },
+                  set: { vm.selectDestination($0) }
+                ),
+                isReplyLocked: vm.isReplyLockedToCircle,
+                isSubmitting: isSubmitting || vm.activeSubmission != nil || vm.mediaItems.contains { $0.isLoading }
+              )
+              .padding(.horizontal, 16)
+            }
             composerEditorSection(vm: vm)
             mentionSuggestionsSection(vm: vm)
             mediaAttachmentsSection(vm: vm)

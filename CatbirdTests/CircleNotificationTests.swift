@@ -931,8 +931,8 @@ struct CircleNotificationTests {
     }
   }
 
-  // 17. AuthManager content-free logs canary test
-  @Test("AuthManager updateState and auto-logout logs are content-free finite codes excluding all canaries")
+  // 17. AuthManager content-free logs canary test across all production flows
+  @Test("AuthManager logs are content-free finite codes excluding all canaries across all auth flows")
   @MainActor
   func authManagerLogsAreContentFreeAndExcludeCanaries() async throws {
     let canaryDID = "did:plc:supersecretcanaryauthdid999"
@@ -950,19 +950,47 @@ struct CircleNotificationTests {
       AuthenticationManager.capturedLogHook = nil
     }
 
-    let authManager = AuthenticationManager()
+    // Instantiate AuthenticationManager with default production handler
+    let authManager = AuthenticationManager(logHandler: DefaultAuthLogHandler())
 
-    // Trigger auto-logout from Petrel with canary DID and reason
+    // 1. Auto-logout with canaries
     await authManager.handleAutoLogoutFromPetrel(did: canaryDID, reason: canaryReason)
 
-    // Trigger various updateState transitions
+    // 2. State updates with canaries
     authManager.updateState(.authenticating(progress: .resolvingHandle(handle: canaryHandle)))
     authManager.updateState(.error(message: "Fatal token rejection: \(canaryToken) at \(canaryURL)"))
     authManager.updateState(.authenticated(userDID: canaryDID))
     authManager.updateState(.unauthenticated)
 
+    // 3. Catastrophic failure with canary error
+    struct CanaryError: LocalizedError {
+      var errorDescription: String? { "Canary internal server failure 500 at https://secret.canary.com" }
+    }
+    await authManager.handleCatastrophicAuthFailure(did: canaryDID, error: CanaryError(), isRetryable: false)
+
+    // 4. Circuit breaker open
+    await authManager.handleCircuitBreakerOpen(did: canaryDID)
+
+    // 5. Expired account reauth start
+    _ = try? await authManager.startOAuthFlowForExpiredAccount()
+
+    // 6. Callback failure with canary URL
+    if let callbackURL = URL(string: "https://catbird.blue/oauth/callback?error=\(canaryToken)&did=\(canaryDID)") {
+      _ = try? await authManager.handleCallback(callbackURL)
+      _ = try? await authManager.handleGatewayCallback(callbackURL)
+    }
+
+    // 7. Switch account with canary DID
+    _ = try? await authManager.switchToAccount(did: canaryDID)
+
+    // 8. Remove account with canary DID
+    await authManager.removeAccount(did: canaryDID)
+
+    // 9. Network recovery attempt
+    await authManager.attemptRecoveryFromNetworkIssues()
+
     // Verify logs WERE actually captured (non-vacuous check)
-    #expect(!capturedLogs.isEmpty, "Auth logs must be captured by the test seam")
+    #expect(capturedLogs.count >= 10, "Auth logs must be captured by the test seam across all exercised paths")
 
     // Verify NONE of the captured logs contain sensitive canaries
     for log in capturedLogs {
@@ -972,6 +1000,9 @@ struct CircleNotificationTests {
       #expect(!log.contains(canaryToken), "Log contained canary token: \(log)")
       #expect(!log.contains(canaryURL), "Log contained canary URL: \(log)")
       #expect(!log.contains(canaryServer), "Log contained canary server: \(log)")
+      #expect(!log.lowercased().contains("secret"), "Log contained 'secret': \(log)")
+      #expect(!log.lowercased().contains("canary"), "Log contained 'canary': \(log)")
+      #expect(log.hasPrefix("AUTH_"), "Log message must be a static code: \(log)")
     }
 
     // Verify AuthState caseLabels are finite and content-free, never stringifying associated canaries
@@ -998,73 +1029,85 @@ struct CircleNotificationTests {
   @Test("Account switch Alice -> Bob -> Alice rebuilds fresh Circle models while old model stays inert")
   @MainActor
   func accountSwitchAliceBobAliceRebuildsFreshCircleModels() async throws {
-    let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
-    let aliceState1 = AppState(userDID: "did:plc:alice", client: client)
-    let service1 = RecordingCircleNotificationService()
-    let notif1 = makeNotification(id: "n1", reason: .value_reply, circle: familyCircle)
-    await service1.setPages([CircleNotificationPage(notifications: [notif1], cursor: nil)])
-    aliceState1.circleNotificationService = service1
+    let appStateManager = AppStateManager.shared
+    let previousLifecycle = appStateManager.lifecycle
+    defer {
+      appStateManager.setLifecycleForTesting(previousLifecycle)
+    }
+
+    // Transition AppStateManager to Alice
+    try await appStateManager.transitionToAuthenticated(userDID: "did:plc:alice")
+    guard case .authenticated(let aliceState1) = appStateManager.lifecycle else {
+      Issue.record("Expected authenticated lifecycle for Alice")
+      return
+    }
 
     let model1 = aliceState1.circleNotificationsModel
-    try await model1.refresh()
-    #expect(model1.notifications.count == 1)
     #expect(!model1.isInvalidated)
 
-    // Switch Alice -> Bob: posts invalidation for Alice
-    NotificationCenter.default.post(
-      name: .circleAccountInvalidated,
-      object: nil,
-      userInfo: ["accountDID": "did:plc:alice"]
-    )
-    #expect(model1.isInvalidated)
+    // Transition AppStateManager to Bob (switch away)
+    try await appStateManager.transitionToAuthenticated(userDID: "did:plc:bob", previousUserDID: "did:plc:alice")
+    guard case .authenticated(let bobState) = appStateManager.lifecycle else {
+      Issue.record("Expected authenticated lifecycle for Bob")
+      return
+    }
+    #expect(bobState.userDID == "did:plc:bob")
 
-    // Verify old model1 is inert
-    await service1.setPages([CircleNotificationPage(notifications: [notif1, notif1], cursor: nil)])
+    // Alice's old model1 is now invalidated and inert
+    #expect(model1.isInvalidated)
     try await model1.refresh()
     #expect(model1.isInvalidated)
     #expect(model1.notifications.isEmpty)
 
-    // Switch Bob -> Alice: reconstructs new AppState and new Circle model
-    let aliceState2 = AppState(userDID: "did:plc:alice", client: client)
-    let service2 = RecordingCircleNotificationService()
-    let notif2 = makeNotification(id: "n2", reason: .value_like, circle: familyCircle)
-    await service2.setPages([CircleNotificationPage(notifications: [notif2], cursor: nil)])
-    aliceState2.circleNotificationService = service2
+    // Transition AppStateManager back to Alice (switch back)
+    try await appStateManager.transitionToAuthenticated(userDID: "did:plc:alice", previousUserDID: "did:plc:bob")
+    guard case .authenticated(let aliceState2) = appStateManager.lifecycle else {
+      Issue.record("Expected authenticated lifecycle for Alice after switch back")
+      return
+    }
 
     let model2 = aliceState2.circleNotificationsModel
+    // Brand new model instance for Alice is fresh and active
     #expect(!model2.isInvalidated)
-    try await model2.refresh()
-    #expect(model2.notifications.count == 1)
-    #expect(model2.notifications.first?.id == "n2")
 
-    // Old model remains inert
+    // Old model1 remains permanently inert
     #expect(model1.isInvalidated)
-    #expect(model1.notifications.isEmpty)
   }
 
   // 19. Forced database drain failure during switch propagates and recovers without leaving lifecycle .launching
   @Test("Forced database drain failure during account switch propagates and recovers safely")
   @MainActor
   func forcedDatabaseDrainFailureDuringSwitchRecoversSafely() async throws {
-    let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
-    let aliceState = AppState(userDID: "did:plc:alice", client: client)
-    let previousLifecycle = AppStateManager.shared.lifecycle
-    AppStateManager.shared.setLifecycleForTesting(.authenticated(aliceState))
+    let appStateManager = AppStateManager.shared
+    let previousLifecycle = appStateManager.lifecycle
+    appStateManager.authentication.clearPendingAuthAlert()
     defer {
-      AppStateManager.shared.setLifecycleForTesting(previousLifecycle)
+      appStateManager.setLifecycleForTesting(previousLifecycle)
       AppStateManager.databaseDrainOverride = nil
+      appStateManager.authentication.clearPendingAuthAlert()
     }
 
-    // Force database drain failure
-    AppStateManager.databaseDrainOverride = { _, _ in false }
+    var overrideInvoked = false
+    // Force database drain failure via override
+    AppStateManager.databaseDrainOverride = { did, timeout in
+      overrideInvoked = true
+      return false
+    }
 
-    // Attempt switch to Bob
-    await AppStateManager.shared.switchAccount(to: "did:plc:bob")
+    // Initialize Alice authenticated state in AppStateManager
+    try await appStateManager.transitionToAuthenticated(userDID: "did:plc:alice")
 
-    // Verify lifecycle is NOT stuck in .launching
-    #expect(AppStateManager.shared.lifecycle != .launching)
+    // Attempt switch to Bob via public switchAccount entry point
+    await appStateManager.switchAccount(to: "did:plc:bob")
+
+    // Assert database drain override was actually invoked during the switch
+    #expect(overrideInvoked, "Database drain override must be invoked during switch")
+
+    // Verify lifecycle is NOT stuck in .launching (it safely recovered to authenticated or unauthenticated)
+    #expect(appStateManager.lifecycle != .launching)
+
     // Verify alert was set explaining the safe recovery
-    #expect(AppStateManager.shared.authentication.pendingAuthAlert?.title == "Restart Required")
+    #expect(appStateManager.authentication.pendingAuthAlert?.title == "Restart Required")
   }
 }
 

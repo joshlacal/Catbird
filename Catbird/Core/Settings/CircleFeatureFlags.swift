@@ -15,14 +15,20 @@ enum CircleFeatureFlags {
     serverEnabled = enabled
   }
 
+  private static var isE2EMode: Bool {
+    ProcessInfo.processInfo.arguments.contains("--e2e-mode")
+  }
+
   /// True only when the local flag and the last-seen server capability agree.
   static var isEnabled: Bool {
     #if DEBUG
-    if ProcessInfo.processInfo.arguments.contains("--circles-unsupported-pds") {
-      return false
-    }
-    if ProcessInfo.processInfo.arguments.contains("--circles-server-capable") {
-      return localFlag
+    if isE2EMode {
+      if ProcessInfo.processInfo.arguments.contains("--circles-unsupported-pds") {
+        return false
+      }
+      if ProcessInfo.processInfo.arguments.contains("--circles-server-capable") {
+        return localFlag
+      }
     }
     #endif
     return localFlag && serverEnabled
@@ -30,8 +36,7 @@ enum CircleFeatureFlags {
 
   static var localFlag: Bool {
     #if DEBUG
-    if ProcessInfo.processInfo.arguments.contains("--enable-circles") ||
-       ProcessInfo.processInfo.environment["ENABLE_CIRCLES"] == "1" {
+    if isE2EMode && ProcessInfo.processInfo.arguments.contains("--enable-circles") {
       return true
     }
     #endif

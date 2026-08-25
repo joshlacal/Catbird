@@ -352,14 +352,16 @@ struct PostComposerView: View {
 
     @ViewBuilder
     private var destinationPickerSection: some View {
-        CircleAudiencePicker(
-            selectedDestination: Binding(
-                get: { viewModel.destination },
-                set: { viewModel.selectDestination($0) }
-            ),
-            isReplyLocked: viewModel.isReplyLockedToCircle,
-            isSubmitting: isSubmitting
-        )
+        if CircleFeatureFlags.isEnabled {
+            CircleAudiencePicker(
+                selectedDestination: Binding(
+                    get: { viewModel.destination },
+                    set: { viewModel.selectDestination($0) }
+                ),
+                isReplyLocked: viewModel.isReplyLockedToCircle,
+                isSubmitting: isSubmitting || viewModel.activeSubmission != nil || viewModel.mediaItems.contains { $0.isLoading }
+            )
+        }
     }
     
     @ViewBuilder

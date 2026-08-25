@@ -130,11 +130,14 @@ struct ActionButtonsView: View {
       #if os(iOS)
       .modifier(ReplyZoomSource(id: replySourceID, namespace: replyTransition))
       #endif
-      Spacer()
+      if viewModel.capabilities.canRepost || viewModel.capabilities.canQuote {
+        Spacer()
 
-      repostMenu
-      .disabled(!viewModel.capabilities.canRepost && !viewModel.capabilities.canQuote)
-      .accessibilityIdentifier("repostButton")
+        repostMenu
+          .disabled(!viewModel.capabilities.canRepost && !viewModel.capabilities.canQuote)
+          .accessibilityIdentifier("repostButton")
+      }
+
       Spacer()
 
       // Like Button
@@ -165,24 +168,27 @@ struct ActionButtonsView: View {
       .disabled(!viewModel.capabilities.canLike)
       .accessibilityIdentifier("likeButton")
       .accessibilityLabel(interactionState.isLiked ? "Unlike. Like count: \(interactionState.likeCount)" : "Like. Like count: \(interactionState.likeCount)")
-      Spacer()
 
-      // Share Button (system share sheet only)
-      InteractionButton(
-        iconName: "square.and.arrow.up",
-        count: nil,  // Share doesn't have a count
-        isActive: false,
-        isFirstAppear: isFirstAppear,
-        color: .secondary,
-        isBig: isBig
-      ) {
-        Task {
-          await viewModel.share(post: post)
+      if viewModel.capabilities.canPublicShare {
+        Spacer()
+
+        // Share Button (system share sheet only)
+        InteractionButton(
+          iconName: "square.and.arrow.up",
+          count: nil,  // Share doesn't have a count
+          isActive: false,
+          isFirstAppear: isFirstAppear,
+          color: .secondary,
+          isBig: isBig
+        ) {
+          Task {
+            await viewModel.share(post: post)
+          }
         }
+        .disabled(!viewModel.capabilities.canPublicShare)
+        .accessibilityIdentifier("shareButton")
+        .accessibilityLabel("Share")
       }
-      .disabled(!viewModel.capabilities.canPublicShare)
-      .accessibilityIdentifier("shareButton")
-      .accessibilityLabel("Share")
     }
     .font(isBig ? .title3 : .callout)
     .frame(height: isBig ? 54 : 45)

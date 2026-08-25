@@ -349,11 +349,8 @@ struct LoginView: View {
                 // Cancel authentication task on error
                 authenticationTask?.cancel()
                 authenticationTask = nil
-            } else if case .authenticated(let userDID) = newValue {
-                // Successfully authenticated - transition to authenticated state
-                Task {
-                    try? await appStateManager.transitionToAuthenticated(userDID: userDID)
-                }
+            } else if case .authenticated = newValue {
+                // Centralized auth state observation in AppStateManager handles transitionToAuthenticated and error recovery.
                 isLoggingIn = false
                 loginProgress = .idle
                 showTimeoutCountdown = false

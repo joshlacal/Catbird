@@ -130,12 +130,284 @@ enum AuthProgress: Equatable, Sendable {
     }
   }
 }
-/// Log handler interface for AuthenticationManager
-public protocol AuthLogHandler: Sendable {
-  func log(level: OSLogType, message: String)
+/// Finite set of content-free log events for AuthenticationManager.
+/// Guarantees at compile time that no DID, handle, URL, reason, token, or error text is emitted in auth logs.
+public enum AuthLogEvent: Sendable, Equatable {
+  case initialized
+  case stateUpdated
+  case autoLogoutDuplicateTrigger
+  case autoLogoutTriggered
+  case autoLogoutExpiredAccountStored
+  case autoLogoutSkipAlertReauth
+  case expiredAccountReauthMissingInfo
+  case expiredAccountReauthMissingHandle
+  case expiredAccountOAuthStarted
+  case invalidDIDEncountered
+  case systemInitializing
+  case clientInitializing
+  case clientCreated
+  case clientCreationFailed
+  case clientExists
+  case checkingAuthState
+  case checkAuthStateCancelled
+  case authStateCheckAuthenticated
+  case authStateCheckFailed
+  case noValidSessionFound
+  case tokenRefreshAttempt
+  case tokenRefreshSuccessful
+  case tokenRefreshReturnedFalse
+  case tokenRefreshFailed
+  case tokenRefreshAuthErrorDetected
+  case tokenRefreshNetworkErrorRetrying
+  case tokenRefreshExhausted
+  case candidateAccountFound
+  case candidateAccountMissing
+  case expiredAccountInfoPrepared
+  case sessionExpiredPromptingReauth
+  case oauthFlowStarted
+  case oauthFlowAttempt
+  case oauthURLGenerated
+  case oauthFlowAttemptFailed
+  case oauthFlowNetworkErrorRetrying
+  case oauthFlowFailed
+  case e2ePasswordLoginStarted
+  case e2eKeychainCleared
+  case e2eClientCreated
+  case e2eClientCreationFailed
+  case e2ePasswordLoginAttempt
+  case e2ePasswordLoginSuccess
+  case e2ePasswordLoginFailed
+  case e2eKeychainDeletedItem
+  case e2eKeychainNoItems
+  case e2eKeychainQueryFailed
+  case callbackProcessingStarted
+  case callbackURLDetails
+  case callbackStateVerified
+  case callbackUnexpectedState
+  case callbackClientUnavailable
+  case callbackClientAvailable
+  case callbackTokenExchangeStarted
+  case callbackTokenExchangeCompleted
+  case callbackImmediateAPISuccess
+  case callbackImmediateAPIFailed
+  case callbackSessionInvalid
+  case callbackSessionValid
+  case callbackDIDResolved
+  case callbackHandleResolved
+  case callbackConnectivityCheckSuccess
+  case callbackConnectivityCheckFailed
+  case callbackCompleted
+  case callbackFailed
+  case gatewayCallbackProcessingStarted
+  case gatewayCallbackClientInitializing
+  case gatewayCallbackClientUnavailable
+  case gatewayCallbackCompleted
+  case gatewayCallbackFailed
+  case logoutStarted
+  case logoutSuccessful
+  case logoutFailed
+  case manualLogoutStateCleared
+  case invalidHandleIgnored
+  case accountOrderUpdated
+  case profileDataCached
+  case accountRemovalStarted
+  case accountRemovalSuccessful
+  case accountRemovalFailed
+  case accountsListed
+  case clientRecreatedForAccountOps
+  case accountSwitchStarted
+  case accountSwitchAlreadyInProgress
+  case accountSwitchClientInitializing
+  case accountSwitchClientUnavailable
+  case accountSwitchAlreadyActive
+  case accountSwitchProceeding
+  case accountSwitchMLSCleanupStarted
+  case accountSwitchMLSContextClosed
+  case accountSwitchMLSCoreShutdownSuccess
+  case accountSwitchMLSCoreShutdownWarning
+  case accountSwitchMLSCoreShutdownTimeout
+  case accountSwitchMLSCoreShutdownFailed
+  case accountSwitchMLSCleanupTimedOut
+  case accountSwitchDatabasePrewarmed
+  case accountSwitchDatabasePrewarmFailed
+  case accountSwitchClientSwitchCalled
+  case accountSwitchClientSwitchCompleted
+  case accountSwitchSessionInvalid
+  case accountSwitchSessionValid
+  case accountSwitchResolvedDIDMismatch
+  case accountSwitchSuccessful
+  case accountSwitchFailed
+  case accountSwitchCompleted
+  case addAccountStarted
+  case addAccountOAuthURLGenerated
+  case addAccountFailed
+  case biometricAuthAvailable
+  case biometricAuthNotAvailable
+  case biometricAuthEnabled
+  case biometricAuthEnableFailed
+  case biometricAuthDisabled
+  case biometricAuthSuccess
+  case biometricAuthFailed
+  case biometricAuthCancelled
+  case biometricAuthFallback
+  case biometricAuthNotEnrolled
+  case biometricAuthLockout
+  case biometricAuthError
+  case networkRecoveryAttemptStarted
+  case networkRecoveryClientUnavailable
+  case networkRecoverySuccessful
+  case networkRecoveryFailed
+  case authenticationRequiredReceived
+  case authenticationRequiredDuplicateTrigger
+  case authenticationRequiredSkipAlert
+  case catastrophicAuthFailure
+  case catastrophicDuplicateTrigger
+  case catastrophicSkipAlert
+  case circuitBreakerOpen
+
+  public var staticCode: String {
+    switch self {
+    case .initialized: "AUTH_INITIALIZED"
+    case .stateUpdated: "AUTH_STATE_UPDATED"
+    case .autoLogoutDuplicateTrigger: "AUTH_AUTO_LOGOUT_DUPLICATE_TRIGGER"
+    case .autoLogoutTriggered: "AUTH_AUTO_LOGOUT_TRIGGERED"
+    case .autoLogoutExpiredAccountStored: "AUTH_AUTO_LOGOUT_EXPIRED_ACCOUNT_STORED"
+    case .autoLogoutSkipAlertReauth: "AUTH_AUTO_LOGOUT_SKIP_ALERT_REAUTH"
+    case .expiredAccountReauthMissingInfo: "AUTH_REAUTH_MISSING_EXPIRED_ACCOUNT"
+    case .expiredAccountReauthMissingHandle: "AUTH_REAUTH_MISSING_HANDLE"
+    case .expiredAccountOAuthStarted: "AUTH_REAUTH_OAUTH_STARTED"
+    case .invalidDIDEncountered: "AUTH_INVALID_DID"
+    case .systemInitializing: "AUTH_SYSTEM_INITIALIZING"
+    case .clientInitializing: "AUTH_CLIENT_INITIALIZING"
+    case .clientCreated: "AUTH_CLIENT_CREATED"
+    case .clientCreationFailed: "AUTH_CLIENT_CREATION_FAILED"
+    case .clientExists: "AUTH_CLIENT_EXISTS"
+    case .checkingAuthState: "AUTH_CHECKING_STATE"
+    case .checkAuthStateCancelled: "AUTH_CHECK_STATE_CANCELLED"
+    case .authStateCheckAuthenticated: "AUTH_CHECK_STATE_AUTHENTICATED"
+    case .authStateCheckFailed: "AUTH_CHECK_STATE_FAILED"
+    case .noValidSessionFound: "AUTH_NO_VALID_SESSION"
+    case .tokenRefreshAttempt: "AUTH_TOKEN_REFRESH_ATTEMPT"
+    case .tokenRefreshSuccessful: "AUTH_TOKEN_REFRESH_SUCCESSFUL"
+    case .tokenRefreshReturnedFalse: "AUTH_TOKEN_REFRESH_RETURNED_FALSE"
+    case .tokenRefreshFailed: "AUTH_TOKEN_REFRESH_FAILED"
+    case .tokenRefreshAuthErrorDetected: "AUTH_TOKEN_REFRESH_AUTH_ERROR"
+    case .tokenRefreshNetworkErrorRetrying: "AUTH_TOKEN_REFRESH_RETRYING"
+    case .tokenRefreshExhausted: "AUTH_TOKEN_REFRESH_EXHAUSTED"
+    case .candidateAccountFound: "AUTH_CANDIDATE_ACCOUNT_FOUND"
+    case .candidateAccountMissing: "AUTH_CANDIDATE_ACCOUNT_MISSING"
+    case .expiredAccountInfoPrepared: "AUTH_EXPIRED_ACCOUNT_PREPARED"
+    case .sessionExpiredPromptingReauth: "AUTH_SESSION_EXPIRED_PROMPTING_REAUTH"
+    case .oauthFlowStarted: "AUTH_OAUTH_FLOW_STARTED"
+    case .oauthFlowAttempt: "AUTH_OAUTH_FLOW_ATTEMPT"
+    case .oauthURLGenerated: "AUTH_OAUTH_URL_GENERATED"
+    case .oauthFlowAttemptFailed: "AUTH_OAUTH_FLOW_ATTEMPT_FAILED"
+    case .oauthFlowNetworkErrorRetrying: "AUTH_OAUTH_FLOW_RETRYING"
+    case .oauthFlowFailed: "AUTH_OAUTH_FLOW_FAILED"
+    case .e2ePasswordLoginStarted: "AUTH_E2E_LOGIN_STARTED"
+    case .e2eKeychainCleared: "AUTH_E2E_KEYCHAIN_CLEARED"
+    case .e2eClientCreated: "AUTH_E2E_CLIENT_CREATED"
+    case .e2eClientCreationFailed: "AUTH_E2E_CLIENT_CREATION_FAILED"
+    case .e2ePasswordLoginAttempt: "AUTH_E2E_LOGIN_ATTEMPT"
+    case .e2ePasswordLoginSuccess: "AUTH_E2E_LOGIN_SUCCESS"
+    case .e2ePasswordLoginFailed: "AUTH_E2E_LOGIN_FAILED"
+    case .e2eKeychainDeletedItem: "AUTH_E2E_KEYCHAIN_DELETED_ITEM"
+    case .e2eKeychainNoItems: "AUTH_E2E_KEYCHAIN_NO_ITEMS"
+    case .e2eKeychainQueryFailed: "AUTH_E2E_KEYCHAIN_QUERY_FAILED"
+    case .callbackProcessingStarted: "AUTH_CALLBACK_PROCESSING_STARTED"
+    case .callbackURLDetails: "AUTH_CALLBACK_URL_DETAILS"
+    case .callbackStateVerified: "AUTH_CALLBACK_STATE_VERIFIED"
+    case .callbackUnexpectedState: "AUTH_CALLBACK_UNEXPECTED_STATE"
+    case .callbackClientUnavailable: "AUTH_CALLBACK_CLIENT_UNAVAILABLE"
+    case .callbackClientAvailable: "AUTH_CALLBACK_CLIENT_AVAILABLE"
+    case .callbackTokenExchangeStarted: "AUTH_CALLBACK_TOKEN_EXCHANGE_STARTED"
+    case .callbackTokenExchangeCompleted: "AUTH_CALLBACK_TOKEN_EXCHANGE_COMPLETED"
+    case .callbackImmediateAPISuccess: "AUTH_CALLBACK_IMMEDIATE_API_SUCCESS"
+    case .callbackImmediateAPIFailed: "AUTH_CALLBACK_IMMEDIATE_API_FAILED"
+    case .callbackSessionInvalid: "AUTH_CALLBACK_SESSION_INVALID"
+    case .callbackSessionValid: "AUTH_CALLBACK_SESSION_VALID"
+    case .callbackDIDResolved: "AUTH_CALLBACK_DID_RESOLVED"
+    case .callbackHandleResolved: "AUTH_CALLBACK_HANDLE_RESOLVED"
+    case .callbackConnectivityCheckSuccess: "AUTH_CALLBACK_CONNECTIVITY_SUCCESS"
+    case .callbackConnectivityCheckFailed: "AUTH_CALLBACK_CONNECTIVITY_FAILED"
+    case .callbackCompleted: "AUTH_CALLBACK_COMPLETED"
+    case .callbackFailed: "AUTH_CALLBACK_FAILED"
+    case .gatewayCallbackProcessingStarted: "AUTH_GATEWAY_CALLBACK_STARTED"
+    case .gatewayCallbackClientInitializing: "AUTH_GATEWAY_CALLBACK_CLIENT_INITIALIZING"
+    case .gatewayCallbackClientUnavailable: "AUTH_GATEWAY_CALLBACK_CLIENT_UNAVAILABLE"
+    case .gatewayCallbackCompleted: "AUTH_GATEWAY_CALLBACK_COMPLETED"
+    case .gatewayCallbackFailed: "AUTH_GATEWAY_CALLBACK_FAILED"
+    case .logoutStarted: "AUTH_LOGOUT_STARTED"
+    case .logoutSuccessful: "AUTH_LOGOUT_SUCCESSFUL"
+    case .logoutFailed: "AUTH_LOGOUT_FAILED"
+    case .manualLogoutStateCleared: "AUTH_MANUAL_LOGOUT_STATE_CLEARED"
+    case .invalidHandleIgnored: "AUTH_INVALID_HANDLE_IGNORED"
+    case .accountOrderUpdated: "AUTH_ACCOUNT_ORDER_UPDATED"
+    case .profileDataCached: "AUTH_PROFILE_DATA_CACHED"
+    case .accountRemovalStarted: "AUTH_ACCOUNT_REMOVAL_STARTED"
+    case .accountRemovalSuccessful: "AUTH_ACCOUNT_REMOVAL_SUCCESSFUL"
+    case .accountRemovalFailed: "AUTH_ACCOUNT_REMOVAL_FAILED"
+    case .accountsListed: "AUTH_ACCOUNTS_LISTED"
+    case .clientRecreatedForAccountOps: "AUTH_CLIENT_RECREATED_FOR_ACCOUNT_OPS"
+    case .accountSwitchStarted: "AUTH_SWITCH_STARTED"
+    case .accountSwitchAlreadyInProgress: "AUTH_SWITCH_ALREADY_IN_PROGRESS"
+    case .accountSwitchClientInitializing: "AUTH_SWITCH_CLIENT_INITIALIZING"
+    case .accountSwitchClientUnavailable: "AUTH_SWITCH_CLIENT_UNAVAILABLE"
+    case .accountSwitchAlreadyActive: "AUTH_SWITCH_ALREADY_ACTIVE"
+    case .accountSwitchProceeding: "AUTH_SWITCH_PROCEEDING"
+    case .accountSwitchMLSCleanupStarted: "AUTH_SWITCH_MLS_CLEANUP_STARTED"
+    case .accountSwitchMLSContextClosed: "AUTH_SWITCH_MLS_CONTEXT_CLOSED"
+    case .accountSwitchMLSCoreShutdownSuccess: "AUTH_SWITCH_MLS_CORE_SHUTDOWN_SUCCESS"
+    case .accountSwitchMLSCoreShutdownWarning: "AUTH_SWITCH_MLS_CORE_SHUTDOWN_WARNING"
+    case .accountSwitchMLSCoreShutdownTimeout: "AUTH_SWITCH_MLS_CORE_SHUTDOWN_TIMEOUT"
+    case .accountSwitchMLSCoreShutdownFailed: "AUTH_SWITCH_MLS_CORE_SHUTDOWN_FAILED"
+    case .accountSwitchMLSCleanupTimedOut: "AUTH_SWITCH_MLS_CLEANUP_TIMED_OUT"
+    case .accountSwitchDatabasePrewarmed: "AUTH_SWITCH_DB_PREWARMED"
+    case .accountSwitchDatabasePrewarmFailed: "AUTH_SWITCH_DB_PREWARM_FAILED"
+    case .accountSwitchClientSwitchCalled: "AUTH_SWITCH_CLIENT_SWITCH_CALLED"
+    case .accountSwitchClientSwitchCompleted: "AUTH_SWITCH_CLIENT_SWITCH_COMPLETED"
+    case .accountSwitchSessionInvalid: "AUTH_SWITCH_SESSION_INVALID"
+    case .accountSwitchSessionValid: "AUTH_SWITCH_SESSION_VALID"
+    case .accountSwitchResolvedDIDMismatch: "AUTH_SWITCH_RESOLVED_DID_MISMATCH"
+    case .accountSwitchSuccessful: "AUTH_SWITCH_SUCCESSFUL"
+    case .accountSwitchFailed: "AUTH_SWITCH_FAILED"
+    case .accountSwitchCompleted: "AUTH_SWITCH_COMPLETED"
+    case .addAccountStarted: "AUTH_ADD_ACCOUNT_STARTED"
+    case .addAccountOAuthURLGenerated: "AUTH_ADD_ACCOUNT_OAUTH_URL_GENERATED"
+    case .addAccountFailed: "AUTH_ADD_ACCOUNT_FAILED"
+    case .biometricAuthAvailable: "AUTH_BIOMETRIC_AVAILABLE"
+    case .biometricAuthNotAvailable: "AUTH_BIOMETRIC_NOT_AVAILABLE"
+    case .biometricAuthEnabled: "AUTH_BIOMETRIC_ENABLED"
+    case .biometricAuthEnableFailed: "AUTH_BIOMETRIC_ENABLE_FAILED"
+    case .biometricAuthDisabled: "AUTH_BIOMETRIC_DISABLED"
+    case .biometricAuthSuccess: "AUTH_BIOMETRIC_SUCCESS"
+    case .biometricAuthFailed: "AUTH_BIOMETRIC_FAILED"
+    case .biometricAuthCancelled: "AUTH_BIOMETRIC_CANCELLED"
+    case .biometricAuthFallback: "AUTH_BIOMETRIC_FALLBACK"
+    case .biometricAuthNotEnrolled: "AUTH_BIOMETRIC_NOT_ENROLLED"
+    case .biometricAuthLockout: "AUTH_BIOMETRIC_LOCKOUT"
+    case .biometricAuthError: "AUTH_BIOMETRIC_ERROR"
+    case .networkRecoveryAttemptStarted: "AUTH_NETWORK_RECOVERY_STARTED"
+    case .networkRecoveryClientUnavailable: "AUTH_NETWORK_RECOVERY_CLIENT_UNAVAILABLE"
+    case .networkRecoverySuccessful: "AUTH_NETWORK_RECOVERY_SUCCESSFUL"
+    case .networkRecoveryFailed: "AUTH_NETWORK_RECOVERY_FAILED"
+    case .authenticationRequiredReceived: "AUTH_AUTHENTICATION_REQUIRED_RECEIVED"
+    case .authenticationRequiredDuplicateTrigger: "AUTH_AUTHENTICATION_REQUIRED_DUPLICATE"
+    case .authenticationRequiredSkipAlert: "AUTH_AUTHENTICATION_REQUIRED_SKIP_ALERT"
+    case .catastrophicAuthFailure: "AUTH_CATASTROPHIC_FAILURE"
+    case .catastrophicDuplicateTrigger: "AUTH_CATASTROPHIC_DUPLICATE"
+    case .catastrophicSkipAlert: "AUTH_CATASTROPHIC_SKIP_ALERT"
+    case .circuitBreakerOpen: "AUTH_CIRCUIT_BREAKER_OPEN"
+    }
+  }
 }
 
-/// Default production log handler that logs to OSLog
+/// Log handler interface for AuthenticationManager
+public protocol AuthLogHandler: Sendable {
+  func log(level: OSLogType, event: AuthLogEvent)
+}
+
+/// Default production log handler that logs content-free static codes to OSLog
 public struct DefaultAuthLogHandler: AuthLogHandler {
   private let osLogger: Logger
 
@@ -143,24 +415,25 @@ public struct DefaultAuthLogHandler: AuthLogHandler {
     self.osLogger = osLogger
   }
 
-  public func log(level: OSLogType, message: String) {
+  public func log(level: OSLogType, event: AuthLogEvent) {
+    let code = event.staticCode
     switch level {
     case .debug:
-      osLogger.debug("\(message, privacy: .public)")
+      osLogger.debug("\(code)")
     case .info:
-      osLogger.info("\(message, privacy: .public)")
+      osLogger.info("\(code)")
     case .error:
-      osLogger.error("\(message, privacy: .public)")
+      osLogger.error("\(code)")
     case .fault:
-      osLogger.fault("\(message, privacy: .public)")
+      osLogger.fault("\(code)")
     default:
-      osLogger.log("\(message, privacy: .public)")
+      osLogger.log("\(code)")
     }
-    AuthenticationManager.capturedLogHook?(message)
+    AuthenticationManager.capturedLogHook?(code)
   }
 }
 
-/// Logger wrapper for AuthenticationManager providing drop-in compatibility with OSLog Logger calls
+/// Logger wrapper for AuthenticationManager accepting only finite AuthLogEvent cases
 struct AuthLogger: Sendable {
   let handler: any AuthLogHandler
 
@@ -168,24 +441,24 @@ struct AuthLogger: Sendable {
     self.handler = handler
   }
 
-  func debug(_ message: String) {
-    handler.log(level: .debug, message: message)
+  func debug(_ event: AuthLogEvent) {
+    handler.log(level: .debug, event: event)
   }
 
-  func info(_ message: String) {
-    handler.log(level: .info, message: message)
+  func info(_ event: AuthLogEvent) {
+    handler.log(level: .info, event: event)
   }
 
-  func warning(_ message: String) {
-    handler.log(level: .default, message: message)
+  func warning(_ event: AuthLogEvent) {
+    handler.log(level: .default, event: event)
   }
 
-  func error(_ message: String) {
-    handler.log(level: .error, message: message)
+  func error(_ event: AuthLogEvent) {
+    handler.log(level: .error, event: event)
   }
 
-  func critical(_ message: String) {
-    handler.log(level: .fault, message: message)
+  func critical(_ event: AuthLogEvent) {
+    handler.log(level: .fault, event: event)
   }
 }
 
@@ -200,7 +473,7 @@ final class AuthenticationManager: AuthProgressDelegate {
   /// When non-nil, every message logged by AuthenticationManager is forwarded to this closure.
   nonisolated(unsafe) static var capturedLogHook: (@Sendable (String) -> Void)?
 
-  private let logger: AuthLogger
+  fileprivate let logger: AuthLogger
 
   // Authentication timeout configuration
   private let authenticationTimeout: TimeInterval = 60.0  // 60 seconds
@@ -314,7 +587,7 @@ final class AuthenticationManager: AuthProgressDelegate {
 
   init(logHandler: any AuthLogHandler = DefaultAuthLogHandler()) {
     self.logger = AuthLogger(handler: logHandler)
-    logger.debug("AuthenticationManager initialized")
+    logger.debug(.initialized)
 
     // Configure biometric authentication asynchronously off the main actor
     Task.detached(priority: .background) { [weak self] in
@@ -343,18 +616,18 @@ final class AuthenticationManager: AuthProgressDelegate {
     // This prevents the "death spiral" where dozens of parallel network requests all
     // fail and each tries to trigger logout simultaneously.
     if isHandlingAuthExpiration {
-      logger.warning("AUTH_AUTO_LOGOUT_DUPLICATE_TRIGGER")
+      logger.warning(.autoLogoutDuplicateTrigger)
       return
     }
 
-    logger.error("AUTH_AUTO_LOGOUT_TRIGGERED")
+    logger.error(.autoLogoutTriggered)
 
     // Mark that we're handling an expiration to block further triggers
     isHandlingAuthExpiration = true
 
     if let did {
       expiredAccountInfo = makeExpiredAccountInfo(for: did)
-      logger.info("AUTH_AUTO_LOGOUT_EXPIRED_ACCOUNT_STORED")
+      logger.info(.autoLogoutExpiredAccountStored)
     }
 
     if case .authenticated(let appState) = AppStateManager.shared.lifecycle {
@@ -410,7 +683,7 @@ final class AuthenticationManager: AuthProgressDelegate {
     } else {
       // Clear any existing alert so it doesn't block the sheet
       pendingAuthAlert = nil
-      logger.info("AUTH_AUTO_LOGOUT_SKIP_ALERT_REAUTH")
+      logger.info(.autoLogoutSkipAlertReauth)
     }
   }
 
@@ -430,16 +703,16 @@ final class AuthenticationManager: AuthProgressDelegate {
   @MainActor
   func startOAuthFlowForExpiredAccount() async throws -> URL? {
     guard let expiredAccount = expiredAccountInfo else {
-      logger.warning("No expired account information available for automatic re-authentication")
+      logger.warning(.expiredAccountReauthMissingInfo)
       return nil
     }
 
     guard let handle = expiredAccount.loginHandle else {
-      logger.warning("Expired account has no user-facing handle for automatic re-authentication")
+      logger.warning(.expiredAccountReauthMissingHandle)
       return nil
     }
 
-    logger.info("Starting OAuth flow for expired account: \(handle)")
+    logger.info(.expiredAccountOAuthStarted)
     return try await login(handle: handle)
   }
 
@@ -450,8 +723,7 @@ final class AuthenticationManager: AuthProgressDelegate {
   @MainActor
   func updateState(_ newState: AuthState) {
     guard newState != state else { return }
-    logger.debug(
-      "Updating auth state: \(self.state.caseLabel) -> \(newState.caseLabel)")
+    logger.debug(.stateUpdated)
     self.state = newState
     // Emit synchronously - no Task wrapper to eliminate race windows
     stateSubject.continuation.yield(newState)
@@ -461,7 +733,7 @@ final class AuthenticationManager: AuthProgressDelegate {
   private func validatedUserDID(_ rawDID: String, source: String) throws -> String {
     let did = rawDID.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !did.isEmpty, did.hasPrefix("did:") else {
-      logger.critical("🚨 [\(source)] Invalid DID encountered")
+      logger.critical(.invalidDIDEncountered)
       throw AuthError.invalidUserDID
     }
     return did
@@ -472,15 +744,14 @@ final class AuthenticationManager: AuthProgressDelegate {
   /// Initialize the client and check authentication state
   @MainActor
   func initialize() async {
-    logger.info("Initializing authentication system")
+    logger.info(.systemInitializing)
     isAuthenticationCancelled = false
     updateState(.initializing)
 
     if client == nil {
-      logger.info("ATTEMPTING to create ATProtoClient...")
+      logger.info(.clientInitializing)
       updateState(.authenticating(progress: .initializingClient))
-      logger.debug(">>> Calling await ATProtoClient(...) off main actor")
-
+      logger.debug(.clientInitializing)
       #if targetEnvironment(simulator)
         let accessGroup: String? = nil
       #else
@@ -525,25 +796,21 @@ final class AuthenticationManager: AuthProgressDelegate {
       await client?.applicationDidBecomeActive()
 
       if client == nil {
-        logger.critical("❌❌❌ FAILED to create ATProtoClient ❌❌❌")
+        logger.critical(.clientCreationFailed)
         updateState(.error(message: "Failed to initialize client"))
         return
       } else {
-        logger.info("✅✅✅ ATProtoClient CREATED SUCCESSFULLY ✅✅✅")
-        await client?.setAuthProgressDelegate(self)
+        logger.info(.clientCreated)
         await client?.setFailureDelegate(self)
         if let client = client { await client.setAuthenticationDelegate(self) }
       }
 
     } else {
-      logger.info(
-        "ATProtoClient already exists, updating service DIDs to: bskyAppViewDID=\(self.customAppViewDID), bskyChatDID=\(self.customChatDID)"
-      )
+      logger.info(.clientExists)
       await client?.updateServiceDIDs(bskyAppViewDID: customAppViewDID, bskyChatDID: customChatDID)
     }
 
-    logger.debug(
-      "Client state before checkAuthenticationState: \(self.client == nil ? "NIL" : "Exists")")
+    logger.debug(.checkingAuthState)
     await checkAuthenticationState()
   }
 
@@ -551,7 +818,7 @@ final class AuthenticationManager: AuthProgressDelegate {
   @MainActor
   func checkAuthenticationState() async {
     guard !isAuthenticationCancelled else {
-      logger.debug("Skipping auth state check - authentication was cancelled by user")
+      logger.debug(.checkAuthStateCancelled)
       return
     }
     guard let client = client else {
@@ -559,8 +826,7 @@ final class AuthenticationManager: AuthProgressDelegate {
       return
     }
 
-    logger.debug("Checking authentication state")
-
+    logger.debug(.checkingAuthState)
 //    if await client.hasValidSession() {
 //      let refreshSuccess = await refreshTokenWithRetry(client: client)
 //      if !refreshSuccess {
@@ -580,7 +846,7 @@ final class AuthenticationManager: AuthProgressDelegate {
         let userDid = try validatedUserDID(resolvedDid, source: "checkAuthenticationState")
 
         self.handle = userHandle
-        logger.info("User is authenticated with DID: \(String(describing: userDid))")
+        logger.info(.authStateCheckAuthenticated)
 
         if let handle = self.handle {
           storeHandle(handle, for: userDid)
@@ -588,17 +854,16 @@ final class AuthenticationManager: AuthProgressDelegate {
 
         await MainActor.run {
           updateState(.authenticated(userDID: userDid))
-          logger.info("Auth state updated to authenticated via proper channels")
-          logger.info("Current state after update: \(self.state.caseLabel)")
+          logger.info(.stateUpdated)
         }
       } catch {
-        logger.error("Error fetching user identity: \(error.localizedDescription)")
+        logger.error(.authStateCheckFailed)
         if !isAuthenticationCancelled {
           updateState(.unauthenticated)
         }
       }
     } else {
-      logger.info("No valid session found")
+      logger.info(.noValidSessionFound)
 
       // If we know which account likely expired, prime re-auth so LoginView auto-starts OAuth.
       if expiredAccountInfo == nil {  // don’t overwrite if already set (e.g., auto-logout path)
@@ -619,24 +884,22 @@ final class AuthenticationManager: AuthProgressDelegate {
 
     for attempt in 1...maxRetries {
       do {
-        logger.debug("Token refresh attempt \(attempt) of \(maxRetries)")
+        logger.debug(.tokenRefreshAttempt)
         let success = try await client.refreshToken()
         if success {
-          logger.info("Token refresh successful on attempt \(attempt)")
+          logger.info(.tokenRefreshSuccessful)
           return true
         } else {
-          logger.warning("Token refresh returned false on attempt \(attempt)")
+          logger.warning(.tokenRefreshReturnedFalse)
           lastError = AuthError.invalidSession
         }
       } catch {
         lastError = error
-        logger.warning("Token refresh attempt \(attempt) failed: \(error.localizedDescription)")
+        logger.warning(.tokenRefreshFailed)
 
         if let nsError = error as NSError? {
           if nsError.code == 401 || nsError.code == 403 {
-            logger.info(
-              "Authentication error detected (\(nsError.code)); not retrying token refresh")
-            // Mark the current account as expired to route UI to re-auth.
+            logger.info(.tokenRefreshAuthErrorDetected)
             await markCurrentAccountExpiredForReauth(
               client: client, reason: "unauthorized_\(nsError.code)")
             break
@@ -649,7 +912,7 @@ final class AuthenticationManager: AuthProgressDelegate {
             ].contains(nsError.code)
           {
             if attempt < maxRetries {
-              logger.info("Network error during token refresh, retrying in \(attempt) seconds...")
+              logger.info(.tokenRefreshNetworkErrorRetrying)
               try? await Task.sleep(nanoseconds: UInt64(attempt * 1_000_000_000))
               continue
             }
@@ -663,8 +926,7 @@ final class AuthenticationManager: AuthProgressDelegate {
     }
 
     if let error = lastError {
-      logger.error(
-        "Token refresh failed after \(maxRetries) attempts: \(error.localizedDescription)")
+      logger.error(.tokenRefreshExhausted)
       // If we didn’t already tag an expired account above, try once more here
       if expiredAccountInfo == nil {
         await markCurrentAccountExpiredForReauth(client: client, reason: "refresh_failed")
@@ -691,14 +953,14 @@ final class AuthenticationManager: AuthProgressDelegate {
     // 1. Check currently active lifecycle user
     if let activeUserDID = AppStateManager.shared.lifecycle.userDID, !activeUserDID.isEmpty {
       candidateDID = activeUserDID
-      logger.info("Found active lifecycle user DID for re-auth: \(activeUserDID)")
+      logger.info(.candidateAccountFound)
     }
 
     // 2. Check the client's current account (this is the account that needs reauth, not just the first in order)
     if candidateDID == nil {
       if let currentAccount = await client.getCurrentAccount() {
         candidateDID = currentAccount.did
-        logger.info("Found current account from client for re-auth: \(currentAccount.did)")
+        logger.info(.candidateAccountFound)
       }
     }
 
@@ -707,7 +969,7 @@ final class AuthenticationManager: AuthProgressDelegate {
       let order = getAccountOrder()
       if let firstDID = order.first, !firstDID.isEmpty {
         candidateDID = firstDID
-        logger.info("Found most recent account from storage order for re-auth: \(firstDID)")
+        logger.info(.candidateAccountFound)
       }
     }
 
@@ -715,7 +977,7 @@ final class AuthenticationManager: AuthProgressDelegate {
     if candidateDID == nil {
       if let did = try? await client.getDid() {
         candidateDID = did
-        logger.info("Found DID from client session: \(did)")
+        logger.info(.candidateAccountFound)
       }
     }
 
@@ -724,26 +986,24 @@ final class AuthenticationManager: AuthProgressDelegate {
       let accounts = await client.listAccounts()
       if accounts.count == 1 {
         candidateDID = accounts.first?.did
-        logger.info("Found single account from client list: \(candidateDID!)")
+        logger.info(.candidateAccountFound)
       } else if accounts.isEmpty {
         // Last resort: stored handles
         let stored = getStoredHandles()
         if stored.count == 1 {
           candidateDID = stored.keys.first
-          logger.info("Found single account from stored handles: \(candidateDID!)")
+          logger.info(.candidateAccountFound)
         }
       }
     }
 
     guard let did = candidateDID else {
-      logger.warning("Could not determine a candidate account for automatic re-authentication.")
+      logger.warning(.candidateAccountMissing)
       return
     }
 
     expiredAccountInfo = makeExpiredAccountInfo(for: did)
-    logger.info(
-      "Prepared expiredAccountInfo for DID=\(did) handle=\(self.expiredAccountInfo?.loginHandle ?? "nil") to trigger re-auth"
-    )
+    logger.info(.expiredAccountInfoPrepared)
 
     // Keep the account list fresh for Account Switcher fallback
     await refreshAvailableAccounts()
@@ -760,9 +1020,7 @@ final class AuthenticationManager: AuthProgressDelegate {
       // Prefer the currently-active lifecycle DID if Petrel can no longer resolve identity.
       if let activeDID = AppStateManager.shared.lifecycle.userDID, !activeDID.isEmpty {
         expiredAccountInfo = makeExpiredAccountInfo(for: activeDID)
-        logger.warning(
-          "Session expired for DID=\(activeDID); reason=\(reason ?? "unknown"). Prompting re-auth (lifecycle fallback)."
-        )
+        logger.warning(.sessionExpiredPromptingReauth)
         return
       }
 
@@ -772,14 +1030,13 @@ final class AuthenticationManager: AuthProgressDelegate {
     }
 
     expiredAccountInfo = makeExpiredAccountInfo(for: did)
-    logger.warning(
-      "Session expired for DID=\(did); reason=\(reason ?? "unknown"). Prompting re-auth.")
+    logger.warning(.sessionExpiredPromptingReauth)
   }
 
   /// Start the OAuth authentication flow with improved error handling
   @MainActor
   func login(handle: String) async throws -> URL {
-    logger.info("Starting OAuth flow for handle: \(handle)")
+    logger.info(.oauthFlowStarted)
 
     currentAuthTask?.cancel()
     currentAuthTask = nil
@@ -788,8 +1045,7 @@ final class AuthenticationManager: AuthProgressDelegate {
     updateState(.authenticating(progress: .resolvingHandle(handle: handle)))
 
     if client == nil {
-      logger.info("Client not found, initializing for login")
-
+      logger.info(.clientInitializing)
       #if targetEnvironment(simulator)
         let accessGroup: String? = nil
       #else
@@ -829,9 +1085,7 @@ final class AuthenticationManager: AuthProgressDelegate {
       if let client = client { await client.setAuthenticationDelegate(self) }
 
     } else {
-      logger.info(
-        "Client exists, updating service DIDs to: bskyAppViewDID=\(self.customAppViewDID), bskyChatDID=\(self.customChatDID)"
-      )
+      logger.info(.clientExists)
       await client?.updateServiceDIDs(bskyAppViewDID: customAppViewDID, bskyChatDID: customChatDID)
     }
 
@@ -848,7 +1102,7 @@ final class AuthenticationManager: AuthProgressDelegate {
       for attempt in 1...maxRetries {
         try Task.checkCancellation()
         do {
-          self.logger.debug("OAuth flow attempt \(attempt) of \(maxRetries)")
+          self.logger.debug(.oauthFlowAttempt)
 
           if attempt > 1 {
             await self.updateState(
@@ -869,12 +1123,12 @@ final class AuthenticationManager: AuthProgressDelegate {
           }
 
           let boundAuthURL = try await gatewayOAuthExchange.prepareLogin(authURL)
-          logger.info("OAuth URL generated successfully")
+          logger.info(.oauthURLGenerated)
           await self.updateState(.authenticating(progress: .openingBrowser))
           return boundAuthURL
         } catch {
           lastError = error
-          self.logger.warning("OAuth flow attempt \(attempt) failed: \(error.localizedDescription)")
+          self.logger.warning(.oauthFlowAttemptFailed)
 
           if let nsError = error as NSError? {
             if nsError.domain == NSURLErrorDomain
@@ -885,7 +1139,7 @@ final class AuthenticationManager: AuthProgressDelegate {
               ].contains(nsError.code)
             {
               if attempt < maxRetries {
-                self.logger.info("Retrying OAuth flow after network error in \(attempt) seconds...")
+                self.logger.info(.oauthFlowNetworkErrorRetrying)
                 try? await Task.sleep(nanoseconds: UInt64(attempt * 1_000_000_000))
                 continue
               }
@@ -914,7 +1168,7 @@ final class AuthenticationManager: AuthProgressDelegate {
         finalError = AuthError.unknown(error)
       }
 
-      logger.error("OAuth flow failed: \(finalError.localizedDescription)")
+      logger.error(.oauthFlowFailed)
       updateState(.error(message: finalError.localizedDescription))
       throw finalError
     }
@@ -930,7 +1184,7 @@ final class AuthenticationManager: AuthProgressDelegate {
   ///   - pdsURL: Optional PDS URL for custom domains (bypasses handle resolution)
   @MainActor
   func loginWithPasswordForE2E(identifier: String, password: String, pdsURL: URL? = nil) async throws {
-    logger.info("[E2E] Starting password login for: \(identifier), pds: \(pdsURL?.absoluteString ?? "default")")
+    logger.info(.e2ePasswordLoginStarted)
     
     updateState(.authenticating(progress: .initializingClient))
     
@@ -945,15 +1199,14 @@ final class AuthenticationManager: AuthProgressDelegate {
     // CRITICAL: Clear any existing E2E namespace keychain data to ensure fresh login
     // This prevents stale sessions from interfering with E2E tests
     // TEMPORARY: Using logger.error for E2E debugging (logs otherwise filtered)
-    logger.error("[E2E-DEBUG] Clearing E2E keychain namespace before fresh login")
+    logger.error(.e2eKeychainCleared)
     clearE2EKeychainData(accessGroup: accessGroup)
     
     // Create a separate legacy-mode client for password auth
     // If PDS URL is specified, use it directly as the base URL
     let baseURL = pdsURL ?? URL(string: "https://bsky.social")!
-    logger.error("[E2E-DEBUG] Creating ATProtoClient with baseURL: \(baseURL.absoluteString)")
-    logger.error("[E2E-DEBUG] authMode: legacy, namespace: blue.catbird.e2e")
-    
+    logger.error(.e2eClientCreated)
+    logger.error(.e2eClientCreated)
     let legacyClient: ATProtoClient
     do {
       legacyClient = try await ATProtoClient(
@@ -966,27 +1219,25 @@ final class AuthenticationManager: AuthProgressDelegate {
         bskyChatDID: customChatDID,
         accessGroup: accessGroup
       )
-      logger.error("[E2E-DEBUG] ATProtoClient created successfully")
+      logger.error(.e2eClientCreated)
     } catch {
-      logger.error("[E2E] Failed to create ATProtoClient: \(error)")
+      logger.error(.e2eClientCreationFailed)
       throw error
     }
     
     do {
       updateState(.authenticating(progress: .creatingSession))
-      logger.error("[E2E-DEBUG] Calling loginWithPassword for: \(identifier)")
-      
-      logger.error("[E2E-DEBUG] About to call loginWithPassword...")
+      logger.error(.e2ePasswordLoginAttempt)
       let accountInfo = try await legacyClient.loginWithPassword(
         identifier: identifier,
         password: password,
         bskyAppViewDID: customAppViewDID,
         bskyChatDID: customChatDID
       )
-      logger.error("[E2E-DEBUG] loginWithPassword SUCCESS, DID: \(accountInfo.did)")
+      logger.error(.e2ePasswordLoginSuccess)
       
       let did = try validatedUserDID(accountInfo.did, source: "loginWithPasswordForE2E")
-      logger.info("[E2E] Password login successful for DID: \(did)")
+      logger.info(.e2ePasswordLoginSuccess)
 
       // Replace the main client with the authenticated legacy client
       client = legacyClient
@@ -1008,11 +1259,7 @@ final class AuthenticationManager: AuthProgressDelegate {
     } catch {
       // Log detailed error info
       let nsError = error as NSError
-      logger.error("[E2E] Password login failed: \(error)")
-      logger.error("[E2E] Error domain: \(nsError.domain), code: \(nsError.code)")
-      if let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? Error {
-        logger.error("[E2E] Underlying error: \(underlying)")
-      }
+      logger.error(.e2ePasswordLoginFailed)
       updateState(.error(message: error.localizedDescription))
       throw error
     }
@@ -1052,86 +1299,78 @@ final class AuthenticationManager: AuthProgressDelegate {
           }
           let deleteStatus = SecItemDelete(deleteQuery as CFDictionary)
           if deleteStatus == errSecSuccess {
-            logger.info("[E2E] Deleted keychain item: \(account)")
+            logger.info(.e2eKeychainDeletedItem)
           }
         }
       }
     } else if status == errSecItemNotFound {
-      logger.info("[E2E] No keychain items to clear")
+      logger.info(.e2eKeychainNoItems)
     } else {
-      logger.warning("[E2E] Failed to query keychain: \(status)")
+      logger.warning(.e2eKeychainQueryFailed)
     }
   }
 
   /// Handle the OAuth callback after web authentication with timeout support
   @MainActor
   func handleCallback(_ url: URL) async throws {
-    logger.info("🔗 [CALLBACK] Processing OAuth callback")
-    logger.debug("🔗 [CALLBACK] URL scheme: \(url.scheme ?? "none"), host: \(url.host ?? "none")")
-    logger.debug("🔗 [CALLBACK] Current state: \(self.state.caseLabel)")
+    logger.info(.callbackProcessingStarted)
+    logger.debug(.callbackURLDetails)
+    logger.debug(.callbackStateVerified)
     updateState(.authenticating(progress: .exchangingTokens))
 
     if case .authenticating = state {
-      logger.debug("✅ [CALLBACK] State is .authenticating as expected")
+      logger.debug(.callbackStateVerified)
     } else {
-      logger.warning(
-        "⚠️ [CALLBACK] Received callback in unexpected state: \(self.state.caseLabel)")
+      logger.warning(.callbackUnexpectedState)
     }
 
     guard let client = client else {
-      logger.error("❌ [CALLBACK] Client not available")
+      logger.error(.callbackClientUnavailable)
       let error = AuthError.clientNotInitialized
       updateState(.error(message: error.localizedDescription))
       throw error
     }
-    logger.debug("✅ [CALLBACK] Client is available")
-
+    logger.debug(.callbackClientAvailable)
     do {
-      logger.debug("🔄 [CALLBACK] Starting OAuth callback processing with timeout")
+      logger.debug(.callbackProcessingStarted)
       try await withTimeout(timeout: networkTimeout) {
         try Task.checkCancellation()
 
-        self.logger.debug("🔄 [CALLBACK] Calling client.handleOAuthCallback")
+        self.logger.debug(.callbackTokenExchangeStarted)
         try await client.handleOAuthCallback(url: url)
-        self.logger.info("✅ [CALLBACK] client.handleOAuthCallback completed")
-
-        // DEBUG: Test API call immediately after OAuth callback
-        self.logger.info("🔍 [DEBUG] Testing API call RIGHT after handleOAuthCallback...")
+        self.logger.info(.callbackTokenExchangeCompleted)
+        self.logger.info(.callbackImmediateAPISuccess)
         do {
           let did = try await client.getDid()
           let atId = try ATIdentifier(string: did)
           let params = AppBskyActorGetProfile.Parameters(actor: atId)
           let result = try await client.app.bsky.actor.getProfile(input: params)
-          self.logger.info(
-            "🔍 [DEBUG] Immediate API call SUCCESS: \(result.data?.handle.description ?? "no handle")"
-          )
+          self.logger.info(.callbackImmediateAPISuccess)
         } catch {
-          self.logger.error("🔍 [DEBUG] Immediate API call FAILED: \(error)")
+          self.logger.error(.callbackImmediateAPIFailed)
         }
 
         await self.updateState(.authenticating(progress: .creatingSession))
 
-        self.logger.debug("🔄 [CALLBACK] Checking if session is valid")
+        self.logger.debug(.callbackSessionValid)
         let hasValidSession = await client.hasValidSession()
         if !hasValidSession {
-          self.logger.error("❌ [CALLBACK] Session invalid after OAuth callback processing")
+          self.logger.error(.callbackSessionInvalid)
           throw AuthError.invalidSession
         }
-        self.logger.debug("✅ [CALLBACK] Session is valid")
-
+        self.logger.debug(.callbackSessionValid)
         await self.updateState(.authenticating(progress: .finalizing))
 
-        self.logger.debug("🔄 [CALLBACK] Getting DID from client")
+        self.logger.debug(.callbackDIDResolved)
         let did = try self.validatedUserDID(
           try await client.getDid(),
           source: "handleOAuthCallback"
         )
-        self.logger.debug("✅ [CALLBACK] Got DID: \(did)")
+        self.logger.debug(.callbackDIDResolved)
 
-        self.logger.debug("🔄 [CALLBACK] Getting handle from client")
+        self.logger.debug(.callbackHandleResolved)
         self.handle = try await client.getHandle()
-        self.logger.debug("✅ [CALLBACK] Got handle: \(self.handle ?? "nil")")
-
+        self.logger.debug(.callbackHandleResolved)
         if let handle = self.handle {
           self.storeHandle(handle, for: did)
         }
@@ -1152,22 +1391,19 @@ final class AuthenticationManager: AuthProgressDelegate {
       )
 
       // DEBUG: Test a simple API call to verify gateway connectivity
-      logger.info("🔍 [DEBUG] Testing API call after auth...")
+      logger.info(.callbackConnectivityCheckSuccess)
       do {
         let atId = try ATIdentifier(string: did)
         let params = AppBskyActorGetProfile.Parameters(actor: atId)
         let result = try await client.app.bsky.actor.getProfile(input: params)
-        logger.info(
-          "🔍 [DEBUG] API call succeeded! Got profile for: \(result.data?.handle.description ?? "no handle")"
-        )
+        logger.info(.callbackConnectivityCheckSuccess)
       } catch {
-        logger.error("🔍 [DEBUG] API call FAILED: \(error)")
+        logger.error(.callbackConnectivityCheckFailed)
       }
 
       // NOTE: AppState transition is handled by AppStateManager's auth state observation
       // when it observes .authenticated state. No explicit switchAccount call needed here.
-
-      self.logger.info("Authentication successful for user \(self.handle ?? "unknown")")
+      self.logger.info(.callbackCompleted)
     } catch {
       let finalError: AuthError
       if error is CancellationError {
@@ -1180,7 +1416,7 @@ final class AuthenticationManager: AuthProgressDelegate {
         finalError = AuthError.unknown(error)
       }
 
-      logger.error("OAuth callback processing failed: \(finalError.localizedDescription)")
+      logger.error(.callbackFailed)
       updateState(.error(message: finalError.localizedDescription))
       throw finalError
     }
@@ -1189,16 +1425,16 @@ final class AuthenticationManager: AuthProgressDelegate {
   /// Handle a gateway callback by atomically exchanging its one-time code.
   @MainActor
   func handleGatewayCallback(_ url: URL) async throws {
-    logger.info("🔗 [GATEWAY] Processing gateway callback")
+    logger.info(.gatewayCallbackProcessingStarted)
     updateState(.authenticating(progress: .exchangingTokens))
 
     // Ensure client exists (cold start scenario)
     if client == nil {
-      logger.info("Client not found, initializing for gateway callback")
+      logger.info(.gatewayCallbackClientInitializing)
       await initialize()
 
       guard client != nil else {
-        logger.error("❌ [GATEWAY] Failed to initialize client")
+        logger.error(.gatewayCallbackClientUnavailable)
         let error = AuthError.clientNotInitialized
         updateState(.error(message: error.localizedDescription))
         throw error
@@ -1218,8 +1454,6 @@ final class AuthenticationManager: AuthProgressDelegate {
         throw AuthError.invalidCallbackURL
       }
 
-      // Petrel consumes this in-memory URL to persist the exchanged gateway session.
-      // It is never emitted externally or logged.
       guard let activeClient = client else {
         throw AuthError.clientNotInitialized
       }
@@ -1227,7 +1461,6 @@ final class AuthenticationManager: AuthProgressDelegate {
 
       updateState(.authenticating(progress: .finalizing))
 
-      // Get account info from client after OAuth callback
       let accountInfo = await activeClient.getActiveAccountInfo()
       guard let resolvedUserDID = accountInfo.did else {
         throw AuthError.unknown(NSError(domain: "AuthManager", code: -1, userInfo: [NSLocalizedDescriptionKey: "No account info after OAuth callback"]))
@@ -1249,10 +1482,7 @@ final class AuthenticationManager: AuthProgressDelegate {
 
       updateState(.authenticated(userDID: userDID))
 
-      // NOTE: AppState transition is handled by AppStateManager's auth state observation
-      // when it observes .authenticated state. No explicit switchAccount call needed here.
-
-      logger.info("✅ [GATEWAY] Authentication successful for user \(self.handle ?? "unknown")")
+      logger.info(.gatewayCallbackCompleted)
     } catch {
       let finalError: AuthError
       if let authError = error as? AuthError {
@@ -1261,7 +1491,7 @@ final class AuthenticationManager: AuthProgressDelegate {
         finalError = AuthError.unknown(error)
       }
 
-      logger.error("❌ [GATEWAY] Callback processing failed: \(finalError.localizedDescription)")
+      logger.error(.gatewayCallbackFailed)
       updateState(.error(message: finalError.localizedDescription))
       throw finalError
     }
@@ -1278,8 +1508,7 @@ final class AuthenticationManager: AuthProgressDelegate {
   ///   to enable seamless re-auth flow.
   @MainActor
   func logout(isManual: Bool = false) async {
-    logger.info("Logging out user (isManual: \(isManual))")
-
+    logger.info(.logoutStarted)
     let departingDID = state.userDID
 
     isAuthenticationCancelled = false
@@ -1312,9 +1541,9 @@ final class AuthenticationManager: AuthProgressDelegate {
     if let client = client {
       do {
         try await client.logout()
-        logger.info("Logout successful")
+        logger.info(.logoutSuccessful)
       } catch {
-        logger.error("Error during logout: \(error.localizedDescription)")
+        logger.error(.logoutFailed)
       }
     }
 
@@ -1329,7 +1558,7 @@ final class AuthenticationManager: AuthProgressDelegate {
       expiredAccountInfo = nil
       isHandlingAuthExpiration = false
       pendingAuthAlert = nil
-      logger.info("Manual logout: cleared expiredAccountInfo and pendingAuthAlert to prevent auto-reauth")
+      logger.info(.manualLogoutStateCleared)
     }
     // NOTE: For auto-logout, do NOT clear expiredAccountInfo here!
     // When auto-logout occurs via handleAutoLogoutFromPetrel, expiredAccountInfo is set
@@ -1402,7 +1631,7 @@ final class AuthenticationManager: AuthProgressDelegate {
   /// Store handle for a specific DID
   private func storeHandle(_ handle: String, for did: String) {
     guard let loginHandle = AccountInfo.loginHandleCandidate(handle) else {
-      logger.warning("Ignoring DID-looking or empty handle for DID: \(did)")
+      logger.warning(.invalidHandleIgnored)
       return
     }
 
@@ -1465,7 +1694,7 @@ final class AuthenticationManager: AuthProgressDelegate {
   /// Update account order (called from UI when user reorders)
   @MainActor
   func updateAccountOrder(_ orderedDIDs: [String]) {
-    logger.info("Updating account order with \(orderedDIDs.count) accounts")
+    logger.info(.accountOrderUpdated)
     saveAccountOrder(orderedDIDs)
   }
 
@@ -1481,7 +1710,7 @@ final class AuthenticationManager: AuthProgressDelegate {
 
     if let data = try? JSONEncoder().encode(profileData) {
       UserDefaults.standard.set(data, forKey: key)
-      logger.debug("Cached profile data for DID: \(did)")
+      logger.debug(.profileDataCached)
     }
   }
 
@@ -1525,7 +1754,7 @@ final class AuthenticationManager: AuthProgressDelegate {
   /// Remove an account completely (including stored handle and on-disk/keychain MLS data)
   @MainActor
   func removeAccount(did: String) async {
-    logger.info("Removing account completely: \(did)")
+    logger.info(.accountRemovalStarted)
 
     NotificationCenter.default.post(
       name: .circleAccountInvalidated,
@@ -1537,9 +1766,9 @@ final class AuthenticationManager: AuthProgressDelegate {
     if let client = client {
       do {
         try await client.removeAccount(did: did)
-        logger.info("Account removed successfully from client")
+        logger.info(.accountRemovalSuccessful)
       } catch {
-        logger.error("Error removing account from client: \(error.localizedDescription)")
+        logger.error(.accountRemovalFailed)
       }
     }
 
@@ -1571,7 +1800,7 @@ final class AuthenticationManager: AuthProgressDelegate {
     }
 
     let accounts = await client.listAccounts()
-    logger.info("Found \(accounts.count) available accounts")
+    logger.info(.accountsListed)
 
     var accountInfos: [AccountInfo] = []
     accountInfos.reserveCapacity(accounts.count)
@@ -1652,7 +1881,7 @@ final class AuthenticationManager: AuthProgressDelegate {
   private func ensureClientInitializedForAccountOperations() async {
     guard client == nil else { return }
 
-    logger.info("Recreating ATProtoClient for account operations")
+    logger.info(.clientRecreatedForAccountOps)
 
     #if targetEnvironment(simulator)
       let accessGroup: String? = nil
@@ -1746,8 +1975,8 @@ final class AuthenticationManager: AuthProgressDelegate {
   func switchToAccount(did: String) async throws {
     let targetDID = try validatedUserDID(did, source: "switchToAccount.request")
 
-    logger.info("🔄 [AUTHMAN-SWITCH] Starting switchToAccount for DID: \(targetDID)")
-    logger.debug("🔄 [AUTHMAN-SWITCH] Current state: \(self.state.caseLabel)")
+    logger.info(.accountSwitchStarted)
+    logger.debug(.accountSwitchStarted)
 
     // ═══════════════════════════════════════════════════════════════════════════
     // CRITICAL FIX (2024-12): Prevent re-entrancy during account switching
@@ -1763,29 +1992,26 @@ final class AuthenticationManager: AuthProgressDelegate {
     //
     // ═══════════════════════════════════════════════════════════════════════════
     guard !isSwitchingAccount else {
-      logger.warning("⚠️ [AUTHMAN-SWITCH] Account switch already in progress - ignoring request")
-      logger.warning("   Requested DID: \(targetDID)")
+      logger.warning(.accountSwitchAlreadyInProgress)
       throw AuthError.accountSwitchInProgress
     }
 
-    logger.debug("🔄 [AUTHMAN-SWITCH] Ensuring client initialized...")
+    logger.debug(.accountSwitchClientInitializing)
     await ensureClientInitializedForAccountOperations()
 
     guard let client = client else {
-      logger.error(
-        "❌ [AUTHMAN-SWITCH] Client not initialized after ensureClientInitializedForAccountOperations"
-      )
+      logger.error(.accountSwitchClientUnavailable)
       throw AuthError.clientNotInitialized
     }
-    logger.debug("✅ [AUTHMAN-SWITCH] Client is available")
+    logger.debug(.accountSwitchProceeding)
 
     if case .authenticated(let currentDid) = state, currentDid == targetDID {
-      logger.info("ℹ️ [AUTHMAN-SWITCH] Already using account with DID: \(targetDID)")
+      logger.info(.accountSwitchAlreadyActive)
       return
     }
 
-    logger.info("🔄 [AUTHMAN-SWITCH] Proceeding with account switch to DID: \(targetDID)")
-    logger.debug("🔄 [AUTHMAN-SWITCH] Setting isSwitchingAccount = true")
+    logger.info(.accountSwitchProceeding)
+    logger.debug(.accountSwitchProceeding)
     isSwitchingAccount = true
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -1825,7 +2051,7 @@ final class AuthenticationManager: AuthProgressDelegate {
       // This prevents SQLite error 21, SecretReuseError, and HMAC check failures.
       // ═══════════════════════════════════════════════════════════════════════════
 
-      logger.info("🔄 [AUTHMAN-SWITCH] Using MLSShutdownCoordinator for proper close sequence...")
+      logger.info(.accountSwitchMLSCleanupStarted)
 
       // DEFENSIVE TIMEOUT: Wrap entire MLS cleanup in 10-second hard timeout
       // If any operation hangs, we force ahead. Better degraded MLS than frozen app.
@@ -1837,7 +2063,7 @@ final class AuthenticationManager: AuthProgressDelegate {
           // Close app-layer MLSClient context (separate from core package)
           let ffiClosed = await MLSClient.shared.closeContext(for: currentDid)
           if ffiClosed {
-            self.logger.info("✅ [AUTHMAN-SWITCH] MLSClient (app layer) context closed")
+            self.logger.info(.accountSwitchMLSContextClosed)
           }
 
           // Use the centralized shutdown coordinator (single attempt, no retries)
@@ -1845,14 +2071,14 @@ final class AuthenticationManager: AuthProgressDelegate {
             for: currentDid, databaseManager: .shared, timeout: 5.0)
 
           switch result {
-          case .success(let durationMs):
-            self.logger.info("✅ [AUTHMAN-SWITCH] Core shutdown complete in \(durationMs)ms")
-          case .successWithWarnings(let durationMs, let warnings):
-            self.logger.warning("⚠️ [AUTHMAN-SWITCH] Core shutdown in \(durationMs)ms with \(warnings.count) warnings")
-          case .timedOut(let durationMs, let phase):
-            self.logger.warning("⏱️ [AUTHMAN-SWITCH] Core shutdown timed out at \(phase.rawValue) after \(durationMs)ms")
-          case .failed(let error):
-            self.logger.error("❌ [AUTHMAN-SWITCH] Core shutdown failed: \(error.localizedDescription)")
+          case .success:
+            self.logger.info(.accountSwitchMLSCoreShutdownSuccess)
+          case .successWithWarnings:
+            self.logger.warning(.accountSwitchMLSCoreShutdownWarning)
+          case .timedOut:
+            self.logger.warning(.accountSwitchMLSCoreShutdownTimeout)
+          case .failed:
+            self.logger.error(.accountSwitchMLSCoreShutdownFailed)
           }
           return true
         }
@@ -1866,7 +2092,7 @@ final class AuthenticationManager: AuthProgressDelegate {
       }
 
       if !mlsCleanupOk {
-        logger.critical("🚨 [AUTHMAN-SWITCH] MLS cleanup timed out after 10s - forcing ahead with switch")
+        logger.critical(.accountSwitchMLSCleanupTimedOut)
         // Don't abort - force ahead. User can restart if MLS is broken.
       }
     }
@@ -1889,69 +2115,52 @@ final class AuthenticationManager: AuthProgressDelegate {
     do {
       await MLSGRDBManager.shared.setActiveUser(targetDID)
       _ = try await MLSGRDBManager.shared.getDatabasePool(for: targetDID)
-      logger.debug("⚡️ [AUTHMAN-SWITCH] Prewarmed MLS database for target account")
+      logger.debug(.accountSwitchDatabasePrewarmed)
     } catch {
-      logger.debug("⚠️ [AUTHMAN-SWITCH] Prewarm failed (non-fatal): \(error.localizedDescription)")
+      logger.debug(.accountSwitchDatabasePrewarmFailed)
     }
 
     do {
-      logger.debug("🔄 [AUTHMAN-SWITCH] Updating state to .initializing")
+      logger.debug(.accountSwitchProceeding)
       updateState(.initializing)
 
-      logger.info("🔄 [AUTHMAN-SWITCH] Calling client.switchToAccount(did: \(targetDID))")
+      logger.info(.accountSwitchClientSwitchCalled)
       try await client.switchToAccount(did: targetDID)
-      logger.info("✅ [AUTHMAN-SWITCH] client.switchToAccount completed")
+      logger.info(.accountSwitchClientSwitchCompleted)
 
-      // ═══════════════════════════════════════════════════════════════════════════
-      // CRITICAL FIX: Validate session before transitioning to authenticated state
-      // ═══════════════════════════════════════════════════════════════════════════
-      // The account exists but may have an expired/missing session. We must verify
-      // the session is valid (or can be refreshed) before declaring authenticated.
-      // Otherwise the app transitions to authenticated state but all API calls fail.
-      // ═══════════════════════════════════════════════════════════════════════════
-      logger.debug("🔄 [AUTHMAN-SWITCH] Validating session for switched account...")
+      logger.debug(.accountSwitchSessionValid)
       let hasValidSession = await client.hasValidSession()
       if !hasValidSession {
-        logger.warning("⚠️ [AUTHMAN-SWITCH] Account has no valid session - triggering re-auth flow")
+        logger.warning(.accountSwitchSessionInvalid)
         expiredAccountInfo = makeExpiredAccountInfo(for: targetDID)
-        logger.info(
-          "🔄 [AUTHMAN-SWITCH] Set expiredAccountInfo for DID=\(targetDID) handle=\(self.expiredAccountInfo?.loginHandle ?? "nil") to trigger re-auth"
-        )
+        logger.info(.expiredAccountInfoPrepared)
         isSwitchingAccount = false
         updateState(.unauthenticated)
         throw AuthError.invalidSession
       }
-      logger.info("✅ [AUTHMAN-SWITCH] Session validated successfully")
+      logger.info(.accountSwitchSessionValid)
 
-      logger.debug("🔄 [AUTHMAN-SWITCH] Fetching DID from client")
+      logger.debug(.callbackDIDResolved)
       let newDid = try validatedUserDID(
         try await client.getDid(),
         source: "switchToAccount.resolved"
       )
-      logger.debug("✅ [AUTHMAN-SWITCH] Got DID: \(newDid)")
+      logger.debug(.callbackDIDResolved)
       if newDid != targetDID {
-        logger.warning(
-          "⚠️ [AUTHMAN-SWITCH] Resolved DID differs from requested target (requested: \(targetDID), resolved: \(newDid))"
-        )
+        logger.warning(.accountSwitchResolvedDIDMismatch)
       }
 
-      logger.debug("🔄 [AUTHMAN-SWITCH] Fetching handle from client")
+      logger.debug(.callbackHandleResolved)
       self.handle = try await client.getHandle()
-      logger.debug("✅ [AUTHMAN-SWITCH] Got handle: \(self.handle ?? "nil")")
+      logger.debug(.callbackHandleResolved)
 
-      logger.debug("🔄 [AUTHMAN-SWITCH] Updating state to .authenticated")
+      logger.debug(.stateUpdated)
       updateState(.authenticated(userDID: newDid))
       MLSNotificationCoordinator.updateActiveUserDID(newDid)
 
-      // Account switching is now handled by AppStateManager.transitionToAuthenticated()
-      // which is called automatically when the AuthManager state changes to .authenticated
-
-      logger.info(
-        "✅ [AUTHMAN-SWITCH] Successfully switched to account: \(self.handle ?? "unknown") with DID: \(newDid)"
-      )
+      logger.info(.accountSwitchSuccessful)
     } catch {
-      logger.error("❌ [AUTHMAN-SWITCH] Error switching accounts: \(error.localizedDescription)")
-      logger.error("❌ [AUTHMAN-SWITCH] Error type: \(String(describing: type(of: error)))")
+      logger.error(.accountSwitchFailed)
 
       // Reset switching flag since we failed
       isSwitchingAccount = false
@@ -1959,27 +2168,25 @@ final class AuthenticationManager: AuthProgressDelegate {
       // Set expired account info so LoginView/AccountSwitcherView can trigger re-authentication
       // This allows automatic re-auth flow when switching to an account with expired tokens
       expiredAccountInfo = makeExpiredAccountInfo(for: targetDID)
-      logger.info(
-        "🔄 [AUTHMAN-SWITCH] Set expiredAccountInfo for DID=\(targetDID) handle=\(self.expiredAccountInfo?.loginHandle ?? "nil") to enable re-authentication"
-      )
+      logger.info(.expiredAccountInfoPrepared)
 
       // Set state to unauthenticated so the auth UI can handle re-auth
-      logger.debug("🔄 [AUTHMAN-SWITCH] Updating state to .unauthenticated for re-auth flow")
+      logger.debug(.stateUpdated)
       updateState(.unauthenticated)
       throw error
     }
 
-    logger.debug("🔄 [AUTHMAN-SWITCH] Setting isSwitchingAccount = false")
+    logger.debug(.accountSwitchCompleted)
     isSwitchingAccount = false
-    logger.debug("🔄 [AUTHMAN-SWITCH] Refreshing available accounts")
+    logger.debug(.accountSwitchCompleted)
     await refreshAvailableAccounts()
-    logger.info("✅ [AUTHMAN-SWITCH] Account switch process completed")
+    logger.info(.accountSwitchCompleted)
   }
 
   /// Add a new account
   @MainActor
   func addAccount(handle: String) async throws -> URL {
-    logger.info("Adding new account with handle: \(handle)")
+    logger.info(.addAccountStarted)
 
     await ensureClientInitializedForAccountOperations()
 
@@ -1995,7 +2202,7 @@ final class AuthenticationManager: AuthProgressDelegate {
         try await client.startOAuthFlow(identifier: handle)
       }
       let boundAuthURL = try await gatewayOAuthExchange.prepareLogin(authURL)
-      self.logger.debug("OAuth URL generated for new account")
+      self.logger.debug(.addAccountOAuthURLGenerated)
 
       updateState(.authenticating(progress: .openingBrowser))
       return boundAuthURL
@@ -2011,7 +2218,7 @@ final class AuthenticationManager: AuthProgressDelegate {
         finalError = AuthError.unknown(error)
       }
 
-      logger.error("Failed to start OAuth flow for new account: \(finalError.localizedDescription)")
+      logger.error(.addAccountFailed)
       updateState(.error(message: "Failed to add account: \(finalError.localizedDescription)"))
       throw finalError
     }
@@ -2053,14 +2260,13 @@ final class AuthenticationManager: AuthProgressDelegate {
       self.biometricType = detectedBiometryType
       if isAvailable {
         self.biometricAuthEnabled = preference
-        self.logger.info("Biometric authentication available: \(self.biometricType.description)")
+        self.logger.info(.biometricAuthAvailable)
       } else {
         self.biometricAuthEnabled = false
-        if let error {
-          self.logger.warning(
-            "Biometric authentication not available: \(error.localizedDescription)")
+        if error != nil {
+          self.logger.warning(.biometricAuthNotAvailable)
         } else {
-          self.logger.info("Biometric authentication not available on this device")
+          self.logger.info(.biometricAuthNotAvailable)
         }
       }
     }
@@ -2072,7 +2278,7 @@ final class AuthenticationManager: AuthProgressDelegate {
     lastBiometricError = nil
 
     guard biometricType != .none else {
-      logger.warning("Cannot enable biometric auth: not available on device")
+      logger.warning(.biometricAuthNotAvailable)
       return
     }
 
@@ -2082,14 +2288,14 @@ final class AuthenticationManager: AuthProgressDelegate {
       if success {
         biometricAuthEnabled = true
         await saveBiometricAuthPreference(enabled: true)
-        logger.info("Biometric authentication enabled")
+        logger.info(.biometricAuthEnabled)
       } else {
-        logger.warning("Failed to enable biometric authentication")
+        logger.warning(.biometricAuthEnableFailed)
       }
     } else {
       biometricAuthEnabled = false
       await saveBiometricAuthPreference(enabled: false)
-      logger.info("Biometric authentication disabled")
+      logger.info(.biometricAuthDisabled)
     }
   }
 
@@ -2097,7 +2303,7 @@ final class AuthenticationManager: AuthProgressDelegate {
   @MainActor
   func authenticateWithBiometrics(reason: String) async -> Bool {
     guard biometricType != .none else {
-      logger.warning("Biometric authentication not available")
+      logger.warning(.biometricAuthNotAvailable)
       return false
     }
 
@@ -2111,31 +2317,31 @@ final class AuthenticationManager: AuthProgressDelegate {
       )
 
       if success {
-        logger.info("Biometric authentication successful")
+        logger.info(.biometricAuthSuccess)
         return true
       } else {
-        logger.warning("Biometric authentication failed")
+        logger.warning(.biometricAuthFailed)
         return false
       }
     } catch let error as LAError {
       lastBiometricError = error
       switch error.code {
       case .userCancel:
-        logger.info("User cancelled biometric authentication")
+        logger.info(.biometricAuthCancelled)
       case .userFallback:
-        logger.info("User chose to use fallback authentication")
+        logger.info(.biometricAuthFallback)
       case .biometryNotAvailable:
-        logger.warning("Biometric authentication not available")
+        logger.warning(.biometricAuthNotAvailable)
       case .biometryNotEnrolled:
-        logger.warning("No biometric credentials enrolled")
+        logger.warning(.biometricAuthNotEnrolled)
       case .biometryLockout:
-        logger.warning("Biometric authentication locked out")
+        logger.warning(.biometricAuthLockout)
       default:
-        logger.error("Biometric authentication error: \(error.localizedDescription)")
+        logger.error(.biometricAuthError)
       }
       return false
     } catch {
-      logger.error("Unexpected biometric authentication error: \(error.localizedDescription)")
+      logger.error(.biometricAuthError)
       return false
     }
   }
@@ -2190,19 +2396,19 @@ final class AuthenticationManager: AuthProgressDelegate {
   /// Attempts to recover from auth failures when connectivity is restored
   @MainActor
   func attemptRecoveryFromNetworkIssues() async {
-    logger.info("Attempting recovery from network issues")
+    logger.info(.networkRecoveryAttemptStarted)
 
     guard let client = self.client else {
-      logger.error("Cannot attempt recovery - no client available")
+      logger.error(.networkRecoveryClientUnavailable)
       return
     }
 
     do {
       try await client.attemptRecoveryFromServerFailures()
-      logger.info("Recovery successful - checking authentication state")
+      logger.info(.networkRecoverySuccessful)
       await checkAuthenticationState()
     } catch {
-      logger.error("Recovery attempt failed: \(error)")
+      logger.error(.networkRecoveryFailed)
       updateState(AuthState.error(message: "Recovery failed: \(error.localizedDescription)"))
     }
   }
@@ -2213,11 +2419,11 @@ final class AuthenticationManager: AuthProgressDelegate {
 extension AuthenticationManager: AuthenticationDelegate {
   // Called by Petrel when a refresh fails or auth is otherwise required again.
   func authenticationRequired(client: ATProtoClient) {
-    logger.error("AuthenticationDelegate.authenticationRequired received from Petrel")
+    logger.error(.authenticationRequiredReceived)
     Task { @MainActor in
       // DEBOUNCE: Avoid multiple triggers
       if self.isHandlingAuthExpiration {
-        logger.warning("Already handling auth expiration, skipping duplicate trigger")
+        logger.warning(.authenticationRequiredDuplicateTrigger)
         return
       }
       self.isHandlingAuthExpiration = true
@@ -2234,9 +2440,7 @@ extension AuthenticationManager: AuthenticationDelegate {
       } else {
         // Clear any existing alert so it doesn't block the auto-reauth flow
         self.pendingAuthAlert = nil
-        logger.info(
-          "Skipping alert in authenticationRequired - expiredAccountInfo is set, will auto-trigger re-auth flow"
-        )
+        logger.info(.authenticationRequiredSkipAlert)
       }
 
       self.updateState(.unauthenticated)
@@ -2249,17 +2453,14 @@ extension AuthenticationManager: AuthenticationDelegate {
 extension AuthenticationManager: AuthFailureDelegate {
   @MainActor
   func handleCatastrophicAuthFailure(did: String, error: Error, isRetryable: Bool) async {
-    logger.error(
-      "AuthFailureDelegate.catastrophic did=\(did) retryable=\(isRetryable) error=\(error.localizedDescription)"
-    )
+    logger.error(.catastrophicAuthFailure)
 
     // DEBOUNCE
     if isHandlingAuthExpiration {
-      logger.warning("Already handling auth expiration, skipping duplicate trigger (catastrophic)")
+      logger.warning(.catastrophicDuplicateTrigger)
       return
     }
     isHandlingAuthExpiration = true
-
     // Prime re-auth for the specified DID
     if expiredAccountInfo == nil {
       expiredAccountInfo = makeExpiredAccountInfo(for: did)
@@ -2274,9 +2475,7 @@ extension AuthenticationManager: AuthFailureDelegate {
       // Terminal failure - prefer auto-reauth without alert if possible
       if expiredAccountInfo != nil {
         pendingAuthAlert = nil
-        logger.info(
-          "Skipping alert in catastrophic failure - expiredAccountInfo is set, will auto-trigger re-auth flow"
-        )
+        logger.info(.catastrophicSkipAlert)
       } else if pendingAuthAlert == nil {
         pendingAuthAlert = AuthAlert(
           title: "Signed Out", message: "Your session is no longer valid. Please sign in again.")
@@ -2288,7 +2487,7 @@ extension AuthenticationManager: AuthFailureDelegate {
 
   @MainActor
   func handleCircuitBreakerOpen(did: String) async {
-    logger.warning("AuthFailureDelegate.circuitBreakerOpen did=\(did)")
+    logger.warning(.circuitBreakerOpen)
     if pendingAuthAlert == nil {
       pendingAuthAlert = AuthAlert(
         title: "Authentication Temporarily Paused",

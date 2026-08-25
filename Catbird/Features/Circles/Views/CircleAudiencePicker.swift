@@ -67,9 +67,9 @@ struct CircleAudiencePicker: View {
         .clipShape(Capsule())
       }
       .disabled(isReplyLocked || isSubmitting)
+      .accessibilityIdentifier("composer.audiencePicker")
       .accessibilityLabel(accessibilityLabelText)
       .accessibilityHint(accessibilityHintText)
-
       Spacer()
     }
     .task {
