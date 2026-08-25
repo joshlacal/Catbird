@@ -1303,6 +1303,42 @@ final class AppState {
         }
     }
 
+    @ObservationIgnored private var _circleNotificationService: (any CircleNotificationServiceProtocol)?
+
+    /// Circle notification service using the current authenticated Circle service
+    var circleNotificationService: any CircleNotificationServiceProtocol {
+        get {
+            if let _circleNotificationService {
+                return _circleNotificationService
+            }
+            return CircleNotificationService(service: circleService)
+        }
+        set {
+            _circleNotificationService = newValue
+        }
+    }
+
+    @ObservationIgnored private var _circleNotificationsModel: CircleNotificationsModel?
+
+    /// Model owning private Circle notifications for this active account
+    @MainActor
+    var circleNotificationsModel: CircleNotificationsModel {
+        get {
+            if let _circleNotificationsModel {
+                return _circleNotificationsModel
+            }
+            let model = CircleNotificationsModel(
+                service: circleNotificationService,
+                accountDID: userDID
+            )
+            _circleNotificationsModel = model
+            return model
+        }
+        set {
+            _circleNotificationsModel = newValue
+        }
+    }
+
     /// Probes Circle capabilities from the server once for this active account,
     /// updating `CircleFeatureFlags.serverCapability` while race-checking against account switches.
     @MainActor

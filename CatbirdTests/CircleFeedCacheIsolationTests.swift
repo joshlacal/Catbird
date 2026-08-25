@@ -6,6 +6,23 @@ import Testing
 
 @Suite("Circle feed cache isolation")
 struct CircleFeedCacheIsolationTests {
+  static func makeProfile(did: DID = CircleTestFixtures.alice, handle: String = "alice.test", displayName: String = "Alice") -> AppBskyActorDefs.ProfileViewBasic {
+    AppBskyActorDefs.ProfileViewBasic(
+      did: did,
+      handle: try! Handle(handleString: handle),
+      displayName: displayName,
+      pronouns: nil,
+      avatar: nil,
+      associated: nil,
+      viewer: nil,
+      labels: nil,
+      createdAt: nil,
+      verification: nil,
+      status: nil,
+      debug: nil
+    )
+  }
+
   @Test("Cache keys include account and Space so accounts and Spaces never leak")
   func cacheKeysIncludeAccountAndSpace() async {
     let cache = CircleFeedCache()
@@ -52,5 +69,62 @@ struct CircleFeedCacheIsolationTests {
     let unified = await cache.page(accountDID: "did:plc:alice", space: nil)
     #expect(unified?.items.count == 1)
     #expect(unified?.items.first?.circle.uri == CircleTestFixtures.workURI)
+  }
+
+  @Test("Notification cache isolates by account DID")
+  func notificationCacheIsolatesByAccount() async {
+    let notifCache = CircleNotificationCache()
+    let notif = BlueCatbirdCircleDefs.Notification(
+      id: "n1",
+      reason: .value_reply,
+      actor: Self.makeProfile(),
+      subject: try! ATProtocolURI(uriString: "\(CircleTestFixtures.familyURI.uriString())/app.bsky.feed.post/123"),
+      indexedAt: ATProtocolDate(date: Date()),
+      circle: CircleTestFixtures.family
+    )
+    let page = CircleNotificationPage(notifications: [notif], cursor: "cur1")
+    await notifCache.store(page, accountDID: "did:plc:alice")
+
+    #expect(await notifCache.page(accountDID: "did:plc:alice")?.notifications.count == 1)
+    #expect(await notifCache.page(accountDID: "did:plc:bob") == nil)
+
+    await notifCache.purge(accountDID: "did:plc:alice")
+    #expect(await notifCache.page(accountDID: "did:plc:alice") == nil)
+  }
+
+  @Test("Notification cache purging one Space retains sibling Spaces and other accounts")
+  func notificationCachePurgeSpaceRetainsSiblings() async {
+    let notifCache = CircleNotificationCache()
+    let notif1 = BlueCatbirdCircleDefs.Notification(
+      id: "n1",
+      reason: .value_reply,
+      actor: Self.makeProfile(),
+      subject: try! ATProtocolURI(uriString: "\(CircleTestFixtures.familyURI.uriString())/app.bsky.feed.post/123"),
+      indexedAt: ATProtocolDate(date: Date()),
+      circle: CircleTestFixtures.family
+    )
+    let notif2 = BlueCatbirdCircleDefs.Notification(
+      id: "n2",
+      reason: .value_like,
+      actor: Self.makeProfile(),
+      subject: try! ATProtocolURI(uriString: "\(CircleTestFixtures.workURI.uriString())/app.bsky.feed.post/456"),
+      indexedAt: ATProtocolDate(date: Date()),
+      circle: CircleTestFixtures.work
+    )
+    let alicePage = CircleNotificationPage(notifications: [notif1, notif2], cursor: "curA")
+    let bobPage = CircleNotificationPage(notifications: [notif1], cursor: "curB")
+
+    await notifCache.store(alicePage, accountDID: "did:plc:alice")
+    await notifCache.store(bobPage, accountDID: "did:plc:bob")
+
+    await notifCache.purge(accountDID: "did:plc:alice", space: CircleTestFixtures.familyURI)
+
+    let aliceRemaining = await notifCache.page(accountDID: "did:plc:alice")
+    #expect(aliceRemaining?.notifications.count == 1)
+    #expect(aliceRemaining?.notifications.first?.circle.uri == CircleTestFixtures.workURI)
+
+    let bobRemaining = await notifCache.page(accountDID: "did:plc:bob")
+    #expect(bobRemaining?.notifications.count == 1)
+    #expect(bobRemaining?.notifications.first?.circle.uri == CircleTestFixtures.familyURI)
   }
 }

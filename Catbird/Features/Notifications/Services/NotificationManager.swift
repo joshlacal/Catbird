@@ -1687,6 +1687,16 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
     notificationLogger.info("Received notification while app in foreground")
 
     let userInfo = notification.request.content.userInfo
+    // Handle generic circle_activity push notifications
+    if let kind = userInfo["kind"] as? String, kind == "circle_activity" {
+      notificationLogger.info("Received generic circle_activity push notification")
+      Task { @MainActor in
+        await self.handlePush(userInfo)
+      }
+      completionHandler([])
+      return
+    }
+
 
     // Skip already-decrypted MLS notifications (prevent infinite loop)
     if userInfo["_mls_decrypted"] as? Bool == true {
@@ -3452,6 +3462,14 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
   ) {
     let userInfo = response.notification.request.content.userInfo
     notificationLogger.info("User interacted with notification: \(userInfo)")
+    if let kind = userInfo["kind"] as? String, kind == "circle_activity" {
+      Task { @MainActor in
+        await self.handlePush(userInfo)
+      }
+      completionHandler()
+      return
+    }
+
 
     let targetDid = userInfo["did"] as? String
     let uriString = userInfo["uri"] as? String
@@ -3979,6 +3997,30 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
       throw NSError(
         domain: "NotificationManager", code: -1,
         userInfo: [NSLocalizedDescriptionKey: "Could not extract profile ID from URI"])
+    }
+  }
+
+  // MARK: - Circle Push Notifications
+
+  /// Handles generic Circle push notifications (`kind == circle_activity`).
+  /// Ignores all payload content/IDs, performs one authenticated refresh for the exact active account,
+  /// and does not render or store the push dictionary.
+  @MainActor
+  func handlePush(
+    _ userInfo: [AnyHashable: Any],
+    circleService: (any CircleNotificationServiceProtocol)? = nil
+  ) async {
+    guard let kind = userInfo["kind"] as? String, kind == "circle_activity" else {
+      return
+    }
+
+    notificationLogger.info("Processing generic circle_activity push")
+
+    if let circleService {
+      _ = try? await circleService.refresh()
+    } else if let appState, !appState.userDID.isEmpty {
+      let service = appState.circleNotificationService
+      _ = try? await service.refresh()
     }
   }
 }

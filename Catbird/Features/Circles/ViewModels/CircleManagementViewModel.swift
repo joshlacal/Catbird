@@ -279,6 +279,11 @@ final class CircleManagementViewModel {
     do {
       let operation = try await service.deleteCircle(space: circle.uri)
       handleOperation(operation)
+      if operation.status == .value_complete {
+        await CircleFeedCache.shared.purge(accountDID: userDID, space: circle.uri)
+        await CircleMediaLoader.shared.purge(accountDID: userDID, space: circle.uri)
+        await CircleNotificationCache.shared.purge(accountDID: userDID, space: circle.uri)
+      }
       return operation
     } catch {
       let cError = circleError(from: error)
@@ -301,6 +306,7 @@ final class CircleManagementViewModel {
       )
       if updatedMuted {
         await CircleFeedCache.shared.purgeMutedSpaceFromUnified(accountDID: userDID, space: circle.uri)
+        await CircleNotificationCache.shared.purgeMutedSpace(accountDID: userDID, space: circle.uri)
         NotificationCenter.default.post(
           name: .circleMuteStateChanged,
           object: nil,

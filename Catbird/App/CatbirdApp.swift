@@ -412,6 +412,20 @@ struct CatbirdApp: App {
     ) {
       let logger = Logger(subsystem: "blue.catbird", category: "AppDelegate")
       logger.info("Received remote notification")
+      // Check if this is a generic Circle activity notification
+      if let kind = userInfo["kind"] as? String, kind == "circle_activity" {
+        logger.info("Processing generic Circle activity push notification")
+        Task { @MainActor in
+          if let activeState = AppStateManager.shared.lifecycle.appState {
+            await activeState.notificationManager.handlePush(userInfo)
+            completionHandler(.newData)
+          } else {
+            completionHandler(.noData)
+          }
+        }
+        return
+      }
+
 
       // Check if this is an MLS key package inventory notification
       if let type = userInfo["type"] as? String,

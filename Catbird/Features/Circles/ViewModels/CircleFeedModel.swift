@@ -152,6 +152,7 @@ final class CircleFeedModel {
     items.removeAll(where: { $0.circle.uri == space })
     await cache.purge(accountDID: accountDID, space: space)
     await CircleMediaLoader.shared.purge(accountDID: accountDID, space: space)
+    await CircleNotificationCache.shared.purge(accountDID: accountDID, space: space)
     if self.space == space {
       self.accessState = .removed
     }
