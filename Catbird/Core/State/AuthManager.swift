@@ -602,6 +602,17 @@ final class AuthenticationManager: AuthProgressDelegate {
   var stateChanges: AsyncStream<AuthState> {
     return stateSubject.stream
   }
+  #if DEBUG
+  nonisolated(unsafe) static var switchAccountOverride: (@Sendable (String) async throws -> (did: String, handle: String))?
+
+  func setClientForTesting(_ client: ATProtoClient?) {
+    self.client = client
+  }
+
+  func resetDebounceForTesting() {
+    self.isHandlingAuthExpiration = false
+  }
+  #endif
 
   // MARK: - Auto-logout handling from Petrel
 
@@ -1628,12 +1639,29 @@ final class AuthenticationManager: AuthProgressDelegate {
 
   // MARK: - Handle Storage
 
+  #if DEBUG
+  nonisolated(unsafe) private static var ephemeralHandles: [String: String] = [:]
+  nonisolated(unsafe) private static var ephemeralAccountOrder: [String] = []
+  nonisolated(unsafe) private static var ephemeralProfileData: [String: [String: String?]] = [:]
+
+  private var isE2EMode: Bool {
+    ProcessInfo.processInfo.arguments.contains("--e2e-mode")
+  }
+  #endif
+
   /// Store handle for a specific DID
-  private func storeHandle(_ handle: String, for did: String) {
+  func storeHandle(_ handle: String, for did: String) {
     guard let loginHandle = AccountInfo.loginHandleCandidate(handle) else {
       logger.warning(.invalidHandleIgnored)
       return
     }
+
+    #if DEBUG
+    if isE2EMode {
+      Self.ephemeralHandles[did] = loginHandle
+      return
+    }
+    #endif
 
     var handles = getStoredHandles()
     handles[did] = loginHandle
@@ -1651,6 +1679,12 @@ final class AuthenticationManager: AuthProgressDelegate {
 
   /// Get all stored handles
   private func getStoredHandles() -> [String: String] {
+    #if DEBUG
+    if isE2EMode {
+      return Self.ephemeralHandles.compactMapValues { AccountInfo.loginHandleCandidate($0) }
+    }
+    #endif
+
     guard let data = UserDefaults.standard.data(forKey: handleStorageKey),
       let handles = try? JSONDecoder().decode([String: String].self, from: data)
     else {
@@ -1661,6 +1695,14 @@ final class AuthenticationManager: AuthProgressDelegate {
 
   /// Remove stored handle for a specific DID
   private func removeStoredHandle(for did: String) {
+    #if DEBUG
+    if isE2EMode {
+      Self.ephemeralHandles.removeValue(forKey: did)
+      Self.ephemeralAccountOrder.removeAll { $0 == did }
+      return
+    }
+    #endif
+
     var handles = getStoredHandles()
     handles.removeValue(forKey: did)
 
@@ -1676,6 +1718,12 @@ final class AuthenticationManager: AuthProgressDelegate {
 
   /// Get stored account order (array of DIDs)
   private func getAccountOrder() -> [String] {
+    #if DEBUG
+    if isE2EMode {
+      return Self.ephemeralAccountOrder
+    }
+    #endif
+
     guard let data = UserDefaults.standard.data(forKey: accountOrderKey),
       let order = try? JSONDecoder().decode([String].self, from: data)
     else {
@@ -1686,6 +1734,13 @@ final class AuthenticationManager: AuthProgressDelegate {
 
   /// Save account order
   private func saveAccountOrder(_ order: [String]) {
+    #if DEBUG
+    if isE2EMode {
+      Self.ephemeralAccountOrder = order
+      return
+    }
+    #endif
+
     if let data = try? JSONEncoder().encode(order) {
       UserDefaults.standard.set(data, forKey: accountOrderKey)
     }
@@ -1708,6 +1763,14 @@ final class AuthenticationManager: AuthProgressDelegate {
       "avatarURL": avatarURL?.absoluteString,
     ]
 
+    #if DEBUG
+    if isE2EMode {
+      Self.ephemeralProfileData[did] = profileData
+      logger.debug(.profileDataCached)
+      return
+    }
+    #endif
+
     if let data = try? JSONEncoder().encode(profileData) {
       UserDefaults.standard.set(data, forKey: key)
       logger.debug(.profileDataCached)
@@ -1718,6 +1781,18 @@ final class AuthenticationManager: AuthProgressDelegate {
   nonisolated func getCachedProfileData(for did: String) -> (
     handle: String?, displayName: String?, avatarURL: URL?
   )? {
+    #if DEBUG
+    if ProcessInfo.processInfo.arguments.contains("--e2e-mode") {
+      if let profileData = Self.ephemeralProfileData[did] {
+        let handle = AccountInfo.loginHandleCandidate(profileData["handle"] as? String)
+        let displayName = profileData["displayName"] as? String
+        let avatarURL = (profileData["avatarURL"] as? String).flatMap { URL(string: $0) }
+        return (handle: handle, displayName: displayName, avatarURL: avatarURL)
+      }
+      return nil
+    }
+    #endif
+
     let key = "cached_profile_\(did)"
     guard let data = UserDefaults.standard.data(forKey: key),
       let profileData = try? JSONDecoder().decode([String: String?].self, from: data)
@@ -2123,6 +2198,19 @@ final class AuthenticationManager: AuthProgressDelegate {
     do {
       logger.debug(.accountSwitchProceeding)
       updateState(.initializing)
+
+      #if DEBUG
+      if let override = Self.switchAccountOverride {
+        let (resolvedDID, resolvedHandle) = try await override(targetDID)
+        self.handle = resolvedHandle
+        updateState(.authenticated(userDID: resolvedDID))
+        MLSNotificationCoordinator.updateActiveUserDID(resolvedDID)
+        logger.info(.accountSwitchSuccessful)
+        isSwitchingAccount = false
+        await refreshAvailableAccounts()
+        return
+      }
+      #endif
 
       logger.info(.accountSwitchClientSwitchCalled)
       try await client.switchToAccount(did: targetDID)

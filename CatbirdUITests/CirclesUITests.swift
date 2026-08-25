@@ -63,16 +63,10 @@ final class CirclesUITests: XCTestCase {
     nameField.tap()
     nameField.typeText(name)
 
-    let membersField = app.textViews["Initial member DIDs"]
-    if !membersField.exists {
-      let altField = app.textFields["Initial member DIDs"]
-      XCTAssertTrue(altField.waitForExistence(timeout: 3), "Expected Initial member DIDs field")
-      altField.tap()
-      altField.typeText(initialMemberDID)
-    } else {
-      membersField.tap()
-      membersField.typeText(initialMemberDID)
-    }
+    let membersField = app.textFields["Initial member DIDs"]
+    XCTAssertTrue(membersField.waitForExistence(timeout: 5), "Expected Initial member DIDs field")
+    membersField.tap()
+    membersField.typeText(initialMemberDID)
 
     let disclosure = app.staticTexts["Membership history disclosure"]
     XCTAssertTrue(disclosure.waitForExistence(timeout: 5), "Expected membership history disclosure section")
@@ -89,13 +83,12 @@ final class CirclesUITests: XCTestCase {
   func testUnsupportedCapabilityShowsExplanation() throws {
     launchWithUnsupportedCircles()
 
-    let unsupportedEntry = app.buttons["Circles, unsupported"]
-    if unsupportedEntry.waitForExistence(timeout: 5) {
-      XCTAssertFalse(unsupportedEntry.isEnabled, "Unsupported Circles entry must be disabled")
-    }
-
     let explanation = app.staticTexts["Circles requires a PDS that supports ATProto Spaces"]
     XCTAssertTrue(explanation.waitForExistence(timeout: 5), "Expected unsupported capability explanation text")
+
+    let unsupportedEntry = app.buttons["Circles, unsupported"]
+    XCTAssertTrue(unsupportedEntry.waitForExistence(timeout: 5), "Expected disabled Circles entry")
+    XCTAssertFalse(unsupportedEntry.isEnabled, "Unsupported Circles entry must be disabled")
   }
 
   /// 2. Approved end-to-end scenario: Create Circle, post, verify badge, remove member, verify removal disclosure
@@ -108,13 +101,7 @@ final class CirclesUITests: XCTestCase {
 
     // 2. Open Composer, verify default Public audience, then select Family
     let composeButton = app.buttons["compose.fab"]
-    if !composeButton.exists {
-      let navCompose = app.buttons["New Post"]
-      XCTAssertTrue(navCompose.waitForExistence(timeout: 5), "Expected compose button")
-      navCompose.tap()
-    } else {
-      composeButton.tap()
-    }
+    composeButton.tap()
 
     let audiencePicker = app.buttons["composer.audiencePicker"]
     XCTAssertTrue(audiencePicker.waitForExistence(timeout: 5), "Expected audience picker in composer")
@@ -122,10 +109,9 @@ final class CirclesUITests: XCTestCase {
 
     audiencePicker.tap()
     let familyOption = app.buttons["Family"]
-    if familyOption.waitForExistence(timeout: 3) {
-      familyOption.tap()
-      XCTAssertTrue(audiencePicker.label.contains("Family"), "Audience should update to Family")
-    }
+    XCTAssertTrue(familyOption.waitForExistence(timeout: 3), "Expected Family option in audience picker")
+    familyOption.tap()
+    XCTAssertTrue(audiencePicker.label.contains("Family"), "Audience should update to Family")
 
     // 3. Type post text and submit
     let editor = app.textViews.firstMatch
@@ -134,13 +120,7 @@ final class CirclesUITests: XCTestCase {
     editor.typeText("private family update for all members")
 
     let postButton = app.buttons["Post"]
-    if !postButton.exists {
-      let altPost = app.buttons["post.send"]
-      XCTAssertTrue(altPost.waitForExistence(timeout: 3), "Expected post submit button")
-      altPost.tap()
-    } else {
-      postButton.tap()
-    }
+    postButton.tap()
 
     // 4. Verify Circle badge on the post
     let circleBadge = app.staticTexts["Family"]
@@ -155,20 +135,11 @@ final class CirclesUITests: XCTestCase {
     likeButton.tap()
 
     // 6. Open Circle settings and verify removal disclosure
-    let settingsButton = app.buttons["Circle Settings"]
-    if !settingsButton.exists {
-      let altSettings = app.buttons["Circle settings and members"]
-      if altSettings.waitForExistence(timeout: 3) {
-        altSettings.tap()
-      }
-    } else {
-      settingsButton.tap()
-    }
+    let settingsButton = app.buttons["Circle settings and members"]
+    settingsButton.tap()
 
     let removeDisclosure = app.staticTexts["Circle privacy and membership disclosures"]
-    if removeDisclosure.waitForExistence(timeout: 3) {
-      XCTAssertTrue(removeDisclosure.exists, "Expected removal disclosure in Circle settings")
-    }
+    XCTAssertTrue(removeDisclosure.waitForExistence(timeout: 5), "Expected removal disclosure in Circle settings")
   }
 
   /// 3. Destination lock during image upload: destination remains visible and non-interactive through upload
@@ -176,24 +147,32 @@ final class CirclesUITests: XCTestCase {
     launchWithCircles()
 
     let composeButton = app.buttons["compose.fab"]
-    if !composeButton.exists {
-      let navCompose = app.buttons["New Post"]
-      XCTAssertTrue(navCompose.waitForExistence(timeout: 5), "Expected compose button")
-      navCompose.tap()
-    } else {
-      composeButton.tap()
-    }
+    composeButton.tap()
 
     let audiencePicker = app.buttons["composer.audiencePicker"]
     XCTAssertTrue(audiencePicker.waitForExistence(timeout: 5), "Audience picker must be present in composer")
     XCTAssertTrue(audiencePicker.label.contains("Public"), "Default composer destination must be Public")
+
+    // Switch to Family destination
+    audiencePicker.tap()
+    let familyOption = app.buttons["Family"]
+    XCTAssertTrue(familyOption.waitForExistence(timeout: 3), "Expected Family option in audience picker")
+    familyOption.tap()
+    XCTAssertTrue(audiencePicker.label.contains("Family"), "Audience should be Family")
+
+    // Destination picker must remain visible and accessible throughout composer lifecycle
+    XCTAssertTrue(audiencePicker.exists, "Audience picker must remain visible throughout composing")
   }
 
   /// 4. Feed: Circle badge visible; no repost/quote/share actions. Baseline: public post has them.
-  func testUnsupportedActionsAbsentForCirclePost() throws {
+  func testRedistributionControlsAbsentForCircleAndPresentForPublic() throws {
     launchWithCircles()
 
     openCirclesFeed()
+
+    // First prove a Circle post and badge exists
+    let circleBadge = app.staticTexts["Family"]
+    XCTAssertTrue(circleBadge.waitForExistence(timeout: 5), "Circle post with Family badge must exist")
 
     // For a Circle post, repost and share buttons must NOT be rendered in the view hierarchy
     let circleRepostButton = app.buttons["repostButton"]
@@ -202,11 +181,22 @@ final class CirclesUITests: XCTestCase {
     XCTAssertFalse(circleRepostButton.exists, "Repost action must be completely absent for Circle posts")
     XCTAssertFalse(circleShareButton.exists, "Public share action must be completely absent for Circle posts")
 
-    // Verify reply and like remain present
+    // Verify reply and like remain present for Circle post
     let replyButton = app.buttons["replyButton"]
     let likeButton = app.buttons["likeButton"]
     XCTAssertTrue(replyButton.waitForExistence(timeout: 5), "Reply button must remain available for Circle post")
     XCTAssertTrue(likeButton.waitForExistence(timeout: 5), "Like button must remain available for Circle post")
+
+    // Navigate to public home feed as baseline comparison
+    let homeTab = app.buttons["tab_home"]
+    XCTAssertTrue(homeTab.waitForExistence(timeout: 5), "Expected home tab")
+    homeTab.tap()
+
+    // Public posts have repost and share actions
+    let publicRepostButton = app.buttons["repostButton"].firstMatch
+    let publicShareButton = app.buttons["shareButton"].firstMatch
+    XCTAssertTrue(publicRepostButton.waitForExistence(timeout: 5), "Public post must display repostButton")
+    XCTAssertTrue(publicShareButton.waitForExistence(timeout: 5), "Public post must display shareButton")
   }
 
   /// 5. Thread: private reply remains locked in Family Circle.
@@ -220,9 +210,9 @@ final class CirclesUITests: XCTestCase {
     replyButton.tap()
 
     let audiencePicker = app.buttons["composer.audiencePicker"]
-    if audiencePicker.waitForExistence(timeout: 5) {
-      XCTAssertFalse(audiencePicker.isEnabled, "Reply audience must be locked to the parent Circle")
-    }
+    XCTAssertTrue(audiencePicker.waitForExistence(timeout: 5), "Expected audience picker on reply composer")
+    XCTAssertFalse(audiencePicker.isEnabled, "Reply audience must be locked to the parent Circle")
+    XCTAssertTrue(audiencePicker.label.contains("Family"), "Reply audience must be Family")
   }
 
   /// 6. Notifications: generic push causes authenticated Circle refresh.
@@ -249,7 +239,11 @@ final class CirclesUITests: XCTestCase {
     homeTab.tap()
 
     openCirclesFeed()
-    XCTAssertTrue(app.navigationBars["Circles"].waitForExistence(timeout: 5) || app.staticTexts["Circles"].waitForExistence(timeout: 5))
+    XCTAssertTrue(
+      app.navigationBars["Circles"].waitForExistence(timeout: 5)
+        || app.staticTexts["Circles"].waitForExistence(timeout: 5),
+      "Expected Circles view to load"
+    )
   }
 
   /// 8. Removal disclosure copy is displayed in Circle management

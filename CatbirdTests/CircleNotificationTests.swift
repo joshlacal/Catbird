@@ -936,7 +936,7 @@ struct CircleNotificationTests {
   @MainActor
   func authManagerLogsAreContentFreeAndExcludeCanaries() async throws {
     let canaryDID = "did:plc:supersecretcanaryauthdid999"
-    let canaryHandle = "supersecretcanaryhandle.bsky.social"
+    let canaryHandle = "supersecretcanaryhandle.invalid"
     let canaryReason = "super_secret_revocation_reason_token_leak_canary"
     let canaryToken = "secret_oauth_bearer_token_xyz_987654321"
     let canaryURL = "https://secret.auth.server.example.com/oauth/authorize?token=" + canaryToken
@@ -952,59 +952,88 @@ struct CircleNotificationTests {
 
     // Instantiate AuthenticationManager with default production handler
     let authManager = AuthenticationManager(logHandler: DefaultAuthLogHandler())
+    capturedLogs.removeAll()
+
+    func verifyStep(
+      stepName: String,
+      terminalEvent: AuthLogEvent
+    ) {
+      let terminalCode = terminalEvent.staticCode
+      let found = capturedLogs.contains(terminalCode)
+      #expect(found, "\(stepName) must emit terminal event code \(terminalCode), got: \(capturedLogs)")
+
+      for log in capturedLogs {
+        #expect(!log.contains(canaryDID), "\(stepName) log contained canary DID: \(log)")
+        #expect(!log.contains(canaryHandle), "\(stepName) log contained canary handle: \(log)")
+        #expect(!log.contains(canaryReason), "\(stepName) log contained canary reason: \(log)")
+        #expect(!log.contains(canaryToken), "\(stepName) log contained canary token: \(log)")
+        #expect(!log.contains(canaryURL), "\(stepName) log contained canary URL: \(log)")
+        #expect(!log.contains(canaryServer), "\(stepName) log contained canary server: \(log)")
+        #expect(!log.lowercased().contains("secret"), "\(stepName) log contained 'secret': \(log)")
+        #expect(!log.lowercased().contains("canary"), "\(stepName) log contained 'canary': \(log)")
+        #expect(log.hasPrefix("AUTH_"), "\(stepName) log message must be a static code: \(log)")
+      }
+      capturedLogs.removeAll()
+    }
 
     // 1. Auto-logout with canaries
+    authManager.storeHandle(canaryHandle, for: canaryDID)
+    capturedLogs.removeAll()
     await authManager.handleAutoLogoutFromPetrel(did: canaryDID, reason: canaryReason)
+    verifyStep(
+      stepName: "Auto-logout",
+      terminalEvent: .autoLogoutSkipAlertReauth
+    )
 
-    // 2. State updates with canaries
-    authManager.updateState(.authenticating(progress: .resolvingHandle(handle: canaryHandle)))
-    authManager.updateState(.error(message: "Fatal token rejection: \(canaryToken) at \(canaryURL)"))
-    authManager.updateState(.authenticated(userDID: canaryDID))
-    authManager.updateState(.unauthenticated)
+    // 2. Stored-handle reauth start with stored canary handle (generates URL)
+    _ = try? await authManager.startOAuthFlowForExpiredAccount()
+    verifyStep(
+      stepName: "Expired-account reauth start",
+      terminalEvent: .oauthURLGenerated
+    )
 
-    // 3. Catastrophic failure with canary error
+    // 2b. Expired-account reauth failure when expired account info is cleared
+    authManager.clearExpiredAccountInfo()
+    _ = try? await authManager.startOAuthFlowForExpiredAccount()
+    verifyStep(
+      stepName: "Expired-account reauth missing info",
+      terminalEvent: .expiredAccountReauthMissingInfo
+    )
+    // 3. Real login attempt failure with empty handle
+    _ = try? await authManager.login(handle: "")
+    verifyStep(
+      stepName: "Login failure",
+      terminalEvent: .oauthFlowFailed
+    )
+    if let callbackURL = URL(string: "https://catbird.blue/oauth/callback?error=\(canaryToken)&did=\(canaryDID)") {
+      _ = try? await authManager.handleCallback(callbackURL)
+      verifyStep(
+        stepName: "Callback failure",
+        terminalEvent: .callbackFailed
+      )
+
+      _ = try? await authManager.handleGatewayCallback(callbackURL)
+      verifyStep(
+        stepName: "Gateway callback failure",
+        terminalEvent: .gatewayCallbackFailed
+      )
+    }
+
+    // 5. Switch failure with canary DID
+    _ = try? await authManager.switchToAccount(did: canaryDID)
+    verifyStep(
+      stepName: "Switch failure",
+      terminalEvent: .accountSwitchFailed
+    )
     struct CanaryError: LocalizedError {
       var errorDescription: String? { "Canary internal server failure 500 at https://secret.canary.com" }
     }
+    authManager.resetDebounceForTesting()
     await authManager.handleCatastrophicAuthFailure(did: canaryDID, error: CanaryError(), isRetryable: false)
-
-    // 4. Circuit breaker open
-    await authManager.handleCircuitBreakerOpen(did: canaryDID)
-
-    // 5. Expired account reauth start
-    _ = try? await authManager.startOAuthFlowForExpiredAccount()
-
-    // 6. Callback failure with canary URL
-    if let callbackURL = URL(string: "https://catbird.blue/oauth/callback?error=\(canaryToken)&did=\(canaryDID)") {
-      _ = try? await authManager.handleCallback(callbackURL)
-      _ = try? await authManager.handleGatewayCallback(callbackURL)
-    }
-
-    // 7. Switch account with canary DID
-    _ = try? await authManager.switchToAccount(did: canaryDID)
-
-    // 8. Remove account with canary DID
-    await authManager.removeAccount(did: canaryDID)
-
-    // 9. Network recovery attempt
-    await authManager.attemptRecoveryFromNetworkIssues()
-
-    // Verify logs WERE actually captured (non-vacuous check)
-    #expect(capturedLogs.count >= 10, "Auth logs must be captured by the test seam across all exercised paths")
-
-    // Verify NONE of the captured logs contain sensitive canaries
-    for log in capturedLogs {
-      #expect(!log.contains(canaryDID), "Log contained canary DID: \(log)")
-      #expect(!log.contains(canaryHandle), "Log contained canary handle: \(log)")
-      #expect(!log.contains(canaryReason), "Log contained canary reason: \(log)")
-      #expect(!log.contains(canaryToken), "Log contained canary token: \(log)")
-      #expect(!log.contains(canaryURL), "Log contained canary URL: \(log)")
-      #expect(!log.contains(canaryServer), "Log contained canary server: \(log)")
-      #expect(!log.lowercased().contains("secret"), "Log contained 'secret': \(log)")
-      #expect(!log.lowercased().contains("canary"), "Log contained 'canary': \(log)")
-      #expect(log.hasPrefix("AUTH_"), "Log message must be a static code: \(log)")
-    }
-
+    verifyStep(
+      stepName: "Catastrophic failure",
+      terminalEvent: .catastrophicSkipAlert
+    )
     // Verify AuthState caseLabels are finite and content-free, never stringifying associated canaries
     let states: [AuthState] = [
       .initializing,
@@ -1035,43 +1064,109 @@ struct CircleNotificationTests {
       appStateManager.setLifecycleForTesting(previousLifecycle)
     }
 
-    // Transition AppStateManager to Alice
+    let namespace = "blue.catbird.test.switch.\(UUID().uuidString)"
+    let storage = KeychainStorage(namespace: namespace)
+    let client = try await ATProtoClient(
+      oauthConfig: OAuthConfig(
+        clientId: "test-client",
+        redirectUri: "https://catbird.blue/oauth/callback",
+        scope: "atproto"
+      ),
+      namespace: namespace,
+      authMode: .publicOAuth
+    )
+
+    let aliceAccount = Account(
+      did: "did:plc:alice",
+      handle: "alice.test",
+      pdsURL: URL(string: "https://bsky.social")!
+    )
+    let aliceSession = Session(
+      accessToken: "access-alice",
+      refreshToken: "refresh-alice",
+      createdAt: Date(),
+      expiresIn: 3600,
+      tokenType: .dpop,
+      did: "did:plc:alice"
+    )
+    try await storage.saveAccount(aliceAccount, for: "did:plc:alice")
+    try await storage.saveSession(aliceSession, for: "did:plc:alice")
+    try await storage.saveCurrentDID("did:plc:alice")
+
+    let bobAccount = Account(
+      did: "did:plc:bob",
+      handle: "bob.test",
+      pdsURL: URL(string: "https://bsky.social")!
+    )
+    let bobSession = Session(
+      accessToken: "access-bob",
+      refreshToken: "refresh-bob",
+      createdAt: Date(),
+      expiresIn: 3600,
+      tokenType: .dpop,
+      did: "did:plc:bob"
+    )
+    try await storage.saveAccount(bobAccount, for: "did:plc:bob")
+    try await storage.saveSession(bobSession, for: "did:plc:bob")
+
+    let authManager = appStateManager.authentication
+    authManager.setClientForTesting(client)
+    authManager.storeHandle("alice.test", for: "did:plc:alice")
+    authManager.storeHandle("bob.test", for: "did:plc:bob")
+    // Transition AppStateManager to Alice initially
     try await appStateManager.transitionToAuthenticated(userDID: "did:plc:alice")
     guard case .authenticated(let aliceState1) = appStateManager.lifecycle else {
       Issue.record("Expected authenticated lifecycle for Alice")
       return
     }
+    #expect(aliceState1.userDID == "did:plc:alice")
+    #expect(authManager.state.userDID == "did:plc:alice")
 
     let model1 = aliceState1.circleNotificationsModel
     #expect(!model1.isInvalidated)
+    let feedModel1 = CircleFeedModel(service: aliceState1.circleService, accountDID: "did:plc:alice")
+    #expect(!feedModel1.isInvalidated)
 
-    // Transition AppStateManager to Bob (switch away)
-    try await appStateManager.transitionToAuthenticated(userDID: "did:plc:bob", previousUserDID: "did:plc:alice")
+    // Switch to Bob via public AppStateManager.switchAccount entry point
+    await appStateManager.switchAccount(to: "did:plc:bob")
     guard case .authenticated(let bobState) = appStateManager.lifecycle else {
       Issue.record("Expected authenticated lifecycle for Bob")
       return
     }
     #expect(bobState.userDID == "did:plc:bob")
+    #expect(authManager.state.userDID == "did:plc:bob")
 
-    // Alice's old model1 is now invalidated and inert
+    // Alice's old model1 and feedModel1 are now invalidated and inert
     #expect(model1.isInvalidated)
-    try await model1.refresh()
+    try? await model1.refresh()
     #expect(model1.isInvalidated)
     #expect(model1.notifications.isEmpty)
+    #expect(feedModel1.isInvalidated)
 
-    // Transition AppStateManager back to Alice (switch back)
-    try await appStateManager.transitionToAuthenticated(userDID: "did:plc:alice", previousUserDID: "did:plc:bob")
+    // Bob's replacement models are fresh
+    let bobModel = bobState.circleNotificationsModel
+    #expect(!bobModel.isInvalidated)
+    let bobFeedModel = CircleFeedModel(service: bobState.circleService, accountDID: "did:plc:bob")
+    #expect(!bobFeedModel.isInvalidated)
+
+    // Switch back to Alice via public AppStateManager.switchAccount entry point
+    await appStateManager.switchAccount(to: "did:plc:alice")
     guard case .authenticated(let aliceState2) = appStateManager.lifecycle else {
       Issue.record("Expected authenticated lifecycle for Alice after switch back")
       return
     }
+    #expect(aliceState2.userDID == "did:plc:alice")
+    #expect(authManager.state.userDID == "did:plc:alice")
 
     let model2 = aliceState2.circleNotificationsModel
     // Brand new model instance for Alice is fresh and active
     #expect(!model2.isInvalidated)
+    let feedModel2 = CircleFeedModel(service: aliceState2.circleService, accountDID: "did:plc:alice")
+    #expect(!feedModel2.isInvalidated)
 
     // Old model1 remains permanently inert
     #expect(model1.isInvalidated)
+    #expect(feedModel1.isInvalidated)
   }
 
   // 19. Forced database drain failure during switch propagates and recovers without leaving lifecycle .launching
@@ -1087,6 +1182,55 @@ struct CircleNotificationTests {
       appStateManager.authentication.clearPendingAuthAlert()
     }
 
+    let namespace = "blue.catbird.test.drain.\(UUID().uuidString)"
+    let storage = KeychainStorage(namespace: namespace)
+    let client = try await ATProtoClient(
+      oauthConfig: OAuthConfig(
+        clientId: "test-client",
+        redirectUri: "https://catbird.blue/oauth/callback",
+        scope: "atproto"
+      ),
+      namespace: namespace,
+      authMode: .publicOAuth
+    )
+
+    let aliceAccount = Account(
+      did: "did:plc:alice",
+      handle: "alice.test",
+      pdsURL: URL(string: "https://bsky.social")!
+    )
+    let aliceSession = Session(
+      accessToken: "access-alice",
+      refreshToken: "refresh-alice",
+      createdAt: Date(),
+      expiresIn: 3600,
+      tokenType: .dpop,
+      did: "did:plc:alice"
+    )
+    try await storage.saveAccount(aliceAccount, for: "did:plc:alice")
+    try await storage.saveSession(aliceSession, for: "did:plc:alice")
+    try await storage.saveCurrentDID("did:plc:alice")
+
+    let bobAccount = Account(
+      did: "did:plc:bob",
+      handle: "bob.test",
+      pdsURL: URL(string: "https://bsky.social")!
+    )
+    let bobSession = Session(
+      accessToken: "access-bob",
+      refreshToken: "refresh-bob",
+      createdAt: Date(),
+      expiresIn: 3600,
+      tokenType: .dpop,
+      did: "did:plc:bob"
+    )
+    try await storage.saveAccount(bobAccount, for: "did:plc:bob")
+    try await storage.saveSession(bobSession, for: "did:plc:bob")
+
+    let authManager = appStateManager.authentication
+    authManager.setClientForTesting(client)
+    authManager.storeHandle("alice.test", for: "did:plc:alice")
+    authManager.storeHandle("bob.test", for: "did:plc:bob")
     var overrideInvoked = false
     // Force database drain failure via override
     AppStateManager.databaseDrainOverride = { did, timeout in

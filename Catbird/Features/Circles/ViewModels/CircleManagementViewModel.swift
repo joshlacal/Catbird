@@ -363,7 +363,7 @@ final class CircleManagementViewModel {
     switch operation.status {
     case .value_complete:
       state = .complete
-      if let delID = pendingDeleteOperationID, delID == operation.id {
+      if let delID = pendingDeleteOperationID, delID.lowercased() == operation.id.lowercased() {
         pendingDeleteOperationID = nil
         await CircleFeedCache.shared.purge(accountDID: userDID, space: circle.uri)
         await CircleMediaLoader.shared.purge(accountDID: userDID, space: circle.uri)

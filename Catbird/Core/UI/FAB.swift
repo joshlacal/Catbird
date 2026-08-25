@@ -124,6 +124,7 @@ struct FAB: View {
                         .composeGlass(reduceTransparency: reduceTransparency)
                         .accessibilityLabel(composeAccessibilityLabel)
                         .accessibilityHint(composeAccessibilityHint)
+                        .accessibilityIdentifier("compose.fab")
                 } else {
                     Menu {
                         composeMenuItems
@@ -134,6 +135,7 @@ struct FAB: View {
                     }
                         .accessibilityLabel(composeAccessibilityLabel)
                         .accessibilityHint(composeAccessibilityHint)
+                        .accessibilityIdentifier("compose.fab")
                 }
             }
             .padding(.horizontal, 16)

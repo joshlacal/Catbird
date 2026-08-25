@@ -1,6 +1,7 @@
 import CatbirdMLSCore
 import Foundation
 import OSLog
+import Petrel
 import SwiftData
 import SwiftUI
 
@@ -212,14 +213,77 @@ final class AppStateManager {
     #if DEBUG
     if isE2EMode, ProcessInfo.processInfo.arguments.contains("--e2e-fixture-account") {
       let fixtureDID = "did:plc:alicee2efixture"
-      authManager.updateState(.authenticated(userDID: fixtureDID))
-      do {
-        try await transitionToAuthenticated(userDID: fixtureDID)
-        MLSDiagnosticLogger.shared.logMLSReady(userDID: fixtureDID)
-      } catch {
-        logger.error("[E2E] Fixture transition failed: \(error)")
-        lifecycle = .unauthenticated
+      let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
+      authManager.setClientForTesting(client)
+      authManager.storeHandle("alice.test", for: fixtureDID)
+      authManager.storeHandle("bob.test", for: "did:plc:bobe2efixture")
+
+      let isUnsupported = ProcessInfo.processInfo.arguments.contains("--circles-unsupported-pds")
+      CircleFeatureFlags.serverCapability(enabled: !isUnsupported)
+
+      let appState = AppState(userDID: fixtureDID, client: client)
+      let transport = E2ECircleTransport()
+      let circleService = CircleService(transport: transport)
+      appState.circleService = circleService
+      appState.circleNotificationsModel = CircleNotificationsModel(
+        service: CircleNotificationService(service: circleService),
+        accountDID: fixtureDID
+      )
+
+      let publicAuthor = AppBskyActorDefs.ProfileViewBasic(
+        did: try! DID(didString: fixtureDID),
+        handle: try! Handle(handleString: "alice.test"),
+        displayName: "Alice",
+        pronouns: nil,
+        avatar: nil,
+        associated: nil,
+        viewer: nil,
+        labels: nil,
+        createdAt: nil,
+        verification: nil,
+        status: nil,
+        debug: nil
+      )
+      let publicPostURI = try! ATProtocolURI(uriString: "at://\(fixtureDID)/app.bsky.feed.post/publicpost1")
+      let publicPost = AppBskyFeedDefs.PostView(
+        uri: publicPostURI,
+        cid: CID.fromDAGCBOR(Data("publicpost1-cid".utf8)),
+        author: publicAuthor,
+        record: .knownType(
+          AppBskyFeedPost(
+            text: "Hello public world from Alice",
+            entities: nil,
+            facets: nil,
+            reply: nil,
+            embed: nil,
+            langs: [LanguageCodeContainer(languageCode: "en")],
+            labels: nil,
+            tags: nil,
+            createdAt: ATProtocolDate(date: Date())
+          )
+        ),
+        embed: nil,
+        bookmarkCount: nil,
+        replyCount: 0,
+        repostCount: 0,
+        likeCount: 0,
+        quoteCount: nil,
+        indexedAt: ATProtocolDate(date: Date()),
+        viewer: nil,
+        labels: nil,
+        threadgate: nil,
+        debug: nil
+      )
+      let publicFeedViewPost = AppBskyFeedDefs.FeedViewPost(post: publicPost, reply: nil, reason: nil, feedContext: nil, reqId: nil)
+      if let cachedPublicPost = CachedFeedViewPost(feedViewPost: publicFeedViewPost) {
+        let timelineModel = FeedModelContainer.shared.getModel(for: .timeline, appState: appState)
+        timelineModel.posts = [cachedPublicPost]
       }
+      authManager.updateState(.authenticated(userDID: fixtureDID))
+      authenticatedStates[fixtureDID] = appState
+      updateAccessOrder(fixtureDID)
+      lifecycle = .authenticated(appState)
+      MLSDiagnosticLogger.shared.logMLSReady(userDID: fixtureDID)
       startAuthStateObservationIfNeeded()
       return
     }
