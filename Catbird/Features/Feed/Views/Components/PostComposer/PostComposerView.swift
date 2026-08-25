@@ -71,12 +71,25 @@ struct PostComposerView: View {
     // Minimize callback - called when composer should be minimized
     let onMinimize: ((PostComposerViewModel) -> Void)?
     
-    init(parentPost: AppBskyFeedDefs.PostView? = nil, quotedPost: AppBskyFeedDefs.PostView? = nil, appState: AppState, onMinimize: ((PostComposerViewModel) -> Void)? = nil) {
+    init(
+        parentPost: AppBskyFeedDefs.PostView? = nil,
+        quotedPost: AppBskyFeedDefs.PostView? = nil,
+        destination: CircleDestination = .public,
+        appState: AppState,
+        circleService: CircleService? = nil,
+        onMinimize: ((PostComposerViewModel) -> Void)? = nil
+    ) {
         self.appState = appState
         self._viewModel = State(
-            wrappedValue: PostComposerViewModel(parentPost: parentPost, quotedPost: quotedPost, appState: appState))
+            wrappedValue: PostComposerViewModel(
+                parentPost: parentPost,
+                quotedPost: quotedPost,
+                destination: destination,
+                appState: appState,
+                circleService: circleService
+            )
+        )
         self.onMinimize = onMinimize
-        
         #if compiler(>=6.2)
         if #available(iOS 26.0, macOS 26.0, *) {
             self._attributedTextSelectionStorage = State(wrappedValue: AttributedTextSelection())
@@ -323,7 +336,8 @@ struct PostComposerView: View {
     
     private var singlePostEditor: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 16) {
+                destinationPickerSection
                 textEditorSection
                 quotedPostSection
                 mediaSection
@@ -333,6 +347,43 @@ struct PostComposerView: View {
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 16)
+        }
+    }
+
+    @ViewBuilder
+    private var destinationPickerSection: some View {
+        HStack {
+            Menu {
+                Button(action: {
+                    viewModel.selectDestination(.public)
+                }) {
+                    Label("Public", systemImage: "globe")
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    switch viewModel.destination {
+                    case .public:
+                        Image(systemName: "globe")
+                        Text("Public")
+                    case .circle(let circle):
+                        Image(systemName: "person.2.fill")
+                        Text(circle.name)
+                    }
+                    if viewModel.canChangeDestination && !isSubmitting {
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 10, weight: .semibold))
+                    }
+                }
+                .font(.subheadline)
+                .foregroundStyle(viewModel.destination == .public ? Color.secondary : Color.accentColor)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(Color.secondarySystemBackground)
+                .clipShape(Capsule())
+            }
+            .disabled(!viewModel.canChangeDestination || isSubmitting)
+
+            Spacer()
         }
     }
     

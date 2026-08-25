@@ -608,17 +608,19 @@ extension PostComposerViewModel {
     func createPost() async throws {
         // Create single post
         isPosting = true
-        defer { isPosting = false }
+        defer {
+            isPosting = false
+            endSubmission()
+        }
+
+        let submission = try beginSubmission()
 
         // Start MetricKit tracking for post composition
         if #available(iOS 26, macOS 26, *) {
           await MetricKitSignposts.beginPostComposition()
         }
 
-        logger.info("Creating post with text: \(self.postText)")
-
-        let postManager = appState.postManager
-
+        logger.info("Creating post with text: \(self.postText), destination: \(String(describing: submission.destination))")
         // Process facets (mentions, links, etc.)
         logger.debug("Processing facets...")
         let facets = await processFacets()
@@ -686,43 +688,70 @@ extension PostComposerViewModel {
         }
         let selfLabels = ComAtprotoLabelDefs.SelfLabels(values: filteredLabels.map { ComAtprotoLabelDefs.SelfLabel(val: $0.rawValue) })
 
-        // Convert threadgate settings if needed
-        var threadgateRules: [AppBskyFeedThreadgate.AppBskyFeedThreadgateAllowUnion]?
-        if !threadgateSettings.allowEverybody {
-            threadgateRules = threadgateSettings.toAllowUnions()
-        }
+        switch submission.destination {
+        case .public:
+            let postManager = appState.postManager
 
-        // Create the post
-        logger.info("Calling postManager.createPost with text: '\(self.postText)', languages: \(self.selectedLanguages.count), facets: \(facets.count), hasEmbed: \(embed != nil), isReply: \(self.parentPost != nil)")
+            // Convert threadgate settings if needed
+            var threadgateRules: [AppBskyFeedThreadgate.AppBskyFeedThreadgateAllowUnion]?
+            if !threadgateSettings.allowEverybody {
+                threadgateRules = threadgateSettings.toAllowUnions()
+            }
 
-        do {
-            try await postManager.createPost(
-                postText,
-                languages: selectedLanguages,
-                metadata: [:],
-                hashtags: outlineTags,
-                facets: facets,
-                parentPost: parentPost,
-                selfLabels: selfLabels,
-                embed: embed,
-                threadgateAllowRules: threadgateRules
-            )
-        } catch {
-            // If offline, enqueue into outbox and surface queued status
-            let nsErr = error as NSError
-            if nsErr.domain == NSURLErrorDomain && (nsErr.code == NSURLErrorNotConnectedToInternet || nsErr.code == NSURLErrorTimedOut) {
-                ComposerOutbox.shared.enqueuePost(text: postText, languages: selectedLanguages, labels: selectedLabels, hashtags: outlineTags)
-                appState.composerDraftManager.clearDraft()
-                logger.info("Post queued offline")
+            // Create the post
+            logger.info("Calling postManager.createPost with text: '\(self.postText)', languages: \(self.selectedLanguages.count), facets: \(facets.count), hasEmbed: \(embed != nil), isReply: \(self.parentPost != nil)")
+
+            do {
+                try await postManager.createPost(
+                    postText,
+                    languages: selectedLanguages,
+                    metadata: [:],
+                    hashtags: outlineTags,
+                    facets: facets,
+                    parentPost: parentPost,
+                    selfLabels: selfLabels,
+                    embed: embed,
+                    threadgateAllowRules: threadgateRules
+                )
+            } catch {
+                // If offline, enqueue into outbox and surface queued status
+                let nsErr = error as NSError
+                if nsErr.domain == NSURLErrorDomain && (nsErr.code == NSURLErrorNotConnectedToInternet || nsErr.code == NSURLErrorTimedOut) {
+                    ComposerOutbox.shared.enqueuePost(text: postText, languages: selectedLanguages, labels: selectedLabels, hashtags: outlineTags)
+                    appState.composerDraftManager.clearDraft()
+                    logger.info("Post queued offline")
+                    if #available(iOS 26, macOS 26, *) {
+                      await MetricKitSignposts.endPostComposition(posted: false, mediaCount: mediaItems.count, characterCount: postText.count)
+                    }
+                    return
+                }
                 if #available(iOS 26, macOS 26, *) {
                   await MetricKitSignposts.endPostComposition(posted: false, mediaCount: mediaItems.count, characterCount: postText.count)
                 }
-                return
+                throw error
             }
-            if #available(iOS 26, macOS 26, *) {
-              await MetricKitSignposts.endPostComposition(posted: false, mediaCount: mediaItems.count, characterCount: postText.count)
+
+        case let .circle(circle):
+            logger.info("Calling CircleService.publishPost to space: '\(circle.uri.uriString())'")
+            let service = circleService ?? appState.circleService
+            let circleDraft = CirclePostDraft(
+                text: postText,
+                facets: facets.isEmpty ? nil : facets,
+                langs: selectedLanguages,
+                labels: selfLabels.values.isEmpty ? nil : AppBskyFeedPost.AppBskyFeedPostLabelsUnion.comAtprotoLabelDefsSelfLabels(selfLabels),
+                embed: embed,
+                createdAt: ATProtocolDate(date: submission.createdAt)
+            )
+
+            do {
+                _ = try await service.publishPost(destination: circle, draft: circleDraft)
+            } catch {
+                logger.error("Circle post creation failed: \(error.localizedDescription)")
+                if #available(iOS 26, macOS 26, *) {
+                  await MetricKitSignposts.endPostComposition(posted: false, mediaCount: mediaItems.count, characterCount: postText.count)
+                }
+                throw error
             }
-            throw error
         }
 
         // Clear draft on successful post creation

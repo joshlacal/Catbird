@@ -1282,6 +1282,11 @@ final class AppState {
         client
     }
 
+    /// Circle service using the current authenticated client
+    var circleService: CircleService {
+        CircleService(transport: GatewayCircleTransport(client: client))
+    }
+
     #if canImport(FoundationModels)
         @available(iOS 26.0, macOS 26.0, *)
         var blueskyAgent: BlueskyIntelligenceAgent {

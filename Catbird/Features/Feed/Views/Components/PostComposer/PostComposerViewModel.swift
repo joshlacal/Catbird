@@ -203,14 +203,65 @@ final class PostComposerViewModel {
     return postText.count > maxCharacterCount
   }
   
+  // MARK: - Circle Destination and Submission Properties
+  
+  private(set) var destination: CircleDestination = .public
+  private(set) var activeSubmission: PostSubmission?
+  var isReplyLockedToCircle: Bool = false
+  var circleService: CircleService?
+  
+  var canChangeDestination: Bool {
+    guard activeSubmission == nil else { return false }
+    guard !isReplyLockedToCircle else { return false }
+    return true
+  }
+  
+  func selectDestination(_ newDestination: CircleDestination) {
+    guard canChangeDestination else { return }
+    self.destination = newDestination
+    if case .circle = newDestination {
+      // Quotes are unsupported in Circles
+      self.quotedPost = nil
+    }
+  }
+  
+  @discardableResult
+  func beginSubmission() throws -> PostSubmission {
+    if let active = activeSubmission {
+      return active
+    }
+    let submission = PostSubmission(
+      id: UUID(),
+      destination: self.destination,
+      text: self.postText,
+      createdAt: Date()
+    )
+    self.activeSubmission = submission
+    return submission
+  }
+  
+  func endSubmission() {
+    self.activeSubmission = nil
+  }
+  
   // MARK: - Initialization
   
-  init(parentPost: AppBskyFeedDefs.PostView? = nil, quotedPost: AppBskyFeedDefs.PostView? = nil, appState: AppState) {
+  init(
+    parentPost: AppBskyFeedDefs.PostView? = nil,
+    quotedPost: AppBskyFeedDefs.PostView? = nil,
+    destination: CircleDestination = .public,
+    appState: AppState,
+    circleService: CircleService? = nil
+  ) {
     logger.info("PostComposerViewModel: Initializing - parentPost: \(parentPost != nil), quotedPost: \(quotedPost != nil)")
     self.parentPost = parentPost
     self.quotedPost = quotedPost
+    self.destination = destination
+    if parentPost != nil, case .circle = destination {
+      self.isReplyLockedToCircle = true
+    }
     self.appState = appState
-    
+    self.circleService = circleService
     if let client = appState.atProtoClient {
       self.mediaUploadManager = MediaUploadManager(client: client)
       logger.debug("PostComposerViewModel: MediaUploadManager initialized")

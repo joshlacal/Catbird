@@ -32,9 +32,29 @@ extension BlueCatbirdCircleDefs.CircleSummary: @retroactive Equatable {
 /// A post targets exactly one destination: Public or one named Circle. No
 /// failure may retry against the public repo, so the destination is decided
 /// once and carried unchanged through submission.
-enum CircleDestination: Equatable, Sendable {
+public enum CircleDestination: Equatable, Sendable {
   case `public`
   case circle(CircleSummary)
+}
+
+/// Immutable snapshot of a post submission, captured before uploads begin.
+public struct PostSubmission: Sendable, Equatable {
+  public let id: UUID
+  public let destination: CircleDestination
+  public let text: String
+  public let createdAt: Date
+
+  public init(
+    id: UUID = UUID(),
+    destination: CircleDestination,
+    text: String,
+    createdAt: Date = Date()
+  ) {
+    self.id = id
+    self.destination = destination
+    self.text = text
+    self.createdAt = createdAt
+  }
 }
 
 /// Access state of a Circle Space, surfaced as an explicit transition rather
