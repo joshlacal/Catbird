@@ -455,6 +455,7 @@ struct PostComposerViewUIKit: View {
         isPlusMenuOpen: $showingPlusMenu,
         characterCount: vm.postText.count,
         allowTenor: appState.appSettings.allowTenor,
+        isAddToThreadDisabled: vm.destination != .public,
         threadgateValue: ComposerChipsStrip.threadgateSummary(vm.threadgateSettings),
         languageValue: languageSummary(vm: vm),
         actions: ComposerBarActions(
@@ -468,6 +469,7 @@ struct PostComposerViewUIKit: View {
           onTags: { showingOutlineTagsEditor = true },
           onLabels: { showingLabelSelector = true },
           onAddToThread: {
+            guard vm.destination == .public else { return }
             withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
               if vm.isThreadMode {
                 vm.addNewThreadEntry()

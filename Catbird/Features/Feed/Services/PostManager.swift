@@ -89,8 +89,9 @@ final class PostManager {
       // Prepare reply reference if this is a reply
       var reply: AppBskyFeedPost.ReplyRef?
       if let parentPost = parentPost {
-        reply = try createReplyRef(for: parentPost)
-        logger.debug("Created reply reference: root=\(reply!.root.uri), parent=\(reply!.parent.uri)")
+        let ref = Self.createReplyRef(for: parentPost)
+        reply = ref
+        logger.debug("Created reply reference: root=\(ref.root.uri), parent=\(ref.parent.uri)")
       } else {
         logger.debug("No parent post - creating root post")
       }
@@ -277,13 +278,10 @@ final class PostManager {
     }
   }
   /// Creates a reply reference for a parent post
-  private func createReplyRef(for parentPost: AppBskyFeedDefs.PostView) throws
+  static func createReplyRef(for parentPost: AppBskyFeedDefs.PostView)
     -> AppBskyFeedPost.ReplyRef {
-    logger.debug("Creating reply reference for post: \(parentPost.uri)")
-
     // Use the parentPost CID directly - this is the actual CID of the post as stored in the network
     let parentRef = ComAtprotoRepoStrongRef(uri: parentPost.uri, cid: parentPost.cid)
-    logger.debug("Parent reference created: uri=\(parentPost.uri), cid=\(parentPost.cid)")
 
     // For the root, check if this is already a reply (in which case use its root)
     // or if it's the root itself
@@ -292,15 +290,11 @@ final class PostManager {
       let postObj = bskyPost as? AppBskyFeedPost,
       let replyRoot = postObj.reply?.root {
       rootRef = replyRoot
-      logger.debug(
-        "Using existing root reference from parent: uri=\(replyRoot.uri), cid=\(replyRoot.cid)")
     } else {
       // If not a reply, the parent is the root
       rootRef = parentRef
-      logger.debug("Parent post is the root of thread: uri=\(parentRef.uri)")
     }
 
-    logger.info("Reply reference created - root: \(rootRef.uri), parent: \(parentRef.uri)")
     return AppBskyFeedPost.ReplyRef(root: rootRef, parent: parentRef)
   }
 
@@ -385,7 +379,7 @@ final class PostManager {
       text: text,
       entities: nil,
       facets: nil,
-      reply: parentPost != nil ? try createReplyRef(for: parentPost!) : nil,
+      reply: parentPost != nil ? Self.createReplyRef(for: parentPost!) : nil,
       embed: embed,
       langs: languages,
       labels: postLabels,

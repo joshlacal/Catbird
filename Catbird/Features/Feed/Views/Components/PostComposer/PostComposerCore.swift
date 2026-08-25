@@ -258,7 +258,8 @@ extension PostComposerViewModel {
 
     func enterThreadMode() {
         guard !isThreadMode else { return }
-
+        // ponytail: block thread mode for circles, add circle threading when needed
+        guard destination == .public else { return }
         // Save current post content to first thread entry
         threadEntries[0].text = postText
         threadEntries[0].mediaItems = mediaItems
@@ -435,6 +436,11 @@ extension PostComposerViewModel {
     // MARK: - Thread Creation
 
     func createThread() async throws {
+        // ponytail: block thread mode for circles, add circle threading when needed
+        guard destination == .public else {
+            throw NSError(domain: "PostError", code: 0, userInfo: [NSLocalizedDescriptionKey: "Thread mode is only supported for public posts"])
+        }
+
         // Update current thread entry before posting
         updateCurrentThreadEntry()
 
@@ -734,15 +740,16 @@ extension PostComposerViewModel {
         case let .circle(circle):
             logger.info("Calling CircleService.publishPost to space: '\(circle.uri.uriString())'")
             let service = circleService ?? appState.circleService
+            let replyRef = parentPost.map { PostManager.createReplyRef(for: $0) }
             let circleDraft = CirclePostDraft(
                 text: postText,
                 facets: facets.isEmpty ? nil : facets,
+                reply: replyRef,
                 langs: selectedLanguages,
                 labels: selfLabels.values.isEmpty ? nil : AppBskyFeedPost.AppBskyFeedPostLabelsUnion.comAtprotoLabelDefsSelfLabels(selfLabels),
                 embed: embed,
                 createdAt: ATProtocolDate(date: submission.createdAt)
             )
-
             do {
                 _ = try await service.publishPost(destination: circle, draft: circleDraft)
             } catch {

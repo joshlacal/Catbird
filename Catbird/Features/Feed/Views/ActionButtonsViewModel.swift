@@ -47,22 +47,21 @@ import SwiftUI
     /// Toggle repost status for the post with optimistic updates
     /// - Returns: True if the operation was successful
     func toggleRepost() async throws {
+        guard postViewModel.capabilities.canRepost else { return }
         try await postViewModel.toggleRepost()
     }
-    
     /// Share the post using system share sheet or to chat
     /// - Parameter post: The post to share
     @MainActor
     func share(post: AppBskyFeedDefs.PostView) async {
+        guard postViewModel.capabilities.canPublicShare else { return }
+        #if os(iOS)
         // Build a Bluesky URL that can be opened in any Bluesky client
         let username = post.author.handle.description == "handle.invalid" ? post.author.did.didString() : post.author.handle.description
         let recordKey = post.uri.recordKey ?? ""
         let shareURL = URL(string: "https://bsky.app/profile/\(username)/post/\(recordKey)")
         
         guard let url = shareURL else { return }
-        
-        #if os(iOS)
-        // Create custom activity for sharing to chat
         let shareToChat = ShareToChatActivity(post: post, appState: appState)
         let shareToMLSChat = ShareToMLSChatActivity(post: post, appState: appState)
         
@@ -111,6 +110,7 @@ import SwiftUI
     /// - Parameter text: The text for the quote
     /// - Returns: True if the operation was successful
     func createQuotePost(text: String) async throws -> Bool {
+        guard postViewModel.capabilities.canQuote else { return false }
         return try await postViewModel.createQuotePost(text: text)
     }
 }

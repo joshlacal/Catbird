@@ -122,7 +122,7 @@ actor GatewayCircleTransport: CircleTransport {
       text: draft.text,
       entities: nil,
       facets: draft.facets,
-      reply: nil,
+      reply: draft.reply,
       embed: draft.embed,
       langs: draft.langs,
       labels: draft.labels,
@@ -181,6 +181,32 @@ actor GatewayCircleTransport: CircleTransport {
     case .comAtprotoSpaceApplyWritesCreateResult(let createResult):
       return createResult.uri
     case .comAtprotoSpaceApplyWritesUpdateResult, .comAtprotoSpaceApplyWritesDeleteResult, .unexpected:
+      throw CircleError.spaceWriteRejected("unexpected applyWrites result")
+    }
+  }
+
+  func deletePost(uri: ATProtocolURI, circle: CircleSummary) async throws {
+    let did = try await client.getDid()
+    let rkey = uri.recordKey ?? ""
+
+    let delete = ComAtprotoSpaceApplyWrites.Delete(
+      collection: try NSID(nsidString: "app.bsky.feed.post"),
+      rkey: try RecordKey(keyString: rkey)
+    )
+
+    let input = ComAtprotoSpaceApplyWrites.Input(
+      space: circle.uri,
+      repo: try DID(didString: did),
+      validate: true,
+      writes: [ComAtprotoSpaceApplyWrites.InputWritesUnion(delete)]
+    )
+
+    let (_, output) = try await client.com.atproto.space.applyWrites(input: input)
+    guard let result = output?.results?.first else { throw CircleError.spaceWriteRejected("no result") }
+    switch result {
+    case .comAtprotoSpaceApplyWritesDeleteResult:
+      return
+    case .comAtprotoSpaceApplyWritesCreateResult, .comAtprotoSpaceApplyWritesUpdateResult, .unexpected:
       throw CircleError.spaceWriteRejected("unexpected applyWrites result")
     }
   }
@@ -246,5 +272,9 @@ actor CircleService {
 
   func like(post: AppBskyFeedDefs.PostView, circle: CircleSummary) async throws -> ATProtocolURI {
     try await transport.like(post: post, circle: circle)
+  }
+
+  func deletePost(uri: ATProtocolURI, circle: CircleSummary) async throws {
+    try await transport.deletePost(uri: uri, circle: circle)
   }
 }

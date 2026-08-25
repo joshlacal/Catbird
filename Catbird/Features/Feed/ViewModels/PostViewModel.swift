@@ -41,8 +41,14 @@ final class PostViewModel {
     // Store the actual like, repost, and bookmark URIs
     private var likeUri: ATProtocolURI?
     private var repostUri: ATProtocolURI?
-    
-    // Task for initialization
+
+    /// Visibility context for the post (public or circle)
+    var visibilityContext: PostVisibilityContext = .public
+
+    /// Capabilities available for this post given its visibility context
+    var capabilities: PostCapabilities {
+        PostCapabilities.forContext(visibilityContext)
+    }
     private var initializationTask: Task<Void, Never>?
     
     /// Logger for debugging
@@ -253,88 +259,137 @@ final class PostViewModel {
         
         do {
             if !wasLiked { // Creating a new like
-                let postRef = ComAtprotoRepoStrongRef(
-                    uri: try ATProtocolURI(uriString: postId),
-                    cid: postCid
-                )
-                // Check if via attribution is enabled in settings
-                let enableAttribution = appState.appSettings.enableViaAttribution
-                let viaReference = enableAttribution ? via : nil
-                
-                let likeRecord = AppBskyFeedLike(
-                    subject: postRef,
-                    createdAt: .init(date: Date()),
-                    via: viaReference
-                )
-                
-                let did = try await client.getDid()
-                let input = ComAtprotoRepoCreateRecord.Input(
-                    repo: try ATIdentifier(string: did),
-                    collection: try NSID(nsidString: "app.bsky.feed.like"),
-                    record: .knownType(likeRecord)
-                )
-                
-                // Use try for result handling
-                let (code, data) = try await client.com.atproto.repo.createRecord(input: input)
-                
-                guard code == 200, let response = data else {
-                    throw PostViewModelError.requestFailed
-                }
-                // Save the URI both in shadow manager and locally
-                self.likeUri = response.uri
-                
-                // Update shadow with real URI
-                await appState.postShadowManager.updateShadow(forUri: postId) { shadow in
-                    shadow.likeUri = response.uri
-                }
-                
-                // Track interaction for feed feedback
-                if let postURI = try? ATProtocolURI(uriString: postId) {
-                    appState.feedFeedbackManager.trackLike(postURI: postURI)
-                }
-                
-                return true
-                
-            } else { // Deleting an existing like
-                let collection = "app.bsky.feed.like"
-                
-                // Determine record key (prefer local, fallback to shadow)
-                var recordKey = ""
-                if let uri = self.likeUri {
-                    recordKey = uri.recordKey ?? ""
-                }
-                
-                if recordKey.isEmpty {
-                    if let shadow = await appState.postShadowManager.getShadow(forUri: postId),
-                       let likeUri = shadow.likeUri {
-                        recordKey = likeUri.recordKey ?? ""
+                switch visibilityContext {
+                case .public:
+                    let postRef = ComAtprotoRepoStrongRef(
+                        uri: try ATProtocolURI(uriString: postId),
+                        cid: postCid
+                    )
+                    // Check if via attribution is enabled in settings
+                    let enableAttribution = appState.appSettings.enableViaAttribution
+                    let viaReference = enableAttribution ? via : nil
+                    
+                    let likeRecord = AppBskyFeedLike(
+                        subject: postRef,
+                        createdAt: .init(date: Date()),
+                        via: viaReference
+                    )
+                    
+                    let did = try await client.getDid()
+                    let input = ComAtprotoRepoCreateRecord.Input(
+                        repo: try ATIdentifier(string: did),
+                        collection: try NSID(nsidString: "app.bsky.feed.like"),
+                        record: .knownType(likeRecord)
+                    )
+                    
+                    // Use try for result handling
+                    let (code, data) = try await client.com.atproto.repo.createRecord(input: input)
+                    
+                    guard code == 200, let response = data else {
+                        throw PostViewModelError.requestFailed
+                    }
+                    // Save the URI both in shadow manager and locally
+                    self.likeUri = response.uri
+                    
+                    // Update shadow with real URI
+                    await appState.postShadowManager.updateShadow(forUri: postId) { shadow in
+                        shadow.likeUri = response.uri
+                    }
+                    
+                    // Track interaction for feed feedback
+                    if let postURI = try? ATProtocolURI(uriString: postId) {
+                        appState.feedFeedbackManager.trackLike(postURI: postURI)
+                    }
+                case let .circle(circle):
+                    let postRef = ComAtprotoRepoStrongRef(
+                        uri: try ATProtocolURI(uriString: postId),
+                        cid: postCid
+                    )
+                    let postView = AppBskyFeedDefs.PostView(
+                        uri: postRef.uri,
+                        cid: postRef.cid,
+                        author: AppBskyActorDefs.ProfileViewBasic(
+                            did: try DID(didString: "did:plc:author"),
+                            handle: try Handle(handleString: "handle.invalid"),
+                            displayName: nil,
+                            pronouns: nil,
+                            avatar: nil,
+                            associated: nil,
+                            viewer: nil,
+                            labels: nil,
+                            createdAt: nil,
+                            verification: nil,
+                            status: nil,
+                            debug: nil
+                        ),
+                        record: ATProtocolValueContainer.knownType(
+                            AppBskyFeedPost(
+                                text: "",
+                                entities: nil,
+                                facets: nil,
+                                reply: nil,
+                                embed: nil,
+                                langs: [],
+                                labels: nil,
+                                tags: nil,
+                                createdAt: ATProtocolDate(date: Date())
+                            )
+                        ),
+                        embed: nil,
+                        bookmarkCount: nil,
+                        replyCount: nil,
+                        repostCount: nil,
+                        likeCount: nil,
+                        quoteCount: nil,
+                        indexedAt: ATProtocolDate(date: Date()),
+                        viewer: nil,
+                        labels: nil,
+                        threadgate: nil,
+                        debug: nil
+                    )
+                    let service = appState.circleService
+                    let responseUri = try await service.like(post: postView, circle: circle)
+                    self.likeUri = responseUri
+                    await appState.postShadowManager.updateShadow(forUri: postId) { shadow in
+                        shadow.likeUri = responseUri
                     }
                 }
-                
-                guard !recordKey.isEmpty else {
-                    #if DEBUG
-                    logger.error("Error: Unable to find valid like record key for deletion.")
-                    #endif
-                    // Revert optimistic update
-                    await revertLikeState(wasLiked: wasLiked, originalCount: currentLikeCount)
-                    return false // Indicate failure
+            } else { // Deleting an existing like
+                switch visibilityContext {
+                case .public:
+                    guard let uri = likeUri else {
+                        throw PostViewModelError.unableToFindRecordKey
+                    }
+                    
+                    let did = try await client.getDid()
+                    let input = ComAtprotoRepoDeleteRecord.Input(
+                        repo: try ATIdentifier(string: did),
+                        collection: try NSID(nsidString: "app.bsky.feed.like"),
+                        rkey: try RecordKey(keyString: uri.recordKey ?? "")
+                    )
+                    
+                    let responseCode = try await client.com.atproto.repo.deleteRecord(input: input).responseCode
+                    
+                    guard responseCode == 200 else {
+                        throw PostViewModelError.requestFailed
+                    }
+                    
+                    self.likeUri = nil
+                    await appState.postShadowManager.updateShadow(forUri: postId) { shadow in
+                        shadow.likeUri = nil
+                    }
+                case let .circle(circle):
+                    if let uri = likeUri {
+                        let service = appState.circleService
+                        try await service.deletePost(uri: uri, circle: circle)
+                    }
+                    self.likeUri = nil
+                    await appState.postShadowManager.updateShadow(forUri: postId) { shadow in
+                        shadow.likeUri = nil
+                    }
                 }
-                
-                let did = try await client.getDid()
-                let input = ComAtprotoRepoDeleteRecord.Input(
-                    repo: try ATIdentifier(string: did),
-                    collection: try NSID(nsidString: collection),
-                    rkey: try RecordKey(keyString: recordKey)
-                )
-                
-                // Use try for result handling
-                _ = try await client.com.atproto.repo.deleteRecord(input: input)
-                
-                // Clear the local URI since we've successfully deleted it
-                self.likeUri = nil
-                // Shadow state already updated optimistically, confirm with server state later if needed
-                return true
             }
+            return true
         } catch {
             // Revert optimistic update on any error
             await revertLikeState(wasLiked: wasLiked, originalCount: currentLikeCount)
@@ -354,6 +409,10 @@ final class PostViewModel {
     ///   Note: Attribution is controlled by the enableViaAttribution setting
     @discardableResult
     func toggleRepost(via: ComAtprotoRepoStrongRef? = nil) async throws -> Bool {
+        guard capabilities.canRepost else {
+            logger.info("Repost unavailable for visibility context")
+            return false
+        }
         guard let client = appState.atProtoClient else {
             throw PostViewModelError.missingClient
         }
@@ -529,6 +588,10 @@ final class PostViewModel {
     /// Create a quote post
     @discardableResult
     func createQuotePost(text: String) async throws -> Bool {
+        guard capabilities.canQuote else {
+            logger.info("Quote unavailable for visibility context")
+            return false
+        }
         guard let client = appState.atProtoClient else {
             throw PostViewModelError.missingClient
         }

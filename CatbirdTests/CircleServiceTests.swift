@@ -70,6 +70,9 @@ actor RecordingCircleTransport: CircleTransport {
     try throwIfConfigured()
     throw CircleError.invalidResponse
   }
+  func deletePost(uri: ATProtocolURI, circle: CircleSummary) async throws {
+    try throwIfConfigured()
+  }
 }
 
 @Suite("Circle service boundary")

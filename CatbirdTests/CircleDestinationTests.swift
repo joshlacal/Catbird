@@ -142,6 +142,10 @@ actor DestinationRecordingCircleTransport: CircleTransport {
     if let error { throw error }
     return try ATProtocolURI(uriString: "\(circle.uri.uriString())/app.bsky.feed.like/testlike123")
   }
+
+  func deletePost(uri: ATProtocolURI, circle: CircleSummary) async throws {
+    if let error { throw error }
+  }
 }
 
 @Suite("Circle destination and composer routing")
@@ -313,5 +317,188 @@ struct CircleDestinationTests {
     let publicCalls = await transport.publicEndpointCallCount
     #expect(publicCalls == 0)
     #expect(model.destination == .circle(family))
+  }
+
+  @Test("Circle reply carries reply reference from parent post")
+  @MainActor
+  func circleReplyCarriesReplyReferenceFromParentPost() async throws {
+    let family = CircleTestFixtures.family
+    let transport = DestinationRecordingCircleTransport()
+    let service = CircleService(transport: transport)
+
+    let parent = circlePost
+    let model = await composer(
+      destination: .circle(family),
+      replyingTo: parent,
+      circleService: service
+    )
+    model.postText = "Replying to circle post"
+
+    try await model.createPost()
+
+    let published = await transport.publishedPosts
+    #expect(published.count == 1)
+    guard let draft = published.first?.draft else {
+      Issue.record("Expected published draft")
+      return
+    }
+    #expect(draft.reply != nil)
+    #expect(draft.reply?.parent.uri == parent.uri)
+    #expect(draft.reply?.parent.cid == parent.cid)
+    #expect(draft.reply?.root.uri == parent.uri)
+    #expect(draft.reply?.root.cid == parent.cid)
+  }
+
+  @Test("Nested Circle reply carries root from grandparent and parent from direct parent")
+  @MainActor
+  func nestedCircleReplyCarriesRootAndParentFromGrandparent() async throws {
+    let family = CircleTestFixtures.family
+    let transport = DestinationRecordingCircleTransport()
+    let service = CircleService(transport: transport)
+
+    let rootURI = try ATProtocolURI(uriString: "\(CircleTestFixtures.familyURI.uriString())/app.bsky.feed.post/root123")
+    let rootCID = CID.fromDAGCBOR(Data("root-cid".utf8))
+    let rootRef = ComAtprotoRepoStrongRef(uri: rootURI, cid: rootCID)
+
+    let parentURI = try ATProtocolURI(uriString: "\(CircleTestFixtures.familyURI.uriString())/app.bsky.feed.post/child123")
+    let parentCID = CID.fromDAGCBOR(Data("child-cid".utf8))
+    let parentRef = ComAtprotoRepoStrongRef(uri: parentURI, cid: parentCID)
+
+    let replyRef = AppBskyFeedPost.ReplyRef(root: rootRef, parent: parentRef)
+    let parentRecord = AppBskyFeedPost(
+      text: "Nested child post",
+      entities: nil,
+      facets: nil,
+      reply: replyRef,
+      embed: nil,
+      langs: [],
+      labels: nil,
+      tags: nil,
+      createdAt: ATProtocolDate(date: Date())
+    )
+    let nestedParent = AppBskyFeedDefs.PostView(
+      uri: parentURI,
+      cid: parentCID,
+      author: AppBskyActorDefs.ProfileViewBasic(
+        did: try DID(didString: "did:plc:bob"),
+        handle: try Handle(handleString: "bob.bsky.social"),
+        displayName: nil,
+        pronouns: nil,
+        avatar: nil,
+        associated: nil,
+        viewer: nil,
+        labels: nil,
+        createdAt: nil,
+        verification: nil,
+        status: nil,
+        debug: nil
+      ),
+      record: ATProtocolValueContainer.knownType(parentRecord),
+      embed: nil,
+      bookmarkCount: nil,
+      replyCount: 0,
+      repostCount: 0,
+      likeCount: 0,
+      quoteCount: 0,
+      indexedAt: ATProtocolDate(date: Date()),
+      viewer: nil,
+      labels: nil,
+      threadgate: nil,
+      debug: nil
+    )
+
+    let model = await composer(
+      destination: .circle(family),
+      replyingTo: nestedParent,
+      circleService: service
+    )
+    model.postText = "Replying to nested circle post"
+
+    try await model.createPost()
+
+    let published = await transport.publishedPosts
+    #expect(published.count == 1)
+    guard let draft = published.first?.draft else {
+      Issue.record("Expected published draft")
+      return
+    }
+    #expect(draft.reply != nil)
+    #expect(draft.reply?.root.uri == rootURI)
+    #expect(draft.reply?.root.cid == rootCID)
+    #expect(draft.reply?.parent.uri == parentURI)
+    #expect(draft.reply?.parent.cid == parentCID)
+  }
+
+  @Test("Circle destination blocks thread mode and exiting exits cleanly")
+  @MainActor
+  func circleDestinationBlocksThreadMode() async throws {
+    let family = CircleTestFixtures.family
+    let model = await composer(destination: .circle(family))
+    model.postText = "Single circle post"
+
+    model.enterThreadMode()
+    #expect(model.isThreadMode == false)
+
+    var threwError = false
+    do {
+      try await model.createThread()
+    } catch {
+      threwError = true
+    }
+    #expect(threwError == true)
+
+    let publicModel = await composer(destination: .public)
+    publicModel.enterThreadMode()
+    #expect(publicModel.isThreadMode == true)
+
+    publicModel.selectDestination(.circle(family))
+    #expect(publicModel.isThreadMode == false)
+    #expect(publicModel.destination == .circle(family))
+  }
+
+  @Test("PostVisibilityContext and PostCapabilities enforce Circle interaction constraints")
+  func postVisibilityContextAndCapabilitiesForCircle() {
+    let family = CircleTestFixtures.family
+    let circleContext = PostVisibilityContext.circle(family)
+    let authorCaps = PostCapabilities.forContext(circleContext, isAuthor: true)
+
+    #expect(authorCaps.canReply == true)
+    #expect(authorCaps.canLike == true)
+    #expect(authorCaps.canDelete == true)
+    #expect(authorCaps.canRepost == false)
+    #expect(authorCaps.canQuote == false)
+    #expect(authorCaps.canPublicShare == false)
+
+    let nonAuthorCaps = PostCapabilities.forContext(circleContext, isAuthor: false)
+    #expect(nonAuthorCaps.canDelete == false)
+
+    let publicCaps = PostCapabilities.forContext(.public, isAuthor: true)
+    #expect(publicCaps.canRepost == true)
+    #expect(publicCaps.canQuote == true)
+    #expect(publicCaps.canPublicShare == true)
+  }
+
+  @Test("PostViewModel dispatches Circle like and delete through CircleService")
+  @MainActor
+  func postViewModelDispatchesCircleLikeAndDeleteThroughCircleService() async throws {
+    let family = CircleTestFixtures.family
+    let transport = DestinationRecordingCircleTransport()
+    let service = CircleService(transport: transport)
+
+    let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
+    let appState = AppState(userDID: "did:plc:testuser", client: client)
+
+    let vm = PostViewModel(post: circlePost, appState: appState)
+    vm.visibilityContext = .circle(family)
+
+    #expect(vm.capabilities.canRepost == false)
+    #expect(vm.capabilities.canQuote == false)
+    #expect(vm.capabilities.canPublicShare == false)
+
+    let repostResult = try await vm.toggleRepost()
+    #expect(repostResult == false)
+
+    let quoteResult = try await vm.createQuotePost(text: "Quote attempt")
+    #expect(quoteResult == false)
   }
 }

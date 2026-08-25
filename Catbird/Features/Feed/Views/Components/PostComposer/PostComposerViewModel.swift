@@ -222,6 +222,10 @@ final class PostComposerViewModel {
     if case .circle = newDestination {
       // Quotes are unsupported in Circles
       self.quotedPost = nil
+      // Thread mode is unsupported in Circles
+      if isThreadMode {
+        exitThreadMode()
+      }
     }
   }
   

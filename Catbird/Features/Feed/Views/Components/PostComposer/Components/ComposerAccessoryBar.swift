@@ -22,10 +22,10 @@ struct ComposerAccessoryBar: View {
   @Binding var isPlusMenuOpen: Bool
   let characterCount: Int
   let allowTenor: Bool
+  var isAddToThreadDisabled: Bool = false
   let threadgateValue: String
   let languageValue: String
   let actions: ComposerBarActions
-
   @Namespace private var glassNamespace
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @AccessibilityFocusState private var menuFocused: Bool
@@ -109,6 +109,7 @@ struct ComposerAccessoryBar: View {
   private var trailingControls: some View {
     HStack(spacing: 14) {
       Button {
+        guard !isAddToThreadDisabled else { return }
         setMenu(false)
         actions.onAddToThread()
       } label: {
@@ -119,8 +120,9 @@ struct ComposerAccessoryBar: View {
           .contentShape(Rectangle())
       }
       .buttonStyle(.plain)
+      .disabled(isAddToThreadDisabled)
+      .opacity(isAddToThreadDisabled ? 0.3 : 1.0)
       .accessibilityLabel("Add another post to thread")
-
       CharacterLimitIndicatorWrapper(currentCount: characterCount)
     }
     .padding(.horizontal, 10)

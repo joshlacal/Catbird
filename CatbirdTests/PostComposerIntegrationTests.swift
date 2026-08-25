@@ -1,7 +1,8 @@
 import Testing
 import SwiftUI
+import Petrel
+import PetrelCatbird
 @testable import Catbird
-
 /// Integration tests demonstrating the PostComposer fixes work in real-world scenarios
 @Suite("PostComposer Integration Tests")
 struct PostComposerIntegrationTests {
@@ -155,6 +156,167 @@ struct PostComposerIntegrationTests {
         await MainActor.run {
             // State should still be stable
             #expect(viewModel.postText.contains("Update number 10"))
+        }
+    }
+
+    @Test("Circle Post Creation Flow with Destination Lock")
+    func testCirclePostCreationFlowWithDestinationLock() async throws {
+        let family = CircleTestFixtures.family
+        let transport = DestinationRecordingCircleTransport()
+        let service = CircleService(transport: transport)
+        let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
+        let appState = AppState(userDID: "did:plc:testuser", client: client)
+
+        let viewModel = await MainActor.run {
+            PostComposerViewModel(
+                destination: .circle(family),
+                appState: appState,
+                circleService: service
+            )
+        }
+
+        await MainActor.run {
+            viewModel.postText = "Hello Circle Space!"
+            #expect(viewModel.canSubmitPost == true)
+            #expect(viewModel.destination == .circle(family))
+            #expect(viewModel.canChangeDestination == true)
+        }
+
+        let submission = try await MainActor.run {
+            try viewModel.beginSubmission()
+        }
+
+        await MainActor.run {
+            #expect(submission.destination == .circle(family))
+            viewModel.selectDestination(.public)
+            #expect(viewModel.destination == .circle(family))
+            #expect(viewModel.canChangeDestination == false)
+        }
+
+        try await viewModel.createPost()
+
+        let published = await transport.publishedPosts
+        #expect(published.count == 1)
+        #expect(published.first?.destination == family)
+        #expect(published.first?.draft.text == "Hello Circle Space!")
+
+        let publicCalls = await transport.publicEndpointCallCount
+        #expect(publicCalls == 0)
+    }
+
+    @Test("Circle Reply Integration Carries ReplyRef")
+    func testCircleReplyIntegrationCarriesReplyRef() async throws {
+        let family = CircleTestFixtures.family
+        let transport = DestinationRecordingCircleTransport()
+        let service = CircleService(transport: transport)
+        let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
+        let appState = AppState(userDID: "did:plc:testuser", client: client)
+
+        let parentURI = try ATProtocolURI(uriString: "\(CircleTestFixtures.familyURI.uriString())/app.bsky.feed.post/parent999")
+        let parentCID = CID.fromDAGCBOR(Data("parent-cid-999".utf8))
+        let parentRecord = AppBskyFeedPost(
+            text: "Parent in Space",
+            entities: nil,
+            facets: nil,
+            reply: nil,
+            embed: nil,
+            langs: [],
+            labels: nil,
+            tags: nil,
+            createdAt: ATProtocolDate(date: Date())
+        )
+        let parentPost = AppBskyFeedDefs.PostView(
+            uri: parentURI,
+            cid: parentCID,
+            author: AppBskyActorDefs.ProfileViewBasic(
+                did: try DID(didString: "did:plc:author1"),
+                handle: try Handle(handleString: "author1.bsky.social"),
+                displayName: nil,
+                pronouns: nil,
+                avatar: nil,
+                associated: nil,
+                viewer: nil,
+                labels: nil,
+                createdAt: nil,
+                verification: nil,
+                status: nil,
+                debug: nil
+            ),
+            record: ATProtocolValueContainer.knownType(parentRecord),
+            embed: nil,
+            bookmarkCount: nil,
+            replyCount: 0,
+            repostCount: 0,
+            likeCount: 0,
+            quoteCount: 0,
+            indexedAt: ATProtocolDate(date: Date()),
+            viewer: nil,
+            labels: nil,
+            threadgate: nil,
+            debug: nil
+        )
+
+        let viewModel = await MainActor.run {
+            PostComposerViewModel(
+                parentPost: parentPost,
+                destination: .circle(family),
+                appState: appState,
+                circleService: service
+            )
+        }
+
+        await MainActor.run {
+            #expect(viewModel.isReplyLockedToCircle == true)
+            #expect(viewModel.canChangeDestination == false)
+            viewModel.postText = "Replying inside circle"
+        }
+
+        try await viewModel.createPost()
+
+        let published = await transport.publishedPosts
+        #expect(published.count == 1)
+        guard let draft = published.first?.draft else {
+            Issue.record("Missing draft")
+            return
+        }
+        #expect(draft.reply != nil)
+        #expect(draft.reply?.parent.uri == parentURI)
+        #expect(draft.reply?.parent.cid == parentCID)
+        #expect(draft.reply?.root.uri == parentURI)
+        #expect(draft.reply?.root.cid == parentCID)
+    }
+
+    @Test("Circle Destination Blocks Thread Mode Integration")
+    func testCircleDestinationBlocksThreadModeIntegration() async throws {
+        let family = CircleTestFixtures.family
+        let appState = AppState()
+
+        let viewModel = await MainActor.run {
+            PostComposerViewModel(
+                destination: .circle(family),
+                appState: appState
+            )
+        }
+
+        await MainActor.run {
+            viewModel.enterThreadMode()
+            #expect(viewModel.isThreadMode == false)
+        }
+
+        let publicViewModel = await MainActor.run {
+            PostComposerViewModel(
+                destination: .public,
+                appState: appState
+            )
+        }
+
+        await MainActor.run {
+            publicViewModel.enterThreadMode()
+            #expect(publicViewModel.isThreadMode == true)
+
+            publicViewModel.selectDestination(.circle(family))
+            #expect(publicViewModel.isThreadMode == false)
+            #expect(publicViewModel.destination == .circle(family))
         }
     }
 }

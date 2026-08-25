@@ -1053,7 +1053,7 @@ struct PostComposerView: View {
                                 systemImage: viewModel.isThreadMode ? "minus.circle" : "plus.circle"
                             )
                         }
-                        
+                        .disabled(viewModel.destination != .public)
                         Button(action: {
                             viewModel.showThreadgateOptions = true
                         }) {

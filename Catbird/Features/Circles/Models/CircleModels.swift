@@ -134,6 +134,7 @@ enum CircleReportReason: String, Sendable {
 struct CirclePostDraft: Sendable {
   let text: String
   let facets: [AppBskyRichtextFacet]?
+  let reply: AppBskyFeedPost.ReplyRef?
   let langs: [LanguageCodeContainer]
   let labels: AppBskyFeedPost.AppBskyFeedPostLabelsUnion?
   let embed: AppBskyFeedPost.AppBskyFeedPostEmbedUnion?
@@ -142,6 +143,7 @@ struct CirclePostDraft: Sendable {
   init(
     text: String,
     facets: [AppBskyRichtextFacet]? = nil,
+    reply: AppBskyFeedPost.ReplyRef? = nil,
     langs: [LanguageCodeContainer] = [],
     labels: AppBskyFeedPost.AppBskyFeedPostLabelsUnion? = nil,
     embed: AppBskyFeedPost.AppBskyFeedPostEmbedUnion? = nil,
@@ -149,10 +151,50 @@ struct CirclePostDraft: Sendable {
   ) {
     self.text = text
     self.facets = facets
+    self.reply = reply
     self.langs = langs
     self.labels = labels
     self.embed = embed
     self.createdAt = createdAt
+  }
+}
+
+/// Visibility context of a post (public network or a private Circle Space).
+public enum PostVisibilityContext: Equatable, Hashable, Sendable {
+  case `public`
+  case circle(BlueCatbirdCircleDefs.CircleSummary)
+}
+
+/// Capability matrix for interactions on a post based on its visibility context.
+public struct PostCapabilities: Equatable, Sendable {
+  public let canReply: Bool
+  public let canLike: Bool
+  public let canDelete: Bool
+  public let canRepost: Bool
+  public let canQuote: Bool
+  public let canPublicShare: Bool
+
+  public static func forContext(_ context: PostVisibilityContext, isAuthor: Bool = false) -> PostCapabilities {
+    switch context {
+    case .public:
+      return PostCapabilities(
+        canReply: true,
+        canLike: true,
+        canDelete: isAuthor,
+        canRepost: true,
+        canQuote: true,
+        canPublicShare: true
+      )
+    case .circle:
+      return PostCapabilities(
+        canReply: true,
+        canLike: true,
+        canDelete: isAuthor,
+        canRepost: false,
+        canQuote: false,
+        canPublicShare: false
+      )
+    }
   }
 }
 
@@ -216,6 +258,7 @@ protocol CircleTransport: Sendable {
   func activate(space: SpaceRef) async throws -> CircleAccessState
   func publishPost(destination: CircleSummary, draft: CirclePostDraft) async throws -> ATProtocolURI
   func like(post: AppBskyFeedDefs.PostView, circle: CircleSummary) async throws -> ATProtocolURI
+  func deletePost(uri: ATProtocolURI, circle: CircleSummary) async throws
 }
 
 /// Maps a generated `BlueCatbirdCircle*` error (or gateway/network error) to a

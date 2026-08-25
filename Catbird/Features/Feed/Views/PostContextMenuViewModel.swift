@@ -41,20 +41,38 @@ final class PostContextMenuViewModel {
         self.allowsThreadSummary = allowsThreadSummary
     }
 
-    func deletePost() async {
-         let did = appState.userDID
-        do {
-            let input = ComAtprotoRepoDeleteRecord.Input(
-                repo: try ATIdentifier(string: did),
-                collection: try NSID(nsidString: "app.bsky.feed.post"),
-                rkey: try RecordKey(keyString: post.uri.recordKey ?? "")
-            )
+    func deletePost(visibilityContext: PostVisibilityContext = .public) async {
+        switch visibilityContext {
+        case .public:
+            let did = appState.userDID
+            do {
+                let input = ComAtprotoRepoDeleteRecord.Input(
+                    repo: try ATIdentifier(string: did),
+                    collection: try NSID(nsidString: "app.bsky.feed.post"),
+                    rkey: try RecordKey(keyString: post.uri.recordKey ?? "")
+                )
 
-            let responseCode = try await appState.atProtoClient?.com.atproto.repo.deleteRecord(input: input).responseCode
-            if responseCode == 200 {
-                logger.debug("Post deleted successfully")
-                
-                // Show deletion toast
+                let responseCode = try await appState.atProtoClient?.com.atproto.repo.deleteRecord(input: input).responseCode
+                if responseCode == 200 {
+                    logger.debug("Post deleted successfully")
+                    
+                    // Show deletion toast
+                    await MainActor.run {
+                        appState.toastManager.show(
+                            ToastItem(
+                                message: "Post deleted",
+                                icon: "trash.fill",
+                                duration: 2.5
+                            )
+                        )
+                    }
+                }
+            } catch {
+                logger.debug("Error deleting post: \(error)")
+            }
+        case let .circle(circle):
+            do {
+                try await appState.circleService.deletePost(uri: post.uri, circle: circle)
                 await MainActor.run {
                     appState.toastManager.show(
                         ToastItem(
@@ -64,9 +82,9 @@ final class PostContextMenuViewModel {
                         )
                     )
                 }
+            } catch {
+                logger.debug("Error deleting circle post: \(error)")
             }
-        } catch {
-            logger.debug("Error deleting post: \(error)")
         }
     }
 
