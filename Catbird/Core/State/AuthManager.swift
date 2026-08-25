@@ -367,7 +367,7 @@ final class AuthenticationManager: AuthProgressDelegate {
   /// update and observer notification. Wrapping in Task created timing gaps that caused
   /// double state transitions on OAuth login.
   @MainActor
-  private func updateState(_ newState: AuthState) {
+  func updateState(_ newState: AuthState) {
     guard newState != state else { return }
     logger.debug(
       "Updating auth state: \(String(describing: self.state)) -> \(String(describing: newState))")
@@ -1199,6 +1199,8 @@ final class AuthenticationManager: AuthProgressDelegate {
   func logout(isManual: Bool = false) async {
     logger.info("Logging out user (isManual: \(isManual))")
 
+    let departingDID = state.userDID
+
     isAuthenticationCancelled = false
     updateState(.unauthenticated)
 
@@ -1211,9 +1213,9 @@ final class AuthenticationManager: AuthProgressDelegate {
 
     // Purge memory-only Circle caches for the logged-out account so a future
     // login never reuses a previous account's permissioned responses.
-    if let userDID = state.userDID {
-      await CircleFeedCache.shared.purge(accountDID: userDID)
-      await CircleMediaLoader.shared.purge(accountDID: userDID)
+    if let departingDID {
+      await CircleFeedCache.shared.purge(accountDID: departingDID)
+      await CircleMediaLoader.shared.purge(accountDID: departingDID)
     }
 
     // Note: AppStateManager calls this method, so we don't call back to avoid infinite loop

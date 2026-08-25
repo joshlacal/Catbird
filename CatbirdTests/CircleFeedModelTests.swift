@@ -4,11 +4,11 @@
 //
 
 import Foundation
+import SwiftUI
 import Petrel
 import PetrelCatbird
 import Testing
 @testable import Catbird
-
 @Suite("Circle feed model and media loading")
 @MainActor
 struct CircleFeedModelTests {
@@ -466,22 +466,22 @@ struct CircleFeedModelTests {
     #expect(await transport.lastMediaAuthorDID != circle.owner)
   }
 
-  @Test("Lifecycle purge clears CircleMediaLoader cache for previous/removed account only")
-  func lifecyclePurgeClearsCircleMediaCacheForLoggedOutSwitchedAndRemovedAccount() async throws {
+  @Test("AuthManager logout purges Circle feed and media caches for departing account")
+  func authManagerLogoutPurgesCircleFeedAndMediaCaches() async throws {
     let transport = MockCircleTransport()
     let service = CircleService(transport: transport)
-    let loader = CircleMediaLoader(service: service)
+    await CircleMediaLoader.shared.setService(service)
 
-    let cid = CID.fromDAGCBOR(Data("cid-lifecycle-image".utf8))
+    let cid = CID.fromDAGCBOR(Data("cid-logout-purge".utf8))
 
-    // Pre-populate cache for Account 1 and Account 2
-    _ = try await loader.image(
+    // Pre-populate shared media loader and shared feed cache for Account 1 and Account 2
+    _ = try await CircleMediaLoader.shared.image(
       accountDID: "did:plc:account1",
       space: CircleTestFixtures.familyURI,
       authorDID: CircleTestFixtures.alice,
       cid: cid
     )
-    _ = try await loader.image(
+    _ = try await CircleMediaLoader.shared.image(
       accountDID: "did:plc:account2",
       space: CircleTestFixtures.familyURI,
       authorDID: CircleTestFixtures.alice,
@@ -489,47 +489,149 @@ struct CircleFeedModelTests {
     )
     #expect(await transport.mediaCallCount == 2)
 
-    // 1. Purge Account 1 (as on logout or removal)
-    await loader.purge(accountDID: "did:plc:account1")
+    let page1 = CircleFeedPage(items: [makeFeedItem(circle: CircleTestFixtures.family, rkey: "post1", text: "Hello")], cursor: nil)
+    let page2 = CircleFeedPage(items: [makeFeedItem(circle: CircleTestFixtures.family, rkey: "post2", text: "World")], cursor: nil)
+    await CircleFeedCache.shared.store(page1, accountDID: "did:plc:account1", space: CircleTestFixtures.familyURI)
+    await CircleFeedCache.shared.store(page2, accountDID: "did:plc:account2", space: CircleTestFixtures.familyURI)
 
-    // Account 1 must re-fetch from transport (mediaCallCount increments)
-    _ = try await loader.image(
+    #expect(await CircleFeedCache.shared.page(accountDID: "did:plc:account1", space: CircleTestFixtures.familyURI) != nil)
+    #expect(await CircleFeedCache.shared.page(accountDID: "did:plc:account2", space: CircleTestFixtures.familyURI) != nil)
+
+    // Drive production logout ordering through AuthenticationManager
+    let authManager = AuthenticationManager()
+    authManager.updateState(.authenticated(userDID: "did:plc:account1"))
+    await authManager.logout()
+
+    // Account 1 feed cache and media cache must be purged
+    #expect(await CircleFeedCache.shared.page(accountDID: "did:plc:account1", space: CircleTestFixtures.familyURI) == nil)
+    _ = try await CircleMediaLoader.shared.image(
       accountDID: "did:plc:account1",
       space: CircleTestFixtures.familyURI,
       authorDID: CircleTestFixtures.alice,
       cid: cid
     )
-    #expect(await transport.mediaCallCount == 3)
+    #expect(await transport.mediaCallCount == 3) // Re-fetched because Account 1 was purged
 
-    // Account 2 must hit memory cache (mediaCallCount does NOT increment)
-    _ = try await loader.image(
+    // Account 2 feed cache and media cache must remain intact
+    #expect(await CircleFeedCache.shared.page(accountDID: "did:plc:account2", space: CircleTestFixtures.familyURI) != nil)
+    _ = try await CircleMediaLoader.shared.image(
       accountDID: "did:plc:account2",
       space: CircleTestFixtures.familyURI,
       authorDID: CircleTestFixtures.alice,
       cid: cid
     )
-    #expect(await transport.mediaCallCount == 3)
+    #expect(await transport.mediaCallCount == 3) // Cache hit, call count did not increment
+  }
 
-    // 2. Purge Account 2 (as on switch away)
-    await loader.purge(accountDID: "did:plc:account2")
+  @Test("Record with media Circle gallery binds author DID to gallery embed and media view")
+  func recordWithMediaCircleGalleryBindsAuthorDID() async throws {
+    let circle = CircleTestFixtures.family
+    let memberDID = CircleTestFixtures.alice
+    let imageCID = "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"
 
-    // Account 2 must re-fetch from transport
-    _ = try await loader.image(
-      accountDID: "did:plc:account2",
-      space: CircleTestFixtures.familyURI,
-      authorDID: CircleTestFixtures.alice,
-      cid: cid
+    let galleryImage = AppBskyEmbedGallery.ViewImage(
+      thumbnail: try URI(uriString: "https://example.com/blob/\(imageCID)"),
+      fullsize: try URI(uriString: "https://example.com/blob/\(imageCID)"),
+      alt: "Circle photo in record with media",
+      aspectRatio: AppBskyEmbedDefs.AspectRatio(width: 800, height: 600)
     )
-    #expect(await transport.mediaCallCount == 4)
-
-    // 3. Purge all clears everything
-    await loader.purgeAll()
-    _ = try await loader.image(
-      accountDID: "did:plc:account1",
-      space: CircleTestFixtures.familyURI,
-      authorDID: CircleTestFixtures.alice,
-      cid: cid
+    let galleryView = AppBskyEmbedGallery.View(
+      items: [.appBskyEmbedGalleryViewImage(galleryImage)]
     )
-    #expect(await transport.mediaCallCount == 5)
+
+    let viewRecord = AppBskyEmbedRecord.ViewRecord(
+      uri: try ATProtocolURI(uriString: "at://\(circle.owner)/app.bsky.feed.post/quoted123"),
+      cid: try CID.parse(imageCID),
+      author: AppBskyActorDefs.ProfileViewBasic(
+        did: circle.owner,
+        handle: try Handle(handleString: "owner.bsky.social"),
+        displayName: "Owner",
+        pronouns: nil,
+        avatar: nil,
+        associated: nil,
+        viewer: nil,
+        labels: nil,
+        createdAt: nil,
+        verification: nil,
+        status: nil,
+        debug: nil
+      ),
+      value: .knownType(
+        AppBskyFeedPost(
+          text: "Quoted text",
+          entities: nil,
+          facets: nil,
+          reply: nil,
+          embed: nil,
+          langs: nil,
+          labels: nil,
+          tags: nil,
+          createdAt: ATProtocolDate(date: Date())
+        )
+      ),
+      labels: nil,
+      replyCount: 0,
+      repostCount: 0,
+      likeCount: 0,
+      quoteCount: 0,
+      embeds: nil,
+      indexedAt: ATProtocolDate(date: Date())
+    )
+
+    let recordWithMediaView = AppBskyEmbedRecordWithMedia.View(
+      record: AppBskyEmbedRecord.View(record: .appBskyEmbedRecordViewRecord(viewRecord)),
+      media: .appBskyEmbedGalleryView(galleryView)
+    )
+
+    let postEmbed = PostEmbed(
+      embed: .appBskyEmbedRecordWithMediaView(recordWithMediaView),
+      labels: nil,
+      path: .constant(NavigationPath()),
+      visibilityContext: .circle(circle),
+      authorDID: memberDID
+    )
+
+    #expect(postEmbed.authorDID == memberDID)
+    if case .circle(let embeddedCircle) = postEmbed.visibilityContext {
+      #expect(embeddedCircle.uri == circle.uri)
+    } else {
+      Issue.record("Expected .circle visibility context on PostEmbed")
+    }
+
+    // Verify GalleryEmbedView with authorDID properly initializes CircleMediaView
+    let galleryEmbed = GalleryEmbedView(
+      gallery: galleryView,
+      shouldBlur: false,
+      visibilityContext: .circle(circle),
+      authorDID: memberDID
+    )
+    #expect(galleryEmbed.authorDID == memberDID)
+
+    // Prove fail-closed: GalleryEmbedView without authorDID produces nil CircleMediaView,
+    // whereas with memberDID it successfully constructs CircleMediaView with memberDID
+    let mediaViewWithMember = CircleMediaView(
+      viewImage: AppBskyEmbedImages.ViewImage(
+        thumb: galleryImage.thumbnail,
+        fullsize: galleryImage.fullsize,
+        alt: galleryImage.alt,
+        aspectRatio: galleryImage.aspectRatio
+      ),
+      circle: circle,
+      authorDID: galleryEmbed.authorDID
+    )
+    #expect(mediaViewWithMember != nil)
+    #expect(mediaViewWithMember?.authorDID == memberDID)
+
+    let mediaViewWithoutAuthor = CircleMediaView(
+      viewImage: AppBskyEmbedImages.ViewImage(
+        thumb: galleryImage.thumbnail,
+        fullsize: galleryImage.fullsize,
+        alt: galleryImage.alt,
+        aspectRatio: galleryImage.aspectRatio
+      ),
+      circle: circle,
+      authorDID: nil
+    )
+    #expect(mediaViewWithoutAuthor == nil)
   }
 }

@@ -171,7 +171,8 @@ struct PostEmbed: View {
                     GalleryEmbedView(
                         gallery: galleryView,
                         shouldBlur: false, // We're handling blur at the ContentLabelManager level now
-                        visibilityContext: visibilityContext
+                        visibilityContext: visibilityContext,
+                        authorDID: authorDID
                     )
                 }
                 .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
