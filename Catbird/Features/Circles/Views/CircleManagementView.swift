@@ -192,7 +192,8 @@ struct CircleManagementView: View {
             .foregroundStyle(.orange)
         }
       }
-      .accessibilityLabel("Circle privacy and membership disclosures")
+      .accessibilityElement(children: .contain)
+      .accessibilityIdentifier("Circle privacy and membership disclosures")
     }
   }
 

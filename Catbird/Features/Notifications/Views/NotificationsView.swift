@@ -73,17 +73,28 @@ struct NotificationsView: View {
         await viewModel.setFilter(newFilter)
       }
     }.task {
-      if !ProcessInfo.processInfo.arguments.contains("--e2e-mode") && viewModel.groupedNotifications.isEmpty {
-        await viewModel.loadNotifications()
-      }
-      if CircleFeatureFlags.isEnabled {
+      async let publicLoad: Void = {
+        #if DEBUG
+        if appState.e2eCircleTransport == nil,
+          viewModel.groupedNotifications.isEmpty
+        {
+          await viewModel.loadNotifications()
+        }
+        #else
+        if viewModel.groupedNotifications.isEmpty {
+          await viewModel.loadNotifications()
+        }
+        #endif
+      }()
+      async let circleLoad: Void = {
+        guard CircleFeatureFlags.isEnabled else { return }
         do {
           try await appState.circleNotificationsModel.refresh()
         } catch {
           // Handled in model.error; isolated from public notifications state
         }
-      }
-
+      }()
+      _ = await (publicLoad, circleLoad)
       // Force widget update when notifications view appears
       appState.notificationManager.updateWidgetUnreadCount(appState.notificationManager.unreadCount)
     }
@@ -188,16 +199,20 @@ struct NotificationsView: View {
 
   @ViewBuilder
   private var notificationContent: some View {
-    if let error = viewModel.error, !CircleFeatureFlags.isEnabled {
-      ErrorStateView(
-        error: error,
-        context: "Failed to load notifications",
-        retryAction: { Task { await retryLoadNotifications() } }
-      )
-    } else if viewModel.isLoading && viewModel.groupedNotifications.isEmpty && !CircleFeatureFlags.isEnabled {
-      loadingView
-    } else if viewModel.groupedNotifications.isEmpty && !CircleFeatureFlags.isEnabled {
-      emptyView
+    if !CircleFeatureFlags.isEnabled {
+      if let error = viewModel.error {
+        ErrorStateView(
+          error: error,
+          context: "Failed to load notifications",
+          retryAction: { Task { await retryLoadNotifications() } }
+        )
+      } else if viewModel.isLoading && viewModel.groupedNotifications.isEmpty {
+        loadingView
+      } else if viewModel.groupedNotifications.isEmpty {
+        emptyView
+      } else {
+        notificationsList
+      }
     } else {
       notificationsList
     }
@@ -256,7 +271,24 @@ struct NotificationsView: View {
           CircleNotificationsSection(appState: appState, navigationPath: navigationPath)
         }
 
-        if viewModel.groupedNotifications.isEmpty && CircleFeatureFlags.isEnabled {
+        if let error = viewModel.error, CircleFeatureFlags.isEnabled {
+          ErrorStateView(
+            error: error,
+            context: "Failed to load public notifications",
+            retryAction: { Task { await retryLoadNotifications() } }
+          )
+          .listRowSeparator(.hidden)
+          .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
+        } else if viewModel.isLoading && viewModel.groupedNotifications.isEmpty && CircleFeatureFlags.isEnabled {
+          HStack {
+            Spacer()
+            ProgressView("Loading public notifications...")
+            Spacer()
+          }
+          .padding(.vertical, DesignTokens.Spacing.xl)
+          .listRowSeparator(.hidden)
+          .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
+        } else if viewModel.groupedNotifications.isEmpty && CircleFeatureFlags.isEnabled {
           VStack(spacing: DesignTokens.Spacing.md) {
             Image(systemName: "bell.slash")
               .appFont(size: 32)

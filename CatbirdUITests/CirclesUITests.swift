@@ -46,40 +46,51 @@ final class CirclesUITests: XCTestCase {
 
   // MARK: - Navigation & Action Helpers
 
+  private func tapNotificationsTab() {
+    let tab = app.buttons["tab_notifications"]
+    XCTAssertTrue(tab.waitForExistence(timeout: 5), "Expected Notifications tab")
+    tab.tap()
+  }
+
+  private func tapHomeTab() {
+    let tab = app.buttons["tab_home"]
+    XCTAssertTrue(tab.waitForExistence(timeout: 5), "Expected Home tab")
+    tab.tap()
+  }
+
   private func openDrawer() {
     let feedSelector = app.buttons["Feed selector"]
-    if feedSelector.waitForExistence(timeout: 3) {
-      feedSelector.tap()
-    } else {
-      let feedsButton = app.buttons["Feeds"]
-      if feedsButton.waitForExistence(timeout: 3) {
-        feedsButton.tap()
-      }
-    }
+    XCTAssertTrue(feedSelector.waitForExistence(timeout: 5), "Expected feed selector")
+    feedSelector.tap()
   }
 
   private func openCirclesFeed() {
     if app.navigationBars["Circles"].exists {
-      let top = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3))
-      let bottom = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.9))
-      top.press(forDuration: 0.1, thenDragTo: bottom)
       return
     }
+    tapHomeTab()
     openDrawer()
     let circlesButton = app.buttons["Circles"]
     XCTAssertTrue(circlesButton.waitForExistence(timeout: 5), "Expected Circles feed entry in drawer or navigation")
     circlesButton.tap()
+    XCTAssertTrue(app.navigationBars["Circles"].waitForExistence(timeout: 5), "Expected Circles navigation bar")
+  }
+
+  private func popToHome() {
+    if app.navigationBars["Circles"].exists {
+      let backButton = app.navigationBars["Circles"].buttons.firstMatch
+      if backButton.exists {
+        backButton.tap()
+      }
+    }
+    tapHomeTab()
   }
 
   private func postContainer(for uri: String) -> XCUIElement {
     let el = app.otherElements["post.\(uri)"]
-    if el.exists {
-      return el
-    }
-    return app
+    XCTAssertTrue(el.waitForExistence(timeout: 5), "Expected post container for \(uri)")
+    return el
   }
-
-  // MARK: - Required Tests
 
   /// 1. Unsupported PDS: Circles disabled with explanation.
   func testUnsupportedCapabilityShowsExplanation() throws {
@@ -120,15 +131,10 @@ final class CirclesUITests: XCTestCase {
     let cancelButton = app.buttons["Cancel creating circle"]
     XCTAssertTrue(cancelButton.waitForExistence(timeout: 5), "Expected cancel/dismiss button")
     cancelButton.tap()
+    XCTAssertFalse(createdLabel.exists, "Wait for create circle sheet to dismiss")
 
     // Pop back to Home
-    if app.navigationBars["Circles"].exists {
-      app.navigationBars.buttons.firstMatch.tap()
-    }
-    let homeTab = app.buttons["tab_home"]
-    if homeTab.waitForExistence(timeout: 3) {
-      homeTab.tap()
-    }
+    popToHome()
     let composeButton = app.buttons["compose.fab"]
     XCTAssertTrue(composeButton.waitForExistence(timeout: 5), "Expected compose FAB")
     composeButton.tap()
@@ -187,14 +193,11 @@ final class CirclesUITests: XCTestCase {
     let likeButton = updatedTarget.buttons["likeButton"].firstMatch
     XCTAssertTrue(likeButton.waitForExistence(timeout: 5), "Expected likeButton on Circle post")
     likeButton.tap()
-    XCTAssertTrue(likeButton.label.contains("Unlike") || likeButton.label.contains("1"), "Like button label should reflect liked state: \(likeButton.label)")
+    XCTAssertEqual(likeButton.label, "Unlike. Like count: 1")
 
     // 6. Open Notifications, tap create-invite row, open settings, add & remove Bob
-    let notificationsTab = app.buttons["tab_notifications"]
-    XCTAssertTrue(notificationsTab.waitForExistence(timeout: 5), "Expected notifications tab")
-    notificationsTab.tap()
-
-    let inviteRow = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'circle.notification.'")).firstMatch
+    tapNotificationsTab()
+    let inviteRow = app.buttons["circle.notification.notif-e2e-circle-1"]
     XCTAssertTrue(inviteRow.waitForExistence(timeout: 5), "Expected create invite notification row")
     inviteRow.tap()
 
@@ -228,8 +231,11 @@ final class CirclesUITests: XCTestCase {
 
     XCTAssertFalse(app.staticTexts["did:plc:bobe2efixture"].exists, "Bob DID should no longer be present in member list")
 
-    let removeDisclosure = app.staticTexts["Circle privacy and membership disclosures"]
+    app.swipeUp()
+    let removeDisclosure = app.otherElements["Circle privacy and membership disclosures"]
     XCTAssertTrue(removeDisclosure.waitForExistence(timeout: 5), "Expected removal disclosure in Circle settings")
+    let removeDisclosureText = app.staticTexts["Removed members cannot access future posts, but prior downloads cannot be recalled."]
+    XCTAssertTrue(removeDisclosureText.waitForExistence(timeout: 5), "Expected exact remove member disclosure copy")
   }
 
   /// 3. Destination lock during image upload: destination remains visible and non-interactive through upload
@@ -258,9 +264,8 @@ final class CirclesUITests: XCTestCase {
 
     // Attach image via accessory bar
     let attachmentMenu = app.buttons["Add attachment or post settings"]
-    if attachmentMenu.exists {
-      attachmentMenu.tap()
-    }
+    XCTAssertTrue(attachmentMenu.waitForExistence(timeout: 5), "Expected attachment menu button")
+    attachmentMenu.tap()
     let photosButton = app.buttons["Photos"]
     XCTAssertTrue(photosButton.waitForExistence(timeout: 5), "Expected Photos button")
     photosButton.tap()
@@ -275,6 +280,7 @@ final class CirclesUITests: XCTestCase {
     XCTAssertFalse(audiencePicker.isEnabled, "Audience picker must be locked (disabled) during image upload")
 
     // Verify after post completes and feed displays rendered image
+    XCTAssertTrue(app.buttons["compose.fab"].waitForExistence(timeout: 10), "Expected compose FAB after post submission")
     openCirclesFeed()
     let uploadedPost = app.staticTexts["image destination lock"]
     XCTAssertTrue(uploadedPost.waitForExistence(timeout: 10), "Expected posted image text to appear in Circles feed")
@@ -312,10 +318,7 @@ final class CirclesUITests: XCTestCase {
     XCTAssertTrue(likeButton.waitForExistence(timeout: 5), "Like button must remain available for Circle post")
 
     // Pop back to Home
-    if app.navigationBars["Circles"].exists {
-      app.navigationBars.buttons.firstMatch.tap()
-    }
-
+    popToHome()
     let publicTarget = postContainer(for: "at://did:plc:alicee2efixture/app.bsky.feed.post/publicpost1")
 
     let publicPostText = publicTarget.staticTexts["Hello public world from Alice"]
@@ -363,9 +366,7 @@ final class CirclesUITests: XCTestCase {
   func testGenericNotificationRefresh() throws {
     launchWithCircles()
 
-    let notificationsTab = app.buttons["tab_notifications"]
-    XCTAssertTrue(notificationsTab.waitForExistence(timeout: 5), "Expected notifications tab")
-    notificationsTab.tap()
+    tapNotificationsTab()
     let initialNotif = app.buttons["circle.notification.notif-1"]
     XCTAssertTrue(initialNotif.waitForExistence(timeout: 10), "Expected initial seeded Circle notification row")
 
@@ -375,6 +376,7 @@ final class CirclesUITests: XCTestCase {
 
     let pushedNotif = app.buttons["circle.notification.push-1"]
     XCTAssertTrue(pushedNotif.waitForExistence(timeout: 10), "Expected push-refreshed Circle notification row")
+    XCTAssertTrue(pushedNotif.label.contains("Bob") && pushedNotif.label.contains("Family") && pushedNotif.label.contains("replied"), "Push notification should reflect Bob replied in Family activity")
   }
 
   /// 7. Account switch/removal: prior Circle content disappears.
@@ -386,9 +388,7 @@ final class CirclesUITests: XCTestCase {
     XCTAssertTrue(alicePost.waitForExistence(timeout: 5), "Expected Alice secret notes post in Alice Circles feed")
 
     // Pop back to Home
-    if app.navigationBars["Circles"].exists {
-      app.navigationBars.buttons.firstMatch.tap()
-    }
+    popToHome()
     let profileButton = app.buttons["Profile and settings"]
     XCTAssertTrue(profileButton.waitForExistence(timeout: 5), "Expected Profile and settings button")
     profileButton.press(forDuration: 1.5)
@@ -404,13 +404,8 @@ final class CirclesUITests: XCTestCase {
     XCTAssertFalse(app.staticTexts["Alice secret notes"].exists, "Alice-only post must not be visible in Bob Circles feed")
 
     // Pop back to Home
-    if app.navigationBars["Circles"].exists {
-      app.navigationBars.buttons.firstMatch.tap()
-    }
+    popToHome()
     // Switch back to Alice
-    let homeTab2 = app.buttons["tab_home"]
-    homeTab2.tap()
-
     let profileButton2 = app.buttons["Profile and settings"]
     XCTAssertTrue(profileButton2.waitForExistence(timeout: 5), "Expected Profile and settings button")
     profileButton2.press(forDuration: 1.5)
@@ -427,10 +422,7 @@ final class CirclesUITests: XCTestCase {
   /// 8. Removal disclosure copy is displayed in Circle management
   func testMemberRemovalDisclosure() throws {
     launchWithCircles()
-
-    let notificationsTab = app.buttons["tab_notifications"]
-    XCTAssertTrue(notificationsTab.waitForExistence(timeout: 5), "Expected notifications tab")
-    notificationsTab.tap()
+    tapNotificationsTab()
 
     let inviteRow = app.buttons["circle.notification.notif-1"]
     XCTAssertTrue(inviteRow.waitForExistence(timeout: 5), "Expected invite notification row")
@@ -440,7 +432,10 @@ final class CirclesUITests: XCTestCase {
     XCTAssertTrue(settingsButton.waitForExistence(timeout: 5), "Expected Circle settings button in detail view")
     settingsButton.tap()
 
-    let removeDisclosure = app.staticTexts["Circle privacy and membership disclosures"]
+    app.swipeUp()
+    let removeDisclosure = app.otherElements["Circle privacy and membership disclosures"]
     XCTAssertTrue(removeDisclosure.waitForExistence(timeout: 5), "Expected Circle privacy and membership disclosures section")
+    let removeDisclosureText = app.staticTexts["Removed members cannot access future posts, but prior downloads cannot be recalled."]
+    XCTAssertTrue(removeDisclosureText.waitForExistence(timeout: 5), "Expected exact remove member disclosure copy")
   }
 }

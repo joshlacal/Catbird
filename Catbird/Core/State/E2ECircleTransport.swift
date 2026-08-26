@@ -24,13 +24,19 @@ struct E2EConstants {
 
 /// Shared in-memory storage for E2E circle tests.
 actor E2ECircleStore {
+  struct StoredMedia: Sendable {
+    let space: SpaceRef
+    let authorDID: DID
+    let cid: CID
+    let data: Data
+  }
+
   private var circles: [SpaceRef: BlueCatbirdCircleDefs.CircleSummary] = [:]
   private var posts: [ATProtocolURI: (post: AppBskyFeedDefs.PostView, circle: BlueCatbirdCircleDefs.CircleSummary, replyTo: ATProtocolURI?)] = [:]
   private var order: [ATProtocolURI] = []
   private var likes: [ATProtocolURI: Set<String>] = [:]
-  private var mediaBlobs: [String: Data] = [:]
-  private var notifications: [BlueCatbirdCircleDefs.Notification] = []
-
+  private var mediaBlobs: [String: StoredMedia] = [:]
+  private var notifications: [(recipient: DID, notification: BlueCatbirdCircleDefs.Notification)] = []
   private var opSeq: Int = 1
   private var postSeq: Int = 1
   private var circleSeq: Int = 1
@@ -152,10 +158,25 @@ actor E2ECircleStore {
       indexedAt: ATProtocolDate(date: Date()),
       circle: family
     )
-    notifications = [notif1, notifBob]
+    notifications = [
+      (recipient: E2EConstants.aliceDID, notification: notif1),
+      (recipient: E2EConstants.bobDID, notification: notifBob)
+    ]
 
-    mediaBlobs["post1-cid"] = E2ECircleTransport.fixtureImageData
-    mediaBlobs["post2-cid"] = E2ECircleTransport.fixtureImageData
+    let post1CID = CID.fromDAGCBOR(Data("post1-cid".utf8))
+    let post2CID = CID.fromDAGCBOR(Data("post2-cid".utf8))
+    mediaBlobs[post1CID.string] = StoredMedia(
+      space: E2EConstants.familyURI,
+      authorDID: E2EConstants.aliceDID,
+      cid: post1CID,
+      data: E2ECircleTransport.fixtureImageData
+    )
+    mediaBlobs[post2CID.string] = StoredMedia(
+      space: E2EConstants.aliceOnlyURI,
+      authorDID: E2EConstants.aliceDID,
+      cid: post2CID,
+      data: E2ECircleTransport.fixtureImageData
+    )
   }
 
   private func isMember(space: SpaceRef, userDID: DID) -> Bool {
@@ -304,7 +325,14 @@ actor E2ECircleStore {
   }
 
   func listNotifications(userDID: DID, cursor: String?) -> CircleNotificationPage {
-    let accessible = notifications.filter { isMember(space: $0.circle.uri, userDID: userDID) }
+    let userDIDString = userDID.didString()
+    let accessible = notifications.compactMap { entry -> BlueCatbirdCircleDefs.Notification? in
+      guard entry.recipient.didString() == userDIDString,
+            isMember(space: entry.notification.circle.uri, userDID: userDID) else {
+        return nil
+      }
+      return entry.notification
+    }
     return CircleNotificationPage(notifications: accessible, cursor: nil)
   }
 
@@ -312,7 +340,14 @@ actor E2ECircleStore {
     guard isMember(space: space, userDID: userDID) else {
       throw CircleError.accessRemoved
     }
-    return mediaBlobs[cid.string] ?? E2ECircleTransport.fixtureImageData
+    guard let stored = mediaBlobs[cid.string] else {
+      throw CircleError.invalidParameter("media not found")
+    }
+    guard stored.space.uriString() == space.uriString(),
+          stored.authorDID.didString() == authorDID.didString() else {
+      throw CircleError.notAuthorized
+    }
+    return stored.data
   }
 
   func createCircle(userDID: DID, name: String, memberDIDs: [DID]) -> CircleOperation {
@@ -337,8 +372,18 @@ actor E2ECircleStore {
       indexedAt: ATProtocolDate(date: Date()),
       circle: newCircle
     )
-    notifications.insert(notif, at: 0)
-
+    notifications.insert((recipient: userDID, notification: notif), at: 0)
+    for member in memberDIDs {
+      let memberNotif = BlueCatbirdCircleDefs.Notification(
+        id: "notif-\(rkey)-\(member.didString())",
+        reason: .value_invite,
+        actor: profile(for: userDID),
+        subject: nil,
+        indexedAt: ATProtocolDate(date: Date()),
+        circle: newCircle
+      )
+      notifications.insert((recipient: member, notification: memberNotif), at: 0)
+    }
     let opId = "op-create-\(opSeq)"
     opSeq += 1
     return CircleOperation(id: opId, status: .value_complete, space: newURI, error: nil)
@@ -433,6 +478,12 @@ actor E2ECircleStore {
       case .appBskyEmbedImages(let imagesEmbed):
         let viewImages = imagesEmbed.images.map { img in
           let cidStr = img.image.ref?.cid.string ?? img.image.cid ?? "image-cid"
+          if var stored = mediaBlobs[cidStr] {
+            stored = StoredMedia(space: destination.uri, authorDID: userDID, cid: stored.cid, data: stored.data)
+            mediaBlobs[cidStr] = stored
+          } else if let parsedCID = try? CID.parse(cidStr) {
+            mediaBlobs[cidStr] = StoredMedia(space: destination.uri, authorDID: userDID, cid: parsedCID, data: E2ECircleTransport.fixtureImageData)
+          }
           return AppBskyEmbedImages.ViewImage(
             thumb: try! URI(uriString: "https://catbird.blue/media?cid=\(cidStr)"),
             fullsize: try! URI(uriString: "https://catbird.blue/media?cid=\(cidStr)"),
@@ -446,6 +497,12 @@ actor E2ECircleStore {
           switch item {
           case .appBskyEmbedGalleryImage(let galleryImage):
             let cidStr = galleryImage.image.ref?.cid.string ?? galleryImage.image.cid ?? "image-cid"
+            if var stored = mediaBlobs[cidStr] {
+              stored = StoredMedia(space: destination.uri, authorDID: userDID, cid: stored.cid, data: stored.data)
+              mediaBlobs[cidStr] = stored
+            } else if let parsedCID = try? CID.parse(cidStr) {
+              mediaBlobs[cidStr] = StoredMedia(space: destination.uri, authorDID: userDID, cid: parsedCID, data: E2ECircleTransport.fixtureImageData)
+            }
             return AppBskyEmbedImages.ViewImage(
               thumb: try! URI(uriString: "https://catbird.blue/media?cid=\(cidStr)"),
               fullsize: try! URI(uriString: "https://catbird.blue/media?cid=\(cidStr)"),
@@ -540,11 +597,16 @@ actor E2ECircleStore {
 
   func uploadImage(imageData: Data) async -> Blob {
     try? await Task.sleep(nanoseconds: 2_000_000_000)
-    let cidString = "bafybeie2eimagefixture\(mediaBlobs.count + 1)"
-    mediaBlobs[cidString] = imageData
-    let cid = (try? CID.parse(cidString)) ?? CID.fromBlob(imageData)
+    let cid = CID.fromBlob(imageData)
+    let cidString = cid.string
     let link = ATProtoLink(cid: cid)
-    return Blob(type: "blob", ref: link, mimeType: "image/jpeg", size: imageData.count, cid: cid.string)
+    mediaBlobs[cidString] = StoredMedia(
+      space: E2EConstants.familyURI,
+      authorDID: E2EConstants.aliceDID,
+      cid: cid,
+      data: imageData
+    )
+    return Blob(type: "blob", ref: link, mimeType: "image/jpeg", size: imageData.count, cid: cidString)
   }
 
   func enqueueGenericActivity(userDID: DID) {
@@ -564,7 +626,7 @@ actor E2ECircleStore {
       indexedAt: ATProtocolDate(date: Date()),
       circle: targetCircle
     )
-    notifications.insert(notif, at: 0)
+    notifications.insert((recipient: userDID, notification: notif), at: 0)
   }
 }
 

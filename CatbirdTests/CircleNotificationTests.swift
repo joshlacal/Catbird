@@ -1223,16 +1223,6 @@ struct CircleNotificationTests {
     try await storage.saveAccount(bobAccount, for: bobDID)
     try await storage.saveSession(bobSession, for: bobDID)
 
-    defer {
-      Task {
-        try? await storage.deleteSession(for: aliceDID)
-        try? await storage.deleteAccount(for: aliceDID)
-        try? await storage.deleteDPoPKey(for: aliceDID)
-        try? await storage.deleteSession(for: bobDID)
-        try? await storage.deleteAccount(for: bobDID)
-        try? await storage.deleteDPoPKey(for: bobDID)
-      }
-    }
 
     let client = try await ATProtoClient(
       oauthConfig: OAuthConfig(
@@ -1270,14 +1260,16 @@ struct CircleNotificationTests {
     #expect(await client.hasValidSession())
     let aliceActiveInfo = await client.getActiveAccountInfo()
     #expect(aliceActiveInfo.did == aliceDID)
+    #expect(aliceActiveInfo.handle == "alice.test")
+    #expect(aliceActiveInfo.pdsURL == URL(string: "https://bsky.social"))
     let aliceStoredSession = try await storage.getSession(for: aliceDID, bypassCache: true)
     #expect(aliceStoredSession == aliceSession)
 
     let model1 = aliceState1.circleNotificationsModel
     #expect(!model1.isInvalidated)
     try await model1.refresh()
-    #expect(!model1.notifications.isEmpty)
-
+    #expect(model1.notifications.contains { $0.id == "notif-1" })
+    #expect(!model1.notifications.contains { $0.id == "notif-bob-1" })
     let feedModel1 = CircleFeedModel(
       service: aliceState1.circleService,
       accountDID: aliceDID,
@@ -1298,6 +1290,8 @@ struct CircleNotificationTests {
     #expect(await client.hasValidSession())
     let bobActiveInfo = await client.getActiveAccountInfo()
     #expect(bobActiveInfo.did == bobDID)
+    #expect(bobActiveInfo.handle == "bob.test")
+    #expect(bobActiveInfo.pdsURL == URL(string: "https://bsky.social"))
     let bobStoredSession = try await storage.getSession(for: bobDID, bypassCache: true)
     #expect(bobStoredSession == bobSession)
 
@@ -1317,7 +1311,8 @@ struct CircleNotificationTests {
     try await bobModel.refresh()
     #expect(!bobModel.isInvalidated)
     #expect(bobModel.error == nil)
-
+    #expect(bobModel.notifications.contains { $0.id == "notif-bob-1" })
+    #expect(!bobModel.notifications.contains { $0.id == "notif-1" })
     let bobFeedModel = CircleFeedModel(
       service: bobState.circleService,
       accountDID: bobDID,
@@ -1339,6 +1334,8 @@ struct CircleNotificationTests {
     #expect(await client.hasValidSession())
     let aliceActiveInfo2 = await client.getActiveAccountInfo()
     #expect(aliceActiveInfo2.did == aliceDID)
+    #expect(aliceActiveInfo2.handle == "alice.test")
+    #expect(aliceActiveInfo2.pdsURL == URL(string: "https://bsky.social"))
     let aliceStoredSession2 = try await storage.getSession(for: aliceDID, bypassCache: true)
     #expect(aliceStoredSession2 == aliceSession)
 
@@ -1346,8 +1343,8 @@ struct CircleNotificationTests {
     #expect(model2 !== model1)
     #expect(!model2.isInvalidated)
     try await model2.refresh()
-    #expect(!model2.notifications.isEmpty)
-
+    #expect(model2.notifications.contains { $0.id == "notif-1" })
+    #expect(!model2.notifications.contains { $0.id == "notif-bob-1" })
     let feedModel2 = CircleFeedModel(
       service: aliceState2.circleService,
       accountDID: aliceDID,
@@ -1362,8 +1359,16 @@ struct CircleNotificationTests {
     // Old model1 and feedModel1 remain permanently inert
     #expect(model1.isInvalidated)
     #expect(feedModel1.isInvalidated)
-  }
 
+    // Await full cleanup of stored sessions, accounts, DPoP keys, and current DID
+    try await storage.deleteSession(for: aliceDID)
+    try await storage.deleteAccount(for: aliceDID)
+    try await storage.deleteDPoPKey(for: aliceDID)
+    try await storage.deleteSession(for: bobDID)
+    try await storage.deleteAccount(for: bobDID)
+    try await storage.deleteDPoPKey(for: bobDID)
+    try await storage.saveCurrentDID("")
+  }
   // 19. Forced database drain failure during switch propagates and recovers without leaving lifecycle .launching
   @Test("Forced database drain failure during account switch propagates and recovers safely")
   @MainActor
@@ -1447,6 +1452,13 @@ struct CircleNotificationTests {
 
     // Verify alert was set explaining the safe recovery
     #expect(appStateManager.authentication.pendingAuthAlert?.title == "Restart Required")
+
+    // Await full cleanup of stored test accounts, sessions, and current DID
+    try await storage.deleteSession(for: "did:plc:alice")
+    try await storage.deleteAccount(for: "did:plc:alice")
+    try await storage.deleteSession(for: "did:plc:bob")
+    try await storage.deleteAccount(for: "did:plc:bob")
+    try await storage.saveCurrentDID("")
   }
 }
 

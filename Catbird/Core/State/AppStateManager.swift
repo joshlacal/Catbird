@@ -237,6 +237,60 @@ final class AppStateManager {
           let transport = E2ECircleTransport(accountDID: targetDID, store: store)
           state.installE2ECircleFixture(transport: transport)
         }
+        let isBob = (did == bobDID)
+        let author = AppBskyActorDefs.ProfileViewBasic(
+          did: try! DID(didString: did),
+          handle: try! Handle(handleString: isBob ? "bob.test" : "alice.test"),
+          displayName: isBob ? "Bob" : "Alice",
+          pronouns: nil,
+          avatar: nil,
+          associated: nil,
+          viewer: nil,
+          labels: nil,
+          createdAt: nil,
+          verification: nil,
+          status: nil,
+          debug: nil
+        )
+        let publicPostURI = try! ATProtocolURI(uriString: "at://\(did)/app.bsky.feed.post/publicpost1")
+        let publicPost = AppBskyFeedDefs.PostView(
+          uri: publicPostURI,
+          cid: CID.fromDAGCBOR(Data("publicpost1-cid".utf8)),
+          author: author,
+          record: .knownType(
+            AppBskyFeedPost(
+              text: isBob ? "Hello public world from Bob" : "Hello public world from Alice",
+              entities: nil,
+              facets: nil,
+              reply: nil,
+              embed: nil,
+              langs: [LanguageCodeContainer(languageCode: "en")],
+              labels: nil,
+              tags: nil,
+              createdAt: ATProtocolDate(date: Date())
+            )
+          ),
+          embed: nil,
+          bookmarkCount: nil,
+          replyCount: 0,
+          repostCount: 0,
+          likeCount: 0,
+          quoteCount: nil,
+          indexedAt: ATProtocolDate(date: Date()),
+          viewer: nil,
+          labels: nil,
+          threadgate: nil,
+          debug: nil
+        )
+        let publicFeedViewPost = AppBskyFeedDefs.FeedViewPost(post: publicPost, reply: nil, reason: nil, feedContext: nil, reqId: nil)
+        if let cachedPublicPost = CachedFeedViewPost(feedViewPost: publicFeedViewPost) {
+          let timelineModel = FeedModelContainer.shared.getModel(for: .timeline, appState: state)
+          timelineModel.posts = [cachedPublicPost]
+          let stateManager = FeedStateStore.shared.stateManager(for: .timeline, appState: state)
+          Task { @MainActor in
+            await stateManager.restorePersistedPosts([cachedPublicPost], cursor: nil)
+          }
+        }
         return state
       }
 
@@ -251,66 +305,13 @@ final class AppStateManager {
       }
 
       let appState = makeAppState(userDID: fixtureDID, client: client)
-
-      let publicAuthor = AppBskyActorDefs.ProfileViewBasic(
-        did: try! DID(didString: fixtureDID),
-        handle: try! Handle(handleString: "alice.test"),
-        displayName: "Alice",
-        pronouns: nil,
-        avatar: nil,
-        associated: nil,
-        viewer: nil,
-        labels: nil,
-        createdAt: nil,
-        verification: nil,
-        status: nil,
-        debug: nil
-      )
-      let publicPostURI = try! ATProtocolURI(uriString: "at://\(fixtureDID)/app.bsky.feed.post/publicpost1")
-      let publicPost = AppBskyFeedDefs.PostView(
-        uri: publicPostURI,
-        cid: CID.fromDAGCBOR(Data("publicpost1-cid".utf8)),
-        author: publicAuthor,
-        record: .knownType(
-          AppBskyFeedPost(
-            text: "Hello public world from Alice",
-            entities: nil,
-            facets: nil,
-            reply: nil,
-            embed: nil,
-            langs: [LanguageCodeContainer(languageCode: "en")],
-            labels: nil,
-            tags: nil,
-            createdAt: ATProtocolDate(date: Date())
-          )
-        ),
-        embed: nil,
-        bookmarkCount: nil,
-        replyCount: 0,
-        repostCount: 0,
-        likeCount: 0,
-        quoteCount: nil,
-        indexedAt: ATProtocolDate(date: Date()),
-        viewer: nil,
-        labels: nil,
-        threadgate: nil,
-        debug: nil
-      )
-      let publicFeedViewPost = AppBskyFeedDefs.FeedViewPost(post: publicPost, reply: nil, reason: nil, feedContext: nil, reqId: nil)
-      if let cachedPublicPost = CachedFeedViewPost(feedViewPost: publicFeedViewPost) {
-        let timelineModel = FeedModelContainer.shared.getModel(for: .timeline, appState: appState)
-        timelineModel.posts = [cachedPublicPost]
-        let stateManager = FeedStateStore.shared.stateManager(for: .timeline, appState: appState)
-        Task { @MainActor in
-          await stateManager.restorePersistedPosts([cachedPublicPost], cursor: nil)
-        }
-      }
       authenticatedStates[fixtureDID] = appState
       updateAccessOrder(fixtureDID)
       authManager.updateState(.authenticated(userDID: fixtureDID))
       lifecycle = .authenticated(appState)
       MLSDiagnosticLogger.shared.logMLSReady(userDID: fixtureDID)
       startAuthStateObservationIfNeeded()
+      await authManager.refreshAvailableAccounts()
       return
     }
     #endif
