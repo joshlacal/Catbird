@@ -79,10 +79,8 @@ struct CircleManagementView: View {
         Button("Delete Circle", role: .destructive) {
           Task {
             do {
-              let op = try await viewModel?.deleteCircle()
-              if op?.status == .value_complete {
-                dismiss()
-              }
+              try await viewModel?.deleteCircle()
+              dismiss()
             } catch {
               // Errors are surfaced in viewModel.state -> operationStateSection
             }
@@ -228,38 +226,23 @@ struct CircleManagementView: View {
             .foregroundStyle(.secondary)
         }
       }
-    case .pending(let operation):
+    case .failed(let message):
+      Section {
+        Label(message, systemImage: "exclamationmark.triangle.fill")
+          .foregroundStyle(.red)
+          .font(.subheadline)
+      }
+    case .activationFailed(let message):
       Section {
         VStack(alignment: .leading, spacing: 8) {
-          Label("Operation Pending", systemImage: "hourglass")
+          Label("AppView sync pending: \(message)", systemImage: "exclamationmark.triangle.fill")
             .foregroundStyle(.orange)
-            .font(.subheadline.weight(.semibold))
-          Text("Operation ID: \(operation.id)")
-            .font(.caption2)
-            .foregroundStyle(.secondary)
-          Button("Retry / Check Status") {
-            Task { try? await vm.retry() }
+            .font(.subheadline)
+          Button("Retry Sync") {
+            Task { try? await vm.retryActivation() }
           }
           .buttonStyle(.bordered)
-          .accessibilityLabel("Retry pending operation")
-        }
-      }
-    case .failed(let message, let retryID):
-      Section {
-        VStack(alignment: .leading, spacing: 8) {
-          Label(message, systemImage: "exclamationmark.triangle.fill")
-            .foregroundStyle(.red)
-            .font(.subheadline)
-          if let retryID {
-            Text("Operation ID: \(retryID.uuidString)")
-              .font(.caption2)
-              .foregroundStyle(.secondary)
-            Button("Retry") {
-              Task { try? await vm.retry(operationID: retryID) }
-            }
-            .buttonStyle(.bordered)
-            .accessibilityLabel("Retry failed operation")
-          }
+          .accessibilityLabel("Retry AppView sync")
         }
       }
     case .complete, .idle:

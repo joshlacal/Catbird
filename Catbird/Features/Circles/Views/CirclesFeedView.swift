@@ -14,6 +14,8 @@ struct CirclesFeedView: View {
   @State private var model: CircleFeedModel?
   @State private var errorMessage: String?
   @State private var showingCreateCircleSheet = false
+  @Environment(\.webAuthenticationSession) private var webAuthenticationSession
+  private var authCoordinator: CircleAppViewAuthCoordinator { .shared }
 
   init(path: Binding<NavigationPath>) {
     self._path = path
@@ -35,6 +37,8 @@ struct CirclesFeedView: View {
           accessRemovedView(model: model)
         case .unsupported:
           unsupportedView
+        case .needsAuthorization:
+          needsAuthorizationView(model: model)
         }
       } else {
         ProgressView("Loading Circles...")
@@ -153,6 +157,37 @@ struct CirclesFeedView: View {
       Label("Circle Unavailable", systemImage: "person.crop.circle.badge.xmark")
     } description: {
       Text("Your access to this Circle was removed or the Circle is no longer available.")
+    }
+  }
+
+  /// The AppView refused the read for want of its own OAuth grant. This is a
+  /// second, separate consent from gateway sign-in, and it is recoverable —
+  /// never treated as a deleted Circle.
+  @ViewBuilder
+  private func needsAuthorizationView(model: CircleFeedModel) -> some View {
+    ContentUnavailableView {
+      Label("Authorize Circles", systemImage: "lock.shield")
+    } description: {
+      if case .failed(let message) = authCoordinator.state {
+        Text(message)
+      } else {
+        Text(
+          "Catbird needs your permission to read your Circles. This approval is separate from signing in."
+        )
+      }
+    } actions: {
+      Button("Authorize") {
+        Task {
+          guard let did = try? DID(didString: appState.userDID) else { return }
+          await authCoordinator.authorize(did: did, using: webAuthenticationSession)
+          if authCoordinator.state == .authorized {
+            try? await model.load()
+          }
+        }
+      }
+      .buttonStyle(.borderedProminent)
+      .disabled(authCoordinator.state == .authorizing)
+      .accessibilityIdentifier("circles.authorizeAppView")
     }
   }
 

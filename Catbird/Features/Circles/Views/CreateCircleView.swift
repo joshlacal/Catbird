@@ -19,7 +19,7 @@ struct CreateCircleView: View {
           TextField("e.g. Close Friends, Family", text: $name)
             .accessibilityLabel("Circle name")
             .accessibilityHint("Name must be between 1 and 64 characters")
-          
+
           Text("\(name.trimmingCharacters(in: .whitespacesAndNewlines).count)/64 characters")
             .font(.caption2)
             .foregroundStyle(name.trimmingCharacters(in: .whitespacesAndNewlines).count > 64 ? .red : .secondary)
@@ -60,38 +60,31 @@ struct CreateCircleView: View {
                   .foregroundStyle(.secondary)
               }
             }
-          case .pending(let operation):
+          case .failed(let message):
+            Section {
+              Label(message, systemImage: "exclamationmark.triangle.fill")
+                .foregroundStyle(.red)
+                .font(.subheadline)
+            }
+          case .activationFailed(let message):
             Section {
               VStack(alignment: .leading, spacing: 8) {
-                Label("Creation Pending", systemImage: "hourglass")
+                Label("Circle created, but AppView sync is pending", systemImage: "exclamationmark.triangle.fill")
                   .foregroundStyle(.orange)
                   .font(.subheadline.weight(.semibold))
-                Text("Operation ID: \(operation.id)")
-                  .font(.caption2)
+                Text(message)
+                  .font(.caption)
                   .foregroundStyle(.secondary)
-                Button("Retry / Check Status") {
-                  Task { try? await vm.retry() }
+                Button("Retry AppView Sync") {
+                  Task {
+                    try? await vm.retryActivation()
+                    if vm.state == .complete {
+                      dismiss()
+                    }
+                  }
                 }
                 .buttonStyle(.bordered)
-                .accessibilityLabel("Retry or check status of pending creation")
-              }
-            }
-          case .failed(let message, let retryID):
-            Section {
-              VStack(alignment: .leading, spacing: 8) {
-                Label(message, systemImage: "exclamationmark.triangle.fill")
-                  .foregroundStyle(.red)
-                  .font(.subheadline)
-                if let retryID {
-                  Text("Operation ID: \(retryID.uuidString)")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                  Button("Retry") {
-                    Task { try? await vm.retry(operationID: retryID) }
-                  }
-                  .buttonStyle(.bordered)
-                  .accessibilityLabel("Retry failed creation")
-                }
+                .accessibilityLabel("Retry AppView sync")
               }
             }
           case .complete:
@@ -118,13 +111,17 @@ struct CreateCircleView: View {
         }
 
         ToolbarItem(placement: .confirmationAction) {
-          Button("Create") {
-            createCircle()
+          if viewModel?.state == .submitting {
+            ProgressView()
+          } else {
+            Button("Create") {
+              createCircle()
+            }
+            .fontWeight(.semibold)
+            .disabled(!isFormValid || viewModel?.state == .submitting)
+            .accessibilityLabel("Create Circle")
+            .accessibilityHint("Validates name and member DIDs, then creates the Circle")
           }
-          .fontWeight(.semibold)
-          .disabled(!isFormValid || viewModel?.state == .submitting)
-          .accessibilityLabel("Create Circle")
-          .accessibilityHint("Validates name and member DIDs, then creates the Circle")
         }
       }
       .task {
@@ -150,6 +147,9 @@ struct CreateCircleView: View {
     Task {
       do {
         _ = try await vm.createCircle(name: name)
+        if vm.state == .complete {
+          dismiss()
+        }
       } catch {
         showingErrorAlert = true
       }

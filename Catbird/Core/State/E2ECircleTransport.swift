@@ -11,10 +11,12 @@ struct E2EConstants {
   static let bobDID = try! DID(didString: bobDIDString)
 
   static let familyURI = try! SpaceRef(uriString: "at://did:plc:alicee2efixture/space/blue.catbird.circle/family123")
+  static let familyCircleId = try! TID(tidString: "3l7familycircle")
   static let familyPostURI = try! ATProtocolURI(uriString: "at://did:plc:alicee2efixture/space/blue.catbird.circle/family123/did:plc:alicee2efixture/app.bsky.feed.post/post1")
   static let familyPostText = "Welcome to Family Circle"
 
   static let aliceOnlyURI = try! SpaceRef(uriString: "at://did:plc:alicee2efixture/space/blue.catbird.circle/aliceonly123")
+  static let aliceOnlyCircleId = try! TID(tidString: "3l7alicecircle")
   static let aliceOnlyPostURI = try! ATProtocolURI(uriString: "at://did:plc:alicee2efixture/space/blue.catbird.circle/aliceonly123/did:plc:alicee2efixture/app.bsky.feed.post/post2")
   static let aliceOnlyPostText = "Alice secret notes"
 
@@ -32,12 +34,12 @@ actor E2ECircleStore {
   }
 
   private var circles: [SpaceRef: BlueCatbirdCircleDefs.CircleSummary] = [:]
+  private var members: [SpaceRef: Set<DID>] = [:]
   private var posts: [ATProtocolURI: (post: AppBskyFeedDefs.PostView, circle: BlueCatbirdCircleDefs.CircleSummary, replyTo: ATProtocolURI?)] = [:]
   private var order: [ATProtocolURI] = []
   private var likes: [ATProtocolURI: Set<String>] = [:]
   private var mediaBlobs: [String: StoredMedia] = [:]
   private var notifications: [(recipient: DID, notification: BlueCatbirdCircleDefs.Notification)] = []
-  private var opSeq: Int = 1
   private var postSeq: Int = 1
   private var circleSeq: Int = 1
   private var likeSeq: Int = 1
@@ -45,23 +47,25 @@ actor E2ECircleStore {
   init() {
     let family = BlueCatbirdCircleDefs.CircleSummary(
       uri: E2EConstants.familyURI,
+      circleId: E2EConstants.familyCircleId,
       name: "Family",
       owner: E2EConstants.aliceDID,
-      accessState: .value_active,
-      muted: false,
-      members: [E2EConstants.bobDID]
+      memberCount: 1,
+      muted: false
     )
     circles[E2EConstants.familyURI] = family
+    members[E2EConstants.familyURI] = [E2EConstants.bobDID]
 
     let aliceOnly = BlueCatbirdCircleDefs.CircleSummary(
       uri: E2EConstants.aliceOnlyURI,
+      circleId: E2EConstants.aliceOnlyCircleId,
       name: "Alice Only",
       owner: E2EConstants.aliceDID,
-      accessState: .value_active,
-      muted: false,
-      members: []
+      memberCount: 0,
+      muted: false
     )
     circles[E2EConstants.aliceOnlyURI] = aliceOnly
+    members[E2EConstants.aliceOnlyURI] = []
 
     let aliceAuthor = AppBskyActorDefs.ProfileViewBasic(
       did: E2EConstants.aliceDID,
@@ -187,7 +191,8 @@ actor E2ECircleStore {
     if circle.owner.didString() == userDIDString {
       return true
     }
-    return (circle.members ?? []).contains { $0.didString() == userDIDString }
+    let spaceMembers = members[circle.uri] ?? []
+    return spaceMembers.contains { $0.didString() == userDIDString }
   }
 
   private func profile(for did: DID) -> AppBskyActorDefs.ProfileViewBasic {
@@ -221,7 +226,8 @@ actor E2ECircleStore {
       threadMuted: nil,
       replyDisabled: nil,
       embeddingDisabled: nil,
-      pinned: nil
+      pinned: nil,
+      knownLikers: nil
     )
     let totalLikes = (post.likeCount ?? 0) + userLikes.count
 
@@ -245,31 +251,20 @@ actor E2ECircleStore {
   }
 
   func capabilities(userDID: DID) -> CircleCapability {
-    CircleCapability(enabled: true, protocolRevision: "2026-08-24", supportsImages: true)
+    CircleCapability(enabled: true, protocolRevision: "2026-08-26", supportsImages: true)
   }
 
   func listCircles(userDID: DID, cursor: String?) -> CircleListPage {
     let userDIDString = userDID.didString()
-    let accessible = circles.values.filter {
-      $0.owner.didString() == userDIDString || ($0.members ?? []).contains { $0.didString() == userDIDString }
+    let accessible = circles.values.filter { circle in
+      if circle.owner.didString() == userDIDString { return true }
+      let spaceMembers = members[circle.uri] ?? []
+      return spaceMembers.contains { $0.didString() == userDIDString }
     }
     return CircleListPage(circles: Array(accessible), cursor: nil)
   }
 
-  func getFeed(space: SpaceRef?, cursor: String?) throws -> CircleFeedPage {
-    return CircleFeedPage(items: order.compactMap { uri -> BlueCatbirdCircleDefs.FeedItem? in
-      guard let entry = posts[uri], entry.replyTo == nil else { return nil }
-      if let space {
-        guard entry.circle.uri.uriString() == space.uriString() else { return nil }
-      }
-      let postView = postWithViewerState(entry.post, userDID: E2EConstants.aliceDID)
-      let fvp = AppBskyFeedDefs.FeedViewPost(post: postView, reply: nil, reason: nil, feedContext: nil, reqId: nil)
-      return BlueCatbirdCircleDefs.FeedItem(post: fvp, circle: entry.circle)
-    }, cursor: nil)
-  }
-
   func getFeed(userDID: DID, space: SpaceRef?, cursor: String?) throws -> CircleFeedPage {
-    let userDIDString = userDID.didString()
     if let space {
       guard isMember(space: space, userDID: userDID) else {
         throw CircleError.accessRemoved
@@ -294,31 +289,47 @@ actor E2ECircleStore {
     return CircleFeedPage(items: items, cursor: nil)
   }
 
-  func getPostThread(userDID: DID, uri: ATProtocolURI, space: SpaceRef) throws -> CircleThreadPage {
-    guard isMember(space: space, userDID: userDID) else {
-      throw CircleError.accessRemoved
+  func getPostThread(userDID: DID, uri: ATProtocolURI, space: SpaceRef?) throws -> CircleThreadPage {
+    if let space {
+      guard isMember(space: space, userDID: userDID) else {
+        throw CircleError.accessRemoved
+      }
     }
     guard let targetEntry = posts.first(where: { $0.key.uriString() == uri.uriString() })?.value else {
-      let defaultCircle = circles.first(where: { $0.key.uriString() == space.uriString() })?.value ?? Array(circles.values)[0]
-      let post = postWithViewerState(posts.values.first?.post ?? posts[E2EConstants.familyPostURI]!.post, userDID: userDID)
-      let thread = AppBskyFeedDefs.ThreadViewPost(post: post, parent: nil, replies: [], threadContext: nil)
-      return CircleThreadPage(thread: thread, circle: defaultCircle)
+      guard let defaultCircle = circles.values.first(where: { isMember(space: $0.uri, userDID: userDID) }) else {
+        throw CircleError.accessRemoved
+      }
+      let samplePost = posts.values.first?.post ?? posts[E2EConstants.familyPostURI]!.post
+      let post = postWithViewerState(samplePost, userDID: userDID)
+      let mainThread = AppBskyFeedDefs.ThreadViewPost(post: post, parent: nil, replies: nil, threadContext: nil)
+      return CircleThreadPage(thread: mainThread, circle: defaultCircle)
+    }
+    guard isMember(space: targetEntry.circle.uri, userDID: userDID) else {
+      throw CircleError.accessRemoved
     }
 
-    let directReplies = order.compactMap { replyURI -> AppBskyFeedDefs.ThreadViewPostRepliesUnion? in
-      guard let entry = posts[replyURI],
-            entry.replyTo?.uriString() == uri.uriString(),
-            entry.circle.uri.uriString() == space.uriString() else { return nil }
-      let postView = postWithViewerState(entry.post, userDID: userDID)
-      let threadPost = AppBskyFeedDefs.ThreadViewPost(post: postView, parent: nil, replies: [], threadContext: nil)
-      return .appBskyFeedDefsThreadViewPost(threadPost)
+    let directReplies = posts.compactMap { (postURI, entry) -> AppBskyFeedDefs.ThreadViewPost? in
+      guard entry.replyTo?.uriString() == uri.uriString() else { return nil }
+      let replyView = postWithViewerState(entry.post, userDID: userDID)
+      return AppBskyFeedDefs.ThreadViewPost(post: replyView, parent: nil, replies: nil, threadContext: nil)
     }
 
-    let mainPostView = postWithViewerState(targetEntry.post, userDID: userDID)
+    let replyUnions = directReplies.map {
+      AppBskyFeedDefs.ThreadViewPostRepliesUnion.appBskyFeedDefsThreadViewPost($0)
+    }
+
+    var parentThread: AppBskyFeedDefs.ThreadViewPostParentUnion? = nil
+    if let parentURI = targetEntry.replyTo, let parentEntry = posts[parentURI] {
+      let parentPostView = postWithViewerState(parentEntry.post, userDID: userDID)
+      let parentViewPost = AppBskyFeedDefs.ThreadViewPost(post: parentPostView, parent: nil, replies: nil, threadContext: nil)
+      parentThread = .appBskyFeedDefsThreadViewPost(parentViewPost)
+    }
+
+    let mainPost = postWithViewerState(targetEntry.post, userDID: userDID)
     let mainThread = AppBskyFeedDefs.ThreadViewPost(
-      post: mainPostView,
-      parent: nil,
-      replies: directReplies,
+      post: mainPost,
+      parent: parentThread,
+      replies: replyUnions.isEmpty ? nil : replyUnions,
       threadContext: nil
     )
     return CircleThreadPage(thread: mainThread, circle: targetEntry.circle)
@@ -350,22 +361,60 @@ actor E2ECircleStore {
     return stored.data
   }
 
-  func createCircle(userDID: DID, name: String, memberDIDs: [DID]) -> CircleOperation {
-    let rkey = "e2e-circle-\(circleSeq)"
+  func updatePreferences(userDID: DID, space: SpaceRef, muted: Bool) throws -> Bool {
+    guard isMember(space: space, userDID: userDID) else {
+      throw CircleError.accessRemoved
+    }
+    if let circle = circles.first(where: { $0.key.uriString() == space.uriString() })?.value {
+      let updated = BlueCatbirdCircleDefs.CircleSummary(
+        uri: circle.uri,
+        circleId: circle.circleId,
+        name: circle.name,
+        owner: circle.owner,
+        memberCount: circle.memberCount,
+        muted: muted
+      )
+      circles[space] = updated
+    }
+    return muted
+  }
+
+  func report(userDID: DID, post: ATProtocolURI, circle: SpaceRef, reason: CircleReportReason, details: String?) throws -> UUID {
+    guard isMember(space: circle, userDID: userDID) else {
+      throw CircleError.accessRemoved
+    }
+    return UUID()
+  }
+
+  func activateCircle(userDID: DID, space: SpaceRef) throws -> BlueCatbirdCircleDefs.CircleSummary {
+    guard let circle = circles.first(where: { $0.key.uriString() == space.uriString() })?.value else {
+      throw CircleError.invalidParameter("space not found")
+    }
+    guard isMember(space: space, userDID: userDID) else {
+      throw CircleError.notAuthorized
+    }
+    return circle
+  }
+
+  func createSpace(userDID: DID, skey: String?, circleId: String?, name: String, memberDIDs: [DID]) throws -> BlueCatbirdCircleDefs.CircleSummary {
+    let skeyStr = skey ?? "e2e-space-\(circleSeq)"
+    let circleIdStr = circleId ?? "3l7circle\(circleSeq)"
     circleSeq += 1
-    let newURI = try! SpaceRef(uriString: "at://\(userDID.didString())/space/blue.catbird.circle/\(rkey)")
+    let newURI = try SpaceRef(uriString: "at://\(userDID.didString())/space/blue.catbird.circle/\(skeyStr)")
+    let tid = try TID(tidString: circleIdStr)
     let newCircle = BlueCatbirdCircleDefs.CircleSummary(
       uri: newURI,
+      circleId: tid,
       name: name,
       owner: userDID,
-      accessState: .value_active,
-      muted: false,
-      members: memberDIDs
+      memberCount: memberDIDs.count,
+      muted: false
     )
     circles[newURI] = newCircle
+    members[newURI] = Set(memberDIDs)
 
     let notif = BlueCatbirdCircleDefs.Notification(
-      id: "notif-\(rkey)",
+      id: "notif-\(skeyStr)",
       reason: .value_invite,
       actor: profile(for: userDID),
       subject: nil,
@@ -375,7 +424,7 @@ actor E2ECircleStore {
     notifications.insert((recipient: userDID, notification: notif), at: 0)
     for member in memberDIDs {
       let memberNotif = BlueCatbirdCircleDefs.Notification(
-        id: "notif-\(rkey)-\(member.didString())",
+        id: "notif-\(skeyStr)-\(member.didString())",
         reason: .value_invite,
         actor: profile(for: userDID),
         subject: nil,
@@ -384,52 +433,83 @@ actor E2ECircleStore {
       )
       notifications.insert((recipient: member, notification: memberNotif), at: 0)
     }
-    let opId = "op-create-\(opSeq)"
-    opSeq += 1
-    return CircleOperation(id: opId, status: .value_complete, space: newURI, error: nil)
+    return newCircle
   }
 
-  func updateMember(userDID: DID, space: SpaceRef, memberDID: DID, action: CircleMemberAction) throws -> CircleOperation {
+  func deleteSpace(userDID: DID, space: SpaceRef) throws {
     guard let circle = circles.first(where: { $0.key.uriString() == space.uriString() })?.value,
           circle.owner.didString() == userDID.didString() else {
       throw CircleError.notAuthorized
     }
-    var members = circle.members ?? []
-    if action == .remove {
-      members.removeAll { $0.didString() == memberDID.didString() }
-    } else if !members.contains(where: { $0.didString() == memberDID.didString() }) {
-      members.append(memberDID)
+    circles.removeValue(forKey: space)
+    members.removeValue(forKey: space)
+    for (uri, entry) in posts {
+      if entry.circle.uri.uriString() == space.uriString() {
+        posts.removeValue(forKey: uri)
+        order.removeAll { $0.uriString() == uri.uriString() }
+      }
     }
-    let updated = BlueCatbirdCircleDefs.CircleSummary(
-      uri: circle.uri,
-      name: circle.name,
-      owner: circle.owner,
-      accessState: circle.accessState,
-      muted: circle.muted,
-      members: members
-    )
-    circles[space] = updated
-    let opId = "op-member-\(opSeq)"
-    opSeq += 1
-    return CircleOperation(id: opId, status: .value_complete, space: space, error: nil)
+    notifications.removeAll { $0.notification.circle.uri.uriString() == space.uriString() }
   }
 
-  func updatePreferences(userDID: DID, space: SpaceRef, muted: Bool) throws -> Bool {
-    guard isMember(space: space, userDID: userDID) else {
-      throw CircleError.accessRemoved
+  func addMember(userDID: DID, space: SpaceRef, did: DID) throws {
+    guard let circle = circles.first(where: { $0.key.uriString() == space.uriString() })?.value,
+          circle.owner.didString() == userDID.didString() else {
+      throw CircleError.notAuthorized
     }
-    if let circle = circles.first(where: { $0.key.uriString() == space.uriString() })?.value {
-      let updated = BlueCatbirdCircleDefs.CircleSummary(
-        uri: circle.uri,
-        name: circle.name,
-        owner: circle.owner,
-        accessState: circle.accessState,
-        muted: muted,
-        members: circle.members
-      )
-      circles[space] = updated
+    var spaceMembers = members[space] ?? Set()
+    spaceMembers.insert(did)
+    members[space] = spaceMembers
+
+    let updated = BlueCatbirdCircleDefs.CircleSummary(
+      uri: circle.uri,
+      circleId: circle.circleId,
+      name: circle.name,
+      owner: circle.owner,
+      memberCount: spaceMembers.count,
+      muted: circle.muted
+    )
+    circles[space] = updated
+
+    let memberNotif = BlueCatbirdCircleDefs.Notification(
+      id: "notif-add-\(space.skey ?? "")-\(did.didString())",
+      reason: .value_invite,
+      actor: profile(for: userDID),
+      subject: nil,
+      indexedAt: ATProtocolDate(date: Date()),
+      circle: updated
+    )
+    notifications.insert((recipient: did, notification: memberNotif), at: 0)
+  }
+
+  func removeMember(userDID: DID, space: SpaceRef, did: DID) throws {
+    guard let circle = circles.first(where: { $0.key.uriString() == space.uriString() })?.value,
+          circle.owner.didString() == userDID.didString() else {
+      throw CircleError.notAuthorized
     }
-    return muted
+    var spaceMembers = members[space] ?? Set()
+    spaceMembers.remove(did)
+    members[space] = spaceMembers
+
+    let updated = BlueCatbirdCircleDefs.CircleSummary(
+      uri: circle.uri,
+      circleId: circle.circleId,
+      name: circle.name,
+      owner: circle.owner,
+      memberCount: spaceMembers.count,
+      muted: circle.muted
+    )
+    circles[space] = updated
+  }
+
+  func listMembers(userDID: DID, space: SpaceRef) throws -> [DID] {
+    guard let circle = circles.first(where: { $0.key.uriString() == space.uriString() })?.value else {
+      throw CircleError.invalidParameter("space not found")
+    }
+    guard circle.owner.didString() == userDID.didString() else {
+      throw CircleError.notAuthorized
+    }
+    return Array(members[space] ?? Set())
   }
 
   func publishPost(userDID: DID, destination: CircleSummary, draft: CirclePostDraft) throws -> ATProtocolURI {
@@ -438,7 +518,7 @@ actor E2ECircleStore {
     }
     let rkey = "e2e-post-\(postSeq)"
     postSeq += 1
-    let postURI = try! ATProtocolURI(uriString: "\(destination.uri.uriString())/\(userDID.didString())/app.bsky.feed.post/\(rkey)")
+    let postURI = try ATProtocolURI(uriString: "\(destination.uri.uriString())/\(userDID.didString())/app.bsky.feed.post/\(rkey)")
     let author = profile(for: userDID)
 
     var replyToURI: ATProtocolURI? = nil
@@ -475,67 +555,153 @@ actor E2ECircleStore {
     if let embed = draft.embed {
       postEmbed = embed
       switch embed {
-      case .appBskyEmbedImages(let imagesEmbed):
-        let viewImages = imagesEmbed.images.map { img in
-          let cidStr = img.image.ref?.cid.string ?? img.image.cid ?? "image-cid"
-          if var stored = mediaBlobs[cidStr] {
-            stored = StoredMedia(space: destination.uri, authorDID: userDID, cid: stored.cid, data: stored.data)
-            mediaBlobs[cidStr] = stored
-          } else if let parsedCID = try? CID.parse(cidStr) {
-            mediaBlobs[cidStr] = StoredMedia(space: destination.uri, authorDID: userDID, cid: parsedCID, data: E2ECircleTransport.fixtureImageData)
-          }
+      case .appBskyEmbedImages(let images):
+        let viewImages = images.images.map { img -> AppBskyEmbedImages.ViewImage in
+          let imageCID = img.image.cid
           return AppBskyEmbedImages.ViewImage(
-            thumb: try! URI(uriString: "https://catbird.blue/media?cid=\(cidStr)"),
-            fullsize: try! URI(uriString: "https://catbird.blue/media?cid=\(cidStr)"),
+            thumb: try! URI(uriString: "https://example.com/blob/\(imageCID)"),
+            fullsize: try! URI(uriString: "https://example.com/blob/\(imageCID)"),
             alt: img.alt,
             aspectRatio: img.aspectRatio
           )
         }
         postViewEmbed = .appBskyEmbedImagesView(AppBskyEmbedImages.View(images: viewImages))
-      case .appBskyEmbedGallery(let galleryEmbed):
-        let viewImages = galleryEmbed.items.compactMap { item -> AppBskyEmbedImages.ViewImage? in
-          switch item {
-          case .appBskyEmbedGalleryImage(let galleryImage):
-            let cidStr = galleryImage.image.ref?.cid.string ?? galleryImage.image.cid ?? "image-cid"
-            if var stored = mediaBlobs[cidStr] {
-              stored = StoredMedia(space: destination.uri, authorDID: userDID, cid: stored.cid, data: stored.data)
-              mediaBlobs[cidStr] = stored
-            } else if let parsedCID = try? CID.parse(cidStr) {
-              mediaBlobs[cidStr] = StoredMedia(space: destination.uri, authorDID: userDID, cid: parsedCID, data: E2ECircleTransport.fixtureImageData)
-            }
-            return AppBskyEmbedImages.ViewImage(
-              thumb: try! URI(uriString: "https://catbird.blue/media?cid=\(cidStr)"),
-              fullsize: try! URI(uriString: "https://catbird.blue/media?cid=\(cidStr)"),
-              alt: galleryImage.alt,
-              aspectRatio: galleryImage.aspectRatio
+      case .appBskyEmbedRecord(let rec):
+        let viewRecord = AppBskyEmbedRecord.ViewRecord(
+          uri: rec.record.uri,
+          cid: rec.record.cid,
+          author: author,
+          value: .knownType(
+            AppBskyFeedPost(
+              text: "Quoted post",
+              entities: nil,
+              facets: nil,
+              reply: nil,
+              embed: nil,
+              langs: nil,
+              labels: nil,
+              tags: nil,
+              createdAt: ATProtocolDate(date: Date())
             )
-          case .unexpected:
-            return nil
+          ),
+          labels: nil,
+          replyCount: 0,
+          repostCount: 0,
+          likeCount: 0,
+          quoteCount: 0,
+          embeds: nil,
+          indexedAt: ATProtocolDate(date: Date())
+        )
+        postViewEmbed = .appBskyEmbedRecordView(AppBskyEmbedRecord.View(record: .appBskyEmbedRecordViewRecord(viewRecord)))
+      case .appBskyEmbedRecordWithMedia(let rwm):
+        let viewRecord = AppBskyEmbedRecord.ViewRecord(
+          uri: rwm.record.record.uri,
+          cid: rwm.record.record.cid,
+          author: author,
+          value: .knownType(
+            AppBskyFeedPost(
+              text: "Quoted post",
+              entities: nil,
+              facets: nil,
+              reply: nil,
+              embed: nil,
+              langs: nil,
+              labels: nil,
+              tags: nil,
+              createdAt: ATProtocolDate(date: Date())
+            )
+          ),
+          labels: nil,
+          replyCount: 0,
+          repostCount: 0,
+          likeCount: 0,
+          quoteCount: 0,
+          embeds: nil,
+          indexedAt: ATProtocolDate(date: Date())
+        )
+        let mediaUnion: AppBskyEmbedRecordWithMedia.ViewMediaUnion?
+        switch rwm.media {
+        case .appBskyEmbedImages(let imgs):
+          let viewImages = imgs.images.map { img in
+            AppBskyEmbedImages.ViewImage(
+              thumb: try! URI(uriString: "https://example.com/blob/\(img.image.cid)"),
+              fullsize: try! URI(uriString: "https://example.com/blob/\(img.image.cid)"),
+              alt: img.alt,
+              aspectRatio: img.aspectRatio
+            )
           }
+          mediaUnion = .appBskyEmbedImagesView(AppBskyEmbedImages.View(images: viewImages))
+        case .appBskyEmbedVideo(let vid):
+          // The blob ref already carries a real CID; parsing one from a string
+          // would just reintroduce a failure path the fixture cannot handle.
+          if let ref = vid.video.ref {
+            mediaUnion = .appBskyEmbedVideoView(
+              AppBskyEmbedVideo.View(
+                cid: ref.cid,
+                playlist: try! URI(uriString: "https://example.com/video/\(ref.cid)/playlist.m3u8"),
+                thumbnail: nil,
+                alt: vid.alt,
+                aspectRatio: vid.aspectRatio,
+                presentation: nil
+              )
+            )
+          } else {
+            mediaUnion = nil
+          }
+        case .appBskyEmbedExternal(let ext):
+          mediaUnion = .appBskyEmbedExternalView(
+            AppBskyEmbedExternal.View(
+              external: AppBskyEmbedExternal.ViewExternal(
+                uri: ext.external.uri,
+                title: ext.external.title,
+                description: ext.external.description,
+                thumb: nil,
+                createdAt: nil,
+                updatedAt: nil,
+                readingTime: nil,
+                labels: nil,
+                source: nil,
+                associatedRefs: nil,
+                associatedProfiles: nil
+              )
+            )
+          )
+        default:
+          // Fixture covers images, video and external only. Anything else
+          // yields no recordWithMedia embed rather than a fabricated value.
+          mediaUnion = nil
         }
-        postViewEmbed = .appBskyEmbedImagesView(AppBskyEmbedImages.View(images: viewImages))
+        if let mediaUnion {
+          postViewEmbed = .appBskyEmbedRecordWithMediaView(
+            AppBskyEmbedRecordWithMedia.View(
+              record: AppBskyEmbedRecord.View(record: .appBskyEmbedRecordViewRecord(viewRecord)),
+              media: mediaUnion
+            )
+          )
+        }
       default:
         break
       }
     }
 
+    let postRecord = AppBskyFeedPost(
+      text: draft.text,
+      entities: nil,
+      facets: draft.facets,
+      reply: draft.reply,
+      embed: postEmbed,
+      langs: draft.langs,
+      labels: draft.labels,
+      tags: nil,
+      createdAt: draft.createdAt
+    )
+
+    let postCID = CID.fromDAGCBOR(Data("e2e-post-cid-\(rkey)".utf8))
     let post = AppBskyFeedDefs.PostView(
       uri: postURI,
-      cid: CID.fromDAGCBOR(Data("\(rkey)-cid".utf8)),
+      cid: postCID,
       author: author,
-      record: .knownType(
-        AppBskyFeedPost(
-          text: draft.text,
-          entities: nil,
-          facets: draft.facets,
-          reply: draft.reply,
-          embed: postEmbed,
-          langs: draft.langs,
-          labels: draft.labels,
-          tags: nil,
-          createdAt: ATProtocolDate(date: Date())
-        )
-      ),
+      record: .knownType(postRecord),
       embed: postViewEmbed,
       bookmarkCount: nil,
       replyCount: 0,
@@ -543,7 +709,16 @@ actor E2ECircleStore {
       likeCount: 0,
       quoteCount: nil,
       indexedAt: ATProtocolDate(date: Date()),
-      viewer: nil,
+      viewer: AppBskyFeedDefs.ViewerState(
+        repost: nil,
+        like: nil,
+        bookmarked: nil,
+        threadMuted: nil,
+        replyDisabled: nil,
+        embeddingDisabled: nil,
+        pinned: nil,
+        knownLikers: nil
+      ),
       labels: nil,
       threadgate: nil,
       debug: nil
@@ -553,19 +728,19 @@ actor E2ECircleStore {
     return postURI
   }
 
-  func like(userDID: DID, post: AppBskyFeedDefs.PostView, circle: CircleSummary) throws -> ATProtocolURI {
-    guard isMember(space: circle.uri, userDID: userDID) else {
+  func like(userDID: DID, post: ATProtocolURI, circle: SpaceRef) throws -> ATProtocolURI {
+    guard isMember(space: circle, userDID: userDID) else {
       throw CircleError.accessRemoved
     }
-    var userLikes = likes[post.uri] ?? Set<String>()
+    var userLikes = likes[post] ?? Set<String>()
     userLikes.insert(userDID.didString())
-    likes[post.uri] = userLikes
-    let likeURI = try! ATProtocolURI(uriString: "\(circle.uri.uriString())/\(userDID.didString())/app.bsky.feed.like/e2e-like-\(likeSeq)")
+    likes[post] = userLikes
+    let likeURI = try ATProtocolURI(uriString: "\(circle.uriString())/\(userDID.didString())/app.bsky.feed.like/e2e-like-\(likeSeq)")
     likeSeq += 1
     return likeURI
   }
 
-  func deleteLike(userDID: DID, uri: ATProtocolURI, circle: CircleSummary) {
+  func deleteLike(userDID: DID, uri: ATProtocolURI, circle: SpaceRef) {
     for (postURI, userSet) in likes {
       var s = userSet
       s.remove(userDID.didString())
@@ -573,30 +748,12 @@ actor E2ECircleStore {
     }
   }
 
-  func deletePost(userDID: DID, uri: ATProtocolURI, circle: CircleSummary) {
+  func deletePost(userDID: DID, uri: ATProtocolURI, circle: SpaceRef) {
     posts.removeValue(forKey: uri)
     order.removeAll { $0.uriString() == uri.uriString() }
   }
 
-  func deleteCircle(userDID: DID, space: SpaceRef) throws -> CircleOperation {
-    guard let circle = circles.first(where: { $0.key.uriString() == space.uriString() })?.value,
-          circle.owner.didString() == userDID.didString() else {
-      throw CircleError.notAuthorized
-    }
-    circles.removeValue(forKey: space)
-    for (uri, entry) in posts {
-      if entry.circle.uri.uriString() == space.uriString() {
-        posts.removeValue(forKey: uri)
-        order.removeAll { $0.uriString() == uri.uriString() }
-      }
-    }
-    let opId = "op-del-\(opSeq)"
-    opSeq += 1
-    return CircleOperation(id: opId, status: .value_complete, space: space, error: nil)
-  }
-
   func uploadImage(imageData: Data) async -> Blob {
-    try? await Task.sleep(nanoseconds: 2_000_000_000)
     let cid = CID.fromBlob(imageData)
     let cidString = cid.string
     let link = ATProtoLink(cid: cid)
@@ -612,11 +769,11 @@ actor E2ECircleStore {
   func enqueueGenericActivity(userDID: DID) {
     let targetCircle = circles.first(where: { $0.key.uriString() == E2EConstants.familyURI.uriString() })?.value ?? BlueCatbirdCircleDefs.CircleSummary(
       uri: E2EConstants.familyURI,
+      circleId: E2EConstants.familyCircleId,
       name: "Family",
       owner: E2EConstants.aliceDID,
-      accessState: .value_active,
-      muted: false,
-      members: [E2EConstants.bobDID]
+      memberCount: 1,
+      muted: false
     )
     let notif = BlueCatbirdCircleDefs.Notification(
       id: "push-1",
@@ -668,24 +825,16 @@ final class E2ECircleTransport: CircleTransport, @unchecked Sendable {
     try await store.media(userDID: accountDID, space: space, authorDID: authorDID, cid: cid)
   }
 
-  func createCircle(name: String, memberDIDs: [DID]) async throws -> CircleOperation {
-    await store.createCircle(userDID: accountDID, name: name, memberDIDs: memberDIDs)
-  }
-
-  func updateMember(space: SpaceRef, memberDID: DID, action: CircleMemberAction) async throws -> CircleOperation {
-    try await store.updateMember(userDID: accountDID, space: space, memberDID: memberDID, action: action)
-  }
-
   func updatePreferences(space: SpaceRef, muted: Bool) async throws -> Bool {
     try await store.updatePreferences(userDID: accountDID, space: space, muted: muted)
   }
 
   func report(post: ATProtocolURI, circle: CircleSummary, reason: CircleReportReason, details: String?) async throws -> UUID {
-    UUID()
+    try await store.report(userDID: accountDID, post: post, circle: circle.uri, reason: reason, details: details)
   }
 
-  func activate(space: SpaceRef) async throws -> CircleAccessState {
-    .active
+  func activateCircle(space: SpaceRef) async throws -> CircleSummary {
+    try await store.activateCircle(userDID: accountDID, space: space)
   }
 
   func publishPost(destination: CircleSummary, draft: CirclePostDraft) async throws -> ATProtocolURI {
@@ -693,27 +842,35 @@ final class E2ECircleTransport: CircleTransport, @unchecked Sendable {
   }
 
   func like(post: AppBskyFeedDefs.PostView, circle: CircleSummary) async throws -> ATProtocolURI {
-    try await store.like(userDID: accountDID, post: post, circle: circle)
+    try await store.like(userDID: accountDID, post: post.uri, circle: circle.uri)
   }
 
   func deletePost(uri: ATProtocolURI, circle: CircleSummary) async throws {
-    await store.deletePost(userDID: accountDID, uri: uri, circle: circle)
+    await store.deletePost(userDID: accountDID, uri: uri, circle: circle.uri)
   }
 
   func deleteLike(uri: ATProtocolURI, circle: CircleSummary) async throws {
-    await store.deleteLike(userDID: accountDID, uri: uri, circle: circle)
+    await store.deleteLike(userDID: accountDID, uri: uri, circle: circle.uri)
   }
 
-  func deleteCircle(space: SpaceRef) async throws -> CircleOperation {
-    try await store.deleteCircle(userDID: accountDID, space: space)
+  func createSpace(skey: String, circleId: String, name: String, memberDIDs: [DID]) async throws -> CircleSummary {
+    try await store.createSpace(userDID: accountDID, skey: skey, circleId: circleId, name: name, memberDIDs: memberDIDs)
   }
 
-  func getOperation(id: String) async throws -> CircleOperation {
-    CircleOperation(id: id, status: .value_complete, space: E2EConstants.familyURI, error: nil)
+  func deleteSpace(space: SpaceRef) async throws {
+    try await store.deleteSpace(userDID: accountDID, space: space)
   }
 
-  func retryOperation(id: String) async throws -> CircleOperation {
-    CircleOperation(id: id, status: .value_complete, space: E2EConstants.familyURI, error: nil)
+  func addMember(space: SpaceRef, did: DID) async throws {
+    try await store.addMember(userDID: accountDID, space: space, did: did)
+  }
+
+  func removeMember(space: SpaceRef, did: DID) async throws {
+    try await store.removeMember(userDID: accountDID, space: space, did: did)
+  }
+
+  func listMembers(space: SpaceRef) async throws -> [DID] {
+    try await store.listMembers(userDID: accountDID, space: space)
   }
 
   func uploadImage(_ data: Data) async throws -> Blob {

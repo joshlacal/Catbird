@@ -135,15 +135,6 @@ struct CircleFeedModelTests {
       lastMediaCID = cid
       return mediaData
     }
-
-    func createCircle(name: String, memberDIDs: [DID]) async throws -> CircleOperation {
-      CircleOperation(id: "op-1", status: .value_complete, space: CircleTestFixtures.familyURI, error: nil)
-    }
-
-    func updateMember(space: SpaceRef, memberDID: DID, action: CircleMemberAction) async throws -> CircleOperation {
-      CircleOperation(id: "op-2", status: .value_complete, space: space, error: nil)
-    }
-
     func updatePreferences(space: SpaceRef, muted: Bool) async throws -> Bool {
       muted
     }
@@ -152,8 +143,8 @@ struct CircleFeedModelTests {
       UUID()
     }
 
-    func activate(space: SpaceRef) async throws -> CircleAccessState {
-      .active
+    func activateCircle(space: SpaceRef) async throws -> CircleSummary {
+      CircleTestFixtures.family
     }
 
     func publishPost(destination: CircleSummary, draft: CirclePostDraft) async throws -> ATProtocolURI {
@@ -166,14 +157,15 @@ struct CircleFeedModelTests {
 
     func deletePost(uri: ATProtocolURI, circle: CircleSummary) async throws {}
     func deleteLike(uri: ATProtocolURI, circle: CircleSummary) async throws {}
-    func deleteCircle(space: SpaceRef) async throws -> CircleOperation {
-      CircleOperation(id: "op-del", status: .value_complete, space: space, error: nil)
+
+    func createSpace(skey: String, circleId: String, name: String, memberDIDs: [DID]) async throws -> CircleSummary {
+      CircleTestFixtures.family
     }
-    func getOperation(id: String) async throws -> CircleOperation {
-      CircleOperation(id: id, status: .value_complete, space: nil, error: nil)
-    }
-    func retryOperation(id: String) async throws -> CircleOperation {
-      CircleOperation(id: id, status: .value_complete, space: nil, error: nil)
+    func deleteSpace(space: SpaceRef) async throws {}
+    func addMember(space: SpaceRef, did: DID) async throws {}
+    func removeMember(space: SpaceRef, did: DID) async throws {}
+    func listMembers(space: SpaceRef) async throws -> [DID] {
+      []
     }
   }
 

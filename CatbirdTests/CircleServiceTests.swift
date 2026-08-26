@@ -25,71 +25,85 @@ actor RecordingCircleTransport: CircleTransport {
     if let customCapabilities { return customCapabilities }
     return CircleCapability(enabled: true, protocolRevision: "test", supportsImages: true)
   }
+
   func listCircles(cursor: String?) async throws -> CircleListPage {
     try throwIfConfigured()
     return CircleListPage(circles: [], cursor: nil)
   }
+
   func getFeed(space: SpaceRef?, cursor: String?) async throws -> CircleFeedPage {
     try throwIfConfigured()
     return CircleFeedPage(items: [], cursor: nil)
   }
+
   func getPostThread(uri: ATProtocolURI, space: SpaceRef) async throws -> CircleThreadPage {
     try throwIfConfigured()
     throw CircleError.invalidResponse
   }
+
   func listNotifications(cursor: String?) async throws -> CircleNotificationPage {
     try throwIfConfigured()
     return CircleNotificationPage(notifications: [], cursor: nil)
   }
+
   func media(space: SpaceRef, authorDID: DID, cid: CID) async throws -> Data {
     try throwIfConfigured()
     return Data()
   }
-  func createCircle(name: String, memberDIDs: [DID]) async throws -> CircleOperation {
-    try throwIfConfigured()
-    throw CircleError.invalidResponse
-  }
-  func updateMember(space: SpaceRef, memberDID: DID, action: CircleMemberAction) async throws -> CircleOperation {
-    try throwIfConfigured()
-    throw CircleError.invalidResponse
-  }
+
   func updatePreferences(space: SpaceRef, muted: Bool) async throws -> Bool {
     try throwIfConfigured()
     return muted
   }
+
   func report(post: ATProtocolURI, circle: CircleSummary, reason: CircleReportReason, details: String?) async throws -> UUID {
     try throwIfConfigured()
     return UUID()
   }
-  func activate(space: SpaceRef) async throws -> CircleAccessState {
+
+  func activateCircle(space: SpaceRef) async throws -> CircleSummary {
     try throwIfConfigured()
-    return .active
+    return CircleTestFixtures.family
   }
+
   func publishPost(destination: CircleSummary, draft: CirclePostDraft) async throws -> ATProtocolURI {
     try throwIfConfigured()
     throw CircleError.invalidResponse
   }
+
   func like(post: AppBskyFeedDefs.PostView, circle: CircleSummary) async throws -> ATProtocolURI {
     try throwIfConfigured()
     throw CircleError.invalidResponse
   }
+
   func deletePost(uri: ATProtocolURI, circle: CircleSummary) async throws {
     try throwIfConfigured()
   }
+
   func deleteLike(uri: ATProtocolURI, circle: CircleSummary) async throws {
     try throwIfConfigured()
   }
-  func deleteCircle(space: SpaceRef) async throws -> CircleOperation {
+
+  func createSpace(skey: String, circleId: String, name: String, memberDIDs: [DID]) async throws -> CircleSummary {
     try throwIfConfigured()
-    return CircleOperation(id: UUID().uuidString, status: .value_complete, space: space, error: nil)
+    return CircleTestFixtures.family
   }
-  func getOperation(id: String) async throws -> CircleOperation {
+
+  func deleteSpace(space: SpaceRef) async throws {
     try throwIfConfigured()
-    return CircleOperation(id: id, status: .value_complete, space: nil, error: nil)
   }
-  func retryOperation(id: String) async throws -> CircleOperation {
+
+  func addMember(space: SpaceRef, did: DID) async throws {
     try throwIfConfigured()
-    return CircleOperation(id: id, status: .value_complete, space: nil, error: nil)
+  }
+
+  func removeMember(space: SpaceRef, did: DID) async throws {
+    try throwIfConfigured()
+  }
+
+  func listMembers(space: SpaceRef) async throws -> [DID] {
+    try throwIfConfigured()
+    return []
   }
 }
 
@@ -115,8 +129,8 @@ struct CircleServiceTests {
     #expect(caps.supportsImages)
     let page = try await service.getFeed(space: nil)
     #expect(page.items.isEmpty)
-    let state = try await service.activate(space: CircleTestFixtures.family.uri)
-    #expect(state == .active)
+    let summary = try await service.activateCircle(space: CircleTestFixtures.family.uri)
+    #expect(summary.uri == CircleTestFixtures.family.uri)
   }
 
   @Test("CircleService deleteLike forwards to transport and stays Circle scoped")
@@ -146,6 +160,7 @@ struct CircleServiceTests {
     await appState.probeCircleCapabilities()
     #expect(CircleFeatureFlags.isEnabled)
   }
+
   @Test("AppState probe failure sets server capability flag to false")
   @MainActor
   func appStateProbeFailureSetsFlagFalse() async throws {
@@ -164,6 +179,7 @@ struct CircleServiceTests {
     await appState.probeCircleCapabilities()
     #expect(!CircleFeatureFlags.isEnabled)
   }
+
   @Test("AppState probe stale result from inactive account is discarded")
   @MainActor
   func appStateProbeStaleResultFromInactiveAccountIsDiscarded() async throws {
@@ -201,15 +217,25 @@ struct CircleServiceTests {
 enum CircleTestFixtures {
   static let alice = try! DID(didString: "did:plc:alice")
   static let familyURI = try! SpaceRef(uriString: "at://did:plc:alice/space/blue.catbird.circle/3abc")
+  static let familyCircleId = try! TID(tidString: "3l7familycirc")
   static let workURI = try! SpaceRef(uriString: "at://did:plc:alice/space/blue.catbird.circle/9xyz")
+  static let workCircleId = try! TID(tidString: "3l7workcircle")
 
   static let family = BlueCatbirdCircleDefs.CircleSummary(
-    uri: familyURI, name: "Family", owner: alice,
-    accessState: .value_active, muted: nil, members: nil
+    uri: familyURI,
+    circleId: familyCircleId,
+    name: "Family",
+    owner: alice,
+    memberCount: 1,
+    muted: nil
   )
   static let work = BlueCatbirdCircleDefs.CircleSummary(
-    uri: workURI, name: "Work", owner: alice,
-    accessState: .value_active, muted: nil, members: nil
+    uri: workURI,
+    circleId: workCircleId,
+    name: "Work",
+    owner: alice,
+    memberCount: 2,
+    muted: nil
   )
 
   static let draft = CirclePostDraft(

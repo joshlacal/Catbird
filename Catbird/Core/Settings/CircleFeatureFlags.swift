@@ -1,17 +1,19 @@
 import Foundation
 
-/// Independent rollout gate for Catbird Circles. The feature is only enabled
-/// when both the local server flag AND the server-advertised capability gate
-/// report enabled, so a draft-protocol revision mismatch or unsupported server
-/// keeps the alpha hidden.
-enum CircleFeatureFlags {
+/// Independent rollout gate for Catbird Circles.
+///
+/// The feature is only enabled when both the local user/developer flag AND the
+/// standalone Circle AppView capability gate report enabled (`blue.catbird.circle.getCapabilities`).
+/// An unsupported AppView, network outage, unsupported PDS, or protocol revision mismatch
+/// fails closed and keeps the alpha hidden.
+public enum CircleFeatureFlags {
   private static let defaults = UserDefaults.standard
   private static let enabledKey = "feature.circles.enabled"
 
-  /// Server capability gate, populated by `CircleService.capabilities()`.
+  /// AppView capability gate, populated by `CircleService.capabilities()`.
   nonisolated(unsafe) private static var serverEnabled: Bool = false
 
-  static func serverCapability(enabled: Bool) {
+  public static func serverCapability(enabled: Bool) {
     serverEnabled = enabled
   }
 
@@ -19,8 +21,8 @@ enum CircleFeatureFlags {
     ProcessInfo.processInfo.arguments.contains("--e2e-mode")
   }
 
-  /// True only when the local flag and the last-seen server capability agree.
-  static var isEnabled: Bool {
+  /// True only when the local flag and the last-seen AppView capability agree.
+  public static var isEnabled: Bool {
     #if DEBUG
     if isE2EMode {
       if ProcessInfo.processInfo.arguments.contains("--circles-unsupported-pds") {
@@ -34,7 +36,7 @@ enum CircleFeatureFlags {
     return localFlag && serverEnabled
   }
 
-  static var localFlag: Bool {
+  public static var localFlag: Bool {
     #if DEBUG
     if isE2EMode && ProcessInfo.processInfo.arguments.contains("--enable-circles") {
       return true
@@ -43,7 +45,8 @@ enum CircleFeatureFlags {
     guard defaults.object(forKey: enabledKey) != nil else { return false }
     return defaults.bool(forKey: enabledKey)
   }
-  static func setLocalFlag(_ enabled: Bool) {
+
+  public static func setLocalFlag(_ enabled: Bool) {
     defaults.set(enabled, forKey: enabledKey)
   }
 }

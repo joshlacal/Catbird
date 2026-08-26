@@ -15,7 +15,7 @@ import AppKit
 
 /// Authenticated image loader and memory cache for Circle media.
 ///
-/// Images are fetched exclusively through the generated authenticated endpoint
+/// Images are fetched exclusively through the proxied AppView media endpoint
 /// (`blue.catbird.circle.getMedia`) via `CircleService`. Raw tokens and media
 /// URLs are never exposed. Decoded `PlatformImage` instances are kept in memory
 /// only, keyed by `accountDID|space|authorDID|cid`, and purged on account

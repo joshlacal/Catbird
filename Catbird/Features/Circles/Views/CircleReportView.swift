@@ -3,7 +3,7 @@ import Petrel
 import PetrelCatbird
 
 /// Private moderation report sheet for Circle posts.
-/// Reports route exclusively through `blue.catbird.circle.reportRecord` and never fall back to public moderation.
+/// Reports route exclusively through the proxied AppView endpoint (`blue.catbird.circle.reportRecord`) and never fall back to public moderation.
 struct CircleReportView: View {
   let post: AppBskyFeedDefs.PostView
   let circle: CircleSummary

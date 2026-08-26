@@ -11,10 +11,12 @@ import PetrelCatbird
 struct CircleDetailView: View {
   let circle: CircleSummary
   @Environment(AppState.self) private var appState
+  @Environment(\.webAuthenticationSession) private var webAuthenticationSession
   @Binding var path: NavigationPath
   @State private var model: CircleFeedModel?
   @State private var errorMessage: String?
   @State private var showingManagementSheet = false
+  private var authCoordinator: CircleAppViewAuthCoordinator { .shared }
 
   init(circle: CircleSummary, path: Binding<NavigationPath>) {
     self.circle = circle
@@ -33,6 +35,8 @@ struct CircleDetailView: View {
           accessRemovedView
         case .unsupported:
           unsupportedView
+        case .needsAuthorization:
+          needsAuthorizationView(model: model)
         }
       } else {
         ProgressView("Loading \(circle.name)...")
@@ -176,6 +180,34 @@ struct CircleDetailView: View {
       Label("Circle Unavailable", systemImage: "person.crop.circle.badge.xmark")
     } description: {
       Text("Your access to \(circle.name) was removed or the Circle was deleted.")
+    }
+  }
+
+  @ViewBuilder
+  private func needsAuthorizationView(model: CircleFeedModel) -> some View {
+    ContentUnavailableView {
+      Label("Authorize Circles", systemImage: "lock.shield")
+    } description: {
+      if case .failed(let message) = authCoordinator.state {
+        Text(message)
+      } else {
+        Text(
+          "Catbird needs your permission to read your Circles. This approval is separate from signing in."
+        )
+      }
+    } actions: {
+      Button("Authorize") {
+        Task {
+          guard let did = try? DID(didString: appState.userDID) else { return }
+          await authCoordinator.authorize(did: did, using: webAuthenticationSession)
+          if authCoordinator.state == .authorized {
+            try? await model.load()
+          }
+        }
+      }
+      .buttonStyle(.borderedProminent)
+      .disabled(authCoordinator.state == .authorizing)
+      .accessibilityIdentifier("circles.authorizeAppView")
     }
   }
 

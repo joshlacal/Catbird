@@ -13,25 +13,16 @@ enum CircleManagementCopy {
 enum CircleManagementState: Equatable, Sendable {
   case idle
   case submitting
-  case pending(CircleOperation)
   case complete
-  case failed(message: String, retryOperationID: UUID?)
+  case failed(message: String)
+  case activationFailed(message: String)
 
-  /// The operation UUID available for generated retryOperation, if any.
-  var retryOperationID: UUID? {
-    switch self {
-    case .pending(let op):
-      return UUID(uuidString: op.id)
-    case .failed(_, let retryID):
-      return retryID
-    default:
-      return nil
+  /// Whether AppView activation can be retried.
+  var canRetryActivation: Bool {
+    if case .activationFailed = self {
+      return true
     }
-  }
-
-  /// Whether a named operation retry is available.
-  var canRetry: Bool {
-    retryOperationID != nil
+    return false
   }
 }
 
@@ -49,19 +40,14 @@ final class CircleManagementViewModel {
   let service: CircleService
   let userDID: String
   let isCreating: Bool
-  private var pendingDeleteOperationID: String?
+
   init(circle: CircleSummary, service: CircleService, userDID: String = "") {
     self.circle = circle
     self.service = service
     self.userDID = userDID
     self.name = circle.name
     self.isCreating = false
-    let isOwner = !userDID.isEmpty && circle.owner.didString() == userDID
-    if isOwner, let circleMembers = circle.members {
-      self.members = circleMembers
-    } else {
-      self.members = []
-    }
+    self.members = []
   }
 
   init(service: CircleService, userDID: String = "") {
@@ -69,13 +55,15 @@ final class CircleManagementViewModel {
       ?? (try! SpaceRef(uriString: "at://did:plc:placeholder/space/blue.catbird.circle/new"))
     let ownerDID = (try? DID(didString: userDID.isEmpty ? "did:plc:placeholder" : userDID))
       ?? (try! DID(didString: "did:plc:placeholder"))
+    let placeholderTID = (try? TID(tidString: "3zzzzzzzzzzzz"))
+      ?? (try! TID(tidString: "3zzzzzzzzzzzz"))
     self.circle = CircleSummary(
       uri: placeholderURI,
+      circleId: placeholderTID,
       name: "",
       owner: ownerDID,
-      accessState: .value_active,
-      muted: false,
-      members: nil
+      memberCount: nil,
+      muted: false
     )
     self.service = service
     self.userDID = userDID
@@ -89,26 +77,22 @@ final class CircleManagementViewModel {
     return circle.owner.didString() == userDID
   }
 
-  /// Whether a named operation retry is actionable for the current state.
-  var canRetry: Bool {
-    state.canRetry
+  /// Whether AppView activation can be retried.
+  var canRetryActivation: Bool {
+    state.canRetryActivation
   }
 
-  /// Authoritatively loads the member roster for owners.
+  /// Authoritatively loads the member roster for owners directly from the owner's PDS.
   func loadMembers() async {
     guard canManageMembers else { return }
     do {
-      let page = try await service.listCircles(cursor: nil)
-      if let current = page.circles.first(where: { $0.uri == circle.uri }) {
-        self.circle = current
-        if let currentMembers = current.members {
-          self.members = currentMembers
-        }
-      }
+      let memberList = try await service.listMembers(space: circle.uri)
+      self.members = memberList
     } catch {
       // Preserve existing in-memory members on network failure
     }
   }
+
   /// Whether this Circle is muted by the active member.
   var isMuted: Bool {
     circle.muted ?? false
@@ -162,8 +146,14 @@ final class CircleManagementViewModel {
 
   // MARK: - Operations
 
-  /// Creates a new named Circle.
-  func createCircle(name: String? = nil, memberDIDs: [DID]? = nil) async throws -> CircleOperation? {
+  /// Creates a new named Circle following the 5-step sequence:
+  /// 1. Mint TID skey and circleId
+  /// 2. createSpace on PDS with memberListPolicy and #allowList
+  /// 3. putRecord metadata with circleId
+  /// 4. addMember per initial member on PDS
+  /// 5. activateCircle against AppView (activation failure is a retryable sync state)
+  @discardableResult
+  func createCircle(name: String? = nil, memberDIDs: [DID]? = nil) async throws -> CircleSummary {
     let rawName = name ?? self.name
     let validName: String
     switch Self.validateName(rawName) {
@@ -172,7 +162,7 @@ final class CircleManagementViewModel {
       self.validationError = nil
     case .failure(let error):
       self.validationError = error.localizedDescription
-      self.state = .failed(message: error.localizedDescription, retryOperationID: nil)
+      self.state = .failed(message: error.localizedDescription)
       throw error
     }
 
@@ -184,7 +174,7 @@ final class CircleManagementViewModel {
         self.validationError = nil
       case .failure(let error):
         self.validationError = error.localizedDescription
-        self.state = .failed(message: error.localizedDescription, retryOperationID: nil)
+        self.state = .failed(message: error.localizedDescription)
         throw error
       }
     } else if !memberDIDsInput.isEmpty {
@@ -194,7 +184,7 @@ final class CircleManagementViewModel {
         self.validationError = nil
       case .failure(let error):
         self.validationError = error.localizedDescription
-        self.state = .failed(message: error.localizedDescription, retryOperationID: nil)
+        self.state = .failed(message: error.localizedDescription)
         throw error
       }
     } else {
@@ -202,87 +192,125 @@ final class CircleManagementViewModel {
     }
 
     state = .submitting
+    let skey = await TIDGenerator.shared.nextStr()
+    let circleId = await TIDGenerator.shared.nextStr()
+
+    let createdSummary: CircleSummary
     do {
-      let operation = try await service.createCircle(name: validName, memberDIDs: finalDIDs)
-      await handleOperation(operation)
-      return operation
+      createdSummary = try await service.createSpace(
+        skey: skey,
+        circleId: circleId,
+        name: validName,
+        memberDIDs: finalDIDs
+      )
+      self.circle = createdSummary
     } catch {
       let cError = circleError(from: error)
-      state = .failed(message: cError.localizedDescription, retryOperationID: nil)
+      state = .failed(message: cError.localizedDescription)
+      throw cError
+    }
+
+    // Step 5: activate with AppView
+    do {
+      let activated = try await service.activateCircle(space: createdSummary.uri)
+      self.circle = activated
+      self.state = .complete
+      return activated
+    } catch {
+      let cError = circleError(from: error)
+      self.state = .activationFailed(message: cError.localizedDescription)
+      return createdSummary
+    }
+  }
+
+  /// Retries AppView activation for an already created Circle Space.
+  func retryActivation() async throws {
+    guard canRetryActivation else { return }
+    state = .submitting
+    do {
+      let activated = try await service.activateCircle(space: circle.uri)
+      self.circle = activated
+      self.state = .complete
+    } catch {
+      let cError = circleError(from: error)
+      self.state = .activationFailed(message: cError.localizedDescription)
       throw cError
     }
   }
 
-  /// Adds a member to an existing Circle (owner only).
-  func addMember(did: DID) async throws -> CircleOperation? {
+  /// Adds a member to an existing Circle directly via PDS (owner only).
+  func addMember(did: DID) async throws {
     guard canManageMembers else {
       let error = CircleError.notAuthorized
-      state = .failed(message: error.localizedDescription, retryOperationID: nil)
+      state = .failed(message: error.localizedDescription)
       throw error
     }
 
     guard members.count < 150 else {
       let error = CircleError.invalidParameter("Circle cannot exceed 150 unique members")
-      state = .failed(message: error.localizedDescription, retryOperationID: nil)
+      state = .failed(message: error.localizedDescription)
       throw error
     }
 
     state = .submitting
     do {
-      let operation = try await service.updateMember(space: circle.uri, memberDID: did, action: .add)
-      await handleOperation(operation)
-      if operation.status == .value_complete {
-        if !members.contains(where: { $0.didString() == did.didString() }) {
-          members.append(did)
-        }
+      try await service.addMember(space: circle.uri, did: did)
+      if !members.contains(where: { $0.didString() == did.didString() }) {
+        members.append(did)
       }
-      return operation
+      state = .complete
     } catch {
       let cError = circleError(from: error)
-      state = .failed(message: cError.localizedDescription, retryOperationID: nil)
+      state = .failed(message: cError.localizedDescription)
       throw cError
     }
   }
 
-  /// Removes a member from an existing Circle (owner only).
-  func removeMember(did: DID) async throws -> CircleOperation? {
+  /// Removes a member from an existing Circle directly via PDS (owner only).
+  func removeMember(did: DID) async throws {
     guard canManageMembers else {
       let error = CircleError.notAuthorized
-      state = .failed(message: error.localizedDescription, retryOperationID: nil)
+      state = .failed(message: error.localizedDescription)
       throw error
     }
 
     state = .submitting
     do {
-      let operation = try await service.updateMember(space: circle.uri, memberDID: did, action: .remove)
-      await handleOperation(operation)
-      if operation.status == .value_complete {
-        members.removeAll(where: { $0.didString() == did.didString() })
-      }
-      return operation
+      try await service.removeMember(space: circle.uri, did: did)
+      members.removeAll(where: { $0.didString() == did.didString() })
+      state = .complete
     } catch {
       let cError = circleError(from: error)
-      state = .failed(message: cError.localizedDescription, retryOperationID: nil)
+      state = .failed(message: cError.localizedDescription)
       throw cError
     }
   }
 
-  /// Deletes a Circle Space entirely (owner only).
-  func deleteCircle() async throws -> CircleOperation? {
+  /// Deletes a Circle Space entirely on the owner's PDS (owner only).
+  func deleteCircle() async throws {
     guard canManageMembers else {
       let error = CircleError.notAuthorized
-      state = .failed(message: error.localizedDescription, retryOperationID: nil)
+      state = .failed(message: error.localizedDescription)
       throw error
     }
     state = .submitting
     do {
-      let operation = try await service.deleteCircle(space: circle.uri)
-      pendingDeleteOperationID = operation.id
-      await handleOperation(operation)
-      return operation
+      try await service.deleteSpace(space: circle.uri)
+      state = .complete
+      await CircleFeedCache.shared.purge(accountDID: userDID, space: circle.uri)
+      await CircleMediaLoader.shared.purge(accountDID: userDID, space: circle.uri)
+      await CircleNotificationCache.shared.purge(accountDID: userDID, space: circle.uri)
+      NotificationCenter.default.post(
+        name: .circleDeleted,
+        object: nil,
+        userInfo: [
+          "accountDID": userDID,
+          "spaceURI": circle.uri.uriString()
+        ]
+      )
     } catch {
       let cError = circleError(from: error)
-      state = .failed(message: cError.localizedDescription, retryOperationID: nil)
+      state = .failed(message: cError.localizedDescription)
       throw cError
     }
   }
@@ -293,11 +321,11 @@ final class CircleManagementViewModel {
       let updatedMuted = try await service.updatePreferences(space: circle.uri, muted: muted)
       self.circle = CircleSummary(
         uri: circle.uri,
+        circleId: circle.circleId,
         name: circle.name,
         owner: circle.owner,
-        accessState: circle.accessState,
-        muted: updatedMuted,
-        members: circle.members
+        memberCount: circle.memberCount,
+        muted: updatedMuted
       )
       if updatedMuted {
         await CircleFeedCache.shared.purgeMutedSpaceFromUnified(accountDID: userDID, space: circle.uri)
@@ -313,75 +341,8 @@ final class CircleManagementViewModel {
       }
     } catch {
       let cError = circleError(from: error)
-      state = .failed(message: cError.localizedDescription, retryOperationID: nil)
+      state = .failed(message: cError.localizedDescription)
       throw cError
-    }
-  }
-
-  /// Retries the named or currently pending/failed operation without duplicating submissions.
-  func retry(operationID: UUID? = nil) async throws {
-    let targetID: String?
-    if let operationID {
-      targetID = operationID.uuidString.lowercased()
-    } else {
-      switch state {
-      case .pending(let op):
-        targetID = op.id
-      case .failed(_, let retryID):
-        targetID = retryID?.uuidString.lowercased()
-      default:
-        targetID = nil
-      }
-    }
-
-    guard let opID = targetID, !opID.isEmpty else { return }
-
-    state = .submitting
-    do {
-      let op = try await service.retryOperation(id: opID)
-      await handleOperation(op)
-    } catch {
-      let cError = circleError(from: error)
-      state = .failed(message: cError.localizedDescription, retryOperationID: UUID(uuidString: opID))
-      throw cError
-    }
-  }
-
-  /// Read-only status consultation for an in-flight operation.
-  func checkStatus(operationID: String) async throws {
-    do {
-      let op = try await service.getOperation(id: operationID)
-      await handleOperation(op)
-    } catch {
-      let cError = circleError(from: error)
-      state = .failed(message: cError.localizedDescription, retryOperationID: UUID(uuidString: operationID))
-      throw cError
-    }
-  }
-
-  private func handleOperation(_ operation: CircleOperation) async {
-    switch operation.status {
-    case .value_complete:
-      state = .complete
-      if let delID = pendingDeleteOperationID, delID.lowercased() == operation.id.lowercased() {
-        pendingDeleteOperationID = nil
-        await CircleFeedCache.shared.purge(accountDID: userDID, space: circle.uri)
-        await CircleMediaLoader.shared.purge(accountDID: userDID, space: circle.uri)
-        await CircleNotificationCache.shared.purge(accountDID: userDID, space: circle.uri)
-        NotificationCenter.default.post(
-          name: .circleDeleted,
-          object: nil,
-          userInfo: [
-            "accountDID": userDID,
-            "spaceURI": circle.uri.uriString()
-          ]
-        )
-      }
-    case .value_pending:
-      state = .pending(operation)
-    case .value_failed:
-      let opUUID = UUID(uuidString: operation.id)
-      state = .failed(message: operation.error ?? "Operation failed", retryOperationID: opUUID)
     }
   }
 }

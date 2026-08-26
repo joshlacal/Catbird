@@ -14,14 +14,11 @@ struct CircleAudiencePicker: View {
   @Environment(AppState.self) private var appState
   @State private var loadedCircles: [CircleSummary] = []
 
-  /// Filters an array of Circles to only those in the active access state.
-  public static func filterActiveCircles(_ circles: [CircleSummary]) -> [CircleSummary] {
-    circles.filter { $0.accessState == .value_active }
-  }
-
+  /// Every Circle the AppView returns is already membership-scoped server-side,
+  /// so there is no client-side access filter. Per-Circle runtime state
+  /// (expired / removed) is tracked by `CircleFeedModel`, not by filtering here.
   private var activeCircles: [CircleSummary] {
-    let source = !circles.isEmpty ? circles : loadedCircles
-    return Self.filterActiveCircles(source)
+    !circles.isEmpty ? circles : loadedCircles
   }
 
   var body: some View {

@@ -86,14 +86,6 @@ actor ModerationRecordingCircleTransport: CircleTransport {
     Data()
   }
 
-  func createCircle(name: String, memberDIDs: [DID]) async throws -> CircleOperation {
-    CircleOperation(id: UUID().uuidString, status: .value_complete, space: nil, error: nil)
-  }
-
-  func updateMember(space: SpaceRef, memberDID: DID, action: CircleMemberAction) async throws -> CircleOperation {
-    CircleOperation(id: UUID().uuidString, status: .value_complete, space: space, error: nil)
-  }
-
   func updatePreferences(space: SpaceRef, muted: Bool) async throws -> Bool {
     muted
   }
@@ -109,8 +101,8 @@ actor ModerationRecordingCircleTransport: CircleTransport {
     return UUID()
   }
 
-  func activate(space: SpaceRef) async throws -> CircleAccessState {
-    .active
+  func activateCircle(space: SpaceRef) async throws -> CircleSummary {
+    CircleTestFixtures.family
   }
 
   func publishPost(destination: CircleSummary, draft: CirclePostDraft) async throws -> ATProtocolURI {
@@ -125,17 +117,20 @@ actor ModerationRecordingCircleTransport: CircleTransport {
 
   func deleteLike(uri: ATProtocolURI, circle: CircleSummary) async throws {}
 
-  func deleteCircle(space: SpaceRef) async throws -> CircleOperation {
-    CircleOperation(id: UUID().uuidString, status: .value_complete, space: space, error: nil)
+  func createSpace(skey: String, circleId: String, name: String, memberDIDs: [DID]) async throws -> CircleSummary {
+    CircleTestFixtures.family
   }
-  func getOperation(id: String) async throws -> CircleOperation {
-    CircleOperation(id: id, status: .value_complete, space: nil, error: nil)
-  }
-  func retryOperation(id: String) async throws -> CircleOperation {
-    CircleOperation(id: id, status: .value_complete, space: nil, error: nil)
+
+  func deleteSpace(space: SpaceRef) async throws {}
+
+  func addMember(space: SpaceRef, did: DID) async throws {}
+
+  func removeMember(space: SpaceRef, did: DID) async throws {}
+
+  func listMembers(space: SpaceRef) async throws -> [DID] {
+    []
   }
 }
-
 
 @Suite("Circle Moderation and Private Reporting", .serialized)
 struct CircleModerationTests {
@@ -158,7 +153,7 @@ struct CircleModerationTests {
     let reports = await transport.reports
     #expect(reports.count == 1)
     #expect(reports.first?.post == privatePostURI)
-    #expect(reports.first?.circle.uri == family.uri)
+    #expect(reports.first?.circle == family)
     #expect(reports.first?.reason == .abuse)
     #expect(reports.first?.details == nil)
   }

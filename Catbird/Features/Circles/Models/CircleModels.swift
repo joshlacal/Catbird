@@ -20,21 +20,41 @@ extension SpaceRef: @retroactive Equatable, @retroactive Hashable {
 extension BlueCatbirdCircleDefs.CircleSummary: @retroactive Equatable {
   public static func == (lhs: BlueCatbirdCircleDefs.CircleSummary, rhs: BlueCatbirdCircleDefs.CircleSummary) -> Bool {
     lhs.uri == rhs.uri &&
+    lhs.circleId == rhs.circleId &&
     lhs.name == rhs.name &&
     lhs.owner == rhs.owner &&
-    lhs.accessState == rhs.accessState &&
-    lhs.muted == rhs.muted &&
-    lhs.members == rhs.members
+    lhs.memberCount == rhs.memberCount &&
+    lhs.muted == rhs.muted
   }
 }
 
-extension BlueCatbirdCircleDefs.Operation: @retroactive Equatable {
-  public static func == (lhs: BlueCatbirdCircleDefs.Operation, rhs: BlueCatbirdCircleDefs.Operation) -> Bool {
-    lhs.id == rhs.id &&
-    lhs.status == rhs.status &&
-    lhs.space == rhs.space &&
-    lhs.error == rhs.error
-  }
+/// Identity of the standalone Circle AppView.
+///
+/// `clientID` and `serviceDID` are NOT interchangeable. `clientID` is the
+/// AppView's OAuth client identifier — the HTTPS URL of its client-metadata
+/// document — and is the value named in a Space's `#allowList`. `serviceDID`
+/// is only the `atproto-proxy` target and `registerNotify` subscriber.
+enum CircleConfiguration {
+  /// Service identifier the gateway proxies Circle reads to.
+  static let serviceDID = "did:web:circles.catbird.blue#atproto_circles"
+
+  /// NSID prefix registered against `serviceDID`. Petrel's service-DID map is
+  /// longest-prefix matched, so this one entry routes every generated
+  /// `blue.catbird.circle.*` read without per-call header plumbing.
+  static let serviceNSIDPrefix = "blue.catbird.circle"
+
+  /// OAuth client_id of the AppView, per `nest/circle-appview/src/oauth.rs`,
+  /// which derives it as `{base_url}/oauth/client-metadata.json`.
+  static let clientID = "https://circles.catbird.blue/oauth/client-metadata.json"
+
+  /// Space type for every Catbird Circle.
+  static let spaceType = "blue.catbird.circle"
+
+  /// Collection holding a Circle's metadata record.
+  static let metadataCollection = "blue.catbird.circle.metadata"
+
+  /// Base URL used to start the AppView's server-side OAuth flow.
+  static let appViewBaseURL = URL(string: "https://circles.catbird.blue")!
 }
 
 /// The single immutable audience for a Circle-capable post.
@@ -74,6 +94,9 @@ public enum CircleAccessState: String, Sendable {
   case expired
   case removed
   case unsupported
+  /// The AppView has no OAuth grant for this account yet, so it refused the
+  /// read. Recoverable by authorizing the AppView; never a Space deletion.
+  case needsAuthorization
 }
 
 /// A single page of hydrated Circle feed items. Circle identity lives beside
@@ -114,21 +137,6 @@ struct CircleCapability: Sendable, Equatable {
   let supportsImages: Bool
 }
 
-/// Outcome of a Circle management operation (create/update member/delete).
-typealias CircleOperation = BlueCatbirdCircleDefs.Operation
-
-/// Add or remove a member from a Circle.
-enum CircleMemberAction: String, Sendable {
-  case add
-  case remove
-
-  var generated: BlueCatbirdCircleUpdateMember.InputAction {
-    switch self {
-    case .add: return .value_add
-    case .remove: return .value_remove
-    }
-  }
-}
 
 /// Reason reported against a Circle record through the private moderation path.
 enum CircleReportReason: String, Sendable {
@@ -318,24 +326,29 @@ public enum CircleError: Error, LocalizedError, Equatable {
 protocol CircleTransport: Sendable {
   var publicEndpointCallCount: Int { get async }
 
+  // MARK: AppView reads, proxied via `CircleConfiguration.serviceDID`
   func capabilities() async throws -> CircleCapability
   func listCircles(cursor: String?) async throws -> CircleListPage
   func getFeed(space: SpaceRef?, cursor: String?) async throws -> CircleFeedPage
   func getPostThread(uri: ATProtocolURI, space: SpaceRef) async throws -> CircleThreadPage
   func listNotifications(cursor: String?) async throws -> CircleNotificationPage
   func media(space: SpaceRef, authorDID: DID, cid: CID) async throws -> Data
-  func createCircle(name: String, memberDIDs: [DID]) async throws -> CircleOperation
-  func updateMember(space: SpaceRef, memberDID: DID, action: CircleMemberAction) async throws -> CircleOperation
   func updatePreferences(space: SpaceRef, muted: Bool) async throws -> Bool
   func report(post: ATProtocolURI, circle: CircleSummary, reason: CircleReportReason, details: String?) async throws -> UUID
-  func activate(space: SpaceRef) async throws -> CircleAccessState
+  func activateCircle(space: SpaceRef) async throws -> CircleSummary
+
+  // MARK: Permissioned writes into the Space
   func publishPost(destination: CircleSummary, draft: CirclePostDraft) async throws -> ATProtocolURI
   func like(post: AppBskyFeedDefs.PostView, circle: CircleSummary) async throws -> ATProtocolURI
   func deletePost(uri: ATProtocolURI, circle: CircleSummary) async throws
   func deleteLike(uri: ATProtocolURI, circle: CircleSummary) async throws
-  func deleteCircle(space: SpaceRef) async throws -> CircleOperation
-  func getOperation(id: String) async throws -> CircleOperation
-  func retryOperation(id: String) async throws -> CircleOperation
+
+  // MARK: Space administration, direct to the owner's own PDS
+  func createSpace(skey: String, circleId: String, name: String, memberDIDs: [DID]) async throws -> CircleSummary
+  func deleteSpace(space: SpaceRef) async throws
+  func addMember(space: SpaceRef, did: DID) async throws
+  func removeMember(space: SpaceRef, did: DID) async throws
+  func listMembers(space: SpaceRef) async throws -> [DID]
 }
 
 /// Maps a generated `BlueCatbirdCircle*` error (or gateway/network error) to a

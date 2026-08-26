@@ -46,28 +46,4 @@ struct ComposerChipsStripTests {
     settings.allowFollowers = false
     #expect(ComposerChipsStrip.threadgateSummary(settings) == "Custom")
   }
-
-  @Test func circleAudiencePickerExcludesNonActiveCircles() {
-    let active = CircleTestFixtures.family
-    let expired = BlueCatbirdCircleDefs.CircleSummary(
-      uri: try! SpaceRef(uriString: "at://did:plc:alice/space/blue.catbird.circle/expired"),
-      name: "Expired Circle",
-      owner: CircleTestFixtures.alice,
-      accessState: .value_expired,
-      muted: nil,
-      members: nil
-    )
-    let removed = BlueCatbirdCircleDefs.CircleSummary(
-      uri: try! SpaceRef(uriString: "at://did:plc:alice/space/blue.catbird.circle/removed"),
-      name: "Removed Circle",
-      owner: CircleTestFixtures.alice,
-      accessState: .value_removed,
-      muted: nil,
-      members: nil
-    )
-    let all = [active, expired, removed]
-    let filtered = CircleAudiencePicker.filterActiveCircles(all)
-    #expect(filtered.count == 1)
-    #expect(filtered.first?.name == "Family")
-  }
 }

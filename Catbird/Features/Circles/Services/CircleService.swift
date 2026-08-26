@@ -67,22 +67,112 @@ actor GatewayCircleTransport: CircleTransport {
     return output.data
   }
 
-  func createCircle(name: String, memberDIDs: [DID]) async throws -> CircleOperation {
-    let (_, output) = try await client.blue.catbird.circle.createCircle(
-      input: BlueCatbirdCircleCreateCircle.Input(name: name, memberDids: memberDIDs)
-    )
-    guard let output else { throw CircleError.invalidResponse }
-    return output
-  }
+  /// Creates the Circle Space on the owner's own PDS and writes its metadata.
+  ///
+  /// `#allowList` names only the AppView's OAuth `client_id`, so no other app
+  /// can mint a credential for this Space. The returned summary is provisional:
+  /// `activateCircle` replaces it with the AppView's authoritative view.
+  func createSpace(skey: String, circleId: String, name: String, memberDIDs: [DID]) async throws -> CircleSummary {
+    let ownerDID = try DID(didString: try await client.getDid())
+    let tid = try TID(tidString: circleId)
 
-  func updateMember(space: SpaceRef, memberDID: DID, action: CircleMemberAction) async throws -> CircleOperation {
-    let (_, output) = try await client.blue.catbird.circle.updateMember(
-      input: BlueCatbirdCircleUpdateMember.Input(
-        space: space, memberDid: memberDID, action: action.generated
+    let (_, created) = try await client.com.atproto.simplespace.createSpace(
+      input: ComAtprotoSimplespaceCreateSpace.Input(
+        type: try NSID(nsidString: CircleConfiguration.spaceType),
+        skey: try RecordKey(keyString: skey),
+        policy: ComAtprotoSimplespaceCreateSpace.InputPolicyUnion(
+          ComAtprotoSimplespaceDefs.MemberListPolicy()
+        ),
+        appAccess: ComAtprotoSimplespaceCreateSpace.InputAppAccessUnion(
+          ComAtprotoSimplespaceDefs.AllowList(allowed: [CircleConfiguration.clientID])
+        )
       )
     )
-    guard let output else { throw CircleError.invalidResponse }
-    return output
+    guard let created else { throw CircleError.invalidResponse }
+    let space = created.uri
+
+    let metadata = BlueCatbirdCircleMetadata(
+      circleId: tid,
+      name: name,
+      createdAt: ATProtocolDate(date: Date()),
+      migratedFrom: nil,
+      migratedTo: nil
+    )
+    let (_, putOutput) = try await client.com.atproto.space.putRecord(
+      input: ComAtprotoSpacePutRecord.Input(
+        space: space,
+        repo: ownerDID,
+        collection: try NSID(nsidString: CircleConfiguration.metadataCollection),
+        rkey: try RecordKey(keyString: "self"),
+        // `validate: false` is required, not a shortcut. A PDS validates records
+        // against lexicons it knows, and `blue.catbird.circle.metadata` is a
+        // third-party lexicon it does not; the live Spaces PDS rejects this write
+        // with "Unknown lexicon type" under validation. Nothing is lost: the
+        // AppView validates metadata on ingest. Records in known namespaces
+        // (app.bsky.feed.post/like) keep validation on.
+        validate: false,
+        record: ATProtocolValueContainer.knownType(metadata)
+      )
+    )
+    guard putOutput != nil else {
+      throw CircleError.spaceWriteRejected("metadata record rejected")
+    }
+
+    for member in memberDIDs {
+      try await addMember(space: space, did: member)
+    }
+
+    return CircleSummary(
+      uri: space,
+      circleId: tid,
+      name: name,
+      owner: ownerDID,
+      memberCount: memberDIDs.count,
+      muted: false
+    )
+  }
+
+  func deleteSpace(space: SpaceRef) async throws {
+    _ = try await client.com.atproto.simplespace.deleteSpace(
+      input: ComAtprotoSimplespaceDeleteSpace.Input(space: space)
+    )
+  }
+
+  func addMember(space: SpaceRef, did: DID) async throws {
+    _ = try await client.com.atproto.simplespace.addMember(
+      input: ComAtprotoSimplespaceAddMember.Input(space: space, did: did)
+    )
+  }
+
+  func removeMember(space: SpaceRef, did: DID) async throws {
+    _ = try await client.com.atproto.simplespace.removeMember(
+      input: ComAtprotoSimplespaceRemoveMember.Input(space: space, did: did)
+    )
+  }
+
+  /// Full member roster from the owner's own PDS. Paginates to completion so a
+  /// truncated page can never read as a shrunken Circle.
+  func listMembers(space: SpaceRef) async throws -> [DID] {
+    var members: [DID] = []
+    var cursor: String?
+    var seenCursors: Set<String> = []
+    repeat {
+      let (_, output) = try await client.com.atproto.simplespace.listMembers(
+        input: ComAtprotoSimplespaceListMembers.Parameters(
+          space: space, limit: nil, cursor: cursor
+        )
+      )
+      guard let output else { throw CircleError.invalidResponse }
+      members.append(contentsOf: output.members.map(\.did))
+      // A server echoing a constant cursor would spin this loop forever and
+      // grow `members` without bound. Treat a repeated cursor as end-of-list.
+      if let next = output.cursor, seenCursors.insert(next).inserted {
+        cursor = next
+      } else {
+        cursor = nil
+      }
+    } while cursor != nil
+    return members
   }
 
   func updatePreferences(space: SpaceRef, muted: Bool) async throws -> Bool {
@@ -106,12 +196,12 @@ actor GatewayCircleTransport: CircleTransport {
     return uuid
   }
 
-  func activate(space: SpaceRef) async throws -> CircleAccessState {
-    let (_, output) = try await client.blue.catbird.circle.activateSpace(
-      input: BlueCatbirdCircleActivateSpace.Input(space: space)
+  func activateCircle(space: SpaceRef) async throws -> CircleSummary {
+    let (_, output) = try await client.blue.catbird.circle.activateCircle(
+      input: BlueCatbirdCircleActivateCircle.Input(space: space)
     )
     guard let output else { throw CircleError.invalidResponse }
-    return CircleAccessState(rawValue: output.accessState.rawValue) ?? .unsupported
+    return output.circle
   }
 
   func publishPost(destination: CircleSummary, draft: CirclePostDraft) async throws -> ATProtocolURI {
@@ -236,30 +326,6 @@ actor GatewayCircleTransport: CircleTransport {
       throw CircleError.spaceWriteRejected("unexpected applyWrites result")
     }
   }
-
-  func deleteCircle(space: SpaceRef) async throws -> CircleOperation {
-    let (_, output) = try await client.blue.catbird.circle.deleteCircle(
-      input: BlueCatbirdCircleDeleteCircle.Input(space: space)
-    )
-    guard let output else { throw CircleError.invalidResponse }
-    return output
-  }
-
-  func getOperation(id: String) async throws -> CircleOperation {
-    let (_, output) = try await client.blue.catbird.circle.getOperation(
-      input: BlueCatbirdCircleGetOperation.Parameters(id: id)
-    )
-    guard let output else { throw CircleError.invalidResponse }
-    return output
-  }
-
-  func retryOperation(id: String) async throws -> CircleOperation {
-    let (_, output) = try await client.blue.catbird.circle.retryOperation(
-      input: BlueCatbirdCircleRetryOperation.Input(id: id)
-    )
-    guard let output else { throw CircleError.invalidResponse }
-    return output
-  }
 }
 
 /// Typed Circle client boundary. Holds a transport (production gateway or test
@@ -296,12 +362,24 @@ actor CircleService {
     try await transport.media(space: space, authorDID: authorDID, cid: cid)
   }
 
-  func createCircle(name: String, memberDIDs: [DID]) async throws -> CircleOperation {
-    try await transport.createCircle(name: name, memberDIDs: memberDIDs)
+  func createSpace(skey: String, circleId: String, name: String, memberDIDs: [DID]) async throws -> CircleSummary {
+    try await transport.createSpace(skey: skey, circleId: circleId, name: name, memberDIDs: memberDIDs)
   }
 
-  func updateMember(space: SpaceRef, memberDID: DID, action: CircleMemberAction) async throws -> CircleOperation {
-    try await transport.updateMember(space: space, memberDID: memberDID, action: action)
+  func deleteSpace(space: SpaceRef) async throws {
+    try await transport.deleteSpace(space: space)
+  }
+
+  func addMember(space: SpaceRef, did: DID) async throws {
+    try await transport.addMember(space: space, did: did)
+  }
+
+  func removeMember(space: SpaceRef, did: DID) async throws {
+    try await transport.removeMember(space: space, did: did)
+  }
+
+  func listMembers(space: SpaceRef) async throws -> [DID] {
+    try await transport.listMembers(space: space)
   }
 
   func updatePreferences(space: SpaceRef, muted: Bool) async throws -> Bool {
@@ -312,8 +390,8 @@ actor CircleService {
     try await transport.report(post: post, circle: circle, reason: reason, details: details)
   }
 
-  func activate(space: SpaceRef) async throws -> CircleAccessState {
-    try await transport.activate(space: space)
+  func activateCircle(space: SpaceRef) async throws -> CircleSummary {
+    try await transport.activateCircle(space: space)
   }
 
   func publishPost(destination: CircleSummary, draft: CirclePostDraft) async throws -> ATProtocolURI {
@@ -330,17 +408,5 @@ actor CircleService {
 
   func deleteLike(uri: ATProtocolURI, circle: CircleSummary) async throws {
     try await transport.deleteLike(uri: uri, circle: circle)
-  }
-
-  func deleteCircle(space: SpaceRef) async throws -> CircleOperation {
-    try await transport.deleteCircle(space: space)
-  }
-
-  func getOperation(id: String) async throws -> CircleOperation {
-    try await transport.getOperation(id: id)
-  }
-
-  func retryOperation(id: String) async throws -> CircleOperation {
-    try await transport.retryOperation(id: id)
   }
 }

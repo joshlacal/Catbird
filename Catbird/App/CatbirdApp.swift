@@ -1382,6 +1382,14 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
                 appState.navigationManager.updateCurrentTab(2)
               }
             }
+          } else if url.scheme == "blue.catbird" && url.host == "oauth"
+                      && url.lastPathComponent == "circle-appview" {
+            // Circle AppView authorization completed. The AppView owns the
+            // grant server-side; this only records that it succeeded.
+            logger.info("Circle AppView OAuth completion deep link received")
+            Task { @MainActor in
+              CircleAppViewAuthCoordinator.shared.complete(callback: url)
+            }
           } else if (url.scheme == "blue.catbird" || url.scheme == "catbird") && (url.host == "e2e" || url.host == "test") {
             // Handle E2E testing commands (only in E2E mode, iOS only)
             #if os(iOS)

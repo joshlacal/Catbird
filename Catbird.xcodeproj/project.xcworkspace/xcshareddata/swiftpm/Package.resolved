@@ -33,16 +33,7 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/joshlacal/CatbirdMLSCore",
       "state" : {
-        "revision" : "ed245de566478c114b0025c7a4cbbdc611b2f55f"
-      }
-    },
-    {
-      "identity" : "cryptoswift",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/krzyzanowskim/CryptoSwift.git",
-      "state" : {
-        "revision" : "e45a26384239e028ec87fbcc788f513b67e10d8f",
-        "version" : "1.9.0"
+        "revision" : "4af15b25b144e9f2f77d0902762510d34fe4fc41"
       }
     },
     {
@@ -61,15 +52,6 @@
       "state" : {
         "revision" : "b83108d10f42680d78f23fe4d4d80fc88dab3212",
         "version" : "7.11.1"
-      }
-    },
-    {
-      "identity" : "jose-swift",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/beatt83/jose-swift.git",
-      "state" : {
-        "revision" : "b7d3ef55660fefd045641293bc95d4cdc07a15d8",
-        "version" : "6.0.4"
       }
     },
     {
@@ -104,7 +86,7 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/joshlacal/Petrel",
       "state" : {
-        "revision" : "64c7574ebfb5e46b260aa1dd808802635ca38851"
+        "revision" : "77879aa416a0e0b3c072514d52b8ea0ade745a32"
       }
     },
     {
@@ -121,7 +103,7 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/joshlacal/PetrelCatbird",
       "state" : {
-        "revision" : "5c0f5404efe01d9ba4b06d871e358dd5edbb6089"
+        "revision" : "a4a0539c8e8aa85f6578b25ea030329d6b0890ed"
       }
     },
     {
@@ -188,15 +170,6 @@
       }
     },
     {
-      "identity" : "swift-certificates",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/apple/swift-certificates.git",
-      "state" : {
-        "revision" : "449dbbecd0f31e82b510ada227ca152caa8b5e98",
-        "version" : "1.19.4"
-      }
-    },
-    {
       "identity" : "swift-collections",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-collections.git",
@@ -230,15 +203,6 @@
       "state" : {
         "revision" : "869129b7bf4ecc57b97d0193ad29690ca2134750",
         "version" : "1.8.1"
-      }
-    },
-    {
-      "identity" : "swift-zlib",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/beatt83/swift-zlib.git",
-      "state" : {
-        "revision" : "8cf51bfdf81c46702dac496d16397d92ac392532",
-        "version" : "1.0.2"
       }
     },
     {

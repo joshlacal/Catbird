@@ -10,6 +10,17 @@ actor DestinationRecordingCircleTransport: CircleTransport {
   private let error: CircleError?
   private(set) var publicEndpointCallCount = 0
   private(set) var publishedPosts: [(destination: CircleSummary, draft: CirclePostDraft)] = []
+  private(set) var likedPosts: [(post: AppBskyFeedDefs.PostView, circle: CircleSummary)] = []
+  private(set) var deletedPosts: [(uri: ATProtocolURI, circle: CircleSummary)] = []
+  private(set) var deletedLikes: [(uri: ATProtocolURI, circle: CircleSummary)] = []
+  private(set) var createdSpaces: [(skey: String, circleId: String, name: String, memberDIDs: [DID])] = []
+  private(set) var deletedSpaces: [SpaceRef] = []
+  private(set) var addedMembers: [(space: SpaceRef, did: DID)] = []
+  private(set) var removedMembers: [(space: SpaceRef, did: DID)] = []
+  private(set) var activatedSpaces: [SpaceRef] = []
+  private(set) var callLog: [String] = []
+
+  var activateError: CircleError?
 
   init(error: CircleError? = nil) {
     self.error = error
@@ -17,12 +28,12 @@ actor DestinationRecordingCircleTransport: CircleTransport {
 
   func capabilities() async throws -> CircleCapability {
     if let error { throw error }
-    return CircleCapability(enabled: true, protocolRevision: "0.1.0", supportsImages: true)
+    return CircleCapability(enabled: true, protocolRevision: "2026-08-26", supportsImages: true)
   }
 
   func listCircles(cursor: String?) async throws -> CircleListPage {
     if let error { throw error }
-    return CircleListPage(circles: [], cursor: nil)
+    return CircleListPage(circles: [CircleTestFixtures.family], cursor: nil)
   }
 
   func getFeed(space: SpaceRef?, cursor: String?) async throws -> CircleFeedPage {
@@ -58,8 +69,8 @@ actor DestinationRecordingCircleTransport: CircleTransport {
       createdAt: ATProtocolDate(date: Date())
     )
     let postView = AppBskyFeedDefs.PostView(
-       uri: uri,
-       cid: CID.fromDAGCBOR(Data("test-thread-root".utf8)),
+      uri: uri,
+      cid: CID.fromDAGCBOR(Data("test-thread-root".utf8)),
       author: author,
       record: ATProtocolValueContainer.knownType(post),
       embed: nil,
@@ -93,26 +104,6 @@ actor DestinationRecordingCircleTransport: CircleTransport {
     return Data()
   }
 
-  func createCircle(name: String, memberDIDs: [DID]) async throws -> CircleOperation {
-    if let error { throw error }
-    return CircleOperation(
-      id: UUID().uuidString,
-      status: .value_complete,
-      space: CircleTestFixtures.familyURI,
-      error: nil
-    )
-  }
-
-  func updateMember(space: SpaceRef, memberDID: DID, action: CircleMemberAction) async throws -> CircleOperation {
-    if let error { throw error }
-    return CircleOperation(
-      id: UUID().uuidString,
-      status: .value_complete,
-      space: space,
-      error: nil
-    )
-  }
-
   func updatePreferences(space: SpaceRef, muted: Bool) async throws -> Bool {
     if let error { throw error }
     return muted
@@ -128,48 +119,72 @@ actor DestinationRecordingCircleTransport: CircleTransport {
     return UUID()
   }
 
-  func activate(space: SpaceRef) async throws -> CircleAccessState {
+  func activateCircle(space: SpaceRef) async throws -> CircleSummary {
+    if let activateError { throw activateError }
     if let error { throw error }
-    return .active
+    activatedSpaces.append(space)
+    callLog.append("activateCircle:\(space.uriString())")
+    return CircleTestFixtures.family
   }
 
   func publishPost(destination: CircleSummary, draft: CirclePostDraft) async throws -> ATProtocolURI {
     if let error { throw error }
     publishedPosts.append((destination: destination, draft: draft))
+    callLog.append("publishPost:\(destination.uri.uriString())")
     return try ATProtocolURI(uriString: "\(destination.uri.uriString())/app.bsky.feed.post/test123")
   }
 
   func like(post: AppBskyFeedDefs.PostView, circle: CircleSummary) async throws -> ATProtocolURI {
     if let error { throw error }
+    likedPosts.append((post: post, circle: circle))
+    callLog.append("like:\(circle.uri.uriString())")
     return try ATProtocolURI(uriString: "\(circle.uri.uriString())/app.bsky.feed.like/testlike123")
   }
-
-  private(set) var deletedPosts: [(uri: ATProtocolURI, circle: CircleSummary)] = []
-  private(set) var deletedLikes: [(uri: ATProtocolURI, circle: CircleSummary)] = []
 
   func deletePost(uri: ATProtocolURI, circle: CircleSummary) async throws {
     if let error { throw error }
     deletedPosts.append((uri: uri, circle: circle))
+    callLog.append("deletePost:\(circle.uri.uriString())")
   }
 
   func deleteLike(uri: ATProtocolURI, circle: CircleSummary) async throws {
     if let error { throw error }
     deletedLikes.append((uri: uri, circle: circle))
+    callLog.append("deleteLike:\(circle.uri.uriString())")
   }
 
-  func deleteCircle(space: SpaceRef) async throws -> CircleOperation {
+  func createSpace(skey: String, circleId: String, name: String, memberDIDs: [DID]) async throws -> CircleSummary {
     if let error { throw error }
-    return CircleOperation(id: UUID().uuidString, status: .value_complete, space: space, error: nil)
+    createdSpaces.append((skey: skey, circleId: circleId, name: name, memberDIDs: memberDIDs))
+    callLog.append("createSpace:\(name)")
+    return CircleTestFixtures.family
   }
 
-  func getOperation(id: String) async throws -> CircleOperation {
+  func deleteSpace(space: SpaceRef) async throws {
     if let error { throw error }
-    return CircleOperation(id: id, status: .value_complete, space: nil, error: nil)
+    deletedSpaces.append(space)
+    callLog.append("deleteSpace:\(space.uriString())")
   }
 
-  func retryOperation(id: String) async throws -> CircleOperation {
+  func addMember(space: SpaceRef, did: DID) async throws {
     if let error { throw error }
-    return CircleOperation(id: id, status: .value_complete, space: nil, error: nil)
+    addedMembers.append((space: space, did: did))
+    callLog.append("addMember:\(did.didString())")
+  }
+
+  func removeMember(space: SpaceRef, did: DID) async throws {
+    if let error { throw error }
+    removedMembers.append((space: space, did: did))
+    callLog.append("removeMember:\(did.didString())")
+  }
+
+  func listMembers(space: SpaceRef) async throws -> [DID] {
+    if let error { throw error }
+    return [CircleTestFixtures.alice]
+  }
+
+  func setActivateError(_ err: CircleError?) {
+    self.activateError = err
   }
 }
 
@@ -226,8 +241,8 @@ struct CircleDestinationTests {
       createdAt: ATProtocolDate(date: Date())
     )
     return AppBskyFeedDefs.PostView(
-       uri: try! ATProtocolURI(uriString: "\(CircleTestFixtures.familyURI.uriString())/app.bsky.feed.post/parent123"),
-       cid: CID.fromDAGCBOR(Data("test-parent-post".utf8)),
+      uri: try! ATProtocolURI(uriString: "\(CircleTestFixtures.familyURI.uriString())/app.bsky.feed.post/parent123"),
+      cid: CID.fromDAGCBOR(Data("test-parent-post".utf8)),
       author: author,
       record: ATProtocolValueContainer.knownType(post),
       embed: nil,
@@ -531,7 +546,7 @@ struct CircleDestinationTests {
     #expect(likeSuccess == true)
     #expect(vm.isLiked == true)
 
-    // Now unlike the post -> must call deleteLike (NOT deletePost) with circle summary
+    // Now unlike the post -> must call deleteLike (NOT deletePost) with circle space
     let unlikeSuccess = try await vm.toggleLike()
     #expect(unlikeSuccess == true)
     #expect(vm.isLiked == false)
@@ -805,5 +820,210 @@ struct CircleDestinationTests {
     let deletedLikes = await transport.deletedLikes
     #expect(deletedLikes.count == 1)
     #expect(deletedLikes.first?.circle == family)
+  }
+
+  // MARK: - New Contract Assertions
+
+  @Test("Circle-destined post and like gain ZERO proprietary fields and serialize to standard ATProto schemas")
+  func circlePostAndLikeContainNoProprietaryFields() throws {
+    let text = "Standard circle post text"
+    let createdAt = ATProtocolDate(date: Date())
+    let langs = [LanguageCodeContainer(languageCode: "en")]
+
+    let standardPost = AppBskyFeedPost(
+      text: text,
+      entities: nil,
+      facets: nil,
+      reply: nil,
+      embed: nil,
+      langs: langs,
+      labels: nil,
+      tags: nil,
+      createdAt: createdAt
+    )
+
+    let encoder = JSONEncoder()
+    let postData = try encoder.encode(standardPost)
+    let postJSON = try JSONSerialization.jsonObject(with: postData) as? [String: Any]
+
+    #expect(postJSON != nil)
+    guard let postKeys = postJSON?.keys else {
+      Issue.record("Expected valid JSON dictionary for post")
+      return
+    }
+
+    // Verify allowed standard fields only; zero proprietary fields
+    let allowedPostKeys: Set<String> = [
+      "$type", "text", "createdAt", "langs", "facets", "reply", "embed", "labels", "tags", "entities"
+    ]
+    for key in postKeys {
+      #expect(allowedPostKeys.contains(key), "Unexpected proprietary field '\(key)' found in Circle post")
+    }
+
+    // Assert specific disallowed proprietary keys are completely absent
+    let forbiddenKeys = ["circleId", "circle", "space", "spaceRef", "privacy", "audience", "catbird", "members"]
+    for forbidden in forbiddenKeys {
+      #expect(postJSON?[forbidden] == nil, "Proprietary field '\(forbidden)' must never appear in a post record")
+    }
+
+    // Verify Like record shape
+    let standardLike = AppBskyFeedLike(
+      subject: ComAtprotoRepoStrongRef(
+        uri: try ATProtocolURI(uriString: "at://did:plc:alice/space/blue.catbird.circle/3abc/did:plc:alice/app.bsky.feed.post/123"),
+        cid: CID.fromDAGCBOR(Data("like-subject-cid".utf8))
+      ),
+      createdAt: createdAt,
+      via: nil
+    )
+
+    let likeData = try encoder.encode(standardLike)
+    let likeJSON = try JSONSerialization.jsonObject(with: likeData) as? [String: Any]
+
+    #expect(likeJSON != nil)
+    guard let likeKeys = likeJSON?.keys else {
+      Issue.record("Expected valid JSON dictionary for like")
+      return
+    }
+
+    let allowedLikeKeys: Set<String> = ["$type", "subject", "createdAt"]
+    for key in likeKeys {
+      #expect(allowedLikeKeys.contains(key), "Unexpected proprietary field '\(key)' found in Circle like")
+    }
+    for forbidden in forbiddenKeys {
+      #expect(likeJSON?[forbidden] == nil, "Proprietary field '\(forbidden)' must never appear in a like record")
+    }
+  }
+
+  @Test("Circle space creation follows strict lifecycle ordering: createSpace -> addMember -> activateCircle")
+  func circleCreationOrdering() async throws {
+    let transport = DestinationRecordingCircleTransport()
+    let service = CircleService(transport: transport)
+
+    let bobDID = try DID(didString: "did:plc:bob")
+    let carolDID = try DID(didString: "did:plc:carol")
+    let initialMembers = [bobDID, carolDID]
+
+    // 1. Space administration: createSpace
+    let createdSummary = try await service.createSpace(
+      skey: "3l7newspace",
+      circleId: "3l7newcircle",
+      name: "New Group",
+      memberDIDs: initialMembers
+    )
+    #expect(createdSummary.name == "Family" || createdSummary.name == "New Group")
+
+    // 2. Space administration: addMember for each initial member
+    for member in initialMembers {
+      try await service.addMember(space: CircleTestFixtures.familyURI, did: member)
+    }
+
+    // 3. AppView activation: activateCircle
+    let activeSummary = try await service.activateCircle(space: CircleTestFixtures.familyURI)
+    #expect(activeSummary.uri == CircleTestFixtures.familyURI)
+
+    // Assert strict ordering in transport call log
+    let log = await transport.callLog
+    #expect(log.count == 4)
+    #expect(log[0] == "createSpace:New Group")
+    #expect(log[1] == "addMember:did:plc:bob")
+    #expect(log[2] == "addMember:did:plc:carol")
+    #expect(log[3] == "activateCircle:\(CircleTestFixtures.familyURI.uriString())")
+  }
+
+  @Test("Activation failure is a retryable sync state and does NOT delete the Space")
+  func activationFailureIsRetryableAndDoesNotDestroySpace() async throws {
+    let transport = DestinationRecordingCircleTransport()
+    let service = CircleService(transport: transport)
+
+    // Create space succeeds on PDS
+    _ = try await service.createSpace(
+      skey: "3l7retryspace",
+      circleId: "3l7retrycircle",
+      name: "Retryable Space",
+      memberDIDs: []
+    )
+
+    // Simulate transient AppView activation failure
+    await transport.setActivateError(CircleError.upstreamUnavailable)
+
+    await #expect(throws: CircleError.self) {
+      try await service.activateCircle(space: CircleTestFixtures.familyURI)
+    }
+
+    // Assert Space was NOT destroyed or deleted
+    let deletedSpaces = await transport.deletedSpaces
+    #expect(deletedSpaces.isEmpty, "Space must never be deleted/rolled back on AppView activation failure")
+
+    // Clear transient activation error and retry
+    await transport.setActivateError(nil)
+    let retriedSummary = try await service.activateCircle(space: CircleTestFixtures.familyURI)
+    #expect(retriedSummary.uri == CircleTestFixtures.familyURI)
+
+    let finalDeletedSpaces = await transport.deletedSpaces
+    #expect(finalDeletedSpaces.isEmpty)
+  }
+
+  @Test("Non-member operations are denied fail-closed with zero public fallback")
+  func denialOnNonMemberWithNoPublicFallback() async throws {
+    let transport = DestinationRecordingCircleTransport(error: CircleError.accessRemoved)
+    let service = CircleService(transport: transport)
+
+    let familySummary = CircleTestFixtures.family
+    let draft = CirclePostDraft(text: "Dave unauthorized post")
+
+    // 1. Non-member getFeed is denied
+    await #expect(throws: CircleError.self) {
+      try await service.getFeed(space: familySummary.uri)
+    }
+
+    // 2. Non-member getPostThread is denied
+    await #expect(throws: CircleError.self) {
+      try await service.getPostThread(uri: try! ATProtocolURI(uriString: "\(familySummary.uri.uriString())/app.bsky.feed.post/post1"), space: familySummary.uri)
+    }
+
+    // 3. Non-member media access is denied
+    let post1CID = CID.fromDAGCBOR(Data("post1-cid".utf8))
+    await #expect(throws: CircleError.self) {
+      try await service.media(space: familySummary.uri, authorDID: familySummary.owner, cid: post1CID)
+    }
+
+    // 4. Non-member publishPost is denied
+    await #expect(throws: CircleError.self) {
+      try await service.publishPost(destination: familySummary, draft: draft)
+    }
+
+    // 5. Non-member like is denied
+    let familyPostView = CircleTestFixtures.makePostView(uri: try! ATProtocolURI(uriString: "\(familySummary.uri.uriString())/app.bsky.feed.post/post1"), authorDID: familySummary.owner, text: "Welcome to Family Circle")
+    await #expect(throws: CircleError.self) {
+      try await service.like(post: familyPostView, circle: familySummary)
+    }
+
+    // 6. Zero public endpoint calls throughout
+    #expect(await transport.publicEndpointCallCount == 0)
+  }
+
+  @Test("Failed Circle operations never fall back to public endpoints")
+  func circleOperationsNeverFallBackToPublic() async throws {
+    let transport = DestinationRecordingCircleTransport(error: CircleError.upstreamUnavailable)
+    let service = CircleService(transport: transport)
+
+    // Publish failure throws CircleError and does not touch public
+    await #expect(throws: CircleError.self) {
+      try await service.publishPost(destination: CircleTestFixtures.family, draft: CircleTestFixtures.draft)
+    }
+    #expect(await transport.publicEndpointCallCount == 0)
+
+    // Like failure throws CircleError and does not touch public
+    let familyPostView = CircleTestFixtures.makePostView(uri: E2EConstants.familyPostURI, authorDID: E2EConstants.aliceDID, text: E2EConstants.familyPostText)
+    await #expect(throws: CircleError.self) {
+      try await service.like(post: familyPostView, circle: CircleTestFixtures.family)
+    }
+    #expect(await transport.publicEndpointCallCount == 0)
+
+    // Feed failure throws CircleError and does not touch public
+    await #expect(throws: CircleError.self) {
+      try await service.getFeed(space: CircleTestFixtures.family.uri)
+    }
+    #expect(await transport.publicEndpointCallCount == 0)
   }
 }

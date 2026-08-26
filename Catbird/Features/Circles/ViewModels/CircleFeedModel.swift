@@ -204,6 +204,10 @@ final class CircleFeedModel {
         }
       case .unsupportedPDS, .protocolRevisionMismatch:
         self.accessState = .unsupported
+      case .authRequired, .notAuthorized:
+        // The AppView holds no grant for this account. Recoverable by
+        // authorizing it; explicitly NOT a purge and NOT a Space deletion.
+        self.accessState = .needsAuthorization
       default:
         break
       }

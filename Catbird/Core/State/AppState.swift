@@ -1363,6 +1363,16 @@ final class AppState {
     @MainActor
     func probeCircleCapabilities() async {
         let targetDID = self.userDID
+        // Route every generated `blue.catbird.circle.*` read to the standalone
+        // Circle AppView. Petrel longest-prefix matches this map, so this one
+        // entry covers the whole namespace without per-call header plumbing.
+        // `com.atproto.simplespace.*` and `com.atproto.space.*` are deliberately
+        // left unmapped so Space administration and permissioned writes stay on
+        // the user's own PDS. Registered before the first probe, and re-run on
+        // account switch, because the client is rebuilt per account.
+        await client.setServiceDID(
+            CircleConfiguration.serviceDID, for: CircleConfiguration.serviceNSIDPrefix
+        )
         do {
             let caps = try await circleService.capabilities()
             guard let activeDID = AppStateManager.shared.lifecycle.userDID, activeDID == targetDID else {

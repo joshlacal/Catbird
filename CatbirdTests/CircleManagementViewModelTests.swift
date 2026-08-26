@@ -9,15 +9,18 @@ actor ManagementRecordingCircleTransport: CircleTransport {
   var error: CircleError?
   private(set) var publicEndpointCallCount = 0
 
-  private(set) var createdCircles: [(name: String, memberDIDs: [DID])] = []
-  private(set) var memberUpdates: [(space: SpaceRef, memberDID: DID, action: CircleMemberAction)] = []
+  private(set) var createdCircles: [(skey: String, circleId: String, name: String, memberDIDs: [DID])] = []
+  private(set) var memberAdds: [(space: SpaceRef, did: DID)] = []
+  private(set) var memberRemoves: [(space: SpaceRef, did: DID)] = []
   private(set) var deletedSpaces: [SpaceRef] = []
   private(set) var updatedPreferences: [(space: SpaceRef, muted: Bool)] = []
   private(set) var detailFeedQueries: [SpaceRef?] = []
-  private(set) var getOperationCalls: [String] = []
-  private(set) var retryOperationCalls: [String] = []
+  private(set) var activateCircleCalls: [SpaceRef] = []
 
-  var nextOperation: CircleOperation?
+  /// Thrown only by `activateCircle`, so a test can assert that a failed
+  /// activation leaves the already-created Space intact rather than rolling back.
+  var activationError: CircleError?
+  var mockMembers: [DID] = []
   var mockFeedItems: [BlueCatbirdCircleDefs.FeedItem] = []
   var mockCirclesList: [CircleSummary] = []
   var detailAccessRemainsEnabled = true
@@ -112,28 +115,35 @@ actor ManagementRecordingCircleTransport: CircleTransport {
     return Data()
   }
 
-  func createCircle(name: String, memberDIDs: [DID]) async throws -> CircleOperation {
+  func createSpace(skey: String, circleId: String, name: String, memberDIDs: [DID]) async throws -> CircleSummary {
     if let error { throw error }
-    createdCircles.append((name, memberDIDs))
-    if let nextOperation { return nextOperation }
-    return CircleOperation(
-      id: UUID().uuidString,
-      status: .value_complete,
-      space: try! SpaceRef(uriString: "at://did:plc:owner/space/blue.catbird.circle/3abc"),
-      error: nil
+    createdCircles.append((skey, circleId, name, memberDIDs))
+    mockMembers = memberDIDs
+    return Self.summary(
+      skey: skey, circleId: circleId, name: name, memberCount: memberDIDs.count
     )
   }
 
-  func updateMember(space: SpaceRef, memberDID: DID, action: CircleMemberAction) async throws -> CircleOperation {
+  func deleteSpace(space: SpaceRef) async throws {
     if let error { throw error }
-    memberUpdates.append((space, memberDID, action))
-    if let nextOperation { return nextOperation }
-    return CircleOperation(
-      id: UUID().uuidString,
-      status: .value_complete,
-      space: space,
-      error: nil
-    )
+    deletedSpaces.append(space)
+  }
+
+  func addMember(space: SpaceRef, did: DID) async throws {
+    if let error { throw error }
+    memberAdds.append((space, did))
+    mockMembers.append(did)
+  }
+
+  func removeMember(space: SpaceRef, did: DID) async throws {
+    if let error { throw error }
+    memberRemoves.append((space, did))
+    mockMembers.removeAll { $0 == did }
+  }
+
+  func listMembers(space: SpaceRef) async throws -> [DID] {
+    if let error { throw error }
+    return mockMembers
   }
 
   func updatePreferences(space: SpaceRef, muted: Bool) async throws -> Bool {
@@ -152,9 +162,16 @@ actor ManagementRecordingCircleTransport: CircleTransport {
     return UUID()
   }
 
-  func activate(space: SpaceRef) async throws -> CircleAccessState {
+  func activateCircle(space: SpaceRef) async throws -> CircleSummary {
     if let error { throw error }
-    return .active
+    activateCircleCalls.append(space)
+    if let activationError { throw activationError }
+    return Self.summary(
+      skey: space.skey,
+      circleId: nil,
+      name: "Activated",
+      memberCount: mockMembers.count
+    )
   }
 
   func publishPost(destination: CircleSummary, draft: CirclePostDraft) async throws -> ATProtocolURI {
@@ -175,44 +192,29 @@ actor ManagementRecordingCircleTransport: CircleTransport {
     if let error { throw error }
   }
 
-  func deleteCircle(space: SpaceRef) async throws -> CircleOperation {
-    if let error { throw error }
-    deletedSpaces.append(space)
-    if let nextOperation { return nextOperation }
-    return CircleOperation(
-      id: UUID().uuidString,
-      status: .value_complete,
-      space: space,
-      error: nil
-    )
+  func setActivationError(_ error: CircleError?) {
+    self.activationError = error
   }
 
-  func getOperation(id: String) async throws -> CircleOperation {
-    if let error { throw error }
-    getOperationCalls.append(id)
-    if let nextOperation { return nextOperation }
-    return CircleOperation(
-      id: id,
-      status: .value_complete,
-      space: try! SpaceRef(uriString: "at://did:plc:owner/space/blue.catbird.circle/3abc"),
-      error: nil
-    )
+  func setMockMembers(_ members: [DID]) {
+    self.mockMembers = members
   }
 
-  func retryOperation(id: String) async throws -> CircleOperation {
-    if let error { throw error }
-    retryOperationCalls.append(id)
-    if let nextOperation { return nextOperation }
-    return CircleOperation(
-      id: id,
-      status: .value_complete,
-      space: try! SpaceRef(uriString: "at://did:plc:owner/space/blue.catbird.circle/3abc"),
-      error: nil
-    )
-  }
+  static let fixtureCircleIdString = "3l7revaaaaaaa"
+  static var fixtureTID: TID { try! TID(tidString: fixtureCircleIdString) }
 
-  func setNextOperation(_ op: CircleOperation) {
-    self.nextOperation = op
+  /// Deterministic summary so assertions can compare by name and member count.
+  static func summary(
+    skey: String, circleId: String?, name: String, memberCount: Int
+  ) -> CircleSummary {
+    CircleSummary(
+      uri: try! SpaceRef(uriString: "at://did:plc:owner/space/blue.catbird.circle/\(skey)"),
+      circleId: circleId.flatMap { try? TID(tidString: $0) } ?? fixtureTID,
+      name: name,
+      owner: try! DID(didString: "did:plc:owner"),
+      memberCount: memberCount,
+      muted: false
+    )
   }
 
   func setMockFeedItems(_ items: [BlueCatbirdCircleDefs.FeedItem]) {
@@ -234,22 +236,22 @@ struct CircleManagementViewModelTests {
   var ownerCircle: CircleSummary {
     CircleSummary(
       uri: try! SpaceRef(uriString: "at://did:plc:owner123/space/blue.catbird.circle/testspace"),
+      circleId: try! TID(tidString: "3l7revaaaaaaa"),
       name: "Family Circle",
       owner: ownerDID,
-      accessState: .value_active,
-      muted: false,
-      members: [ownerDID, bobDID]
+      memberCount: 2,
+      muted: false
     )
   }
 
   var memberCircle: CircleSummary {
     CircleSummary(
       uri: try! SpaceRef(uriString: "at://did:plc:otherowner/space/blue.catbird.circle/other"),
+      circleId: try! TID(tidString: "3l7revaaaaaaa"),
       name: "Friend Circle",
       owner: try! DID(didString: "did:plc:otherowner"),
-      accessState: .value_active,
-      muted: false,
-      members: nil
+      memberCount: 1,
+      muted: false
     )
   }
 
@@ -283,7 +285,7 @@ struct CircleManagementViewModelTests {
     await #expect(throws: CircleError.self) {
       try await model.addMember(did: bobDID)
     }
-    #expect(await transport.memberUpdates.isEmpty)
+    #expect(await transport.memberAdds.isEmpty)
   }
 
   @Test func nonOwnerDeleteCircleFailsClosed() async throws {
@@ -309,11 +311,11 @@ struct CircleManagementViewModelTests {
     // Create a muted feed item and an unmuted feed item
     let mutedCircle = CircleSummary(
       uri: memberCircle.uri,
+      circleId: memberCircle.circleId,
       name: memberCircle.name,
       owner: memberCircle.owner,
-      accessState: .value_active,
-      muted: true,
-      members: nil
+      memberCount: memberCircle.memberCount,
+      muted: true
     )
     let unmutedCircle = ownerCircle
     let mutedItem = CircleTestFixtures.makeFeedItem(circle: mutedCircle, rkey: "p1", text: "Muted Post")
@@ -435,48 +437,50 @@ struct CircleManagementViewModelTests {
     #expect(await transport.createdCircles.first?.memberDIDs.count == 150)
   }
 
-  @Test func pendingOperationTransitionsToPendingState() async throws {
+  @Test func createCircleCallsCreateSpaceThenActivateCircleInOrder() async throws {
     let transport = ManagementRecordingCircleTransport()
-    let pendingOp = CircleOperation(
-      id: "12345678-1234-4234-8234-123456789abc",
-      status: .value_pending,
-      space: ownerCircle.uri,
-      error: nil
-    )
-    await transport.setNextOperation(pendingOp)
-
     let service = CircleService(transport: transport)
-    let model = CircleManagementViewModel(circle: ownerCircle, service: service, userDID: ownerDID.didString())
+    let model = CircleManagementViewModel(service: service, userDID: ownerDID.didString())
 
-    _ = try await model.addMember(did: bobDID)
-    #expect(model.state == .pending(pendingOp))
+    let created = try await model.createCircle(name: "Order Test Circle", memberDIDs: [bobDID])
+    #expect(await transport.createdCircles.count == 1)
+    #expect(await transport.activateCircleCalls.count == 1)
+    #expect(model.state == .complete)
+    #expect(created.name == "Activated")
   }
 
-  @Test func failedOperationTransitionsToFailedStateWithRetryID() async throws {
+  @Test func activateCircleFailureLeavesSpaceIntactAndEnablesActivationRetry() async throws {
     let transport = ManagementRecordingCircleTransport()
-    let uuidString = "87654321-4321-4321-8321-cba987654321"
-    let failedOp = CircleOperation(
-      id: uuidString,
-      status: .value_failed,
-      space: ownerCircle.uri,
-      error: "Conflict updating members"
-    )
-    await transport.setNextOperation(failedOp)
-
+    await transport.setActivationError(.upstreamUnavailable)
     let service = CircleService(transport: transport)
-    let model = CircleManagementViewModel(circle: ownerCircle, service: service, userDID: ownerDID.didString())
+    let model = CircleManagementViewModel(service: service, userDID: ownerDID.didString())
 
-    _ = try await model.addMember(did: bobDID)
-    #expect(model.state == .failed(message: "Conflict updating members", retryOperationID: UUID(uuidString: uuidString)))
+    let summary = try await model.createCircle(name: "Activation Fail Circle", memberDIDs: [bobDID])
+    #expect(await transport.createdCircles.count == 1)
+    #expect(await transport.activateCircleCalls.count == 1)
+    #expect(await transport.deletedSpaces.isEmpty)
+    #expect(model.state == .activationFailed(message: CircleError.upstreamUnavailable.localizedDescription))
+    #expect(model.canRetryActivation == true)
+    #expect(summary.name == "Activation Fail Circle")
+
+    // Retrying activation succeeds when error clears
+    await transport.setActivationError(nil)
+    try await model.retryActivation()
+    #expect(model.state == .complete)
+    #expect(model.canRetryActivation == false)
+    #expect(await transport.activateCircleCalls.count == 2)
+    #expect(model.circle.name == "Activated")
   }
 
   @Test func ownerMemberRosterIsLoadedAuthoritativelyAndNonOwnerNeverReceivesRoster() async throws {
     let transport = ManagementRecordingCircleTransport()
+    await transport.setMockMembers([ownerDID, bobDID])
     let service = CircleService(transport: transport)
 
-    // Owner initialized with members array receives it
+    // Owner loaded with members
     let ownerModel = CircleManagementViewModel(circle: ownerCircle, service: service, userDID: ownerDID.didString())
     #expect(ownerModel.canManageMembers == true)
+    await ownerModel.loadMembers()
     #expect(ownerModel.members.count == 2)
     #expect(ownerModel.members.contains(ownerDID))
     #expect(ownerModel.members.contains(bobDID))
@@ -484,38 +488,15 @@ struct CircleManagementViewModelTests {
     // Non-owner never receives members and canManageMembers is false
     let nonOwnerModel = CircleManagementViewModel(circle: memberCircle, service: service, userDID: memberDID.didString())
     #expect(nonOwnerModel.canManageMembers == false)
+    await nonOwnerModel.loadMembers()
     #expect(nonOwnerModel.members.isEmpty)
 
-    // Calling loadMembers for owner updates roster from listCircles
-    let updatedOwnerCircle = CircleSummary(
-      uri: ownerCircle.uri,
-      name: ownerCircle.name,
-      owner: ownerCircle.owner,
-      accessState: .value_active,
-      muted: false,
-      members: [ownerDID, bobDID, try! DID(didString: "did:plc:carol")]
-    )
-    await transport.setMockCirclesList([updatedOwnerCircle])
+    // Calling loadMembers for owner updates roster from PDS
+    let carolDID = try! DID(didString: "did:plc:carol")
+    await transport.setMockMembers([ownerDID, bobDID, carolDID])
     await ownerModel.loadMembers()
     #expect(ownerModel.members.count == 3)
   }
-
-  @Test func retryPendingOrFailedOperationTargetsNamedOperationWithoutDuplicateSubmission() async throws {
-    let transport = ManagementRecordingCircleTransport()
-    let service = CircleService(transport: transport)
-    let model = CircleManagementViewModel(circle: ownerCircle, service: service, userDID: ownerDID.didString())
-
-    let failedUUID = UUID()
-    model.state = .failed(message: "Transient failure", retryOperationID: failedUUID)
-
-    // Retry targets the existing operation ID
-    try await model.retry(operationID: failedUUID)
-    #expect(model.state == .complete)
-    #expect(await transport.retryOperationCalls.contains(failedUUID.uuidString.lowercased()))
-    #expect(await transport.createdCircles.isEmpty)
-    #expect(await transport.deletedSpaces.isEmpty)
-  }
-
   @Test func privateCirclePostCannotExecuteMuteThread() async throws {
     let client = await ATProtoClient(baseURL: URL(string: "https://invalid.example.com")!)
     let appState = AppState(userDID: ownerDID.didString(), client: client)
@@ -557,58 +538,13 @@ struct CircleManagementViewModelTests {
     let service = CircleService(transport: transport)
     let model = CircleManagementViewModel(circle: ownerCircle, service: service, userDID: ownerDID.didString())
 
-    let op = try await model.deleteCircle()
-    #expect(op?.status == .value_complete)
+    try await model.deleteCircle()
     #expect(model.state == .complete)
-    #expect(!model.canRetry)
-    #expect(model.state.retryOperationID == nil)
     #expect(await transport.deletedSpaces.count == 1)
     #expect(await transport.deletedSpaces.first == ownerCircle.uri)
   }
 
-  @Test func deleteCirclePendingOutcomeLeavesStatePendingWithRetryID() async throws {
-    let transport = ManagementRecordingCircleTransport()
-    let pendingUUID = UUID()
-    let pendingOp = CircleOperation(
-      id: pendingUUID.uuidString,
-      status: .value_pending,
-      space: ownerCircle.uri,
-      error: nil
-    )
-    await transport.setNextOperation(pendingOp)
-
-    let service = CircleService(transport: transport)
-    let model = CircleManagementViewModel(circle: ownerCircle, service: service, userDID: ownerDID.didString())
-
-    let op = try await model.deleteCircle()
-    #expect(op?.status == .value_pending)
-    #expect(model.state == .pending(pendingOp))
-    #expect(model.canRetry)
-    #expect(model.state.retryOperationID == pendingUUID)
-  }
-
-  @Test func deleteCircleReturnedFailedOutcomePreservesUUIDForRetry() async throws {
-    let transport = ManagementRecordingCircleTransport()
-    let failedUUID = UUID()
-    let failedOp = CircleOperation(
-      id: failedUUID.uuidString,
-      status: .value_failed,
-      space: ownerCircle.uri,
-      error: "Space quota exceeded"
-    )
-    await transport.setNextOperation(failedOp)
-
-    let service = CircleService(transport: transport)
-    let model = CircleManagementViewModel(circle: ownerCircle, service: service, userDID: ownerDID.didString())
-
-    let op = try await model.deleteCircle()
-    #expect(op?.status == .value_failed)
-    #expect(model.state == .failed(message: "Space quota exceeded", retryOperationID: failedUUID))
-    #expect(model.canRetry)
-    #expect(model.state.retryOperationID == failedUUID)
-  }
-
-  @Test func deleteCircleThrownErrorSetsFailedWithNilRetryIDAndDisablesNamedRetry() async throws {
+  @Test func deleteCircleThrownErrorSetsFailedState() async throws {
     let transport = ManagementRecordingCircleTransport(error: CircleError.upstreamUnavailable)
     let service = CircleService(transport: transport)
     let model = CircleManagementViewModel(circle: ownerCircle, service: service, userDID: ownerDID.didString())
@@ -616,37 +552,7 @@ struct CircleManagementViewModelTests {
     await #expect(throws: CircleError.self) {
       try await model.deleteCircle()
     }
-    #expect(model.state == .failed(message: CircleError.upstreamUnavailable.localizedDescription, retryOperationID: nil))
-    #expect(!model.canRetry)
-    #expect(model.state.retryOperationID == nil)
-  }
-
-  @Test func circleManagementStateRetryPolicyForNilAndNonNilOperationIDs() {
-    let idleState = CircleManagementState.idle
-    #expect(!idleState.canRetry)
-    #expect(idleState.retryOperationID == nil)
-
-    let submittingState = CircleManagementState.submitting
-    #expect(!submittingState.canRetry)
-    #expect(submittingState.retryOperationID == nil)
-
-    let completeState = CircleManagementState.complete
-    #expect(!completeState.canRetry)
-    #expect(completeState.retryOperationID == nil)
-
-    let failedNoIDState = CircleManagementState.failed(message: "Network error", retryOperationID: nil)
-    #expect(!failedNoIDState.canRetry)
-    #expect(failedNoIDState.retryOperationID == nil)
-
-    let testUUID = UUID()
-    let failedWithIDState = CircleManagementState.failed(message: "Server failed", retryOperationID: testUUID)
-    #expect(failedWithIDState.canRetry)
-    #expect(failedWithIDState.retryOperationID == testUUID)
-
-    let pendingOp = CircleOperation(id: testUUID.uuidString, status: .value_pending, space: ownerCircle.uri, error: nil)
-    let pendingState = CircleManagementState.pending(pendingOp)
-    #expect(pendingState.canRetry)
-    #expect(pendingState.retryOperationID == testUUID)
+    #expect(model.state == .failed(message: CircleError.upstreamUnavailable.localizedDescription))
   }
 
   // MARK: - Lifecycle Event Tests
@@ -672,9 +578,7 @@ struct CircleManagementViewModelTests {
     let transport = ManagementRecordingCircleTransport()
     let service = CircleService(transport: transport)
     let model = CircleManagementViewModel(circle: ownerCircle, service: service, userDID: ownerDID.didString())
-    let op = try await model.deleteCircle()
-    #expect(op?.status == .value_complete)
-
+    try await model.deleteCircle()
     // Emits exactly once on immediate complete
     #expect(capture.count == 1)
     #expect(capture.accountDID == ownerDID.didString())
@@ -684,77 +588,6 @@ struct CircleManagementViewModelTests {
     let newMemberDID = try! DID(didString: "did:plc:member99")
     _ = try await model.addMember(did: newMemberDID)
     #expect(capture.count == 1)
-  }
-
-  @Test func deleteCirclePendingOrFailedOutcomeEmitsNoNotification() async throws {
-    var notificationCount = 0
-    let observer = NotificationCenter.default.addObserver(
-      forName: .circleDeleted,
-      object: nil,
-      queue: nil
-    ) { _ in
-      notificationCount += 1
-    }
-    defer { NotificationCenter.default.removeObserver(observer) }
-
-    let transport = ManagementRecordingCircleTransport()
-    let pendingUUID = UUID()
-    let pendingOp = CircleOperation(
-      id: pendingUUID.uuidString,
-      status: .value_pending,
-      space: ownerCircle.uri,
-      error: nil
-    )
-    await transport.setNextOperation(pendingOp)
-
-    let service = CircleService(transport: transport)
-    let model = CircleManagementViewModel(circle: ownerCircle, service: service, userDID: ownerDID.didString())
-
-    let op = try await model.deleteCircle()
-    #expect(op?.status == .value_pending)
-    #expect(notificationCount == 0)
-  }
-
-  @Test func deleteCirclePendingThenRetryCompleteEmitsExactlyOnce() async throws {
-    var notificationCount = 0
-    let observer = NotificationCenter.default.addObserver(
-      forName: .circleDeleted,
-      object: nil,
-      queue: nil
-    ) { _ in
-      notificationCount += 1
-    }
-    defer { NotificationCenter.default.removeObserver(observer) }
-
-    let transport = ManagementRecordingCircleTransport()
-    let deleteUUID = UUID()
-    let pendingOp = CircleOperation(
-      id: deleteUUID.uuidString,
-      status: .value_pending,
-      space: ownerCircle.uri,
-      error: nil
-    )
-    await transport.setNextOperation(pendingOp)
-
-    let service = CircleService(transport: transport)
-    let model = CircleManagementViewModel(circle: ownerCircle, service: service, userDID: ownerDID.didString())
-
-    let op = try await model.deleteCircle()
-    #expect(op?.status == .value_pending)
-    #expect(notificationCount == 0)
-
-    // Retry for the same delete operation completes
-    let completeOp = CircleOperation(
-      id: deleteUUID.uuidString,
-      status: .value_complete,
-      space: ownerCircle.uri,
-      error: nil
-    )
-    await transport.setNextOperation(completeOp)
-    try await model.retry(operationID: deleteUUID)
-
-    #expect(notificationCount == 1)
-    #expect(model.state == .complete)
   }
 
   @Test func unrelatedOperationAfterFailedDeleteDoesNotEmitDeleteNotification() async throws {

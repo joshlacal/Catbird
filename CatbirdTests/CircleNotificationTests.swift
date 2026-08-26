@@ -262,11 +262,11 @@ struct CircleNotificationTests {
   func mutedCirclesFilteredFromNotifications() async throws {
     let mutedCircle = BlueCatbirdCircleDefs.CircleSummary(
       uri: familyCircle.uri,
+      circleId: familyCircle.circleId,
       name: familyCircle.name,
       owner: familyCircle.owner,
-      accessState: .value_active,
-      muted: true,
-      members: nil
+      memberCount: familyCircle.memberCount,
+      muted: true
     )
 
     let unmutedNotif = makeNotification(id: "n_unmuted", reason: .value_reply, circle: workCircle)
@@ -1234,13 +1234,93 @@ struct CircleNotificationTests {
       authMode: .publicOAuth
     )
 
-    let store = E2ECircleStore()
+    final class MockSwitchTransport: CircleTransport, @unchecked Sendable {
+      let accountDID: String
+      let publicEndpointCallCount: Int = 0
+
+      init(accountDID: String) {
+        self.accountDID = accountDID
+      }
+
+      func capabilities() async throws -> CircleCapability {
+        CircleCapability(enabled: true, protocolRevision: "2026-08", supportsImages: true)
+      }
+
+      func listCircles(cursor: String?) async throws -> CircleListPage {
+        CircleListPage(circles: [CircleTestFixtures.family, CircleTestFixtures.work], cursor: nil)
+      }
+
+      func getFeed(space: SpaceRef?, cursor: String?) async throws -> CircleFeedPage {
+        let familyURI = E2EConstants.familyPostURI
+        let aliceOnlyURI = E2EConstants.aliceOnlyPostURI
+        let item1 = BlueCatbirdCircleDefs.FeedItem(
+          post: AppBskyFeedDefs.FeedViewPost(
+            post: CircleTestFixtures.makePostView(uri: familyURI, text: "Family Post"),
+            reply: nil,
+            reason: nil,
+            feedContext: nil,
+            reqId: nil
+          ),
+          circle: CircleTestFixtures.family
+        )
+        let item2 = BlueCatbirdCircleDefs.FeedItem(
+          post: AppBskyFeedDefs.FeedViewPost(
+            post: CircleTestFixtures.makePostView(uri: aliceOnlyURI, text: "Alice Only Post"),
+            reply: nil,
+            reason: nil,
+            feedContext: nil,
+            reqId: nil
+          ),
+          circle: CircleTestFixtures.work
+        )
+        if accountDID == E2EConstants.aliceDIDString {
+          return CircleFeedPage(items: [item1, item2], cursor: nil)
+        } else {
+          return CircleFeedPage(items: [item1], cursor: nil)
+        }
+      }
+
+      func getPostThread(uri: ATProtocolURI, space: SpaceRef) async throws -> CircleThreadPage {
+        let postView = CircleTestFixtures.makePostView(uri: uri)
+        let thread = AppBskyFeedDefs.ThreadViewPost(post: postView, parent: nil, replies: nil, threadContext: nil)
+        return CircleThreadPage(thread: thread, circle: CircleTestFixtures.family)
+      }
+
+      func listNotifications(cursor: String?) async throws -> CircleNotificationPage {
+        let notifId = (accountDID == E2EConstants.aliceDIDString) ? "notif-1" : "notif-bob-1"
+        let notif = BlueCatbirdCircleDefs.Notification(
+          id: notifId,
+          reason: .value_reply,
+          actor: CircleFeedCacheIsolationTests.makeProfile(),
+          subject: E2EConstants.familyPostURI,
+          indexedAt: ATProtocolDate(date: Date()),
+          circle: CircleTestFixtures.family
+        )
+        return CircleNotificationPage(notifications: [notif], cursor: nil)
+      }
+
+      func media(space: SpaceRef, authorDID: DID, cid: CID) async throws -> Data { Data() }
+      func updatePreferences(space: SpaceRef, muted: Bool) async throws -> Bool { muted }
+      func report(post: ATProtocolURI, circle: CircleSummary, reason: CircleReportReason, details: String?) async throws -> UUID { UUID() }
+      func activateCircle(space: SpaceRef) async throws -> CircleSummary { CircleTestFixtures.family }
+      func publishPost(destination: CircleSummary, draft: CirclePostDraft) async throws -> ATProtocolURI {
+        try! ATProtocolURI(uriString: "at://\(E2EConstants.aliceDIDString)/space/blue.catbird.circle/family123/did:plc:alice/app.bsky.feed.post/post1")
+      }
+      func like(post: AppBskyFeedDefs.PostView, circle: CircleSummary) async throws -> ATProtocolURI {
+        try! ATProtocolURI(uriString: "at://\(E2EConstants.aliceDIDString)/space/blue.catbird.circle/family123/did:plc:alice/app.bsky.feed.like/like1")
+      }
+      func deletePost(uri: ATProtocolURI, circle: CircleSummary) async throws {}
+      func deleteLike(uri: ATProtocolURI, circle: CircleSummary) async throws {}
+      func createSpace(skey: String, circleId: String, name: String, memberDIDs: [DID]) async throws -> CircleSummary { CircleTestFixtures.family }
+      func deleteSpace(space: SpaceRef) async throws {}
+      func addMember(space: SpaceRef, did: DID) async throws {}
+      func removeMember(space: SpaceRef, did: DID) async throws {}
+      func listMembers(space: SpaceRef) async throws -> [DID] { [] }
+    }
+
     appStateManager.setAppStateFactoryForTesting { did, cli in
       let state = AppState(userDID: did, client: cli)
-      if let targetDID = try? DID(didString: did) {
-        let transport = E2ECircleTransport(accountDID: targetDID, store: store)
-        state.installE2ECircleFixture(transport: transport)
-      }
+      state.circleService = CircleService(transport: MockSwitchTransport(accountDID: did))
       return state
     }
 
