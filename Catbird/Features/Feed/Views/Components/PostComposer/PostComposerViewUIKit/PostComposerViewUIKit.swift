@@ -140,6 +140,15 @@ struct PostComposerViewUIKit: View {
         pcUIKitLogger.info("PostComposerViewUIKit: Restoring current draft (likely from account switch)")
         vm.restoreDraftState(currentDraft)
       }
+      #if DEBUG
+      let arguments = ProcessInfo.processInfo.arguments
+      if arguments.contains("--e2e-mode"),
+        arguments.contains("--e2e-auto-photo"),
+        let transport = appState.e2eCircleTransport
+      {
+        vm.ingestCapturedPhoto(transport.fixtureImageData)
+      }
+      #endif
       
       viewModel = vm
 

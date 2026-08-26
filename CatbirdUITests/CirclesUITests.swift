@@ -47,13 +47,13 @@ final class CirclesUITests: XCTestCase {
   // MARK: - Navigation & Action Helpers
 
   private func tapNotificationsTab() {
-    let tab = app.buttons["tab_notifications"]
+    let tab = app.buttons["tab_notifications"].firstMatch
     XCTAssertTrue(tab.waitForExistence(timeout: 5), "Expected Notifications tab")
     tab.tap()
   }
 
   private func tapHomeTab() {
-    let tab = app.buttons["tab_home"]
+    let tab = app.buttons["tab_home"].firstMatch
     XCTAssertTrue(tab.waitForExistence(timeout: 5), "Expected Home tab")
     tab.tap()
   }
@@ -240,7 +240,7 @@ final class CirclesUITests: XCTestCase {
 
   /// 3. Destination lock during image upload: destination remains visible and non-interactive through upload
   func testDestinationLockedDuringImageUpload() throws {
-    launchWithCircles()
+    launchWithCircles(extraArgs: ["--e2e-auto-photo"])
 
     let composeButton = app.buttons["compose.fab"]
     XCTAssertTrue(composeButton.waitForExistence(timeout: 5), "Expected compose FAB")
@@ -262,13 +262,8 @@ final class CirclesUITests: XCTestCase {
     editor.tap()
     editor.typeText("image destination lock")
 
-    // Attach image via accessory bar
-    let attachmentMenu = app.buttons["Add attachment or post settings"]
-    XCTAssertTrue(attachmentMenu.waitForExistence(timeout: 5), "Expected attachment menu button")
-    attachmentMenu.tap()
-    let photosButton = app.buttons["Photos"]
-    XCTAssertTrue(photosButton.waitForExistence(timeout: 5), "Expected Photos button")
-    photosButton.tap()
+    let mediaPreview = app.buttons["Remove image"].firstMatch
+    XCTAssertTrue(mediaPreview.waitForExistence(timeout: 5), "Expected deterministic image preview")
 
     let postButton = app.buttons["Post"]
     XCTAssertTrue(postButton.waitForExistence(timeout: 5), "Expected Post button")
