@@ -71,6 +71,7 @@ struct SettingsAvatarToolbarButton: View {
               }
             }
             .disabled(account.isActive)
+            .accessibilityIdentifier("account.switch.\(account.did)")
           }
         }
       } label: {

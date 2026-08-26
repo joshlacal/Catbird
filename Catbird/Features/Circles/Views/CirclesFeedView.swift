@@ -91,6 +91,7 @@ struct CirclesFeedView: View {
             path: $path,
             appState: appState
           )
+          .id("\(item.post.post.uri.uriString())-\(item.post.post.replyCount ?? 0)-\(item.post.post.likeCount ?? 0)-\(item.post.post.viewer?.like != nil)")
           .onAppear {
             if index >= model.items.count - 3 {
               Task {

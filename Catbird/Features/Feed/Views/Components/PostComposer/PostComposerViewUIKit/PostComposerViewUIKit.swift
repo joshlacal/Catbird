@@ -30,9 +30,9 @@ struct PostComposerViewUIKit: View {
   @State var viewModel: PostComposerViewModel?
   private let initialParentPost: AppBskyFeedDefs.PostView?
   private let initialQuotedPost: AppBskyFeedDefs.PostView?
+  private let initialDestination: CircleDestination
   private let restoringDraftParam: PostComposerDraft?
   private let initialCapturedMediaParam: CapturedMedia?
-
   // Link creation state
   @State var showingLinkCreation = false
   @State var linkSelection: ComposerLinkEdit.Selection?
@@ -73,10 +73,12 @@ struct PostComposerViewUIKit: View {
   
   init(parentPost: AppBskyFeedDefs.PostView? = nil,
        quotedPost: AppBskyFeedDefs.PostView? = nil,
+       destination: CircleDestination = .public,
        appState: AppState) {
     self.appState = appState
     self.initialParentPost = parentPost
     self.initialQuotedPost = quotedPost
+    self.initialDestination = destination
     self.restoringDraftParam = nil
     self.initialCapturedMediaParam = nil
   }
@@ -86,6 +88,7 @@ struct PostComposerViewUIKit: View {
     self.appState = appState
     self.initialParentPost = nil
     self.initialQuotedPost = nil
+    self.initialDestination = .public
     self.restoringDraftParam = draft
     self.initialCapturedMediaParam = nil
   }
@@ -95,6 +98,7 @@ struct PostComposerViewUIKit: View {
     self.appState = appState
     self.initialParentPost = nil
     self.initialQuotedPost = nil
+    self.initialDestination = .public
     self.restoringDraftParam = nil
     self.initialCapturedMediaParam = initialCapturedMedia
   }
@@ -124,7 +128,7 @@ struct PostComposerViewUIKit: View {
         return 
       }
       pcUIKitLogger.info("PostComposerViewUIKit: Initializing composer - parentPost: \(initialParentPost != nil), quotedPost: \(initialQuotedPost != nil), draft: \(restoringDraftParam != nil), currentDraft: \(appState.composerDraftManager.currentDraft != nil)")
-      let vm = PostComposerViewModel(parentPost: initialParentPost, quotedPost: initialQuotedPost, appState: appState)
+      let vm = PostComposerViewModel(parentPost: initialParentPost, quotedPost: initialQuotedPost, destination: initialDestination, appState: appState)
       
       // Captured media always opens a fresh composer; the previous working
       // draft was stashed before entering the system camera.
@@ -470,7 +474,7 @@ struct PostComposerViewUIKit: View {
         threadgateValue: ComposerChipsStrip.threadgateSummary(vm.threadgateSettings),
         languageValue: languageSummary(vm: vm),
         actions: ComposerBarActions(
-          onPhotos: { photoPickerVisible = true },
+          onPhotos: { presentPhotoPicker(vm: vm) },
           onVideo: { videoPickerVisible = true },
           onGif: { showingGifPicker = true },
           onAudio: { showingAudioRecorder = true },
@@ -597,7 +601,7 @@ struct PostComposerViewUIKit: View {
         focusActivationID: activeEditorFocusID,
         onPhotosAction: { 
           pcUIKitLogger.info("PostComposerViewUIKit: Photos action triggered")
-          photoPickerVisible = true 
+          presentPhotoPicker(vm: vm)
         },
         onVideoAction: { 
           pcUIKitLogger.info("PostComposerViewUIKit: Video action triggered")

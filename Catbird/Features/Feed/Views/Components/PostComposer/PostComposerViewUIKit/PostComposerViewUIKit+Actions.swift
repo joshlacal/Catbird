@@ -77,6 +77,16 @@ extension PostComposerViewUIKit {
     pcActionsLogger.debug("PostComposerActions: Emoji inserted, new cursor position: \(vm.cursorPosition)")
   }
   
+  func presentPhotoPicker(vm: PostComposerViewModel) {
+    #if DEBUG
+    if let transport = appState.e2eCircleTransport {
+      vm.ingestCapturedPhoto(transport.fixtureImageData)
+      return
+    }
+    #endif
+    photoPickerVisible = true
+  }
+  
   func handleMediaSelection(from items: [PhotosPickerItem], isVideo: Bool = false, vm: PostComposerViewModel) {
     guard !items.isEmpty else { return }
     pcActionsLogger.info("PostComposerActions: Handling media selection - items: \(items.count), isVideo: \(isVideo)")

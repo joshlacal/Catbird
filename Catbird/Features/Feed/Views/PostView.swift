@@ -161,6 +161,8 @@ var id: String {
       }
       .padding(.top, PostView.baseUnit)
     }
+    .accessibilityElement(children: .contain)
+    .accessibilityIdentifier("post.\(post.uri.uriString())")
     .appDisplayScale(appState: appState)
     .contrastAwareBackground(appState: appState, defaultColor: .clear)
     .transaction { t in  // Disable initial animations
@@ -172,6 +174,9 @@ var id: String {
     .entityContext(EntityIdentifier(for: PostEntity.self, identifier: post.uri.uriString()))
     .task {
       await setupPost()
+    }
+    .onChange(of: post) { _, newPost in
+      postState.currentPost = newPost
     }
     .onDisappear {
       shadowUpdateTask?.cancel()

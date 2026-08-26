@@ -135,11 +135,6 @@ struct CreateCircleView: View {
           )
         }
       }
-      .onChange(of: viewModel?.state) { _, newState in
-        if newState == .complete {
-          dismiss()
-        }
-      }
     }
   }
 

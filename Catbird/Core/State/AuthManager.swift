@@ -462,6 +462,28 @@ struct AuthLogger: Sendable {
   }
 }
 
+/// Injectable dependency overrides for AuthenticationManager unit testing.
+public struct AuthenticationDependencyOverrides: Sendable {
+  public var startOAuth: (@Sendable (ATProtoClient, String, String, String) async throws -> URL)?
+  public var prepareGatewayLogin: (@Sendable (URL) async throws -> URL)?
+  public var handleOAuthCallback: (@Sendable (ATProtoClient, URL) async throws -> Void)?
+  public var redeemGatewayCallback: (@Sendable (URL) async throws -> String)?
+  public var switchAccount: (@Sendable (ATProtoClient, String) async throws -> Void)?
+
+  public init(
+    startOAuth: (@Sendable (ATProtoClient, String, String, String) async throws -> URL)? = nil,
+    prepareGatewayLogin: (@Sendable (URL) async throws -> URL)? = nil,
+    handleOAuthCallback: (@Sendable (ATProtoClient, URL) async throws -> Void)? = nil,
+    redeemGatewayCallback: (@Sendable (URL) async throws -> String)? = nil,
+    switchAccount: (@Sendable (ATProtoClient, String) async throws -> Void)? = nil
+  ) {
+    self.startOAuth = startOAuth
+    self.prepareGatewayLogin = prepareGatewayLogin
+    self.handleOAuthCallback = handleOAuthCallback
+    self.redeemGatewayCallback = redeemGatewayCallback
+    self.switchAccount = switchAccount
+  }
+}
 
 /// Handles all authentication-related operations with a clean state machine approach
 @Observable
@@ -474,7 +496,8 @@ final class AuthenticationManager: AuthProgressDelegate {
   nonisolated(unsafe) static var capturedLogHook: (@Sendable (String) -> Void)?
 
   fileprivate let logger: AuthLogger
-
+  @ObservationIgnored
+  private let dependencyOverrides: AuthenticationDependencyOverrides
   // Authentication timeout configuration
   private let authenticationTimeout: TimeInterval = 60.0  // 60 seconds
   private let networkTimeout: TimeInterval = 30.0  // 30 seconds for individual network calls
@@ -585,10 +608,13 @@ final class AuthenticationManager: AuthProgressDelegate {
 
   // MARK: - Initialization
 
-  init(logHandler: any AuthLogHandler = DefaultAuthLogHandler()) {
+  init(
+    logHandler: any AuthLogHandler = DefaultAuthLogHandler(),
+    dependencyOverrides: AuthenticationDependencyOverrides = .init()
+  ) {
     self.logger = AuthLogger(handler: logHandler)
+    self.dependencyOverrides = dependencyOverrides
     logger.debug(.initialized)
-
     // Configure biometric authentication asynchronously off the main actor
     Task.detached(priority: .background) { [weak self] in
       guard let self else { return }
@@ -1125,15 +1151,24 @@ final class AuthenticationManager: AuthProgressDelegate {
           }
 
           let authURL = try await withTimeout(timeout: networkTimeout) {
-            // Pass custom service DIDs to OAuth flow
-            try await client.startOAuthFlow(
-              identifier: handle,
-              bskyAppViewDID: self.customAppViewDID,
-              bskyChatDID: self.customChatDID
-            )
+            if let startOAuth = self.dependencyOverrides.startOAuth {
+              return try await startOAuth(client, handle, self.customAppViewDID, self.customChatDID)
+            } else {
+              // Pass custom service DIDs to OAuth flow
+              return try await client.startOAuthFlow(
+                identifier: handle,
+                bskyAppViewDID: self.customAppViewDID,
+                bskyChatDID: self.customChatDID
+              )
+            }
           }
 
-          let boundAuthURL = try await gatewayOAuthExchange.prepareLogin(authURL)
+          let boundAuthURL: URL
+          if let prepare = self.dependencyOverrides.prepareGatewayLogin {
+            boundAuthURL = try await prepare(authURL)
+          } else {
+            boundAuthURL = try await gatewayOAuthExchange.prepareLogin(authURL)
+          }
           logger.info(.oauthURLGenerated)
           await self.updateState(.authenticating(progress: .openingBrowser))
           return boundAuthURL
@@ -1348,7 +1383,11 @@ final class AuthenticationManager: AuthProgressDelegate {
         try Task.checkCancellation()
 
         self.logger.debug(.callbackTokenExchangeStarted)
-        try await client.handleOAuthCallback(url: url)
+        if let handleCallback = self.dependencyOverrides.handleOAuthCallback {
+          try await handleCallback(client, url)
+        } else {
+          try await client.handleOAuthCallback(url: url)
+        }
         self.logger.info(.callbackTokenExchangeCompleted)
         self.logger.info(.callbackImmediateAPISuccess)
         do {
@@ -1455,7 +1494,12 @@ final class AuthenticationManager: AuthProgressDelegate {
     do {
       updateState(.authenticating(progress: .creatingSession))
 
-      let sessionID = try await gatewayOAuthExchange.redeem(url)
+      let sessionID: String
+      if let redeem = dependencyOverrides.redeemGatewayCallback {
+        sessionID = try await redeem(url)
+      } else {
+        sessionID = try await gatewayOAuthExchange.redeem(url)
+      }
       var internalCallback = URLComponents()
       internalCallback.scheme = "https"
       internalCallback.host = "catbird.blue"
@@ -2213,7 +2257,11 @@ final class AuthenticationManager: AuthProgressDelegate {
       #endif
 
       logger.info(.accountSwitchClientSwitchCalled)
-      try await client.switchToAccount(did: targetDID)
+      if let switchAccount = dependencyOverrides.switchAccount {
+        try await switchAccount(client, targetDID)
+      } else {
+        try await client.switchToAccount(did: targetDID)
+      }
       logger.info(.accountSwitchClientSwitchCompleted)
 
       logger.debug(.accountSwitchSessionValid)

@@ -384,4 +384,8 @@ public extension Notification.Name {
   /// Synchronously invalidates loaded Circle models for the departing DID and increments their generation.
   /// `userInfo` contains `accountDID` (String).
   static let circleAccountInvalidated = Notification.Name("CircleAccountInvalidated")
+
+  /// Posted when a Circle post or reply is published.
+  /// `userInfo` contains `accountDID` (String) and `spaceURI` (String).
+  static let circlePostPublished = Notification.Name("CirclePostPublished")
 }

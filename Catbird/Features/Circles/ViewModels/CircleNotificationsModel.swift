@@ -65,7 +65,7 @@ final class CircleNotificationsModel {
     ) { [weak self] notification in
       guard let self else { return }
       let targetAccountDID = notification.userInfo?["accountDID"] as? String ?? ""
-      guard targetAccountDID.isEmpty || targetAccountDID == self.accountDID else {
+      guard !targetAccountDID.isEmpty, targetAccountDID == self.accountDID else {
         return
       }
       guard let spaceURIString = notification.userInfo?["spaceURI"] as? String,
@@ -82,7 +82,7 @@ final class CircleNotificationsModel {
     ) { [weak self] notification in
       guard let self else { return }
       let targetAccountDID = notification.userInfo?["accountDID"] as? String ?? ""
-      guard targetAccountDID.isEmpty || targetAccountDID == self.accountDID else {
+      guard !targetAccountDID.isEmpty, targetAccountDID == self.accountDID else {
         return
       }
       self.handleAccountInvalidatedSync()

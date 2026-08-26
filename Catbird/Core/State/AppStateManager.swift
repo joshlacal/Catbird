@@ -210,25 +210,47 @@ final class AppStateManager {
       MLSDiagnosticLogger.shared.logE2EModeStarted(runId: runId)
     }
 
+    #if os(iOS)
+    if isE2EMode {
+      UIView.setAnimationsEnabled(false)
+    }
+    #endif
     #if DEBUG
     if isE2EMode, ProcessInfo.processInfo.arguments.contains("--e2e-fixture-account") {
       let fixtureDID = "did:plc:alicee2efixture"
+      let bobDID = "did:plc:bobe2efixture"
       let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
       authManager.setClientForTesting(client)
       authManager.storeHandle("alice.test", for: fixtureDID)
-      authManager.storeHandle("bob.test", for: "did:plc:bobe2efixture")
+      authManager.storeHandle("bob.test", for: bobDID)
+      authManager.cacheProfileData(for: fixtureDID, handle: "alice.test", displayName: "Alice", avatarURL: nil)
+      authManager.cacheProfileData(for: bobDID, handle: "bob.test", displayName: "Bob", avatarURL: nil)
+      authManager.updateAccountOrder([fixtureDID, bobDID])
 
       let isUnsupported = ProcessInfo.processInfo.arguments.contains("--circles-unsupported-pds")
       CircleFeatureFlags.serverCapability(enabled: !isUnsupported)
 
-      let appState = AppState(userDID: fixtureDID, client: client)
-      let transport = E2ECircleTransport()
-      let circleService = CircleService(transport: transport)
-      appState.circleService = circleService
-      appState.circleNotificationsModel = CircleNotificationsModel(
-        service: CircleNotificationService(service: circleService),
-        accountDID: fixtureDID
-      )
+      let store = E2ECircleStore()
+      setAppStateFactoryForTesting { [weak self] did, cli in
+        let state = AppState(userDID: did, client: cli)
+        if let targetDID = try? DID(didString: did) {
+          let transport = E2ECircleTransport(accountDID: targetDID, store: store)
+          state.installE2ECircleFixture(transport: transport)
+        }
+        return state
+      }
+
+      AuthenticationManager.switchAccountOverride = { targetDID in
+        if targetDID == fixtureDID {
+          return (fixtureDID, "alice.test")
+        } else if targetDID == bobDID {
+          return (bobDID, "bob.test")
+        } else {
+          throw AuthError.invalidUserDID
+        }
+      }
+
+      let appState = makeAppState(userDID: fixtureDID, client: client)
 
       let publicAuthor = AppBskyActorDefs.ProfileViewBasic(
         did: try! DID(didString: fixtureDID),
@@ -278,10 +300,14 @@ final class AppStateManager {
       if let cachedPublicPost = CachedFeedViewPost(feedViewPost: publicFeedViewPost) {
         let timelineModel = FeedModelContainer.shared.getModel(for: .timeline, appState: appState)
         timelineModel.posts = [cachedPublicPost]
+        let stateManager = FeedStateStore.shared.stateManager(for: .timeline, appState: appState)
+        Task { @MainActor in
+          await stateManager.restorePersistedPosts([cachedPublicPost], cursor: nil)
+        }
       }
-      authManager.updateState(.authenticated(userDID: fixtureDID))
       authenticatedStates[fixtureDID] = appState
       updateAccessOrder(fixtureDID)
+      authManager.updateState(.authenticated(userDID: fixtureDID))
       lifecycle = .authenticated(appState)
       MLSDiagnosticLogger.shared.logMLSReady(userDID: fixtureDID)
       startAuthStateObservationIfNeeded()
@@ -520,7 +546,7 @@ final class AppStateManager {
     } else {
       // Create new AppState with authenticated client for THIS account
       logger.info("🆕 Creating new AppState for: \(userDID)")
-      appState = AppState(userDID: userDID, client: client)
+      appState = makeAppState(userDID: userDID, client: client)
       authenticatedStates[userDID] = appState
       isCachedAccount = false
       updateAccessOrder(userDID)
@@ -706,7 +732,7 @@ final class AppStateManager {
   private func recoverFromSwitchFailure() async {
     if case let .authenticated(authDID) = authManager.state, let client = authManager.client {
       authenticatedStates.removeValue(forKey: authDID)
-      let newAppState = AppState(userDID: authDID, client: client)
+      let newAppState = makeAppState(userDID: authDID, client: client)
       authenticatedStates[authDID] = newAppState
       updateAccessOrder(authDID)
       lifecycle = .authenticated(newAppState)
@@ -1000,6 +1026,25 @@ final class AppStateManager {
     - Total cached accounts: \(authenticatedStates.count)
     - Access order: \(accessOrder.joined(separator: ", "))
     """
+  }
+
+#if DEBUG
+  @ObservationIgnored
+  private var appStateFactoryForTesting: (@MainActor (String, ATProtoClient) -> AppState)?
+
+  func setAppStateFactoryForTesting(_ factory: (@MainActor (String, ATProtoClient) -> AppState)?) {
+    self.appStateFactoryForTesting = factory
+  }
+#endif
+
+  @MainActor
+  private func makeAppState(userDID: String, client: ATProtoClient) -> AppState {
+    #if DEBUG
+    if let factory = appStateFactoryForTesting {
+      return factory(userDID, client)
+    }
+    #endif
+    return AppState(userDID: userDID, client: client)
   }
 }
 

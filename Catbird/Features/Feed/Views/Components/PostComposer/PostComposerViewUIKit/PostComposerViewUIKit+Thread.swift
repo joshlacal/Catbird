@@ -148,7 +148,7 @@ extension PostComposerViewUIKit {
       // Avoid auto-focus on every attach to prevent keyboard reloads.
       focusOnAppear: false,
       focusActivationID: activeEditorFocusID,
-      onPhotosAction: { photoPickerVisible = true },
+      onPhotosAction: { presentPhotoPicker(vm: vm) },
       onVideoAction: { videoPickerVisible = true },
       onAudioAction: { showingAudioRecorder = true },
       onGifAction: { showingGifPicker = true },
@@ -246,7 +246,7 @@ extension PostComposerViewUIKit {
             set: { vm.isAltTextEditorPresented = $0 }
           ),
           maxImagesAllowed: vm.maxImagesAllowed,
-          onAddMore: { photoPickerVisible = true },
+          onAddMore: { presentPhotoPicker(vm: vm) },
           onMoveLeft: { id in vm.moveMediaItemLeft(id: id) },
           onMoveRight: { id in vm.moveMediaItemRight(id: id) },
           onCropSquare: { id in vm.cropMediaItemToSquare(id: id) },
@@ -279,7 +279,7 @@ extension PostComposerViewUIKit {
             set: { vm.isAltTextEditorPresented = $0 }
           ),
           maxImagesAllowed: vm.maxImagesAllowed,
-          onAddMore: { photoPickerVisible = true },
+          onAddMore: { presentPhotoPicker(vm: vm) },
           onMoveLeft: { id in vm.moveMediaItemLeft(id: id) },
           onMoveRight: { id in vm.moveMediaItemRight(id: id) },
           onCropSquare: { id in vm.cropMediaItemToSquare(id: id) },

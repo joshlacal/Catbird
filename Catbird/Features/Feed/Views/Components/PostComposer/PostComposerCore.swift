@@ -754,6 +754,14 @@ extension PostComposerViewModel {
             )
             do {
                 _ = try await service.publishPost(destination: circle, draft: circleDraft)
+                NotificationCenter.default.post(
+                  name: .circlePostPublished,
+                  object: nil,
+                  userInfo: [
+                    "accountDID": appState.userDID ?? "",
+                    "spaceURI": circle.uri.uriString()
+                  ]
+                )
             } catch {
                 logger.error("Circle post creation failed: \(error.localizedDescription)")
                 if #available(iOS 26, macOS 26, *) {

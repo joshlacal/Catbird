@@ -72,6 +72,17 @@ struct CircleNotificationsSection: View {
           .listRowSeparator(.visible)
           .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
         }
+#if DEBUG
+        if let transport = appState.e2eCircleTransport {
+          Button("Trigger Circle Push") {
+            Task {
+              await transport.enqueueGenericActivity()
+              await appState.notificationManager.handlePush(["kind": "circle_activity"])
+            }
+          }
+          .accessibilityIdentifier("e2e.circleActivityPush")
+        }
+#endif
       } header: {
         HStack(spacing: 6) {
           Image(systemName: "person.2.circle.fill")
@@ -193,8 +204,8 @@ struct CircleNotificationRow: View {
       .contentShape(Rectangle())
     }
     .buttonStyle(.plain)
-    .accessibilityElement(children: .combine)
     .accessibilityLabel("\(notification.actor.displayName ?? notification.actor.handle.description) \(actionDescription) in \(notification.circle.name)")
+    .accessibilityIdentifier("circle.notification.\(notification.id)")
   }
 
   @ViewBuilder

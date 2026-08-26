@@ -73,12 +73,12 @@ struct NotificationsView: View {
         await viewModel.setFilter(newFilter)
       }
     }.task {
-      if viewModel.groupedNotifications.isEmpty {
+      if !ProcessInfo.processInfo.arguments.contains("--e2e-mode") && viewModel.groupedNotifications.isEmpty {
         await viewModel.loadNotifications()
       }
       if CircleFeatureFlags.isEnabled {
         do {
-          try await appState.circleNotificationsModel.load()
+          try await appState.circleNotificationsModel.refresh()
         } catch {
           // Handled in model.error; isolated from public notifications state
         }
@@ -188,13 +188,13 @@ struct NotificationsView: View {
 
   @ViewBuilder
   private var notificationContent: some View {
-    if let error = viewModel.error {
+    if let error = viewModel.error, !CircleFeatureFlags.isEnabled {
       ErrorStateView(
         error: error,
         context: "Failed to load notifications",
         retryAction: { Task { await retryLoadNotifications() } }
       )
-    } else if viewModel.isLoading && viewModel.groupedNotifications.isEmpty {
+    } else if viewModel.isLoading && viewModel.groupedNotifications.isEmpty && !CircleFeatureFlags.isEnabled {
       loadingView
     } else if viewModel.groupedNotifications.isEmpty && !CircleFeatureFlags.isEnabled {
       emptyView

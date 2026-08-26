@@ -574,44 +574,47 @@ struct FeedsStartPage: View {
       .accessibilityAddTraits(.isButton)
     } else {
       // Disabled explanatory entry when local flag is on but PDS unsupported
-      HStack(spacing: 21) {
-        ZStack {
-          HStack {
-            Image(systemName: "person.2.circle")
-              .font(.system(size: 28))
-              .foregroundStyle(.secondary)
+      Button {} label: {
+        HStack(spacing: 21) {
+          ZStack {
+            HStack {
+              Image(systemName: "person.2.circle")
+                .font(.system(size: 28))
+                .foregroundStyle(.secondary)
 
-            VStack(alignment: .leading, spacing: 2) {
-              Text("Circles")
-                .padding(.leading, 6)
-                .appFont(AppTextRole.headline)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.leading)
-                .frame(maxWidth: .infinity, alignment: .leading)
-              Text("Circles requires a PDS that supports ATProto Spaces")
-                .padding(.leading, 6)
-                .appFont(AppTextRole.caption)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.leading)
-                .frame(maxWidth: .infinity, alignment: .leading)
+              VStack(alignment: .leading, spacing: 2) {
+                Text("Circles")
+                  .padding(.leading, 6)
+                  .appFont(AppTextRole.headline)
+                  .foregroundStyle(.secondary)
+                  .multilineTextAlignment(.leading)
+                  .frame(maxWidth: .infinity, alignment: .leading)
+                Text("Circles requires a PDS that supports ATProto Spaces")
+                  .padding(.leading, 6)
+                  .appFont(AppTextRole.caption)
+                  .foregroundStyle(.secondary)
+                  .multilineTextAlignment(.leading)
+                  .frame(maxWidth: .infinity, alignment: .leading)
+              }
+
+              Spacer()
             }
-
-            Spacer()
           }
-        }
-        .padding(12)
-        .background {
-          if !inSideDrawer {
-            RoundedRectangle(cornerRadius: cardCornerRadius)
-              .fill(.ultraThinMaterial.opacity(0.5))
+          .padding(12)
+          .background {
+            if !inSideDrawer {
+              RoundedRectangle(cornerRadius: cardCornerRadius)
+                .fill(.ultraThinMaterial.opacity(0.5))
+            }
           }
+          .modifier(LaunchpadGlassChip(cornerRadius: cardCornerRadius, isEnabled: inSideDrawer))
+          .contentShape(RoundedRectangle(cornerRadius: cardCornerRadius, style: .continuous))
         }
-        .modifier(LaunchpadGlassChip(cornerRadius: cardCornerRadius, isEnabled: inSideDrawer))
-        .contentShape(RoundedRectangle(cornerRadius: cardCornerRadius, style: .continuous))
       }
+      .buttonStyle(PlainButtonStyle())
       .padding(.vertical, 4)
       .disabled(true)
-      .accessibilityLabel("Circles, unsupported")
+      .accessibilityIdentifier("Circles, unsupported")
       .accessibilityHint("Circles requires a PDS that supports ATProto Spaces")
     }
   }

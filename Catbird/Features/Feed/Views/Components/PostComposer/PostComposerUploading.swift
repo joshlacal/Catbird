@@ -35,16 +35,34 @@ extension PostComposerViewModel {
             let imageData = try await processImageForUpload(rawData)
             logger.debug("PostComposerUploading: Image processed - final size: \(imageData.count) bytes")
 
+            let blob: Blob
+            #if DEBUG
+            if let transport = appState.e2eCircleTransport {
+                blob = try await transport.uploadImage(imageData)
+            } else {
+                let (responseCode, blobOutput) = try await client.com.atproto.repo.uploadBlob(
+                    data: imageData,
+                    mimeType: "image/jpeg",
+                    stripMetadata: true
+                )
+                guard responseCode == 200, let uploadedBlob = blobOutput?.blob else {
+                    logger.error("PostComposerUploading: Blob upload failed - response code: \(responseCode)")
+                    throw NSError(domain: "BlobUploadError", code: responseCode, userInfo: nil)
+                }
+                blob = uploadedBlob
+            }
+            #else
             let (responseCode, blobOutput) = try await client.com.atproto.repo.uploadBlob(
                 data: imageData,
                 mimeType: "image/jpeg",
                 stripMetadata: true
             )
-
-            guard responseCode == 200, let blob = blobOutput?.blob else {
+            guard responseCode == 200, let uploadedBlob = blobOutput?.blob else {
                 logger.error("PostComposerUploading: Blob upload failed - response code: \(responseCode)")
                 throw NSError(domain: "BlobUploadError", code: responseCode, userInfo: nil)
             }
+            blob = uploadedBlob
+            #endif
             
             logger.info("PostComposerUploading: Image \(index + 1) uploaded successfully")
 

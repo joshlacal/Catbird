@@ -1342,6 +1342,22 @@ final class AppState {
         }
     }
 
+#if DEBUG
+    @ObservationIgnored var e2eCircleTransport: E2ECircleTransport?
+
+    @MainActor
+    func installE2ECircleFixture(transport: E2ECircleTransport) {
+        self.e2eCircleTransport = transport
+        let service = CircleService(transport: transport)
+        self.circleService = service
+        self.circleNotificationsModel = CircleNotificationsModel(
+            service: CircleNotificationService(service: service),
+            accountDID: userDID,
+            activeDIDProvider: { AppStateManager.shared.lifecycle.userDID }
+        )
+    }
+#endif
+
     /// Probes Circle capabilities from the server once for this active account,
     /// updating `CircleFeatureFlags.serverCapability` while race-checking against account switches.
     @MainActor

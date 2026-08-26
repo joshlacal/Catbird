@@ -32,6 +32,7 @@ final class CircleFeedModel {
   @ObservationIgnored private var muteObserver: NSObjectProtocol?
   @ObservationIgnored private var deleteObserver: NSObjectProtocol?
   @ObservationIgnored private var accountInvalidatedObserver: NSObjectProtocol?
+  @ObservationIgnored private var postPublishedObserver: NSObjectProtocol?
 
   init(
     service: CircleService,
@@ -72,7 +73,7 @@ final class CircleFeedModel {
     ) { [weak self] notification in
       guard let self else { return }
       let targetAccountDID = notification.userInfo?["accountDID"] as? String ?? ""
-      guard targetAccountDID.isEmpty || targetAccountDID == self.accountDID else {
+      guard !targetAccountDID.isEmpty, targetAccountDID == self.accountDID else {
         return
       }
       guard let spaceURIString = notification.userInfo?["spaceURI"] as? String,
@@ -89,10 +90,25 @@ final class CircleFeedModel {
     ) { [weak self] notification in
       guard let self else { return }
       let targetAccountDID = notification.userInfo?["accountDID"] as? String ?? ""
-      guard targetAccountDID.isEmpty || targetAccountDID == self.accountDID else {
+      guard !targetAccountDID.isEmpty, targetAccountDID == self.accountDID else {
         return
       }
       self.handleAccountInvalidatedSync()
+    }
+
+    self.postPublishedObserver = NotificationCenter.default.addObserver(
+      forName: .circlePostPublished,
+      object: nil,
+      queue: nil
+    ) { [weak self] notification in
+      guard let self else { return }
+      let targetAccountDID = notification.userInfo?["accountDID"] as? String ?? ""
+      guard targetAccountDID.isEmpty || targetAccountDID == self.accountDID else {
+        return
+      }
+      Task { @MainActor in
+        try? await self.load()
+      }
     }
   }
 
@@ -105,6 +121,9 @@ final class CircleFeedModel {
     }
     if let accountInvalidatedObserver {
       NotificationCenter.default.removeObserver(accountInvalidatedObserver)
+    }
+    if let postPublishedObserver {
+      NotificationCenter.default.removeObserver(postPublishedObserver)
     }
   }
 

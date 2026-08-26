@@ -54,7 +54,7 @@ struct ActionButtonsView: View {
 
   // Post to display actions for
   let post: AppBskyFeedDefs.PostView
-
+  let postViewModel: PostViewModel
   @State private var isFirstAppear = true
 
   // View model for handling actions
@@ -88,6 +88,7 @@ struct ActionButtonsView: View {
     isBig: Bool = false
   ) {
     self.post = post
+    self.postViewModel = postViewModel
     self._viewModel = State(
       wrappedValue: ActionButtonViewModel(
         postId: post.uri.uriString(),
@@ -122,7 +123,7 @@ struct ActionButtonsView: View {
         handleReplyTap()
       }
       .accessibilityIdentifier("replyButton")
-        .accessibilityLabel("Reply. Replies count: \(post.replyCount ?? 0)")
+        .accessibilityLabel("Reply. Replies count: \(interactionState.replyCount)")
       .disabled((post.viewer?.replyDisabled ?? false) || !viewModel.capabilities.canReply)
       // Subtle glass and mark as the matched transition source for this post
       .padding(.vertical, isBig ? 3 : 2)
@@ -231,6 +232,12 @@ struct ActionButtonsView: View {
       Group {
         PostComposerViewUIKit(
           parentPost: post,
+          destination: {
+            if case .circle(let summary) = postViewModel.visibilityContext {
+              return .circle(summary)
+            }
+            return .public
+          }(),
           appState: appState
         )
         .applyAppStateEnvironment(appState)
@@ -243,6 +250,9 @@ struct ActionButtonsView: View {
         }())
         #endif
       }
+    .onChange(of: post) { _, newPost in
+      interactionState.update(from: newPost)
+    }
       #if os(iOS)
       // Link the composer sheet to this reply button's transition namespace
       .modifier(ReplyZoomDestination(id: replySourceID, namespace: replyTransition))
