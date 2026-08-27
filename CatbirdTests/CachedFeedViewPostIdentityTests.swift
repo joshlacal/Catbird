@@ -1,6 +1,7 @@
 import Foundation
 import Petrel
 import SwiftData
+import SwiftUI
 import Testing
 
 @testable import Catbird
@@ -243,6 +244,32 @@ struct CachedFeedViewPostIdentityTests {
 
     #expect(source.contains("let postFeedType = cachedPost.feedType"))
     #expect(source.contains("post.id == postId && post.feedType == postFeedType"))
+  }
+
+  @Test("Raw FeedViewPost initializer renders without a cache wrapper")
+  @MainActor
+  func rawFeedViewPostInitializerRendersWithoutCacheWrapper() async throws {
+    let rawPost = try makeFeedViewPost(rkey: "raw-post-render-test")
+    let enhanced = EnhancedFeedPost(feedViewPost: rawPost, path: .constant(NavigationPath()))
+    let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
+    let appState = AppState(userDID: "did:plc:testuser", client: client)
+    let renderer = ImageRenderer(content: enhanced.environment(appState).frame(width: 402))
+
+    #expect(enhanced.id == rawPost.id)
+    #expect(enhanced.feedViewPost == rawPost)
+    #expect(renderer.uiImage != nil)
+  }
+
+  @Test("EnhancedFeedPost does not snapshot cached payload in initializer")
+  @MainActor
+  func enhancedFeedPostDoesNotSnapshotCachedPayloadInInitializer() throws {
+    let post = try makeFeedViewPost(rkey: "lazy-payload-test")
+    let cached = try #require(CachedFeedViewPost(from: post, feedType: "timeline"))
+    let enhanced = EnhancedFeedPost(cachedPost: cached, path: .constant(NavigationPath()))
+
+    cached.serializedPost = Data("invalid-payload".utf8)
+
+    #expect(enhanced.feedViewPost == nil)
   }
 
   private func sourceFile(_ relativePath: String) throws -> String {

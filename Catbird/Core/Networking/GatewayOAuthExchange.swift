@@ -15,6 +15,8 @@ actor GatewayOAuthExchange {
   typealias DeadlineWaiter = @Sendable () async throws -> Void
 
   static let maximumResponseBytes = 8 * 1024
+  static let pendingBrowserLoginLifetime: TimeInterval = 600
+  static let overlappingLoginProtectionLifetime: TimeInterval = 60
 
   private let gatewayURL: URL
   private let callbackURL: URL
@@ -55,7 +57,7 @@ actor GatewayOAuthExchange {
   }
 
   func prepareLogin(_ loginURL: URL) throws -> URL {
-    if let pending, uptime() - pending.createdAt <= 60 {
+    if let pending, uptime() - pending.createdAt <= Self.overlappingLoginProtectionLifetime {
       throw GatewayOAuthExchangeError.flowInProgress
     }
     pending = nil
@@ -101,7 +103,7 @@ actor GatewayOAuthExchange {
     }
     self.pending = nil
 
-    guard uptime() - pending.createdAt <= 60 else {
+    guard uptime() - pending.createdAt <= Self.pendingBrowserLoginLifetime else {
       throw GatewayOAuthExchangeError.unauthorized
     }
 

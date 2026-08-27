@@ -307,10 +307,9 @@ final class ProfileCollectionViewController: UIViewController {
     let postReg = UICollectionView.CellRegistration<UICollectionViewCell, String> {
       [weak self] cell, _, uri in
       guard let self, let feedPost = self.postsByURI[uri] else { return }
-      guard let cached = CachedFeedViewPost(feedViewPost: feedPost) else { return }
       cell.contentConfiguration = UIHostingConfiguration {
         VStack(spacing: 0) {
-          EnhancedFeedPost(cachedPost: cached, path: self.navigationPathBinding)
+          EnhancedFeedPost(feedViewPost: feedPost, path: self.navigationPathBinding)
           Divider().padding(.top, 8)
         }
         .environment(self.appState)

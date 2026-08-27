@@ -46,15 +46,6 @@ struct UnifiedProfileView: View {
   private let layoutLogger = Logger(subsystem: "blue.catbird", category: "LayoutDebug")
   #endif
 
-  // MARK: - Computed Properties
-
-  /// Computed property to convert the viewModel's pinned post to a cached version
-  /// This prevents recreating the CachedFeedViewPost on every render
-  private var cachedPinnedPost: CachedFeedViewPost? {
-    guard let pinnedPost = viewModel.pinnedPost else { return nil }
-    return CachedFeedViewPost(feedViewPost: pinnedPost)
-  }
-
   // MARK: - Initialization (keeping all initializers)
   init(
     appState: AppState, selectedTab: Binding<Int>, lastTappedTab: Binding<Int?>,
@@ -347,11 +338,11 @@ struct UnifiedProfileView: View {
           .frame(maxWidth: .infinity, alignment: .center)
       } else {
         // Show pinned post first if it exists
-        if let cachedPinned = cachedPinnedPost {
+        if let pinnedPost = viewModel.pinnedPost {
           VStack(spacing: 0) {
             // Post content
             EnhancedFeedPost(
-              cachedPost: cachedPinned,
+              feedViewPost: pinnedPost,
               path: $navigationPath
             )
             .frame(maxWidth: contentMaxWidth, alignment: .center)

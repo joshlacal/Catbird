@@ -174,12 +174,23 @@ struct SettingsRuntimeWiringTests {
     #expect(resetBody.contains("await mlsEpochRetentionCleanupCoordinator.stop()"))
 
     let manager = try coreStateSource(named: "AppStateManager.swift")
+    let transitionBody = try sourceSlice(
+      manager,
+      from: "func transitionToAuthenticated(userDID: String, previousUserDID: String? = nil)",
+      through: "func logout(isManual: Bool = true) async"
+    )
+    #expect(transitionBody.contains("await previousAppState.prepareMLSStorageReset()"))
+
     let switchBody = try sourceSlice(
       manager,
       from: "private func performSwitchAccount(",
       through: "func removeAccount("
     )
-    #expect(switchBody.contains("await oldState.prepareMLSStorageReset()"))
+    #expect(
+      switchBody.contains(
+        "transitionToAuthenticated(userDID: userDID, previousUserDID: previousUserDID)"
+      )
+    )
 
     let logoutBody = try sourceSlice(
       manager,

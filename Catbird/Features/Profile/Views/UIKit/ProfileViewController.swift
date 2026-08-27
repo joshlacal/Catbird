@@ -484,10 +484,6 @@ private struct PostsTabView: View {
   let viewModel: ProfileViewModel
   @Binding var path: NavigationPath
 
-  private var cachedPinnedPost: CachedFeedViewPost? {
-    viewModel.pinnedPost.flatMap { CachedFeedViewPost(feedViewPost: $0) }
-  }
-
   var body: some View {
     LazyVStack(spacing: 0) {
       if viewModel.isLoading && viewModel.posts.isEmpty {
@@ -497,17 +493,15 @@ private struct PostsTabView: View {
       } else if viewModel.posts.isEmpty && viewModel.pinnedPost == nil {
         emptyView(message: "No posts yet")
       } else {
-        if let pinned = cachedPinnedPost {
+        if let pinned = viewModel.pinnedPost {
           VStack(spacing: 0) {
-            EnhancedFeedPost(cachedPost: pinned, path: $path)
+            EnhancedFeedPost(feedViewPost: pinned, path: $path)
             Divider().padding(.top, 8)
           }
         }
         ForEach(viewModel.posts, id: \.post.uri) { feedPost in
           VStack(spacing: 0) {
-            if let cached = CachedFeedViewPost(feedViewPost: feedPost) {
-              EnhancedFeedPost(cachedPost: cached, path: $path)
-            }
+            EnhancedFeedPost(feedViewPost: feedPost, path: $path)
             Divider().padding(.top, 8)
           }
           .onAppear {
@@ -544,9 +538,7 @@ private struct GenericFeedTabView: View {
       } else {
         ForEach(posts, id: \.post.uri) { feedPost in
           VStack(spacing: 0) {
-            if let cached = CachedFeedViewPost(feedViewPost: feedPost) {
-              EnhancedFeedPost(cachedPost: cached, path: $path)
-            }
+            EnhancedFeedPost(feedViewPost: feedPost, path: $path)
             Divider().padding(.top, 8)
           }
           .onAppear {

@@ -153,8 +153,8 @@ struct GatewayOAuthExchangeTests {
     }
   }
 
-  @Test("a native nonce expires after sixty seconds")
-  func nativeNonceExpiry() async throws {
+  @Test("an abandoned pending login allows a replacement login after 60.001 seconds")
+  func abandonedPendingLoginReplacedAfterSixtySeconds() async throws {
     let clock = TestUptime()
     let exchange = GatewayOAuthExchange(
       gatewayURL: gatewayURL,
@@ -165,6 +165,64 @@ struct GatewayOAuthExchangeTests {
     _ = try await exchange.prepareLogin(URL(string: "https://api.catbird.blue/auth/login")!)
     clock.value = 60.001
 
+    let replacementURL = try await exchange.prepareLogin(
+      URL(string: "https://api.catbird.blue/auth/login")!
+    )
+    #expect(replacementURL.query?.contains("browser_nonce") == true)
+  }
+
+  @Test("a prepared login can redeem a valid callback at 60.001 seconds")
+  func redemptionAllowedAtSixtySeconds() async throws {
+    let clock = TestUptime()
+    let recorder = RequestRecorder(
+      responseData: Data(
+        #"{"session_id":"550e8400-e29b-41d4-a716-446655440000"}"#.utf8),
+      response: HTTPURLResponse(
+        url: gatewayURL.appendingPathComponent("auth/exchange"),
+        statusCode: 200,
+        httpVersion: nil,
+        headerFields: ["Content-Type": "application/json"]
+      )!
+    )
+    let exchange = GatewayOAuthExchange(
+      gatewayURL: gatewayURL,
+      callbackURL: callbackURL,
+      uptime: { clock.value },
+      send: { request in await recorder.send(request) }
+    )
+    _ = try await exchange.prepareLogin(URL(string: "https://api.catbird.blue/auth/login")!)
+    clock.value = 60.001
+
+    let sessionID = try await exchange.redeem(
+      URL(
+        string:
+          "https://catbird.blue/oauth/callback?code=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ")!
+    )
+    #expect(sessionID == "550e8400-e29b-41d4-a716-446655440000")
+  }
+
+  @Test("a native nonce expires after 600 seconds without sending")
+  func nativeNonceExpiry() async throws {
+    let clock = TestUptime()
+    let recorder = RequestRecorder(
+      responseData: Data(
+        #"{"session_id":"550e8400-e29b-41d4-a716-446655440000"}"#.utf8),
+      response: HTTPURLResponse(
+        url: gatewayURL.appendingPathComponent("auth/exchange"),
+        statusCode: 200,
+        httpVersion: nil,
+        headerFields: ["Content-Type": "application/json"]
+      )!
+    )
+    let exchange = GatewayOAuthExchange(
+      gatewayURL: gatewayURL,
+      callbackURL: callbackURL,
+      uptime: { clock.value },
+      send: { request in await recorder.send(request) }
+    )
+    _ = try await exchange.prepareLogin(URL(string: "https://api.catbird.blue/auth/login")!)
+    clock.value = 600.001
+
     await #expect(throws: GatewayOAuthExchangeError.unauthorized) {
       try await exchange.redeem(
         URL(
@@ -172,6 +230,7 @@ struct GatewayOAuthExchangeTests {
             "https://catbird.blue/oauth/callback?code=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ")!
       )
     }
+    #expect(await recorder.request == nil)
   }
 
   @Test("exchange transport rejects redirects and streamed responses over budget")

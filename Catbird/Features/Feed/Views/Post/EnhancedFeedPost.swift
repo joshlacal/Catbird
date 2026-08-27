@@ -15,9 +15,23 @@ struct EnhancedFeedPost: View, Equatable {
     lhs.id == rhs.id
   }
 
+  // MARK: - Types
+  private enum Source {
+    case cached(CachedFeedViewPost)
+    case raw(AppBskyFeedDefs.FeedViewPost)
+  }
+
+  private enum ThreadMode {
+    case standard
+    case expanded(postCount: Int)
+    case collapsed(hiddenCount: Int)
+  }
+
   // MARK: - Properties
-  let cachedPost: CachedFeedViewPost
+  let id: String
   @Binding var path: NavigationPath
+  private let source: Source
+
   @Environment(AppState.self) private var appState
   @Environment(\.horizontalSizeClass) private var hSizeClass
 
@@ -25,18 +39,49 @@ struct EnhancedFeedPost: View, Equatable {
     hSizeClass == .compact ? .infinity : 600
   }
 
-  // MARK: - Layout Constants
   private static let baseUnit: CGFloat = 3
 
-  // MARK: - Computed Properties
-
-  /// Cached entry identity is already repost-aware.
-  private var id: String {
-    cachedPost.id
+  // MARK: - Initializers
+  init(cachedPost: CachedFeedViewPost, path: Binding<NavigationPath>) {
+    self.id = cachedPost.id
+    self.source = .cached(cachedPost)
+    self._path = path
   }
 
-  private var feedViewPost: AppBskyFeedDefs.FeedViewPost? {
-    try? cachedPost.feedViewPost
+  init(feedViewPost: AppBskyFeedDefs.FeedViewPost, path: Binding<NavigationPath>) {
+    self.id = feedViewPost.id
+    self.source = .raw(feedViewPost)
+    self._path = path
+  }
+
+  // MARK: - Computed Properties
+  var feedViewPost: AppBskyFeedDefs.FeedViewPost? {
+    switch source {
+    case .cached(let cachedPost):
+      return try? cachedPost.feedViewPost
+    case .raw(let rawPost):
+      return rawPost
+    }
+  }
+
+  private var threadDisplayMode: ThreadMode {
+    guard case .cached(let cachedPost) = source,
+          let mode = cachedPost.threadDisplayMode
+    else { return .standard }
+
+    switch mode {
+    case "expanded":
+      return .expanded(postCount: cachedPost.threadPostCount ?? 2)
+    case "collapsed":
+      return .collapsed(hiddenCount: cachedPost.threadHiddenCount ?? 0)
+    default:
+      return .standard
+    }
+  }
+
+  private var sliceItems: [FeedSliceItem]? {
+    guard case .cached(let cachedPost) = source else { return nil }
+    return cachedPost.sliceItems
   }
 
   // MARK: - Body
@@ -99,29 +144,6 @@ struct EnhancedFeedPost: View, Equatable {
     }
   }
 
-  private enum ThreadMode {
-    case standard
-    case expanded(postCount: Int)
-    case collapsed(hiddenCount: Int)
-  }
-
-  private var threadDisplayMode: ThreadMode {
-    guard let modeString = cachedPost.threadDisplayMode else {
-      return .standard
-    }
-
-    switch modeString {
-    case "expanded":
-      let count = cachedPost.threadPostCount ?? 2
-      return .expanded(postCount: count)
-    case "collapsed":
-      let hiddenCount = cachedPost.threadHiddenCount ?? 0
-      return .collapsed(hiddenCount: hiddenCount)
-    default:
-      return .standard
-    }
-  }
-
   // MARK: - Standard Thread Content
   @ViewBuilder
   private func standardThreadContent(_ feedViewPost: AppBskyFeedDefs.FeedViewPost) -> some View {
@@ -143,7 +165,7 @@ struct EnhancedFeedPost: View, Equatable {
   ) -> some View {
 
     VStack(alignment: .leading, spacing: 0) {
-      if let sliceItems = cachedPost.sliceItems, !sliceItems.isEmpty {
+      if let sliceItems, !sliceItems.isEmpty {
         ForEach(Array(sliceItems.enumerated()), id: \.element.id) { index, item in
           let isLast = index == sliceItems.count - 1
 
@@ -156,7 +178,7 @@ struct EnhancedFeedPost: View, Equatable {
             appState: appState,
             hasVisibleThreadContext: true
           )
-          .environment(\.feedPostID, cachedPost.id)
+          .environment(\.feedPostID, id)
           .contentShape(Rectangle())
           .onTapGesture {
             path.append(NavigationDestination.post(item.post.uri))
@@ -180,7 +202,7 @@ struct EnhancedFeedPost: View, Equatable {
     hiddenCount: Int
   ) -> some View {
     VStack(alignment: .leading, spacing: 0) {
-      if let sliceItems = cachedPost.sliceItems, sliceItems.count >= 3 {
+      if let sliceItems, sliceItems.count >= 3 {
         let rootItem = sliceItems[0]
         PostView(
           post: rootItem.post,
@@ -191,7 +213,7 @@ struct EnhancedFeedPost: View, Equatable {
           appState: appState,
           hasVisibleThreadContext: true
         )
-        .environment(\.feedPostID, cachedPost.id)
+        .environment(\.feedPostID, id)
         .contentShape(Rectangle())
         .onTapGesture {
           path.append(NavigationDestination.post(rootItem.post.uri))
@@ -216,7 +238,7 @@ struct EnhancedFeedPost: View, Equatable {
             appState: appState,
             hasVisibleThreadContext: true
           )
-          .environment(\.feedPostID, cachedPost.id)
+          .environment(\.feedPostID, id)
           .contentShape(Rectangle())
           .onTapGesture {
             path.append(NavigationDestination.post(item.post.uri))
