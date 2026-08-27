@@ -100,7 +100,7 @@ struct NotificationsView: View {
     }
     // Check scene phase changes
     #if os(iOS)
-    .onChange(of: UIApplication.shared.applicationState) { _, newState in
+    .onChange(of: UIApplication.shared.applicationState) { newState in
       if newState == .active {
           // App became active, update widget
         appState.notificationManager.updateWidgetUnreadCount(
@@ -144,6 +144,7 @@ struct NotificationsView: View {
               Image(systemName: "bell.badge")
                 .imageScale(.medium)
             }
+            .nuxNudge(id: .activitySubscriptions)
           }
 
           ToolbarItem(placement: .principal) {
@@ -478,7 +479,8 @@ struct NotificationCard: View {
 
                 if let badgeKind = VerificationBadge.kind(
                   for: notification.author.verification,
-                  did: notification.author.did
+                  did: notification.author.did,
+                  hideBadges: appState.preferencesManager.hideVerificationBadges
                 ) {
                   VerificationBadgeView(kind: badgeKind)
                     .font(.caption)
@@ -628,7 +630,15 @@ struct NotificationCard: View {
     case (.reply, _): return "\(othersSuffix) replied"
     case (.quote, 1): return " quoted your post"
     case (.quote, _): return "\(othersSuffix) quoted"
-    case (.activitySubscription, _): return " shared a new post"
+    case (.activitySubscription, 1): return " shared a new post"
+    case (.activitySubscription, let n): return " shared \(n) new posts"
+    case (.starterpackJoined, 1): return " signed up with your starter pack"
+    case (.starterpackJoined, _): return "\(othersSuffix) signed up with your starter pack"
+    case (.verified, _): return " verification was added"
+    case (.unverified, _): return " verification was removed"
+    case (.contactMatch, _): return " is on Bluesky"
+    case (.feedgenLike, 1): return " liked your custom feed"
+    case (.feedgenLike, _): return "\(othersSuffix) liked your custom feed"
     }
   }
 
@@ -655,7 +665,11 @@ struct NotificationCard: View {
     var sentence = Text(authorName).font(bodyFont.bold())
 
     if let author = firstAuthor,
-       let badge = VerificationBadge.inlineText(for: author.verification, did: author.did) {
+       let badge = VerificationBadge.inlineText(
+         for: author.verification,
+         did: author.did,
+         hideBadges: appState.preferencesManager.hideVerificationBadges
+       ) {
       sentence = sentence + Text(verbatim: " ") + badge
     }
 
@@ -669,7 +683,11 @@ struct NotificationCard: View {
     let firstAuthor = group.notifications.first?.author
     var label = notificationAuthorName
     if let author = firstAuthor,
-       let kind = VerificationBadge.kind(for: author.verification, did: author.did) {
+       let kind = VerificationBadge.kind(
+         for: author.verification,
+         did: author.did,
+         hideBadges: appState.preferencesManager.hideVerificationBadges
+       ) {
       label += ", \(kind.accessibilityLabel),"
     }
     return label + notificationVerbPhrase
@@ -771,7 +789,9 @@ struct NotificationCard: View {
         onTap(NavigationDestination.post(reasonSubject))
       }
     case .follow, .followBack:
-      break
+      if let follower = group.notifications.first {
+        onTap(NavigationDestination.profile(follower.author.did.didString()))
+      }
     case .reply, .quote, .mention:
       if let post = group.subjectPost {
         onTap(NavigationDestination.post(post.uri))
@@ -779,10 +799,32 @@ struct NotificationCard: View {
         onTap(NavigationDestination.post(uri))
       }
     case .activitySubscription:
-      if let post = group.subjectPost {
-        onTap(NavigationDestination.post(post.uri))
-      } else if let uri = group.notifications.first?.uri {
-        onTap(NavigationDestination.post(uri))
+      var uniqueURIs: [ATProtocolURI] = []
+      for notification in group.notifications {
+        if !uniqueURIs.contains(notification.uri) {
+          uniqueURIs.append(notification.uri)
+          if uniqueURIs.count == 25 { break }
+        }
+      }
+      if uniqueURIs.isEmpty {
+        if let post = group.subjectPost {
+          uniqueURIs = [post.uri]
+        } else if let uri = group.notifications.first?.uri {
+          uniqueURIs = [uri]
+        }
+      }
+      onTap(NavigationDestination.notificationActivity(uniqueURIs))
+    case .starterpackJoined:
+      if let starterPackURI = group.notifications.first?.reasonSubject {
+        onTap(NavigationDestination.starterPack(starterPackURI))
+      }
+    case .verified, .unverified, .contactMatch:
+      if let actor = group.notifications.first {
+        onTap(NavigationDestination.profile(actor.author.did.didString()))
+      }
+    case .feedgenLike:
+      if let feedURI = group.notifications.first?.reasonSubject {
+        onTap(NavigationDestination.feed(feedURI))
       }
     }
   }

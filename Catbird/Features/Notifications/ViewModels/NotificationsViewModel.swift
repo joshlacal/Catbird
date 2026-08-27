@@ -9,7 +9,7 @@ import SwiftUI
 
 /// Defines notification types
 enum NotificationType: String, CaseIterable {
-  case like, repost, follow, followBack, mention, reply, quote, likeViaRepost, repostViaRepost, activitySubscription
+  case like, repost, follow, followBack, mention, reply, quote, likeViaRepost, repostViaRepost, activitySubscription, starterpackJoined, verified, unverified, contactMatch, feedgenLike
 
   var icon: String {
     switch self {
@@ -23,6 +23,11 @@ enum NotificationType: String, CaseIterable {
     case .likeViaRepost: return "heart.fill"
     case .repostViaRepost: return "arrow.2.squarepath"
     case .activitySubscription: return "bell.badge.fill"
+    case .starterpackJoined: return "person.2.badge.plus"
+    case .verified: return "checkmark.seal.fill"
+    case .unverified: return "xmark.seal.fill"
+    case .contactMatch: return "person.crop.circle.badge.checkmark"
+    case .feedgenLike: return "heart.fill"
     }
   }
 
@@ -38,16 +43,20 @@ enum NotificationType: String, CaseIterable {
     case .likeViaRepost: return .red
     case .repostViaRepost: return .green
     case .activitySubscription: return .indigo
+    case .starterpackJoined: return .purple
+    case .verified: return .blue
+    case .unverified: return .secondary
+    case .contactMatch: return .green
+    case .feedgenLike: return .pink
     }
   }
 
   /// Determines if this notification type should be grouped
   var isGroupable: Bool {
     switch self {
-    case .like, .repost, .follow, .followBack, .likeViaRepost, .repostViaRepost:
+    case .like, .repost, .follow, .followBack, .likeViaRepost, .repostViaRepost, .feedgenLike, .starterpackJoined:
       return true
-    case .mention, .reply, .quote, .activitySubscription:
-      // Don't group replies and quotes per requirement
+    case .mention, .reply, .quote, .activitySubscription, .verified, .unverified, .contactMatch:
       return false
     }
   }
@@ -380,7 +389,7 @@ private actor FollowRecordCreatedAtCacheActor {
   }
 
   /// Groups notifications based on type and subject
-  private func groupNotifications(
+  func groupNotifications(
     _ notifications: [AppBskyNotificationListNotifications.Notification],
     pageNumber: Int
   ) async -> [GroupedNotification] {
@@ -391,7 +400,12 @@ private actor FollowRecordCreatedAtCacheActor {
 
     for notification in notifications {
       switch notification.reason {
-      case "like", "repost":
+      case "like":
+        if let reasonSubject = notification.reasonSubject,
+           !reasonSubject.uriString().contains("app.bsky.feed.generator") {
+          urisToFetch.insert(reasonSubject)
+        }
+      case "repost":
         if let reasonSubject = notification.reasonSubject {
           urisToFetch.insert(reasonSubject)
         }
@@ -406,18 +420,8 @@ private actor FollowRecordCreatedAtCacheActor {
         }
       case "reply", "mention", "quote":
         urisToFetch.insert(notification.uri)
-
-        // For replies, also fetch the parent post to get the parent author
-        if notification.reason == "reply" {
-          // We need to fetch the reply post first to get the parent URI
-          // This will be a two-step process
-        }
       case "subscribed-post":
-        if let subject = notification.reasonSubject {
-          urisToFetch.insert(subject)
-        } else {
-          urisToFetch.insert(notification.uri)
-        }
+        urisToFetch.insert(notification.uri)
       default:
         break
       }
@@ -440,30 +444,57 @@ private actor FollowRecordCreatedAtCacheActor {
     let fetchedParentPosts = await fetchPosts(uris: Array(parentUrisToFetch))
     let viewerFollowCreatedAtByURI = await fetchViewerFollowCreatedAtByURI(for: notifications)
 
-    // For groupable notification types (like, repost, follow), group by type and subject
-    // For non-groupable types (reply, quote, mention), keep them separate
-    var notificationGroups: [String: [AppBskyNotificationListNotifications.Notification]] = [:]
+    // Sort raw notifications newest-first so grouping anchors are the newest notifications
+    let sortedRawNotifications = notifications.sorted {
+      $0.indexedAt.date > $1.indexedAt.date
+    }
 
-    for notification in notifications {
+    var notificationGroups: [String: [AppBskyNotificationListNotifications.Notification]] = [:]
+    var activityGroupAnchors: [String: [(key: String, anchorDate: Date)]] = [:]
+
+    for notification in sortedRawNotifications {
       let type = mapReasonToNotificationType(
         notification.reason,
         notification: notification,
         viewerFollowCreatedAtByURI: viewerFollowCreatedAtByURI
       )
 
-      // Only group notification types that are groupable
-      if let type = type, type.isGroupable {
+      guard let type = type else { continue }
+
+      if type == .activitySubscription {
+        let subjectKey = notification.reasonSubject?.uriString() ?? notification.author.did.didString()
+        let anchors = activityGroupAnchors[subjectKey] ?? []
+        var matchedKey: String?
+
+        for groupInfo in anchors {
+          if abs(groupInfo.anchorDate.timeIntervalSince(notification.indexedAt.date)) <= 48 * 3600 {
+            matchedKey = groupInfo.key
+            break
+          }
+        }
+
+        if let existingKey = matchedKey {
+          notificationGroups[existingKey]?.append(notification)
+        } else {
+          let newKey = "activitySubscription_\(subjectKey)_\(notification.uri.uriString())"
+          notificationGroups[newKey] = [notification]
+          var currentAnchors = activityGroupAnchors[subjectKey] ?? []
+          currentAnchors.append((key: newKey, anchorDate: notification.indexedAt.date))
+          activityGroupAnchors[subjectKey] = currentAnchors
+        }
+      } else if type.isGroupable {
         let key: String
 
         switch type {
-        case .like, .repost, .likeViaRepost, .repostViaRepost:  // Added new notification types
-          key = "\(notification.reason)_\(notification.reasonSubject?.uriString() ?? "")"
+        case .like, .repost, .likeViaRepost, .repostViaRepost, .feedgenLike:
+          key = "\(type.rawValue)_\(notification.reasonSubject?.uriString() ?? "")"
+        case .starterpackJoined:
+          key = "\(type.rawValue)_\(notification.reasonSubject?.uriString() ?? "")"
         case .follow:
           key = notification.reason
         case .followBack:
           key = "followBack"
         default:
-          // For non-groupable types, use unique ID to prevent grouping
           key = "\(notification.reason)_\(notification.uri.uriString())_\(notification.cid)"
         }
 
@@ -473,7 +504,7 @@ private actor FollowRecordCreatedAtCacheActor {
           notificationGroups[key]?.append(notification)
         }
       } else {
-        // For non-groupable types, create a unique key to prevent grouping
+        // Non-groupable (mention, reply, quote, verified, unverified, contactMatch)
         let uniqueKey = "\(notification.reason)_\(notification.uri.uriString())_\(notification.cid)"
         notificationGroups[uniqueKey] = [notification]
       }
@@ -529,14 +560,14 @@ private actor FollowRecordCreatedAtCacheActor {
            let replyRef = feedPost.reply {
           parentPost = fetchedParentPosts[replyRef.parent.uri]
         }
-      case .follow, .followBack:
+      case .follow, .followBack, .starterpackJoined, .verified, .unverified, .contactMatch, .feedgenLike:
         // No subject post needed
         break
       case .activitySubscription:
-        if let subject = sortedNotifications.first?.reasonSubject {
-          subjectPost = fetchedPosts[subject]
-        } else if let uri = sortedNotifications.first?.uri {
-          subjectPost = fetchedPosts[uri]
+        if let newestUri = sortedNotifications.first?.uri {
+          subjectPost = fetchedPosts[newestUri]
+        } else if let reasonSubject = sortedNotifications.first?.reasonSubject {
+          subjectPost = fetchedPosts[reasonSubject]
         }
       }
 
@@ -573,13 +604,18 @@ private actor FollowRecordCreatedAtCacheActor {
   }
 
   /// Maps API reason strings to our NotificationType enum
-  private func mapReasonToNotificationType(
+  func mapReasonToNotificationType(
     _ reason: String,
     notification: AppBskyNotificationListNotifications.Notification,
-    viewerFollowCreatedAtByURI: [ATProtocolURI: Date]
+    viewerFollowCreatedAtByURI: [ATProtocolURI: Date] = [:]
   ) -> NotificationType? {
     switch reason {
-    case "like": return .like
+    case "like":
+      if let reasonSubject = notification.reasonSubject,
+         reasonSubject.collection == "app.bsky.feed.generator" || reasonSubject.uriString().contains("app.bsky.feed.generator") {
+        return .feedgenLike
+      }
+      return .like
     case "repost": return .repost
     case "follow":
       return Self.classifyFollowNotification(
@@ -594,10 +630,13 @@ private actor FollowRecordCreatedAtCacheActor {
     case "like-via-repost": return .likeViaRepost
     case "repost-via-repost": return .repostViaRepost
     case "subscribed-post": return .activitySubscription
+    case "starterpack-joined": return .starterpackJoined
+    case "verified": return .verified
+    case "unverified": return .unverified
+    case "contact-match": return .contactMatch
     default: return nil
     }
   }
-
   private static func followRecordCreatedAt(
     in notification: AppBskyNotificationListNotifications.Notification
   ) -> Date? {

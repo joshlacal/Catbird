@@ -24,7 +24,7 @@ struct NotificationWidgetData: Codable {
 
 /// Manages push notifications registration and handling for the Catbird app
 @Observable
-final class NotificationManager: NSObject {
+final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   // MARK: - Properties
 
   /// Logger for notification-related events
@@ -203,11 +203,54 @@ final class NotificationManager: NSObject {
   @ObservationIgnored
   private var serverPreferencesSnapshot: AppBskyNotificationDefs.Preferences?
 
+  /// Persisted key prefix for per-account push notifications master enable preference
+  private let masterPushEnabledDefaultsKeyPrefix = "masterPushNotificationsEnabled"
+
   /// Persisted key prefix for per-account chat notification preference
   private let chatNotificationsDefaultsKeyPrefix = "chatNotificationsEnabled"
 
   /// Persisted key prefix for per-account MLS chat notification preference
   private let mlsChatNotificationsDefaultsKeyPrefix = "mlsChatNotificationsEnabled"
+
+  /// Generation counter for serializing preference mutations
+  @ObservationIgnored private var preferenceMutationGeneration: UInt64 = 0
+
+  /// Current active mutation task to serialize PUT operations
+  @ObservationIgnored private var activePreferenceMutationTask: Task<AppBskyNotificationDefs.Preferences?, Error>?
+
+  /// Prior confirmed snapshot before uncommitted mutations
+  @ObservationIgnored private var priorConfirmedPreferences: NotificationPreferences?
+  @ObservationIgnored private var priorConfirmedServerSnapshot: AppBskyNotificationDefs.Preferences?
+
+  private var currentAccountDID: String? {
+    guard let did = appState?.userDID, !did.isEmpty else { return nil }
+    return did
+  }
+
+  /// Checks if push notifications are enabled by the user for the current account
+  private func isMasterPushEnabled() -> Bool {
+    guard let defaults = UserDefaults(suiteName: "group.blue.catbird.shared"),
+      let did = currentAccountDID
+    else {
+      return true
+    }
+    let key = "\(masterPushEnabledDefaultsKeyPrefix)_\(did)"
+    if defaults.object(forKey: key) != nil {
+      return defaults.bool(forKey: key)
+    }
+    return true
+  }
+
+  /// Sets the user-controlled master push preference for the current account
+  private func setMasterPushEnabled(_ enabled: Bool) {
+    guard let defaults = UserDefaults(suiteName: "group.blue.catbird.shared"),
+      let did = currentAccountDID
+    else {
+      return
+    }
+    let key = "\(masterPushEnabledDefaultsKeyPrefix)_\(did)"
+    defaults.set(enabled, forKey: key)
+  }
 
   /// Whether chat message notifications are enabled locally (per-account)
   var chatNotificationsEnabled: Bool = true {
@@ -254,104 +297,30 @@ final class NotificationManager: NSObject {
   /// Non-fatal: the server will pick up the change on the next background sync.
   private func syncChatPushPreferenceToServer(enabled: Bool) async {
     guard let client = client else { return }
-    guard status == .registered else { return }
 
+    var updated = preferences
+    if let snapshot = await currentNotificationPreferencesSnapshot(using: client) {
+      updated = NotificationPreferences(serverPreferences: snapshot)
+    }
+    updated.chat = AppBskyNotificationDefs.ChatPreference(
+      include: updated.chat.include,
+      push: enabled
+    )
     do {
-      await configureNotificationServiceRouting(on: client)
-
-      guard let serverPreferences = await currentNotificationPreferencesSnapshot(using: client)
-      else {
-        notificationLogger.debug(
-          "Cannot sync chat push preference - server preferences unavailable")
-        return
-      }
-
-      // Build input with the updated chat push value, preserving all other preferences
-      let input = AppBskyNotificationPutPreferencesV2.Input(
-        chat: AppBskyNotificationDefs.ChatPreference(
-          include: serverPreferences.chat.include,
-          push: enabled
-        ),
-        follow: AppBskyNotificationDefs.FilterablePreference(
-          include: serverPreferences.follow.include,
-          list: serverPreferences.follow.list,
-          push: serverPreferences.follow.push
-        ),
-        like: AppBskyNotificationDefs.FilterablePreference(
-          include: serverPreferences.like.include,
-          list: serverPreferences.like.list,
-          push: serverPreferences.like.push
-        ),
-        likeViaRepost: AppBskyNotificationDefs.FilterablePreference(
-          include: serverPreferences.likeViaRepost.include,
-          list: serverPreferences.likeViaRepost.list,
-          push: serverPreferences.likeViaRepost.push
-        ),
-        mention: AppBskyNotificationDefs.FilterablePreference(
-          include: serverPreferences.mention.include,
-          list: serverPreferences.mention.list,
-          push: serverPreferences.mention.push
-        ),
-        quote: AppBskyNotificationDefs.FilterablePreference(
-          include: serverPreferences.quote.include,
-          list: serverPreferences.quote.list,
-          push: serverPreferences.quote.push
-        ),
-        reply: AppBskyNotificationDefs.FilterablePreference(
-          include: serverPreferences.reply.include,
-          list: serverPreferences.reply.list,
-          push: serverPreferences.reply.push
-        ),
-        repost: AppBskyNotificationDefs.FilterablePreference(
-          include: serverPreferences.repost.include,
-          list: serverPreferences.repost.list,
-          push: serverPreferences.repost.push
-        ),
-        repostViaRepost: AppBskyNotificationDefs.FilterablePreference(
-          include: serverPreferences.repostViaRepost.include,
-          list: serverPreferences.repostViaRepost.list,
-          push: serverPreferences.repostViaRepost.push
-        ),
-        starterpackJoined: AppBskyNotificationDefs.Preference(
-          list: serverPreferences.starterpackJoined.list,
-          push: serverPreferences.starterpackJoined.push
-        ),
-        subscribedPost: AppBskyNotificationDefs.Preference(
-          list: serverPreferences.subscribedPost.list,
-          push: serverPreferences.subscribedPost.push
-        ),
-        unverified: AppBskyNotificationDefs.Preference(
-          list: serverPreferences.unverified.list,
-          push: serverPreferences.unverified.push
-        ),
-        verified: AppBskyNotificationDefs.Preference(
-          list: serverPreferences.verified.list,
-          push: serverPreferences.verified.push
-        )
-      )
-
-      let (responseCode, output) = try await client.app.bsky.notification.putPreferencesV2(
-        input: input
-      )
-
-      if (200 ... 299).contains(responseCode) {
-        if let updatedPreferences = output?.preferences {
-          applyNotificationPreferencesSnapshot(updatedPreferences)
-        }
-        notificationLogger.info(
-          "Synced chat push preference to server: \(enabled ? "enabled" : "disabled")")
-      } else {
-        notificationLogger.warning(
-          "Chat push preference sync returned HTTP \(responseCode)")
-      }
+      try await updatePreferences(updated)
     } catch {
-      notificationLogger.warning(
-        "Chat push preference sync failed: \(error.localizedDescription)")
+      notificationLogger.error(
+        "Failed to sync chat push preference to server: \(error.localizedDescription)"
+      )
     }
   }
 
-  /// Load chat notification preference for the current account
+  /// Load chat notification preference for the current account without triggering didSet sync
   private func loadChatNotificationPreference() async {
+    let previousPersist = shouldPersistChatPreference
+    shouldPersistChatPreference = false
+    defer { shouldPersistChatPreference = previousPersist }
+
     guard let defaults = UserDefaults(suiteName: "group.blue.catbird.shared"),
       let client = client,
       let did = try? await client.getDid()
@@ -429,9 +398,7 @@ final class NotificationManager: NSObject {
     self.notificationServiceDIDString = notificationServiceDIDString
     super.init()
 
-    // Chat notification preference will be loaded per-account when client is set
-    shouldPersistChatPreference = true
-
+    // Chat notification preference will be enabled after initial load in updateClient
     // Initialize widget with a test value to ensure it's populated
     #if DEBUG
       setupTestWidgetData()
@@ -489,15 +456,25 @@ final class NotificationManager: NSObject {
       notificationLogger.info("🧹 Clearing notification preferences for account switch")
       preferences = NotificationPreferences()
       serverPreferencesSnapshot = nil
+      priorConfirmedPreferences = nil
+      priorConfirmedServerSnapshot = nil
+      activePreferenceMutationTask = nil
     }
 
-    // Load chat notification preference for the new account
+    // Load preferences and chat configuration for the new account
     if let newClient {
+      let masterEnabled = isMasterPushEnabled()
+      if !masterEnabled {
+        notificationsEnabled = false
+        status = .disabled
+      }
       await configureNotificationServiceRouting(on: newClient)
-      await loadChatNotificationPreference()
       await refreshNotificationPreferences()
+      await loadChatNotificationPreference()
+      shouldPersistChatPreference = true
+    } else {
+      shouldPersistChatPreference = false
     }
-
     // If we have a valid token and a new client, register the device
     if newClient != nil, let deviceToken = deviceToken {
       notificationLogger.info("🚀 Triggering device registration from updateClient")
@@ -548,13 +525,13 @@ final class NotificationManager: NSObject {
     Bundle.main.bundleIdentifier ?? "blue.catbird"
   }
 
-  private func refreshNotificationPreferences() async {
+  func refreshNotificationPreferences() async {
     guard let client else { return }
     _ = await fetchNotificationPreferences(using: client)
   }
 
   @discardableResult
-  private func fetchNotificationPreferences(using client: ATProtoClient) async
+  func fetchNotificationPreferences(using client: ATProtoClient) async
     -> AppBskyNotificationDefs.Preferences? {
     do {
       await configureNotificationServiceRouting(on: client)
@@ -575,14 +552,14 @@ final class NotificationManager: NSObject {
     }
   }
 
-  private func applyNotificationPreferencesSnapshot(
+  func applyNotificationPreferencesSnapshot(
     _ serverPreferences: AppBskyNotificationDefs.Preferences
   ) {
     serverPreferencesSnapshot = serverPreferences
     preferences = NotificationPreferences(serverPreferences: serverPreferences)
   }
 
-  private func currentNotificationPreferencesSnapshot(using client: ATProtoClient) async
+  func currentNotificationPreferencesSnapshot(using client: ATProtoClient) async
     -> AppBskyNotificationDefs.Preferences? {
     if let serverPreferencesSnapshot {
       return serverPreferencesSnapshot
@@ -591,71 +568,31 @@ final class NotificationManager: NSObject {
     return await fetchNotificationPreferences(using: client)
   }
 
-  private func makeNotificationPreferencesInput(
-    from serverPreferences: AppBskyNotificationDefs.Preferences
-  ) -> AppBskyNotificationPutPreferencesV2.Input {
-    AppBskyNotificationPutPreferencesV2.Input(
-      chat: AppBskyNotificationDefs.ChatPreference(
-        include: serverPreferences.chat.include,
-        push: serverPreferences.chat.push
-      ),
-      follow: AppBskyNotificationDefs.FilterablePreference(
-        include: serverPreferences.follow.include,
-        list: serverPreferences.follow.list,
-        push: preferences.follows
-      ),
-      like: AppBskyNotificationDefs.FilterablePreference(
-        include: serverPreferences.like.include,
-        list: serverPreferences.like.list,
-        push: preferences.likes
-      ),
-      likeViaRepost: AppBskyNotificationDefs.FilterablePreference(
-        include: serverPreferences.likeViaRepost.include,
-        list: serverPreferences.likeViaRepost.list,
-        push: preferences.likeViaRepost
-      ),
-      mention: AppBskyNotificationDefs.FilterablePreference(
-        include: serverPreferences.mention.include,
-        list: serverPreferences.mention.list,
-        push: preferences.mentions
-      ),
-      quote: AppBskyNotificationDefs.FilterablePreference(
-        include: serverPreferences.quote.include,
-        list: serverPreferences.quote.list,
-        push: preferences.quotes
-      ),
-      reply: AppBskyNotificationDefs.FilterablePreference(
-        include: serverPreferences.reply.include,
-        list: serverPreferences.reply.list,
-        push: preferences.replies
-      ),
-      repost: AppBskyNotificationDefs.FilterablePreference(
-        include: serverPreferences.repost.include,
-        list: serverPreferences.repost.list,
-        push: preferences.reposts
-      ),
-      repostViaRepost: AppBskyNotificationDefs.FilterablePreference(
-        include: serverPreferences.repostViaRepost.include,
-        list: serverPreferences.repostViaRepost.list,
-        push: preferences.repostViaRepost
-      ),
-      starterpackJoined: AppBskyNotificationDefs.Preference(
-        list: serverPreferences.starterpackJoined.list,
-        push: serverPreferences.starterpackJoined.push
-      ),
-      subscribedPost: AppBskyNotificationDefs.Preference(
-        list: serverPreferences.subscribedPost.list,
-        push: serverPreferences.subscribedPost.push
-      ),
-      unverified: AppBskyNotificationDefs.Preference(
-        list: serverPreferences.unverified.list,
-        push: serverPreferences.unverified.push
-      ),
-      verified: AppBskyNotificationDefs.Preference(
-        list: serverPreferences.verified.list,
-        push: serverPreferences.verified.push
-      )
-    )
+  /// Enable all notifications
+  @MainActor
+  func enableNotifications() async {
+    setMasterPushEnabled(true)
+    notificationsEnabled = true
+    if deviceToken == nil {
+      await requestNotificationPermission()
+    } else if let token = deviceToken {
+      await registerDeviceToken(token)
+      await registerMLSDeviceToken(token)
+    }
+  }
+
+  /// Disable all notifications
+  @MainActor
+  func disableNotifications() async {
+    setMasterPushEnabled(false)
+    notificationsEnabled = false
+    status = .disabled
+    if let deviceToken = deviceToken {
+      if let did = try? await client?.getDid() {
+        await unregisterDeviceToken(deviceToken, did: did)
+      }
+      await unregisterMLSDeviceToken(deviceToken)
+    }
   }
 
   /// Request notification permissions from the user
@@ -673,10 +610,8 @@ final class NotificationManager: NSObject {
       // Update state based on user's choice
       if granted {
         notificationLogger.info("Notification permission granted")
+        setMasterPushEnabled(true)
         notificationsEnabled = true
-
-        // Register for remote notifications on the main thread
-        notificationLogger.info("📱 Permission granted, registering for remote notifications...")
         await MainActor.run {
           #if os(iOS)
             UIApplication.shared.registerForRemoteNotifications()
@@ -733,24 +668,31 @@ final class NotificationManager: NSObject {
     switch settings.authorizationStatus {
     case .authorized, .provisional, .ephemeral:
       notificationLogger.info("Notifications are authorized")
+
+      let masterEnabled = isMasterPushEnabled()
+      if !masterEnabled {
+        notificationLogger.info("Push notifications explicitly disabled by user for this account")
+        notificationsEnabled = false
+        status = .disabled
+        return
+      }
+
       notificationsEnabled = true
 
       // Make sure we're registered for remote notifications
       notificationLogger.info(
         "📱 Permissions already granted, registering for remote notifications...")
-      await MainActor.run {
-        #if os(iOS)
-          UIApplication.shared.registerForRemoteNotifications()
-          notificationLogger.info(
-            "✅ Called UIApplication.shared.registerForRemoteNotifications() in checkNotificationStatus"
-          )
-        #elseif os(macOS)
-          NSApplication.shared.registerForRemoteNotifications()
-          notificationLogger.info(
-            "✅ Called NSApplication.shared.registerForRemoteNotifications() in checkNotificationStatus"
-          )
-        #endif
-      }
+      #if os(iOS)
+        UIApplication.shared.registerForRemoteNotifications()
+        notificationLogger.info(
+          "✅ Called UIApplication.shared.registerForRemoteNotifications() in checkNotificationStatus"
+        )
+      #elseif os(macOS)
+        NSApplication.shared.registerForRemoteNotifications()
+        notificationLogger.info(
+          "✅ Called NSApplication.shared.registerForRemoteNotifications() in checkNotificationStatus"
+        )
+      #endif
 
     // Note: Don't set status = .registered here!
     // Status should only be .registered after successfully registering with our notification service
@@ -790,6 +732,12 @@ final class NotificationManager: NSObject {
       return
     }
 
+    guard notificationsEnabled && isMasterPushEnabled() else {
+      notificationLogger.info(
+        "Push notifications disabled by user for this account; skipping registration"
+      )
+      return
+    }
     // Check if we have a client before attempting registration
     if client == nil {
       notificationLogger.warning(
@@ -805,44 +753,102 @@ final class NotificationManager: NSObject {
     await registerMLSDeviceToken(deviceToken)
   }
 
-  /// Update notification preferences
-  func updatePreferences(_ newPreferences: NotificationPreferences) async {
+  /// Update notification preferences with serialized execution and rollback on failure.
+  @discardableResult
+  func updatePreferences(_ newPreferences: NotificationPreferences) async throws -> AppBskyNotificationDefs.Preferences? {
+    guard let client = client else {
+      notificationLogger.warning("Cannot update preferences - no client available")
+      throw NotificationServiceError.clientUnavailable
+    }
+
+    // Save prior confirmed snapshot if this is the first uncommitted mutation in flight
+    if priorConfirmedPreferences == nil {
+      priorConfirmedPreferences = preferences
+      priorConfirmedServerSnapshot = serverPreferencesSnapshot
+    }
+
+    // Increment mutation generation and update optimistic state
+    preferenceMutationGeneration &+= 1
+    let mutationGeneration = preferenceMutationGeneration
     preferences = newPreferences
 
-    // Only send update if we're in a good state
-    guard status == .registered else {
-      notificationLogger.warning("Not updating preferences - not properly registered")
-      return
+    let previousTask = activePreferenceMutationTask
+    let mutationTask = Task { [weak self] () -> AppBskyNotificationDefs.Preferences? in
+      // Wait for any previous mutation to complete (ignoring errors so subsequent edits proceed)
+      _ = try? await previousTask?.value
+
+      guard let self else {
+        throw NotificationServiceError.clientUnavailable
+      }
+
+      return try await self.performPreferencesMutation(newPreferences, generation: mutationGeneration, client: client)
     }
 
-    // Send new preferences to the server
-    await updateNotificationPreferences()
+    activePreferenceMutationTask = mutationTask
+
+    do {
+      let result = try await mutationTask.value
+      if mutationGeneration == self.preferenceMutationGeneration {
+        self.priorConfirmedPreferences = nil
+        self.priorConfirmedServerSnapshot = nil
+      }
+      return result
+    } catch {
+      if mutationGeneration == self.preferenceMutationGeneration {
+        if let prior = self.priorConfirmedPreferences {
+          self.notificationLogger.warning(
+            "Reverting notification preferences to prior confirmed snapshot due to mutation failure: \(error.localizedDescription)"
+          )
+          self.preferences = prior
+          self.serverPreferencesSnapshot = self.priorConfirmedServerSnapshot
+        }
+        self.priorConfirmedPreferences = nil
+        self.priorConfirmedServerSnapshot = nil
+        Task { [weak self] in
+          await self?.refreshNotificationPreferences()
+        }
+      }
+      throw error
+    }
   }
 
-  /// Toggle a specific notification preference
-  func togglePreference(_ type: NotificationTypes) async {
-    var newPreferences = preferences
+  /// Mutates notification preferences using a closure, serialized with rollback on failure.
+  @discardableResult
+  func updatePreferences(_ mutate: (inout NotificationPreferences) -> Void) async throws -> AppBskyNotificationDefs.Preferences? {
+    var updated = preferences
+    mutate(&updated)
+    return try await updatePreferences(updated)
+  }
 
-    switch type {
-    case .mentions:
-      newPreferences.mentions.toggle()
-    case .replies:
-      newPreferences.replies.toggle()
-    case .likes:
-      newPreferences.likes.toggle()
-    case .follows:
-      newPreferences.follows.toggle()
-    case .reposts:
-      newPreferences.reposts.toggle()
-    case .quotes:
-      newPreferences.quotes.toggle()
-    case .likeViaRepost:
-      newPreferences.likeViaRepost.toggle()
-    case .repostViaRepost:
-      newPreferences.repostViaRepost.toggle()
+  private func performPreferencesMutation(
+    _ newPreferences: NotificationPreferences,
+    generation: UInt64,
+    client: ATProtoClient
+  ) async throws -> AppBskyNotificationDefs.Preferences? {
+    await configureNotificationServiceRouting(on: client)
+    let input = newPreferences.toPutPreferencesInput()
+    let (responseCode, output) = try await client.app.bsky.notification.putPreferencesV2(
+      input: input
+    )
+
+    guard (200 ... 299).contains(responseCode) else {
+      notificationLogger.error(
+        "Notification preferences update failed via XRPC: HTTP \(responseCode)")
+      throw NotificationServiceError.serverError("HTTP \(responseCode)")
     }
 
-    await updatePreferences(newPreferences)
+    if let updatedPreferences = output?.preferences {
+      if generation == self.preferenceMutationGeneration {
+        applyNotificationPreferencesSnapshot(updatedPreferences)
+      }
+      notificationLogger.info("Successfully updated notification preferences via XRPC (generation: \(generation))")
+      return updatedPreferences
+    } else {
+      if generation == self.preferenceMutationGeneration {
+        serverPreferencesSnapshot = nil
+      }
+      return nil
+    }
   }
 
   /// Starts periodic checking of unread notifications
@@ -894,7 +900,9 @@ final class NotificationManager: NSObject {
     unreadCount = 0
     preferences = NotificationPreferences()
     serverPreferencesSnapshot = nil
-    mutedUsers.removeAll()
+    priorConfirmedPreferences = nil
+    priorConfirmedServerSnapshot = nil
+    activePreferenceMutationTask = nil
     blockedUsers.removeAll()
     lastRelationshipSync = nil
     lastRegisteredDeviceToken = nil
@@ -1510,95 +1518,54 @@ final class NotificationManager: NSObject {
         }
 
         if let mlsClient = await appState.getMLSAPIClient() {
-          notificationLogger.info("🚀 Registering device token with MLS server")
-
-          let deviceName = UIDevice.current.name
-
-          try await mlsClient.registerDeviceToken(
-            deviceId: deviceInfo.deviceUUID ?? deviceInfo.deviceId,
+          let success = try await mlsClient.registerDeviceToken(
+            deviceId: deviceInfo.deviceId,
             pushToken: tokenHex,
-            deviceName: deviceName,
-            platform: "ios"
+            deviceName: UIDevice.current.name
           )
-          notificationLogger.info("✅ Successfully registered device token with MLS server")
+          if success {
+            notificationLogger.info("✅ Successfully registered device token with MLS server")
+          } else {
+            notificationLogger.warning(
+              "⚠️ MLS device token registration failed"
+            )
+          }
         }
       } catch {
         notificationLogger.error(
-          "❌ Failed to register device token with MLS server: \(error.localizedDescription)")
+          "❌ Error registering device token with MLS server: \(error.localizedDescription)"
+        )
       }
     #endif
   }
 
-  /// Unregister device token from MLS server
+  /// Unregister device token with MLS server
   private func unregisterMLSDeviceToken(_ token: Data) async {
     #if os(iOS)
       guard let appState = appState else { return }
-
-      // Use device identifier for vendor as deviceId (same as registration)
-      let deviceId = UIDevice.current.identifierForVendor?.uuidString ?? "unknown-device"
-
+      guard let conversationManager = await appState.getMLSConversationManager() else { return }
+      guard let deviceInfo = try? await conversationManager.registeredDeviceInfoForPushTokenRegistration() else { return }
       if let mlsClient = await appState.getMLSAPIClient() {
-        notificationLogger.info("Unregistering device token from MLS server")
-        do {
-          try await mlsClient.unregisterDeviceToken(deviceId: deviceId)
-          notificationLogger.info("✅ Successfully unregistered device token from MLS server")
-        } catch {
-          notificationLogger.error(
-            "❌ Failed to unregister device token from MLS server: \(error.localizedDescription)")
-        }
+        _ = try? await mlsClient.unregisterDeviceToken(deviceId: deviceInfo.deviceId)
       }
     #endif
   }
 
-  /// Update notification preferences on the server
-  private func updateNotificationPreferences(
-    attempt _: Int = 0
-  ) async {
-    guard let client = client else {
-      notificationLogger.warning("Cannot update preferences - no client available")
-      return
-    }
-
-    guard status == .registered else {
-      notificationLogger.warning("Cannot update preferences - push registration not complete")
-      return
-    }
-
-    do {
-      await configureNotificationServiceRouting(on: client)
-
-      guard let serverPreferences = await currentNotificationPreferencesSnapshot(using: client) else {
-        notificationLogger.warning(
-          "Cannot update notification preferences - current server preferences unavailable")
-        return
+  private func createNavigationDestination(from uriString: String, type: String) throws -> NavigationDestination {
+    switch type {
+    case "follow":
+      if uriString.hasPrefix("at://") {
+        let uri = try ATProtocolURI(uriString: uriString)
+        return .profile(uri.authority)
+      } else {
+        return .profile(uriString)
       }
-
-      let input = makeNotificationPreferencesInput(from: serverPreferences)
-      let (responseCode, output) = try await client.app.bsky.notification.putPreferencesV2(
-        input: input
-      )
-
-      switch responseCode {
-      case 200 ... 299:
-        if let updatedPreferences = output?.preferences {
-          applyNotificationPreferencesSnapshot(updatedPreferences)
-        } else {
-          serverPreferencesSnapshot = nil
-          await refreshNotificationPreferences()
-        }
-        notificationLogger.info("Successfully updated notification preferences via XRPC")
-      default:
-        throw NSError(
-          domain: "NotificationManager",
-          code: responseCode,
-          userInfo: [
-            NSLocalizedDescriptionKey: "Notification preferences update failed (HTTP \(responseCode))"
-          ]
-        )
-      }
-    } catch {
-      notificationLogger.error(
-        "Error updating notification preferences via XRPC: \(error.localizedDescription)")
+    case "starterpack-joined":
+      let uri = try ATProtocolURI(uriString: uriString)
+      return .starterPack(uri)
+    default:
+      let uri = try ATProtocolURI(uriString: uriString)
+      return .post(uri)
     }
   }
 
@@ -1671,10 +1638,7 @@ final class NotificationManager: NSObject {
     notificationLogger.info(
       "🔄 Widget timeline refresh requested for kind: CatbirdNotificationWidget")
   }
-}
-// MARK: - UNUserNotificationCenterDelegate
-
-extension NotificationManager: UNUserNotificationCenterDelegate {
+  // MARK: - UNUserNotificationCenterDelegate
   /// Handle notifications received while app is in the foreground
   ///
   /// CRITICAL: When app is in foreground, iOS bypasses the Notification Service Extension.
@@ -3951,54 +3915,10 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
       currentAppState.navigationManager.updateCurrentTab(4)
 
       // Navigate to the specific conversation
-      let destination = NavigationDestination.conversation(conversationID)
-      currentAppState.navigationManager.navigate(to: destination, in: 4)
-
-      notificationLogger.info("Successfully navigated to chat conversation \(conversationID)")
+      currentAppState.navigationManager.navigate(to: .conversation(conversationID))
     }
   }
   #endif
-
-  /// Create a NavigationDestination from notification data
-  private func createNavigationDestination(from uriString: String, type: String) throws
-    -> NavigationDestination {
-    // For URI-based notifications, convert to ATProtocolURI
-    if type.lowercased() != "follow" {
-      guard let uri = try? ATProtocolURI(uriString: uriString) else {
-        notificationLogger.error("Invalid AT Protocol URI: \(uriString)")
-        throw NSError(
-          domain: "NotificationManager", code: -1,
-          userInfo: [NSLocalizedDescriptionKey: "Invalid URI format"])
-      }
-
-      switch type.lowercased() {
-      case "like", "repost", "reply", "mention", "quote":
-        return .post(uri)
-
-      default:
-        notificationLogger.warning(
-          "Unknown notification type with URI: \(type), using default post navigation")
-        return .post(uri)
-      }
-    } else {  // Handle follow notifications
-      // Extract DID from URI format (at://did:plc:xyz/...)
-      if uriString.hasPrefix("at://") {
-        let components = uriString.components(separatedBy: "/")
-        if components.count >= 3 {
-          let did = components[2]
-          return .profile(did)
-        }
-      } else if uriString.hasPrefix("did:") {
-        // If it's already just a DID
-        return .profile(uriString)
-      }
-
-      // If we couldn't parse it properly
-      throw NSError(
-        domain: "NotificationManager", code: -1,
-        userInfo: [NSLocalizedDescriptionKey: "Could not extract profile ID from URI"])
-    }
-  }
 
   // MARK: - Circle Push Notifications
 
@@ -4055,7 +3975,6 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
         return currentLifecycleDID
       })
     } catch {
-      // Handle errors explicitly without private identifiers
       notificationLogger.error("Generic circle push refresh failed")
     }
   }
@@ -4063,70 +3982,118 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
 
 // MARK: - Notification Preferences Model
 
-/// Represents user preferences for push notifications
-struct NotificationPreferences: Codable, Equatable {
-  var mentions: Bool = true
-  var replies: Bool = true
-  var likes: Bool = true
-  var follows: Bool = true
-  var reposts: Bool = true
-  var quotes: Bool = true
-  var likeViaRepost: Bool = true  // maps to via_likes
-  var repostViaRepost: Bool = true  // maps to via_reposts
-  // New key expected by server for preferences payloads
-  var activitySubscriptions: Bool = true
+/// Represents user preferences for notifications (channels and filters)
+public struct NotificationPreferences: Codable, Equatable, Sendable {
+  public var chat: AppBskyNotificationDefs.ChatPreference
+  public var follow: AppBskyNotificationDefs.FilterablePreference
+  public var like: AppBskyNotificationDefs.FilterablePreference
+  public var likeViaRepost: AppBskyNotificationDefs.FilterablePreference
+  public var mention: AppBskyNotificationDefs.FilterablePreference
+  public var quote: AppBskyNotificationDefs.FilterablePreference
+  public var reply: AppBskyNotificationDefs.FilterablePreference
+  public var repost: AppBskyNotificationDefs.FilterablePreference
+  public var repostViaRepost: AppBskyNotificationDefs.FilterablePreference
+  public var starterpackJoined: AppBskyNotificationDefs.Preference
+  public var subscribedPost: AppBskyNotificationDefs.Preference
+  public var unverified: AppBskyNotificationDefs.Preference
+  public var verified: AppBskyNotificationDefs.Preference
 
-  init() {}
-
-  init(serverPreferences: AppBskyNotificationDefs.Preferences) {
-    mentions = serverPreferences.mention.push
-    replies = serverPreferences.reply.push
-    likes = serverPreferences.like.push
-    follows = serverPreferences.follow.push
-    reposts = serverPreferences.repost.push
-    quotes = serverPreferences.quote.push
-    likeViaRepost = serverPreferences.likeViaRepost.push
-    repostViaRepost = serverPreferences.repostViaRepost.push
-    activitySubscriptions = serverPreferences.subscribedPost.push
+  public init() {
+    chat = .init(include: "all", push: true)
+    follow = .init(include: "all", list: true, push: true)
+    like = .init(include: "all", list: true, push: true)
+    likeViaRepost = .init(include: "all", list: true, push: true)
+    mention = .init(include: "all", list: true, push: true)
+    quote = .init(include: "all", list: true, push: true)
+    reply = .init(include: "all", list: true, push: true)
+    repost = .init(include: "all", list: true, push: true)
+    repostViaRepost = .init(include: "all", list: true, push: true)
+    starterpackJoined = .init(list: true, push: true)
+    subscribedPost = .init(list: true, push: true)
+    unverified = .init(list: true, push: true)
+    verified = .init(list: true, push: true)
   }
 
-  enum CodingKeys: String, CodingKey {
-    case mentions
-    case replies
-    case likes
-    case follows
-    case reposts
-    case quotes
-    case likeViaRepost = "via_likes"
-    case repostViaRepost = "via_reposts"
-    case activitySubscriptions = "activity_subscriptions"
+  public init(serverPreferences: AppBskyNotificationDefs.Preferences) {
+    chat = serverPreferences.chat
+    follow = serverPreferences.follow
+    like = serverPreferences.like
+    likeViaRepost = serverPreferences.likeViaRepost
+    mention = serverPreferences.mention
+    quote = serverPreferences.quote
+    reply = serverPreferences.reply
+    repost = serverPreferences.repost
+    repostViaRepost = serverPreferences.repostViaRepost
+    starterpackJoined = serverPreferences.starterpackJoined
+    subscribedPost = serverPreferences.subscribedPost
+    unverified = serverPreferences.unverified
+    verified = serverPreferences.verified
   }
 
-  func asDictionary() -> [String: Any] {
-    return [
-      "mentions": mentions,
-      "replies": replies,
-      "likes": likes,
-      "follows": follows,
-      "reposts": reposts,
-      "quotes": quotes,
-      "likeViaRepost": likeViaRepost,
-      "repostViaRepost": repostViaRepost,
-      "activitySubscriptions": activitySubscriptions
-    ]
+  public func toServerPreferences() -> AppBskyNotificationDefs.Preferences {
+    AppBskyNotificationDefs.Preferences(
+      chat: chat,
+      follow: follow,
+      like: like,
+      likeViaRepost: likeViaRepost,
+      mention: mention,
+      quote: quote,
+      reply: reply,
+      repost: repost,
+      repostViaRepost: repostViaRepost,
+      starterpackJoined: starterpackJoined,
+      subscribedPost: subscribedPost,
+      unverified: unverified,
+      verified: verified
+    )
+  }
+
+  public func toPutPreferencesInput() -> AppBskyNotificationPutPreferencesV2.Input {
+    AppBskyNotificationPutPreferencesV2.Input(
+      chat: chat,
+      follow: follow,
+      like: like,
+      likeViaRepost: likeViaRepost,
+      mention: mention,
+      quote: quote,
+      reply: reply,
+      repost: repost,
+      repostViaRepost: repostViaRepost,
+      starterpackJoined: starterpackJoined,
+      subscribedPost: subscribedPost,
+      unverified: unverified,
+      verified: verified
+    )
   }
 }
 
-/// Types of notifications
-enum NotificationTypes: String, Codable {
-  case mentions
-  case replies
-  case likes
-  case follows
-  case reposts
-  case quotes
-  case likeViaRepost
-  case repostViaRepost
+extension AppBskyNotificationDefs.FilterablePreference {
+  public var summaryDescription: String {
+    guard list || push else { return "Off" }
+    let channelText: String
+    if list && push {
+      channelText = "In-App, Push"
+    } else if list {
+      channelText = "In-App"
+    } else {
+      channelText = "Push"
+    }
+    let audienceText = (include == "follows") ? "People I follow" : "Everyone"
+    return "\(channelText), \(audienceText)"
+  }
+}
+
+extension AppBskyNotificationDefs.Preference {
+  public var summaryDescription: String {
+    guard list || push else { return "Off" }
+    if list && push {
+      return "In-App, Push"
+    } else if list {
+      return "In-App"
+    } else {
+      return "Push"
+    }
+  }
 }
 
 private actor RegistrationCoordinator {
