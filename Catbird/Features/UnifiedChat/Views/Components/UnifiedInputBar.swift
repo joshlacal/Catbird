@@ -9,13 +9,15 @@ struct UnifiedInputBar: View {
   var onAttachTapped: (() -> Void)?
   var onMicTapped: (() -> Void)?
   var isRecording: Bool = false
+  var placeholder: String = "Message"
+  var isDisabled: Bool = false
 
   @Environment(AppState.self) private var appState
   @Environment(\.colorScheme) private var colorScheme
   @FocusState private var isFocused: Bool
 
   private var canSend: Bool {
-    !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || attachedEmbed != nil
+    !isDisabled && (!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || attachedEmbed != nil)
   }
 
   var body: some View {
@@ -44,13 +46,16 @@ struct UnifiedInputBar: View {
             .font(.title2)
             .foregroundStyle(.secondary)
         }
+        .accessibilityLabel("Attach media")
+        .accessibilityHint("Adds photos or media to your message")
       }
 
       // Text field
-      TextField("Message", text: $text, axis: .vertical)
+      TextField(placeholder, text: $text, axis: .vertical)
         .textFieldStyle(.plain)
         .lineLimit(1...5)
         .focused($isFocused)
+        .disabled(isDisabled)
         #if os(macOS)
         .onKeyPress(.return, phases: .down) { event in
           if event.modifiers.contains(.shift) {
@@ -79,6 +84,8 @@ struct UnifiedInputBar: View {
             .foregroundStyle(Color.accentColor)
         }
         .animation(.easeInOut(duration: 0.2), value: canSend)
+        .accessibilityLabel("Send message")
+        .accessibilityHint("Sends the current message")
       } else if let onMic = onMicTapped {
         Button(action: onMic) {
           Image(systemName: "mic.circle.fill")
@@ -86,6 +93,8 @@ struct UnifiedInputBar: View {
             .foregroundStyle(isRecording ? Color.red : Color.secondary)
         }
         .animation(.easeInOut(duration: 0.2), value: isRecording)
+        .accessibilityLabel(isRecording ? "Stop voice recording" : "Record voice message")
+        .accessibilityHint(isRecording ? "Stops recording and attaches audio" : "Begins recording a voice message")
       } else {
         Button(action: sendMessage) {
           Image(systemName: "arrow.up.circle.fill")
@@ -93,6 +102,8 @@ struct UnifiedInputBar: View {
             .foregroundStyle(Color.secondary.opacity(0.5))
         }
         .disabled(true)
+        .accessibilityLabel("Send message")
+        .accessibilityHint("Type a message or attach an item to send")
       }
     }
   }
@@ -122,6 +133,8 @@ struct UnifiedInputBar: View {
         Image(systemName: "xmark.circle.fill")
           .foregroundStyle(.secondary)
       }
+      .accessibilityLabel("Remove attached item")
+      .accessibilityHint("Removes the current attachment")
     }
     .padding(.horizontal, 12)
     .padding(.vertical, 8)

@@ -51,6 +51,7 @@ struct ChatCollectionViewBridge<DataSource: UnifiedChatDataSource>: UIViewContro
   var onRetryMessage: ((String) -> Void)?
   var onEditMessage: ((DataSource.Message) -> Void)?
   var onUnsendMessage: ((DataSource.Message) -> Void)?
+  var onReply: ((DataSource.Message) -> Void)?
   var composerConfig: InlineComposerConfig?
 
   func makeUIViewController(context: Context) -> ChatCollectionViewController<DataSource> {
@@ -64,6 +65,7 @@ struct ChatCollectionViewBridge<DataSource: UnifiedChatDataSource>: UIViewContro
     controller.onRetryMessage = onRetryMessage
     controller.onEditMessage = onEditMessage
     controller.onUnsendMessage = onUnsendMessage
+    controller.onReply = onReply
     if let config = composerConfig {
       controller.installComposer(config: config)
     }
@@ -81,6 +83,7 @@ struct ChatCollectionViewBridge<DataSource: UnifiedChatDataSource>: UIViewContro
     controller.onRetryMessage = onRetryMessage
     controller.onEditMessage = onEditMessage
     controller.onUnsendMessage = onUnsendMessage
+    controller.onReply = onReply
     if let config = composerConfig {
       controller.updateComposerCallbacks(config: config)
       controller.updateComposerEmbedState(hasEmbed: config.hasEmbed, previewImage: config.embedPreviewImage)

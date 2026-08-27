@@ -10,11 +10,8 @@ struct ReportChatMessageView: View {
   let message: ChatBskyConvoDefs.MessageView
   let onDismiss: () -> Void
   
-  @State private var selectedReason: ComAtprotoModerationDefs.ReasonType = .comatprotomoderationdefsreasonspam
-  @State private var additionalDetails: String = ""
   @State private var isSubmitting = false
-  @State private var showingError = false
-  @State private var errorMessage = ""
+  @State private var errorMessage: String?
   
   private var reportingService: ReportingService? {
     guard let client = appState.atProtoClient else { return nil }
@@ -23,113 +20,59 @@ struct ReportChatMessageView: View {
   
   var body: some View {
     NavigationStack {
-      Form {
-        Section("Message to Report") {
-          Text(message.text)
-            .appCallout()
-            .foregroundColor(.secondary)
-            .padding(.vertical, 4)
+      ChatReportFormView(
+        title: "Report Message",
+        subtitle: "Reporting message: \"\(message.text.prefix(60))\(message.text.count > 60 ? "…" : "")\"",
+        isSubmitting: isSubmitting,
+        errorMessage: errorMessage,
+        onSubmit: { reason, details in
+          submitReport(reason: reason, details: details)
+        },
+        onCancel: {
+          onDismiss()
         }
-        
-        Section("Report Reason") {
-          Picker("Reason", selection: $selectedReason) {
-              Text("Spam").tag(ComAtprotoModerationDefs.ReasonType.comatprotomoderationdefsreasonspam)
-              Text("Harassment").tag(ComAtprotoModerationDefs.ReasonType.comatprotomoderationdefsreasonrude)
-              Text("Violation").tag(ComAtprotoModerationDefs.ReasonType.comatprotomoderationdefsreasonviolation)
-              Text("Misleading").tag(ComAtprotoModerationDefs.ReasonType.comatprotomoderationdefsreasonmisleading)
-              Text("Sexual Content").tag(ComAtprotoModerationDefs.ReasonType.comatprotomoderationdefsreasonsexual)
-              Text("Other").tag(ComAtprotoModerationDefs.ReasonType.comatprotomoderationdefsreasonother)
-          }
-        }
-        
-        Section("Additional Details (Optional)") {
-          TextEditor(text: $additionalDetails)
-            .frame(minHeight: 100)
-        }
-        
-        Section {
-          Text("This report will be sent to the Bluesky moderation team for review.")
-            .appCaption()
-            .foregroundColor(.secondary)
-        }
-      }
-      .navigationTitle("Report Message")
-    #if os(iOS)
-    .toolbarTitleDisplayMode(.inline)
-    #endif
-      .toolbar {
-        ToolbarItem(placement: .cancellationAction) {
-          Button("Cancel", systemImage: "xmark") {
-            onDismiss()
-          }
-          .disabled(isSubmitting)
-        }
-        
-        ToolbarItem(placement: .primaryAction) {
-          Button("Submit") {
-            submitReport()
-          }
-          .disabled(isSubmitting)
-        }
-      }
-      .disabled(isSubmitting)
-      .overlay {
-        if isSubmitting {
-          ProgressView("Submitting report...")
-            .padding()
-            .background(.regularMaterial)
-            .clipShape(RoundedRectangle(cornerRadius: 10))
-        }
-      }
-      .alert("Report Error", isPresented: $showingError) {
-        Button("OK") { }
-      } message: {
-        Text(errorMessage)
-      }
+      )
     }
   }
   
-  private func submitReport() {
+  private func submitReport(reason: ComAtprotoModerationDefs.ReasonType, details: String) {
+    isSubmitting = true
+    errorMessage = nil
+
     Task {
-      isSubmitting = true
-      defer { isSubmitting = false }
-      
       guard let reportingService = reportingService else {
         await MainActor.run {
-          errorMessage = "Reporting service is not available"
-          showingError = true
+          self.isSubmitting = false
+          self.errorMessage = "Not authenticated"
         }
         return
       }
       
       do {
-        // For chat messages, we'll report the sender's account
         let subject = reportingService.createUserSubject(did: message.sender.did)
-        
-        let reason = additionalDetails.isEmpty ? "Inappropriate message in chat" : additionalDetails
+        let reasonText = details.isEmpty ? "Inappropriate message in chat" : details
         
         let success = try await reportingService.submitReport(
           subject: subject,
-          reasonType: selectedReason,
-          reason: reason
+          reasonType: reason,
+          reason: reasonText
         )
         
-        if success {
-          await MainActor.run {
+        await MainActor.run {
+          self.isSubmitting = false
+          if success {
             onDismiss()
-          }
-        } else {
-          await MainActor.run {
-            errorMessage = "Failed to submit report. Please try again."
-            showingError = true
+          } else {
+            self.errorMessage = "Failed to submit report. Please try again."
           }
         }
       } catch {
         await MainActor.run {
-          errorMessage = error.localizedDescription
-          showingError = true
+          self.isSubmitting = false
+          self.errorMessage = "Error submitting report: \(error.localizedDescription)"
         }
       }
     }
   }
+  
 }

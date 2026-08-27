@@ -55,6 +55,27 @@ extension ChatBskyConvoDefs.ConvoView {
     return members.first
   }
 
+  /// Primary member of this conversation for reporting and safety attribution
+  func primaryMember(currentUserDID: String) -> ChatBskyActorDefs.ProfileViewBasic? {
+    if !isGroupConversation {
+      return directDisplayMember(currentUserDID: currentUserDID)
+    }
+
+    // Group chat: check owner first
+    if let owner = members.first(where: { member in
+      if case .chatBskyActorDefsGroupConvoMember(let gm) = member.kind,
+         gm.role.rawValue == ChatBskyActorDefs.MemberRole.owner.rawValue {
+        return true
+      }
+      return false
+    }) {
+      return owner
+    }
+
+    // Otherwise first non-self member
+    let otherMembers = displayMembersExcludingCurrentUser(currentUserDID: currentUserDID)
+    return otherMembers.first ?? members.first
+  }
   func displayTitle(currentUserDID: String) -> String {
     if let groupMetadata {
       let groupName = groupMetadata.name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -127,6 +148,62 @@ extension ChatBskyConvoDefs.ConvoView {
           || member.handle.description.localizedCaseInsensitiveContains(trimmed)
       }
   }
+
+  /// Moderation block state for this conversation.
+  /// For a direct chat: checks if the other member has `blocking`, `blockingByList`, or `blockedBy`.
+  /// For a group chat: checks if the current user blocks the group owner/primary member (non-owner blocks do not suppress group composer).
+  func moderationBlockState(currentUserDID: String) -> BlueskyConversationBlockState {
+    if !isGroupConversation {
+      guard let member = directDisplayMember(currentUserDID: currentUserDID),
+            let viewer = member.viewer else {
+        return .none
+      }
+
+      if viewer.blocking != nil {
+        return .directBlock(
+          did: member.did.didString(),
+          handle: member.handle.description,
+          displayName: member.displayName
+        )
+      } else if let list = viewer.blockingByList {
+        return .listBlock(
+          did: member.did.didString(),
+          handle: member.handle.description,
+          displayName: member.displayName,
+          list: list
+        )
+      } else if viewer.blockedBy == true {
+        return .blockedBy(
+          did: member.did.didString(),
+          handle: member.handle.description,
+          displayName: member.displayName
+        )
+      }
+      return .none
+    } else {
+      // Group chat: check if current user has blocked the group owner / primary member
+      guard let primary = primaryMember(currentUserDID: currentUserDID),
+            let viewer = primary.viewer else {
+        return .none
+      }
+
+      if viewer.blocking != nil {
+        return .directBlock(
+          did: primary.did.didString(),
+          handle: primary.handle.description,
+          displayName: primary.displayName
+        )
+      } else if let list = viewer.blockingByList {
+        return .listBlock(
+          did: primary.did.didString(),
+          handle: primary.handle.description,
+          displayName: primary.displayName,
+          list: list
+        )
+      }
+      return .none
+    }
+  }
 }
 
 extension ChatBskyActorDefs.ProfileViewBasic {
@@ -144,3 +221,15 @@ extension ChatBskyActorDefs.ProfileViewBasic {
     return "@\(handle.description)"
   }
 }
+
+enum BlueskyConversationBlockState: Equatable, Sendable {
+  case none
+  case directBlock(did: String, handle: String, displayName: String?)
+  case listBlock(did: String, handle: String, displayName: String?, list: AppBskyGraphDefs.ListViewBasic)
+  case blockedBy(did: String, handle: String, displayName: String?)
+
+  var isBlocked: Bool {
+    self != .none
+  }
+}
+

@@ -80,17 +80,20 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
   var onRequestEmojiPicker: ((String) -> Void)? = nil
   var onLongPress: ((CGRect) -> Void)?
   var onReactionLongPress: (() -> Void)? = nil
+  var onReply: (() -> Void)? = nil
+  var onReplyTapped: ((String) -> Void)? = nil
+  var onToggleGroup: (() -> Void)? = nil
   /// Invoked when the user taps the retry affordance on a failed send (WS-6.5).
   var onRetry: (() -> Void)? = nil
   var showSenderInfo: Bool = true
   var groupPosition: UnifiedMessageGroupPosition = .single
-
   @Environment(AppState.self) private var appState
   @Environment(\.colorScheme) private var colorScheme
 
   @State private var bubbleGlobalFrame: CGRect = .zero
   @State private var showingMLSErrorDetails = false
-
+  @State private var dragOffset: CGFloat = 0
+  @State private var hasTriggeredHaptic = false
   private let cornerRadius: CGFloat = 18
   private let maxBubbleWidth: CGFloat = 280
 
@@ -115,25 +118,44 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
   }
 
   var body: some View {
-    HStack(alignment: .bottom, spacing: 8) {
-      if message.isFromCurrentUser {
-        Spacer(minLength: 50)
-        messageContent
+    if message.isSystemMessage {
+      if let blueskyMsg = message as? BlueskyMessageAdapter {
+        UnifiedSystemMessageView(
+          message: blueskyMsg,
+          navigationPath: $navigationPath,
+          onToggleGroup: onToggleGroup
+        )
       } else {
-        if showSenderInfo {
-          if groupPosition.showsAvatar {
-            avatarView
-          } else {
-            avatarPlaceholderSpacer
-          }
+        HStack {
+          Spacer()
+          Text(message.text)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+          Spacer()
         }
-        messageContent
-        Spacer(minLength: 50)
+        .padding(.vertical, 4)
       }
+    } else {
+      HStack(alignment: .bottom, spacing: 8) {
+        if message.isFromCurrentUser {
+          Spacer(minLength: 50)
+          messageContent
+        } else {
+          if showSenderInfo {
+            if groupPosition.showsAvatar {
+              avatarView
+            } else {
+              avatarPlaceholderSpacer
+            }
+          }
+          messageContent
+          Spacer(minLength: 50)
+        }
+      }
+      .padding(.horizontal, 12)
+      .padding(.top, groupPosition.isFirstInGroup ? 4 : 1)
+      .padding(.bottom, groupPosition.isLastInGroup ? 4 : 1)
     }
-    .padding(.horizontal, 12)
-    .padding(.top, groupPosition.isFirstInGroup ? 4 : 1)
-    .padding(.bottom, groupPosition.isLastInGroup ? 4 : 1)
   }
 
   // MARK: - Avatar
@@ -200,9 +222,50 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
           showFill: !isMediaOnly
         )
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        .offset(x: dragOffset)
+
+      let gesturedSurface: some View = {
+        if onReply != nil, !message.isTombstone {
+          return AnyView(
+            bubbleSurface
+              .gesture(
+                DragGesture(minimumDistance: 15)
+                  .onChanged { value in
+                    let translation = value.translation.width
+                    if abs(value.translation.height) < abs(translation) {
+                      let isSelf = message.isFromCurrentUser
+                      let validTranslation = isSelf ? min(0, translation) : max(0, translation)
+                      let damped = validTranslation * 0.4
+                      dragOffset = damped
+                      let isArmed = isSelf ? damped <= -30 : damped >= 30
+                      if isArmed && !hasTriggeredHaptic {
+                        PlatformHaptics.light()
+                        hasTriggeredHaptic = true
+                      } else if !isArmed && hasTriggeredHaptic {
+                        hasTriggeredHaptic = false
+                      }
+                    }
+                  }
+                  .onEnded { _ in
+                    let isSelf = message.isFromCurrentUser
+                    let isArmed = isSelf ? dragOffset <= -30 : dragOffset >= 30
+                    if isArmed {
+                      onReply?()
+                    }
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                      dragOffset = 0
+                      hasTriggeredHaptic = false
+                    }
+                  }
+              )
+          )
+        } else {
+          return AnyView(bubbleSurface)
+        }
+      }()
 
       if onLongPress != nil, !message.isTombstone {
-        bubbleSurface
+        gesturedSurface
           .background(
             GeometryReader { proxy in
               Color.clear
@@ -218,7 +281,7 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
             onLongPress?(bubbleGlobalFrame)
           }
       } else {
-        bubbleSurface
+        gesturedSurface
       }
 
       // Reactions
@@ -319,6 +382,10 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
           }
           .accessibilityHint("Tap for error details")
         }
+        // Reply preview inside bubble
+        if !message.isTombstone, let reply = message.replyContext {
+          replyPreviewInsideBubble(reply)
+        }
 
         // Embed preview
         if !message.isTombstone, let embed = message.embed {
@@ -367,6 +434,47 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
     } else {
       bubble
     }
+  }
+
+  // MARK: - Reply Preview Inside Bubble
+
+  @ViewBuilder
+  private func replyPreviewInsideBubble(_ reply: UnifiedMessageReplyContext) -> some View {
+    Button {
+      if reply.isTappable, let refID = reply.referencedMessageID {
+        onReplyTapped?(refID)
+      }
+    } label: {
+      HStack(spacing: 8) {
+        RoundedRectangle(cornerRadius: 1.5)
+          .fill(message.isFromCurrentUser ? Color.white.opacity(0.8) : Color.accentColor)
+          .frame(width: 3)
+
+        VStack(alignment: .leading, spacing: 2) {
+          if let name = reply.senderDisplayName {
+            Text(name)
+              .font(.caption2)
+              .fontWeight(.semibold)
+              .foregroundStyle(message.isFromCurrentUser ? Color.white.opacity(0.9) : Color.primary)
+              .lineLimit(1)
+          }
+
+          Text(reply.previewText)
+            .font(.caption2)
+            .foregroundStyle(message.isFromCurrentUser ? Color.white.opacity(0.75) : Color.secondary)
+            .lineLimit(2)
+        }
+        Spacer(minLength: 0)
+      }
+      .padding(.horizontal, 8)
+      .padding(.vertical, 6)
+      .background(
+        RoundedRectangle(cornerRadius: 8, style: .continuous)
+          .fill(message.isFromCurrentUser ? Color.black.opacity(0.15) : Color.secondary.opacity(0.12))
+      )
+    }
+    .buttonStyle(.plain)
+    .disabled(!reply.isTappable)
   }
 
   // MARK: - MLS Error Details

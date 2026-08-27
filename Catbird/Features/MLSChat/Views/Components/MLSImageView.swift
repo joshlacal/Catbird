@@ -22,10 +22,10 @@ struct MLSImageView: View {
   @Namespace private var imageTransition
 
   /// Whether the user is allowed to reveal sensitive content.
-  /// Adults with adult content enabled can reveal; minors and users with adult content off cannot.
+  /// Controlled by whether adult content is enabled in moderation preferences.
   @MainActor
   private var canRevealSensitiveContent: Bool {
-    appState.ageVerificationManager.currentAgeGroup == .adult && appState.isAdultContentEnabled
+    appState.isAdultContentEnabled
   }
 
   /// Aspect ratio from the embed metadata. Used only for the placeholder —

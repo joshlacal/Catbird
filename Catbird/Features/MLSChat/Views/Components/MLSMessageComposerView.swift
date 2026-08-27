@@ -12,12 +12,42 @@ import SwiftUI
 
     let conversationId: String
     let onSend: (String, MLSEmbedData?) -> Void
+    var onAsyncSend: ((String, MLSEmbedData?) async -> Bool)? = nil
     var onTypingChanged: ((Bool) -> Void)? = nil
     var supportsEmbeds: Bool = true
     var showsAttachmentMenu: Bool = true
     var dismissKeyboardOnSend: Bool = false
     var placeholderText: String = "Message"
 
+    init(
+      text: Binding<String>,
+      attachedEmbed: Binding<MLSEmbedData?>,
+      conversationId: String,
+      onSend: @escaping (String, MLSEmbedData?) -> Void = { _, _ in },
+      onAsyncSend: ((String, MLSEmbedData?) async -> Bool)? = nil,
+      onTypingChanged: ((Bool) -> Void)? = nil,
+      supportsEmbeds: Bool = true,
+      showsAttachmentMenu: Bool = true,
+      dismissKeyboardOnSend: Bool = false,
+      placeholderText: String = "Message",
+      imageSender: MLSImageSender? = nil,
+      onVoiceTapped: (() -> Void)? = nil,
+      isRecording: Bool = false
+    ) {
+      self._text = text
+      self._attachedEmbed = attachedEmbed
+      self.conversationId = conversationId
+      self.onSend = onSend
+      self.onAsyncSend = onAsyncSend
+      self.onTypingChanged = onTypingChanged
+      self.supportsEmbeds = supportsEmbeds
+      self.showsAttachmentMenu = showsAttachmentMenu
+      self.dismissKeyboardOnSend = dismissKeyboardOnSend
+      self.placeholderText = placeholderText
+      self.imageSender = imageSender
+      self.onVoiceTapped = onVoiceTapped
+      self.isRecording = isRecording
+    }
     @State private var showingGifPicker = false
     @State private var showingPostPicker = false
     @State private var selectedPhotoItem: PhotosPickerItem?
@@ -563,8 +593,24 @@ import SwiftUI
         isTextFieldFocused = false
       }
 
-      // Call onSend with captured values
-      onSend(messageText, messageEmbed)
+      if let onAsyncSend {
+        Task {
+          let success = await onAsyncSend(messageText, messageEmbed)
+          if !success {
+            await MainActor.run {
+              if self.text.isEmpty {
+                self.text = messageText
+              }
+              if self.attachedEmbed == nil {
+                self.attachedEmbed = messageEmbed
+              }
+            }
+          }
+        }
+      } else {
+        // Call onSend with captured values
+        onSend(messageText, messageEmbed)
+      }
     }
 
     private func attachPost(_ post: AppBskyFeedDefs.PostView) {

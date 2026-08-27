@@ -166,6 +166,7 @@ struct ChatTabView: View {
         ChatFAB(newMessageAction: {
           showingNewMessageSheet = true
         })
+        .nuxNudge(id: .groupChatsAnnouncement)
         .padding(.bottom, 20)
         .padding(.trailing, 20)
       }

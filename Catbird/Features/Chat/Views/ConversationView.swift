@@ -12,6 +12,7 @@ struct ConversationView: View {
   @Environment(AppState.self) private var appState
   @Environment(\.colorScheme) private var colorScheme
   @Environment(\.horizontalSizeClass) private var hSizeClass
+  @Environment(\.dismiss) private var dismiss
   let convoId: String
 
   private var contentMaxWidth: CGFloat {
@@ -21,7 +22,7 @@ struct ConversationView: View {
   @State private var isInitialized = false
   @State private var attachedEmbed: MLSEmbedData?
   @State private var pendingPostRef: ComAtprotoRepoStrongRef?
-
+  @State private var stagedReplyTarget: BlueskyMessageAdapter?
   private var chatNavigationPath: Binding<NavigationPath> {
     appState.navigationManager.pathBinding(for: 4)
   }
@@ -145,6 +146,10 @@ struct ConversationView: View {
         onRequestEmojiPicker: { messageID in
           emojiPickerMessageID = messageID
           showingEmojiPicker = true
+        },
+        onReply: { message in
+          guard !message.isSystemMessage else { return }
+          stagedReplyTarget = message
         }
       )
       .ignoresSafeArea(.container)
@@ -163,7 +168,24 @@ struct ConversationView: View {
       }
       .safeAreaInset(edge: .bottom) {
         if chatNavigationPath.wrappedValue.isEmpty {
-          if isConversationLocked {
+          if conversationBlockState.isBlocked {
+            BlockedConversationFooter(
+              convoId: convoId,
+              isGroup: currentConversation?.isGroupConversation ?? false,
+              blockState: conversationBlockState,
+              onUnblocked: {
+                Task {
+                  await chatManager.refreshConversation(convoId: convoId)
+                }
+              },
+              onLeft: {
+                if !chatNavigationPath.wrappedValue.isEmpty {
+                  chatNavigationPath.wrappedValue.removeLast()
+                }
+                dismiss()
+              }
+            )
+          } else if isConversationLocked {
             lockedConversationBanner
           } else if isOtherMemberDeleted {
             deletedAccountBanner
@@ -187,31 +209,83 @@ struct ConversationView: View {
 
   @ViewBuilder
   private func blueskyInputBar(dataSource: BlueskyConversationDataSource) -> some View {
+    VStack(spacing: 0) {
+      if let staged = stagedReplyTarget {
+        HStack(alignment: .center, spacing: 8) {
+          Image(systemName: "arrowshape.turn.up.left.fill")
+            .font(.caption2)
+            .foregroundStyle(Color.accentColor)
+
+          VStack(alignment: .leading, spacing: 2) {
+            Text("Replying to \(staged.senderDisplayName ?? "message")")
+              .font(.caption2)
+              .fontWeight(.semibold)
+              .foregroundStyle(.primary)
+              .lineLimit(1)
+
+            Text(staged.text)
+              .font(.caption2)
+              .foregroundStyle(.secondary)
+              .lineLimit(2)
+          }
+
+          Spacer(minLength: 0)
+
+          Button {
+            stagedReplyTarget = nil
+          } label: {
+            Image(systemName: "xmark.circle.fill")
+              .font(.caption)
+              .foregroundStyle(.secondary)
+          }
+          .buttonStyle(.plain)
+          .accessibilityLabel("Cancel reply")
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(Color(.secondarySystemBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .padding(.horizontal, 12)
+        .padding(.bottom, 4)
+      }
+
       MLSMessageComposerView(
-      text: Binding(
-        get: { dataSource.draftText },
-        set: { dataSource.draftText = $0 }
-      ),
+        text: Binding(
+          get: { dataSource.draftText },
+          set: { dataSource.draftText = $0 }
+        ),
         attachedEmbed: $attachedEmbed,
         conversationId: convoId,
         onSend: { text, stagedEmbed in
-          // Relies on supportsEmbeds: false below, so the only possible stagedEmbed is
-          // the consumed pending share. If attachments are ever enabled for Bluesky
-          // chat, this mapping must distinguish embed provenance instead of assuming it.
           let embedUnion: ChatBskyConvoDefs.MessageInputEmbedUnion?
           if stagedEmbed != nil, let postRef = pendingPostRef {
             embedUnion = .appBskyEmbedRecord(AppBskyEmbedRecord(record: postRef))
           } else {
             embedUnion = nil
           }
-          pendingPostRef = nil
-          Task { await dataSource.sendMessage(text: text, embed: embedUnion) }
+          let replyRef = stagedReplyTarget.map { ChatBskyConvoDefs.ReplyRef(messageId: $0.id) }
+
+          Task {
+            let success = await dataSource.sendMessage(
+              text: text,
+              embed: embedUnion,
+              replyTo: replyRef
+            )
+            if success {
+              await MainActor.run {
+                stagedReplyTarget = nil
+                attachedEmbed = nil
+                pendingPostRef = nil
+              }
+            }
+          }
         },
         supportsEmbeds: false,
         showsAttachmentMenu: false,
         dismissKeyboardOnSend: false
       )
     }
+  }
 
     // MARK: - Deleted Account Banner
 
@@ -252,6 +326,14 @@ struct ConversationView: View {
     messageToReport = message.id
     messageToDelete = message.id
   }
+
+    private var currentConversation: ChatBskyConvoDefs.ConvoView? {
+      chatManager.conversations.first(where: { $0.id == convoId })
+    }
+
+    private var conversationBlockState: BlueskyConversationBlockState {
+      currentConversation?.moderationBlockState(currentUserDID: appState.userDID) ?? .none
+    }
 
     // Check if the other member's account has been deleted
     private var isOtherMemberDeleted: Bool {

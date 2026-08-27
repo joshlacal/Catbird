@@ -20,6 +20,7 @@ struct ConversationManagementView: View {
   @State private var showingEditNameAlert = false
   @State private var showingLockConfirmation = false
   @State private var showingAddMembers = false
+  @State private var showingReportConversation = false
   @State private var editedName = ""
 
   private let logger = Logger(subsystem: "blue.catbird", category: "ConversationManagementView")
@@ -80,6 +81,20 @@ struct ConversationManagementView: View {
         if isOwnedGroup {
           groupAdministrationSection
         }
+        if !isOwnedGroup {
+          Section {
+            Button(role: .destructive) {
+              showingReportConversation = true
+            } label: {
+              HStack {
+                Image(systemName: "exclamationmark.bubble")
+                  .foregroundColor(.red)
+                Text("Report Conversation")
+                  .foregroundColor(.red)
+              }
+            }
+          }
+        }
         leaveSection
       }
       .animation(.spring(response: 0.35, dampingFraction: 0.8), value: memberIDs)
@@ -103,6 +118,14 @@ struct ConversationManagementView: View {
       }
       .sheet(isPresented: $showingAddMembers) {
         AddGroupMembersSheet(convoId: convo.id, existingMemberDIDs: Set(memberIDs))
+      }
+      .sheet(isPresented: $showingReportConversation) {
+        ReportConversationView(
+          conversation: convo,
+          onConversationLeft: {
+            dismiss()
+          }
+        )
       }
       .alert("Leave Conversation", isPresented: $showingLeaveAlert) {
         Button("Cancel", role: .cancel) { }

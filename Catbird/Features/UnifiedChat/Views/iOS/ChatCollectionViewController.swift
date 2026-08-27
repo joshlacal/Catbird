@@ -94,13 +94,45 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
   var onRetryMessage: ((String) -> Void)? // (messageID) retry a failed send (WS-6.5)
   var onEditMessage: ((Message) -> Void)?
   var onUnsendMessage: ((Message) -> Void)?
-
+  var onReply: ((Message) -> Void)?
   private var hasPerformedInitialScroll = false
   private var lastScrollToBottomTrigger: Int = 0
   /// Extra bottom inset to keep content above the floating composer.
   private var composerInset: CGFloat = 100
   /// Current keyboard overlap with this view (0 when keyboard is hidden).
   private var keyboardOverlap: CGFloat = 0
+
+  private let newMessagesPillButton: UIButton = {
+    var config = UIButton.Configuration.filled()
+    config.cornerStyle = .capsule
+    config.baseBackgroundColor = .secondarySystemGroupedBackground
+    config.baseForegroundColor = .label
+    config.image = UIImage(systemName: "chevron.down")
+    config.imagePlacement = .trailing
+    config.imagePadding = 6
+    config.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(scale: .small)
+    config.contentInsets = NSDirectionalEdgeInsets(top: 8, leading: 14, bottom: 8, trailing: 14)
+
+    var titleAttr = AttributedString("New messages")
+    let baseFont = UIFont.preferredFont(forTextStyle: UIFont.TextStyle.subheadline)
+    let descriptor = baseFont.fontDescriptor.addingAttributes([.traits: [UIFontDescriptor.TraitKey.weight: UIFont.Weight.medium]])
+    titleAttr.font = UIFont(descriptor: descriptor, size: 0)
+    config.attributedTitle = titleAttr
+
+    let button = UIButton(configuration: config)
+    button.translatesAutoresizingMaskIntoConstraints = false
+    button.accessibilityLabel = "New messages"
+    button.accessibilityHint = "Jump to latest messages"
+    button.layer.shadowColor = UIColor.black.cgColor
+    button.layer.shadowOpacity = 0.12
+    button.layer.shadowRadius = 8
+    button.layer.shadowOffset = CGSize(width: 0, height: 2)
+    button.alpha = 0
+    button.isHidden = true
+    return button
+  }()
+
+  private var pillBottomConstraint: NSLayoutConstraint?
 
   // MARK: - Inline Composer
 
@@ -154,8 +186,8 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
     setupDataSource()
     setupObservation()
     setupKeyboardObservers()
+    setupNewMessagesPill()
   }
-
   override func viewWillAppear(_ animated: Bool) {
     super.viewWillAppear(animated)
     if observationTask == nil {
@@ -210,7 +242,19 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
 
     view.addSubview(collectionView)
   }
+  private func setupNewMessagesPill() {
+    view.addSubview(newMessagesPillButton)
+    newMessagesPillButton.addTarget(self, action: #selector(didTapNewMessagesPill), for: .touchUpInside)
 
+    let bottomAnchor = composerView?.topAnchor ?? view.safeAreaLayoutGuide.bottomAnchor
+    let constraint = newMessagesPillButton.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12)
+    pillBottomConstraint = constraint
+
+    NSLayoutConstraint.activate([
+      newMessagesPillButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+      constraint
+    ])
+  }
   private func createLayout() -> UICollectionViewLayout {
     let itemSize = NSCollectionLayoutSize(
       widthDimension: .fractionalWidth(1.0),
@@ -341,6 +385,16 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
             Task { @MainActor [weak self] in
               await self?.presentReactionDetailsSheet(messageID: messageID)
             }
+          },
+          onReply: { [weak self] in
+            guard let self, let msg = self.dataSource.message(for: messageID) else { return }
+            self.onReply?(msg)
+          },
+          onReplyTapped: { [weak self] referencedID in
+            self?.scrollToMessage(id: referencedID, highlight: true)
+          },
+          onToggleGroup: { [weak self] in
+            (self?.dataSource as? BlueskyConversationDataSource)?.toggleSystemGroup(groupID: messageID)
           },
           onRetry: { [weak self] in
             self?.onRetryMessage?(messageID)
@@ -567,6 +621,7 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
         collectionView.alpha = 1
       }
       hasPerformedInitialScroll = true
+      hideNewMessagesPill(animated: false)
       lastOldestMessageID = currentOldestMessageID
       lastMessageCount = currentMessageCount
     } else if didPrependOlderMessages {
@@ -588,16 +643,23 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
       // leaves an in-flight glide untouched (see scrollToBottom).
       UIView.performWithoutAnimation {
         diffableDataSource.apply(snapshot, animatingDifferences: false)
-        collectionView.layoutIfNeeded()
       }
       if shouldPinBottomAfterUpdate {
         scrollToBottom(animated: true)
+        hideNewMessagesPill(animated: true)
+      } else {
+        let newlyAppendedCount = currentMessageCount - lastMessageCount
+        if itemsChanged && newlyAppendedCount > 0 && !forceScrollToBottom {
+          let latestMessageIsFromSelf = dataSource.messages.last?.isFromCurrentUser ?? false
+          if !latestMessageIsFromSelf {
+            showNewMessagesPill(animated: true)
+          }
+        }
       }
       lastOldestMessageID = currentOldestMessageID
       lastMessageCount = currentMessageCount
     }
   }
-
   func updateNavigationBinding(_ binding: Binding<NavigationPath>) {
     navigationPath = binding
   }
@@ -651,6 +713,11 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
       bottomConstraint,
     ])
 
+
+    pillBottomConstraint?.isActive = false
+    let newPillConstraint = newMessagesPillButton.bottomAnchor.constraint(equalTo: composer.topAnchor, constant: -12)
+    pillBottomConstraint = newPillConstraint
+    newPillConstraint.isActive = true
     composerView = composer
 
     // Update inset after layout pass
@@ -770,7 +837,7 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
     dismissReactionOverlay()
 
     guard let message = dataSource.message(for: messageID) else { return }
-    guard let mlsMessage = message as? MLSMessageAdapter else { return }
+    guard !message.isSystemMessage, !message.reactions.isEmpty else { return }
 
     let mlsReactions = message.reactions.map { reaction in
       MLSMessageReaction(
@@ -782,12 +849,13 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
     }
 
     let senderDIDs = Array(Set(mlsReactions.map(\.senderDID)))
+    let currentUserDID = appState?.userDID ?? ""
 
     let makeSheet: ([String: MLSProfileEnricher.ProfileData]) -> MLSReactionDetailsSheet = { profiles in
       MLSReactionDetailsSheet(
         reactions: mlsReactions,
         participantProfiles: profiles,
-        currentUserDID: mlsMessage.currentUserDID,
+        currentUserDID: currentUserDID,
         onAddReaction: { [weak self] emoji in
           guard let self else { return }
           self.dataSource.addReaction(messageID: messageID, emoji: emoji)
@@ -968,6 +1036,8 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
   }
 
   func scrollToBottom(animated: Bool = true) {
+    hideNewMessagesPill(animated: animated)
+
     guard
       diffableDataSource != nil,
       diffableDataSource.snapshot().numberOfItems > 0,
@@ -1021,6 +1091,32 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
     }
   }
 
+  func scrollToMessage(id: String, highlight: Bool = true) {
+    guard let diffableDataSource else { return }
+    let snapshot = diffableDataSource.snapshot()
+    guard let item = snapshot.itemIdentifiers.first(where: {
+      if case .message(let itemID) = $0 {
+        return itemID == id
+      }
+      return false
+    }), let indexPath = diffableDataSource.indexPath(for: item) else { return }
+
+    collectionView.scrollToItem(at: indexPath, at: .centeredVertically, animated: true)
+
+    if highlight {
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+        guard let cell = self?.collectionView.cellForItem(at: indexPath) else { return }
+        UIView.animate(withDuration: 0.2, animations: {
+          cell.contentView.backgroundColor = UIColor.systemFill.withAlphaComponent(0.3)
+        }) { _ in
+          UIView.animate(withDuration: 0.5, delay: 0.5, options: .curveEaseOut) {
+            cell.contentView.backgroundColor = .clear
+          }
+        }
+      }
+    }
+  }
+
   // MARK: - UICollectionViewDelegate
 
   func scrollViewDidScroll(_ scrollView: UIScrollView) {
@@ -1031,6 +1127,10 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
       scrollView.adjustedContentInset.bottom
 
     isAtBottom = visibleBottom >= scrollView.contentSize.height - bottomLockThreshold
+    if isAtBottom {
+      hideNewMessagesPill(animated: true)
+    }
+
 
     // Trigger pagination when approaching the top (older messages)
     let threshold: CGFloat = 200
@@ -1092,6 +1192,49 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
     cancelPrefetchingForItemsAt indexPaths: [IndexPath]
   ) {
     // Hook for cancelling prefetch work when cells leave the screen
+  }
+
+  // MARK: - New Messages Pill Actions
+
+  @objc private func didTapNewMessagesPill() {
+    PlatformHaptics.light()
+    scrollToBottom(animated: true)
+    hideNewMessagesPill(animated: true)
+  }
+
+  @MainActor
+  private func showNewMessagesPill(animated: Bool = true) {
+    guard newMessagesPillButton.isHidden || newMessagesPillButton.alpha < 1 else { return }
+    newMessagesPillButton.isHidden = false
+    view.bringSubviewToFront(newMessagesPillButton)
+    if animated {
+      UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .allowUserInteraction]) {
+        self.newMessagesPillButton.alpha = 1
+        self.newMessagesPillButton.transform = .identity
+      }
+    } else {
+      newMessagesPillButton.alpha = 1
+      newMessagesPillButton.transform = .identity
+    }
+  }
+
+  @MainActor
+  private func hideNewMessagesPill(animated: Bool = true) {
+    guard !newMessagesPillButton.isHidden else { return }
+    if animated {
+      UIView.animate(withDuration: 0.2, delay: 0, options: [.curveEaseIn, .allowUserInteraction]) {
+        self.newMessagesPillButton.alpha = 0
+        self.newMessagesPillButton.transform = CGAffineTransform(translationX: 0, y: 10)
+      } completion: { finished in
+        if finished {
+          self.newMessagesPillButton.isHidden = true
+        }
+      }
+    } else {
+      newMessagesPillButton.alpha = 0
+      newMessagesPillButton.isHidden = true
+      newMessagesPillButton.transform = CGAffineTransform(translationX: 0, y: 10)
+    }
   }
 }
 
@@ -1163,6 +1306,7 @@ extension ChatCollectionViewController: UIKitMLSComposerDelegate {
       self?.scrollToBottom(animated: true)
     }
   }
+
 
   func composerDidTapAttach(_ composer: UIKitMLSComposerView) {
     onComposerAttach?()

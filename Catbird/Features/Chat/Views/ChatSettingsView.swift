@@ -2,6 +2,26 @@ import OSLog
 import Petrel
 import SwiftUI
 
+/// Bluesky chat declaration privacy options
+enum ChatPrivacyOption: String, CaseIterable, Identifiable, Sendable {
+  case all = "all"
+  case following = "following"
+  case none = "none"
+
+  var id: String { rawValue }
+
+  var title: String {
+    switch self {
+    case .all:
+      return "Everyone"
+    case .following:
+      return "People I follow"
+    case .none:
+      return "No one"
+    }
+  }
+}
+
 /// Settings view for chat-related options and actions
 struct ChatSettingsView: View {
   @Environment(AppState.self) private var appState
@@ -19,12 +39,108 @@ struct ChatSettingsView: View {
   @State private var isLoadingOptInStatus = true  // Start as true to prevent onChange during init
   @State private var isTogglingOptIn = false
   @State private var hasLoadedInitialState = false  // Track if we've completed initial load
-
+  @State private var messagesFrom: ChatPrivacyOption = .following
+  @State private var groupInvitesFrom: ChatPrivacyOption = .following
+  @State private var isLoadingDeclaration = true
+  @State private var declarationLoadError: String?
+  @State private var isSavingDeclaration = false
+  @State private var declarationCid: CID?
   private let logger = Logger(subsystem: "blue.catbird", category: "ChatSettingsView")
   
   var body: some View {
     NavigationStack {
       List {
+        Section {
+          if isLoadingDeclaration {
+            HStack {
+              Text("Loading chat privacy settings…")
+                .foregroundStyle(.secondary)
+              Spacer()
+              ProgressView()
+                .scaleEffect(0.8)
+            }
+          } else if let declarationLoadError {
+            VStack(alignment: .leading, spacing: 8) {
+              HStack {
+                Image(systemName: "exclamationmark.triangle.fill")
+                  .foregroundStyle(.orange)
+                Text("Failed to load privacy settings")
+                  .font(.subheadline)
+                  .foregroundStyle(.primary)
+              }
+              Text(declarationLoadError)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+              Button("Retry") {
+                Task {
+                  await loadDeclaration()
+                }
+              }
+              .font(.subheadline)
+            }
+            .padding(.vertical, 4)
+          } else {
+            Picker("Messages from", selection: Binding(
+              get: { messagesFrom },
+              set: { newValue in
+                guard !isSavingDeclaration, newValue != messagesFrom else { return }
+                let previous = messagesFrom
+                messagesFrom = newValue
+                Task {
+                  await updateDeclaration(
+                    messagesFrom: newValue,
+                    groupInvitesFrom: groupInvitesFrom,
+                    previousMessagesFrom: previous,
+                    previousGroupInvitesFrom: groupInvitesFrom
+                  )
+                }
+              }
+            )) {
+              ForEach(ChatPrivacyOption.allCases) { option in
+                Text(option.title).tag(option)
+              }
+            }
+            .disabled(isSavingDeclaration)
+
+            Picker("Group chat invites from", selection: Binding(
+              get: { groupInvitesFrom },
+              set: { newValue in
+                guard !isSavingDeclaration, newValue != groupInvitesFrom else { return }
+                let previous = groupInvitesFrom
+                groupInvitesFrom = newValue
+                Task {
+                  await updateDeclaration(
+                    messagesFrom: messagesFrom,
+                    groupInvitesFrom: newValue,
+                    previousMessagesFrom: messagesFrom,
+                    previousGroupInvitesFrom: previous
+                  )
+                }
+              }
+            )) {
+              ForEach(ChatPrivacyOption.allCases) { option in
+                Text(option.title).tag(option)
+              }
+            }
+            .disabled(isSavingDeclaration)
+            
+            if isSavingDeclaration {
+              HStack {
+                Text("Saving privacy settings…")
+                  .font(.caption)
+                  .foregroundStyle(.secondary)
+                Spacer()
+                ProgressView()
+                  .scaleEffect(0.8)
+              }
+            }
+          }
+        } header: {
+          Text("Bluesky Chat Privacy")
+        } footer: {
+          Text("Choose who can send you direct messages and invite you to group chats on Bluesky.")
+        }
+
         Section {
           HStack {
             VStack(alignment: .leading, spacing: 4) {
@@ -189,7 +305,9 @@ struct ChatSettingsView: View {
         Text(errorMessage ?? "An unknown error occurred")
       }
       .task {
-        await loadOptInStatus()
+        async let optIn: () = loadOptInStatus()
+        async let declaration: () = loadDeclaration()
+        _ = await (optIn, declaration)
       }
       .onAppear {
         // Refresh opt-in status when returning from MLSChatSettingsView (user may have opted out)
@@ -211,6 +329,130 @@ struct ChatSettingsView: View {
       isOptedIn = ExperimentalSettings.shared.isMLSChatEnabled(for: userDID)
       isLoadingOptInStatus = false
       hasLoadedInitialState = true
+    }
+  }
+
+  private func loadDeclaration() async {
+    guard let client = appState.atProtoClient else {
+      await MainActor.run {
+        self.declarationLoadError = "Not authenticated"
+        self.isLoadingDeclaration = false
+      }
+      return
+    }
+
+    await MainActor.run {
+      self.isLoadingDeclaration = true
+      self.declarationLoadError = nil
+    }
+
+    do {
+      let params = ComAtprotoRepoGetRecord.Parameters(
+        repo: try ATIdentifier(string: appState.userDID),
+        collection: try NSID(nsidString: "chat.bsky.actor.declaration"),
+        rkey: try RecordKey(keyString: "self")
+      )
+      let (code, recordOutput) = try await client.com.atproto.repo.getRecord(input: params)
+      if code == 200, let recordOutput {
+        let cid = recordOutput.cid
+        if let decl = recordOutput.value.decoded(ChatBskyActorDeclaration.self) {
+          let incoming = ChatPrivacyOption(rawValue: decl.allowIncoming) ?? .following
+          let groupInvites = decl.allowGroupInvites.flatMap(ChatPrivacyOption.init(rawValue:)) ?? incoming
+          await MainActor.run {
+            self.declarationCid = cid
+            self.messagesFrom = incoming
+            self.groupInvitesFrom = groupInvites
+            self.isLoadingDeclaration = false
+            self.declarationLoadError = nil
+          }
+          return
+        } else {
+          logger.error("Failed to decode ChatBskyActorDeclaration from successful response")
+          await MainActor.run {
+            self.declarationLoadError = "Failed to parse chat privacy settings."
+            self.isLoadingDeclaration = false
+          }
+          return
+        }
+      } else {
+        logger.warning("Failed to load chat declaration: status \(code)")
+        await MainActor.run {
+          self.declarationLoadError = "Server returned status \(code)."
+          self.isLoadingDeclaration = false
+        }
+      }
+    } catch let atprotoError as ATProtoError<ComAtprotoRepoGetRecord.Error> where atprotoError.error == .recordNotFound {
+      await MainActor.run {
+        self.declarationCid = nil
+        self.messagesFrom = .following
+        self.groupInvitesFrom = .following
+        self.isLoadingDeclaration = false
+        self.declarationLoadError = nil
+      }
+    } catch let xrpcError as ATProtoXRPCError where xrpcError.error == "RecordNotFound" {
+      await MainActor.run {
+        self.declarationCid = nil
+        self.messagesFrom = .following
+        self.groupInvitesFrom = .following
+        self.isLoadingDeclaration = false
+        self.declarationLoadError = nil
+      }
+    } catch {
+      logger.warning("No existing chat declaration record or failed to load: \(error.localizedDescription)")
+      await MainActor.run {
+        self.declarationLoadError = error.localizedDescription
+        self.isLoadingDeclaration = false
+      }
+    }
+  }
+
+  private func updateDeclaration(
+    messagesFrom: ChatPrivacyOption,
+    groupInvitesFrom: ChatPrivacyOption,
+    previousMessagesFrom: ChatPrivacyOption,
+    previousGroupInvitesFrom: ChatPrivacyOption
+  ) async {
+    guard let client = appState.atProtoClient else {
+      await MainActor.run {
+        self.messagesFrom = previousMessagesFrom
+        self.groupInvitesFrom = previousGroupInvitesFrom
+        self.errorMessage = "Not authenticated"
+      }
+      return
+    }
+
+    await MainActor.run {
+      self.isSavingDeclaration = true
+    }
+
+    do {
+      let declaration = ChatBskyActorDeclaration(
+        allowIncoming: messagesFrom.rawValue,
+        allowGroupInvites: groupInvitesFrom.rawValue
+      )
+      let input = ComAtprotoRepoPutRecord.Input(
+        repo: try ATIdentifier(string: appState.userDID),
+        collection: try NSID(nsidString: "chat.bsky.actor.declaration"),
+        rkey: try RecordKey(keyString: "self"),
+        record: .knownType(declaration),
+        swapRecord: declarationCid
+      )
+      let (code, output) = try await client.com.atproto.repo.putRecord(input: input)
+      guard code == 200, let output else {
+        throw NSError(domain: "ChatSettings", code: code, userInfo: [NSLocalizedDescriptionKey: "Failed to update chat privacy settings (\(code))."])
+      }
+      await MainActor.run {
+        self.declarationCid = output.cid
+        self.isSavingDeclaration = false
+      }
+    } catch {
+      logger.error("Failed to update chat declaration: \(error.localizedDescription)")
+      await MainActor.run {
+        self.messagesFrom = previousMessagesFrom
+        self.groupInvitesFrom = previousGroupInvitesFrom
+        self.isSavingDeclaration = false
+        self.errorMessage = "Failed to update chat privacy settings: \(error.localizedDescription)"
+      }
     }
   }
 

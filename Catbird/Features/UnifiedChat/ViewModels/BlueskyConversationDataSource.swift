@@ -20,10 +20,10 @@ final class BlueskyConversationDataSource: UnifiedChatDataSource {
   private(set) var isLoading: Bool = false
   private(set) var hasMoreMessages: Bool = true
   private(set) var error: Error?
+  private(set) var expandedSystemGroupIDs: Set<String> = []
   private var hasReceivedInitialMessages: Bool = false
 
   var draftText: String = ""
-
   // MARK: - Init
 
   init(chatManager: ChatManager, convoID: String, currentUserDID: String) {
@@ -64,23 +64,42 @@ final class BlueskyConversationDataSource: UnifiedChatDataSource {
   }
 
   func sendMessage(text: String) async {
-    await sendMessage(text: text, embed: nil)
+    _ = await sendMessage(text: text, embed: nil, replyTo: nil)
   }
 
-  func sendMessage(text: String, embed: ChatBskyConvoDefs.MessageInputEmbedUnion?) async {
+  func sendMessage(
+    text: String,
+    embed: ChatBskyConvoDefs.MessageInputEmbedUnion? = nil,
+    replyTo: ChatBskyConvoDefs.ReplyRef? = nil
+  ) async -> Bool {
     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !trimmed.isEmpty || embed != nil else { return }
+    guard !trimmed.isEmpty || embed != nil else { return false }
 
-    let success = await chatManager.sendMessage(convoId: convoID, text: text, embed: embed)
+    let success = await chatManager.sendMessage(
+      convoId: convoID,
+      text: text,
+      embed: embed,
+      replyTo: replyTo
+    )
     if success {
       draftText = ""
       // Refresh to get the sent message
       await loadMessages()
+      return true
     } else {
       self.error = NSError(domain: "ChatError", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to send message"])
+      return false
     }
   }
 
+  func toggleSystemGroup(groupID: String) {
+    if expandedSystemGroupIDs.contains(groupID) {
+      expandedSystemGroupIDs.remove(groupID)
+    } else {
+      expandedSystemGroupIDs.insert(groupID)
+    }
+    updateMessagesFromManager()
+  }
   func toggleReaction(messageID: String, emoji: String) {
     Task {
       do {
@@ -112,8 +131,10 @@ final class BlueskyConversationDataSource: UnifiedChatDataSource {
     let existingIDs = Set(messages.map { $0.id })
     let maxExistingTimestamp = messages.map { $0.sentAt }.max() ?? .distantPast
 
-    // Get original messages from ChatManager (now using native MessageView types)
+    // Get original messages and system messages from ChatManager
     let originalMessages = chatManager.originalMessagesMap[convoID] ?? [:]
+    let systemMessages = chatManager.systemMessagesMap[convoID] ?? [:]
+    let relatedProfiles = chatManager.relatedProfilesMap[convoID] ?? [:]
 
     // Get member profiles from the conversation
     let conversation = chatManager.conversations.first { $0.id == convoID }
@@ -138,22 +159,38 @@ final class BlueskyConversationDataSource: UnifiedChatDataSource {
       return profiles
     }()
 
-    // Convert ChatBskyConvoDefs.MessageView to BlueskyMessageAdapter, sorted by sentAt
-    self.messages = originalMessages.values
-      .sorted { $0.sentAt.date < $1.sentAt.date }
-      .map { messageView in
-        let senderDID = messageView.sender.did.didString()
-        let profile = memberProfiles[senderDID]
-        let reactions = messageView.reactions ?? []
+    let allProfiles = memberProfiles.merging(relatedProfiles) { current, _ in current }
 
-        return BlueskyMessageAdapter(
-          messageView: messageView,
-          currentUserDID: currentUserDID,
-          senderProfile: profile,
-          reactions: reactions
-        )
-      }
+    // 1. Convert user messages to BlueskyMessageAdapter
+    let userAdapters = originalMessages.values.map { messageView in
+      let senderDID = messageView.sender.did.didString()
+      let profile = allProfiles[senderDID]
+      let reactions = messageView.reactions ?? []
 
+      return BlueskyMessageAdapter(
+        messageView: messageView,
+        currentUserDID: currentUserDID,
+        senderProfile: profile,
+        reactions: reactions
+      )
+    }
+
+    // 2. Convert system messages to BlueskyMessageAdapter
+    let systemAdapters = systemMessages.values.map { systemMessageView in
+      BlueskyMessageAdapter(
+        systemMessageView: systemMessageView,
+        relatedProfiles: allProfiles
+      )
+    }
+
+    // 3. Combine and sort chronologically by sentAt
+    let combined = (userAdapters + systemAdapters).sorted { $0.sentAt < $1.sentAt }
+
+    // 4. Group consecutive same-day system messages (1-3 separate, 4+ collapsed)
+    self.messages = BlueskySystemMessageGrouper.group(
+      messages: combined,
+      expandedGroupIDs: expandedSystemGroupIDs
+    )
     // Update hasMoreMessages based on ChatManager's cursor system
     // Check if there's a cursor for this conversation - if there is, more messages may be available
     hasMoreMessages = chatManager.hasMoreMessages(for: convoID)
@@ -178,6 +215,8 @@ final class BlueskyConversationDataSource: UnifiedChatDataSource {
       guard let self else { return }
       withObservationTracking {
         _ = chatManager.originalMessagesMap[convoID]
+        _ = chatManager.systemMessagesMap[convoID]
+        _ = chatManager.relatedProfilesMap[convoID]
         _ = chatManager.conversations
         _ = chatManager.hasMoreMessages(for: convoID)
       } onChange: {

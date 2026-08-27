@@ -157,7 +157,7 @@ struct BatchMessageView: View {
       defer { isSending = false }
       
       let items = selectedConversations.map { convoId in
-        (convoId: convoId, text: messageText)
+        (convoId: convoId, text: messageText, replyTo: nil as ChatBskyConvoDefs.ReplyRef?)
       }
       
       let results = await appState.chatManager.sendMessageBatch(items: items)

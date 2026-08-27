@@ -7,6 +7,25 @@ enum UnifiedChatRenderSignature {
     let profileSignature = message.senderDisplayName ?? ""
     let avatarSignature = message.senderAvatarURL?.absoluteString ?? ""
     let embedSignature = message.embed.map { String($0.hashValue) } ?? ""
+    let replySignature: String = {
+      guard let reply = message.replyContext else { return "" }
+      return [
+        reply.referencedMessageID ?? "",
+        reply.senderDisplayName ?? "",
+        reply.previewText,
+        reply.isTappable ? "tappable" : "static"
+      ].joined(separator: ":")
+    }()
+
+    let systemSignature: String = {
+      if message.isSystemGroup {
+        return "group:\(message.isExpanded ? "expanded" : "collapsed"):\(message.systemGroupEvents?.count ?? 0)"
+      }
+      if let event = message.systemEvent {
+        return "system:\(String(describing: event.kind)):\(event.messageText)"
+      }
+      return ""
+    }()
 
     // Minute bucket: the bubble renders sentAt with .time (hour:minute), and a
     // pending send's local timestamp is replaced by the server timestamp on
@@ -26,6 +45,8 @@ enum UnifiedChatRenderSignature {
       message.isTombstone ? "tombstone" : "live",
       message.canEdit ? "editable" : "not-editable",
       message.canUnsend ? "unsendable" : "not-unsendable",
+      replySignature,
+      systemSignature,
     ].joined(separator: "|")
   }
 

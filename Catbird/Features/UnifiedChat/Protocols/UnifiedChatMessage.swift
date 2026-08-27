@@ -26,6 +26,87 @@ protocol UnifiedChatMessage: Identifiable, Hashable, Sendable {
   var editedAt: Date? { get }
   var isTombstone: Bool { get }
   var deletedAt: Date? { get }
+  var isSystemMessage: Bool { get }
+  var systemEvent: UnifiedSystemEvent? { get }
+  var systemGroupEvents: [UnifiedSystemEvent]? { get }
+  var isSystemGroup: Bool { get }
+  var isExpanded: Bool { get }
+  var replyContext: UnifiedMessageReplyContext? { get }
+}
+
+/// Hydrated reply context for a chat message
+struct UnifiedMessageReplyContext: Hashable, Sendable {
+  enum Kind: Hashable, Sendable {
+    case message(id: String, senderDID: String, senderDisplayName: String?, text: String)
+    case deleted
+    case beforeUserJoined
+    case unexpected(String)
+  }
+
+  let kind: Kind
+  let referencedMessageID: String?
+  let senderDisplayName: String?
+  let previewText: String
+  let isTappable: Bool
+
+  init(
+    kind: Kind,
+    referencedMessageID: String?,
+    senderDisplayName: String?,
+    previewText: String,
+    isTappable: Bool
+  ) {
+    self.kind = kind
+    self.referencedMessageID = referencedMessageID
+    self.senderDisplayName = senderDisplayName
+    self.previewText = previewText
+    self.isTappable = isTappable
+  }
+}
+
+/// Represents an in-stream system event (e.g. member joined, group edited, chat locked)
+struct UnifiedSystemEvent: Hashable, Sendable {
+  enum Kind: Hashable, Sendable {
+    case memberAdded(memberDID: String, role: String?)
+    case memberRemoved(memberDID: String, removedByDID: String?)
+    case memberJoined(memberDID: String, role: String?)
+    case memberLeave(memberDID: String)
+    case convoLocked(byDID: String?)
+    case convoUnlocked(byDID: String?)
+    case convoEnded(byDID: String?)
+    case groupEdited(oldName: String?, newName: String?)
+    case joinLinkCreated
+    case joinLinkEdited
+    case joinLinkEnabled
+    case joinLinkDisabled
+    case generic(String)
+  }
+
+  let id: String
+  let kind: Kind
+  let sentAt: Date
+  let messageText: String
+  let iconName: String
+  let referencedDIDs: [String]
+  let referencedNames: [String: String]
+
+  init(
+    id: String,
+    kind: Kind,
+    sentAt: Date,
+    messageText: String,
+    iconName: String,
+    referencedDIDs: [String] = [],
+    referencedNames: [String: String] = [:]
+  ) {
+    self.id = id
+    self.kind = kind
+    self.sentAt = sentAt
+    self.messageText = messageText
+    self.iconName = iconName
+    self.referencedDIDs = referencedDIDs
+    self.referencedNames = referencedNames
+  }
 }
 
 // MARK: - MessageSendState
@@ -54,6 +135,12 @@ extension UnifiedChatMessage {
   var editedAt: Date? { nil }
   var isTombstone: Bool { false }
   var deletedAt: Date? { nil }
+  var isSystemMessage: Bool { false }
+  var systemEvent: UnifiedSystemEvent? { nil }
+  var systemGroupEvents: [UnifiedSystemEvent]? { nil }
+  var isSystemGroup: Bool { false }
+  var isExpanded: Bool { false }
+  var replyContext: UnifiedMessageReplyContext? { nil }
 }
 
 // MARK: - ChatTextRenderer

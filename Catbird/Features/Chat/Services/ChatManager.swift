@@ -21,6 +21,8 @@ final class ChatManager: StateInvalidationSubscriber {
   var conversations: [ChatBskyConvoDefs.ConvoView] = []
   // Store original message views for reactions and other advanced features
   private(set) var originalMessagesMap: [String: [String: ChatBskyConvoDefs.MessageView]] = [:]  // [convoId: [messageId: MessageView]]
+  private(set) var systemMessagesMap: [String: [String: ChatBskyConvoDefs.SystemMessageView]] = [:]  // [convoId: [messageId: SystemMessageView]]
+  private(set) var relatedProfilesMap: [String: [String: ChatBskyActorDefs.ProfileViewBasic]] = [:]  // [convoId: [didString: ProfileViewBasic]]
   private(set) var loadingConversations: Bool = false
   private(set) var loadingMessages: [String: Bool] = [:]
   var errorState: ChatError?
@@ -247,6 +249,8 @@ final class ChatManager: StateInvalidationSubscriber {
     stopAllPolling()
     conversations = []
     originalMessagesMap = [:]
+    systemMessagesMap = [:]
+    relatedProfilesMap = [:]
     conversationsCursor = nil
     messagesCursors = [:]
     conversationsPollBackoff = 0
@@ -416,20 +420,21 @@ final class ChatManager: StateInvalidationSubscriber {
         return
       }
 
-      // Convert messages to original format for storage
+      // Convert messages to original format for storage and collect deletions
       var originalMessages: [String: ChatBskyConvoDefs.MessageView] = [:]
+      var systemMessages: [String: ChatBskyConvoDefs.SystemMessageView] = [:]
+      var deletedMessageIds: Set<String> = []
       var messageCount = 0
       for messageUnion in messagesData.messages {
         switch messageUnion {
         case .chatBskyConvoDefsMessageView(let messageView):
           originalMessages[messageView.id] = messageView
           messageCount += 1
-        case .chatBskyConvoDefsDeletedMessageView:
-          // Skip deleted messages
-          continue
-        case .chatBskyConvoDefsSystemMessageView:
-          // System messages are not stored in the plain user-message map.
-          continue
+        case .chatBskyConvoDefsDeletedMessageView(let deletedMessageView):
+          deletedMessageIds.insert(deletedMessageView.id)
+        case .chatBskyConvoDefsSystemMessageView(let systemMessageView):
+          systemMessages[systemMessageView.id] = systemMessageView
+          messageCount += 1
         case .unexpected(let data):
           logger.warning(
             "Unexpected message type encountered in \(convoId): \(String(describing: data))")
@@ -437,19 +442,37 @@ final class ChatManager: StateInvalidationSubscriber {
         }
       }
 
-      // Update state with original messages only
-      if refresh {
-        originalMessagesMap[convoId] = originalMessages
-      } else if var existingOriginals = originalMessagesMap[convoId] {
-        for (id, messageView) in originalMessages {
-          existingOriginals[id] = messageView
-        }
-        originalMessagesMap[convoId] = existingOriginals
-      } else {
-        originalMessagesMap[convoId] = originalMessages
+      // Upsert original messages and remove deleted messages without erasing paginated history
+      var existingOriginals = originalMessagesMap[convoId] ?? [:]
+      for (id, messageView) in originalMessages {
+        existingOriginals[id] = messageView
       }
+      for deletedId in deletedMessageIds {
+        existingOriginals.removeValue(forKey: deletedId)
+      }
+      originalMessagesMap[convoId] = existingOriginals
 
-      messagesCursors[convoId] = messagesData.cursor
+      // Upsert system messages and remove deleted messages without erasing paginated history
+      var existingSystems = systemMessagesMap[convoId] ?? [:]
+      for (id, systemMessageView) in systemMessages {
+        existingSystems[id] = systemMessageView
+      }
+      for deletedId in deletedMessageIds {
+        existingSystems.removeValue(forKey: deletedId)
+      }
+      systemMessagesMap[convoId] = existingSystems
+
+      // Merge relatedProfiles
+      if let related = messagesData.relatedProfiles {
+        var existingProfiles = relatedProfilesMap[convoId] ?? [:]
+        for profile in related {
+          existingProfiles[profile.did.didString()] = profile
+        }
+        relatedProfilesMap[convoId] = existingProfiles
+      }
+      if !refresh || messagesCursors[convoId] == nil {
+        messagesCursors[convoId] = messagesData.cursor
+      }
       messagePollBackoffs[convoId] = nil
 
       logger.debug(
@@ -518,6 +541,8 @@ final class ChatManager: StateInvalidationSubscriber {
       if let index = conversations.firstIndex(where: { $0.id == convoId }) {
         conversations.remove(at: index)
         originalMessagesMap[convoId] = nil  // Clear original messages for this convo
+        systemMessagesMap[convoId] = nil
+        relatedProfilesMap[convoId] = nil
         logger.debug("Left conversation \(convoId) successfully.")
       }
       return .success
@@ -813,12 +838,17 @@ final class ChatManager: StateInvalidationSubscriber {
 
   @MainActor
   func sendMessage(convoId: String, text: String) async -> Bool {
-    return await sendMessage(convoId: convoId, text: text, embed: nil)
+    return await sendMessage(convoId: convoId, text: text, embed: nil, replyTo: nil)
   }
   
-  /// Send a message with optional embed (for sharing posts)
+  /// Send a message with optional embed and optional replyTo
   @MainActor
-  func sendMessage(convoId: String, text: String, embed: ChatBskyConvoDefs.MessageInputEmbedUnion?) async -> Bool {
+  func sendMessage(
+    convoId: String,
+    text: String,
+    embed: ChatBskyConvoDefs.MessageInputEmbedUnion? = nil,
+    replyTo: ChatBskyConvoDefs.ReplyRef? = nil
+  ) async -> Bool {
     guard let client = client else {
       logger.error("Cannot send message to \(convoId): client or session is nil")
       errorState = .noClient
@@ -842,7 +872,7 @@ final class ChatManager: StateInvalidationSubscriber {
         text: trimmedText,
         facets: facets.isEmpty ? nil : facets,
         embed: embed,
-        replyTo: nil // TODO: add reply to
+        replyTo: replyTo
       )
 
       let input = ChatBskyConvoSendMessage.Input(
@@ -1041,7 +1071,7 @@ final class ChatManager: StateInvalidationSubscriber {
   }
 
   @MainActor
-  func sendMessageBatch(items: [(convoId: String, text: String)]) async -> [String?] {
+  func sendMessageBatch(items: [(convoId: String, text: String, replyTo: ChatBskyConvoDefs.ReplyRef?)]) async -> [String?] {
     guard let client = client else {
       logger.error("Cannot send message batch: client is nil")
       errorState = .noClient
@@ -1057,7 +1087,7 @@ final class ChatManager: StateInvalidationSubscriber {
           text: trimmedText,
           facets: facets.isEmpty ? nil : facets,
           embed: nil,
-          replyTo: nil // TODO: add reply to
+          replyTo: item.replyTo
         )
         batchItems.append(ChatBskyConvoSendMessageBatch.BatchItem(
           convoId: item.convoId,
@@ -1664,6 +1694,8 @@ final class ChatManager: StateInvalidationSubscriber {
       // Clear all local chat data after successful deletion
       conversations = []
       originalMessagesMap = [:]
+      systemMessagesMap = [:]
+      relatedProfilesMap = [:]
       conversationsCursor = nil
       messagesCursors = [:]
       profileCache = [:]
