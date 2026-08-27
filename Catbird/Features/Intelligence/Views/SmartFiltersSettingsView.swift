@@ -3,6 +3,7 @@ import SwiftUI
 struct SmartFiltersSettingsView: View {
     @Environment(AppState.self) private var appState
     @State private var rules: [FeedFilterRule] = []
+    @State private var copilotRule: FeedFilterRule? = nil
 
     var body: some View {
         List {
@@ -23,7 +24,33 @@ struct SmartFiltersSettingsView: View {
                             .appFont(AppTextRole.caption)
                             .foregroundStyle(.secondary)
                     }
-                    .swipeActions {
+                    .contextMenu {
+                        Button {
+                            copilotRule = rule
+                        } label: {
+                            Label("Ask Catbird", systemImage: "sparkles")
+                        }
+                        Button(role: .destructive) {
+                            Task {
+                                try? await SmartFilterRuleStore.shared.remove(
+                                    id: rule.id,
+                                    accountDID: appState.userDID
+                                )
+                                await reload()
+                            }
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                    }
+                    .swipeActions(edge: .leading) {
+                        Button {
+                            copilotRule = rule
+                        } label: {
+                            Label("Ask Catbird", systemImage: "sparkles")
+                        }
+                        .tint(.accentColor)
+                    }
+                    .swipeActions(edge: .trailing) {
                         Button("Delete", role: .destructive) {
                             Task {
                                 try? await SmartFilterRuleStore.shared.remove(
@@ -39,6 +66,20 @@ struct SmartFiltersSettingsView: View {
         }
         .navigationTitle("Smart Filters")
         .task { await reload() }
+        .sheet(item: $copilotRule) { rule in
+            CatbirdCopilotSheet(
+                context: .smartFilter(id: rule.id, name: rule.rawText),
+                onConfirmedAction: { proposal in
+                    try await CopilotProposalCoordinator.executeConfirmed(
+                        proposal,
+                        context: .smartFilter(id: rule.id, name: rule.rawText),
+                        expectedAccountDID: appState.userDID,
+                        appState: appState
+                    )
+                    await reload()
+                }
+            )
+        }
     }
 
     private func toggleBinding(for rule: FeedFilterRule) -> Binding<Bool> {
