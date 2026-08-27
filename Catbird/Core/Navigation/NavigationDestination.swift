@@ -1,10 +1,11 @@
 import Foundation
 import Petrel
 
-enum NavigationDestination: Hashable {
+public enum NavigationDestination: Hashable, Sendable {
     case profile(String)  // DID or handle
     case post(ATProtocolURI)
     case hashtag(String)
+    case topic(String)
     case timeline
     case feed(ATProtocolURI)
     case list(ATProtocolURI)
@@ -15,6 +16,7 @@ enum NavigationDestination: Hashable {
     case listFeed(ATProtocolURI)
     case listMembers(ATProtocolURI)
     case starterPack(ATProtocolURI)
+    case starterPackShort(String)
     case postLikes(String) // postUri
     case postReposts(String) // postUri
     case postQuotes(String) // postUri
@@ -23,13 +25,16 @@ enum NavigationDestination: Hashable {
     case circlePost(ATProtocolURI, CircleSummary)
     case circlesFeed
     case circleDetail(CircleSummary)
+    case notificationActivity([ATProtocolURI])
+    case videoFeed
+    case settings(SettingsRoute)
     #if os(iOS)
     case conversation(String) // convoId
     case mlsConversation(String) // MLS secure conversation ID
     case chatTab
     #endif
     
-    func hash(into hasher: inout Hasher) {
+    public func hash(into hasher: inout Hasher) {
         switch self {
         case .profile(let did):
             hasher.combine("profile")
@@ -40,6 +45,9 @@ enum NavigationDestination: Hashable {
         case .hashtag(let tag):
             hasher.combine("hashtag")
             hasher.combine(tag)
+        case .topic(let topic):
+            hasher.combine("topic")
+            hasher.combine(topic)
         case .timeline:
             hasher.combine("timeline")
         case .feed(let uri):
@@ -66,6 +74,9 @@ enum NavigationDestination: Hashable {
         case .starterPack(let uri):
             hasher.combine("starterPack")
             hasher.combine(uri.uriString())
+        case .starterPackShort(let code):
+            hasher.combine("starterPackShort")
+            hasher.combine(code)
         case .postLikes(let postUri):
             hasher.combine("postLikes")
             hasher.combine(postUri)
@@ -88,6 +99,16 @@ enum NavigationDestination: Hashable {
         case .circleDetail(let circle):
             hasher.combine("circleDetail")
             hasher.combine(circle.uri)
+        case .notificationActivity(let uris):
+            hasher.combine("notificationActivity")
+            for uri in uris {
+                hasher.combine(uri.uriString())
+            }
+        case .videoFeed:
+            hasher.combine("videoFeed")
+        case .settings(let route):
+            hasher.combine("settings")
+            hasher.combine(route)
         #if os(iOS)
         case .conversation(let convoId):
             hasher.combine("conversation")
@@ -101,7 +122,7 @@ enum NavigationDestination: Hashable {
         }
     }
     
-    static func == (lhs: NavigationDestination, rhs: NavigationDestination) -> Bool {
+    public static func == (lhs: NavigationDestination, rhs: NavigationDestination) -> Bool {
         switch (lhs, rhs) {
         case (.profile(let lhsDid), .profile(let rhsDid)):
             return lhsDid == rhsDid
@@ -109,6 +130,8 @@ enum NavigationDestination: Hashable {
             return lhsUri.uriString() == rhsUri.uriString()
         case (.hashtag(let lhsTag), .hashtag(let rhsTag)):
             return lhsTag == rhsTag
+        case (.topic(let lhsTopic), .topic(let rhsTopic)):
+            return lhsTopic == rhsTopic
         case (.feed(let lhsUri), .feed(let rhsUri)):
             return lhsUri.uriString() == rhsUri.uriString()
         case (.list(let lhsUri), .list(let rhsUri)):
@@ -127,6 +150,8 @@ enum NavigationDestination: Hashable {
             return lhsUri.uriString() == rhsUri.uriString()
         case (.starterPack(let lhsUri), .starterPack(let rhsUri)):
             return lhsUri.uriString() == rhsUri.uriString()
+        case (.starterPackShort(let lhsCode), .starterPackShort(let rhsCode)):
+            return lhsCode == rhsCode
         case (.postLikes(let lhsUri), .postLikes(let rhsUri)):
             return lhsUri == rhsUri
         case (.postReposts(let lhsUri), .postReposts(let rhsUri)):
@@ -143,6 +168,12 @@ enum NavigationDestination: Hashable {
             return true
         case (.circleDetail(let lCircle), .circleDetail(let rCircle)):
             return lCircle == rCircle
+        case (.notificationActivity(let lhsUris), .notificationActivity(let rhsUris)):
+            return lhsUris.map { $0.uriString() } == rhsUris.map { $0.uriString() }
+        case (.videoFeed, .videoFeed):
+            return true
+        case (.settings(let lhsRoute), .settings(let rhsRoute)):
+            return lhsRoute == rhsRoute
         #if os(iOS)
         case (.conversation(let lhsId), .conversation(let rhsId)):
             return lhsId == rhsId

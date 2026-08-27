@@ -32,23 +32,24 @@ struct NavigationHandler {
 
     case .post(let uri):
       ThreadView(postURI: uri, path: path)
-            .ignoresSafeArea()
-
-        //                .toolbarVisibility(.visible, for: .automatic)
-        //                .toolbarBackgroundVisibility(.visible, for: .automatic)
+        .ignoresSafeArea()
         #if os(iOS)
         .toolbarTitleDisplayMode(.inline)
         #endif
-        //                .themedNavigationBar(appState.themeManager)
         .navigationTitle("Post")
-        //                .ensureDeepNavigationFonts() // Use deep navigation fonts for thread views
         .id(uri.uriString())
 
     case .hashtag(let tag):
       HashtagView(tag: tag, path: path)
-        // Respect safe areas for this screen; content manages its own padding
-        //                .themedNavigationBar(appState.themeManager)
         .id(tag)
+
+    case .topic(let topic):
+      TopicFeedView(topic: topic)
+        .navigationTitle(topic)
+        #if os(iOS)
+        .toolbarTitleDisplayMode(.inline)
+        #endif
+        .id(topic)
 
     case .timeline:
       FeedCollectionView.create(
@@ -57,31 +58,33 @@ struct NavigationHandler {
         navigationPath: path
       )
       .ignoresSafeArea()
-
-      .id("timeline")  // Add stable identity
+      .id("timeline")
       .navigationTitle("Timeline")
       #if os(iOS)
       .toolbarTitleDisplayMode(.large)
       #endif
 
     case .feed(let uri):
-        FeedScreen(path: path, uri: uri)
+      FeedScreen(path: path, uri: uri)
         .ignoresSafeArea()
         .id(uri.uriString())
 
     case .list(let uri):
       ListView(listURI: uri, path: path)
-        //                .themedNavigationBar(appState.themeManager)
         .id(uri.uriString())
 
     case .starterPack(let uri):
       StarterPackView(uri: uri, path: path)
-        //                .themedNavigationBar(appState.themeManager)
         .id(uri.uriString())
 
+    case .starterPackShort(let code):
+      StarterPackShortResolverView(code: code, path: path)
+        .id(code)
+
     case .postLikes(let postUri):
+      let isLabeler = postUri.contains("app.bsky.labeler.service")
       LikesView(postUri: postUri, path: path)
-        .navigationTitle("Likes")
+        .navigationTitle(isLabeler ? "Liked By" : "Likes")
         #if os(iOS)
         .toolbarTitleDisplayMode(.inline)
         #endif
@@ -140,29 +143,39 @@ struct NavigationHandler {
       CircleDetailView(circle: circle, path: path)
         .id(circle.uri.description)
 
+    case .notificationActivity(let uris):
+      NotificationsActivityListView(postURIs: uris, path: path)
+        .navigationTitle("Activity")
+        #if os(iOS)
+        .toolbarTitleDisplayMode(.inline)
+        #endif
+        .id(uris.map { $0.uriString() }.joined(separator: ","))
+
+    case .videoFeed:
+      VideoFeedView(path: path)
+        .id("videoFeed")
+
+    case .settings(let route):
+      settingsView(for: route)
+        .id("settings-\(route.rawValue)")
+
     #if os(iOS)
     case .conversation(let convoId):
       ConversationView(convoId: convoId)
-        //                .themedNavigationBar(appState.themeManager)
-        .id(convoId)  // Use convoId for view identity
-    // Add necessary environment objects or parameters if needed
-    // .environment(appState) // Already available via @Environment
+        .id(convoId)
 
     case .mlsConversation(let convoId):
       MLSConversationDetailView(conversationId: convoId)
-        .id(convoId)  // Use conversation ID for view identity
+        .id(convoId)
 
     case .chatTab:
       ChatTabView(
         selectedTab: selectedTab,
-        lastTappedTab: .constant(nil)  // Pass constant nil as lastTappedTab isn't available here
+        lastTappedTab: .constant(nil)
       )
-      //             .themedNavigationBar(appState.themeManager)
-      .id("chatTab")  // Static ID for the tab view itself
+      .id("chatTab")
     #endif
 
-
-    
     case .createList:
       CreateListView()
         .navigationTitle("Create List")
@@ -170,7 +183,7 @@ struct NavigationHandler {
         .toolbarTitleDisplayMode(.inline)
         #endif
         .id("createList")
-    
+
     case .editList(let listURI):
       EditListView(listURI: listURI.uriString())
         .navigationTitle("Edit List")
@@ -178,7 +191,7 @@ struct NavigationHandler {
         .toolbarTitleDisplayMode(.inline)
         #endif
         .id(listURI.uriString())
-    
+
     case .listManager:
       ListsManagerView()
         .navigationTitle("My Lists")
@@ -186,7 +199,7 @@ struct NavigationHandler {
         .toolbarTitleDisplayMode(.large)
         #endif
         .id("listManager")
-    
+
     case .listDiscovery:
       ListDiscoveryView()
         .navigationTitle("Discover Lists")
@@ -194,7 +207,7 @@ struct NavigationHandler {
         .toolbarTitleDisplayMode(.large)
         #endif
         .id("listDiscovery")
-    
+
     case .listFeed(let listURI):
       ListDetailView(listURIString: listURI.uriString(), path: path)
         .navigationTitle("List")
@@ -202,16 +215,40 @@ struct NavigationHandler {
         .toolbarTitleDisplayMode(.inline)
         #endif
         .id(listURI.uriString())
-    
+
     case .listMembers(let listURI):
       ListMemberManagementView(listURI: listURI.uriString())
         .id(listURI.uriString())
     }
   }
 
+  @ViewBuilder
+  private static func settingsView(for route: SettingsRoute) -> some View {
+    switch route {
+    case .language:
+      LanguageSettingsView()
+    case .accessibility:
+      AccessibilitySettingsView()
+    case .appearance, .appIcon:
+      AppearanceSettingsView()
+    case .account, .appPasswords:
+      AccountSettingsView()
+    case .privacyAndSecurity:
+      PrivacySecuritySettingsView()
+    case .contentAndMedia, .followingFeed, .interests:
+      ContentMediaSettingsView()
+    case .about:
+      AboutSettingsView()
+    case .notifications:
+      NotificationSettingsView()
+    case .moderation:
+      ModerationSettingsView()
+    case .savedFeeds:
+      ListsManagerView()
+    }
+  }
+
   /// Returns the title string for a navigation destination
-  /// - Parameter destination: The navigation destination
-  /// - Returns: A title string appropriate for the destination
   static func titleForDestination(_ destination: NavigationDestination) -> String {
     switch destination {
     case .profile:
@@ -220,13 +257,15 @@ struct NavigationHandler {
       return "Post"
     case .hashtag(let tag):
       return "#\(tag)"
+    case .topic(let topic):
+      return topic
     case .timeline:
       return "Timeline"
     case .feed:
       return "Feed"
     case .list:
       return "List"
-    case .starterPack:
+    case .starterPack, .starterPackShort:
       return "Starter Pack"
     case .postLikes:
       return "Likes"
@@ -244,55 +283,67 @@ struct NavigationHandler {
       return "Circles"
     case .circleDetail(let circle):
       return circle.name
+    case .notificationActivity:
+      return "Activity"
+    case .videoFeed:
+      return "Videos"
+    case .settings(let route):
+      switch route {
+      case .language: return "Language"
+      case .accessibility: return "Accessibility"
+      case .appearance: return "Appearance"
+      case .account: return "Account"
+      case .privacyAndSecurity: return "Privacy & Security"
+      case .contentAndMedia: return "Content & Media"
+      case .about: return "About"
+      case .notifications: return "Notifications"
+      case .moderation: return "Moderation"
+      case .followingFeed: return "Following Feed"
+      case .savedFeeds: return "Saved Feeds"
+      case .appPasswords: return "App Passwords"
+      case .interests: return "Interests"
+      case .appIcon: return "App Icon"
+      }
     #if os(iOS)
     case .conversation:
-      // Title might be dynamic based on convo, but NavigationHandler provides a static one
       return "Conversation"
     case .mlsConversation:
       return "Secure Conversation"
     case .chatTab:
       return "Messages"
     #endif
-    
     case .createList:
       return "Create List"
-    
     case .editList:
       return "Edit List"
-    
     case .listManager:
       return "My Lists"
-    
     case .listDiscovery:
       return "Discover Lists"
-    
     case .listFeed:
       return "List Feed"
-    
     case .listMembers:
       return "List Members"
     }
   }
 
   /// Returns the icon name for a navigation destination
-  /// - Parameter destination: The navigation destination
-  /// - Returns: An SF Symbol name appropriate for the destination
-  static func iconForDestination(_ destination: NavigationDestination) -> String {
+  public static func iconForDestination(_ destination: NavigationDestination) -> String {
     switch destination {
     case .profile:
-      return "person"
+      return "person.circle"
     case .post:
-      return "bubble.left"
-    case .hashtag:
+      return "doc.text"
+    case .hashtag, .topic:
       return "number"
     case .timeline:
-      return "list.bullet"
+      return "clock"
     case .feed:
       return "newspaper"
     case .list:
-      return "list.bullet.rectangle"
-    case .starterPack:
-      return "person.3"
+      return "list.bullet"
+    case .starterPack, .starterPackShort:
+      return "person.3.sequence"
     case .postLikes:
       return "heart"
     case .postReposts:
@@ -301,40 +352,146 @@ struct NavigationHandler {
       return "quote.bubble"
     case .bookmarks:
       return "bookmark"
+    case .activitySubscriptions:
+      return "bell.badge"
+    case .circlePost:
+      return "person.2.circle"
+    case .circlesFeed:
+      return "person.2.circle.fill"
+    case .circleDetail:
+      return "person.2.circle"
+    case .notificationActivity:
+      return "bell"
+    case .videoFeed:
+      return "play.rectangle"
+    case .settings:
+      return "gear"
     #if os(iOS)
     case .conversation:
-      return "bubble.left.and.bubble.right.fill"  // Or just "bubble.left.fill"
-    case .mlsConversation:
-      return "lock.shield.fill"
-    case .chatTab:
       return "bubble.left.and.bubble.right"
+    case .mlsConversation:
+      return "lock.bubble"
+    case .chatTab:
+      return "message"
     #endif
-    
     case .createList:
-      return "plus.rectangle.on.rectangle"
-    
+      return "plus.circle"
     case .editList:
-      return "pencil.and.list.clipboard"
-    
+      return "pencil.circle"
     case .listManager:
-      return "list.bullet.rectangle.portrait"
-    
-    case .listDiscovery:
-      return "magnifyingglass"
-    
-    case .listFeed:
       return "list.bullet.rectangle"
-    
+    case .listDiscovery:
+      return "magnifyingglass.circle"
+    case .listFeed:
+      return "text.badge.plus"
     case .listMembers:
-      return "person.2.badge.gearshape"
-    case .activitySubscriptions:
-        return "bell.badge"
-    case .circlePost:
-        return "person.2.circle"
-    case .circlesFeed:
-        return "person.2.circle.fill"
-    case .circleDetail:
-        return "person.2.circle"
+      return "person.2.circle"
     }
+  }
+
+  /// Returns the associated NuxID for a navigation destination, if one exists
+  public static func nuxIDForDestination(_ destination: NavigationDestination) -> NuxID? {
+    switch destination {
+    case .bookmarks:
+      return .bookmarksAnnouncement
+    case .activitySubscriptions:
+      return .activitySubscriptions
+    default:
+      return nil
+    }
+  }
+}
+
+// MARK: - Helper Views
+
+public struct StarterPackShortResolverView: View {
+  let code: String
+  @Binding var path: NavigationPath
+  @Environment(AppState.self) private var appState
+  @State private var resolvedURI: ATProtocolURI?
+  @State private var errorMessage: String?
+  @State private var isLoading = true
+
+  public init(code: String, path: Binding<NavigationPath>) {
+    self.code = code
+    self._path = path
+  }
+
+  public var body: some View {
+    Group {
+      if let resolvedURI {
+        StarterPackView(uri: resolvedURI, path: $path)
+      } else if let errorMessage {
+        ContentUnavailableView {
+          Label("Unable to Open Starter Pack", systemImage: "exclamationmark.triangle")
+        } description: {
+          Text(errorMessage)
+        } actions: {
+          Button("Retry") {
+            Task { await resolveCode() }
+          }
+        }
+      } else {
+        ProgressView("Resolving Starter Pack...")
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
+      }
+    }
+    .task {
+      await resolveCode()
+    }
+  }
+
+  private func resolveCode() async {
+    isLoading = true
+    errorMessage = nil
+    
+    guard let url = URL(string: "https://go.bsky.app/\(code)") else {
+      errorMessage = "Invalid starter pack code"
+      isLoading = false
+      return
+    }
+
+    var request = URLRequest(url: url)
+    request.httpMethod = "GET"
+    request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+    do {
+      let (data, response) = try await URLSession.shared.data(for: request)
+      guard let httpResponse = response as? HTTPURLResponse, (200...399).contains(httpResponse.statusCode) else {
+        errorMessage = "Starter pack not found or link has expired."
+        isLoading = false
+        return
+      }
+
+      if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+        let candidateString = json["url"] as? String ?? json["uri"] as? String ?? json["redirect"] as? String
+        if let candidateString {
+          if candidateString.starts(with: "at://"), let uri = try? ATProtocolURI(uriString: candidateString) {
+            self.resolvedURI = uri
+          } else if let dest = await appState.urlHandler.parseDestination(from: candidateString),
+                    case .starterPack(let uri) = dest {
+            self.resolvedURI = uri
+          } else {
+            errorMessage = "Could not resolve starter pack destination."
+          }
+        } else {
+          errorMessage = "Starter pack not found or link has expired."
+        }
+      } else if let location = httpResponse.value(forHTTPHeaderField: "Location") {
+        if location.starts(with: "at://"), let uri = try? ATProtocolURI(uriString: location) {
+          self.resolvedURI = uri
+        } else if let dest = await appState.urlHandler.parseDestination(from: location),
+                  case .starterPack(let uri) = dest {
+          self.resolvedURI = uri
+        } else {
+          errorMessage = "Could not resolve starter pack destination."
+        }
+      } else {
+        errorMessage = "Starter pack not found or link has expired."
+      }
+    } catch {
+      errorMessage = "Network error resolving starter pack: \(error.localizedDescription)"
+    }
+    isLoading = false
   }
 }
