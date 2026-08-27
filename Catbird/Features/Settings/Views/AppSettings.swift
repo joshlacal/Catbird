@@ -162,17 +162,10 @@ import OSLog
         
         // Save webview settings for persistence
         defaults.set(useWebViewEmbeds, forKey: "useWebViewEmbeds")
-        defaults.set(allowYouTube, forKey: "allowYouTube")
-        defaults.set(allowYouTubeShorts, forKey: "allowYouTubeShorts")
-        defaults.set(allowVimeo, forKey: "allowVimeo")
-        defaults.set(allowTwitch, forKey: "allowTwitch")
-        defaults.set(allowGiphy, forKey: "allowGiphy")
-        defaults.set(allowTenor, forKey: "allowTenor")
-        defaults.set(allowSpotify, forKey: "allowSpotify")
-        defaults.set(allowAppleMusic, forKey: "allowAppleMusic")
-        defaults.set(allowSoundCloud, forKey: "allowSoundCloud")
-        defaults.set(allowFlickr, forKey: "allowFlickr")
-
+        for provider in ExternalMediaProvider.allCases {
+            let consent = externalMediaConsent(for: provider)
+            defaults.set(consent.rawValue, forKey: "externalMediaConsent.\(provider.rawValue)")
+        }
         if let accountDID = accountScopedDefaultsDID {
             let accountScopedThemeKeys = [
                 ("theme", theme),
@@ -192,17 +185,14 @@ import OSLog
             let accountScopedBoolKeys: [(String, Bool)] = [
                 ("dynamicTypeEnabled", dynamicTypeEnabled),
                 ("useWebViewEmbeds", useWebViewEmbeds),
-                ("allowYouTube", allowYouTube),
-                ("allowYouTubeShorts", allowYouTubeShorts),
-                ("allowVimeo", allowVimeo),
-                ("allowTwitch", allowTwitch),
-                ("allowGiphy", allowGiphy),
-                ("allowTenor", allowTenor),
-                ("allowSpotify", allowSpotify),
-                ("allowAppleMusic", allowAppleMusic),
-                ("allowSoundCloud", allowSoundCloud),
-                ("allowFlickr", allowFlickr),
             ]
+            for provider in ExternalMediaProvider.allCases {
+                let consent = externalMediaConsent(for: provider)
+                defaults.set(
+                    consent.rawValue,
+                    forKey: AppSettingsModel.scopedKey("externalMediaConsent.\(provider.rawValue)", accountDID: accountDID)
+                )
+            }
 
             for (key, value) in accountScopedBoolKeys {
                 defaults.set(value, forKey: AppSettingsModel.scopedKey(key, accountDID: accountDID))
@@ -214,7 +204,7 @@ import OSLog
         groupDefaults.set(theme, forKey: "theme")
         groupDefaults.set(darkThemeMode, forKey: "darkThemeMode")
         
-        logger.debug("Settings saved to UserDefaults: theme=\(self.theme), darkMode=\(self.darkThemeMode), webViewEmbeds=\(self.useWebViewEmbeds), allowYouTube=\(self.allowYouTube)")
+        logger.debug("Settings saved to UserDefaults: theme=\(self.theme), darkMode=\(self.darkThemeMode), webViewEmbeds=\(self.useWebViewEmbeds)")
     }
     
     /// Load theme settings from UserDefaults if SwiftData is not available
@@ -258,36 +248,14 @@ import OSLog
     }
     
     /// Load webview settings from UserDefaults if SwiftData is not available
-    private func loadWebViewSettingsFromUserDefaults() -> (useWebViewEmbeds: Bool, allowYouTube: Bool, allowYouTubeShorts: Bool, allowVimeo: Bool, allowTwitch: Bool, allowGiphy: Bool, allowTenor: Bool, allowSpotify: Bool, allowAppleMusic: Bool, allowSoundCloud: Bool, allowFlickr: Bool) {
+    private func loadWebViewSettingsFromUserDefaults() -> (useWebViewEmbeds: Bool, placeholder: Void) {
         let defaults = standardDefaults
-        
         let savedUseWebViewEmbeds = AppSettingsModel.boolValue(for: "useWebViewEmbeds", accountDID: accountScopedDefaultsDID, defaults: defaults, includeLegacyFallback: shouldUseRuntimeLegacyFallback) ?? true
-        let savedAllowYouTube = AppSettingsModel.boolValue(for: "allowYouTube", accountDID: accountScopedDefaultsDID, defaults: defaults, includeLegacyFallback: shouldUseRuntimeLegacyFallback) ?? true
-        let savedAllowYouTubeShorts = AppSettingsModel.boolValue(for: "allowYouTubeShorts", accountDID: accountScopedDefaultsDID, defaults: defaults, includeLegacyFallback: shouldUseRuntimeLegacyFallback) ?? true
-        let savedAllowVimeo = AppSettingsModel.boolValue(for: "allowVimeo", accountDID: accountScopedDefaultsDID, defaults: defaults, includeLegacyFallback: shouldUseRuntimeLegacyFallback) ?? true
-        let savedAllowTwitch = AppSettingsModel.boolValue(for: "allowTwitch", accountDID: accountScopedDefaultsDID, defaults: defaults, includeLegacyFallback: shouldUseRuntimeLegacyFallback) ?? true
-        let savedAllowGiphy = AppSettingsModel.boolValue(for: "allowGiphy", accountDID: accountScopedDefaultsDID, defaults: defaults, includeLegacyFallback: shouldUseRuntimeLegacyFallback) ?? true
-        let savedAllowTenor = AppSettingsModel.boolValue(for: "allowTenor", accountDID: accountScopedDefaultsDID, defaults: defaults, includeLegacyFallback: shouldUseRuntimeLegacyFallback) ?? true
-        let savedAllowSpotify = AppSettingsModel.boolValue(for: "allowSpotify", accountDID: accountScopedDefaultsDID, defaults: defaults, includeLegacyFallback: shouldUseRuntimeLegacyFallback) ?? true
-        let savedAllowAppleMusic = AppSettingsModel.boolValue(for: "allowAppleMusic", accountDID: accountScopedDefaultsDID, defaults: defaults, includeLegacyFallback: shouldUseRuntimeLegacyFallback) ?? true
-        let savedAllowSoundCloud = AppSettingsModel.boolValue(for: "allowSoundCloud", accountDID: accountScopedDefaultsDID, defaults: defaults, includeLegacyFallback: shouldUseRuntimeLegacyFallback) ?? true
-        let savedAllowFlickr = AppSettingsModel.boolValue(for: "allowFlickr", accountDID: accountScopedDefaultsDID, defaults: defaults, includeLegacyFallback: shouldUseRuntimeLegacyFallback) ?? true
-        
         return (
             useWebViewEmbeds: savedUseWebViewEmbeds,
-            allowYouTube: savedAllowYouTube,
-            allowYouTubeShorts: savedAllowYouTubeShorts,
-            allowVimeo: savedAllowVimeo,
-            allowTwitch: savedAllowTwitch,
-            allowGiphy: savedAllowGiphy,
-            allowTenor: savedAllowTenor,
-            allowSpotify: savedAllowSpotify,
-            allowAppleMusic: savedAllowAppleMusic,
-            allowSoundCloud: savedAllowSoundCloud,
-            allowFlickr: savedAllowFlickr
+            placeholder: ()
         )
     }
-    
     // MARK: - Computed Properties
     
     // Appearance
@@ -642,136 +610,43 @@ import OSLog
             saveChanges()
         }
     }
-    
-    // External Media Preferences
-    var allowYouTube: Bool {
-        get { 
-            if let settingsModel = settingsModel {
-                return settingsModel.allowYouTube
-            }
-            return loadWebViewSettingsFromUserDefaults().allowYouTube
+    // MARK: - External Media Preferences
+    func externalMediaConsent(for provider: ExternalMediaProvider) -> ExternalMediaConsent {
+        if let settingsModel = settingsModel {
+            return settingsModel.consent(for: provider)
         }
-        set {
-            settingsModel?.allowYouTube = newValue
-            saveChanges()
-        }
+        return loadExternalMediaConsentFromUserDefaults(for: provider)
     }
-    
-    var allowYouTubeShorts: Bool {
-        get { 
-            if let settingsModel = settingsModel {
-                return settingsModel.allowYouTubeShorts
-            }
-            return loadWebViewSettingsFromUserDefaults().allowYouTubeShorts
+
+    func setExternalMediaConsent(_ consent: ExternalMediaConsent, for provider: ExternalMediaProvider) {
+        settingsModel?.setConsent(consent, for: provider)
+        standardDefaults.set(consent.rawValue, forKey: "externalMediaConsent.\(provider.rawValue)")
+        if let accountDID = accountScopedDefaultsDID {
+            standardDefaults.set(
+                consent.rawValue,
+                forKey: AppSettingsModel.scopedKey("externalMediaConsent.\(provider.rawValue)", accountDID: accountDID)
+            )
         }
-        set {
-            settingsModel?.allowYouTubeShorts = newValue
-            saveChanges()
-        }
+        saveChanges()
     }
-    
-    var allowVimeo: Bool {
-        get { 
-            if let settingsModel = settingsModel {
-                return settingsModel.allowVimeo
-            }
-            return loadWebViewSettingsFromUserDefaults().allowVimeo
-        }
-        set {
-            settingsModel?.allowVimeo = newValue
-            saveChanges()
-        }
-    }
-    
-    var allowTwitch: Bool {
-        get { 
-            if let settingsModel = settingsModel {
-                return settingsModel.allowTwitch
-            }
-            return loadWebViewSettingsFromUserDefaults().allowTwitch
-        }
-        set {
-            settingsModel?.allowTwitch = newValue
-            saveChanges()
-        }
-    }
-    
-    var allowGiphy: Bool {
-        get { 
-            if let settingsModel = settingsModel {
-                return settingsModel.allowGiphy
-            }
-            return loadWebViewSettingsFromUserDefaults().allowGiphy
-        }
-        set {
-            settingsModel?.allowGiphy = newValue
-            saveChanges()
-        }
-    }
-    
-    var allowSpotify: Bool {
-        get { 
-            if let settingsModel = settingsModel {
-                return settingsModel.allowSpotify
-            }
-            return loadWebViewSettingsFromUserDefaults().allowSpotify
-        }
-        set {
-            settingsModel?.allowSpotify = newValue
-            saveChanges()
-        }
-    }
-    
-    var allowAppleMusic: Bool {
-        get { 
-            if let settingsModel = settingsModel {
-                return settingsModel.allowAppleMusic
-            }
-            return loadWebViewSettingsFromUserDefaults().allowAppleMusic
-        }
-        set {
-            settingsModel?.allowAppleMusic = newValue
-            saveChanges()
-        }
-    }
-    
-    var allowSoundCloud: Bool {
-        get { 
-            if let settingsModel = settingsModel {
-                return settingsModel.allowSoundCloud
-            }
-            return loadWebViewSettingsFromUserDefaults().allowSoundCloud
-        }
-        set {
-            settingsModel?.allowSoundCloud = newValue
-            saveChanges()
-        }
-    }
-    
-    var allowFlickr: Bool {
-        get { 
-            if let settingsModel = settingsModel {
-                return settingsModel.allowFlickr
-            }
-            return loadWebViewSettingsFromUserDefaults().allowFlickr
-        }
-        set {
-            settingsModel?.allowFlickr = newValue
-            saveChanges()
+
+    func setExternalMediaConsentForAllProviders(_ consent: ExternalMediaConsent) {
+        for provider in ExternalMediaProvider.allCases {
+            setExternalMediaConsent(consent, for: provider)
         }
     }
 
-    var allowTenor: Bool {
-        get { 
-            if let settingsModel = settingsModel {
-                return settingsModel.allowTenor
-            }
-            return loadWebViewSettingsFromUserDefaults().allowTenor
+    private func loadExternalMediaConsentFromUserDefaults(for provider: ExternalMediaProvider) -> ExternalMediaConsent {
+        let key = "externalMediaConsent.\(provider.rawValue)"
+        if let raw = AppSettingsModel.stringValue(
+            for: key,
+            accountDID: accountScopedDefaultsDID,
+            defaults: standardDefaults,
+            includeLegacyFallback: false
+        ), let consent = ExternalMediaConsent(rawValue: raw) {
+            return consent
         }
-        set {
-            settingsModel?.allowTenor = newValue
-            saveChanges()
-        }
+        return .undecided
     }
     
     // WebView Embeds

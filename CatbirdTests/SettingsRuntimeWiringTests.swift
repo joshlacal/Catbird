@@ -249,6 +249,7 @@ struct SettingsRuntimeWiringTests {
     #expect(!flags.contains("localFlag"))
     #expect(!feeds.contains("if CircleFeatureFlags.localFlag"))
   }
+
   @Test("Circle capability check goes directly to the public standalone AppView")
   func circleCapabilityCheckBypassesGatewayAndPDSProxy() throws {
     let service = try repositorySource(
@@ -264,6 +265,7 @@ struct SettingsRuntimeWiringTests {
     #expect(capabilityBody.contains("CircleConfiguration.appViewBaseURL"))
     #expect(!capabilityBody.contains("client.blue.catbird.circle.getCapabilities"))
   }
+
   @Test("Opening Circles automatically starts separate AppView authorization when required")
   func circlesFirstOpenStartsAppViewAuthorization() throws {
     let view = try repositorySource(
@@ -301,6 +303,180 @@ struct SettingsRuntimeWiringTests {
     #expect(removeBody.contains("CircleFeedCache.shared.purge(accountDID:"))
   }
 
+
+  @Test("Change handle wires to progressive JIT identity:handle and supports service and custom domains")
+  func changeHandleWiring() throws {
+    let helpersSource = try settingsSource(named: "AccountSettingsHelpers.swift")
+    let accountSettingsSource = try settingsSource(named: "AccountSettingsView.swift")
+    
+    // Verify HandleUpdateSheet has serviceDomain and customDomain modes
+    #expect(helpersSource.contains("case serviceDomain"))
+    #expect(helpersSource.contains("case customDomain"))
+    
+    // Verify describeServer is queried for available user domains
+    #expect(helpersSource.contains("describeServer()"))
+    #expect(helpersSource.contains("availableUserDomains"))
+    
+    // Verify custom domain verification instructions (DNS TXT and HTTPS Well-Known)
+    #expect(helpersSource.contains("_atproto."))
+    #expect(helpersSource.contains(".well-known/atproto-did"))
+    
+    // Verify resolution checks against user DID and resolveHandle
+    #expect(helpersSource.contains("resolveHandle"))
+    #expect(helpersSource.contains("ensurePermission(.identityHandle)"))
+    #expect(helpersSource.contains("updateHandle(input:"))
+    
+    // Verify AccountSettingsView has active Change Handle presentation
+    #expect(accountSettingsSource.contains("isShowingHandleSheet = true"))
+    #expect(accountSettingsSource.contains("recordCurrentHandleChange"))
+  }
+
+  @Test("Account deactivation wires to progressive JIT account:status?action=manage and requires DEACTIVATE confirmation")
+  func accountDeactivationWiring() throws {
+    let source = try settingsSource(named: "AccountSettingsView.swift")
+    
+    #expect(source.contains("deactivateConfirmText == \"DEACTIVATE\""))
+    #expect(source.contains("ensurePermission(.accountStatusManage)"))
+    #expect(source.contains("client.com.atproto.server.deactivateAccount("))
+    #expect(source.contains("input: .init(deleteAfter: nil)"))
+    #expect(source.contains("(200...299).contains(responseCode)"))
+    #expect(source.contains("handleLogout()"))
+    // Verify dormant delete account UI/methods are removed
+    #expect(!source.contains("deleteAccount("))
+    #expect(!source.contains("Delete Account"))
+  }
+
+  @Test("Two-Factor Authentication wires to emailAuthFactor and JIT account:email?action=manage")
+  func email2FAWiring() throws {
+    let source = try settingsSource(named: "PrivacySecuritySettingsView.swift")
+    
+    #expect(source.contains("emailAuthFactor"))
+    #expect(source.contains("ensurePermission(.accountEmailManage)"))
+    #expect(source.contains("updateEmail(input:"))
+    #expect(source.contains("requestEmailUpdate()"))
+    #expect(source.contains("disable2FACode"))
+  }
+
+  @Test("Your Interests settings wires to PreferencesManager.updateInterests and SmartFeedDiscoveryView picker")
+  func interestsSettingsWiring() throws {
+    let contentMediaSource = try settingsSource(named: "ContentMediaSettingsView.swift")
+    let interestsSource = try settingsSource(named: "InterestsSettingsView.swift")
+    
+    #expect(contentMediaSource.contains("InterestsSettingsView()"))
+    #expect(contentMediaSource.contains("userInterestsCount"))
+    
+    #expect(interestsSource.contains("preferencesManager.getPreferences()"))
+    #expect(interestsSource.contains("preferencesManager.updateInterests("))
+    #expect(interestsSource.contains("InterestPickerSheet("))
+  }
+
+  @Test("External media consent state supports tri-state per provider and Bandcamp detection")
+  func externalMediaConsentState() {
+    // Verify all 12 providers (including Klipy)
+    #expect(ExternalMediaProvider.allCases.count == 12)
+    #expect(ExternalMediaProvider.allCases.contains(.bandcamp))
+    #expect(ExternalMediaProvider.allCases.contains(.youtube))
+    #expect(ExternalMediaProvider.allCases.contains(.spotify))
+    #expect(ExternalMediaProvider.allCases.contains(.klipy))
+    #expect(ExternalMediaProvider.klipy.displayName == "Klipy")
+    #expect(ExternalMediaProvider.klipy.hostDescription == "static.klipy.com")
+    
+    // Verify model defaults to undecided
+    let model = AppSettingsModel()
+    for provider in ExternalMediaProvider.allCases {
+      #expect(model.consent(for: provider) == .undecided)
+    }
+    
+    // Verify per-provider allow/hide
+    model.setConsent(.allow, for: .youtube)
+    model.setConsent(.hide, for: .spotify)
+    model.setConsent(.allow, for: .klipy)
+    #expect(model.consent(for: .youtube) == .allow)
+    #expect(model.consent(for: .spotify) == .hide)
+    #expect(model.consent(for: .bandcamp) == .undecided)
+    #expect(model.consent(for: .klipy) == .allow)
+    
+    // Verify Block All includes Klipy and all other providers
+    for provider in ExternalMediaProvider.allCases {
+      model.setConsent(.hide, for: provider)
+    }
+    for provider in ExternalMediaProvider.allCases {
+      #expect(model.consent(for: provider) == .hide)
+    }
+
+    // Verify Allow All includes Klipy
+    for provider in ExternalMediaProvider.allCases {
+      model.setConsent(.allow, for: provider)
+    }
+    for provider in ExternalMediaProvider.allCases {
+      #expect(model.consent(for: provider) == .allow)
+    }
+    
+    // Verify Bandcamp URL detection
+    if let trackURL = URL(string: "https://artist.bandcamp.com/track/my-track") {
+      let detected = ExternalMediaType.detect(from: trackURL)
+      #expect(detected == .bandcamp(url: "https://artist.bandcamp.com/track/my-track"))
+      #expect(detected?.provider == .bandcamp)
+    }
+  }
+
+  @Test("Bot label preserves unrelated self-labels")
+  func botLabelPreservesUnrelatedSelfLabels() {
+    let source = ["porn", "!no-unauthenticated", "graphic-media"]
+    #expect(
+      AutomationBotSelfLabels.reconciled(source, isBot: true)
+        == ["porn", "!no-unauthenticated", "graphic-media", "bot"]
+    )
+    
+    let botSource = ["porn", "!no-unauthenticated", "bot", "graphic-media"]
+    #expect(
+      AutomationBotSelfLabels.reconciled(botSource, isBot: false)
+        == ["porn", "!no-unauthenticated", "graphic-media"]
+    )
+  }
+
+  @Test("Algorithmic visibility opt-out wires to app.bsky.actor.contentVisibilityDeclaration")
+  func algorithmicVisibilityWiring() throws {
+    let source = try settingsSource(named: "PrivacySecuritySettingsView.swift")
+    
+    #expect(source.contains("app.bsky.actor.contentVisibilityDeclaration"))
+    #expect(source.contains("hideFromAlgorithmicRecommendations"))
+    #expect(source.contains("AppBskyActorContentVisibilityDeclaration"))
+  }
+
+  @Test("Activity privacy wires to app.bsky.notification.declaration")
+  func activityPrivacyWiring() throws {
+    let privacySource = try settingsSource(named: "PrivacySecuritySettingsView.swift")
+    let activitySource = try settingsSource(named: "ActivityPrivacySettingsView.swift")
+    
+    #expect(privacySource.contains("ActivityPrivacySettingsView()"))
+    #expect(activitySource.contains("app.bsky.notification.declaration"))
+    #expect(activitySource.contains("AppBskyNotificationDeclaration"))
+    #expect(activitySource.contains("followers"))
+    #expect(activitySource.contains("mutuals"))
+    #expect(activitySource.contains("none"))
+  }
+
+  @Test("CAR repository export wires to com.atproto.sync.getRepo and fileExporter")
+  func carExportWiring() throws {
+    let source = try settingsSource(named: "AccountSettingsView.swift")
+    
+    #expect(source.contains("client.com.atproto.sync.getRepo"))
+    #expect(source.contains("isShowingFileExporter"))
+    #expect(source.contains("CARFileDocument"))
+    #expect(source.contains("-repository.car"))
+  }
+
+  @Test("App icon settings wires to alternateIconName CatbirdClassic")
+  func appIconWiring() throws {
+    let appearanceSource = try settingsSource(named: "AppearanceSettingsView.swift")
+    let iconSource = try settingsSource(named: "AppIconSettingsView.swift")
+    
+    #expect(appearanceSource.contains("AppIconSettingsView()"))
+    #expect(appearanceSource.contains("supportsAlternateIcons"))
+    #expect(iconSource.contains("CatbirdClassic"))
+    #expect(iconSource.contains("setAlternateIconName"))
+  }
 }
 
 private func settingsSource(named filename: String) throws -> String {

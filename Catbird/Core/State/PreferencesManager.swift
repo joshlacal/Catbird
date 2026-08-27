@@ -42,9 +42,11 @@ final class PreferencesManager {
 
   private(set) var state: PreferencesState = .initializing
 
+  // Centralized verification badge visibility observable
+  @MainActor var hideVerificationBadges: Bool = false
+
   // Per-account scoping
   private(set) var accountDID: String = ""
-
   // Core dependencies
   private weak var client: ATProtoClient?
   private var modelContext: ModelContext?
@@ -81,6 +83,13 @@ final class PreferencesManager {
     // Clear cache so next fetch loads the correct account's data
     cachedServerPreferences = nil
     logger.debug("PreferencesManager configured for account: \(accountDID)")
+    Task { @MainActor [weak self] in
+      if let self = self, let prefs = try? await self.loadPreferences() {
+        self.hideVerificationBadges = prefs.hideVerificationBadges
+      } else {
+        self?.hideVerificationBadges = false
+      }
+    }
   }
 
   private func scopedKey(_ baseKey: String) -> String {
@@ -252,7 +261,6 @@ final class PreferencesManager {
       var serverThreadViewPref: ThreadViewPreference?
       var serverFeedViewPref: FeedViewPreference?
       var serverAdultContentEnabled: Bool = false
-      var serverBirthDate: Date?
       var serverMutedWords: [MutedWord] = []
       var serverHiddenPosts: [String] = []
       var serverLabelers: [LabelerPreference] = []
@@ -260,8 +268,8 @@ final class PreferencesManager {
       var serverQueuedNudges: [String] = []
       var serverNuxStates: [NuxState] = []
       var serverInterests: [String] = []
-
-      // --- Process Server Response ---
+      var serverPostInteractionSettingsPref: AppBskyActorDefs.PostInteractionSettingsPref?
+      var serverVerificationPrefs: AppBskyActorDefs.VerificationPrefs?
       var didProcessV2Feeds = false  // Flag to prioritize V2
       for pref in resultItems {
         switch pref {
@@ -296,11 +304,6 @@ final class PreferencesManager {
 
         case .adultContentPref(let value):
           serverAdultContentEnabled = value.enabled
-
-        case .personalDetailsPref(let value):
-          if let dateStr = value.birthDate?.date {
-            serverBirthDate = dateStr
-          }
 
         case .threadViewPref(let value):
           serverThreadViewPref = ThreadViewPreference(
@@ -348,8 +351,12 @@ final class PreferencesManager {
 
         case .interestsPref(let value):
           serverInterests = value.tags
-          default:
-            logger.debug("Unhandled preference type encountered: \(String(describing: pref))")
+        case .postInteractionSettingsPref(let value):
+          serverPostInteractionSettingsPref = value
+        case .verificationPrefs(let value):
+          serverVerificationPrefs = value
+        default:
+          logger.debug("Unhandled preference type encountered: \(String(describing: pref))")
         }
       }
       // --- End Processing Server Response ---
@@ -369,7 +376,6 @@ final class PreferencesManager {
       currentPrefs.threadViewPref = serverThreadViewPref
       currentPrefs.feedViewPref = serverFeedViewPref
       currentPrefs.adultContentEnabled = serverAdultContentEnabled
-      currentPrefs.birthDate = serverBirthDate
       currentPrefs.mutedWords = serverMutedWords
       currentPrefs.hiddenPosts = serverHiddenPosts
       currentPrefs.labelers = serverLabelers
@@ -377,7 +383,12 @@ final class PreferencesManager {
       currentPrefs.queuedNudges = serverQueuedNudges
       currentPrefs.nuxStates = serverNuxStates
       currentPrefs.interests = serverInterests
-
+      currentPrefs.postInteractionSettingsPref = serverPostInteractionSettingsPref
+      currentPrefs.verificationPrefs = serverVerificationPrefs
+      currentPrefs.hideVerificationBadges = serverVerificationPrefs?.hideBadges ?? false
+      await MainActor.run {
+        self.hideVerificationBadges = serverVerificationPrefs?.hideBadges ?? false
+      }
       // Save the updated local preferences object
       try await savePreferences(currentPrefs)  // Saves the modified currentPrefs to SwiftData
       logger.info("Local preferences updated and saved from server data.")
@@ -486,7 +497,6 @@ final class PreferencesManager {
       existingPreferences.threadViewPref = preferences.threadViewPref
       existingPreferences.feedViewPref = preferences.feedViewPref
       existingPreferences.adultContentEnabled = preferences.adultContentEnabled
-      existingPreferences.birthDate = preferences.birthDate
       existingPreferences.mutedWords = preferences.mutedWords
       existingPreferences.hiddenPosts = preferences.hiddenPosts
       existingPreferences.labelers = preferences.labelers
@@ -559,8 +569,17 @@ final class PreferencesManager {
     let params = AppBskyActorGetPreferences.Parameters()
     let serverPrefs = try await client.app.bsky.actor.getPreferences(input: params)
 
+    guard serverPrefs.responseCode >= 200 && serverPrefs.responseCode < 300,
+          let items = serverPrefs.data?.preferences.items else {
+      throw NSError(
+        domain: "Preferences",
+        code: serverPrefs.responseCode != 0 ? serverPrefs.responseCode : -1,
+        userInfo: [NSLocalizedDescriptionKey: "Failed to fetch existing preferences from server before update"]
+      )
+    }
+
     // Start with ALL existing preferences from server
-    var allPrefItems = serverPrefs.data?.preferences.items ?? []
+    var allPrefItems = items
 
     // Only remove the specific preferences we're updating
     allPrefItems.removeAll { item in
@@ -576,8 +595,7 @@ final class PreferencesManager {
       case .feedViewPref:
         return preferences.feedViewPref != nil  // Only remove if we have a new value
       case .personalDetailsPref:
-        // Do not attempt to remove or set personal details via app.bsky.actor.putPreferences.
-        // Birth date must be managed via server personal-details API; leave as-is on server.
+        // Do not alter or write personalDetailsPref via putPreferences.
         return false
       case .mutedWordsPref:
         return !preferences.mutedWords.isEmpty  // Only remove if we have muted words
@@ -590,6 +608,10 @@ final class PreferencesManager {
           || !preferences.queuedNudges.isEmpty  // Only remove if we have app state prefs
       case .interestsPref:
         return !preferences.interests.isEmpty  // Only remove if we have interests
+      case .postInteractionSettingsPref:
+        return preferences.postInteractionSettingsPref != nil
+      case .verificationPrefs:
+        return preferences.verificationPrefs != nil
       default:
         return false  // Keep all other preference types
       }
@@ -667,10 +689,6 @@ final class PreferencesManager {
         AppBskyActorDefs.AdultContentPref(
           enabled: prefsToSync.adultContentEnabled
         )))
-
-    // 4. Birth date: skip sending via putPreferences (server rejects personalDetailsPref here).
-    // Personal details must be set via a dedicated server endpoint; we keep local copy only.
-
     // 5. Add thread view preferences if present
     if let threadPref = prefsToSync.threadViewPref {
       allPrefItems.append(
@@ -773,6 +791,15 @@ final class PreferencesManager {
         .interestsPref(AppBskyActorDefs.InterestsPref(tags: prefsToSync.interests)))
     }
 
+    // 12. Add post interaction settings if present
+    if let postInteractionPref = prefsToSync.postInteractionSettingsPref {
+      allPrefItems.append(.postInteractionSettingsPref(postInteractionPref))
+    }
+
+    // 13. Add verification preferences if present
+    if let verificationPref = prefsToSync.verificationPrefs {
+      allPrefItems.append(.verificationPrefs(verificationPref))
+    }
     // Create the final preferences object and send to server
     let apiPreferences = AppBskyActorDefs.Preferences(items: allPrefItems)
     let input = AppBskyActorPutPreferences.Input(preferences: apiPreferences)
@@ -805,13 +832,6 @@ final class PreferencesManager {
   func setAdultContentEnabled(_ enabled: Bool) async throws {
     let preferences = try await getPreferences()
     preferences.adultContentEnabled = enabled
-    try await saveAndSyncPreferences(preferences)
-  }
-
-  @MainActor
-  func setBirthDate(_ date: Date?) async throws {
-    let preferences = try await getPreferences()
-    preferences.birthDate = date
     try await saveAndSyncPreferences(preferences)
   }
 
@@ -981,8 +1001,17 @@ final class PreferencesManager {
     let params = AppBskyActorGetPreferences.Parameters()
     let serverPrefs = try await client.app.bsky.actor.getPreferences(input: params)
 
+    guard serverPrefs.responseCode >= 200 && serverPrefs.responseCode < 300,
+          let items = serverPrefs.data?.preferences.items else {
+      throw NSError(
+        domain: "Preferences",
+        code: serverPrefs.responseCode != 0 ? serverPrefs.responseCode : -1,
+        userInfo: [NSLocalizedDescriptionKey: "Failed to fetch existing preferences from server before update"]
+      )
+    }
+
     // Keep all existing preferences
-    var allPrefs = serverPrefs.data?.preferences.items ?? []
+    var allPrefs = items
 
     // Find existing preference of this type
     var existingIndex: Int?
@@ -1557,6 +1586,117 @@ final class PreferencesManager {
     let preferences = try await getPreferences()
     preferences.feedViewPref = feedViewPref
     try await saveAndSyncPreferences(preferences)
+  }
+
+  // MARK: - Post Interaction Settings (G40)
+  
+  @MainActor
+  func cachedPostInteractionSettingsPref() -> AppBskyActorDefs.PostInteractionSettingsPref? {
+    if let cached = cachedServerPreferences?.postInteractionSettingsPref {
+      return cached
+    }
+    guard let modelContext = modelContext else { return nil }
+    let descriptor = scopedPreferencesFetchDescriptor()
+    if let local = try? modelContext.fetch(descriptor).first {
+      return local.postInteractionSettingsPref
+    }
+    return nil
+  }
+
+  @MainActor
+  func getPostInteractionSettingsPref() async throws -> AppBskyActorDefs.PostInteractionSettingsPref? {
+    let prefs = try await getPreferences()
+    return prefs.postInteractionSettingsPref
+  }
+  
+  @MainActor
+  func setPostInteractionSettingsPref(_ pref: AppBskyActorDefs.PostInteractionSettingsPref?) async throws {
+    guard let client = client else {
+      throw PreferencesManagerError.clientNotInitialized
+    }
+    
+    // Fetch server preferences first to preserve everything
+    let params = AppBskyActorGetPreferences.Parameters()
+    let serverResponse = try await client.app.bsky.actor.getPreferences(input: params)
+    guard serverResponse.responseCode >= 200 && serverResponse.responseCode < 300,
+          let items = serverResponse.data?.preferences.items else {
+      throw NSError(
+        domain: "Preferences",
+        code: serverResponse.responseCode != 0 ? serverResponse.responseCode : -1,
+        userInfo: [NSLocalizedDescriptionKey: "Failed to fetch existing preferences from server before update"]
+      )
+    }
+    var allPrefs = items
+    
+    allPrefs.removeAll { item in
+      if case .postInteractionSettingsPref = item { return true }
+      return false
+    }
+    
+    if let pref = pref {
+      allPrefs.append(.postInteractionSettingsPref(pref))
+    }
+    
+    let input = AppBskyActorPutPreferences.Input(preferences: AppBskyActorDefs.Preferences(items: allPrefs))
+    let responseCode = try await client.app.bsky.actor.putPreferences(input: input)
+    guard responseCode >= 200 && responseCode < 300 else {
+      throw NSError(domain: "Preferences", code: responseCode, userInfo: [NSLocalizedDescriptionKey: "Failed to update post interaction settings on server"])
+    }
+    
+    let localPrefs = try await getPreferences()
+    localPrefs.postInteractionSettingsPref = pref
+    try await savePreferences(localPrefs)
+    cachedServerPreferences = localPrefs
+  }
+
+  // MARK: - Verification Preferences (G45)
+  
+  @MainActor
+  func getVerificationPrefs() async throws -> AppBskyActorDefs.VerificationPrefs? {
+    let prefs = try await getPreferences()
+    return prefs.verificationPrefs
+  }
+  
+  @MainActor
+  func setVerificationPrefs(_ pref: AppBskyActorDefs.VerificationPrefs?) async throws {
+    guard let client = client else {
+      throw PreferencesManagerError.clientNotInitialized
+    }
+    
+    // Fetch server preferences first to preserve everything
+    let params = AppBskyActorGetPreferences.Parameters()
+    let serverResponse = try await client.app.bsky.actor.getPreferences(input: params)
+    guard serverResponse.responseCode >= 200 && serverResponse.responseCode < 300,
+          let items = serverResponse.data?.preferences.items else {
+      throw NSError(
+        domain: "Preferences",
+        code: serverResponse.responseCode != 0 ? serverResponse.responseCode : -1,
+        userInfo: [NSLocalizedDescriptionKey: "Failed to fetch existing preferences from server before update"]
+      )
+    }
+    var allPrefs = items
+    
+    allPrefs.removeAll { item in
+      if case .verificationPrefs = item { return true }
+      return false
+    }
+    
+    if let pref = pref {
+      allPrefs.append(.verificationPrefs(pref))
+    }
+    
+    let input = AppBskyActorPutPreferences.Input(preferences: AppBskyActorDefs.Preferences(items: allPrefs))
+    let responseCode = try await client.app.bsky.actor.putPreferences(input: input)
+    guard responseCode >= 200 && responseCode < 300 else {
+      throw NSError(domain: "Preferences", code: responseCode, userInfo: [NSLocalizedDescriptionKey: "Failed to update verification preferences on server"])
+    }
+    
+    let localPrefs = try await getPreferences()
+    localPrefs.verificationPrefs = pref
+    localPrefs.hideVerificationBadges = pref?.hideBadges ?? false
+    self.hideVerificationBadges = pref?.hideBadges ?? false
+    try await savePreferences(localPrefs)
+    cachedServerPreferences = localPrefs
   }
 
   // Helper to compare relevant parts of preferences for caching logic

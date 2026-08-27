@@ -39,12 +39,13 @@ final class Preferences {
   private var nuxStatesData: String = "[]"
   private var interestsData: String = "[]"
   private var queuedNudgesData: String = "[]"
+  private var postInteractionSettingsData: String = "{}"
+  private var verificationPrefsData: String = "{}"
 
   // Simple properties
   var adultContentEnabled: Bool = false
-  var birthDate: Date?
+  var hideVerificationBadges: Bool = false
   var activeProgressGuide: String?
-  
   // Language preferences
   var primaryLanguage: String = "en"
   private var contentLanguagesData: String = "[\"en\"]"
@@ -190,6 +191,33 @@ final class Preferences {
       }
     }
   }
+  var postInteractionSettingsPref: AppBskyActorDefs.PostInteractionSettingsPref? {
+    get {
+      guard postInteractionSettingsData != "{}" && !postInteractionSettingsData.isEmpty else { return nil }
+      return try? JSONDecoder().decode(AppBskyActorDefs.PostInteractionSettingsPref.self, from: Data(postInteractionSettingsData.utf8))
+    }
+    set {
+      if let value = newValue, let data = try? JSONEncoder().encode(value) {
+        postInteractionSettingsData = String(data: data, encoding: .utf8) ?? "{}"
+      } else {
+        postInteractionSettingsData = "{}"
+      }
+    }
+  }
+
+  var verificationPrefs: AppBskyActorDefs.VerificationPrefs? {
+    get {
+      guard verificationPrefsData != "{}" && !verificationPrefsData.isEmpty else { return nil }
+      return try? JSONDecoder().decode(AppBskyActorDefs.VerificationPrefs.self, from: Data(verificationPrefsData.utf8))
+    }
+    set {
+      if let value = newValue, let data = try? JSONEncoder().encode(value) {
+        verificationPrefsData = String(data: data, encoding: .utf8) ?? "{}"
+      } else {
+        verificationPrefsData = "{}"
+      }
+    }
+  }
 
   // Initialize with all the preferences
   init(
@@ -200,7 +228,6 @@ final class Preferences {
     threadViewPref: ThreadViewPreference? = nil,
     feedViewPref: FeedViewPreference? = nil,
     adultContentEnabled: Bool = false,
-    birthDate: Date? = nil,
     mutedWords: [MutedWord] = [],
     hiddenPosts: [String] = [],
     labelers: [LabelerPreference] = [],
@@ -209,7 +236,10 @@ final class Preferences {
     nuxStates: [NuxState] = [],
     interests: [String] = [],
     primaryLanguage: String = "en",
-    contentLanguages: [String] = ["en"]
+    contentLanguages: [String] = ["en"],
+    hideVerificationBadges: Bool = false,
+    postInteractionSettingsPref: AppBskyActorDefs.PostInteractionSettingsPref? = nil,
+    verificationPrefs: AppBskyActorDefs.VerificationPrefs? = nil
   ) {
     // Set account scoping
     self.accountDID = accountDID
@@ -220,9 +250,10 @@ final class Preferences {
     self.contentLabelPrefsData = "[]"
     self.threadViewPrefData = "{}"
     self.feedViewPrefData = "{}"
+    self.postInteractionSettingsData = "{}"
+    self.verificationPrefsData = "{}"
     self.mutedWordsData = "[]"
-    self.hiddenPostsData = "[]"
-    self.labelersData = "[]"
+    self.hideVerificationBadges = hideVerificationBadges
     self.nuxStatesData = "[]"
     self.interestsData = "[]"
     self.queuedNudgesData = "[]"
@@ -242,7 +273,6 @@ final class Preferences {
     self.threadViewPref = threadViewPref
     self.feedViewPref = feedViewPref
     self.adultContentEnabled = adultContentEnabled
-    self.birthDate = birthDate
     self.mutedWords = mutedWords
     self.hiddenPosts = hiddenPosts
     self.labelers = labelers

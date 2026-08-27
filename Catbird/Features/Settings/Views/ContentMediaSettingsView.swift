@@ -19,6 +19,10 @@ struct ContentMediaSettingsView: View {
     
     @State private var errorMessage: String?
     
+    // Interests (server-synced)
+    @State private var userInterestsCount: Int = 0
+    @State private var isLoadingInterests: Bool = true
+    
     var body: some View {
         Form {
             // Media Playback Settings
@@ -62,6 +66,22 @@ struct ContentMediaSettingsView: View {
                     set: { appState.appSettings.showTrendingVideos = $0 }
                 ))
                 .tint(.blue)
+                
+                NavigationLink {
+                    InterestsSettingsView()
+                } label: {
+                    HStack {
+                        Text("Your Interests")
+                        Spacer()
+                        if isLoadingInterests {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else {
+                            Text(userInterestsCount > 0 ? "\(userInterestsCount) selected" : "None")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
             }
             
             // Feed View Preferences - synced with server
@@ -219,70 +239,17 @@ struct ContentMediaSettingsView: View {
                 ))
                 .tint(.blue)
                 
-                Toggle("YouTube", isOn: Binding(
-                    get: { appState.appSettings.allowYouTube },
-                    set: { appState.appSettings.allowYouTube = $0 }
-                ))
-                .tint(.blue)
+                NavigationLink(destination: ExternalMediaPreferencesView()) {
+                    HStack {
+                        Text("External Media Preferences")
+                        Spacer()
+                    }
+                }
                 .disabled(!appState.appSettings.useWebViewEmbeds)
-                
-                Toggle("YouTube Shorts", isOn: Binding(
-                    get: { appState.appSettings.allowYouTubeShorts },
-                    set: { appState.appSettings.allowYouTubeShorts = $0 }
-                ))
-                .tint(.blue)
-                
-                Toggle("Vimeo", isOn: Binding(
-                    get: { appState.appSettings.allowVimeo },
-                    set: { appState.appSettings.allowVimeo = $0 }
-                ))
-                .tint(.blue)
-                
-                Toggle("Twitch", isOn: Binding(
-                    get: { appState.appSettings.allowTwitch },
-                    set: { appState.appSettings.allowTwitch = $0 }
-                ))
-                .tint(.blue)
-                
-                Toggle("GIPHY", isOn: Binding(
-                    get: { appState.appSettings.allowGiphy },
-                    set: { appState.appSettings.allowGiphy = $0 }
-                ))
-                .tint(.blue)
-                
-                Toggle("Tenor", isOn: Binding(
-                    get: { appState.appSettings.allowTenor },
-                    set: { appState.appSettings.allowTenor = $0 }
-                ))
-                .tint(.blue)
-                
-                Toggle("Spotify", isOn: Binding(
-                    get: { appState.appSettings.allowSpotify },
-                    set: { appState.appSettings.allowSpotify = $0 }
-                ))
-                .tint(.blue)
-                
-                Toggle("Apple Music", isOn: Binding(
-                    get: { appState.appSettings.allowAppleMusic },
-                    set: { appState.appSettings.allowAppleMusic = $0 }
-                ))
-                .tint(.blue)
-                
-                Toggle("SoundCloud", isOn: Binding(
-                    get: { appState.appSettings.allowSoundCloud },
-                    set: { appState.appSettings.allowSoundCloud = $0 }
-                ))
-                .tint(.blue)
-                
-                Toggle("Flickr", isOn: Binding(
-                    get: { appState.appSettings.allowFlickr },
-                    set: { appState.appSettings.allowFlickr = $0 }
-                ))
-                .tint(.blue)
             } header: {
                 Text("External Media Embeds")
             } footer: {
-                Text("WebView embeds show interactive content directly in posts. When WebView embeds are disabled, external media will display as link cards. Control which external media services are allowed to display embedded content in posts.")
+                Text("Control player permissions and consent for third-party media embeds such as YouTube, Spotify, and Bandcamp.")
                     .appFont(AppTextRole.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -304,9 +271,9 @@ struct ContentMediaSettingsView: View {
             }
         }
         .navigationTitle("Content & Media")
-    #if os(iOS)
-    .toolbarTitleDisplayMode(.inline)
-    #endif
+        #if os(iOS)
+        .toolbarTitleDisplayMode(.inline)
+        #endif
         .task {
             await loadServerPreferences()
         }
@@ -314,6 +281,11 @@ struct ContentMediaSettingsView: View {
             // Initialize local state from current app settings
             threadSortOrder = appState.appSettings.threadSortOrder
             prioritizeFollowedUsers = appState.appSettings.prioritizeFollowedUsers
+            Task { @MainActor in
+                if let prefs = try? await appState.preferencesManager.getPreferences() {
+                    userInterestsCount = prefs.interests.count
+                }
+            }
         }
     }
     
@@ -348,6 +320,9 @@ struct ContentMediaSettingsView: View {
             appState.appSettings.threadSortOrder = threadSortOrder
             appState.appSettings.prioritizeFollowedUsers = prioritizeFollowedUsers
             
+            
+            userInterestsCount = preferences.interests.count
+            isLoadingInterests = false
         } catch {
             errorMessage = "Failed to load preferences: \(error.localizedDescription)"
         }
@@ -401,17 +376,7 @@ struct ContentMediaSettingsView: View {
         
         // Reset external media settings
         appState.appSettings.useWebViewEmbeds = true
-        appState.appSettings.allowYouTube = true
-        appState.appSettings.allowYouTubeShorts = true
-        appState.appSettings.allowVimeo = true
-        appState.appSettings.allowTwitch = true
-        appState.appSettings.allowGiphy = true
-        appState.appSettings.allowTenor = true
-        appState.appSettings.allowSpotify = true
-        appState.appSettings.allowAppleMusic = true
-        appState.appSettings.allowSoundCloud = true
-        appState.appSettings.allowFlickr = true
-        
+        appState.appSettings.setExternalMediaConsentForAllProviders(.undecided)
         // Reset thread preferences
         threadSortOrder = "hot"
         prioritizeFollowedUsers = true

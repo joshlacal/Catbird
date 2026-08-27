@@ -80,6 +80,26 @@ struct AppearanceSettingsView: View {
             }
             .pickerStyle(.menu)
             
+            #if os(iOS)
+            if UIApplication.shared.supportsAlternateIcons {
+                Section("App Icon") {
+                    NavigationLink(destination: AppIconSettingsView()) {
+                        HStack {
+                            Text("App Icon")
+                            Spacer()
+                            if let alternateName = UIApplication.shared.alternateIconName {
+                                Text(alternateName == "CatbirdClassic" ? "Classic" : alternateName)
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                Text("Default")
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+            }
+            #endif
+            
             // Accent Color Section
             Section("Accent Color") {
                 AccentColorPicker(selection: accentColor)

@@ -215,17 +215,7 @@ final class AppSettingsModel {
         target.showSavedFeedSamples = source.showSavedFeedSamples
 
         // External Media
-        target.allowYouTube = source.allowYouTube
-        target.allowYouTubeShorts = source.allowYouTubeShorts
-        target.allowVimeo = source.allowVimeo
-        target.allowTwitch = source.allowTwitch
-        target.allowGiphy = source.allowGiphy
-        target.allowTenor = source.allowTenor
-        target.allowSpotify = source.allowSpotify
-        target.allowAppleMusic = source.allowAppleMusic
-        target.allowSoundCloud = source.allowSoundCloud
-        target.allowFlickr = source.allowFlickr
-
+        target.externalMediaConsents = source.externalMediaConsents
         // WebView Embeds
         target.useWebViewEmbeds = source.useWebViewEmbeds
 
@@ -304,18 +294,20 @@ final class AppSettingsModel {
     // Local Feed Preferences (used in addition to server preferences)
     var showSavedFeedSamples: Bool = false
     
-    // External Media Preferences
-    var allowYouTube: Bool = true
-    var allowYouTubeShorts: Bool = true
-    var allowVimeo: Bool = true
-    var allowTwitch: Bool = true
-    var allowGiphy: Bool = true
-    var allowTenor: Bool = true
-    var allowSpotify: Bool = true
-    var allowAppleMusic: Bool = true
-    var allowSoundCloud: Bool = true
-    var allowFlickr: Bool = true
-    
+    // External Media Preferences (Tri-state consent per provider, default .undecided)
+    var externalMediaConsents: [String: String] = [:]
+
+    func consent(for provider: ExternalMediaProvider) -> ExternalMediaConsent {
+        if let raw = externalMediaConsents[provider.rawValue],
+           let consent = ExternalMediaConsent(rawValue: raw) {
+            return consent
+        }
+        return .undecided
+    }
+
+    func setConsent(_ consent: ExternalMediaConsent, for provider: ExternalMediaProvider) {
+        externalMediaConsents[provider.rawValue] = consent.rawValue
+    }
     // WebView Embeds
     var useWebViewEmbeds: Bool = true
     
@@ -420,17 +412,16 @@ final class AppSettingsModel {
         if let value = Self.boolValue(for: "showSavedFeedSamples", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { showSavedFeedSamples = value }
         
         // External Media
-        if let value = Self.boolValue(for: "allowYouTube", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { allowYouTube = value }
-        if let value = Self.boolValue(for: "allowYouTubeShorts", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { allowYouTubeShorts = value }
-        if let value = Self.boolValue(for: "allowVimeo", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { allowVimeo = value }
-        if let value = Self.boolValue(for: "allowTwitch", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { allowTwitch = value }
-        if let value = Self.boolValue(for: "allowGiphy", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { allowGiphy = value }
-        if let value = Self.boolValue(for: "allowTenor", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { allowTenor = value }
-        if let value = Self.boolValue(for: "allowSpotify", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { allowSpotify = value }
-        if let value = Self.boolValue(for: "allowAppleMusic", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { allowAppleMusic = value }
-        if let value = Self.boolValue(for: "allowSoundCloud", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { allowSoundCloud = value }
-        if let value = Self.boolValue(for: "allowFlickr", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { allowFlickr = value }
-        
+        for provider in ExternalMediaProvider.allCases {
+            if let raw = Self.stringValue(
+                for: "externalMediaConsent.\(provider.rawValue)",
+                accountDID: accountDID,
+                defaults: defaults,
+                includeLegacyFallback: false
+            ), let consent = ExternalMediaConsent(rawValue: raw) {
+                externalMediaConsents[provider.rawValue] = consent.rawValue
+            }
+        }
         // WebView Embeds
         if let value = Self.boolValue(for: "useWebViewEmbeds", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { useWebViewEmbeds = value }
         
@@ -522,17 +513,7 @@ final class AppSettingsModel {
         showSavedFeedSamples = false
         
         // External Media
-        allowYouTube = true
-        allowYouTubeShorts = true
-        allowVimeo = true
-        allowTwitch = true
-        allowGiphy = true
-        allowTenor = true
-        allowSpotify = true
-        allowAppleMusic = true
-        allowSoundCloud = true
-        allowFlickr = true
-        
+        externalMediaConsents = [:]
         // WebView Embeds
         useWebViewEmbeds = true
         

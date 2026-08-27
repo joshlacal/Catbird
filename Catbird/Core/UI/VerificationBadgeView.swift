@@ -31,8 +31,10 @@ enum VerificationBadge {
 
   static func kind(
     for state: AppBskyActorDefs.VerificationState?,
-    did: DID
+    did: DID,
+    hideBadges: Bool = false
   ) -> VerificationBadgeKind? {
+    guard !hideBadges else { return nil }
     if state?.trustedVerifierStatus == "valid" {
       return .trustedVerifier
     }
@@ -52,17 +54,18 @@ enum VerificationBadge {
   /// `.accessibilityLabel`.
   static func inlineText(
     for state: AppBskyActorDefs.VerificationState?,
-    did: DID
+    did: DID,
+    hideBadges: Bool = false
   ) -> Text? {
-    guard let kind = kind(for: state, did: did) else { return nil }
+    guard let kind = kind(for: state, did: did, hideBadges: hideBadges) else { return nil }
     return Text(Image(systemName: kind.symbolName)).foregroundColor(.blue)
   }
 }
 
 struct VerificationBadgeView: View {
+  @Environment(AppState.self) private var appState: AppState?
   let kind: VerificationBadgeKind
   var action: (() -> Void)? = nil
-
   init?(
     verification: AppBskyActorDefs.VerificationState?,
     did: DID,
@@ -81,18 +84,22 @@ struct VerificationBadgeView: View {
   }
 
   var body: some View {
-    Group {
-      if let action {
-        Button(action: action) {
+    if appState?.preferencesManager.hideVerificationBadges == true {
+      EmptyView()
+    } else {
+      Group {
+        if let action {
+          Button(action: action) {
+            icon
+          }
+          .buttonStyle(.plain)
+          .accessibilityAddTraits(.isButton)
+        } else {
           icon
         }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(.isButton)
-      } else {
-        icon
       }
+      .accessibilityLabel(kind.accessibilityLabel)
     }
-    .accessibilityLabel(kind.accessibilityLabel)
   }
 
   private var icon: some View {

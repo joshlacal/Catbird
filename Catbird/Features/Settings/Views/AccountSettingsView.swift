@@ -1,46 +1,115 @@
 import SwiftUI
 import Petrel
 import OSLog
+import UniformTypeIdentifiers
 
+private struct CARFileDocument: FileDocument {
+    static var readableContentTypes: [UTType] {
+        if let carType = UTType(filenameExtension: "car") {
+            return [carType, .data]
+        }
+        return [.data]
+    }
+    
+    var data: Data
+    
+    init(data: Data = Data()) {
+        self.data = data
+    }
+    
+    init(configuration: ReadConfiguration) throws {
+        self.data = configuration.file.regularFileContents ?? Data()
+    }
+    
+    func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
+        FileWrapper(regularFileWithContents: data)
+    }
+}
 struct AccountSettingsView: View {
     @Environment(AppState.self) private var appState
+    @Environment(AppStateManager.self) private var appStateManager
+    @Environment(\.webAuthenticationSession) private var webAuthenticationSession
+    
     @State private var isLoading = true
     @State private var profile: AppBskyActorDefs.ProfileViewDetailed?
-    @State private var accountInfo: ComAtprotoServerDescribeServer.Output?
-    
     private let logger = Logger(subsystem: "blue.catbird", category: "AccountSettings")
     
-    // Email verification
+    // Email management & verification
     @State private var isEmailVerified = false
     @State private var email = ""
+    @State private var hasEmailScope = false
+    @State private var emailAuthFactor: Bool?
     @State private var isShowingEmailSheet = false
-    
     // Handle management
     @State private var isShowingHandleSheet = false
-    @State private var checkingAvailability = false
     
-    // Account management
+    // Automation / Bot label
+    @State private var isBotAccount = false
+    
+    // CAR Repository Export
+    @State private var isExportingData = false
+    @State private var exportDocument: CARFileDocument?
+    @State private var isShowingFileExporter = false
+    @State private var exportFilename = "repository.car"
+    // Account status & management
+    @State private var isAccountActive: Bool?
+    @State private var accountStatus: String?
     @State private var isShowingDeactivateAlert = false
-    @State private var isShowingDeleteAlert = false
     @State private var deactivateConfirmText = ""
-    @State private var deleteConfirmText = ""
+    @State private var isDeactivating = false
+    @State private var isReactivating = false
     @State private var formError: String?
     @State private var showingFormError = false
     
-    // Export data
-    @State private var isExporting = false
-    @State private var exportCompleted = false
+    // Retained operation tasks
+    @State private var loadDetailsTask: Task<Void, Never>?
+    @State private var manageEmailTask: Task<Void, Never>?
+    @State private var sendVerificationTask: Task<Void, Never>?
+    @State private var deactivationTask: Task<Void, Never>?
+    @State private var reactivationTask: Task<Void, Never>?
+    @State private var verificationPollingTask: Task<Void, Never>?
+    @State private var exportTask: Task<Void, Never>?
+    @State private var consecutivePollingErrors = 0
     
+    // MARK: - Progressive Permission Presenter
     
-    // Email verification polling
-    @State private var verificationPollingTimer: Timer?
+    @MainActor
+    private func ensurePermission(_ permission: GatewayPermission) async throws {
+        let expectedDID = appState.userDID
+        try await appStateManager.authentication.ensureGatewayPermission(permission) { authURL in
+            if #available(iOS 17.4, macOS 14.4, *) {
+                return try await webAuthenticationSession.authenticate(
+                    using: authURL,
+                    callback: .https(host: "catbird.blue", path: "/oauth/permission-callback"),
+                    preferredBrowserSession: .shared,
+                    additionalHeaderFields: [:]
+                )
+            } else {
+                return try await webAuthenticationSession.authenticate(
+                    using: authURL,
+                    callbackURLScheme: "catbird",
+                    preferredBrowserSession: .shared
+                )
+            }
+        }
+        guard appState.userDID == expectedDID else {
+            throw GatewayPermissionError.stateChanged
+        }
+    }
     
     // MARK: - Error Handling
     
+    @MainActor
     private func handleAPIError(_ error: Error, operation: String) {
+        if error is CancellationError {
+            return
+        }
+        if let gatewayError = error as? GatewayPermissionError, gatewayError == .cancelled {
+            return
+        }
+        
         let errorMessage: String
         
-        // Check for network errors
         if let urlError = error as? URLError {
             switch urlError.code {
             case .notConnectedToInternet:
@@ -53,7 +122,6 @@ struct AccountSettingsView: View {
                 errorMessage = "Network error occurred. Please try again."
             }
         } else {
-            // Use our centralized error handler for consistent messaging
             let (_, userMessage, requiresReAuth) = AuthenticationErrorHandler.categorizeError(error)
             if requiresReAuth {
                 errorMessage = "\(userMessage) You may need to sign in again to continue."
@@ -67,86 +135,7 @@ struct AccountSettingsView: View {
         isLoading = false
     }
     
-    // MARK: - Computed Properties
-    
-    private var emailSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Email")
-                        .fontWeight(.medium)
-                    
-                    if email.isEmpty {
-                        Text("No email set")
-                            .appFont(AppTextRole.caption)
-                            .foregroundStyle(.secondary)
-                    } else {
-                        Text(email)
-                            .appFont(AppTextRole.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                
-                Spacer()
-                
-                emailStatusBadge
-            }
-            
-            if !isEmailVerified && !email.isEmpty {
-                emailVerificationActions
-            }
-        }
-    }
-    
-    private var emailStatusBadge: some View {
-        Group {
-            if isEmailVerified {
-                Label("Verified", systemImage: "checkmark.seal.fill")
-                    .appFont(AppTextRole.caption)
-                    .fontWeight(.medium)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Color.green.opacity(0.2))
-                    .foregroundStyle(.green)
-                    .cornerRadius(6)
-            } else if !email.isEmpty {
-                Label("Unverified", systemImage: "exclamationmark.triangle.fill")
-                    .appFont(AppTextRole.caption)
-                    .fontWeight(.medium)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Color.orange.opacity(0.2))
-                    .foregroundStyle(.orange)
-                    .cornerRadius(6)
-            }
-        }
-    }
-    
-    private var emailVerificationActions: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Button {
-                sendVerificationEmail()
-            } label: {
-                if isLoading {
-                    HStack {
-                        Text("Sending verification email...")
-                        Spacer()
-                        ProgressView()
-                            .scaleEffect(0.8)
-                    }
-                } else {
-                    Text("Send Verification Email")
-                }
-            }
-            .disabled(isLoading)
-            .foregroundStyle(.blue)
-            
-            Text("A verification email will be sent to \(email). Click the link in the email to verify your address.")
-                .appFont(AppTextRole.caption)
-                .foregroundStyle(.secondary)
-                .padding(.top, 4)
-        }
-    }
+    // MARK: - Body
     
     var body: some View {
         NavigationStack {
@@ -193,42 +182,118 @@ struct AccountSettingsView: View {
                             .padding(.vertical, 4)
                         }
                         
-                        // Change Handle requires OAuth scope not available with current auth flow
-                        // Button("Change Handle") {
-                        //     isShowingHandleSheet = true
-                        // }
+                        Button("Change Handle") {
+                            isShowingHandleSheet = true
+                        }
+                        .disabled(isLoading || isDeactivating || isReactivating)
                     }
                     
-                    // Data backup functionality removed
+                    emailSection
                     
-                    // Migration functionality removed
+                    Section("Account Type") {
+                        NavigationLink(destination: AutomationLabelSettingsView()) {
+                            HStack {
+                                Text("Automation Label")
+                                Spacer()
+                                if isBotAccount {
+                                    Text("Bot")
+                                        .font(.caption)
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2)
+                                        .background(Color.secondary.opacity(0.2))
+                                        .foregroundStyle(.secondary)
+                                        .clipShape(Capsule())
+                                } else {
+                                    Text("None")
+                                        .font(.callout)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                    }
                     
-                    // Danger Zone section removed - requires OAuth scopes not available
-                    // Section("Danger Zone") {
-                    //     Button("Deactivate Account") {
-                    //         isShowingDeactivateAlert = true
-                    //     }
-                    //     .foregroundStyle(.orange)
-                    //     
-                    //     Button("Delete Account") {
-                    //         isShowingDeleteAlert = true
-                    //     }
-                    //     .foregroundStyle(.red)
-                    // }
+                    Section {
+                        Button {
+                            exportRepositoryData()
+                        } label: {
+                            if isExportingData {
+                                HStack {
+                                    Text("Downloading Repository Data...")
+                                    Spacer()
+                                    ProgressView()
+                                        .scaleEffect(0.8)
+                                }
+                            } else {
+                                HStack {
+                                    Text("Export Repository Data")
+                                    Spacer()
+                                    Image(systemName: "arrow.down.doc")
+                                        .foregroundStyle(.blue)
+                                }
+                            }
+                        }
+                        .disabled(isLoading || isExportingData || isDeactivating || isReactivating)
+                    } header: {
+                        Text("Data Export")
+                    } footer: {
+                        Text("Download your public AT Protocol repository as a CAR (Content Addressable aRchive) file. This contains your public posts, likes, follows, and profile data, distinct from Catbird's local device backup.")
+                            .appFont(AppTextRole.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                    Section("Danger Zone") {
+                        if isAccountActive == true {
+                            Button("Deactivate Account") {
+                                deactivateConfirmText = ""
+                                isShowingDeactivateAlert = true
+                            }
+                            .foregroundStyle(.orange)
+                            .disabled(isDeactivating || isReactivating || isLoading)
+                            
+                            if let status = accountStatus, !status.isEmpty && status.lowercased() != "active" {
+                                Text("Account status: \(status.capitalized)")
+                                    .appFont(AppTextRole.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        } else if isAccountActive == false {
+                            if let status = accountStatus?.lowercased(), status == "deactivated" {
+                                Button {
+                                    reactivateAccount()
+                                } label: {
+                                    if isReactivating {
+                                        HStack {
+                                            Text("Reactivating Account...")
+                                            Spacer()
+                                            ProgressView()
+                                                .scaleEffect(0.8)
+                                        }
+                                    } else {
+                                        Text("Reactivate Account")
+                                    }
+                                }
+                                .disabled(isReactivating || isDeactivating || isLoading)
+                                .foregroundStyle(.blue)
+                            } else if let status = accountStatus, !status.isEmpty {
+                                accountUnavailableView(for: status)
+                            } else {
+                                accountUnavailableView(for: "inactive")
+                            }
+                        } else {
+                            if let status = accountStatus, !status.isEmpty {
+                                accountUnavailableView(for: status)
+                            } else {
+                                accountUnavailableView(for: "unavailable")
+                            }
+                        }
+                    }
                 }
             }
             .navigationTitle("Account Settings")
-    #if os(iOS)
-    .toolbarTitleDisplayMode(.inline)
-    #endif
+            #if os(iOS)
+            .toolbarTitleDisplayMode(.inline)
+            #endif
             .task {
                 logger.info("AccountSettingsView appeared, loading data...")
                 await loadAccountDetails()
-                
-                // Add a small delay to ensure model context is ready
-                try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
-                
-                // Backup functionality removed
                 logger.info("Initial data load complete")
             }
             .alert("Error", isPresented: $showingFormError) {
@@ -238,31 +303,47 @@ struct AccountSettingsView: View {
             }
             .sheet(isPresented: $isShowingEmailSheet) {
                 EmailUpdateSheet(
-                    currentEmail: email,
-                    onEmailUpdated: { newEmail in
-                        email = newEmail
-                        isEmailVerified = false
-                        Task {
-                            await loadAccountDetails()
+                    currentEmail: hasEmailScope ? email : "",
+                    emailAuthFactor: hasEmailScope ? emailAuthFactor : nil,
+                    ensurePermission: { permission in
+                        let targetDID = appState.userDID
+                        try await ensurePermission(permission)
+                        guard appState.userDID == targetDID else {
+                            throw GatewayPermissionError.stateChanged
                         }
+                    },
+                    onEmailUpdated: { _ in
+                        reloadAccountDetails()
                     }
                 )
             }
             .sheet(isPresented: $isShowingHandleSheet) {
                 HandleUpdateSheet(
                     currentHandle: profile?.handle.description ?? "",
-                    onHandleUpdated: {
-                        Task {
-                            await loadAccountDetails()
+                    ensurePermission: { permission in
+                        let targetDID = appState.userDID
+                        try await ensurePermission(permission)
+                        guard appState.userDID == targetDID else {
+                            throw GatewayPermissionError.stateChanged
                         }
+                    },
+                    onHandleUpdated: { newHandle in
+                        let targetDID = appState.userDID
+                        guard appState.userDID == targetDID else { return }
+                        do {
+                            try appStateManager.authentication.recordCurrentHandleChange(newHandle, for: targetDID)
+                        } catch {
+                            handleAPIError(error, operation: "update handle")
+                        }
+                        reloadAccountDetails()
                     }
                 )
             }
-            // Backup settings sheet removed
-            // Backup details sheet removed
             .alert("Deactivate Account", isPresented: $isShowingDeactivateAlert) {
                 TextField("Type DEACTIVATE to confirm", text: $deactivateConfirmText)
-                Button("Cancel", role: .cancel) { }
+                Button("Cancel", role: .cancel) {
+                    deactivateConfirmText = ""
+                }
                 Button("Deactivate", role: .destructive) {
                     if deactivateConfirmText == "DEACTIVATE" {
                         deactivateAccount()
@@ -272,220 +353,655 @@ struct AccountSettingsView: View {
             } message: {
                 Text("This will temporarily disable your account. You can reactivate it by logging in again.")
             }
-            .alert("Delete Account", isPresented: $isShowingDeleteAlert) {
-                TextField("Type DELETE to confirm", text: $deleteConfirmText)
-                Button("Cancel", role: .cancel) { }
-                Button("Delete", role: .destructive) {
-                    if deleteConfirmText == "DELETE" {
-                        deleteAccount()
-                    }
+            .fileExporter(
+                isPresented: $isShowingFileExporter,
+                document: exportDocument,
+                contentType: UTType(filenameExtension: "car") ?? .data,
+                defaultFilename: exportFilename
+            ) { result in
+                switch result {
+                case .success(let url):
+                    logger.info("Successfully exported repository CAR file to \(url.path)")
+                case .failure(let error):
+                    logger.error("Failed to save exported CAR file: \(error.localizedDescription)")
                 }
-                .disabled(deleteConfirmText != "DELETE")
-            } message: {
-                Text("This will permanently delete your account and all associated data. This action cannot be undone.")
+                exportDocument = nil
+            }
+            .interactiveDismissDisabled(isDeactivating || isReactivating || isExportingData)
+            .onDisappear {
+                loadDetailsTask?.cancel()
+                loadDetailsTask = nil
+                manageEmailTask?.cancel()
+                manageEmailTask = nil
+                sendVerificationTask?.cancel()
+                sendVerificationTask = nil
+                if !isDeactivating {
+                    deactivationTask?.cancel()
+                    deactivationTask = nil
+                }
+                if !isReactivating {
+                    reactivationTask?.cancel()
+                    reactivationTask = nil
+                }
+                verificationPollingTask?.cancel()
+                verificationPollingTask?.cancel()
+                verificationPollingTask = nil
+                exportTask?.cancel()
+                exportTask = nil
             }
         }
     }
     
+    // MARK: - Data Export
+    
+    @MainActor
+    private func exportRepositoryData() {
+        guard let client = appState.atProtoClient else { return }
+        let userDID = appState.userDID
+        let handle = profile?.handle.description ?? userDID
+        let sanitizedHandle = handle.replacingOccurrences(of: "/", with: "-")
+        exportFilename = "\(sanitizedHandle)-repository.car"
+        isExportingData = true
+        
+        exportTask?.cancel()
+        exportTask = Task { @MainActor in
+            defer { isExportingData = false }
+            do {
+                let (code, output) = try await client.com.atproto.sync.getRepo(
+                    input: .init(did: try DID(didString: userDID))
+                )
+                guard !Task.isCancelled else { return }
+                if code == 200, let output = output, !output.data.isEmpty {
+                    self.exportDocument = CARFileDocument(data: output.data)
+                    self.isShowingFileExporter = true
+                } else {
+                    formError = "Failed to export repository (status \(code))."
+                    showingFormError = true
+                }
+            } catch {
+                guard !Task.isCancelled else { return }
+                handleAPIError(error, operation: "export repository data")
+            }
+        }
+    }
+    
+    // MARK: - Data Loading
+    
+    @MainActor
+    private func reloadAccountDetails() {
+        loadDetailsTask?.cancel()
+        loadDetailsTask = Task { @MainActor in
+            await loadAccountDetails()
+        }
+    }
+    
+    @MainActor
     private func loadAccountDetails() async {
         isLoading = true
-        defer { isLoading = false }
+        isAccountActive = nil
+        accountStatus = nil
+        
+        defer {
+            if !Task.isCancelled {
+                isLoading = false
+            }
+        }
         
         guard let client = appState.atProtoClient else {
-            handleAPIError(AuthError.clientNotInitialized, operation: "load account details")
+            if !Task.isCancelled {
+                handleAPIError(AuthError.clientNotInitialized, operation: "load account details")
+            }
             return
         }
         
+        let userDID = appState.userDID
+        
+        // 1. Load session status & email info in independent do/catch
         do {
-            // Get current user profile
-             let userDID = appState.userDID
+            let grantedScopes = try await client.fetchGrantedScopes(for: userDID)
+            guard !Task.isCancelled else { return }
             
+            let emailScopeGranted = grantedScopes.contains(GatewayPermission.accountEmailManage.rawValue)
+            self.hasEmailScope = emailScopeGranted
+            
+            let (sessionCode, sessionData) = try await client.com.atproto.server.getSession()
+            guard !Task.isCancelled else { return }
+            
+            if sessionCode == 200, let session = sessionData {
+                if emailScopeGranted {
+                    if let sessionEmail = session.email, !sessionEmail.isEmpty {
+                        self.email = sessionEmail
+                    } else {
+                        self.email = ""
+                    }
+                    self.isEmailVerified = session.emailConfirmed ?? false
+                    self.emailAuthFactor = session.emailAuthFactor
+                } else {
+                    self.email = ""
+                    self.isEmailVerified = false
+                    self.emailAuthFactor = nil
+                }
+                self.isAccountActive = session.active
+                self.accountStatus = session.status
+            } else {
+                self.email = ""
+                self.isEmailVerified = false
+                self.emailAuthFactor = nil
+                self.isAccountActive = nil
+                self.accountStatus = nil
+            }
+        } catch {
+            guard !Task.isCancelled else { return }
+            self.hasEmailScope = false
+            self.email = ""
+            self.isEmailVerified = false
+            self.emailAuthFactor = nil
+            self.isAccountActive = nil
+            self.accountStatus = nil
+            handleAPIError(error, operation: "load account session")
+        }
+        
+        guard !Task.isCancelled else { return }
+        
+        // 2. Load profile and self-labels in independent do/catch so profile failure cannot erase status or reactivation
+        do {
             let (profileCode, profileData) = try await client.app.bsky.actor.getProfile(
                 input: .init(actor: ATIdentifier(string: userDID))
             )
+            guard !Task.isCancelled else { return }
             
             if profileCode == 200, let profile = profileData {
                 self.profile = profile
             }
             
-            // Try to get session info which may include email
-            let (sessionCode, sessionData) = try await client.com.atproto.server.getSession()
-            
-            if sessionCode == 200, let session = sessionData {
-                self.email = session.email ?? ""
-                self.isEmailVerified = session.emailConfirmed ?? false
+            let (recCode, recData) = try await client.com.atproto.repo.getRecord(
+                input: .init(
+                    repo: try ATIdentifier(string: userDID),
+                    collection: try NSID(nsidString: "app.bsky.actor.profile"),
+                    rkey: try RecordKey(keyString: "self")
+                )
+            )
+            guard !Task.isCancelled else { return }
+            if recCode == 200, let record = recData,
+               case let .knownType(profileRecord) = record.value,
+               let profile = profileRecord as? AppBskyActorProfile {
+                if case let .comAtprotoLabelDefsSelfLabels(selfLabels) = profile.labels {
+                    self.isBotAccount = selfLabels.values.contains { $0.val == "bot" }
+                } else {
+                    self.isBotAccount = false
+                }
             }
-            
         } catch {
-            handleAPIError(error, operation: "load account details")
+            guard !Task.isCancelled else { return }
+            logger.warning("Failed to load profile details: \(error.localizedDescription)")
         }
     }
     
+    // MARK: - Email Actions
+    
+    @MainActor
+    private func manageEmailAction() {
+        manageEmailTask?.cancel()
+        manageEmailTask = Task { @MainActor in
+            guard let client = appState.atProtoClient else {
+                if !Task.isCancelled {
+                    handleAPIError(AuthError.clientNotInitialized, operation: "manage email")
+                }
+                return
+            }
+            isLoading = true
+            defer {
+                if !Task.isCancelled {
+                    isLoading = false
+                }
+            }
+            
+            let targetDID = appState.userDID
+            do {
+                try await ensurePermission(.accountEmailManage)
+                guard !Task.isCancelled, appState.userDID == targetDID else {
+                    if appState.userDID != targetDID {
+                        throw GatewayPermissionError.stateChanged
+                    }
+                    return
+                }
+                
+                let userDID = appState.userDID
+                let grantedScopes = try await client.fetchGrantedScopes(for: userDID)
+                guard !Task.isCancelled, appState.userDID == targetDID else {
+                    if appState.userDID != targetDID {
+                        throw GatewayPermissionError.stateChanged
+                    }
+                    return
+                }
+                
+                let emailScopeGranted = grantedScopes.contains(GatewayPermission.accountEmailManage.rawValue)
+                self.hasEmailScope = emailScopeGranted
+                
+                guard emailScopeGranted else {
+                    self.email = ""
+                    self.isEmailVerified = false
+                    self.emailAuthFactor = nil
+                    formError = "Missing required email management permission."
+                    showingFormError = true
+                    return
+                }
+                let (sessionCode, sessionData) = try await client.com.atproto.server.getSession()
+                guard !Task.isCancelled else { return }
+                
+                if sessionCode == 200, let session = sessionData {
+                    if let sessionEmail = session.email, !sessionEmail.isEmpty {
+                        self.email = sessionEmail
+                    } else {
+                        self.email = ""
+                    }
+                    self.isEmailVerified = session.emailConfirmed ?? false
+                    self.emailAuthFactor = session.emailAuthFactor
+                    self.isAccountActive = session.active
+                    self.accountStatus = session.status
+                    
+                    guard !Task.isCancelled else { return }
+                    isShowingEmailSheet = true
+                } else {
+                    self.email = ""
+                    self.isEmailVerified = false
+                    self.emailAuthFactor = nil
+                    formError = "Failed to load account session (Code: \(sessionCode))."
+                    showingFormError = true
+                }
+            } catch is CancellationError {
+                // User cancelled permission upgrade - preserve form
+            } catch GatewayPermissionError.cancelled {
+                // User cancelled permission upgrade - preserve form
+            } catch {
+                guard !Task.isCancelled else { return }
+                handleAPIError(error, operation: "manage email")
+            }
+        }
+    }
+    
+    @MainActor
     private func sendVerificationEmail() {
         isLoading = true
         
-        Task {
-            defer { 
-                Task { @MainActor in
+        sendVerificationTask?.cancel()
+        sendVerificationTask = Task { @MainActor in
+            defer {
+                if !Task.isCancelled {
                     isLoading = false
                 }
             }
             
             guard let client = appState.atProtoClient else {
-                Task { @MainActor in
+                if !Task.isCancelled {
                     handleAPIError(AuthError.clientNotInitialized, operation: "send verification email")
                 }
                 return
             }
-            
+            let targetDID = appState.userDID
             do {
-                // Use the AT Protocol email confirmation API to (re)send verification email
+                try await ensurePermission(.accountEmailManage)
+                guard !Task.isCancelled, appState.userDID == targetDID else {
+                    if appState.userDID != targetDID {
+                        throw GatewayPermissionError.stateChanged
+                    }
+                    return
+                }
+                
                 let (responseCode) = try await client.com.atproto.server.requestEmailConfirmation()
                 
-                if responseCode == 200 {
-                    Task { @MainActor in
-                        startEmailVerificationPolling()
-                    }
-                } else {
-                    Task { @MainActor in
-                        formError = "Failed to send verification email (Code: \(responseCode)). Please try again."
-                        showingFormError = true
-                    }
+                if (200...299).contains(responseCode) {
+                    startEmailVerificationPolling()
+                } else if !Task.isCancelled {
+                    formError = "Failed to send verification email (Code: \(responseCode)). Please try again."
+                    showingFormError = true
+                }
+            } catch is CancellationError {
+                // User cancelled permission upgrade - preserve form
+            } catch GatewayPermissionError.cancelled {
+                // User cancelled permission upgrade - preserve form
+            } catch {
+                guard !Task.isCancelled else { return }
+                handleAPIError(error, operation: "send verification email")
+            }
+        }
+    }
+    
+    @MainActor
+    private func startEmailVerificationPolling() {
+        verificationPollingTask?.cancel()
+        consecutivePollingErrors = 0
+        
+        verificationPollingTask = Task { @MainActor in
+            var pollCount = 0
+            let maxPolls = 60
+            let maxConsecutiveErrors = 3
+            
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(nanoseconds: 5_000_000_000)
+                } catch {
+                    break
                 }
                 
-            } catch {
-                Task { @MainActor in
-                    handleAPIError(error, operation: "send verification email")
-                }
-            }
-        }
-    }
-    
-    private func startEmailVerificationPolling() {
-        verificationPollingTimer?.invalidate()
-        
-        var pollCount = 0
-        let maxPolls = 60
-        
-        verificationPollingTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { timer in
-            guard self != nil else {
-                timer.invalidate()
-                return
-            }
-            
-            pollCount += 1
-            
-            let pollCount = pollCount
-
-            Task {
-                await self.checkEmailVerificationStatus()
-                if await self.isEmailVerified || pollCount >= maxPolls {
-                    Task { @MainActor in
-                        timer.invalidate()
-                        self.verificationPollingTimer = nil
+                guard !Task.isCancelled else { break }
+                
+                pollCount += 1
+                let success = await checkEmailVerificationStatus()
+                
+                guard !Task.isCancelled else { break }
+                
+                if !success {
+                    consecutivePollingErrors += 1
+                    if consecutivePollingErrors >= maxConsecutiveErrors {
+                        formError = "Email verification check failed after multiple attempts. Please try again."
+                        showingFormError = true
+                        break
                     }
+                } else {
+                    consecutivePollingErrors = 0
                 }
+                
+                if isEmailVerified || pollCount >= maxPolls {
+                    break
+                }
+            }
+            
+            if !Task.isCancelled {
+                verificationPollingTask = nil
             }
         }
     }
     
-    private func checkEmailVerificationStatus() async {
-        guard let client = appState.atProtoClient else { return }
+    @MainActor
+    @discardableResult
+    private func checkEmailVerificationStatus() async -> Bool {
+        guard let client = appState.atProtoClient else { return false }
         
         do {
+            let userDID = appState.userDID
+            let grantedScopes = try await client.fetchGrantedScopes(for: userDID)
+            guard !Task.isCancelled else { return false }
+            
+            let emailScopeGranted = grantedScopes.contains(GatewayPermission.accountEmailManage.rawValue)
+            self.hasEmailScope = emailScopeGranted
+            
+            if !emailScopeGranted {
+                self.email = ""
+                self.isEmailVerified = false
+                self.emailAuthFactor = nil
+                return false
+            }
+            
             let (sessionCode, sessionData) = try await client.com.atproto.server.getSession()
+            guard !Task.isCancelled else { return false }
             
             if sessionCode == 200, let session = sessionData {
-                Task { @MainActor in
-                    self.isEmailVerified = session.emailConfirmed ?? false
-                    
-                    if self.isEmailVerified {
-                        self.verificationPollingTimer?.invalidate()
-                        self.verificationPollingTimer = nil
-                    }
+                self.isEmailVerified = session.emailConfirmed ?? false
+                if let sessionEmail = session.email, !sessionEmail.isEmpty {
+                    self.email = sessionEmail
+                } else {
+                    self.email = ""
                 }
+                self.emailAuthFactor = session.emailAuthFactor
+                self.isAccountActive = session.active
+                self.accountStatus = session.status
+                return true
+            } else {
+                self.email = ""
+                self.isEmailVerified = false
+                self.emailAuthFactor = nil
+                self.isAccountActive = nil
+                self.accountStatus = nil
+                return false
             }
         } catch {
-            // Silently fail during polling
+            if Task.isCancelled || error is CancellationError {
+                return false
+            }
+            logger.warning("Polling getSession error: \(error.localizedDescription)")
+            return false
         }
     }
     
-    // Backup functionality removed
+    // MARK: - Account Management Actions
     
+    @MainActor
     private func deactivateAccount() {
-        Task {
-            guard let client = appState.atProtoClient else {
-                handleAPIError(AuthError.clientNotInitialized, operation: "deactivate account")
-                return
+        isDeactivating = true
+        
+        deactivationTask?.cancel()
+        deactivationTask = Task { @MainActor in
+            defer {
+                isDeactivating = false
             }
             
+            guard let client = appState.atProtoClient else {
+                if !Task.isCancelled {
+                    handleAPIError(AuthError.clientNotInitialized, operation: "deactivate account")
+                }
+                return
+            }
+            let targetDID = appState.userDID
             do {
+                try await ensurePermission(.accountStatusManage)
+                guard !Task.isCancelled, appState.userDID == targetDID else {
+                    if appState.userDID != targetDID {
+                        throw GatewayPermissionError.stateChanged
+                    }
+                    return
+                }
+                
                 let responseCode = try await client.com.atproto.server.deactivateAccount(
                     input: .init(deleteAfter: nil)
                 )
                 
-                if responseCode == 200 {
-                    try await appState.handleLogout()
-                } else {
-                    formError = "Failed to deactivate account. Please try again."
+                if (200...299).contains(responseCode) {
+                    // Always process 2xx and reconcile logout even if view disappears
+                    try? await appState.handleLogout()
+                } else if !Task.isCancelled {
+                    formError = "Failed to deactivate account (Code: \(responseCode)). Please try again."
                     showingFormError = true
                 }
+            } catch is CancellationError {
+                // User cancelled permission upgrade - preserve form
+            } catch GatewayPermissionError.cancelled {
+                // User cancelled permission upgrade - preserve form
             } catch {
+                guard !Task.isCancelled else { return }
                 handleAPIError(error, operation: "deactivate account")
             }
         }
     }
     
-    private func deleteAccount() {
-        Task {
-            guard let client = appState.atProtoClient else {
-                handleAPIError(AuthError.clientNotInitialized, operation: "delete account")
-                return
+    @MainActor
+    private func reactivateAccount() {
+        guard isAccountActive == false, accountStatus?.lowercased() == "deactivated" else { return }
+        isReactivating = true
+        
+        reactivationTask?.cancel()
+        reactivationTask = Task { @MainActor in
+            defer {
+                isReactivating = false
             }
             
+            guard let client = appState.atProtoClient else {
+                if !Task.isCancelled {
+                    handleAPIError(AuthError.clientNotInitialized, operation: "reactivate account")
+                }
+                return
+            }
+            let targetDID = appState.userDID
             do {
-                let responseCode = try await client.com.atproto.server.deleteAccount(
-                    input: .init(did: try DID(didString: appState.userDID ?? ""), password: "", token: "")
-                )
+                try await ensurePermission(.accountStatusManage)
+                guard !Task.isCancelled, appState.userDID == targetDID else {
+                    if appState.userDID != targetDID {
+                        throw GatewayPermissionError.stateChanged
+                    }
+                    return
+                }
                 
-                if responseCode == 200 {
-                    try await appState.handleLogout()
-                } else {
-                    formError = "Failed to delete account. Please contact support."
+                let responseCode = try await client.com.atproto.server.activateAccount()
+                
+                if (200...299).contains(responseCode) {
+                    // Always process 2xx and reconcile status even if view disappears
+                    await loadAccountDetails()
+                } else if !Task.isCancelled {
+                    formError = "Failed to reactivate account (Code: \(responseCode)). Please try again."
                     showingFormError = true
                 }
+            } catch is CancellationError {
+                // User cancelled permission upgrade - preserve form
+            } catch GatewayPermissionError.cancelled {
+                // User cancelled permission upgrade - preserve form
             } catch {
-                handleAPIError(error, operation: "delete account")
+                guard !Task.isCancelled else { return }
+                handleAPIError(error, operation: "reactivate account")
             }
         }
     }
-}
-
-
-// MARK: - Helper Functions
-
-private func colorFromString(_ colorName: String) -> Color {
-    switch colorName {
-    case "blue":
-        return .blue
-    case "green":
-        return .green
-    case "red":
-        return .red
-    case "orange":
-        return .orange
-    case "yellow":
-        return .yellow
-    case "purple":
-        return .purple
-    default:
-        return .primary
+    
+    // MARK: - Computed Subviews
+    
+    private var emailSection: some View {
+        Section("Email") {
+            if hasEmailScope {
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Email Address")
+                            .fontWeight(.medium)
+                        
+                        if email.isEmpty {
+                            Text("No email set")
+                                .appFont(AppTextRole.caption)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Text(email)
+                                .appFont(AppTextRole.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    
+                    Spacer()
+                    
+                    emailStatusBadge
+                }
+                
+                if !isEmailVerified && !email.isEmpty {
+                    emailVerificationActions
+                }
+                
+                Button("Manage Email") {
+                    manageEmailAction()
+                }
+                .disabled(isLoading || isDeactivating || isReactivating)
+            } else {
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Email")
+                            .fontWeight(.medium)
+                        
+                        Text("Manage email")
+                            .appFont(AppTextRole.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    
+                    Spacer()
+                }
+                
+                Button("Manage Email") {
+                    manageEmailAction()
+                }
+                .disabled(isLoading || isDeactivating || isReactivating)
+            }
+        }
+    }
+    
+    private var emailStatusBadge: some View {
+        Group {
+            if isEmailVerified {
+                Label("Verified", systemImage: "checkmark.seal.fill")
+                    .appFont(AppTextRole.caption)
+                    .fontWeight(.medium)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.green.opacity(0.2))
+                    .foregroundStyle(.green)
+                    .cornerRadius(6)
+            } else if !email.isEmpty {
+                Label("Unverified", systemImage: "exclamationmark.triangle.fill")
+                    .appFont(AppTextRole.caption)
+                    .fontWeight(.medium)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.orange.opacity(0.2))
+                    .foregroundStyle(.orange)
+                    .cornerRadius(6)
+            }
+        }
+    }
+    
+    private var emailVerificationActions: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                sendVerificationEmail()
+            } label: {
+                if isLoading {
+                    HStack {
+                        Text("Sending verification email...")
+                        Spacer()
+                        ProgressView()
+                            .scaleEffect(0.8)
+                    }
+                } else {
+                    Text("Send Verification Email")
+                }
+            }
+            .disabled(isLoading || isDeactivating || isReactivating)
+            
+            Text("A verification email will be sent to \(email). Click the link in the email to verify your address.")
+                .appFont(AppTextRole.caption)
+                .foregroundStyle(.secondary)
+                .padding(.top, 4)
+        }
+    }
+    
+    private func accountUnavailableInfo(for status: String) -> (title: String, message: String, icon: String) {
+        let normalizedStatus = status.lowercased()
+        switch normalizedStatus {
+        case "takendown", "taken-down":
+            return ("Account Taken Down", "This account has been taken down and is unavailable.", "xmark.octagon.fill")
+        case "suspended":
+            return ("Account Suspended", "This account is suspended and cannot be reactivated.", "exclamationmark.octagon.fill")
+        case "deleted":
+            return ("Account Deleted", "This account has been deleted.", "trash.fill")
+        case "inactive":
+            return ("Account Inactive", "This account is inactive.", "exclamationmark.triangle.fill")
+        case "unavailable":
+            return ("Account Unavailable", "Account status is currently unavailable.", "exclamationmark.triangle.fill")
+        default:
+            return ("Account Unavailable", "This account is currently \(status).", "exclamationmark.triangle.fill")
+        }
+    }
+    
+    private func accountUnavailableView(for status: String) -> some View {
+        let info = accountUnavailableInfo(for: status)
+        return VStack(alignment: .leading, spacing: 6) {
+            Label(info.title, systemImage: info.icon)
+                .fontWeight(.medium)
+                .foregroundStyle(.red)
+            
+            Text(info.message)
+                .appFont(AppTextRole.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 4)
     }
 }
 
 #Preview("AccountSettingsView") {
-  NavigationStack {
-    AccountSettingsView()
-  }
-  .previewWithAuthenticatedState()
+    NavigationStack {
+        AccountSettingsView()
+    }
+    .previewWithAuthenticatedState()
 }

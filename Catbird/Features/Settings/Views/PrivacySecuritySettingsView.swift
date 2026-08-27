@@ -43,15 +43,27 @@ struct LoggedOutVisibilityChangeGate {
 
 struct PrivacySecuritySettingsView: View {
     @Environment(AppState.self) private var appState
+    @Environment(AppStateManager.self) private var appStateManager
+    @Environment(\.webAuthenticationSession) private var webAuthenticationSession
+    
+    // 2FA state
+    @State private var email: String = ""
+    @State private var isEmailVerified: Bool = false
+    @State private var emailAuthFactor: Bool? = nil
+    @State private var isLoading2FA: Bool = true
+    @State private var isUpdating2FA: Bool = false
+    @State private var isRequestingDisableCode: Bool = false
+    @State private var isSubmittingDisableCode: Bool = false
+    @State private var showEnable2FAConfirmation: Bool = false
+    @State private var showDisable2FASheet: Bool = false
+    @State private var disable2FACode: String = ""
+    @State private var show2FAError: Bool = false
+    @State private var twoFAErrorMessage: String = ""
+    @State private var twoFATask: Task<Void, Never>? = nil
     
     // Loading states
-    @State private var isLoadingAppPasswords = false
     @State private var isLoadingBlocks = false
     @State private var isLoadingMutes = false
-    
-    // App passwords
-    @State private var appPasswords: [AppPassword] = []
-    @State private var isShowingAppPasswordSheet = false
     
     // Block and mute lists
     @State private var blockedProfiles: [String] = []
@@ -66,6 +78,13 @@ struct PrivacySecuritySettingsView: View {
     @State private var loggedOutVisibilityErrorMessage = ""
     @State private var loggedOutVisibilityChangeGate = LoggedOutVisibilityChangeGate()
     
+    // Algorithmic Recommendations Opt-Out (G34)
+    @State private var hideFromAlgorithmicRecommendations: Bool = false
+    @State private var isLoadingAlgorithmicVisibility = false
+    @State private var isUpdatingAlgorithmicVisibility = false
+    @State private var showAlgorithmicVisibilityError = false
+    @State private var algorithmicVisibilityErrorMessage = ""
+    @State private var algorithmicVisibilityTask: Task<Void, Never>? = nil
     // Biometric error handling
     @State private var showBiometricError = false
     @State private var biometricErrorMessage = ""
@@ -123,35 +142,9 @@ struct PrivacySecuritySettingsView: View {
                 }
             }
             
-            // App Passwords section removed - requires OAuth scopes not available
-            // Section("App Passwords") {
-            //     NavigationLink {
-            //         AppPasswordsView()
-            //             .applyAppStateEnvironment(appState)
-            //     } label: {
-            //         HStack {
-            //             VStack(alignment: .leading, spacing: 4) {
-            //                 Text("App Passwords")
-            //                     .fontWeight(.medium)
-            //                 
-            //                 Text("Create passwords for third-party apps")
-            //                     .appFont(AppTextRole.caption)
-            //                     .foregroundStyle(.secondary)
-            //             }
-            //             
-            //             Spacer()
-            //             
-            //             if isLoadingAppPasswords {
-            //                 ProgressView()
-            //                     .controlSize(.small)
-            //             } else {
-            //                 Text("\(appPasswords.count)")
-            //                     .foregroundStyle(.secondary)
-            //             }
-            //         }
-            //     }
-            // }
-            
+            // Two-Factor Authentication Section
+            twoFactorSection
+
             Section("Account Privacy") {
                 Toggle("Logged-Out Visibility", isOn: $loggedOutVisibility)
                     .tint(.blue)
@@ -164,6 +157,30 @@ struct PrivacySecuritySettingsView: View {
                         }
                     }
                 
+                Toggle("Ask apps to hide my posts from algorithmic recommendations", isOn: $hideFromAlgorithmicRecommendations)
+                    .tint(.blue)
+                    .disabled(isLoadingAlgorithmicVisibility || isUpdatingAlgorithmicVisibility)
+                    .onChange(of: hideFromAlgorithmicRecommendations) { oldValue, newValue in
+                        guard oldValue != newValue else { return }
+                        algorithmicVisibilityTask?.cancel()
+                        algorithmicVisibilityTask = Task {
+                            await updateAlgorithmicVisibility(newValue, previousValue: oldValue)
+                        }
+                    }
+                
+                NavigationLink(destination: ActivityPrivacySettingsView()) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Activity Privacy")
+                                .fontWeight(.medium)
+                            Text("Who can subscribe to post notifications")
+                                .appFont(AppTextRole.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                    }
+                }
+                
                 Toggle("Attribution Tracking", isOn: Binding(
                     get: { appState.appSettings.enableViaAttribution },
                     set: { appState.appSettings.enableViaAttribution = $0 }
@@ -175,11 +192,15 @@ struct PrivacySecuritySettingsView: View {
                     .foregroundStyle(.secondary)
                     .padding(.bottom, 4)
                 
+                Text("Requests that Bluesky and third-party apps do not include your posts in algorithmic feeds and discovery features.")
+                    .appFont(AppTextRole.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.bottom, 4)
+                
                 Text("Attribution tracking credits users when you like or repost content you discovered through their reposts.")
                     .appFont(AppTextRole.caption)
                     .foregroundStyle(.secondary)
             }
-
             #if os(iOS)
             Section("MLS Encrypted Chat") {
                 NavigationLink {
@@ -297,13 +318,6 @@ struct PrivacySecuritySettingsView: View {
                 }
             }
             
-            // About App Passwords section removed - feature unavailable with current OAuth scopes
-            // Section("About App Passwords") {
-            //     Text("App passwords let you securely use third-party apps with your Bluesky account without sharing your main password.")
-            //         .appFont(AppTextRole.caption)
-            //         .foregroundStyle(.secondary)
-            // }
-            
             Section("About Privacy Controls") {
                 Text("Blocking prevents an account from interacting with you, including following you or seeing your content in their feeds.")
                     .appFont(AppTextRole.caption)
@@ -339,16 +353,277 @@ struct PrivacySecuritySettingsView: View {
         } message: {
             Text(loggedOutVisibilityErrorMessage)
         }
+        .alert("Algorithmic Recommendations", isPresented: $showAlgorithmicVisibilityError) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(algorithmicVisibilityErrorMessage)
+        }
+        .alert("Enable Email 2FA?", isPresented: $showEnable2FAConfirmation) {
+            Button("Cancel", role: .cancel) { }
+            Button("Enable") {
+                enable2FAAction()
+            }
+        } message: {
+            Text("An authentication code will be sent to \(email) each time you sign in to your Bluesky account.")
+        }
+        .alert("Two-Factor Authentication", isPresented: $show2FAError) {
+            Button("OK", role: .cancel) {
+                show2FAError = false
+            }
+        } message: {
+            Text(twoFAErrorMessage)
+        }
+        .sheet(isPresented: $showDisable2FASheet) {
+            NavigationStack {
+                Form {
+                    Section {
+                        Text("A confirmation code has been sent to \(email). Enter the code below to disable two-factor authentication.")
+                            .appFont(AppTextRole.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    
+                    Section("Confirmation Code") {
+                        TextField("Enter confirmation code", text: $disable2FACode)
+                            #if os(iOS)
+                            .textInputAutocapitalization(.never)
+                            #endif
+                            .autocorrectionDisabled(true)
+                            .disabled(isSubmittingDisableCode)
+                        
+                        Button("Resend Code") {
+                            startDisable2FAFlow()
+                        }
+                        .disabled(isRequestingDisableCode || isSubmittingDisableCode)
+                    }
+                }
+                .navigationTitle("Disable 2FA")
+                #if os(iOS)
+                .toolbarTitleDisplayMode(.inline)
+                #endif
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Cancel", systemImage: "xmark") {
+                            showDisable2FASheet = false
+                        }
+                        .disabled(isSubmittingDisableCode)
+                    }
+                    
+                    ToolbarItem(placement: .primaryAction) {
+                        Button("Disable") {
+                            submitDisable2FA(token: disable2FACode)
+                        }
+                        .disabled(disable2FACode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSubmittingDisableCode)
+                    }
+                }
+            }
+            .presentationDetents([.medium])
+        }
+        .onDisappear {
+            twoFATask?.cancel()
+            twoFATask = nil
+            algorithmicVisibilityTask?.cancel()
+            algorithmicVisibilityTask = nil
+        }
     }
     
     private func loadData() async {
         await loadLoggedOutVisibility()
-        // Load app passwords
-        await loadAppPasswords()
-        
+        await loadAlgorithmicVisibility()
+        await load2FAStatus()
         // Load blocks and mutes counts
         await loadBlocksCount()
         await loadMutesCount()
+    }
+
+    // MARK: - Progressive Permission & 2FA
+    
+    @MainActor
+    private func ensurePermission(_ permission: GatewayPermission) async throws {
+        try await appStateManager.authentication.ensureGatewayPermission(permission) { authURL in
+            if #available(iOS 17.4, macOS 14.4, *) {
+                return try await webAuthenticationSession.authenticate(
+                    using: authURL,
+                    callback: .https(host: "catbird.blue", path: "/oauth/permission-callback"),
+                    preferredBrowserSession: .shared,
+                    additionalHeaderFields: [:]
+                )
+            } else {
+                return try await webAuthenticationSession.authenticate(
+                    using: authURL,
+                    callbackURLScheme: "catbird",
+                    preferredBrowserSession: .shared
+                )
+            }
+        }
+    }
+    
+    @MainActor
+    private func load2FAStatus() async {
+        guard appState.isAuthenticated, let client = appState.atProtoClient else {
+            isLoading2FA = false
+            return
+        }
+        
+        isLoading2FA = true
+        defer { isLoading2FA = false }
+        
+        do {
+            let (code, session) = try await client.com.atproto.server.getSession()
+            if code == 200, let session = session {
+                self.email = session.email ?? ""
+                self.isEmailVerified = session.emailConfirmed ?? false
+                self.emailAuthFactor = session.emailAuthFactor
+            }
+        } catch {
+            logger.error("Error loading 2FA session info: \(error.localizedDescription)")
+        }
+    }
+    
+    @MainActor
+    private func enable2FAAction() {
+        twoFATask?.cancel()
+        twoFATask = Task { @MainActor in
+            guard let client = appState.atProtoClient else { return }
+            
+            isUpdating2FA = true
+            defer { isUpdating2FA = false }
+            
+            do {
+                try await ensurePermission(.accountEmailManage)
+                guard !Task.isCancelled else { return }
+                
+                // Fetch fresh session to get the authoritative unredacted email under the upgraded scope
+                let (sessionCode, sessionData) = try await client.com.atproto.server.getSession()
+                guard !Task.isCancelled else { return }
+                guard sessionCode == 200, let session = sessionData, let sessionEmail = session.email, !sessionEmail.isEmpty else {
+                    throw NSError(
+                        domain: "PrivacySecuritySettings",
+                        code: sessionCode,
+                        userInfo: [NSLocalizedDescriptionKey: "Failed to retrieve account email from server."]
+                    )
+                }
+                self.email = sessionEmail
+                self.isEmailVerified = session.emailConfirmed ?? false
+                self.emailAuthFactor = session.emailAuthFactor
+                
+                let input = ComAtprotoServerUpdateEmail.Input(
+                    email: sessionEmail,
+                    emailAuthFactor: true,
+                    token: nil
+                )
+                let responseCode = try await client.com.atproto.server.updateEmail(input: input)
+                
+                if (200...299).contains(responseCode) {
+                    await load2FAStatus()
+                } else if !Task.isCancelled {
+                    twoFAErrorMessage = "Failed to enable two-factor authentication (Code: \(responseCode))."
+                    show2FAError = true
+                }
+            } catch is CancellationError {
+                // Cancelled
+            } catch GatewayPermissionError.cancelled {
+                // Cancelled
+            } catch {
+                guard !Task.isCancelled else { return }
+                twoFAErrorMessage = error.localizedDescription
+                show2FAError = true
+            }
+        }
+    }
+    
+    @MainActor
+    private func startDisable2FAFlow() {
+        twoFATask?.cancel()
+        twoFATask = Task { @MainActor in
+            guard let client = appState.atProtoClient else { return }
+            
+            isRequestingDisableCode = true
+            defer { isRequestingDisableCode = false }
+            
+            do {
+                try await ensurePermission(.accountEmailManage)
+                guard !Task.isCancelled else { return }
+                
+                let (sessionCode, sessionData) = try await client.com.atproto.server.getSession()
+                guard !Task.isCancelled else { return }
+                if sessionCode == 200, let session = sessionData, let sessionEmail = session.email, !sessionEmail.isEmpty {
+                    self.email = sessionEmail
+                    self.isEmailVerified = session.emailConfirmed ?? false
+                    self.emailAuthFactor = session.emailAuthFactor
+                }
+                
+                let (responseCode, _) = try await client.com.atproto.server.requestEmailUpdate()
+                
+                if (200...299).contains(responseCode) {
+                    disable2FACode = ""
+                    showDisable2FASheet = true
+                } else if !Task.isCancelled {
+                    twoFAErrorMessage = "Failed to request confirmation code (Code: \(responseCode))."
+                    show2FAError = true
+                }
+            } catch is CancellationError {
+                // Cancelled
+            } catch GatewayPermissionError.cancelled {
+                // Cancelled
+            } catch {
+                guard !Task.isCancelled else { return }
+                twoFAErrorMessage = error.localizedDescription
+                show2FAError = true
+            }
+        }
+    }
+    
+    @MainActor
+    private func submitDisable2FA(token: String) {
+        twoFATask?.cancel()
+        twoFATask = Task { @MainActor in
+            guard let client = appState.atProtoClient else { return }
+            
+            isSubmittingDisableCode = true
+            defer { isSubmittingDisableCode = false }
+            
+            do {
+                try await ensurePermission(.accountEmailManage)
+                guard !Task.isCancelled else { return }
+                
+                // Fetch fresh session to get the authoritative unredacted email under the upgraded scope
+                let (sessionCode, sessionData) = try await client.com.atproto.server.getSession()
+                guard !Task.isCancelled else { return }
+                guard sessionCode == 200, let session = sessionData, let sessionEmail = session.email, !sessionEmail.isEmpty else {
+                    throw NSError(
+                        domain: "PrivacySecuritySettings",
+                        code: sessionCode,
+                        userInfo: [NSLocalizedDescriptionKey: "Failed to retrieve account email from server."]
+                    )
+                }
+                self.email = sessionEmail
+                self.isEmailVerified = session.emailConfirmed ?? false
+                self.emailAuthFactor = session.emailAuthFactor
+                
+                let input = ComAtprotoServerUpdateEmail.Input(
+                    email: sessionEmail,
+                    emailAuthFactor: false,
+                    token: token.trimmingCharacters(in: .whitespacesAndNewlines)
+                )
+                let responseCode = try await client.com.atproto.server.updateEmail(input: input)
+                
+                if (200...299).contains(responseCode) {
+                    showDisable2FASheet = false
+                    await load2FAStatus()
+                } else if !Task.isCancelled {
+                    twoFAErrorMessage = "Failed to disable two-factor authentication (Code: \(responseCode)). Please check your code and try again."
+                    show2FAError = true
+                }
+            } catch is CancellationError {
+                // Cancelled
+            } catch GatewayPermissionError.cancelled {
+                // Cancelled
+            } catch {
+                guard !Task.isCancelled else { return }
+                twoFAErrorMessage = error.localizedDescription
+                show2FAError = true
+            }
+        }
     }
 
     private static let noUnauthenticatedLabel = "!no-unauthenticated"
@@ -369,7 +644,7 @@ struct PrivacySecuritySettingsView: View {
                     throw visibilityError("Unexpected profile record format.")
                 }
                 isVisible = !Self.hasNoUnauthenticatedLabel(profile.labels)
-            } else if code == 400 {
+            } else if code == 400 || code == 404 {
                 isVisible = true
             } else {
                 throw visibilityError("Failed to load profile record (\(code)).")
@@ -377,7 +652,14 @@ struct PrivacySecuritySettingsView: View {
 
             setLoggedOutVisibilityProgrammatically(isVisible)
             appState.appSettings.loggedOutVisibility = isVisible
+        } catch ComAtprotoRepoGetRecord.Error.recordNotFound {
+            guard !Task.isCancelled else { return }
+            setLoggedOutVisibilityProgrammatically(true)
+            appState.appSettings.loggedOutVisibility = true
+        } catch is CancellationError {
+            // Cancelled
         } catch {
+            guard !Task.isCancelled else { return }
             logger.error("Error loading logged-out visibility: \(error.localizedDescription)")
         }
     }
@@ -416,6 +698,76 @@ struct PrivacySecuritySettingsView: View {
         }
     }
 
+    private func loadAlgorithmicVisibility() async {
+        guard appState.isAuthenticated, let client = appState.atProtoClient else { return }
+        isLoadingAlgorithmicVisibility = true
+        defer { isLoadingAlgorithmicVisibility = false }
+
+        do {
+            let (code, recordData) = try await client.com.atproto.repo.getRecord(
+                input: .init(
+                    repo: try ATIdentifier(string: appState.userDID),
+                    collection: try NSID(nsidString: "app.bsky.actor.contentVisibilityDeclaration"),
+                    rkey: try RecordKey(keyString: "self")
+                )
+            )
+            guard !Task.isCancelled else { return }
+            if code == 200, let record = recordData,
+               case let .knownType(declarationValue) = record.value,
+               let declaration = declarationValue as? AppBskyActorContentVisibilityDeclaration {
+                self.hideFromAlgorithmicRecommendations = declaration.hideFromAlgorithmicRecommendations
+            } else if code == 400 || code == 404 {
+                // Explicit record-not-found implies false (opted in to recommendations)
+                self.hideFromAlgorithmicRecommendations = false
+            } else {
+                throw NSError(domain: "PrivacySecuritySettings", code: code, userInfo: [NSLocalizedDescriptionKey: "Failed to load content visibility declaration (\(code))."])
+            }
+        } catch ComAtprotoRepoGetRecord.Error.recordNotFound {
+            guard !Task.isCancelled else { return }
+            self.hideFromAlgorithmicRecommendations = false
+        } catch is CancellationError {
+            // Cancelled
+        } catch {
+            guard !Task.isCancelled else { return }
+            logger.error("Failed to load content visibility declaration: \(error.localizedDescription)")
+            algorithmicVisibilityErrorMessage = "Couldn't load algorithmic recommendations setting: \(error.localizedDescription)"
+            showAlgorithmicVisibilityError = true
+        }
+    }
+
+    private func updateAlgorithmicVisibility(_ hide: Bool, previousValue: Bool) async {
+        guard let client = appState.atProtoClient else {
+            revertAlgorithmicVisibility(to: previousValue, message: "You must be signed in to change this setting.")
+            return
+        }
+
+        isUpdatingAlgorithmicVisibility = true
+        defer { isUpdatingAlgorithmicVisibility = false }
+
+        do {
+            let decl = AppBskyActorContentVisibilityDeclaration(hideFromAlgorithmicRecommendations: hide)
+            let input = ComAtprotoRepoPutRecord.Input(
+                repo: try ATIdentifier(string: appState.userDID),
+                collection: try NSID(nsidString: "app.bsky.actor.contentVisibilityDeclaration"),
+                rkey: try RecordKey(keyString: "self"),
+                record: .knownType(decl)
+            )
+            let (code, _) = try await client.com.atproto.repo.putRecord(input: input)
+            guard code == 200 else {
+                throw NSError(domain: "PrivacySecuritySettings", code: code, userInfo: [NSLocalizedDescriptionKey: "Failed to update algorithmic recommendations setting (\(code))."])
+            }
+        } catch {
+            logger.error("Error updating algorithmic recommendations setting: \(error.localizedDescription)")
+            revertAlgorithmicVisibility(to: previousValue, message: "Couldn't update this setting: \(error.localizedDescription)")
+        }
+    }
+
+    private func revertAlgorithmicVisibility(to previousValue: Bool, message: String) {
+        hideFromAlgorithmicRecommendations = previousValue
+        algorithmicVisibilityErrorMessage = message
+        showAlgorithmicVisibilityError = true
+    }
+
     private func profileRecordParameters() throws -> ComAtprotoRepoGetRecord.Parameters {
         ComAtprotoRepoGetRecord.Parameters(
             repo: try ATIdentifier(string: appState.userDID),
@@ -423,7 +775,6 @@ struct PrivacySecuritySettingsView: View {
             rkey: try RecordKey(keyString: "self")
         )
     }
-
     private func putProfileVisibility(
         record: ComAtprotoRepoGetRecord.Output,
         isVisible: Bool,
@@ -575,34 +926,6 @@ struct PrivacySecuritySettingsView: View {
         }
     }
     
-    private func loadAppPasswords() async {
-        guard appState.isAuthenticated, let client = appState.atProtoClient else { return }
-        
-        isLoadingAppPasswords = true
-        defer { isLoadingAppPasswords = false }
-        
-        do {
-            let (responseCode, response) = try await client.com.atproto.server.listAppPasswords()
-            
-            if responseCode == 200, let passwords = response?.passwords {
-                let mappedPasswords = passwords.map { password in
-                    AppPassword(
-                        id: password.name,
-                        name: password.name,
-                        createdAt: password.createdAt.date,
-                        lastUsed: nil,
-                        isPrivileged: password.privileged ?? false
-                    )
-                }
-                await MainActor.run {
-                    self.appPasswords = mappedPasswords
-                }
-            }
-        } catch {
-            logger.debug("Error loading app passwords: \(error)")
-        }
-    }
-    
     private func loadBlocksCount() async {
         guard appState.isAuthenticated else { return }
         
@@ -636,370 +959,83 @@ struct PrivacySecuritySettingsView: View {
     }
     
     // Age-related helper removed
-}
-
-// MARK: - App Passwords View
-
-struct AppPasswordsView: View {
-    @Environment(AppState.self) private var appState
-    
-    @State private var appPasswords: [AppPassword] = []
-    @State private var isShowingCreateSheet = false
-    @State private var isShowingDeleteAlert = false
-    @State private var passwordToDelete: AppPassword?
-    @State private var isLoading = false
-    @State private var errorMessage: String?
-    
-    var body: some View {
-        List {
-            if let errorMessage = errorMessage {
-                Section {
-                    Text(errorMessage)
-                        .foregroundStyle(.red)
+    @ViewBuilder
+    private var twoFactorSection: some View {
+        Section {
+            if isLoading2FA {
+                HStack {
+                    Text("Email 2FA")
+                    Spacer()
+                    ProgressView()
+                        .controlSize(.small)
                 }
-            }
-            
-            Section {
-                Button {
-                    isShowingCreateSheet = true
-                } label: {
-                    Label("Create New App Password", systemImage: "plus.circle.fill")
-                        .foregroundStyle(.blue)
-                }
-            }
-            
-            Section("Your App Passwords") {
-                if isLoading {
-                    HStack {
-                        Spacer()
-                        ProgressView()
-                        Spacer()
-                    }
-                    .padding()
-                } else if appPasswords.isEmpty {
-                    Text("You haven't created any app passwords yet.")
-                        .foregroundStyle(.secondary)
-                        .italic()
-                } else {
-                    ForEach(appPasswords) { password in
-                        HStack {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(password.name)
-                                    .fontWeight(.medium)
-                                
-                                Text("Created \(formattedDate(password.createdAt))")
-                                    .appFont(AppTextRole.caption)
-                                    .foregroundStyle(.secondary)
-                                
-                                if let lastUsed = password.lastUsed {
-                                    Text("Last used \(formattedDate(lastUsed))")
-                                        .appFont(AppTextRole.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                                
-                                if password.isPrivileged {
-                                    Text("Privileged")
-                                        .appFont(AppTextRole.caption)
-                                        .padding(.horizontal, 6)
-                                        .padding(.vertical, 2)
-                                        .background(Color.blue.opacity(0.2))
-                                        .foregroundStyle(.blue)
-                                        .cornerRadius(4)
-                                }
-                            }
-                            
-                            Spacer()
-                            
-                            Button {
-                                passwordToDelete = password
-                                isShowingDeleteAlert = true
-                            } label: {
-                                Image(systemName: "trash")
-                                    .foregroundStyle(.red)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                }
-            }
-            
-            Section("About App Passwords") {
-                Text("App passwords are used with third-party apps that don't support Bluesky's secure sign-in flow. Each app password provides limited access to your account.")
-                    .appFont(AppTextRole.caption)
-                    .foregroundStyle(.secondary)
-                
-                Text("Never share your main account password with third-party apps. Use app passwords instead.")
-                    .appFont(AppTextRole.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(.top, 4)
-            }
-        }
-        .navigationTitle("App Passwords")
-    #if os(iOS)
-    .toolbarTitleDisplayMode(.inline)
-    #endif
-        .refreshable {
-            await loadAppPasswords()
-        }
-        .sheet(isPresented: $isShowingCreateSheet) {
-            CreateAppPasswordView(appState: appState) { name, isPrivileged in
-                return await createAppPassword(name: name, isPrivileged: isPrivileged)
-            }
-        }
-        .alert("Delete App Password", isPresented: $isShowingDeleteAlert) {
-            Button("Cancel", role: .cancel) {
-                passwordToDelete = nil
-            }
-            
-            Button("Delete", role: .destructive) {
-                if let password = passwordToDelete {
-                    Task {
-                        await deleteAppPassword(name: password.name)
-                    }
-                }
-                passwordToDelete = nil
-            }
-        } message: {
-            if let password = passwordToDelete {
-                Text("Are you sure you want to delete the app password '\(password.name)'? Any apps using this password will no longer be able to access your account.")
-            } else {
-                Text("Are you sure you want to delete this app password?")
-            }
-        }
-        .task {
-            await loadAppPasswords()
-        }
-    }
-    
-    private func loadAppPasswords() async {
-        guard let client = appState.atProtoClient else { return }
-        
-        isLoading = true
-        errorMessage = nil
-        
-        do {
-            let (responseCode, response) = try await client.com.atproto.server.listAppPasswords()
-            
-            if responseCode == 200, let passwords = response?.passwords {
-                let mappedPasswords = passwords.map { password in
-                    AppPassword(
-                        id: password.name,
-                        name: password.name,
-                        createdAt: password.createdAt.date,
-                        lastUsed: nil,
-                        isPrivileged: password.privileged ?? false
-                    )
-                }
-                await MainActor.run {
-                    self.appPasswords = mappedPasswords
-                    self.isLoading = false
-                }
-            } else {
-                await MainActor.run {
-                    self.errorMessage = "Failed to load app passwords (Status: \(responseCode))"
-                    self.isLoading = false
-                }
-            }
-        } catch {
-            await MainActor.run {
-                self.errorMessage = "Error: \(error.localizedDescription)"
-                self.isLoading = false
-            }
-        }
-    }
-    
-    private func createAppPassword(name: String, isPrivileged: Bool) async -> String? {
-        guard let client = appState.atProtoClient else { return nil }
-        
-        await MainActor.run {
-            isLoading = true
-            errorMessage = nil
-        }
-        
-        do {
-            let input = ComAtprotoServerCreateAppPassword.Input(
-                name: name,
-                privileged: isPrivileged
-            )
-            
-            let (responseCode, response) = try await client.com.atproto.server.createAppPassword(input: input)
-            
-            if responseCode == 200, let newPassword = response {
-                // Add to the local list
-                let appPassword = AppPassword(
-                    id: newPassword.name,
-                    name: newPassword.name,
-                    createdAt: newPassword.createdAt.date,
-                    lastUsed: nil,
-                    isPrivileged: newPassword.privileged ?? false
-                )
-                
-                await MainActor.run {
-                    self.appPasswords.append(appPassword)
-                    self.isLoading = false
-                }
-                return newPassword.password
-            } else {
-                await MainActor.run {
-                    self.errorMessage = "Failed to create app password (Status: \(responseCode))"
-                    self.isLoading = false
-                }
-                return nil
-            }
-        } catch {
-            await MainActor.run {
-                self.errorMessage = "Error: \(error.localizedDescription)"
-                self.isLoading = false
-            }
-            return nil
-        }
-    }
-    
-    private func deleteAppPassword(name: String) async {
-        guard let client = appState.atProtoClient else { return }
-        
-        await MainActor.run {
-            isLoading = true
-            errorMessage = nil
-        }
-        
-        do {
-            let input = ComAtprotoServerRevokeAppPassword.Input(name: name)
-            
-            let responseCode = try await client.com.atproto.server.revokeAppPassword(input: input)
-            
-            if responseCode >= 200 && responseCode < 300 {
-                await MainActor.run {
-                    self.appPasswords.removeAll { $0.name == name }
-                    self.isLoading = false
-                }
-            } else {
-                await MainActor.run {
-                    self.errorMessage = "Failed to delete app password (Status: \(responseCode))"
-                    self.isLoading = false
-                }
-            }
-        } catch {
-            await MainActor.run {
-                self.errorMessage = "Error: \(error.localizedDescription)"
-                self.isLoading = false
-            }
-        }
-    }
-    
-    private func formattedDate(_ date: Date) -> String {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .short
-        return formatter.localizedString(for: date, relativeTo: Date())
-    }
-}
-
-// MARK: - Create App Password View
-
-struct CreateAppPasswordView: View {
-    @Environment(\.dismiss) private var dismiss
-    @State private var passwordName = ""
-    @State private var isPrivileged = false
-    @State private var isCreating = false
-    @State private var generatedPassword: String?
-    @State private var showGeneratedPassword = false
-    
-    let appState: AppState
-    let onCreate: (String, Bool) async -> String?
-    
-    init(appState: AppState, onCreate: @escaping (String, Bool) async -> String?) {
-        self.appState = appState
-        self.onCreate = onCreate
-    }
-    
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section("Password Name") {
-                        TextField("Enter a name for this password", text: $passwordName)
-                            .autocorrectionDisabled(true)
-                    }
-                
-                Section("About Privileged Access") {
-                    Text("Privileged app passwords have additional permissions for advanced features. Only enable this for apps you fully trust.")
+            } else if email.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Email Authentication")
+                        .fontWeight(.medium)
+                    Text("No email address configured. Add an email in Account Settings to enable two-factor authentication.")
                         .appFont(AppTextRole.caption)
                         .foregroundStyle(.secondary)
                 }
-                
-                if let generatedPassword = generatedPassword {
-                    Section("Your New App Password") {
-                        HStack {
-                            Text(generatedPassword)
-                                .appFont(AppTextRole.footnote)
-                                .fontDesign(.monospaced)
-                                .textSelection(.enabled)
-                            
-                            Spacer()
-                            
-                            Button {
-                                #if os(iOS)
-                                UIPasteboard.general.string = generatedPassword
-                                #elseif os(macOS)
-                                NSPasteboard.general.setString(generatedPassword, forType: .string)
-                                #endif
-                            } label: {
-                                Image(systemName: "doc.on.doc")
-                            }
-                        }
-                        
-                        Text("Copy this password now - you won't be able to see it again. Store it safely in your password manager.")
+            } else if !isEmailVerified {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("Email Authentication")
+                        .fontWeight(.medium)
+                        Spacer()
+                        Label("Unverified", systemImage: "exclamationmark.triangle.fill")
                             .appFont(AppTextRole.caption)
-                            .foregroundStyle(.red)
-                            .fontWeight(.medium)
+                            .foregroundStyle(.orange)
                     }
+                    Text("Your email (\(email)) must be verified before enabling two-factor authentication. Please verify it in Account Settings.")
+                        .appFont(AppTextRole.caption)
+                        .foregroundStyle(.secondary)
                 }
-            }
-            .navigationTitle("Create App Password")
-    #if os(iOS)
-    .toolbarTitleDisplayMode(.inline)
-    #endif
-            .toolbar(content: {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel", systemImage: "xmark") {
-                        dismiss()
+            } else {
+                let is2FAEnabled = (emailAuthFactor == true)
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Email Authentication")
+                            .fontWeight(.medium)
+                        Text(is2FAEnabled
+                             ? "Security codes are required when signing in."
+                             : "Require a security code sent to your email when signing in.")
+                            .appFont(AppTextRole.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    
+                    Spacer()
+                    
+                    if is2FAEnabled {
+                        Label("Enabled", systemImage: "checkmark.shield.fill")
+                            .appFont(AppTextRole.caption)
+                            .foregroundStyle(.green)
+                    } else {
+                        Label("Disabled", systemImage: "shield.slash")
+                            .appFont(AppTextRole.caption)
+                            .foregroundStyle(.secondary)
                     }
                 }
                 
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Create") {
-                        Task {
-                            await createPassword()
-                        }
+                if is2FAEnabled {
+                    Button("Disable Email 2FA") {
+                        startDisable2FAFlow()
                     }
-                    .disabled(passwordName.isEmpty || isCreating)
+                    .foregroundStyle(.red)
+                    .disabled(isUpdating2FA || isRequestingDisableCode)
+                } else {
+                    Button("Enable Email 2FA") {
+                        showEnable2FAConfirmation = true
+                    }
+                    .disabled(isUpdating2FA || isRequestingDisableCode)
                 }
-            })
-        }
-        .alert("App Password Created", isPresented: $showGeneratedPassword) {
-            Button {
-                dismiss()
-            } label: {
-                Image(systemName: "xmark")
             }
-            
-        } message: {
-            Text("Your app password has been created successfully. Make sure to copy it from above - you won't be able to see it again.")
-        }
-    }
-    
-    private func createPassword() async {
-        isCreating = true
-        
-        if let password = await onCreate(passwordName, isPrivileged) {
-            await MainActor.run {
-                generatedPassword = password
-                showGeneratedPassword = true
-                isCreating = false
-            }
-        } else {
-            await MainActor.run {
-                isCreating = false
-            }
+        } header: {
+            Text("Two-Factor Authentication")
+        } footer: {
+            Text("When enabled, an email with a verification code will be sent to your email address each time you sign in.")
+                .appFont(AppTextRole.footnote)
+                .foregroundStyle(.secondary)
         }
     }
 }
@@ -1377,18 +1413,11 @@ struct BasicProfileInfo: ProfileBasicInfo {
     let avatar: URL?
 }
 
-struct AppPassword: Identifiable {
-    let id: String
-    let name: String
-    let createdAt: Date
-    let lastUsed: Date?
-    let isPrivileged: Bool
-}
-
 #Preview {
   AsyncPreviewContent { appState in
     NavigationStack {
             PrivacySecuritySettingsView()
         }
   }
+
 }

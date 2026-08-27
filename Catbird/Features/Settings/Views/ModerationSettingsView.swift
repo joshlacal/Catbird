@@ -18,8 +18,9 @@ struct ModerationSettingsView: View {
     // Labeler preferences
     @State private var labelers: [LabelerInfo] = []
     @State private var isLoadingLabelers = false
-    
-    // Muted accounts
+    @State private var unavailableLabelers: [String] = []
+    @State private var isCleaningUpLabelers = false
+    @State private var showingCleanupConfirmation = false
     @State private var showMutedAccounts = false
     @State private var mutedAccounts: [MutedAccount] = []
     @State private var isLoadingMutedAccounts = false
@@ -63,6 +64,34 @@ struct ModerationSettingsView: View {
             } else {
                 // Moderation Tools Section
                 Section("Moderation Tools") {
+                    NavigationLink(destination: DefaultPostInteractionSettingsView()) {
+                        Label {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Post Interaction Settings")
+                                Text("Default reply and quote rules")
+                                    .appFont(AppTextRole.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        } icon: {
+                            Image(systemName: "bubble.left.and.bubble.right.fill")
+                                .foregroundStyle(.blue)
+                        }
+                    }
+
+                    NavigationLink(destination: VerificationSettingsView()) {
+                        Label {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Verification Badges")
+                                Text("Manage badge visibility")
+                                    .appFont(AppTextRole.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        } icon: {
+                            Image(systemName: "checkmark.seal.fill")
+                                .foregroundStyle(.blue)
+                        }
+                    }
+
                     NavigationLink(destination: MuteWordsSettingsView()) {
                         Label {
                             Text("Muted Words & Tags")
@@ -128,9 +157,9 @@ struct ModerationSettingsView: View {
                     }
                 }
                 
+                
                 // Content Filters Section
                 Section("Content Filters") {
-                    VStack(alignment: .leading, spacing: 8) {
                         Toggle("Adult Content", isOn: $adultContentEnabled)
                             .tint(.blue)
                             // Only allow turning it off here. Enabling must be done in Bluesky.
@@ -148,7 +177,6 @@ struct ModerationSettingsView: View {
                                     .foregroundStyle(.secondary)
                             }
                         }
-                    }
                     
                     if adultContentEnabled {
                         ContentVisibilitySelector(
@@ -255,6 +283,38 @@ struct ModerationSettingsView: View {
                     }
                 }
                 
+                // Unavailable Labelers Warning & Cleanup
+                if !unavailableLabelers.isEmpty {
+                    Section("Unavailable Labelers") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(alignment: .top, spacing: 10) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .foregroundStyle(.orange)
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("\(unavailableLabelers.count) Subscribed Labeler(s) Unavailable")
+                                        .font(.subheadline)
+                                        .fontWeight(.semibold)
+                                    Text("These moderation services are offline or no longer exist. You can remove them from your subscriptions.")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            
+                            Button(role: .destructive) {
+                                showingCleanupConfirmation = true
+                            } label: {
+                                if isCleaningUpLabelers {
+                                    ProgressView()
+                                } else {
+                                    Text("Remove Unavailable Labelers")
+                                }
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(isCleaningUpLabelers)
+                        }
+                        .padding(.vertical, 4)
+                    }
+                }
                 if let error = errorMessage {
                     Section {
                         Text(error)
@@ -262,7 +322,6 @@ struct ModerationSettingsView: View {
                             .appFont(AppTextRole.caption)
                     }
                 }
-                
                 Section("About Moderation") {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Content filters help you customize your experience. Changes take effect immediately.")
@@ -284,6 +343,16 @@ struct ModerationSettingsView: View {
     #endif
         .appDisplayScale(appState: appState)
         .contrastAwareBackground(appState: appState, defaultColor: Color.systemBackground)
+        .alert("Remove Unavailable Labelers", isPresented: $showingCleanupConfirmation) {
+            Button("Cancel", role: .cancel) {}
+            Button("Remove", role: .destructive) {
+                Task {
+                    await removeUnavailableLabelers()
+                }
+            }
+        } message: {
+            Text("Remove \(unavailableLabelers.count) unavailable labeler(s) from your subscribed moderation services?")
+        }
         .task {
             await loadPreferences()
             await loadLabelers()
@@ -344,9 +413,17 @@ struct ModerationSettingsView: View {
         }
         
         do {
+            // Get user preferences to find exact subscribed labeler DIDs
+            let preferences = try await appState.preferencesManager.getPreferences()
+            let subscribedDIDs = preferences.labelers.map { $0.did }
+            guard !subscribedDIDs.isEmpty else {
+                self.labelers = []
+                self.unavailableLabelers = []
+                return
+            }
             // Get labelers from server
             let (code, data) = try await client.app.bsky.labeler.getServices(
-                input: .init(dids: [])
+                input: .init(dids: subscribedDIDs, detailed: true)
             )
             
             if code != 200 || data == nil {
@@ -354,29 +431,29 @@ struct ModerationSettingsView: View {
                 return
             }
             
-            // Get enabled labelers from preferences
-            let preferences = try await appState.preferencesManager.getPreferences()
-            let enabledLabelerDIDs = Set(preferences.labelers.map { $0.did })
-            
-            // Transform to our model
+            let returnedViews = data!.views
+            var returnedDIDs = Set<String>()
             var labelerList: [LabelerInfo] = []
             
-            for service in data!.views {
-                // Handle different view types in the union
+            for service in returnedViews {
                 switch service {
                 case .appBskyLabelerDefsLabelerView(let view):
+                    let didStr = view.creator.did.didString()
+                    returnedDIDs.insert(didStr)
                     labelerList.append(LabelerInfo(
-                        id: view.creator.did.didString(),
+                        id: didStr,
                         name: view.creator.displayName ?? view.creator.handle.description,
                         description: nil,
-                        isEnabled: enabledLabelerDIDs.contains(try DID(didString: view.creator.did.didString()))
+                        isEnabled: true
                     ))
                 case .appBskyLabelerDefsLabelerViewDetailed(let view):
+                    let didStr = view.creator.did.didString()
+                    returnedDIDs.insert(didStr)
                     labelerList.append(LabelerInfo(
-                        id: view.creator.did.didString(),
+                        id: didStr,
                         name: view.creator.displayName ?? view.creator.handle.description,
                         description: view.creator.description,
-                        isEnabled: enabledLabelerDIDs.contains(try DID(didString: view.creator.did.didString()))
+                        isEnabled: true
                     ))
                 case .unexpected:
                     continue
@@ -385,8 +462,34 @@ struct ModerationSettingsView: View {
             
             self.labelers = labelerList
             
+            // Identify subscribed DIDs absent from server response
+            let missingDIDs = subscribedDIDs.map { $0.didString() }.filter { !returnedDIDs.contains($0) }
+            self.unavailableLabelers = missingDIDs
+            
         } catch {
             errorMessage = "Failed to load labelers: \(error.localizedDescription)"
+        }
+    }
+    
+    private func removeUnavailableLabelers() async {
+        guard !unavailableLabelers.isEmpty else { return }
+        isCleaningUpLabelers = true
+        defer { isCleaningUpLabelers = false }
+        
+        do {
+            let preferences = try await appState.preferencesManager.getPreferences()
+            let unavailableSet = Set(unavailableLabelers)
+            for didStr in unavailableSet {
+                if let did = try? DID(didString: didStr) {
+                    preferences.removeLabeler(did)
+                }
+            }
+            try await appState.preferencesManager.saveAndSyncPreferences(preferences)
+            unavailableLabelers = []
+            // Refresh hub
+            await loadLabelers()
+        } catch {
+            errorMessage = "Error cleaning up labelers: \(error.localizedDescription)"
         }
     }
     

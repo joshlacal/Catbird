@@ -47,4 +47,17 @@ struct VerificationBadgeTests {
     let s = state(verified: "invalid", trustedVerifier: "invalid")
     #expect(VerificationBadge.kind(for: s, did: Self.regularDID) == nil)
   }
+
+  @Test func hideBadgesHidesAllKinds() {
+    let s = state(verified: "valid", trustedVerifier: "valid")
+    #expect(VerificationBadge.kind(for: s, did: Self.regularDID, hideBadges: true) == nil)
+    #expect(VerificationBadge.kind(for: nil, did: Self.selfDID, hideBadges: true) == nil)
+    #expect(VerificationBadge.inlineText(for: s, did: Self.regularDID, hideBadges: true) == nil)
+  }
+
+  @Test func hideBadgesFalseShowsBadges() {
+    let s = state(verified: "valid", trustedVerifier: "valid")
+    #expect(VerificationBadge.kind(for: s, did: Self.regularDID, hideBadges: false) == .trustedVerifier)
+    #expect(VerificationBadge.inlineText(for: s, did: Self.regularDID, hideBadges: false) != nil)
+  }
 }

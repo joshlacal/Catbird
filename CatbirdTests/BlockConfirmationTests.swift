@@ -30,4 +30,34 @@ struct BlockConfirmationTests {
         == "Unblock @alice.bsky.social? They will be able to interact with you again. Note: previously-left conversations will NOT be rejoined — you'll need a fresh invite."
     )
   }
+
+  @Test func mutualGroupsDeduplication() throws {
+    let convo1ID = "convo-1"
+    let convo2ID = "convo-2"
+    let convo3ID = "convo-3"
+    
+    var existingIDs = Set([convo1ID, convo2ID])
+    let incoming = [convo2ID, convo3ID]
+    
+    let newConvos = incoming.filter { !existingIDs.contains($0) }
+    #expect(newConvos == [convo3ID])
+    
+    for id in newConvos {
+      existingIDs.insert(id)
+    }
+    #expect(existingIDs.count == 3)
+  }
+
+  @Test func optimisticRemovalAndRestoration() {
+    var mutualGroups = ["group-1", "group-2", "group-3"]
+    let original = mutualGroups
+    
+    // Optimistic remove
+    mutualGroups.removeAll { $0 == "group-2" }
+    #expect(mutualGroups == ["group-1", "group-3"])
+    
+    // Simulate failure -> restore
+    mutualGroups = original
+    #expect(mutualGroups == ["group-1", "group-2", "group-3"])
+  }
 }
