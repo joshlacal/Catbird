@@ -16,7 +16,25 @@ struct VideoPickerView: View {
     @Binding var isUploading: Bool
     let mediaUploadManager: MediaUploadManager?
     let onEditAlt: (UUID) -> Void
-    
+    var onUpdateCaption: ((VideoCaption?) -> Void)? = nil
+    var onRemoveCaption: (() -> Void)? = nil
+    @State private var showingCaptionEditor: Bool = false
+
+    init(
+        videoItem: Binding<PostComposerViewModel.MediaItem?>,
+        isUploading: Binding<Bool>,
+        mediaUploadManager: MediaUploadManager?,
+        onEditAlt: @escaping (UUID) -> Void,
+        onUpdateCaption: ((VideoCaption?) -> Void)? = nil,
+        onRemoveCaption: (() -> Void)? = nil
+    ) {
+        self._videoItem = videoItem
+        self._isUploading = isUploading
+        self.mediaUploadManager = mediaUploadManager
+        self.onEditAlt = onEditAlt
+        self.onUpdateCaption = onUpdateCaption
+        self.onRemoveCaption = onRemoveCaption
+    }
     var body: some View {
         VStack(spacing: 12) {
             if let videoItem = videoItem {
@@ -47,25 +65,83 @@ struct VideoPickerView: View {
                                     .opacity(0.8)
                             }
                             
-                            // Alt text status
-                            HStack {
-                                Text(videoItem.altText.isEmpty ? "Add description" : videoItem.altText)
-                                    .appFont(AppTextRole.caption)
-                                    .foregroundColor(videoItem.altText.isEmpty ? .gray : .primary)
-                                    .lineLimit(1)
-                                    .truncationMode(.tail)
-                                
-                                Spacer()
-                                
-                                Image(systemName: "pencil")
-                                    .appFont(AppTextRole.caption)
-                            }
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(Color(platformColor: .platformSystemGray6))
-                            .cornerRadius(6)
-                            .onTapGesture {
-                                onEditAlt(videoItem.id)
+                            // Alt text and Captions status
+                            VStack(spacing: 6) {
+                                // Alt text status
+                                HStack {
+                                    Text(videoItem.altText.isEmpty ? "Add description" : videoItem.altText)
+                                        .appFont(AppTextRole.caption)
+                                        .foregroundColor(videoItem.altText.isEmpty ? .gray : .primary)
+                                        .lineLimit(1)
+                                        .truncationMode(.tail)
+                                    
+                                    Spacer()
+                                    
+                                    Image(systemName: "pencil")
+                                        .appFont(AppTextRole.caption)
+                                }
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(Color(platformColor: .platformSystemGray6))
+                                .cornerRadius(6)
+                                .onTapGesture {
+                                    onEditAlt(videoItem.id)
+                                }
+
+                                // Captions status
+                                HStack {
+                                    if let caption = videoItem.caption {
+                                        let langCode = caption.lang.lang.languageCode?.identifier ?? caption.lang.lang.minimalIdentifier
+                                        let langName = Locale.current.localizedString(forLanguageCode: langCode) ?? caption.lang.lang.minimalIdentifier
+                                        
+                                        Image(systemName: "captions.bubble.fill")
+                                            .appFont(AppTextRole.caption)
+                                            .foregroundStyle(.tint)
+                                        
+                                        Text("\(langName) (\(caption.filename))")
+                                            .appFont(AppTextRole.caption)
+                                            .lineLimit(1)
+                                            .truncationMode(.tail)
+                                        
+                                        Spacer()
+                                        
+                                        Button(action: {
+                                            self.videoItem?.caption = nil
+                                            if let onRemoveCaption {
+                                                onRemoveCaption()
+                                            } else if let onUpdateCaption {
+                                                onUpdateCaption(nil)
+                                            }
+                                        }) {
+                                            Image(systemName: "xmark.circle.fill")
+                                                .appFont(AppTextRole.caption)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        .buttonStyle(.plain)
+                                        .accessibilityLabel("Remove caption")
+                                    } else {
+                                        Image(systemName: "captions.bubble")
+                                            .appFont(AppTextRole.caption)
+                                            .foregroundStyle(.secondary)
+                                        
+                                        Text("Captions (.vtt)")
+                                            .appFont(AppTextRole.caption)
+                                            .foregroundColor(.gray)
+                                        
+                                        Spacer()
+                                        
+                                        Image(systemName: "plus")
+                                            .appFont(AppTextRole.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(Color(platformColor: .platformSystemGray6))
+                                .cornerRadius(6)
+                                .onTapGesture {
+                                    showingCaptionEditor = true
+                                }
                             }
                         }
                     }
@@ -127,6 +203,27 @@ struct VideoPickerView: View {
                     }
                     .padding(.vertical, 8)
                 }
+            }
+        }
+        .sheet(isPresented: $showingCaptionEditor) {
+            if let currentVideo = videoItem {
+                VideoCaptionEditorView(
+                    caption: currentVideo.caption,
+                    onSave: { newCaption in
+                        self.videoItem?.caption = newCaption
+                        if let onUpdateCaption {
+                            onUpdateCaption(newCaption)
+                        }
+                    },
+                    onRemove: {
+                        self.videoItem?.caption = nil
+                        if let onRemoveCaption {
+                            onRemoveCaption()
+                        } else if let onUpdateCaption {
+                            onUpdateCaption(nil)
+                        }
+                    }
+                )
             }
         }
     }

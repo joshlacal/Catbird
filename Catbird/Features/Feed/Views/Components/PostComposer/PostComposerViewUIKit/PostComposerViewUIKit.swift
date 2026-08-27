@@ -31,6 +31,7 @@ struct PostComposerViewUIKit: View {
   private let initialParentPost: AppBskyFeedDefs.PostView?
   private let initialQuotedPost: AppBskyFeedDefs.PostView?
   private let initialDestination: CircleDestination
+  private let initialTextParam: String?
   private let restoringDraftParam: PostComposerDraft?
   private let initialCapturedMediaParam: CapturedMedia?
   // Link creation state
@@ -74,11 +75,13 @@ struct PostComposerViewUIKit: View {
   init(parentPost: AppBskyFeedDefs.PostView? = nil,
        quotedPost: AppBskyFeedDefs.PostView? = nil,
        destination: CircleDestination = .public,
+       initialText: String? = nil,
        appState: AppState) {
     self.appState = appState
     self.initialParentPost = parentPost
     self.initialQuotedPost = quotedPost
     self.initialDestination = destination
+    self.initialTextParam = initialText
     self.restoringDraftParam = nil
     self.initialCapturedMediaParam = nil
   }
@@ -89,6 +92,7 @@ struct PostComposerViewUIKit: View {
     self.initialParentPost = nil
     self.initialQuotedPost = nil
     self.initialDestination = .public
+    self.initialTextParam = nil
     self.restoringDraftParam = draft
     self.initialCapturedMediaParam = nil
   }
@@ -99,6 +103,7 @@ struct PostComposerViewUIKit: View {
     self.initialParentPost = nil
     self.initialQuotedPost = nil
     self.initialDestination = .public
+    self.initialTextParam = nil
     self.restoringDraftParam = nil
     self.initialCapturedMediaParam = initialCapturedMedia
   }
@@ -127,12 +132,19 @@ struct PostComposerViewUIKit: View {
         pcUIKitLogger.debug("PostComposerViewUIKit: Task skipped, viewModel already exists")
         return 
       }
-      pcUIKitLogger.info("PostComposerViewUIKit: Initializing composer - parentPost: \(initialParentPost != nil), quotedPost: \(initialQuotedPost != nil), draft: \(restoringDraftParam != nil), currentDraft: \(appState.composerDraftManager.currentDraft != nil)")
-      let vm = PostComposerViewModel(parentPost: initialParentPost, quotedPost: initialQuotedPost, destination: initialDestination, appState: appState)
+      pcUIKitLogger.info("PostComposerViewUIKit: Initializing composer - parentPost: \(initialParentPost != nil), quotedPost: \(initialQuotedPost != nil), initialText: \(initialTextParam != nil), draft: \(restoringDraftParam != nil), currentDraft: \(appState.composerDraftManager.currentDraft != nil)")
+      let vm = PostComposerViewModel(
+        parentPost: initialParentPost,
+        quotedPost: initialQuotedPost,
+        destination: initialDestination,
+        appState: appState
+      )
       
-      // Captured media always opens a fresh composer; the previous working
-      // draft was stashed before entering the system camera.
-      if let draft = restoringDraftParam {
+      // If initial text was passed (e.g. from Copilot proposal), prefill it;
+      // otherwise check for a restored or current draft.
+      if let initialText = initialTextParam, !initialText.isEmpty {
+        vm.postText = initialText
+      } else if let draft = restoringDraftParam {
         pcUIKitLogger.info("PostComposerViewUIKit: Restoring draft from parameter")
         vm.restoreDraftState(draft)
       } else if initialCapturedMediaParam == nil,
@@ -259,6 +271,7 @@ struct PostComposerViewUIKit: View {
               }
               .accessibilityLabel("Open Drafts")
               .help("Open saved drafts")
+              .nuxNudge(id: .draftsAnnouncement)
             }
           }
 
@@ -450,7 +463,7 @@ struct PostComposerViewUIKit: View {
         outlineTags: vm.outlineTags,
         selectedLanguages: vm.selectedLanguages,
         selectedLabels: vm.selectedLabels,
-        threadgateSettings: vm.threadgateSettings,
+        interactionSettings: vm.interactionSettings,
         suggestedLanguage: vm.suggestedLanguage,
         hasText: !vm.postText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
         onRemoveTag: { tag in
@@ -465,7 +478,7 @@ struct PostComposerViewUIKit: View {
           closePlusMenu()
           vm.applySuggestedLanguage()
         },
-        onEditThreadgate: {
+        onEditInteractionSettings: {
           closePlusMenu()
           showingThreadgate = true
         },
@@ -478,9 +491,9 @@ struct PostComposerViewUIKit: View {
       ComposerAccessoryBar(
         isPlusMenuOpen: $showingPlusMenu,
         characterCount: vm.postText.count,
-        allowTenor: appState.appSettings.allowTenor,
+        allowTenor: appState.appSettings.externalMediaConsent(for: .tenor) != .hide,
         isAddToThreadDisabled: vm.destination != .public,
-        threadgateValue: ComposerChipsStrip.threadgateSummary(vm.threadgateSettings),
+        threadgateValue: vm.interactionSettings.summary,
         languageValue: languageSummary(vm: vm),
         actions: ComposerBarActions(
           onPhotos: { presentPhotoPicker(vm: vm) },
@@ -660,7 +673,7 @@ struct PostComposerViewUIKit: View {
           pcUIKitLogger.info("PostComposerViewUIKit: Link action triggered")
           presentLinkCreation(vm: vm)
         },
-        allowTenor: appState.appSettings.allowTenor,
+        		allowTenor: appState.appSettings.externalMediaConsent(for: .tenor) != .hide,
         onTextViewCreated: { textView in
           pcUIKitLogger.debug("PostComposerViewUIKit: Text view created")
           #if os(iOS)

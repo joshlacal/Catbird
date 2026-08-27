@@ -513,4 +513,42 @@ struct DraftSyncTranslationTests {
     #expect(viewModel.hasVideo)
     #expect(viewModel.thumbnailURLs.map(\.absoluteString) == [coverPath, threadPath])
   }
+
+  @Test("Video caption round trip preserves language, filename, and content")
+  func videoCaptionRoundTripPreservesLanguageFilenameAndContent() throws {
+    let caption = VideoCaption(
+      lang: LanguageCodeContainer(languageCode: "en"),
+      filename: "captions-en.vtt",
+      content: "WEBVTT\n\n1\n00:00:00.000 --> 00:00:02.000\nHello world!"
+    )
+    let video = CodableMediaItem(
+      altText: "A video with captions",
+      aspectRatio: nil,
+      isLoading: false,
+      isAudioVisualizerVideo: false,
+      rawVideoURLString: "file:///tmp/video.mp4",
+      rawImageURLString: nil,
+      caption: caption
+    )
+    let local = makeDraft(
+      postText: "Post with video captions",
+      videoItem: video,
+      threadEntries: [makeEntry(text: "Post with video captions", videoItem: video)]
+    )
+
+    // Translate to remote draft
+    let remote = DraftSyncTranslator.remoteDraft(from: local, deviceId: "device-1", deviceName: "Test iPhone")
+    let remoteVideo = try #require(remote.posts.first?.embedVideos?.first)
+    let remoteCaption = try #require(remoteVideo.captions?.first)
+    #expect(remoteCaption.lang.lang.minimalIdentifier == "en")
+    #expect(remoteCaption.content == caption.content)
+
+    // Translate back to local draft with same device (includeLocalMedia: true)
+    let restored = DraftSyncTranslator.localDraft(from: remote, includeLocalMedia: true)
+    let restoredVideo = try #require(restored.videoItem)
+    let restoredCaption = try #require(restoredVideo.caption)
+    #expect(restoredCaption.lang.lang.minimalIdentifier == "en")
+    #expect(restoredCaption.content == caption.content)
+    #expect(restoredCaption.filename == "captions-en.vtt")
+  }
 }

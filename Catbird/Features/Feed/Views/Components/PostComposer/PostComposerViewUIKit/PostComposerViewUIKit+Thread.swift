@@ -175,7 +175,7 @@ extension PostComposerViewUIKit {
       onLinkAction: {
         presentLinkCreation(vm: vm)
       },
-      allowTenor: appState.appSettings.allowTenor,
+      		allowTenor: appState.appSettings.externalMediaConsent(for: .tenor) != .hide,
       onTextViewCreated: { textView in
         pcThreadLogger.debug("PostComposerThread: Text view created for active thread entry")
         #if os(iOS)

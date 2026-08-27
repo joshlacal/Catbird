@@ -541,11 +541,9 @@ extension PostComposerViewModel {
         }
         let selfLabels = ComAtprotoLabelDefs.SelfLabels(values: filteredLabels.map { ComAtprotoLabelDefs.SelfLabel(val: $0.rawValue) })
 
-        // Set up threadgate for the first post
-        var threadgateRules: [AppBskyFeedThreadgate.AppBskyFeedThreadgateAllowUnion]?
-        if !threadgateSettings.allowEverybody {
-            threadgateRules = threadgateSettings.toAllowUnions()
-        }
+        // Set up threadgate and postgate for the first post
+        let threadgateRules = interactionSettings.toThreadgateAllowRules()
+        let postgateRules = interactionSettings.toPostgateEmbeddingRules()
 
         // Create the entire thread in one batch operation
         do {
@@ -557,7 +555,8 @@ extension PostComposerViewModel {
                 facets: allFacets,
                 embeds: allEmbeds,
                 parentPost: parentPost,
-                threadgateAllowRules: threadgateRules
+                threadgateAllowRules: threadgateRules,
+                postgateEmbeddingRules: postgateRules
             )
         } catch {
             let nsErr = error as NSError
@@ -696,17 +695,13 @@ extension PostComposerViewModel {
         }
         let selfLabels = ComAtprotoLabelDefs.SelfLabels(values: filteredLabels.map { ComAtprotoLabelDefs.SelfLabel(val: $0.rawValue) })
 
+        let threadgateRules = interactionSettings.toThreadgateAllowRules()
+        let postgateRules = interactionSettings.toPostgateEmbeddingRules()
+
         switch submission.destination {
         case .public:
             let postManager = appState.postManager
 
-            // Convert threadgate settings if needed
-            var threadgateRules: [AppBskyFeedThreadgate.AppBskyFeedThreadgateAllowUnion]?
-            if !threadgateSettings.allowEverybody {
-                threadgateRules = threadgateSettings.toAllowUnions()
-            }
-
-            // Create the post
             logger.info("Calling postManager.createPost with text: '\(self.postText)', languages: \(self.selectedLanguages.count), facets: \(facets.count), hasEmbed: \(embed != nil), isReply: \(self.parentPost != nil)")
 
             do {
@@ -719,22 +714,38 @@ extension PostComposerViewModel {
                     parentPost: parentPost,
                     selfLabels: selfLabels,
                     embed: embed,
-                    threadgateAllowRules: threadgateRules
+                    threadgateAllowRules: threadgateRules,
+                    postgateEmbeddingRules: postgateRules
                 )
             } catch {
-                // If offline, enqueue into outbox and surface queued status
                 let nsErr = error as NSError
-                if nsErr.domain == NSURLErrorDomain && (nsErr.code == NSURLErrorNotConnectedToInternet || nsErr.code == NSURLErrorTimedOut) {
-                    ComposerOutbox.shared.enqueuePost(text: postText, languages: selectedLanguages, labels: selectedLabels, hashtags: outlineTags)
+                if nsErr.domain == NSURLErrorDomain
+                    && (nsErr.code == NSURLErrorNotConnectedToInternet
+                        || nsErr.code == NSURLErrorTimedOut)
+                {
+                    ComposerOutbox.shared.enqueuePost(
+                        text: postText,
+                        languages: selectedLanguages,
+                        labels: selectedLabels,
+                        hashtags: outlineTags
+                    )
                     appState.composerDraftManager.clearDraft()
                     logger.info("Post queued offline")
                     if #available(iOS 26, macOS 26, *) {
-                      await MetricKitSignposts.endPostComposition(posted: false, mediaCount: mediaItems.count, characterCount: postText.count)
+                        await MetricKitSignposts.endPostComposition(
+                            posted: false,
+                            mediaCount: mediaItems.count,
+                            characterCount: postText.count
+                        )
                     }
                     return
                 }
                 if #available(iOS 26, macOS 26, *) {
-                  await MetricKitSignposts.endPostComposition(posted: false, mediaCount: mediaItems.count, characterCount: postText.count)
+                    await MetricKitSignposts.endPostComposition(
+                        posted: false,
+                        mediaCount: mediaItems.count,
+                        characterCount: postText.count
+                    )
                 }
                 throw error
             }
@@ -748,24 +759,31 @@ extension PostComposerViewModel {
                 facets: facets.isEmpty ? nil : facets,
                 reply: replyRef,
                 langs: selectedLanguages,
-                labels: selfLabels.values.isEmpty ? nil : AppBskyFeedPost.AppBskyFeedPostLabelsUnion.comAtprotoLabelDefsSelfLabels(selfLabels),
+                labels: selfLabels.values.isEmpty
+                    ? nil
+                    : AppBskyFeedPost.AppBskyFeedPostLabelsUnion
+                        .comAtprotoLabelDefsSelfLabels(selfLabels),
                 embed: embed,
                 createdAt: ATProtocolDate(date: submission.createdAt)
             )
             do {
                 _ = try await service.publishPost(destination: circle, draft: circleDraft)
                 NotificationCenter.default.post(
-                  name: .circlePostPublished,
-                  object: nil,
-                  userInfo: [
-                    "accountDID": appState.userDID ?? "",
-                    "spaceURI": circle.uri.uriString()
-                  ]
+                    name: .circlePostPublished,
+                    object: nil,
+                    userInfo: [
+                        "accountDID": appState.userDID ?? "",
+                        "spaceURI": circle.uri.uriString()
+                    ]
                 )
             } catch {
                 logger.error("Circle post creation failed: \(error.localizedDescription)")
                 if #available(iOS 26, macOS 26, *) {
-                  await MetricKitSignposts.endPostComposition(posted: false, mediaCount: mediaItems.count, characterCount: postText.count)
+                    await MetricKitSignposts.endPostComposition(
+                        posted: false,
+                        mediaCount: mediaItems.count,
+                        characterCount: postText.count
+                    )
                 }
                 throw error
             }

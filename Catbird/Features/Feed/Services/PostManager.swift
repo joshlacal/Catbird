@@ -57,7 +57,8 @@ final class PostManager {
     parentPost: AppBskyFeedDefs.PostView? = nil,
     selfLabels: ComAtprotoLabelDefs.SelfLabels,
     embed: AppBskyFeedPost.AppBskyFeedPostEmbedUnion? = nil,
-    threadgateAllowRules: [AppBskyFeedThreadgate.AppBskyFeedThreadgateAllowUnion]? = nil
+    threadgateAllowRules: [AppBskyFeedThreadgate.AppBskyFeedThreadgateAllowUnion]? = nil,
+    postgateEmbeddingRules: [AppBskyFeedPostgate.AppBskyFeedPostgateEmbeddingRulesUnion]? = nil
   ) async throws -> ATProtocolURI {
     logger.info(
       "Creating \(parentPost == nil ? "post" : "reply") with text length: \(postText.count)")
@@ -183,6 +184,22 @@ final class PostManager {
         )
         writes.append(ComAtprotoRepoApplyWrites.InputWritesUnion(createThreadgate))
         logger.debug("Added threadgate creation to batch")
+      }
+      // Add postgate creation if applicable
+      if let embeddingRules = postgateEmbeddingRules, !embeddingRules.isEmpty {
+        let postgate = AppBskyFeedPostgate(
+          createdAt: currentATProtocolDate,
+          post: postURI,
+          detachedEmbeddingUris: nil,
+          embeddingRules: embeddingRules
+        )
+        let createPostgate = ComAtprotoRepoApplyWrites.Create(
+          collection: try NSID(nsidString: "app.bsky.feed.postgate"),
+          rkey: try RecordKey(keyString: tid.description),
+          value: ATProtocolValueContainer.knownType(postgate)
+        )
+        writes.append(ComAtprotoRepoApplyWrites.InputWritesUnion(createPostgate))
+        logger.debug("Added postgate creation to batch")
       }
 
       // Execute batch write operation
@@ -545,7 +562,8 @@ final class PostManager {
     facets: [[AppBskyRichtextFacet]?]? = nil,
     embeds: [AppBskyFeedPost.AppBskyFeedPostEmbedUnion?]? = nil,
     parentPost: AppBskyFeedDefs.PostView? = nil,
-    threadgateAllowRules: [AppBskyFeedThreadgate.AppBskyFeedThreadgateAllowUnion]? = nil
+    threadgateAllowRules: [AppBskyFeedThreadgate.AppBskyFeedThreadgateAllowUnion]? = nil,
+    postgateEmbeddingRules: [AppBskyFeedPostgate.AppBskyFeedPostgateEmbeddingRulesUnion]? = nil
   ) async throws {
     logger.info("Starting thread creation with \(posts.count) posts, isReply: \(parentPost != nil)")
 
@@ -702,6 +720,22 @@ final class PostManager {
           writes.append(ComAtprotoRepoApplyWrites.InputWritesUnion(createThreadgate))
           logger.debug("Added threadgate creation for first post")
         }
+        // Add postgate for the first post if applicable
+        if index == 0, let embeddingRules = postgateEmbeddingRules, !embeddingRules.isEmpty {
+          let postgate = AppBskyFeedPostgate(
+            createdAt: postATProtocolDate,
+            post: postURI,
+            detachedEmbeddingUris: nil,
+            embeddingRules: embeddingRules
+          )
+          let createPostgate = ComAtprotoRepoApplyWrites.Create(
+            collection: try NSID(nsidString: "app.bsky.feed.postgate"),
+            rkey: try RecordKey(keyString: rkeys[index].description),
+            value: ATProtocolValueContainer.knownType(postgate)
+          )
+          writes.append(ComAtprotoRepoApplyWrites.InputWritesUnion(createPostgate))
+          logger.debug("Added postgate creation for first post")
+        }
       }
 
       // Create the input for applyWrites
@@ -783,6 +817,364 @@ final class PostManager {
       rkeys.append(tid)
     }
     return rkeys
+  }
+  /// Fetches the authenticated user's profile record and writes back a copy
+  /// with the given pinned post applied.
+  private func updatePinnedPost(
+    _ pinnedPost: ComAtprotoRepoStrongRef?,
+    fetchErrorMessage: String,
+    writeErrorMessage: String
+  ) async throws {
+    guard let client = client else { throw AuthError.clientNotInitialized }
+    let did = try await client.getDid()
+
+    let getRecordParams = ComAtprotoRepoGetRecord.Parameters(
+      repo: try ATIdentifier(string: did),
+      collection: try NSID(nsidString: "app.bsky.actor.profile"),
+      rkey: try RecordKey(keyString: "self")
+    )
+    let (getRecordCode, getRecordOutput) = try await client.com.atproto.repo.getRecord(input: getRecordParams)
+
+    guard getRecordCode == 200, let existingRecord = getRecordOutput,
+          case let .knownType(value) = existingRecord.value,
+          let existingProfile = value as? AppBskyActorProfile else {
+      throw NSError(
+        domain: "ProfilePinning",
+        code: getRecordCode,
+        userInfo: [NSLocalizedDescriptionKey: fetchErrorMessage]
+      )
+    }
+
+    let updatedProfile = AppBskyActorProfile(
+      displayName: existingProfile.displayName,
+      description: existingProfile.description,
+      pronouns: existingProfile.pronouns,
+      website: existingProfile.website,
+      avatar: existingProfile.avatar,
+      banner: existingProfile.banner,
+      labels: existingProfile.labels,
+      joinedViaStarterPack: existingProfile.joinedViaStarterPack,
+      pinnedPost: pinnedPost,
+      createdAt: existingProfile.createdAt
+    )
+
+    let putRecordInput = ComAtprotoRepoPutRecord.Input(
+      repo: try ATIdentifier(string: did),
+      collection: try NSID(nsidString: "app.bsky.actor.profile"),
+      rkey: try RecordKey(keyString: "self"),
+      record: ATProtocolValueContainer.knownType(updatedProfile),
+      swapRecord: existingRecord.cid
+    )
+
+    let (putRecordCode, _) = try await client.com.atproto.repo.putRecord(input: putRecordInput)
+    if putRecordCode != 200 {
+      throw NSError(
+        domain: "ProfilePinning",
+        code: putRecordCode,
+        userInfo: [NSLocalizedDescriptionKey: "\(writeErrorMessage) \(putRecordCode)"]
+      )
+    }
+  }
+
+  /// Pins a post to the authenticated user's profile.
+  func pinPost(uri: ATProtocolURI, cid: String) async throws {
+    let strongRef = ComAtprotoRepoStrongRef(uri: uri, cid: try CID.parse(cid))
+    try await updatePinnedPost(
+      strongRef,
+      fetchErrorMessage: "Failed to fetch actor profile for pinning",
+      writeErrorMessage: "Error updating pinned post: Unexpected response code"
+    )
+  }
+
+  /// Unpins any currently pinned post from the authenticated user's profile.
+  func unpinPost() async throws {
+    try await updatePinnedPost(
+      nil,
+      fetchErrorMessage: "Failed to fetch actor profile for unpinning",
+      writeErrorMessage: "Error unpinning post: Unexpected response code"
+    )
+  }
+
+  // MARK: - Post Interaction Settings & Moderation
+
+  private func isRecordNotFoundError(_ error: Error) -> Bool {
+    if let protoError = error as? ATProtoError<ComAtprotoRepoGetRecord.Error>, protoError.error == .recordNotFound {
+      return true
+    }
+    if let directError = error as? ComAtprotoRepoGetRecord.Error, directError == .recordNotFound {
+      return true
+    }
+    if let xrpcError = error as? ATProtoXRPCError, xrpcError.error == "RecordNotFound" {
+      return true
+    }
+    return false
+  }
+
+  /// Fetches an optional record from the repository, returning nil if the record does not exist.
+  private func getOptionalRecord<T: ATProtocolValue>(
+    repo: String,
+    collection: String,
+    rkey: RecordKey
+  ) async throws -> (record: T?, cid: CID?) {
+    guard let client = client else { throw AuthError.clientNotInitialized }
+    let params = ComAtprotoRepoGetRecord.Parameters(
+      repo: try ATIdentifier(string: repo),
+      collection: try NSID(nsidString: collection),
+      rkey: rkey
+    )
+    do {
+      let (code, output) = try await client.com.atproto.repo.getRecord(input: params)
+      if (200...299).contains(code) {
+        if let record = output, case let .knownType(value) = record.value, let typedRecord = value as? T {
+          return (typedRecord, record.cid)
+        }
+        return (nil, output?.cid)
+      } else {
+        throw AuthError.badResponse(code)
+      }
+    } catch {
+      if isRecordNotFoundError(error) {
+        return (nil, nil)
+      }
+      throw error
+    }
+  }
+
+  /// Updates interaction settings for a post (postgate) and optionally its root post (threadgate).
+  func updateInteractionSettings(
+    postURI: ATProtocolURI,
+    rootPostURI: ATProtocolURI,
+    settings: PostInteractionSettingsState
+  ) async throws {
+    guard let client = client else { throw AuthError.clientNotInitialized }
+    let did = try await client.getDid()
+    let postRkey = try RecordKey(keyString: postURI.recordKey ?? "")
+    let rootRkey = try RecordKey(keyString: rootPostURI.recordKey ?? "")
+
+    var existingTg: AppBskyFeedThreadgate?
+    var tgSwapCid: CID?
+    let shouldCheckTg = rootPostURI.authority == did
+    if shouldCheckTg {
+      let (tgRecord, cid): (AppBskyFeedThreadgate?, CID?) = try await getOptionalRecord(
+        repo: did,
+        collection: "app.bsky.feed.threadgate",
+        rkey: rootRkey
+      )
+      existingTg = tgRecord
+      tgSwapCid = cid
+    }
+
+    var existingPg: AppBskyFeedPostgate?
+    var pgSwapCid: CID?
+    let shouldCheckPg = postURI.authority == did
+    if shouldCheckPg {
+      let (pgRecord, cid): (AppBskyFeedPostgate?, CID?) = try await getOptionalRecord(
+        repo: did,
+        collection: "app.bsky.feed.postgate",
+        rkey: postRkey
+      )
+      existingPg = pgRecord
+      pgSwapCid = cid
+    }
+
+    let updatedTg = PostInteractionSettingsState.mergeThreadgate(
+      existing: existingTg,
+      postURI: rootPostURI,
+      settings: settings
+    )
+    let updatedPg = PostInteractionSettingsState.mergePostgate(
+      existing: existingPg,
+      postURI: postURI,
+      settings: settings
+    )
+
+    let tgChanged: Bool
+    if shouldCheckTg {
+      if existingTg == nil {
+        tgChanged = (updatedTg.allow != nil || updatedTg.hiddenReplies != nil)
+      } else {
+        tgChanged = (existingTg?.allow != updatedTg.allow)
+      }
+    } else {
+      tgChanged = false
+    }
+
+    let pgChanged: Bool
+    if shouldCheckPg {
+      if existingPg == nil {
+        pgChanged = (updatedPg.embeddingRules != nil || updatedPg.detachedEmbeddingUris != nil)
+      } else {
+        pgChanged = (existingPg?.embeddingRules != updatedPg.embeddingRules)
+      }
+    } else {
+      pgChanged = false
+    }
+
+    var writes: [ComAtprotoRepoApplyWrites.InputWritesUnion] = []
+    if tgChanged {
+      if existingTg != nil {
+        writes.append(.comAtprotoRepoApplyWritesUpdate(ComAtprotoRepoApplyWrites.Update(
+          collection: try NSID(nsidString: "app.bsky.feed.threadgate"),
+          rkey: rootRkey,
+          value: ATProtocolValueContainer.knownType(updatedTg)
+        )))
+      } else {
+        writes.append(.comAtprotoRepoApplyWritesCreate(ComAtprotoRepoApplyWrites.Create(
+          collection: try NSID(nsidString: "app.bsky.feed.threadgate"),
+          rkey: rootRkey,
+          value: ATProtocolValueContainer.knownType(updatedTg)
+        )))
+      }
+    }
+
+    if pgChanged {
+      if existingPg != nil {
+        writes.append(.comAtprotoRepoApplyWritesUpdate(ComAtprotoRepoApplyWrites.Update(
+          collection: try NSID(nsidString: "app.bsky.feed.postgate"),
+          rkey: postRkey,
+          value: ATProtocolValueContainer.knownType(updatedPg)
+        )))
+      } else {
+        writes.append(.comAtprotoRepoApplyWritesCreate(ComAtprotoRepoApplyWrites.Create(
+          collection: try NSID(nsidString: "app.bsky.feed.postgate"),
+          rkey: postRkey,
+          value: ATProtocolValueContainer.knownType(updatedPg)
+        )))
+      }
+    }
+
+    if writes.count > 1 {
+      let applyInput = ComAtprotoRepoApplyWrites.Input(
+        repo: try ATIdentifier(string: did),
+        validate: true,
+        writes: writes,
+        swapCommit: nil
+      )
+      let (code, _) = try await client.com.atproto.repo.applyWrites(input: applyInput)
+      guard (200...299).contains(code) else {
+        throw AuthError.badResponse(code)
+      }
+    } else if tgChanged {
+      let putTgInput = ComAtprotoRepoPutRecord.Input(
+        repo: try ATIdentifier(string: did),
+        collection: try NSID(nsidString: "app.bsky.feed.threadgate"),
+        rkey: rootRkey,
+        record: ATProtocolValueContainer.knownType(updatedTg),
+        swapRecord: tgSwapCid
+      )
+      let (code, _) = try await client.com.atproto.repo.putRecord(input: putTgInput)
+      guard (200...299).contains(code) else {
+        throw AuthError.badResponse(code)
+      }
+    } else if pgChanged {
+      let putPgInput = ComAtprotoRepoPutRecord.Input(
+        repo: try ATIdentifier(string: did),
+        collection: try NSID(nsidString: "app.bsky.feed.postgate"),
+        rkey: postRkey,
+        record: ATProtocolValueContainer.knownType(updatedPg),
+        swapRecord: pgSwapCid
+      )
+      let (code, _) = try await client.com.atproto.repo.putRecord(input: putPgInput)
+      guard (200...299).contains(code) else {
+        throw AuthError.badResponse(code)
+      }
+    }
+  }
+
+  /// Maximum number of hidden replies allowed by the ATProto threadgate lexicon.
+  public static let maxHiddenReplies = 300
+
+  /// Hides or unhides a reply on a thread owned by the authenticated user.
+  func setReplyHidden(rootPostURI: ATProtocolURI, replyURI: ATProtocolURI, hidden: Bool) async throws {
+    guard let client = client else { throw AuthError.clientNotInitialized }
+    let did = try await client.getDid()
+    let rootRkey = try RecordKey(keyString: rootPostURI.recordKey ?? "")
+
+    let (existingTg, swapCid): (AppBskyFeedThreadgate?, CID?) = try await getOptionalRecord(
+      repo: did,
+      collection: "app.bsky.feed.threadgate",
+      rkey: rootRkey
+    )
+
+    var hiddenURIs = existingTg?.hiddenReplies ?? []
+    if hidden {
+      if !hiddenURIs.contains(replyURI) {
+        if hiddenURIs.count >= Self.maxHiddenReplies {
+          throw NSError(
+            domain: "ThreadgateModeration",
+            code: 400,
+            userInfo: [NSLocalizedDescriptionKey: "Maximum of \(Self.maxHiddenReplies) hidden replies reached"]
+          )
+        }
+        hiddenURIs.append(replyURI)
+      }
+    } else {
+      hiddenURIs.removeAll { $0 == replyURI }
+    }
+
+    let allowRules = existingTg?.allow
+    let createdAt = existingTg?.createdAt ?? ATProtocolDate(date: Date())
+    let updatedTg = AppBskyFeedThreadgate(
+      post: rootPostURI,
+      allow: allowRules,
+      createdAt: createdAt,
+      hiddenReplies: hiddenURIs.isEmpty ? nil : hiddenURIs
+    )
+
+    let putTgInput = ComAtprotoRepoPutRecord.Input(
+      repo: try ATIdentifier(string: did),
+      collection: try NSID(nsidString: "app.bsky.feed.threadgate"),
+      rkey: rootRkey,
+      record: ATProtocolValueContainer.knownType(updatedTg),
+      swapRecord: swapCid
+    )
+    let (code, _) = try await client.com.atproto.repo.putRecord(input: putTgInput)
+    guard (200...299).contains(code) else {
+      throw AuthError.badResponse(code)
+    }
+  }
+
+  /// Detaches or re-attaches a quote embedding of the authenticated user's post.
+  func setQuoteDetached(quotedPostURI: ATProtocolURI, quotePostURI: ATProtocolURI, detached: Bool) async throws {
+    guard let client = client else { throw AuthError.clientNotInitialized }
+    let did = try await client.getDid()
+    let quotedRkey = try RecordKey(keyString: quotedPostURI.recordKey ?? "")
+
+    let (existingPg, swapCid): (AppBskyFeedPostgate?, CID?) = try await getOptionalRecord(
+      repo: did,
+      collection: "app.bsky.feed.postgate",
+      rkey: quotedRkey
+    )
+
+    var detachedURIs = existingPg?.detachedEmbeddingUris ?? []
+    if detached {
+      if !detachedURIs.contains(quotePostURI) {
+        detachedURIs.append(quotePostURI)
+      }
+    } else {
+      detachedURIs.removeAll { $0 == quotePostURI }
+    }
+
+    let embeddingRules = existingPg?.embeddingRules
+    let createdAt = existingPg?.createdAt ?? ATProtocolDate(date: Date())
+    let updatedPg = AppBskyFeedPostgate(
+      createdAt: createdAt,
+      post: quotedPostURI,
+      detachedEmbeddingUris: detachedURIs.isEmpty ? nil : detachedURIs,
+      embeddingRules: embeddingRules
+    )
+
+    let putPgInput = ComAtprotoRepoPutRecord.Input(
+      repo: try ATIdentifier(string: did),
+      collection: try NSID(nsidString: "app.bsky.feed.postgate"),
+      rkey: quotedRkey,
+      record: ATProtocolValueContainer.knownType(updatedPg),
+      swapRecord: swapCid
+    )
+    let (code, _) = try await client.com.atproto.repo.putRecord(input: putPgInput)
+    guard (200...299).contains(code) else {
+      throw AuthError.badResponse(code)
+    }
   }
 
   // Post Manager Errors

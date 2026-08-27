@@ -952,7 +952,7 @@ struct PostComposerView: View {
                 }
                 
                 // GIF button
-                if appState.appSettings.allowTenor {
+                if appState.appSettings.externalMediaConsent(for: .tenor) != .hide {
                     Button(action: {
                         viewModel.showingGifPicker = true
                     }) {
@@ -1484,7 +1484,7 @@ struct SheetsModifier: ViewModifier {
                     isTextFieldFocused = true
                 }
             }) {
-                ThreadgateOptionsView(settings: $viewModel.threadgateSettings)
+                PostInteractionSettingsView(settings: $viewModel.interactionSettings)
             }
             .sheet(isPresented: $viewModel.showingGifPicker, onDismiss: {
                 Task { @MainActor in
@@ -1586,19 +1586,7 @@ struct DraftSavingModifier: ViewModifier {
             .onChange(of: viewModel.selectedLabels) { _, _ in
                 viewModel.saveDraftIfNeeded()
             }
-            .onChange(of: viewModel.threadgateSettings.allowEverybody) { _, _ in
-                viewModel.saveDraftIfNeeded()
-            }
-            .onChange(of: viewModel.threadgateSettings.allowMentioned) { _, _ in
-                viewModel.saveDraftIfNeeded()
-            }
-            .onChange(of: viewModel.threadgateSettings.allowFollowing) { _, _ in
-                viewModel.saveDraftIfNeeded()
-            }
-            .onChange(of: viewModel.threadgateSettings.allowLists) { _, _ in
-                viewModel.saveDraftIfNeeded()
-            }
-            .onChange(of: viewModel.threadgateSettings.selectedLists) { _, _ in
+            .onChange(of: viewModel.interactionSettings) { _, _ in
                 viewModel.saveDraftIfNeeded()
             }
     }

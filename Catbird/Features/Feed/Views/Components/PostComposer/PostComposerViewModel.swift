@@ -134,8 +134,11 @@ final class PostComposerViewModel {
   var mediaSourceTracker: Set<String> = []
   var showLabelSelector = false
   var showThreadgateOptions = false
-  var threadgateSettings: ThreadgateSettings = ThreadgateSettings()
-  
+  var interactionSettings: PostInteractionSettingsState = PostInteractionSettingsState()
+  var threadgateSettings: ThreadgateSettings {
+    get { interactionSettings.threadgate }
+    set { interactionSettings.threadgate = newValue }
+  }
   // MARK: - Private Properties
   
   let appState: AppState
@@ -266,6 +269,23 @@ final class PostComposerViewModel {
     }
     self.appState = appState
     self.circleService = circleService
+
+    // Initialize interaction settings from saved account defaults
+    if let defaultPref = appState.preferencesManager.cachedPostInteractionSettingsPref() {
+      self.interactionSettings = Self.interactionSettings(from: defaultPref)
+    } else {
+      self.interactionSettings = PostInteractionSettingsState()
+      Task { [weak self] in
+        guard let self = self else { return }
+        if let pref = try? await self.appState.preferencesManager.getPostInteractionSettingsPref() {
+          await MainActor.run {
+            if !self.interactionSettings.isCustom {
+              self.interactionSettings = Self.interactionSettings(from: pref)
+            }
+          }
+        }
+      }
+    }
     if let client = appState.atProtoClient {
       self.mediaUploadManager = MediaUploadManager(client: client)
       logger.debug("PostComposerViewModel: MediaUploadManager initialized")
@@ -434,6 +454,21 @@ func saveDraftIfNeeded() {
     selectedEmbedURL = nil
     urlsKeptForEmbed = []
     mentionSuggestions = []
+    if let defaultPref = appState.preferencesManager.cachedPostInteractionSettingsPref() {
+      interactionSettings = Self.interactionSettings(from: defaultPref)
+    } else {
+      interactionSettings = PostInteractionSettingsState()
+      Task { [weak self] in
+        guard let self = self else { return }
+        if let pref = try? await self.appState.preferencesManager.getPostInteractionSettingsPref() {
+          await MainActor.run {
+            if !self.interactionSettings.isCustom {
+              self.interactionSettings = Self.interactionSettings(from: pref)
+            }
+          }
+        }
+      }
+    }
     
     logger.debug("PostComposerViewModel: All state cleared")
   }
@@ -518,6 +553,69 @@ func saveDraftIfNeeded() {
       logger.error("Failed to restore post from URI \(uriString): \(error)")
     }
   }
+
+  // MARK: - Post Interaction Settings Helper (G40)
+
+  static func interactionSettings(from pref: AppBskyActorDefs.PostInteractionSettingsPref?) -> PostInteractionSettingsState {
+    guard let pref = pref else {
+      return PostInteractionSettingsState()
+    }
+    
+    var threadgate = ThreadgateSettings()
+    if let rules = pref.threadgateAllowRules {
+      if rules.isEmpty {
+        threadgate.allowEverybody = false
+        threadgate.allowNobody = true
+        threadgate.allowMentioned = false
+        threadgate.allowFollowing = false
+        threadgate.allowFollowers = false
+        threadgate.allowLists = false
+        threadgate.selectedLists = []
+      } else {
+        threadgate.allowEverybody = false
+        threadgate.allowNobody = false
+        var allowMentioned = false
+        var allowFollowing = false
+        var allowFollowers = false
+        var allowLists = false
+        var selectedLists: [String] = []
+        
+        for rule in rules {
+          switch rule {
+          case .appBskyFeedThreadgateMentionRule:
+            allowMentioned = true
+          case .appBskyFeedThreadgateFollowingRule:
+            allowFollowing = true
+          case .appBskyFeedThreadgateFollowerRule:
+            allowFollowers = true
+          case .appBskyFeedThreadgateListRule(let listRule):
+            allowLists = true
+            selectedLists.append(listRule.list.uriString())
+          case .unexpected:
+            break
+          }
+        }
+        threadgate.allowMentioned = allowMentioned
+        threadgate.allowFollowing = allowFollowing
+        threadgate.allowFollowers = allowFollowers
+        threadgate.allowLists = allowLists
+        threadgate.selectedLists = selectedLists
+      }
+    } else {
+      threadgate.allowEverybody = true
+    }
+    
+    var allowQuotes = true
+    if let postgateRules = pref.postgateEmbeddingRules,
+       postgateRules.contains(where: {
+         if case .appBskyFeedPostgateDisableRule = $0 { return true }
+         return false
+       }) {
+      allowQuotes = false
+    }
+    
+    return PostInteractionSettingsState(threadgate: threadgate, allowQuotes: allowQuotes)
+  }
   
   // MARK: - Media Item Model
   
@@ -534,6 +632,7 @@ func saveDraftIfNeeded() {
     var rawVideoAsset: AVAsset?
     var isAudioVisualizerVideo: Bool = false
     var isGifConversion: Bool = false
+    var caption: VideoCaption? = nil
     
     init(pickerItem: PhotosPickerItem) {
       self.pickerItem = pickerItem

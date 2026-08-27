@@ -68,9 +68,9 @@ extension PostComposerViewUIKit {
         }
       }
       .sheet(isPresented: $showingThreadgate) {
-        ThreadgateOptionsView(settings: Binding(
-          get: { vm.threadgateSettings },
-          set: { vm.threadgateSettings = $0 }
+        PostInteractionSettingsView(settings: Binding(
+          get: { vm.interactionSettings },
+          set: { vm.interactionSettings = $0 }
         ))
       }
       .sheet(isPresented: $showingLabelSelector) {

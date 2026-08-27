@@ -1,17 +1,17 @@
 import Foundation
 import Petrel
 
-struct ThreadgateSettings: Equatable {
-  enum ReplyOption: String, CaseIterable, Identifiable {
+public struct ThreadgateSettings: Equatable, Sendable {
+  public enum ReplyOption: String, CaseIterable, Identifiable, Sendable {
     case everybody = "Everybody"
     case nobody = "Nobody"
     case mentioned = "Mentioned users"
     case following = "Users you follow"
     case followers = "Your followers"
 
-    var id: String { self.rawValue }
+    public var id: String { self.rawValue }
 
-    var iconName: String {
+    public var iconName: String {
       switch self {
       case .everybody: return "globe"
       case .nobody: return "person.crop.circle.badge.xmark"
@@ -22,16 +22,34 @@ struct ThreadgateSettings: Equatable {
     }
   }
 
-  var allowEverybody: Bool = true
-  var allowNobody: Bool = false
-  var allowMentioned: Bool = false
-  var allowFollowing: Bool = false
-  var allowFollowers: Bool = false
-  var allowLists: Bool = false
-  var selectedLists: [String] = []  // List URIs
+  public var allowEverybody: Bool = true
+  public var allowNobody: Bool = false
+  public var allowMentioned: Bool = false
+  public var allowFollowing: Bool = false
+  public var allowFollowers: Bool = false
+  public var allowLists: Bool = false
+  public var selectedLists: [String] = []  // List URIs
+
+  public init(
+    allowEverybody: Bool = true,
+    allowNobody: Bool = false,
+    allowMentioned: Bool = false,
+    allowFollowing: Bool = false,
+    allowFollowers: Bool = false,
+    allowLists: Bool = false,
+    selectedLists: [String] = []
+  ) {
+    self.allowEverybody = allowEverybody
+    self.allowNobody = allowNobody
+    self.allowMentioned = allowMentioned
+    self.allowFollowing = allowFollowing
+    self.allowFollowers = allowFollowers
+    self.allowLists = allowLists
+    self.selectedLists = selectedLists
+  }
 
   // Convert settings to AppBskyFeedThreadgateAllowUnion array
-  func toAllowUnions() -> [AppBskyFeedThreadgate.AppBskyFeedThreadgateAllowUnion] {
+  public func toAllowUnions() -> [AppBskyFeedThreadgate.AppBskyFeedThreadgateAllowUnion] {
     var allowUnions: [AppBskyFeedThreadgate.AppBskyFeedThreadgateAllowUnion] = []
 
     if allowMentioned {
@@ -55,12 +73,12 @@ struct ThreadgateSettings: Equatable {
   }
 
   // Determine if posting is allowed based on settings
-  var isReplyingAllowed: Bool {
+  public var isReplyingAllowed: Bool {
     return allowEverybody || allowMentioned || allowFollowing || allowFollowers || allowLists
   }
 
   // Get the primary option for display
-  var primaryOption: ReplyOption {
+  public var primaryOption: ReplyOption {
     if allowEverybody {
       return .everybody
     } else if allowNobody {
@@ -77,7 +95,7 @@ struct ThreadgateSettings: Equatable {
   }
 
   // Get all enabled options for multiple selection
-  var enabledOptions: [ReplyOption] {
+  public var enabledOptions: [ReplyOption] {
     var options: [ReplyOption] = []
 
     if allowMentioned { options.append(.mentioned) }
@@ -88,12 +106,12 @@ struct ThreadgateSettings: Equatable {
   }
   
   // Check if lists are enabled
-  var hasListsEnabled: Bool {
+  public var hasListsEnabled: Bool {
     return allowLists && !selectedLists.isEmpty
   }
 
   // Update based on selected option
-  mutating func selectOption(_ option: ReplyOption) {
+  public mutating func selectOption(_ option: ReplyOption) {
     // Reset all settings
     allowEverybody = false
     allowNobody = false
@@ -119,7 +137,7 @@ struct ThreadgateSettings: Equatable {
   }
 
   // Toggle individual settings for combined options
-  mutating func toggleOption(_ option: ReplyOption) {
+  public mutating func toggleOption(_ option: ReplyOption) {
     switch option {
     case .mentioned:
       allowMentioned.toggle()
@@ -150,7 +168,7 @@ struct ThreadgateSettings: Equatable {
   }
   
   // Add a list to threadgate
-  mutating func addList(_ listURI: String) {
+  public mutating func addList(_ listURI: String) {
     if !selectedLists.contains(listURI) {
       selectedLists.append(listURI)
       allowLists = true
@@ -159,7 +177,7 @@ struct ThreadgateSettings: Equatable {
   }
   
   // Remove a list from threadgate
-  mutating func removeList(_ listURI: String) {
+  public mutating func removeList(_ listURI: String) {
     selectedLists.removeAll { $0 == listURI }
     if selectedLists.isEmpty {
       allowLists = false
@@ -168,7 +186,7 @@ struct ThreadgateSettings: Equatable {
   }
   
   // Toggle list selection
-  mutating func toggleList(_ listURI: String) {
+  public mutating func toggleList(_ listURI: String) {
     if selectedLists.contains(listURI) {
       removeList(listURI)
     } else {

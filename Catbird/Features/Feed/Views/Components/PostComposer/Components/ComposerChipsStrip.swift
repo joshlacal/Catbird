@@ -10,16 +10,69 @@ struct ComposerChipsStrip: View {
   let outlineTags: [String]
   let selectedLanguages: [LanguageCodeContainer]
   let selectedLabels: Set<ComAtprotoLabelDefs.LabelValue>
-  let threadgateSettings: ThreadgateSettings
+  let interactionSettings: PostInteractionSettingsState
   let suggestedLanguage: LanguageCodeContainer?
   let hasText: Bool
 
   let onRemoveTag: (String) -> Void
   let onToggleLanguage: (LanguageCodeContainer) -> Void
   let onApplySuggestedLanguage: () -> Void
-  let onEditThreadgate: () -> Void
+  let onEditInteractionSettings: () -> Void
   let onEditLabels: () -> Void
 
+  init(
+    outlineTags: [String],
+    selectedLanguages: [LanguageCodeContainer],
+    selectedLabels: Set<ComAtprotoLabelDefs.LabelValue>,
+    interactionSettings: PostInteractionSettingsState,
+    suggestedLanguage: LanguageCodeContainer?,
+    hasText: Bool,
+    onRemoveTag: @escaping (String) -> Void,
+    onToggleLanguage: @escaping (LanguageCodeContainer) -> Void,
+    onApplySuggestedLanguage: @escaping () -> Void,
+    onEditInteractionSettings: @escaping () -> Void,
+    onEditLabels: @escaping () -> Void
+  ) {
+    self.outlineTags = outlineTags
+    self.selectedLanguages = selectedLanguages
+    self.selectedLabels = selectedLabels
+    self.interactionSettings = interactionSettings
+    self.suggestedLanguage = suggestedLanguage
+    self.hasText = hasText
+    self.onRemoveTag = onRemoveTag
+    self.onToggleLanguage = onToggleLanguage
+    self.onApplySuggestedLanguage = onApplySuggestedLanguage
+    self.onEditInteractionSettings = onEditInteractionSettings
+    self.onEditLabels = onEditLabels
+  }
+
+  init(
+    outlineTags: [String],
+    selectedLanguages: [LanguageCodeContainer],
+    selectedLabels: Set<ComAtprotoLabelDefs.LabelValue>,
+    threadgateSettings: ThreadgateSettings,
+    suggestedLanguage: LanguageCodeContainer?,
+    hasText: Bool,
+    onRemoveTag: @escaping (String) -> Void,
+    onToggleLanguage: @escaping (LanguageCodeContainer) -> Void,
+    onApplySuggestedLanguage: @escaping () -> Void,
+    onEditThreadgate: @escaping () -> Void,
+    onEditLabels: @escaping () -> Void
+  ) {
+    self.init(
+      outlineTags: outlineTags,
+      selectedLanguages: selectedLanguages,
+      selectedLabels: selectedLabels,
+      interactionSettings: PostInteractionSettingsState(threadgate: threadgateSettings, allowQuotes: true),
+      suggestedLanguage: suggestedLanguage,
+      hasText: hasText,
+      onRemoveTag: onRemoveTag,
+      onToggleLanguage: onToggleLanguage,
+      onApplySuggestedLanguage: onApplySuggestedLanguage,
+      onEditInteractionSettings: onEditThreadgate,
+      onEditLabels: onEditLabels
+    )
+  }
   static func isVisible(
     tagCount: Int,
     explicitLanguageCount: Int,
@@ -31,8 +84,8 @@ struct ComposerChipsStrip: View {
       || threadgateIsCustom || hasLanguageSuggestion
   }
 
-  private var threadgateIsCustom: Bool {
-    !threadgateSettings.allowEverybody
+  private var interactionSettingsIsCustom: Bool {
+    interactionSettings.isCustom
   }
 
   private var showsLanguageSuggestion: Bool {
@@ -45,7 +98,7 @@ struct ComposerChipsStrip: View {
       tagCount: outlineTags.count,
       explicitLanguageCount: selectedLanguages.count,
       labelCount: selectedLabels.count,
-      threadgateIsCustom: threadgateIsCustom,
+      threadgateIsCustom: interactionSettingsIsCustom,
       hasLanguageSuggestion: showsLanguageSuggestion
     ) {
       ScrollView(.horizontal) {
@@ -63,13 +116,13 @@ struct ComposerChipsStrip: View {
             }
           }
 
-          if threadgateIsCustom {
-            let summary = Self.threadgateSummary(threadgateSettings)
+          if interactionSettingsIsCustom {
+            let summary = interactionSettings.summary
             tappableChip(
               text: summary,
               systemImage: "bubble.left.and.exclamationmark.bubble.right",
-              accessibilityLabel: "Who can reply: \(summary)",
-              action: onEditThreadgate
+              accessibilityLabel: "Interaction settings: \(summary)",
+              action: onEditInteractionSettings
             )
           }
 

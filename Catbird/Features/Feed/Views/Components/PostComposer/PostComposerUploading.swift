@@ -120,6 +120,14 @@ extension PostComposerViewModel {
         logger.debug("DEBUG: Creating video embed, starting upload process")
 
         do {
+            var uploadedCaptions: [AppBskyEmbedVideo.Caption]? = nil
+            if let caption = videoItem.caption {
+                logger.info("PostComposerUploading: Uploading video caption (.vtt) for language \(caption.lang.lang.minimalIdentifier)")
+                let uploadedCaption = try await mediaUploadManager.uploadCaptionBlob(caption)
+                uploadedCaptions = [uploadedCaption]
+                logger.info("PostComposerUploading: Video caption uploaded successfully")
+            }
+
             let blob: Blob
 
             if let videoURL = videoItem.rawVideoURL {
@@ -163,7 +171,8 @@ extension PostComposerViewModel {
             let embed = mediaUploadManager.createVideoEmbed(
                 aspectRatio: videoItem.aspectRatio,
                 alt: videoItem.altText.isEmpty ? "Video" : videoItem.altText,
-                presentation: videoItem.isGifConversion ? "gif" : nil
+                presentation: videoItem.isGifConversion ? "gif" : nil,
+                captions: uploadedCaptions
             )
 
             isVideoUploading = false

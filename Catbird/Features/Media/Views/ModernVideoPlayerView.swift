@@ -11,6 +11,49 @@ import Petrel
 import SwiftUI
 import os.log
 
+// MARK: - Playback Position Provider
+
+/// Registry for current playback positions of active videos (WS-J -> WS-E handoff)
+public final class VideoPlaybackPositionProvider: @unchecked Sendable {
+    public static let shared = VideoPlaybackPositionProvider()
+    
+    private let lock = NSLock()
+    private var positions: [String: Double] = [:]
+    
+    public func setPosition(_ seconds: Double, for key: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        positions[key] = seconds
+    }
+    
+    public func getPosition(for key: String) -> Double? {
+        lock.lock()
+        defer { lock.unlock() }
+        return positions[key]
+    }
+    
+    public func removePosition(for key: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        positions.removeValue(forKey: key)
+    }
+    
+    /// Look up position for any key matching postID, post URI, or CID
+    public func getPosition(forSubject subjectKey: String) -> Double? {
+        lock.lock()
+        defer { lock.unlock() }
+        if let exact = positions[subjectKey] {
+            return exact
+        }
+        for (k, v) in positions {
+            if k.contains(subjectKey) || subjectKey.contains(k) {
+                return v
+            }
+        }
+        return nil
+    }
+}
+
 // MARK: - Main Player View
 
 @available(iOS 17.0, *)
@@ -20,6 +63,7 @@ struct ModernVideoPlayerView: View {
   // MARK: - Properties
   let model: VideoModel
   @State private var player: AVPlayer?
+  @State private var timeObserverToken: Any?
   @State private var isVisible = false
   @State private var showControls = false
   @State private var showFullscreen = false
@@ -311,6 +355,23 @@ struct ModernVideoPlayerView: View {
         // audio (e.g. Music). Configure the same as HLS for all video types.
         AudioSessionManager.shared.configureForSilentPlayback()
         VideoCoordinator.shared.register(model, player: newPlayer)
+        
+        // Observe playback time to publish current position for reporting (WS-E / WS-J handoff)
+        let interval = CMTime(seconds: 0.5, preferredTimescale: 600)
+        let token = newPlayer.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [model = model, postID = postID] time in
+            let seconds = time.seconds
+            if seconds.isFinite && seconds >= 0 {
+                VideoPlaybackPositionProvider.shared.setPosition(seconds, for: postID)
+                VideoPlaybackPositionProvider.shared.setPosition(seconds, for: model.id)
+                switch model.type {
+                case .hlsStream(_, let cid, _), .bskyGif(_, let cid, _):
+                    VideoPlaybackPositionProvider.shared.setPosition(seconds, for: cid.string)
+                default:
+                    break
+                }
+            }
+        }
+        self.timeObserverToken = token
       }
     } catch {
       logger.debug("Failed to setup player: \(error)")
@@ -318,6 +379,24 @@ struct ModernVideoPlayerView: View {
   }
 
   private func cleanupPlayer() {
+    if let player = player {
+      let seconds = player.currentTime().seconds
+      if seconds.isFinite && seconds >= 0 {
+        VideoPlaybackPositionProvider.shared.setPosition(seconds, for: postID)
+        VideoPlaybackPositionProvider.shared.setPosition(seconds, for: model.id)
+        switch model.type {
+        case .hlsStream(_, let cid, _), .bskyGif(_, let cid, _):
+            VideoPlaybackPositionProvider.shared.setPosition(seconds, for: cid.string)
+        default:
+            break
+        }
+      }
+    }
+    if let token = timeObserverToken {
+      player?.removeTimeObserver(token)
+      timeObserverToken = nil
+    }
+    
     if VideoCoordinator.shared.isPictureInPictureActive(model.id) {
       logger.debug("📺 PiP active for \(model.id), keeping player alive")
       VideoCoordinator.shared.updateVisibility(false, for: model.id)

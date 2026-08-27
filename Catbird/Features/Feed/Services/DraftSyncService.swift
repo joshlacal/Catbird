@@ -49,11 +49,47 @@ enum DraftSyncTranslator {
     }
   }
 
+  static func threadgateAllowRules(from pref: AppBskyActorDefs.PostInteractionSettingsPref?) -> [AppBskyDraftDefs.DraftThreadgateAllowUnion]? {
+    guard let rules = pref?.threadgateAllowRules else { return nil }
+    var result: [AppBskyDraftDefs.DraftThreadgateAllowUnion] = []
+    for rule in rules {
+      switch rule {
+      case .appBskyFeedThreadgateMentionRule(let r):
+        result.append(.appBskyFeedThreadgateMentionRule(r))
+      case .appBskyFeedThreadgateFollowerRule(let r):
+        result.append(.appBskyFeedThreadgateFollowerRule(r))
+      case .appBskyFeedThreadgateFollowingRule(let r):
+        result.append(.appBskyFeedThreadgateFollowingRule(r))
+      case .appBskyFeedThreadgateListRule(let r):
+        result.append(.appBskyFeedThreadgateListRule(r))
+      case .unexpected:
+        break
+      }
+    }
+    return result
+  }
+
+  static func postgateEmbeddingRules(from pref: AppBskyActorDefs.PostInteractionSettingsPref?) -> [AppBskyDraftDefs.DraftPostgateEmbeddingRulesUnion]? {
+    guard let rules = pref?.postgateEmbeddingRules else { return nil }
+    var result: [AppBskyDraftDefs.DraftPostgateEmbeddingRulesUnion] = []
+    for rule in rules {
+      switch rule {
+      case .appBskyFeedPostgateDisableRule(let r):
+        result.append(.appBskyFeedPostgateDisableRule(r))
+      case .unexpected:
+        break
+      }
+    }
+    return result
+  }
+
   /// Translate a local draft into the remote record shape for push.
   static func remoteDraft(
     from draft: PostComposerDraft,
     deviceId: String?,
-    deviceName: String?
+    deviceName: String?,
+    postgateEmbeddingRules: [AppBskyDraftDefs.DraftPostgateEmbeddingRulesUnion]? = nil,
+    threadgateAllow: [AppBskyDraftDefs.DraftThreadgateAllowUnion]? = nil
   ) -> AppBskyDraftDefs.Draft {
     let labelsUnion: AppBskyDraftDefs.DraftPostLabelsUnion?
     if draft.selectedLabels.isEmpty {
@@ -94,8 +130,8 @@ enum DraftSyncTranslator {
       deviceName: deviceName.map { String($0.prefix(Self.maxDeviceNameLength)) },
       posts: Array(posts.prefix(Self.maxPosts)),
       langs: draft.selectedLanguages.isEmpty ? nil : Array(draft.selectedLanguages.prefix(Self.maxLangs)),
-      postgateEmbeddingRules: nil,
-      threadgateAllow: nil
+      postgateEmbeddingRules: postgateEmbeddingRules,
+      threadgateAllow: threadgateAllow
     )
   }
 
@@ -150,11 +186,22 @@ enum DraftSyncTranslator {
 
     var videos: [AppBskyDraftDefs.DraftEmbedVideo] = []
     if let videoItem, let path = videoItem.rawVideoURLString {
+      let captions: [AppBskyDraftDefs.DraftEmbedCaption]?
+      if let caption = videoItem.caption {
+        captions = [
+          AppBskyDraftDefs.DraftEmbedCaption(
+            lang: caption.lang,
+            content: String(caption.content.prefix(Self.maxTextLength))
+          )
+        ]
+      } else {
+        captions = nil
+      }
       videos.append(
         AppBskyDraftDefs.DraftEmbedVideo(
           localRef: .init(path: path),
           alt: videoItem.altText.isEmpty ? nil : videoItem.altText,
-          captions: nil
+          captions: captions
         )
       )
     }
@@ -202,13 +249,23 @@ enum DraftSyncTranslator {
         )
       }
       if let video = post.embedVideos?.first {
+        var caption: VideoCaption? = nil
+        if let remoteCaption = video.captions?.first {
+          let langCode = remoteCaption.lang.lang.languageCode?.identifier ?? remoteCaption.lang.lang.minimalIdentifier
+          caption = VideoCaption(
+            lang: remoteCaption.lang,
+            filename: "captions-\(langCode).vtt",
+            content: remoteCaption.content
+          )
+        }
         videoItem = CodableMediaItem(
           altText: video.alt ?? "",
           aspectRatio: nil,
           isLoading: false,
           isAudioVisualizerVideo: false,
           rawVideoURLString: video.localRef.path,
-          rawImageURLString: nil
+          rawImageURLString: nil,
+          caption: caption
         )
       }
     }
@@ -270,7 +327,7 @@ final class DraftSyncService {
   private let logger = Logger(subsystem: "blue.catbird", category: "DraftSyncService")
   private let persistence: DraftPersistence
   private let clientProvider: @MainActor () -> ATProtoClient?
-
+  private let preferencesProvider: (@MainActor () -> AppBskyActorDefs.PostInteractionSettingsPref?)?
   /// Debounce for push-after-save; mirrors the composer autosave debounce
   /// (ComposerDraftManager.persistDebounceInterval, 500ms).
   private let pushDebounce: Duration = .milliseconds(500)
@@ -290,10 +347,12 @@ final class DraftSyncService {
 
   init(
     persistence: DraftPersistence,
-    clientProvider: @escaping @MainActor () -> ATProtoClient?
+    clientProvider: @escaping @MainActor () -> ATProtoClient?,
+    preferencesProvider: (@MainActor () -> AppBskyActorDefs.PostInteractionSettingsPref?)? = nil
   ) {
     self.persistence = persistence
     self.clientProvider = clientProvider
+    self.preferencesProvider = preferencesProvider
   }
 
   /// Feature gate — all network sync is dark unless explicitly enabled.
@@ -385,12 +444,34 @@ final class DraftSyncService {
         return
       }
 
+      var threadgateRules: [AppBskyDraftDefs.DraftThreadgateAllowUnion]? = nil
+      var postgateRules: [AppBskyDraftDefs.DraftPostgateEmbeddingRulesUnion]? = nil
+      if let pref = preferencesProvider?() {
+        threadgateRules = DraftSyncTranslator.threadgateAllowRules(from: pref)
+        postgateRules = DraftSyncTranslator.postgateEmbeddingRules(from: pref)
+      } else {
+        // Fetch server preferences to attach post interaction defaults if available
+        if let output = try? await client.app.bsky.actor.getPreferences(input: .init()),
+           output.responseCode == 200,
+           let items = output.data?.preferences.items {
+          var postInteractionPref: AppBskyActorDefs.PostInteractionSettingsPref?
+          for item in items {
+            if case .postInteractionSettingsPref(let p) = item {
+              postInteractionPref = p
+              break
+            }
+          }
+          threadgateRules = DraftSyncTranslator.threadgateAllowRules(from: postInteractionPref)
+          postgateRules = DraftSyncTranslator.postgateEmbeddingRules(from: postInteractionPref)
+        }
+      }
       let remote = DraftSyncTranslator.remoteDraft(
         from: draft,
         deviceId: Self.deviceId,
-        deviceName: Self.deviceName
+        deviceName: Self.deviceName,
+        postgateEmbeddingRules: postgateRules,
+        threadgateAllow: threadgateRules
       )
-
       if let remoteId = model.remoteId {
         let tid = try TID(tidString: remoteId)
         let status = try await client.app.bsky.draft.updateDraft(

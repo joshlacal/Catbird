@@ -169,6 +169,7 @@ struct CodableMediaItem: Codable, Hashable {
   // Optional persisted reference to local files (used for share extension imports)
   let rawVideoURLString: String?
   let rawImageURLString: String?
+  let caption: VideoCaption?
 
   init(from mediaItem: PostComposerViewModel.MediaItem) {
     self.altText = mediaItem.altText
@@ -177,6 +178,7 @@ struct CodableMediaItem: Codable, Hashable {
     self.isAudioVisualizerVideo = mediaItem.isAudioVisualizerVideo
     self.isGifConversion = mediaItem.isGifConversion
     self.rawVideoURLString = mediaItem.rawVideoURL?.absoluteString
+    self.caption = mediaItem.caption
     // Persist image data to a temp file so it survives draft serialization (e.g. account switch)
     if let rawData = mediaItem.rawData {
       self.rawImageURLString = CodableMediaItem.persistImageData(rawData)
@@ -225,6 +227,7 @@ struct CodableMediaItem: Codable, Hashable {
         item.isLoading = false
       }
     }
+    item.caption = caption
     return item
   }
 }
@@ -237,7 +240,8 @@ extension CodableMediaItem {
     isAudioVisualizerVideo: Bool,
     isGifConversion: Bool = false,
     rawVideoURLString: String?,
-    rawImageURLString: String?
+    rawImageURLString: String?,
+    caption: VideoCaption? = nil
   ) {
     self.altText = altText
     self.aspectRatio = aspectRatio
@@ -246,6 +250,7 @@ extension CodableMediaItem {
     self.isGifConversion = isGifConversion
     self.rawVideoURLString = rawVideoURLString
     self.rawImageURLString = rawImageURLString
+    self.caption = caption
   }
 }
 

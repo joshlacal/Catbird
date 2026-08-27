@@ -15,6 +15,46 @@ struct ComposerOutboxItem: Codable, Identifiable {
   let labels: Set<ComAtprotoLabelDefs.LabelValue>
   let hashtags: [String]
   let createdAt: Date
+  let threadgateAllowRules: [AppBskyFeedThreadgate.AppBskyFeedThreadgateAllowUnion]?
+  let postgateEmbeddingRules: [AppBskyFeedPostgate.AppBskyFeedPostgateEmbeddingRulesUnion]?
+
+  init(
+    id: UUID = UUID(),
+    kind: Kind,
+    postText: String?,
+    threadTexts: [String]?,
+    languages: [LanguageCodeContainer],
+    labels: Set<ComAtprotoLabelDefs.LabelValue>,
+    hashtags: [String],
+    createdAt: Date = Date(),
+    threadgateAllowRules: [AppBskyFeedThreadgate.AppBskyFeedThreadgateAllowUnion]? = nil,
+    postgateEmbeddingRules: [AppBskyFeedPostgate.AppBskyFeedPostgateEmbeddingRulesUnion]? = nil
+  ) {
+    self.id = id
+    self.kind = kind
+    self.postText = postText
+    self.threadTexts = threadTexts
+    self.languages = languages
+    self.labels = labels
+    self.hashtags = hashtags
+    self.createdAt = createdAt
+    self.threadgateAllowRules = threadgateAllowRules
+    self.postgateEmbeddingRules = postgateEmbeddingRules
+  }
+
+  init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    id = try container.decode(UUID.self, forKey: .id)
+    kind = try container.decode(Kind.self, forKey: .kind)
+    postText = try container.decodeIfPresent(String.self, forKey: .postText)
+    threadTexts = try container.decodeIfPresent([String].self, forKey: .threadTexts)
+    languages = try container.decode([LanguageCodeContainer].self, forKey: .languages)
+    labels = try container.decode(Set<ComAtprotoLabelDefs.LabelValue>.self, forKey: .labels)
+    hashtags = try container.decode([String].self, forKey: .hashtags)
+    createdAt = try container.decode(Date.self, forKey: .createdAt)
+    threadgateAllowRules = try container.decodeIfPresent([AppBskyFeedThreadgate.AppBskyFeedThreadgateAllowUnion].self, forKey: .threadgateAllowRules)
+    postgateEmbeddingRules = try container.decodeIfPresent([AppBskyFeedPostgate.AppBskyFeedPostgateEmbeddingRulesUnion].self, forKey: .postgateEmbeddingRules)
+  }
 }
 
 @MainActor
@@ -30,14 +70,50 @@ final class ComposerOutbox {
     load()
   }
 
-  func enqueuePost(text: String, languages: [LanguageCodeContainer], labels: Set<ComAtprotoLabelDefs.LabelValue>, hashtags: [String]) {
-    let item = ComposerOutboxItem(id: UUID(), kind: .post, postText: text, threadTexts: nil, languages: languages, labels: labels, hashtags: hashtags, createdAt: Date())
+  func enqueuePost(
+    text: String,
+    languages: [LanguageCodeContainer],
+    labels: Set<ComAtprotoLabelDefs.LabelValue>,
+    hashtags: [String],
+    threadgateAllowRules: [AppBskyFeedThreadgate.AppBskyFeedThreadgateAllowUnion]? = nil,
+    postgateEmbeddingRules: [AppBskyFeedPostgate.AppBskyFeedPostgateEmbeddingRulesUnion]? = nil
+  ) {
+    let item = ComposerOutboxItem(
+      id: UUID(),
+      kind: .post,
+      postText: text,
+      threadTexts: nil,
+      languages: languages,
+      labels: labels,
+      hashtags: hashtags,
+      createdAt: Date(),
+      threadgateAllowRules: threadgateAllowRules,
+      postgateEmbeddingRules: postgateEmbeddingRules
+    )
     items.append(item); persist()
     logger.info("Outbox: enqueued post len=\(text.count)")
   }
 
-  func enqueueThread(texts: [String], languages: [LanguageCodeContainer], labels: Set<ComAtprotoLabelDefs.LabelValue>, hashtags: [String]) {
-    let item = ComposerOutboxItem(id: UUID(), kind: .thread, postText: nil, threadTexts: texts, languages: languages, labels: labels, hashtags: hashtags, createdAt: Date())
+  func enqueueThread(
+    texts: [String],
+    languages: [LanguageCodeContainer],
+    labels: Set<ComAtprotoLabelDefs.LabelValue>,
+    hashtags: [String],
+    threadgateAllowRules: [AppBskyFeedThreadgate.AppBskyFeedThreadgateAllowUnion]? = nil,
+    postgateEmbeddingRules: [AppBskyFeedPostgate.AppBskyFeedPostgateEmbeddingRulesUnion]? = nil
+  ) {
+    let item = ComposerOutboxItem(
+      id: UUID(),
+      kind: .thread,
+      postText: nil,
+      threadTexts: texts,
+      languages: languages,
+      labels: labels,
+      hashtags: hashtags,
+      createdAt: Date(),
+      threadgateAllowRules: threadgateAllowRules,
+      postgateEmbeddingRules: postgateEmbeddingRules
+    )
     items.append(item); persist()
     logger.info("Outbox: enqueued thread count=\(texts.count)")
   }
@@ -66,14 +142,53 @@ final class ComposerOutbox {
 
       let item = pendingItems[index]
       do {
+        let threadgateRules: [AppBskyFeedThreadgate.AppBskyFeedThreadgateAllowUnion]?
+        let postgateRules: [AppBskyFeedPostgate.AppBskyFeedPostgateEmbeddingRulesUnion]?
+        if item.threadgateAllowRules != nil || item.postgateEmbeddingRules != nil {
+          threadgateRules = item.threadgateAllowRules
+          postgateRules = item.postgateEmbeddingRules
+        } else if let defaultPref = appState.preferencesManager.cachedPostInteractionSettingsPref() {
+          let settings = PostComposerViewModel.interactionSettings(from: defaultPref)
+          threadgateRules = settings.toThreadgateAllowRules()
+          postgateRules = settings.toPostgateEmbeddingRules()
+        } else if let pref = try? await appState.preferencesManager.getPostInteractionSettingsPref() {
+          let settings = PostComposerViewModel.interactionSettings(from: pref)
+          threadgateRules = settings.toThreadgateAllowRules()
+          postgateRules = settings.toPostgateEmbeddingRules()
+        } else {
+          threadgateRules = nil
+          postgateRules = nil
+        }
+
         switch item.kind {
         case .post:
           if let text = item.postText {
-            try await postManager.createPost(text, languages: item.languages, metadata: [:], hashtags: item.hashtags, facets: [], parentPost: nil, selfLabels: ComAtprotoLabelDefs.SelfLabels(values: item.labels.map { .init(val: $0.rawValue) }), embed: nil, threadgateAllowRules: nil)
+            try await postManager.createPost(
+              text,
+              languages: item.languages,
+              metadata: [:],
+              hashtags: item.hashtags,
+              facets: [],
+              parentPost: nil,
+              selfLabels: ComAtprotoLabelDefs.SelfLabels(values: item.labels.map { .init(val: $0.rawValue) }),
+              embed: nil,
+              threadgateAllowRules: threadgateRules,
+              postgateEmbeddingRules: postgateRules
+            )
           }
         case .thread:
           if let texts = item.threadTexts {
-            try await postManager.createThread(posts: texts, languages: item.languages, selfLabels: ComAtprotoLabelDefs.SelfLabels(values: item.labels.map { .init(val: $0.rawValue) }), hashtags: item.hashtags, facets: Array(repeating: [], count: texts.count), embeds: Array(repeating: nil, count: texts.count), threadgateAllowRules: nil)
+            try await postManager.createThread(
+              posts: texts,
+              languages: item.languages,
+              selfLabels: ComAtprotoLabelDefs.SelfLabels(values: item.labels.map { .init(val: $0.rawValue) }),
+              hashtags: item.hashtags,
+              facets: Array(repeating: [], count: texts.count),
+              embeds: Array(repeating: nil, count: texts.count),
+              parentPost: nil,
+              threadgateAllowRules: threadgateRules,
+              postgateEmbeddingRules: postgateRules
+            )
           }
         }
         logger.info("Outbox: posted item=\(item.id.uuidString)")

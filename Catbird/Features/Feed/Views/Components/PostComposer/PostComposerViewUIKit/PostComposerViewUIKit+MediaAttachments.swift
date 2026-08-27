@@ -60,18 +60,7 @@ extension PostComposerViewUIKit {
   
   @ViewBuilder
   private func videoAttachmentView(videoItem: PostComposerViewModel.MediaItem, vm: PostComposerViewModel) -> some View {
-    MediaItemView(
-      item: videoItem,
-      onRemove: {
-        pcMediaLogger.info("PostComposerMedia: Removing video attachment")
-        vm.removeMediaItem(withId: videoItem.id)
-      },
-      onEditAlt: {
-        pcMediaLogger.info("PostComposerMedia: Opening alt text editor for video \(videoItem.id)")
-        vm.beginEditingAltText(for: videoItem.id)
-      },
-      isVideo: true
-    )
+    PostComposerUIKitVideoAttachmentView(videoItem: videoItem, vm: vm)
   }
   
   @ViewBuilder
@@ -96,5 +85,93 @@ extension PostComposerViewUIKit {
     }
     .padding(.horizontal, 16)
     .padding(.vertical, 8)
+  }
+}
+
+private struct PostComposerUIKitVideoAttachmentView: View {
+  let videoItem: PostComposerViewModel.MediaItem
+  let vm: PostComposerViewModel
+  @State private var showingCaptionEditor = false
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      MediaItemView(
+        item: videoItem,
+        onRemove: {
+          pcMediaLogger.info("PostComposerMedia: Removing video attachment")
+          vm.removeMediaItem(withId: videoItem.id)
+        },
+        onEditAlt: {
+          pcMediaLogger.info("PostComposerMedia: Opening alt text editor for video \(videoItem.id)")
+          vm.beginEditingAltText(for: videoItem.id)
+        },
+        isVideo: true
+      )
+
+      // Captions control button
+      HStack(spacing: 6) {
+        if let caption = videoItem.caption {
+          let langCode = caption.lang.lang.languageCode?.identifier ?? caption.lang.lang.minimalIdentifier
+          let langName = Locale.current.localizedString(forLanguageCode: langCode) ?? caption.lang.lang.minimalIdentifier
+
+          Button {
+            showingCaptionEditor = true
+          } label: {
+            HStack(spacing: 4) {
+              Image(systemName: "captions.bubble.fill")
+                .font(.system(size: 11))
+                .foregroundStyle(.tint)
+              Text("\(langName) (\(caption.filename))")
+                .font(.system(size: 11, weight: .medium))
+                .lineLimit(1)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Color(platformColor: .platformSystemGray6))
+            .cornerRadius(6)
+          }
+          .buttonStyle(.plain)
+
+          Button {
+            vm.updateVideoCaption(nil)
+          } label: {
+            Image(systemName: "xmark.circle.fill")
+              .font(.system(size: 11))
+              .foregroundStyle(.secondary)
+          }
+          .buttonStyle(.plain)
+          .accessibilityLabel("Remove caption")
+        } else {
+          Button {
+            showingCaptionEditor = true
+          } label: {
+            HStack(spacing: 4) {
+              Image(systemName: "captions.bubble")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+              Text("Captions (.vtt)")
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Color(platformColor: .platformSystemGray6))
+            .cornerRadius(6)
+          }
+          .buttonStyle(.plain)
+        }
+      }
+    }
+    .sheet(isPresented: $showingCaptionEditor) {
+      VideoCaptionEditorView(
+        caption: videoItem.caption,
+        onSave: { newCaption in
+          vm.updateVideoCaption(newCaption)
+        },
+        onRemove: {
+          vm.updateVideoCaption(nil)
+        }
+      )
+    }
   }
 }

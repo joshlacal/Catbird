@@ -83,6 +83,35 @@ final class MediaUploadManager {
 
     return blob
   }
+  // MARK: - Caption Upload Methods
+
+  /// Upload a video caption (.vtt) blob to the repository with metadata stripping disabled
+  func uploadCaptionBlob(_ caption: VideoCaption) async throws -> AppBskyEmbedVideo.Caption {
+    guard let data = caption.content.data(using: .utf8) else {
+      logger.error("MediaUploadManager: Failed to encode caption text as UTF-8")
+      throw VideoUploadError.uploadFailed
+    }
+
+    logger.info("MediaUploadManager: Uploading caption blob for language \(caption.lang.lang.minimalIdentifier) (\(data.count) bytes)")
+
+    let (responseCode, blobOutput) = try await client.com.atproto.repo.uploadBlob(
+      data: data,
+      mimeType: "text/vtt",
+      stripMetadata: false
+    )
+
+    guard responseCode == 200, let blob = blobOutput?.blob else {
+      logger.error("MediaUploadManager: Caption upload failed with response code \(responseCode)")
+      throw VideoUploadError.uploadFailed
+    }
+
+    logger.info("MediaUploadManager: Caption blob uploaded successfully, blob mimeType: \(blob.mimeType)")
+    return AppBskyEmbedVideo.Caption(
+      lang: caption.lang,
+      file: blob
+    )
+  }
+
 
   // MARK: - Video Upload Methods
   /// Get authentication token for video operations
@@ -712,9 +741,12 @@ final class MediaUploadManager {
   }
 
   /// Creates a video embed from the uploaded blob
-  func createVideoEmbed(aspectRatio: CGSize?, alt: String, presentation: String? = nil) -> AppBskyFeedPost
-    .AppBskyFeedPostEmbedUnion?
-  {
+  func createVideoEmbed(
+    aspectRatio: CGSize?,
+    alt: String,
+    presentation: String? = nil,
+    captions: [AppBskyEmbedVideo.Caption]? = nil
+  ) -> AppBskyFeedPost.AppBskyFeedPostEmbedUnion? {
     guard let blob = uploadedBlob else {
       return nil
     }
@@ -730,7 +762,7 @@ final class MediaUploadManager {
     // Create video embed
     let videoEmbed = AppBskyEmbedVideo(
       video: blob,
-      captions: nil,
+      captions: captions,
       alt: alt.isEmpty ? nil : alt,
       aspectRatio: ratio,
       presentation: presentation

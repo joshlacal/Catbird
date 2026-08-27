@@ -268,6 +268,20 @@ extension PostComposerViewModel {
         isAltTextEditorPresented = true
     }
 
+
+    // MARK: - Video Caption Management
+
+    func updateVideoCaption(_ caption: VideoCaption?) {
+        self.videoItem?.caption = caption
+        syncMediaStateToCurrentThread()
+        saveDraftIfNeeded()
+    }
+
+    func removeVideoCaption() {
+        self.videoItem?.caption = nil
+        syncMediaStateToCurrentThread()
+        saveDraftIfNeeded()
+    }
     // MARK: - Photo Editing
 
     func beginEditingImage(for id: UUID, at index: Int) {
