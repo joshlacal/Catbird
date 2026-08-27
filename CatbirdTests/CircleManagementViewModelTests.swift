@@ -511,7 +511,6 @@ struct CircleManagementViewModelTests {
   }
 
   @Test func runtimeCircleCapabilityProbingAndAccountSwitchRaceSafety() async throws {
-    CircleFeatureFlags.setLocalFlag(true)
     CircleFeatureFlags.serverCapability(enabled: false)
     #expect(!CircleFeatureFlags.isEnabled)
 
@@ -528,7 +527,7 @@ struct CircleManagementViewModelTests {
     await appState.probeCircleCapabilities()
     #expect(CircleFeatureFlags.isEnabled)
 
-    // Logging out resets server capability
+    // An explicit AppView disabled response still disables Circle-backed surfaces.
     CircleFeatureFlags.serverCapability(enabled: false)
     #expect(!CircleFeatureFlags.isEnabled)
   }

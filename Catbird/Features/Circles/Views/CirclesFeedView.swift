@@ -3,9 +3,9 @@
 //  Catbird
 //
 
-import SwiftUI
 import Petrel
 import PetrelCatbird
+import SwiftUI
 
 /// View displaying the unified feed of all Circles the user belongs to.
 struct CirclesFeedView: View {
@@ -63,19 +63,21 @@ struct CirclesFeedView: View {
       CreateCircleView()
     }
     .task {
-      if model == nil {
-        let newModel = CircleFeedModel(
-          service: appState.circleService,
-          accountDID: appState.userDID ?? "",
-          activeDIDProvider: { AppStateManager.shared.lifecycle.userDID }
-        )
-        self.model = newModel
-        do {
-          try await newModel.load()
-        } catch {
-          self.errorMessage = error.localizedDescription
-        }
+      guard model == nil else { return }
+
+      let newModel = CircleFeedModel(
+        service: appState.circleService,
+        accountDID: appState.userDID,
+        activeDIDProvider: { AppStateManager.shared.lifecycle.userDID }
+      )
+      model = newModel
+      do {
+        try await newModel.load()
+      } catch {
+        errorMessage = error.localizedDescription
       }
+      guard newModel.accessState == .needsAuthorization else { return }
+      await authorizeCircles(model: newModel)
     }
   }
 
@@ -160,6 +162,18 @@ struct CirclesFeedView: View {
     }
   }
 
+  @MainActor
+  private func authorizeCircles(model: CircleFeedModel) async {
+    guard authCoordinator.needsAuthorization,
+          let did = try? DID(didString: appState.userDID)
+    else { return }
+
+    await authCoordinator.authorize(did: did, using: webAuthenticationSession)
+    if authCoordinator.state == .authorized {
+      try? await model.load()
+    }
+  }
+
   /// The AppView refused the read for want of its own OAuth grant. This is a
   /// second, separate consent from gateway sign-in, and it is recoverable —
   /// never treated as a deleted Circle.
@@ -178,11 +192,7 @@ struct CirclesFeedView: View {
     } actions: {
       Button("Authorize") {
         Task {
-          guard let did = try? DID(didString: appState.userDID) else { return }
-          await authCoordinator.authorize(did: did, using: webAuthenticationSession)
-          if authCoordinator.state == .authorized {
-            try? await model.load()
-          }
+          await authorizeCircles(model: model)
         }
       }
       .buttonStyle(.borderedProminent)

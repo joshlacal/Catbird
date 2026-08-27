@@ -226,19 +226,42 @@ struct SettingsRuntimeWiringTests {
     )
   }
 
-  @Test("Circle enablement requires both the local flag and the server capability")
-  func circleFlagsRequireBothGates() {
-    CircleFeatureFlags.setLocalFlag(true)
-    CircleFeatureFlags.serverCapability(enabled: false)
-    #expect(!CircleFeatureFlags.isEnabled)
-
-    CircleFeatureFlags.serverCapability(enabled: true)
-    #expect(CircleFeatureFlags.isEnabled)
-
-    CircleFeatureFlags.setLocalFlag(false)
-    #expect(!CircleFeatureFlags.isEnabled)
-
-    CircleFeatureFlags.setLocalFlag(true)
+  @Test("Circles is shipped and the feed entry has no private local rollout gate")
+  func circlesEntryIsAlwaysDiscoverable() throws {
+    let flags = try repositorySource(
+      components: ["Catbird", "Core", "Settings", "CircleFeatureFlags.swift"]
+    )
+    let feeds = try repositorySource(
+      components: ["Catbird", "Features", "Feed", "Views", "FeedsStartPage.swift"]
+    )
+    #expect(!flags.contains("feature.circles.enabled"))
+    #expect(!flags.contains("localFlag"))
+    #expect(!feeds.contains("if CircleFeatureFlags.localFlag"))
+  }
+  @Test("Circle capability check goes directly to the public standalone AppView")
+  func circleCapabilityCheckBypassesGatewayAndPDSProxy() throws {
+    let service = try repositorySource(
+      components: [
+        "Catbird", "Features", "Circles", "Services", "CircleService.swift",
+      ]
+    )
+    let capabilityBody = try sourceSlice(
+      service,
+      from: "func capabilities() async throws -> CircleCapability {",
+      through: "func listCircles(cursor:"
+    )
+    #expect(capabilityBody.contains("CircleConfiguration.appViewBaseURL"))
+    #expect(!capabilityBody.contains("client.blue.catbird.circle.getCapabilities"))
+  }
+  @Test("Opening Circles automatically starts separate AppView authorization when required")
+  func circlesFirstOpenStartsAppViewAuthorization() throws {
+    let view = try repositorySource(
+      components: [
+        "Catbird", "Features", "Circles", "Views", "CirclesFeedView.swift",
+      ]
+    )
+    #expect(view.contains("await authorizeCircles(model: newModel)"))
+    #expect(view.contains("guard newModel.accessState == .needsAuthorization"))
   }
 
   @Test("AuthManager purges the Circle cache on logout, switch, and removal")

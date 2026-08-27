@@ -11,12 +11,12 @@ struct E2EConstants {
   static let bobDID = try! DID(didString: bobDIDString)
 
   static let familyURI = try! SpaceRef(uriString: "at://did:plc:alicee2efixture/space/blue.catbird.circle/family123")
-  static let familyCircleId = try! TID(tidString: "3l7familycircle")
+  static let familyCircleId = try! TID(tidString: "3l7familycirc")
   static let familyPostURI = try! ATProtocolURI(uriString: "at://did:plc:alicee2efixture/space/blue.catbird.circle/family123/did:plc:alicee2efixture/app.bsky.feed.post/post1")
   static let familyPostText = "Welcome to Family Circle"
 
   static let aliceOnlyURI = try! SpaceRef(uriString: "at://did:plc:alicee2efixture/space/blue.catbird.circle/aliceonly123")
-  static let aliceOnlyCircleId = try! TID(tidString: "3l7alicecircle")
+  static let aliceOnlyCircleId = try! TID(tidString: "3l7alicecircl")
   static let aliceOnlyPostURI = try! ATProtocolURI(uriString: "at://did:plc:alicee2efixture/space/blue.catbird.circle/aliceonly123/did:plc:alicee2efixture/app.bsky.feed.post/post2")
   static let aliceOnlyPostText = "Alice secret notes"
 

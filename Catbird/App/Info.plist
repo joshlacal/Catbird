@@ -46,6 +46,8 @@
 	</array>
 	<key>NSUserNotificationUsageDescription</key>
 	<string>Catbird needs permission to send you notifications about mentions, replies, and interactions with your posts.</string>
+	<key>SentryLaunchProfilingEnabled</key>
+	<false/>
 	<key>SupportURL</key>
 	<string>https://catbird.blue/support</string>
 	<key>UIBackgroundModes</key>
@@ -55,8 +57,6 @@
 		<string>fetch</string>
 		<string>processing</string>
 	</array>
-	<key>SentryLaunchProfilingEnabled</key>
-	<false/>
 	<key>UIObservationTrackingEnabled</key>
 	<true/>
 	<key>com.apple.developer.associated-domains</key>

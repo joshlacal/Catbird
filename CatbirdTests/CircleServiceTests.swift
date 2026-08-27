@@ -145,7 +145,6 @@ struct CircleServiceTests {
   @Test("AppState probes capabilities and enables server capability flag")
   @MainActor
   func appStateProbesCapabilitiesAndFlipsFlag() async throws {
-    CircleFeatureFlags.setLocalFlag(true)
     CircleFeatureFlags.serverCapability(enabled: false)
     #expect(!CircleFeatureFlags.isEnabled)
 
@@ -161,10 +160,9 @@ struct CircleServiceTests {
     #expect(CircleFeatureFlags.isEnabled)
   }
 
-  @Test("AppState probe failure sets server capability flag to false")
+  @Test("AppState probe failure preserves the last known AppView capability")
   @MainActor
-  func appStateProbeFailureSetsFlagFalse() async throws {
-    CircleFeatureFlags.setLocalFlag(true)
+  func appStateProbeFailurePreservesCapability() async throws {
     CircleFeatureFlags.serverCapability(enabled: true)
     #expect(CircleFeatureFlags.isEnabled)
 
@@ -177,13 +175,12 @@ struct CircleServiceTests {
     appState.circleService = CircleService(transport: transport)
 
     await appState.probeCircleCapabilities()
-    #expect(!CircleFeatureFlags.isEnabled)
+    #expect(CircleFeatureFlags.isEnabled)
   }
 
   @Test("AppState probe stale result from inactive account is discarded")
   @MainActor
   func appStateProbeStaleResultFromInactiveAccountIsDiscarded() async throws {
-    CircleFeatureFlags.setLocalFlag(true)
     CircleFeatureFlags.serverCapability(enabled: false)
 
     let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
@@ -200,14 +197,12 @@ struct CircleServiceTests {
     #expect(!CircleFeatureFlags.isEnabled)
   }
 
-  @Test("Circle capability reset on account transition")
+  @Test("An explicit disabled AppView capability disables Circle-backed surfaces")
   @MainActor
-  func circleCapabilityResetOnAccountTransition() async throws {
-    CircleFeatureFlags.setLocalFlag(true)
+  func explicitDisabledCapabilityDisablesCircles() async throws {
     CircleFeatureFlags.serverCapability(enabled: true)
     #expect(CircleFeatureFlags.isEnabled)
 
-    // Transition resets flag
     CircleFeatureFlags.serverCapability(enabled: false)
     #expect(!CircleFeatureFlags.isEnabled)
   }

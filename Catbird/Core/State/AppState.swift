@@ -1362,7 +1362,7 @@ final class AppState {
     /// updating `CircleFeatureFlags.serverCapability` while race-checking against account switches.
     @MainActor
     func probeCircleCapabilities() async {
-        let targetDID = self.userDID
+        let targetDID = userDID
         // Route every generated `blue.catbird.circle.*` read to the standalone
         // Circle AppView. Petrel longest-prefix matches this map, so this one
         // entry covers the whole namespace without per-call header plumbing.
@@ -1375,17 +1375,16 @@ final class AppState {
         )
         do {
             let caps = try await circleService.capabilities()
-            guard let activeDID = AppStateManager.shared.lifecycle.userDID, activeDID == targetDID else {
+            guard AppStateManager.shared.lifecycle.userDID == targetDID else {
                 logger.info("Circle capability probe discarded for inactive account: \(targetDID)")
                 return
             }
             CircleFeatureFlags.serverCapability(enabled: caps.enabled)
             logger.info("Circle capability probe succeeded for \(targetDID): enabled=\(caps.enabled)")
         } catch {
-            guard let activeDID = AppStateManager.shared.lifecycle.userDID, activeDID == targetDID else {
+            guard AppStateManager.shared.lifecycle.userDID == targetDID else {
                 return
             }
-            CircleFeatureFlags.serverCapability(enabled: false)
             logger.debug("Circle capability probe failed for \(targetDID): \(error.localizedDescription)")
         }
     }

@@ -573,7 +573,7 @@ struct FeedsStartPage: View {
       .accessibilityHint("Opens Circles feed and closes drawer")
       .accessibilityAddTraits(.isButton)
     } else {
-      // Disabled explanatory entry when local flag is on but PDS unsupported
+      // Keep Circles discoverable even when the AppView reports it unavailable.
       Button {} label: {
         HStack(spacing: 21) {
           ZStack {
@@ -1557,9 +1557,7 @@ struct FeedsStartPage: View {
 
               // Big default feed button as first feed in hierarchy
               bigDefaultFeedButton
-              if CircleFeatureFlags.localFlag {
-                  circlesFeedEntry
-              }
+              circlesFeedEntry
 
               // Pinned feeds section - continue the hierarchy
               if !filteredPinnedFeeds.isEmpty {

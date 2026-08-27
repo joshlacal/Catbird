@@ -2,12 +2,12 @@ import Foundation
 import Petrel
 import PetrelCatbird
 
-/// Production Circle transport over the existing gateway `ATProtoClient`.
+/// Production Circle transport.
 ///
-/// All requests go through Petrel's normal gateway network path (`client.blue
-/// .catbird.circle.*` and `client.com.atproto.space.*`); no raw session token
-/// or PDS DPoP material is exposed to the device. Writes go to the exact
-/// Circle Space and never fall back to the public repo.
+/// Public capability discovery calls the standalone AppView directly.
+/// Authenticated Circle reads use Petrel's service map; Space administration
+/// and permissioned writes stay on the owner's PDS. No raw session token or
+/// PDS DPoP material is exposed to the device.
 actor GatewayCircleTransport: CircleTransport {
   private let client: ATProtoClient
 
@@ -18,8 +18,24 @@ actor GatewayCircleTransport: CircleTransport {
   let publicEndpointCallCount: Int = 0
 
   func capabilities() async throws -> CircleCapability {
-    let (_, output) = try await client.blue.catbird.circle.getCapabilities()
-    guard let output else { throw CircleError.invalidResponse }
+    let endpoint = CircleConfiguration.appViewBaseURL
+      .appendingPathComponent("xrpc/blue.catbird.circle.getCapabilities")
+    let data: Data
+    let response: URLResponse
+    do {
+      (data, response) = try await URLSession.shared.data(from: endpoint)
+    } catch {
+      throw CircleError.networkError(error.localizedDescription)
+    }
+    guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+      throw CircleError.upstreamUnavailable
+    }
+    guard let output = try? JSONDecoder().decode(
+      BlueCatbirdCircleGetCapabilities.Output.self,
+      from: data
+    ) else {
+      throw CircleError.invalidResponse
+    }
     return CircleCapability(
       enabled: output.enabled,
       protocolRevision: output.protocolRevision,
