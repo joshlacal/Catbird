@@ -1,3 +1,4 @@
+import AuthenticationServices
 import CatbirdMLSCore
 import Foundation
 import LocalAuthentication
@@ -436,6 +437,7 @@ public struct DefaultAuthLogHandler: AuthLogHandler {
 /// Logger wrapper for AuthenticationManager accepting only finite AuthLogEvent cases
 struct AuthLogger: Sendable {
   let handler: any AuthLogHandler
+  private let osLogger = Logger(subsystem: "blue.catbird", category: "Authentication")
 
   init(handler: any AuthLogHandler = DefaultAuthLogHandler()) {
     self.handler = handler
@@ -459,6 +461,26 @@ struct AuthLogger: Sendable {
 
   func critical(_ event: AuthLogEvent) {
     handler.log(level: .fault, event: event)
+  }
+
+  func debug(_ message: String) {
+    osLogger.debug("\(message)")
+  }
+
+  func info(_ message: String) {
+    osLogger.info("\(message)")
+  }
+
+  func warning(_ message: String) {
+    osLogger.warning("\(message)")
+  }
+
+  func error(_ message: String) {
+    osLogger.error("\(message)")
+  }
+
+  func critical(_ message: String) {
+    osLogger.fault("\(message)")
   }
 }
 
@@ -508,7 +530,7 @@ final class AuthenticationManager: AuthProgressDelegate {
   // Handle storage for multi-account support
   private let handleStorageKey = "catbird_account_handles"
   private let accountOrderKey = "catbird_account_order"
-
+  private let userDefaults: UserDefaults
   // State change handling with async streams
   @ObservationIgnored
   private let stateSubject = AsyncStream<AuthState>.makeStream()
@@ -569,6 +591,89 @@ final class AuthenticationManager: AuthProgressDelegate {
     callbackURL: URL(string: "https://catbird.blue/oauth/callback")!
   )
 
+  // MARK: - Progressive Gateway Permissions
+
+  /// Continuity snapshot capturing authentication identity and context before and across upgrade steps.
+  private struct GatewayPermissionContinuitySnapshot {
+    let did: String
+    let client: ATProtoClient
+    let appState: AppState?
+    let appStateUserDID: String?
+  }
+
+  /// Struct representing an in-flight gateway permission upgrade request.
+  private struct InFlightPermissionRequest {
+    let id: UUID
+    let permission: GatewayPermission
+    let did: String
+    let task: Task<Void, Error>
+  }
+
+/// Thread-safe cancellation-aware waiter that awaits a shared Task without cancelling it upon waiter cancellation.
+private final class CoalescedPermissionWaiter: @unchecked Sendable {
+  private let lock = NSLock()
+  private var continuation: CheckedContinuation<Void, Error>?
+  private var isResolved = false
+
+  func wait(for task: Task<Void, Error>) async throws {
+    try await withTaskCancellationHandler {
+      try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+        self.lock.lock()
+        if Task.isCancelled || self.isResolved {
+          self.isResolved = true
+          self.lock.unlock()
+          continuation.resume(throwing: GatewayPermissionError.cancelled)
+          return
+        }
+        self.continuation = continuation
+        self.lock.unlock()
+
+        Task {
+          do {
+            try await task.value
+            self.resolve(with: .success(()))
+          } catch {
+            self.resolve(with: .failure(error))
+          }
+        }
+      }
+    } onCancel: {
+      self.resolve(with: .failure(GatewayPermissionError.cancelled))
+    }
+  }
+
+  private func resolve(with result: Result<Void, Error>) {
+    lock.lock()
+    guard !isResolved else {
+      lock.unlock()
+      return
+    }
+    isResolved = true
+    let cont = continuation
+    continuation = nil
+    lock.unlock()
+    if let cont {
+      switch result {
+      case .success:
+        cont.resume()
+      case .failure(let error):
+        cont.resume(throwing: error)
+      }
+    }
+  }
+}
+
+  @ObservationIgnored
+  private var inFlightPermission: InFlightPermissionRequest?
+
+  // Internal test / dependency injection hooks
+  @ObservationIgnored
+  var fetchGrantedScopesHook: ((_ did: String?) async throws -> Set<String>)?
+  @ObservationIgnored
+  var startGatewayScopeUpgradeHook: ((_ requesting: Set<String>, _ expectedDID: String, _ callbackURL: URL) async throws -> URL)?
+  @ObservationIgnored
+  var completeGatewayScopeUpgradeHook: ((_ callbackURL: URL, _ expectedDID: String) async throws -> Set<String>)?
+
   // MARK: - Debounce Flag for Auth Expiration
 
   /// Prevents multiple simultaneous auth expiration handlers from triggering.
@@ -609,9 +714,11 @@ final class AuthenticationManager: AuthProgressDelegate {
   // MARK: - Initialization
 
   init(
+    userDefaults: UserDefaults = .standard,
     logHandler: any AuthLogHandler = DefaultAuthLogHandler(),
     dependencyOverrides: AuthenticationDependencyOverrides = .init()
   ) {
+    self.userDefaults = userDefaults
     self.logger = AuthLogger(handler: logHandler)
     self.dependencyOverrides = dependencyOverrides
     logger.debug(.initialized)
@@ -630,10 +737,6 @@ final class AuthenticationManager: AuthProgressDelegate {
   }
   #if DEBUG
   nonisolated(unsafe) static var switchAccountOverride: (@Sendable (String) async throws -> (did: String, handle: String))?
-
-  func setClientForTesting(_ client: ATProtoClient?) {
-    self.client = client
-  }
 
   func resetDebounceForTesting() {
     self.isHandlingAuthExpiration = false
@@ -739,6 +842,7 @@ final class AuthenticationManager: AuthProgressDelegate {
   /// Start OAuth flow for the expired account (if available)
   @MainActor
   func startOAuthFlowForExpiredAccount() async throws -> URL? {
+    cancelInFlightPermissionUpgrade()
     guard let expiredAccount = expiredAccountInfo else {
       logger.warning(.expiredAccountReauthMissingInfo)
       return nil
@@ -765,6 +869,21 @@ final class AuthenticationManager: AuthProgressDelegate {
     // Emit synchronously - no Task wrapper to eliminate race windows
     stateSubject.continuation.yield(newState)
   }
+
+  #if DEBUG
+  @MainActor
+  func setClientForTesting(_ client: ATProtoClient?) {
+    self.client = client
+  }
+
+  @MainActor
+  func setAuthenticatedForTesting(did: String, client: ATProtoClient? = nil) {
+    if let client = client {
+      self.client = client
+    }
+    updateState(.authenticated(userDID: did))
+  }
+  #endif
 
   /// Validate a DID coming from user input or client session state.
   private func validatedUserDID(_ rawDID: String, source: String) throws -> String {
@@ -1077,7 +1196,7 @@ final class AuthenticationManager: AuthProgressDelegate {
 
     currentAuthTask?.cancel()
     currentAuthTask = nil
-
+    cancelInFlightPermissionUpgrade()
     isAuthenticationCancelled = false
     updateState(.authenticating(progress: .resolvingHandle(handle: handle)))
 
@@ -1230,6 +1349,7 @@ final class AuthenticationManager: AuthProgressDelegate {
   ///   - pdsURL: Optional PDS URL for custom domains (bypasses handle resolution)
   @MainActor
   func loginWithPasswordForE2E(identifier: String, password: String, pdsURL: URL? = nil) async throws {
+    cancelInFlightPermissionUpgrade()
     logger.info(.e2ePasswordLoginStarted)
     
     updateState(.authenticating(progress: .initializingClient))
@@ -1359,6 +1479,7 @@ final class AuthenticationManager: AuthProgressDelegate {
   /// Handle the OAuth callback after web authentication with timeout support
   @MainActor
   func handleCallback(_ url: URL) async throws {
+    cancelInFlightPermissionUpgrade()
     logger.info(.callbackProcessingStarted)
     logger.debug(.callbackURLDetails)
     logger.debug(.callbackStateVerified)
@@ -1475,6 +1596,7 @@ final class AuthenticationManager: AuthProgressDelegate {
   /// Handle a gateway callback by atomically exchanging its one-time code.
   @MainActor
   func handleGatewayCallback(_ url: URL) async throws {
+    cancelInFlightPermissionUpgrade()
     logger.info(.gatewayCallbackProcessingStarted)
     updateState(.authenticating(progress: .exchangingTokens))
 
@@ -1554,9 +1676,9 @@ final class AuthenticationManager: AuthProgressDelegate {
 
   @MainActor
   func cancelGatewayOAuthFlow() async {
+    cancelInFlightPermissionUpgrade()
     await gatewayOAuthExchange.cancelPendingLogin()
   }
-
   /// Logout the current user
   /// - Parameter isManual: If true, this is a user-initiated logout and we should clear expiredAccountInfo
   ///   to prevent auto-triggering re-authentication. If false (auto-logout), preserve expiredAccountInfo
@@ -1565,8 +1687,8 @@ final class AuthenticationManager: AuthProgressDelegate {
   func logout(isManual: Bool = false) async {
     logger.info(.logoutStarted)
     let departingDID = state.userDID
-
     isAuthenticationCancelled = false
+    cancelInFlightPermissionUpgrade()
     updateState(.unauthenticated)
 
     if let departingDID {
@@ -1631,7 +1753,7 @@ final class AuthenticationManager: AuthProgressDelegate {
   func resetError() {
     currentAuthTask?.cancel()
     currentAuthTask = nil
-
+    cancelInFlightPermissionUpgrade()
     if let client = client {
       Task {
         await client.cancelOAuthFlow()
@@ -1646,6 +1768,307 @@ final class AuthenticationManager: AuthProgressDelegate {
     } else if case .authenticating = state {
       updateState(.unauthenticated)
     }
+  }
+
+  // MARK: - Progressive Gateway Permission Coordinator
+
+  /// Cancels any in-flight gateway permission upgrade.
+  @MainActor
+  func cancelInFlightPermissionUpgrade() {
+    if let inFlight = inFlightPermission {
+      logger.info("Cancelling in-flight gateway permission upgrade for \(inFlight.permission.rawValue) (id: \(inFlight.id))")
+      inFlight.task.cancel()
+      inFlightPermission = nil
+    }
+  }
+
+  @MainActor
+  private func capturePermissionContinuitySnapshot() throws -> GatewayPermissionContinuitySnapshot {
+    guard !isSwitchingAccount else {
+      logger.error("ensureGatewayPermission called while switching accounts")
+      throw GatewayPermissionError.stateChanged
+    }
+
+    guard case .authenticated(let expectedDID) = self.state, !expectedDID.isEmpty else {
+      logger.error("ensureGatewayPermission called while not authenticated")
+      throw GatewayPermissionError.unauthenticated
+    }
+
+    guard let expectedClient = self.client else {
+      logger.error("ensureGatewayPermission called with client unavailable")
+      throw GatewayPermissionError.clientUnavailable
+    }
+
+    if isAuthenticationCancelled {
+      throw GatewayPermissionError.cancelled
+    }
+
+    let expectedAppState = AppStateManager.shared.getState(for: expectedDID)
+    let expectedAppStateUserDID = AppStateManager.shared.lifecycle.userDID
+
+    return GatewayPermissionContinuitySnapshot(
+      did: expectedDID,
+      client: expectedClient,
+      appState: expectedAppState,
+      appStateUserDID: expectedAppStateUserDID
+    )
+  }
+
+  @MainActor
+  private func validatePermissionContinuity(against snapshot: GatewayPermissionContinuitySnapshot) throws {
+    if Task.isCancelled {
+      throw GatewayPermissionError.cancelled
+    }
+
+    if isAuthenticationCancelled {
+      logger.error("Authentication was cancelled during permission upgrade")
+      throw GatewayPermissionError.cancelled
+    }
+
+    if isSwitchingAccount {
+      logger.error("Account switch began during permission upgrade")
+      throw GatewayPermissionError.stateChanged
+    }
+
+    // Verify DID state is unchanged and still authenticated
+    guard case .authenticated(let currentDID) = self.state, currentDID == snapshot.did else {
+      logger.error("Auth state changed during permission upgrade (expected \(snapshot.did))")
+      throw GatewayPermissionError.stateChanged
+    }
+
+    // Verify client instance is unchanged
+    guard let currentClient = self.client, currentClient === snapshot.client else {
+      logger.error("Client instance changed during permission upgrade")
+      throw GatewayPermissionError.stateChanged
+    }
+
+    // Verify AppState lifecycle userDID is unchanged (including nil transitions)
+    let currentLifecycleUserDID = AppStateManager.shared.lifecycle.userDID
+    guard currentLifecycleUserDID == snapshot.appStateUserDID else {
+      logger.error("AppState lifecycle userDID changed during permission upgrade (expected \(String(describing: snapshot.appStateUserDID)), got \(String(describing: currentLifecycleUserDID)))")
+      throw GatewayPermissionError.stateChanged
+    }
+
+    // Verify AppState instance is unchanged
+    let currentAppState = AppStateManager.shared.getState(for: snapshot.did)
+    guard currentAppState === snapshot.appState else {
+      logger.error("AppState instance changed during permission upgrade")
+      throw GatewayPermissionError.stateChanged
+    }
+  }
+
+  /// Ensures that the specified gateway permission is granted for the currently authenticated user.
+  /// If the permission is already granted, returns immediately without opening a browser.
+  /// Otherwise, initiates a progressive JIT OAuth upgrade flow via Nest and the Petrel client.
+  ///
+  /// - Parameters:
+  ///   - permission: The progressive gateway permission scope to ensure.
+  ///   - present: A closure that presents the authorization URL (e.g. via `ASWebAuthenticationSession`)
+  ///              and returns the resulting callback URL.
+  /// - Throws: `GatewayPermissionError` if unauthenticated, cancelled, denied, state changed, or upgrade failed.
+  @MainActor
+  public func ensureGatewayPermission(
+    _ permission: GatewayPermission,
+    present: @escaping @MainActor (URL) async throws -> URL
+  ) async throws {
+    // Check Task cancellation at start
+    if Task.isCancelled {
+      throw GatewayPermissionError.cancelled
+    }
+
+    // 1. Snapshot authenticated DID / client / current AppState
+    let snapshot = try capturePermissionContinuitySnapshot()
+
+    // 2. Fetch granted scopes (throwing - transport errors throw and never mean an empty grant)
+    let currentScopes: Set<String>
+    do {
+      if let hook = fetchGrantedScopesHook {
+        currentScopes = try await hook(snapshot.did)
+      } else {
+        currentScopes = try await snapshot.client.fetchGrantedScopes(for: snapshot.did)
+      }
+    } catch {
+      if Task.isCancelled || error is CancellationError {
+        throw GatewayPermissionError.cancelled
+      }
+      throw error
+    }
+
+    // Validate continuity snapshot before already-granted return
+    try validatePermissionContinuity(against: snapshot)
+
+    // 3. Skip browser if grant present
+    if currentScopes.contains(permission.rawValue) {
+      logger.info("Gateway permission \(permission.rawValue) is already granted for \(snapshot.did)")
+      return
+    }
+
+    // 4. Coalesce / reject concurrent flow
+    // Discard a cancelled in-flight record before coalescing/rejecting so a new
+    // request for the same permission can proceed.
+    if let existing = inFlightPermission, existing.task.isCancelled {
+      inFlightPermission = nil
+    }
+
+    if let existing = inFlightPermission {
+      if existing.permission == permission && existing.did == snapshot.did {
+        logger.info("Coalescing concurrent permission request for \(permission.rawValue)")
+        do {
+          let waiter = CoalescedPermissionWaiter()
+          try await waiter.wait(for: existing.task)
+        } catch {
+          if Task.isCancelled || error is CancellationError || (error as? GatewayPermissionError) == .cancelled {
+            throw GatewayPermissionError.cancelled
+          }
+          throw error
+        }
+        if Task.isCancelled {
+          throw GatewayPermissionError.cancelled
+        }
+        return
+      } else {
+        logger.warning("Rejecting concurrent permission request for \(permission.rawValue) (active: \(existing.permission.rawValue))")
+        throw GatewayPermissionError.alreadyInProgress
+      }
+    }
+
+    // 5. Create unique request generation ID and structured in-flight task
+    let requestID = UUID()
+    let upgradeTask = Task { @MainActor [weak self] () -> Void in
+      guard let self = self else { throw GatewayPermissionError.clientUnavailable }
+      try await self.performGatewayScopeUpgrade(
+        permission: permission,
+        snapshot: snapshot,
+        present: present
+      )
+    }
+
+    self.inFlightPermission = InFlightPermissionRequest(
+      id: requestID,
+      permission: permission,
+      did: snapshot.did,
+      task: upgradeTask
+    )
+
+    defer {
+      if self.inFlightPermission?.id == requestID {
+        self.inFlightPermission = nil
+      }
+    }
+
+    do {
+      try await withTaskCancellationHandler {
+        try await upgradeTask.value
+      } onCancel: {
+        upgradeTask.cancel()
+        Task { @MainActor [weak self] in
+          if self?.inFlightPermission?.id == requestID {
+            self?.inFlightPermission = nil
+          }
+        }
+      }
+    } catch {
+      if Task.isCancelled || error is CancellationError || (error as? GatewayPermissionError) == .cancelled {
+        throw GatewayPermissionError.cancelled
+      }
+      throw error
+    }
+  }
+
+  @MainActor
+  private func performGatewayScopeUpgrade(
+    permission: GatewayPermission,
+    snapshot: GatewayPermissionContinuitySnapshot,
+    present: @MainActor (URL) async throws -> URL
+  ) async throws {
+    let callbackURL = GatewayPermission.permissionCallbackURL
+
+    // Check Task cancellation at start
+    if Task.isCancelled {
+      throw GatewayPermissionError.cancelled
+    }
+
+    // Start gateway scope upgrade
+    let authURL: URL
+    do {
+      if let hook = startGatewayScopeUpgradeHook {
+        authURL = try await hook(Set([permission.rawValue]), snapshot.did, callbackURL)
+      } else {
+        authURL = try await snapshot.client.startGatewayScopeUpgrade(
+          requesting: Set([permission.rawValue]),
+          for: snapshot.did,
+          callbackURL: callbackURL
+        )
+      }
+    } catch {
+      if Task.isCancelled || error is CancellationError {
+        logger.info("Gateway permission upgrade start cancelled for \(permission.rawValue)")
+        throw GatewayPermissionError.cancelled
+      }
+      throw error
+    }
+
+    // Validate continuity snapshot before presentation
+    try validatePermissionContinuity(against: snapshot)
+
+    // Present auth URL via presentation handler
+    let returnedCallbackURL: URL
+    do {
+      returnedCallbackURL = try await present(authURL)
+    } catch {
+      if Task.isCancelled || error is CancellationError {
+        logger.info("Gateway permission upgrade cancelled by user for \(permission.rawValue)")
+        throw GatewayPermissionError.cancelled
+      }
+      #if canImport(AuthenticationServices)
+      if let asError = error as? ASWebAuthenticationSessionError, asError.code == .canceledLogin {
+        logger.info("Gateway permission upgrade ASWebAuthenticationSession cancelled by user for \(permission.rawValue)")
+        throw GatewayPermissionError.cancelled
+      }
+      #endif
+      if let authError = error as? AuthError, authError == .cancelled {
+        logger.info("Gateway permission upgrade AuthError.cancelled for \(permission.rawValue)")
+        throw GatewayPermissionError.cancelled
+      }
+      if let gwError = error as? GatewayPermissionError, gwError == .cancelled {
+        throw gwError
+      }
+      logger.error("Gateway permission presentation failed: \(error.localizedDescription)")
+      throw error
+    }
+
+    // Validate continuity snapshot before complete/redeem
+    try validatePermissionContinuity(against: snapshot)
+
+    // Complete gateway scope upgrade
+    let grantedScopes: Set<String>
+    do {
+      if let hook = completeGatewayScopeUpgradeHook {
+        grantedScopes = try await hook(returnedCallbackURL, snapshot.did)
+      } else {
+        grantedScopes = try await snapshot.client.completeGatewayScopeUpgrade(
+          callbackURL: returnedCallbackURL,
+          for: snapshot.did
+        )
+      }
+    } catch {
+      if Task.isCancelled || error is CancellationError {
+        logger.info("Gateway permission upgrade complete cancelled for \(permission.rawValue)")
+        throw GatewayPermissionError.cancelled
+      }
+      throw error
+    }
+
+    // Validate continuity snapshot after completion
+    try validatePermissionContinuity(against: snapshot)
+
+    // Verify actual returned grant contains requested permission
+    guard grantedScopes.contains(permission.rawValue) else {
+      logger.error("Returned scopes missing requested permission \(permission.rawValue): \(grantedScopes)")
+      throw GatewayPermissionError.missingGrantedScope(permission)
+    }
+
+    logger.info("Successfully upgraded gateway permission for \(permission.rawValue)")
   }
 
   // MARK: - Account Management
@@ -1693,6 +2116,86 @@ final class AuthenticationManager: AuthProgressDelegate {
   }
   #endif
 
+  /// Records a local handle transition for the currently authenticated account.
+  /// Validates that the manager is authenticated for the expected DID with an active client,
+  /// validates that the handle is a canonical nonempty non-DID string, and updates local
+  /// state and persistent handle storage atomically enough that future JIT / expired reauth / account switching uses the new handle.
+  ///
+  /// - Parameters:
+  ///   - newHandle: The new handle string.
+  ///   - expectedDID: The DID expected to be currently authenticated.
+  /// - Throws: `AuthError.invalidSession` if not authenticated or DID mismatch,
+  ///           `AuthError.clientNotInitialized` if client is missing,
+  ///           `AuthError.invalidHandle` if handle is empty, malformed, or starts with `did:`.
+  @MainActor
+  func recordCurrentHandleChange(_ newHandle: String, for expectedDID: String) throws {
+    guard case .authenticated(let currentDID) = self.state, currentDID == expectedDID, !expectedDID.isEmpty else {
+      logger.error("Handle change rejected: auth state is not authenticated for expected DID: \(expectedDID)")
+      throw AuthError.invalidSession
+    }
+
+    guard self.client != nil else {
+      logger.error("Handle change rejected: client not initialized")
+      throw AuthError.clientNotInitialized
+    }
+
+    var trimmed = newHandle.trimmingCharacters(in: .whitespacesAndNewlines)
+    if trimmed.hasPrefix("@") {
+      trimmed = String(trimmed.dropFirst()).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    trimmed = trimmed.lowercased()
+
+    guard !trimmed.isEmpty,
+      !trimmed.hasPrefix("did:"),
+      let parsedHandle = try? Handle(handleString: trimmed)
+    else {
+      logger.error("Handle change rejected invalid handle: '\(newHandle)'")
+      throw AuthError.invalidHandle
+    }
+
+    let canonicalHandle = parsedHandle.value
+    // 1. Update in-memory current handle
+    self.handle = canonicalHandle
+
+    // 2. Update persistent handle storage for this DID
+    storeHandle(canonicalHandle, for: expectedDID)
+
+    // 3. Update cached profile data handle
+    let existingProfile = getCachedProfileData(for: expectedDID)
+    cacheProfileData(
+      for: expectedDID,
+      handle: canonicalHandle,
+      displayName: existingProfile?.displayName,
+      avatarURL: existingProfile?.avatarURL
+    )
+
+    // 4. Ensure DID is present in account order metadata
+    var order = getAccountOrder()
+    if !order.contains(expectedDID) {
+      order.insert(expectedDID, at: 0)
+      saveAccountOrder(order)
+    }
+
+    // 5. Update in-memory availableAccounts entry if present
+    if let index = availableAccounts.firstIndex(where: { $0.did == expectedDID }) {
+      let existing = availableAccounts[index]
+      availableAccounts[index] = AccountInfo(
+        did: existing.did,
+        handle: canonicalHandle,
+        isActive: existing.isActive,
+        cachedHandle: canonicalHandle,
+        cachedDisplayName: existing.cachedDisplayName,
+        cachedAvatarURL: existing.cachedAvatarURL
+      )
+    }
+
+    // 6. Update expiredAccountInfo if it targets this DID
+    if expiredAccountInfo?.did == expectedDID {
+      expiredAccountInfo = makeExpiredAccountInfo(for: expectedDID, isActive: expiredAccountInfo?.isActive ?? false)
+    }
+
+    logger.info("Successfully recorded handle transition to '\(canonicalHandle)' for DID: \(expectedDID)")
+  }
   /// Store handle for a specific DID
   func storeHandle(_ handle: String, for did: String) {
     guard let loginHandle = AccountInfo.loginHandleCandidate(handle) else {
@@ -1711,25 +2214,25 @@ final class AuthenticationManager: AuthProgressDelegate {
     handles[did] = loginHandle
 
     if let data = try? JSONEncoder().encode(handles) {
-      UserDefaults.standard.set(data, forKey: handleStorageKey)
+      userDefaults.set(data, forKey: handleStorageKey)
     }
   }
 
   /// Get stored handle for a specific DID
-  private func getStoredHandle(for did: String) -> String? {
+  func getStoredHandle(for did: String) -> String? {
     let handles = getStoredHandles()
     return AccountInfo.loginHandleCandidate(handles[did])
   }
 
   /// Get all stored handles
-  private func getStoredHandles() -> [String: String] {
+  func getStoredHandles() -> [String: String] {
     #if DEBUG
     if isE2EMode {
       return Self.ephemeralHandles.compactMapValues { AccountInfo.loginHandleCandidate($0) }
     }
     #endif
 
-    guard let data = UserDefaults.standard.data(forKey: handleStorageKey),
+    guard let data = userDefaults.data(forKey: handleStorageKey),
       let handles = try? JSONDecoder().decode([String: String].self, from: data)
     else {
       return [:]
@@ -1751,7 +2254,7 @@ final class AuthenticationManager: AuthProgressDelegate {
     handles.removeValue(forKey: did)
 
     if let data = try? JSONEncoder().encode(handles) {
-      UserDefaults.standard.set(data, forKey: handleStorageKey)
+      userDefaults.set(data, forKey: handleStorageKey)
     }
 
     // Also remove from account order
@@ -1768,7 +2271,7 @@ final class AuthenticationManager: AuthProgressDelegate {
     }
     #endif
 
-    guard let data = UserDefaults.standard.data(forKey: accountOrderKey),
+    guard let data = userDefaults.data(forKey: accountOrderKey),
       let order = try? JSONDecoder().decode([String].self, from: data)
     else {
       return []
@@ -1786,7 +2289,7 @@ final class AuthenticationManager: AuthProgressDelegate {
     #endif
 
     if let data = try? JSONEncoder().encode(order) {
-      UserDefaults.standard.set(data, forKey: accountOrderKey)
+      userDefaults.set(data, forKey: accountOrderKey)
     }
   }
 
@@ -1816,7 +2319,7 @@ final class AuthenticationManager: AuthProgressDelegate {
     #endif
 
     if let data = try? JSONEncoder().encode(profileData) {
-      UserDefaults.standard.set(data, forKey: key)
+      userDefaults.set(data, forKey: key)
       logger.debug(.profileDataCached)
     }
   }
@@ -1838,7 +2341,7 @@ final class AuthenticationManager: AuthProgressDelegate {
     #endif
 
     let key = "cached_profile_\(did)"
-    guard let data = UserDefaults.standard.data(forKey: key),
+    guard let data = userDefaults.data(forKey: key),
       let profileData = try? JSONDecoder().decode([String: String?].self, from: data)
     else {
       return nil
@@ -1882,6 +2385,9 @@ final class AuthenticationManager: AuthProgressDelegate {
     )
 
     removeStoredHandle(for: did)
+    if inFlightPermission?.did == did {
+      cancelInFlightPermissionUpgrade()
+    }
     if let client = client {
       do {
         try await client.removeAccount(did: did)
@@ -2132,7 +2638,7 @@ final class AuthenticationManager: AuthProgressDelegate {
     logger.info(.accountSwitchProceeding)
     logger.debug(.accountSwitchProceeding)
     isSwitchingAccount = true
-
+    cancelInFlightPermissionUpgrade()
     // ═══════════════════════════════════════════════════════════════════════════
     // CRITICAL FIX (2024-12): Close current user's MLS databases before switching
     // ═══════════════════════════════════════════════════════════════════════════
@@ -2239,6 +2745,7 @@ final class AuthenticationManager: AuthProgressDelegate {
       logger.debug(.accountSwitchDatabasePrewarmFailed)
     }
 
+    cancelInFlightPermissionUpgrade()
     do {
       logger.debug(.accountSwitchProceeding)
       updateState(.initializing)
@@ -2322,6 +2829,7 @@ final class AuthenticationManager: AuthProgressDelegate {
   /// Add a new account
   @MainActor
   func addAccount(handle: String) async throws -> URL {
+    cancelInFlightPermissionUpgrade()
     logger.info(.addAccountStarted)
 
     await ensureClientInitializedForAccountOperations()
@@ -2495,11 +3003,11 @@ final class AuthenticationManager: AuthProgressDelegate {
   // MARK: - Biometric Preferences
 
   private func getBiometricAuthPreference() async -> Bool {
-    return UserDefaults.standard.bool(forKey: "biometric_auth_enabled")
+    return userDefaults.bool(forKey: "biometric_auth_enabled")
   }
 
   private func saveBiometricAuthPreference(enabled: Bool) async {
-    UserDefaults.standard.set(enabled, forKey: "biometric_auth_enabled")
+    userDefaults.set(enabled, forKey: "biometric_auth_enabled")
   }
 
   // MARK: - AuthProgressDelegate
@@ -2652,6 +3160,8 @@ enum AuthError: Error, LocalizedError {
   case accountSwitchInProgress
   /// Database drain failed during account switch; do not proceed to avoid corruption.
   case databaseDrainFailed
+  /// Received an empty, DID-formatted, or malformed handle.
+  case invalidHandle
 
   var errorDescription: String? {
     switch self {
@@ -2679,6 +3189,8 @@ enum AuthError: Error, LocalizedError {
       return "Please wait for the current account switch to complete"
     case .databaseDrainFailed:
       return "Could not safely close the database. Please restart the app and try again."
+    case .invalidHandle:
+      return "Received an invalid handle"
     }
   }
 
@@ -2709,6 +3221,8 @@ enum AuthError: Error, LocalizedError {
     case .databaseDrainFailed:
       return
         "The app couldn’t acquire exclusive access to the encrypted database to flush and close it safely."
+    case .invalidHandle:
+      return "The handle is empty, malformed, or formatted as a DID."
     default:
       return nil
     }
@@ -2742,8 +3256,36 @@ enum AuthError: Error, LocalizedError {
       return "Wait a moment for the current account switch to finish, then try again."
     case .databaseDrainFailed:
       return "Restart the app, then try switching accounts again."
+    case .invalidHandle:
+      return "Please check the handle format and try again."
     default:
       return "Please try again or contact support if the problem persists."
+    }
+  }
+}
+
+extension AuthError: Equatable {
+  public static func == (lhs: AuthError, rhs: AuthError) -> Bool {
+    switch (lhs, rhs) {
+    case (.clientNotInitialized, .clientNotInitialized),
+      (.invalidSession, .invalidSession),
+      (.invalidCredentials, .invalidCredentials),
+      (.invalidCallbackURL, .invalidCallbackURL),
+      (.timeout, .timeout),
+      (.cancelled, .cancelled),
+      (.invalidUserDID, .invalidUserDID),
+      (.accountSwitchInProgress, .accountSwitchInProgress),
+      (.databaseDrainFailed, .databaseDrainFailed),
+      (.invalidHandle, .invalidHandle):
+      return true
+    case (.badResponse(let l), .badResponse(let r)):
+      return l == r
+    case (.networkError(let l), .networkError(let r)):
+      return (l as NSError) == (r as NSError)
+    case (.unknown(let l), .unknown(let r)):
+      return (l as NSError) == (r as NSError)
+    default:
+      return false
     }
   }
 }

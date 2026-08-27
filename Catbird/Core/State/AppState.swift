@@ -191,8 +191,23 @@ final class AppState {
     @ObservationIgnored private(set) var blockedAuthorHydrator: BlockedAuthorHydrator?
 
     /// URL handling for deep links
-    @ObservationIgnored let urlHandler: URLHandler
+    @ObservationIgnored private(set) var urlHandler: URLHandler
 
+
+    /// Current sanitized platform age signal from on-device regulatory checking
+    var platformAgeSignal: PlatformAgeSignal = .none
+
+    /// Regulatory checker for on-device platform regulatory preflight
+    @ObservationIgnored let regulatoryChecker: any AgeRegulatoryChecking
+
+    /// Live status manager for authoring and editing stream status
+    @ObservationIgnored private(set) var liveStatusManager: LiveStatusManager
+
+    /// Live event service for event feed banners
+    @ObservationIgnored private(set) var liveEventService: LiveEventService
+
+    /// NUX announcement presenter
+    @ObservationIgnored private(set) var nuxPresenter: NuxAnnouncementPresenter
     /// Shared renderer for inline Bluemoji custom emoji (verify + forge + cache).
     @ObservationIgnored let bluemojiRenderer = BluemojiRenderer()
 
@@ -241,9 +256,6 @@ final class AppState {
 
     /// Feed feedback manager for custom feed interactions
     @ObservationIgnored let feedFeedbackManager = FeedFeedbackManager()
-
-    /// Age verification manager (deprecated; retained for source compatibility, no UI)
-    @ObservationIgnored let ageVerificationManager = AgeVerificationManager()
 
     /// App-specific settings that aren't synced with the server
     @ObservationIgnored let appSettings = AppSettings()
@@ -454,7 +466,6 @@ final class AppState {
     @ObservationIgnored private var isAuthManagerInitialized = false
 
     // For task cancellation when needed
-    @ObservationIgnored private var authStateObservationTask: Task<Void, Never>?
     @ObservationIgnored private var backgroundPollingTask: Task<Void, Never>?
 
     // MARK: - Initialization
@@ -481,9 +492,15 @@ final class AppState {
         }
     }
 
-    init(userDID: String, client: ATProtoClient) {
+    @MainActor
+    init(
+        userDID: String,
+        client: ATProtoClient,
+        regulatoryChecker: any AgeRegulatoryChecking = AppleAgeRangeAdapter.shared
+    ) {
         self.userDID = userDID
         self.client = client
+        self.regulatoryChecker = regulatoryChecker
         let authorityMode = Self.configuredMLSProtocolAuthorityMode()
         MLSAuthorityModeSharedState.setCurrentMode(authorityMode)
         logger.info("AppState initializing for account: \(userDID)")
@@ -501,6 +518,9 @@ final class AppState {
         }
 
         urlHandler = URLHandler()
+        liveStatusManager = LiveStatusManager(appState: nil)
+        liveEventService = LiveEventService(appState: nil)
+        nuxPresenter = NuxAnnouncementPresenter(appState: nil)
 
         // Create per-account manager instances
         feedFilterSettings = FeedFilterSettings(accountDID: userDID)
@@ -528,6 +548,13 @@ final class AppState {
         // Initialize chat manager with authenticated client
         chatManager = ChatManager(client: client, appState: nil)
 
+
+        onboardingManager.configure(accountDID: userDID)
+        liveStatusManager.configure(with: self)
+        liveEventService.configure(with: self)
+        nuxPresenter.configure(with: self)
+        urlHandler.configure(with: self)
+        urlHandler.externalIntentPresenter.flushPendingIntent(with: self)
         // Load user settings
         if let storedContentSetting = AppSettingsModel.boolValue(
             for: "isAdultContentEnabled",
@@ -548,155 +575,6 @@ final class AppState {
         // Client is passed in already authenticated, no need to observe state changes
         // Managers are initialized with the client in init
 
-        /* REMOVED: authStateObservationTask observer - no longer needed
-             authStateObservationTask = Task { [weak self] in
-               guard let self = self else { return }
-
-               for await state in XYZ.stateChanges {
-                 Task { @MainActor in
-                   // Update currentUserDID when auth state changes
-                   let newDID = state.userDID
-                   if self.currentUserDID != newDID {
-                     self.currentUserDID = newDID
-                   }
-
-                   // When auth state changes, update ALL manager client references
-                   if case .authenticated = state {
-                     // Setup MLS database for authenticated user
-                     if let userDID = state.userDID {
-                       self.logger.info("🔐 User authenticated - setting up MLS database")
-                       await self.setupMLSDatabase(for: userDID)
-                     }
-
-                     self.postManager.updateClient(self.client)
-                     self.preferencesManager.updateClient(self.client)
-                     if !isFaultOrderingMode {
-                       await self.notificationManager.updateClient(self.client)
-                     }
-                     if let client = self.client {
-                       self.graphManager = GraphManager(atProtoClient: client)
-                       self.listManager.updateClient(client)
-                       self.listManager.updateAppState(self)
-                       self.activitySubscriptionService.updateClient(client)
-
-                       // Update preferences manager reference and load hidden posts
-                       Task { @MainActor in
-                         self.postHidingManager.updatePreferencesManager(self.preferencesManager)
-                         await self.postHidingManager.loadFromPreferences()
-                       }
-
-         #if canImport(FoundationModels)
-                       if #available(iOS 26.0, macOS 26.0, *), !isFaultOrderingMode {
-                         let agent = self.blueskyAgent
-                         Task {
-                           await agent.updateClient(client)
-                         }
-                       }
-         #endif
-         #if canImport(FoundationModels)
-                       if #available(iOS 26.0, macOS 26.0, *), !isFaultOrderingMode {
-                         Task(priority: .background) {
-                           await TopicSummaryService.shared.prepareLaunchWarmup(appState: self)
-                         }
-                       }
-         #endif
-                       if !isFaultOrderingMode {
-                         self.chatManager.updateAppState(self) // Wire AppState reference to ChatManager
-                         await self.chatManager.updateClient(client) // Update ChatManager client
-                         self.chatHeartbeatManager.client = client
-                         self.urlHandler.configure(with: self)
-                       }
-
-                       if !isFaultOrderingMode {
-                         Task { @MainActor in
-                           await self.notificationManager.requestNotificationsAfterLogin()
-                         }
-
-                         // Notify that authentication is complete to refresh all views
-                         self.notifyAccountSwitched()
-
-                         // When we authenticate, also try to refresh preferences
-                         Task { @MainActor in
-                           do {
-                             try await self.preferencesManager.fetchPreferences(forceRefresh: true)
-                           } catch {
-                             self.logger.error(
-                               "Error fetching preferences after authentication: \(error.localizedDescription)"
-                             )
-                           }
-
-                           Task { @MainActor in
-                             await self.activitySubscriptionService.refreshSubscriptions()
-                           }
-
-                             guard let userDID = self.currentUserDID else {
-                             self.logger.error("No current user DID after authentication")
-                             return
-                           }
-
-                           // Wait briefly for auth to fully establish
-                           try? await Task.sleep(nanoseconds: 200_000_000)
-
-                           // Load current user profile for optimistic updates
-                           await self.loadCurrentUserProfile(did: userDID)
-
-                           // User profile loaded successfully
-
-                           // Clear any stale widget data and trigger fresh load
-                           Task {
-                             FeedWidgetDataProvider.shared.clearWidgetData()
-                           }
-                         }
-                       }
-                     }
-                   } else if case .unauthenticated = state {
-                     // Always clear clients when state becomes unauthenticated, regardless of initialization status.
-                     self.logger.info("Auth state changed to unauthenticated. Clearing clients.")
-
-                     // Close MLS database for logged out user
-                     if let oldUserDID = self.currentUserDID {
-                       self.logger.info("🔒 User logged out - closing MLS database")
-                       await self.clearMLSDatabase(for: oldUserDID)
-                     }
-
-                     // Clear current user profile on logout/session expiry
-                     self.currentUserProfile = nil
-                     self.logger.debug("Cleared current user profile on unauthenticated state")
-
-                     // Clear user-specific composer drafts
-                     self.logger.debug("Cleared composer drafts on unauthenticated state")
-
-                     // Clear client on logout or session expiry
-                     self.postManager.updateClient(nil)
-                     self.preferencesManager.updateClient(nil)
-                     await self.notificationManager.updateClient(nil)
-                     self.graphManager = GraphManager(atProtoClient: nil)
-                     self.listManager.updateClient(nil)
-                     self.listManager.updateAppState(nil)
-                     self.activitySubscriptionService.updateClient(nil)
-                     self.postHidingManager.updatePreferencesManager(nil)
-         #if canImport(FoundationModels)
-                     if #available(iOS 26.0, macOS 26.0, *) {
-                       if let agent = self.blueskyAgentStorage as? BlueskyIntelligenceAgent {
-                         Task {
-                           await agent.updateClient(nil)
-                         }
-                       }
-                     }
-         #endif
-                     await self.chatManager.updateClient(nil)
-
-                     // Clear widget data on logout
-                     FeedWidgetDataProvider.shared.clearWidgetData()
-                   } else if case .initializing = state {
-                     // Handle initializing state if needed
-                     self.logger.info("Auth state changed to initializing.")
-                   }
-                 }
-               }
-             }
-             */ // End of removed authStateObservationTask
-
         // Set up circular references after initialization
         postManager.updateAppState(self)
         composerDraftManager.updateAppState(self)
@@ -713,6 +591,13 @@ final class AppState {
         Task { @MainActor in
             setupThemeAndFontObservation()
         }
+
+        // Passive on-device regulatory preflight without network calls or user prompts
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let signal = await self.regulatoryChecker.preflight()
+            self.platformAgeSignal = signal
+        }
         // NOTE: Settings observation is set up later in initializePreferencesManager
         // to avoid duplicate observers
 
@@ -722,8 +607,6 @@ final class AppState {
     deinit {
         // Clean up notification observers
         NotificationCenter.default.removeObserver(self)
-        // Cancel auth state observation task
-        authStateObservationTask?.cancel()
         backgroundPollingTask?.cancel()
     }
 
@@ -733,10 +616,9 @@ final class AppState {
     func cleanup() {
         logger.info("🧹 Cleaning up AppState for user: \(self.userDID)")
 
-        // Cancel long-running tasks
-        authStateObservationTask?.cancel()
-        authStateObservationTask = nil
+        platformAgeSignal = .none
 
+        // Cancel long-running tasks
         backgroundPollingTask?.cancel()
         backgroundPollingTask = nil
 
@@ -834,6 +716,11 @@ final class AppState {
                         if await self.isAuthenticated {
                             do {
                                 try await self.preferencesManager.fetchPreferences(forceRefresh: true)
+                                await MainActor.run {
+                                    self.nuxPresenter.evaluateAndPresentIfNeeded(
+                                        isWelcomeShowing: self.onboardingManager.showWelcomeSheet
+                                    )
+                                }
                             } catch {
                                 self.logger.error(
                                     "Error during periodic preferences refresh: \(error.localizedDescription)"
@@ -910,6 +797,10 @@ final class AppState {
         await chatManager.updateClient(client)
         updateChatUnreadCount()
 
+        Task { [weak self] in
+            await self?.probeCircleCapabilities()
+        }
+
         // Setup other components as needed (skip for FaultOrdering)
         startBackgroundPolling()
         setupNotifications()
@@ -951,11 +842,17 @@ final class AppState {
 
                 // Synchronize server preferences with app settings
                 do {
+                    try await preferencesManager.fetchPreferences(forceRefresh: true)
                     try await preferencesManager.syncPreferencesWithAppSettings(self)
                     logger.info("Successfully synchronized server preferences with app settings")
                 } catch {
                     logger.error("Failed to synchronize preferences: \(error.localizedDescription)")
                 }
+
+                await self.activitySubscriptionService.refreshSubscriptions()
+                self.nuxPresenter.evaluateAndPresentIfNeeded(
+                    isWelcomeShowing: self.onboardingManager.showWelcomeSheet
+                )
             }
         }
         // Connect VideoCoordinator to app settings for real-time autoplay updates
@@ -974,9 +871,15 @@ final class AppState {
         logger.info("Refreshing data after account switch")
         isTransitioningAccounts = true
 
+        Task { [weak self] in
+            await self?.probeCircleCapabilities()
+        }
+        platformAgeSignal = .none
 
-        Task {
-            await self.probeCircleCapabilities()
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let signal = await self.regulatoryChecker.preflight()
+            self.platformAgeSignal = signal
         }
         // Clear old prefetched data and any shadowed interactions
         await prefetchedFeedCache.clear()
@@ -1049,6 +952,7 @@ final class AppState {
 
         await preferencesTask
         await profileTask
+        await probeCircleCapabilities()
     }
 
     @MainActor
@@ -1059,6 +963,11 @@ final class AppState {
 
             try await preferencesManager.syncPreferencesWithAppSettings(self)
             logger.info("Successfully synchronized preferences with app settings after account switch")
+
+            await activitySubscriptionService.refreshSubscriptions()
+            nuxPresenter.evaluateAndPresentIfNeeded(
+                isWelcomeShowing: onboardingManager.showWelcomeSheet
+            )
         } catch {
             logger.error("Failed to refresh preferences after account switch: \(error)")
         }
@@ -1080,6 +989,9 @@ final class AppState {
         mlsConversationManagerInitTask = nil
         await mlsEpochRetentionCleanupCoordinator.stop()
         clearMLSGlobalWebSocketSubscriptionTracking()
+        _circleNotificationsModel = nil
+        _circleNotificationService = nil
+        _circleService = nil
 
         // CRITICAL FIX: Signal NSE to yield BEFORE stopping event streams
         // This prevents new NSE decryption attempts during shutdown, avoiding race conditions
@@ -2215,6 +2127,7 @@ final class AppState {
 
     // MARK: Navigation
 
+    @MainActor
     func configureURLHandler() {
         urlHandler.navigateAction = { [weak self] destination, tabIndex in
             self?.navigationManager.navigate(to: destination, in: tabIndex)
@@ -2422,7 +2335,7 @@ final class AppState {
         hasher.combine(appSettings.maxDynamicTypeSize)
         hasher.combine(appSettings.useInAppBrowser)
         hasher.combine(appSettings.autoplayVideos)
-        hasher.combine(appSettings.allowTenor)
+        hasher.combine(appSettings.externalMediaConsent(for: .tenor) != .hide)
         hasher.combine(appSettings.requireAltText)
         hasher.combine(appSettings.reduceMotion)
         hasher.combine(appSettings.increaseContrast)
@@ -3190,7 +3103,6 @@ final class AppState {
         // poison the identity cache for the (unchanged) account.
         blockedAuthorHydrator = makeBlockedAuthorHydrator()
         listManager.updateClient(newClient)
-
         // Update notification manager (async operation)
         Task {
             await notificationManager.updateClient(newClient)
@@ -3267,7 +3179,18 @@ final class AppState {
     /// Present the post composer for creating a new post, reply, or quote post
     @MainActor
     func presentPostComposer(
-        parentPost: AppBskyFeedDefs.PostView? = nil, quotedPost: AppBskyFeedDefs.PostView? = nil
+        parentPost: AppBskyFeedDefs.PostView? = nil,
+        quotedPost: AppBskyFeedDefs.PostView? = nil
+    ) {
+        presentPostComposer(initialText: nil, parentPost: parentPost, quotedPost: quotedPost)
+    }
+
+    /// Present the post composer with optional prefilled initial text, preserving reply or quote context
+    @MainActor
+    func presentPostComposer(
+        initialText: String?,
+        parentPost: AppBskyFeedDefs.PostView? = nil,
+        quotedPost: AppBskyFeedDefs.PostView? = nil
     ) {
         // Track quote interaction for feed feedback
         if let quotedPost = quotedPost {
@@ -3278,6 +3201,7 @@ final class AppState {
         let composerView = PostComposerViewUIKit(
             parentPost: parentPost,
             quotedPost: quotedPost,
+            initialText: initialText,
             appState: self
         )
         .applyAppStateEnvironment(self)
@@ -3410,15 +3334,11 @@ final class AppState {
         var preferredLanguages: [String] = []
         var feedViewPref: FeedViewPreference?
 
-        do {
-            let preferences = try await preferencesManager.loadPreferences()
-            contentLabelPrefs = preferences?.contentLabelPrefs ?? []
-            adultContentEnabled = preferences?.adultContentEnabled ?? false
-            preferredLanguages = preferences?.contentLanguages ?? ["en"]
-            feedViewPref = preferences?.feedViewPref
-        } catch {
-            logger.warning("Could not load preferences for filtering: \(error.localizedDescription)")
-        }
+        let preferences = try? await preferencesManager.getPreferences()
+        contentLabelPrefs = preferences?.contentLabelPrefs ?? []
+        adultContentEnabled = preferences?.adultContentEnabled ?? false
+        preferredLanguages = preferences?.contentLanguages ?? ["en"]
+        feedViewPref = preferences?.feedViewPref
 
         // Get muted and blocked users from GraphManager
         let mutedUsers = graphManager.muteCache

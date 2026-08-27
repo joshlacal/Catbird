@@ -185,6 +185,7 @@ struct CircleModerationTests {
     #expect(await transport.publicEndpointCallCount == 0)
   }
 
+  @MainActor
   @Test func muteThreadIsNeverInvokedForCircleVisibilityContext() async throws {
     let client = await ATProtoClient(baseURL: URL(string: "https://invalid.example.com")!)
     let appState = AppState(userDID: "did:plc:alice", client: client)

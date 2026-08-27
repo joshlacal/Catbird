@@ -577,19 +577,16 @@ final class AppStateManager {
       logger.debug("📝 pendingComposerDraft kept set for ContentView.onChange detection")
     }
 
-    // Update lifecycle state with a gentle animation so the UI swaps immediately
-    let newLifecycle: AppLifecycle = .authenticated(appState)
+    // Check account status with server before publishing authenticated lifecycle
+    let newLifecycle = await checkAccountStatus(for: appState)
+    setLifecycle(newLifecycle)
 
-    if #available(iOS 17.0, macOS 14.0, *) {
-      withAnimation(.snappy(duration: 0.32, extraBounce: 0.0)) {
-        lifecycle = newLifecycle
-      }
-    } else {
-      withAnimation(.easeInOut(duration: 0.25)) {
-        lifecycle = newLifecycle
-      }
+    guard case .authenticated = newLifecycle else {
+      // Clear transitioning overlay if restricted
+      appState.isTransitioningAccounts = false
+      logger.info("Account is restricted (\(String(describing: newLifecycle))) - skipping normal authenticated initialization")
+      return
     }
-
     if !isCachedAccount {
       // Initialize the new AppState in the background to unblock UI swap
       logger.info("🔄 Initializing new AppState asynchronously")
@@ -680,6 +677,11 @@ final class AppStateManager {
       authenticatedStates.removeValue(forKey: currentUserDID)
       accessOrder.removeAll { $0 == currentUserDID }
       await MLSImageCache.shared.purge(for: currentUserDID)
+      NotificationCenter.default.post(
+        name: .circleAccountInvalidated,
+        object: self,
+        userInfo: ["did": currentUserDID]
+      )
     }
     // Clear auth manager session - pass isManual to control re-auth behavior
     await authManager.logout(isManual: isManual)
@@ -692,6 +694,84 @@ final class AppStateManager {
     writeAccountsToAppGroup()
 
     logger.info("✅ Logged out successfully")
+  }
+
+  // MARK: - Account Restriction & Reactivation
+
+  /// Checks account status with the server and returns the appropriate lifecycle state
+  func checkAccountStatus(for appState: AppState) async -> AppLifecycle {
+    guard let client = appState.atProtoClient else {
+      return .authenticated(appState)
+    }
+
+    do {
+      let (code, session) = try await client.com.atproto.server.getSession()
+      if code >= 200 && code < 300, let session = session {
+        if session.active == false || session.status == "deactivated" {
+          logger.warning("Account is deactivated for DID: \(appState.userDID)")
+          return .deactivated(appState)
+        } else if session.status == "takendown" || session.status == "suspended" {
+          logger.warning("Account is taken down for DID: \(appState.userDID)")
+          return .takendown(appState)
+        }
+      }
+    } catch {
+      logger.debug("Session check failed: \(error.localizedDescription)")
+    }
+
+    return .authenticated(appState)
+  }
+  /// Attempts to reactivate a deactivated account and verifies confirmed active status
+  func reactivateAccount(appState: AppState) async throws {
+    guard let client = appState.atProtoClient else {
+      throw GatewayPermissionError.clientUnavailable
+    }
+
+    // Call com.atproto.server.activateAccount
+    let statusCode = try await client.com.atproto.server.activateAccount()
+    guard statusCode >= 200 && statusCode < 300 else {
+      throw NSError(
+        domain: "blue.catbird.server",
+        code: statusCode,
+        userInfo: [
+          NSLocalizedDescriptionKey: "Failed to reactivate account (server responded with code \(statusCode))."
+        ]
+      )
+    }
+
+    // Verify session status after activation - require 2xx, non-nil session with explicit active status and no restricted status
+    let (getSessionCode, session) = try await client.com.atproto.server.getSession()
+    guard getSessionCode >= 200 && getSessionCode < 300,
+          let session = session,
+          session.active == true,
+          session.status == nil || session.status?.lowercased() == "active" else {
+      let failureCode = (getSessionCode >= 200 && getSessionCode < 300) ? -1 : getSessionCode
+      throw NSError(
+        domain: "blue.catbird.server",
+        code: failureCode,
+        userInfo: [
+          NSLocalizedDescriptionKey: "Account is not confirmed active after reactivation request."
+        ]
+      )
+    }
+    // Transition to active authenticated lifecycle
+    setLifecycle(.authenticated(appState))
+
+    // Initialize the app state now that the account is active
+    await appState.initialize()
+  }
+
+  /// Updates lifecycle state directly for testing or explicit restriction handling
+  func setLifecycle(_ newLifecycle: AppLifecycle) {
+    if #available(iOS 17.0, macOS 14.0, *) {
+      withAnimation(.snappy(duration: 0.32, extraBounce: 0.0)) {
+        self.lifecycle = newLifecycle
+      }
+    } else {
+      withAnimation(.easeInOut(duration: 0.25)) {
+        self.lifecycle = newLifecycle
+      }
+    }
   }
 
   // MARK: - Account Management
@@ -767,6 +847,12 @@ final class AppStateManager {
       beginStorageMaintenance(for: oldUserDID)
       defer { endStorageMaintenance(for: oldUserDID) }
       #endif
+      logger.info("MLS: SQLite storage for previous user \(oldUserDID) is automatically persisted")
+      NotificationCenter.default.post(
+        name: .circleAccountInvalidated,
+        object: self,
+        userInfo: ["did": oldUserDID]
+      )
     }
 
     // Store draft for transfer
@@ -799,6 +885,11 @@ final class AppStateManager {
     // Purge decrypted image cache for this user
     await MLSImageCache.shared.purge(for: userDID)
 
+    NotificationCenter.default.post(
+      name: .circleAccountInvalidated,
+      object: self,
+      userInfo: ["did": userDID]
+    )
     // Completely destroy all MLS databases, WAL/SHM files, Keychain materials, credentials, and preferences
     await MLSClient.shared.destroyStorageCompletely(for: userDID)
 
