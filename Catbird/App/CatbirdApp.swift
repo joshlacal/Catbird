@@ -614,6 +614,9 @@ struct CatbirdApp: App {
   @State private var showBiometricPrompt = false
   @State private var hasBiometricCheck = false
   
+  // Pending launch URL received before authentication
+  @State private var pendingLaunchURL: URL?
+  @State private var unauthenticatedStarterPackItem: StarterPackLandingItem?
   // MARK: - State Restoration
   @State private var restorationIdentifier = "CatbirdMainApp"
 
@@ -1345,9 +1348,16 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
             "Received URL for scheme=\(url.scheme ?? "none", privacy: .public) host=\(url.host ?? "none", privacy: .public) path=\(url.path, privacy: .public)"
           )
 
+          guard let components = URLComponents(url: url, resolvingAgainstBaseURL: true) else {
+            return
+          }
+          let scheme = (components.scheme ?? "").lowercased()
+          let host = (components.host ?? "").lowercased()
+          let path = components.path.lowercased()
+
           // Check for gateway BFF callback (Universal Link from catbird.blue)
           // Gateway redirects with a one-time exchange code in the query.
-          if url.host == "catbird.blue" && url.path == "/oauth/callback" {
+          if scheme == "https" && host == "catbird.blue" && path == "/oauth/callback" {
             logger.info("Gateway OAuth callback detected")
             Task {
               do {
@@ -1357,7 +1367,7 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
                 logger.error("Error handling gateway callback: \(error)")
               }
             }
-          } else if url.absoluteString.contains("/oauth/callback") {
+          } else if (scheme == "catbird" || scheme == "blue.catbird") && ((host == "oauth" && path == "/callback") || (host.isEmpty && path == "/oauth/callback") || (host == "oauth/callback" && path.isEmpty)) {
             // Legacy public OAuth callback (direct ATProto OAuth)
             Task {
               do {
@@ -1368,7 +1378,6 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
               }
             }
           } else if url.scheme == "blue.catbird" && url.host == "notifications" {
-            // Handle widget notification deep link
             logger.info("Widget notification deep link received")
 
             // Instead of using the navigation system, directly set the selected tab
@@ -1403,26 +1412,52 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
               logger.error("[E2E-URL] E2E URL received but not in E2E mode: \(url.absoluteString)")
             }
             #endif
+          } else if let intent = ExternalURLIntent.parse(from: url) {
+            // Route bluesky://intent/* (compose prefill, verify-email) and group-chat join links through ExternalURLIntentPresenter
+            logger.info("External URL intent parsed from URL: \(url.absoluteString, privacy: .private)")
+            if let appState = self.appState {
+              appState.urlHandler.externalIntentPresenter.handleIntent(intent, from: url, appState: appState)
+            } else {
+              logger.info("AppState unavailable; retaining pending intent launch URL")
+              pendingLaunchURL = url
+            }
           } else {
             // Handle all other URLs through the URLHandler
             if let appState = self.appState {
               _ = appState.urlHandler.handle(url)
             } else {
-              logger.error("URL received but AppState is unavailable")
+              logger.info("AppState unavailable; retaining pending launch URL")
+              pendingLaunchURL = url
             }
           }
         }
-      }
+        .onChange(of: appStateManager.lifecycle) { _, newLifecycle in
+          if case .authenticated(let appState) = newLifecycle {
+            unauthenticatedStarterPackItem = nil
+            routePendingLaunchURLIfNeeded(with: appState)
+          }
+        }
+        .onChange(of: pendingLaunchURL) { _, newURL in
+          if appState == nil, let url = newURL {
+            Task { @MainActor in
+              let handler = URLHandler()
+              if let uri = await handler.resolveStarterPackURI(from: url) {
+                self.unauthenticatedStarterPackItem = StarterPackLandingItem(flowID: UUID(), uri: uri)
+              }
+            }
+          }
+        }
       #if os(macOS)
       .windowStyle(.automatic)
       .defaultSize(width: 1200, height: 800)
       #endif
+    }
 
     #if os(macOS)
     macOSWindowScenes
     #endif
-    }
   }
+}
 
 private extension CatbirdApp {
   @ViewBuilder
@@ -1435,7 +1470,22 @@ private extension CatbirdApp {
       case .unauthenticated:
         LoginView()
           .environment(appStateManager)
-
+          .sheet(item: $unauthenticatedStarterPackItem, onDismiss: {
+            if !appStateManager.lifecycle.isAuthenticated {
+              StarterPackOnboardingManager.shared.clearPendingContext()
+              pendingLaunchURL = nil
+            }
+            unauthenticatedStarterPackItem = nil
+          }) { item in
+            StarterPackLandingView(flowID: item.flowID, starterPackURI: item.uri) {
+              if !appStateManager.lifecycle.isAuthenticated {
+                StarterPackOnboardingManager.shared.clearPendingContext()
+                pendingLaunchURL = nil
+              }
+              unauthenticatedStarterPackItem = nil
+            }
+            .environment(appStateManager)
+          }
       case .authenticated(let appState):
         if shouldShowContentForAuthenticatedState {
           ContentView()
@@ -1444,10 +1494,33 @@ private extension CatbirdApp {
         } else {
           LoadingView()  // For biometric check
         }
+
+      case .deactivated(let appState):
+        AccountDeactivatedView(appState: appState)
+          .id(appState.userDID)
+          .applyAppStateEnvironment(appState)
+          .environment(appStateManager)
+
+      case .takendown(let appState):
+        AccountTakedownView(appState: appState)
+          .id(appState.userDID)
+          .applyAppStateEnvironment(appState)
+          .environment(appStateManager)
       }
     }
     .overlay {
       biometricOverlay()
+    }
+  }
+
+  private struct StarterPackLandingItem: Identifiable {
+    let flowID: UUID
+    let uri: ATProtocolURI
+    var id: String { "\(flowID.uuidString)-\(uri.uriString())" }
+
+    init(flowID: UUID = UUID(), uri: ATProtocolURI) {
+      self.flowID = flowID
+      self.uri = uri
     }
   }
 
@@ -1952,6 +2025,7 @@ private extension CatbirdApp {
       }
 
       // MLS initialization removed - will be lazily initialized when user opens chat
+      routePendingLaunchURLIfNeeded(with: appState)
     }
 
     await performInitialBiometricCheck()
@@ -1965,6 +2039,34 @@ private extension CatbirdApp {
     }
 
     logger.info("🎉 initializeApplicationIfNeeded completed - hasBiometricCheck: \(hasBiometricCheck)")
+  }
+
+  private func routePendingLaunchURLIfNeeded(with appState: AppState) {
+    guard let url = pendingLaunchURL else {
+      StarterPackOnboardingManager.shared.clearPendingContext()
+      return
+    }
+    logger.info("Routing pending launch URL after authentication: \(url.absoluteString, privacy: .private)")
+    pendingLaunchURL = nil
+    if let intent = ExternalURLIntent.parse(from: url) {
+      appState.urlHandler.externalIntentPresenter.handleIntent(intent, from: url, appState: appState)
+    } else {
+      _ = appState.urlHandler.handle(url)
+    }
+    // If welcome onboarding is required for this account (e.g. brand new account signup),
+    // WelcomeOnboardingView owns the starter pack finalization presentation.
+    // Otherwise (e.g. existing account login with starter pack link), finalize here.
+    if appState.onboardingManager.hasCompletedWelcome(for: appState.userDID),
+       let pending = StarterPackOnboardingManager.shared.pendingContext,
+       let client = appState.atProtoClient {
+      Task {
+        _ = try? await StarterPackOnboardingManager.shared.finalizeStarterPackOnboarding(
+          client: client,
+          appState: appState,
+          context: pending
+        )
+      }
+    }
   }
 
   var shouldShowContent: Bool {

@@ -52,23 +52,31 @@ private extension ContentView {
       unauthenticatedView
     case .authenticated(let appState):
       authenticatedMainView(appState: appState)
+    case .deactivated(let appState):
+      AccountDeactivatedView(appState: appState)
+        .applyAppStateEnvironment(appState)
+        .environment(appStateManager)
+    case .takendown(let appState):
+      AccountTakedownView(appState: appState)
+        .applyAppStateEnvironment(appState)
+        .environment(appStateManager)
     }
   }
 
   @ViewBuilder
   func authenticatedMainView(appState: AppState) -> some View {
-      MainContentView(
-        selectedTab: $selectedTab,
-        lastTappedTab: $lastTappedTab
-      )
-      .applyAppStateEnvironment(appState)
-      .environment(appStateManager)
-      .onAppear {
-        // Finish extended launch measurement when main content appears
-        if #available(iOS 26, macOS 26, *) {
-          MetricKitManager.shared.finishExtendedLaunchMeasurement()
-        }
+    MainContentView(
+      selectedTab: $selectedTab,
+      lastTappedTab: $lastTappedTab
+    )
+    .applyAppStateEnvironment(appState)
+    .environment(appStateManager)
+    .onAppear {
+      // Finish extended launch measurement when main content appears
+      if #available(iOS 26, macOS 26, *) {
+        MetricKitManager.shared.finishExtendedLaunchMeasurement()
       }
+    }
   }
 
   @ViewBuilder
@@ -204,6 +212,8 @@ struct MainContentView: View {
   @State private var showingNewMessageSheet = false
   @State private var hasInitializedFeed = false
   @State private var showingOnboarding = false
+  @State private var showingVerifyEmailCode: String?
+  @State private var showingGroupChatCode: String?
   @State private var hasRestoredState = false
   @State private var isRestoringFeed = false // Prevent saving during account switch
   @State private var drawerNavigationPath = NavigationPath()
@@ -657,6 +667,7 @@ struct MainContentView: View {
                           .allowsHitTesting(drawerChromeVisible)
                           .accessibilityHidden(!drawerChromeVisible)
                           .accessibilityLabel("Bookmarks")
+                          .nuxNudge(id: .bookmarksAnnouncement)
                   }
                   ToolbarItem(placement: .bottomBar) {
                       Button {
@@ -699,6 +710,8 @@ struct MainContentView: View {
         navigationManager.registerTabSelectionCallback { newTab in
           selectedTab = newTab
         }
+
+        scheduleNuxEvaluation(delay: 500_000_000)
       }
       .sheet(isPresented: $showingPostComposer) {
         Group {
@@ -784,6 +797,64 @@ struct MainContentView: View {
         WelcomeOnboardingView()
           .applyAppStateEnvironment(appState)
       }
+      .sheet(isPresented: Binding(
+        get: { showingVerifyEmailCode != nil },
+        set: { if !$0 { showingVerifyEmailCode = nil; appState.urlHandler.externalIntentPresenter.clearActiveIntent() } }
+      )) {
+        if let code = showingVerifyEmailCode {
+          VerifyEmailIntentView(code: code)
+            .applyAppStateEnvironment(appState)
+        }
+      }
+      .sheet(isPresented: Binding(
+        get: { showingGroupChatCode != nil },
+        set: { if !$0 { showingGroupChatCode = nil; appState.urlHandler.externalIntentPresenter.clearActiveIntent() } }
+      )) {
+        if let code = showingGroupChatCode {
+          GroupChatJoinIntentView(code: code)
+            .applyAppStateEnvironment(appState)
+        }
+      }
+      .sheet(isPresented: Binding(
+        get: {
+          if showingOnboarding || showingPostComposer { return false }
+          return appState.nuxPresenter.activeAnnouncement != nil
+        },
+        set: { if !$0 { appState.nuxPresenter.dismissActiveAnnouncement() } }
+      )) {
+        if let nuxID = appState.nuxPresenter.activeAnnouncement {
+          NuxAnnouncementView(nuxID: nuxID) {
+            appState.nuxPresenter.dismissActiveAnnouncement()
+          }
+          .applyAppStateEnvironment(appState)
+        }
+      }
+      .onChange(of: appState.urlHandler.externalIntentPresenter.activeIntent) { _, newIntent in
+        guard let intent = newIntent else { return }
+        switch intent {
+        case .compose(let text):
+          Task { @MainActor in
+            await openFreshComposerWithPrefilledText(text ?? "")
+            appState.urlHandler.externalIntentPresenter.clearActiveIntent()
+          }
+        case .verifyEmail(let code):
+          showingVerifyEmailCode = code
+        case .groupChatJoin(let code):
+          showingGroupChatCode = code
+        @unknown default:
+          break
+        }
+      }
+      .onChange(of: showingOnboarding) { _, isShowing in
+        if !isShowing {
+          if appState.onboardingManager.showWelcomeSheet {
+            Task { @MainActor in
+              appState.onboardingManager.completeWelcomeOnboarding(for: appState.userDID)
+            }
+          }
+          scheduleNuxEvaluation(delay: 300_000_000)
+        }
+      }
       .onChange(of: appState.onboardingManager.showWelcomeSheet) { _, newValue in
         showingOnboarding = newValue
       }
@@ -793,13 +864,7 @@ struct MainContentView: View {
           #if os(iOS)
           composerCapturedMedia = nil
           #endif
-        }
-      }
-      .onChange(of: showingOnboarding) { _, newValue in
-        if !newValue && appState.onboardingManager.showWelcomeSheet {
-          Task { @MainActor in
-            appState.onboardingManager.completeWelcomeOnboarding()
-          }
+          scheduleNuxEvaluation(delay: 300_000_000)
         }
       }
       .onChange(of: isDrawerOpen) { _, newValue in
@@ -903,6 +968,8 @@ struct MainContentView: View {
           navigationManager.registerTabSelectionCallback { newTab in
             selectedTab = newTab
           }
+
+          scheduleNuxEvaluation(delay: 500_000_000)
         }
         .sheet(isPresented: $showingOnboarding) {
           WelcomeOnboardingView()
@@ -914,8 +981,11 @@ struct MainContentView: View {
         .onChange(of: showingOnboarding) { _, newValue in
           if !newValue && appState.onboardingManager.showWelcomeSheet {
             Task { @MainActor in
-              appState.onboardingManager.completeWelcomeOnboarding()
+              appState.onboardingManager.completeWelcomeOnboarding(for: appState.userDID)
             }
+          }
+          if !newValue {
+            scheduleNuxEvaluation(delay: 300_000_000)
           }
         }
       #endif
@@ -968,6 +1038,19 @@ extension MainContentView {
     showingPostComposer = true
   }
 
+  /// Re-evaluates pending NUX announcements shortly after a presentation-affecting
+  /// state change settles (e.g. onboarding/composer dismissal), so an announcement
+  /// never tries to present on top of an existing sheet.
+  private func scheduleNuxEvaluation(delay nanoseconds: UInt64) {
+    Task { @MainActor in
+      try? await Task.sleep(nanoseconds: nanoseconds)
+      appState.nuxPresenter.evaluateAndPresentIfNeeded(
+        isWelcomeShowing: showingOnboarding,
+        isComposerShowing: showingPostComposer
+      )
+    }
+  }
+
   private func stashWorkingDraft(
     destinationAvailable: Bool = true
   ) async -> WorkingDraftStashPolicy.Result {
@@ -986,7 +1069,30 @@ extension MainContentView {
     )
   }
 
+  /// Presents a fresh composer with no draft, discarding any stashed working draft first.
   private func openFreshComposerStashingDraft() async {
+    await openFreshComposer(initialDraft: nil)
+  }
+
+  /// Presents a fresh composer prefilled with text, discarding any stashed working draft first.
+  private func openFreshComposerWithPrefilledText(_ text: String) async {
+    await openFreshComposer(initialDraft: PostComposerDraft(
+      postText: text,
+      mediaItems: [],
+      videoItem: nil,
+      selectedGif: nil,
+      selectedLanguages: [],
+      selectedLabels: [],
+      outlineTags: [],
+      threadEntries: [],
+      isThreadMode: false,
+      currentThreadIndex: 0,
+      parentPostURI: nil,
+      quotedPostURI: nil
+    ))
+  }
+
+  private func openFreshComposer(initialDraft: PostComposerDraft?) async {
     let result = await stashWorkingDraft()
     guard result.allowsTransition else {
       appState.toastManager.show(
@@ -997,7 +1103,7 @@ extension MainContentView {
     #if os(iOS)
     composerCapturedMedia = nil
     #endif
-    composerInitialDraft = nil
+    composerInitialDraft = initialDraft
     showingPostComposer = true
   }
 
@@ -1101,7 +1207,7 @@ private struct ContentViewModifiers: ViewModifier {
         if case .authenticated(let appState) = newValue {
           Task { @MainActor in
             await FeedStateStore.shared.triggerPostAuthenticationFeedLoad()
-            appState.onboardingManager.checkForWelcomeOnboarding()
+            await appState.onboardingManager.checkForWelcomeOnboarding(client: appState.client, for: appState.userDID)
           }
         }
       }

@@ -193,7 +193,6 @@
 		21A1B3C42F800000DEADBEEF /* Exceptions for "CatbirdTests" folder in "CatbirdTests" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
-				AgeVerificationTests.swift,
 				AttributedStringBridgeTests.swift,
 				AuthenticationManagerActualTests.swift,
 				CatbirdTests.swift,
@@ -1028,6 +1027,7 @@
 		212E94252D60132A00D3E1DD /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES = CatbirdClassic;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				AUTOMATION_APPLE_EVENTS = NO;
@@ -1115,6 +1115,7 @@
 		212E94262D60132A00D3E1DD /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES = CatbirdClassic;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				AUTOMATION_APPLE_EVENTS = NO;
