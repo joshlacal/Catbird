@@ -19,7 +19,9 @@ struct DiscoveryView: View {
     let onQueryLoaded: (String) -> Void
     @Environment(\.colorScheme) private var colorScheme
     @Environment(AppState.self) private var appState
-    
+    @State private var showInterestPicker = false
+    @State private var showInviteFriends = false
+    @State private var showInviteScanner = false
     var body: some View {
         ScrollView {
             VStack(spacing: DesignTokens.Spacing.section) {
@@ -44,8 +46,41 @@ struct DiscoveryView: View {
                         }
                     )
                 }
+                // Live Events Banner (G52)
+                if let liveEvent = appState.liveEventService.activeEvents.first {
+                    LiveEventBanner(event: liveEvent, style: .wide)
+                        .padding(.horizontal)
+                }
+                // Explore interests NUX card (G07)
+                if viewModel.showExploreInterestsCard {
+                    ExploreInterestsCard(
+                        userInterests: viewModel.userInterests,
+                        onEditInterests: {
+                            showInterestPicker = true
+                        },
+                        onDismiss: {
+                            Task {
+                                await viewModel.dismissExploreInterestsCard()
+                            }
+                        }
+                    )
+                }
+                // Trending videos (G03)
+                if !viewModel.trendingVideos.isEmpty,
+                   let client = appState.atProtoClient,
+                   appState.appSettings.showTrendingVideos {
+                    TrendingVideosSection(
+                        videos: viewModel.trendingVideos,
+                        onSelectPost: { post in
+                            path.append(NavigationDestination.post(post.uri))
+                        },
+                        onSeeAll: {
+                            path.append(NavigationDestination.videoFeed)
+                        }
+                    )
+                }
                 
-                // Trending topics
+                // Trending topics (G06)
                 if !viewModel.trendingTopics.isEmpty, 
                    let client = appState.atProtoClient,
                    appState.appSettings.showTrendingTopics {
@@ -62,6 +97,28 @@ struct DiscoveryView: View {
                     )
                 }
                 
+                // Suggested Accounts with Interest Tabs (G04)
+                if let client = appState.atProtoClient {
+                    SuggestedProfilesSection(
+                        profiles: viewModel.suggestedProfiles,
+                        selectedCategory: viewModel.selectedSuggestedCategory,
+                        userInterests: viewModel.userInterests,
+                        isLoading: viewModel.isSuggestedProfilesLoading,
+                        onSelectCategory: { category in
+                            Task {
+                                await viewModel.fetchSuggestedUsers(category: category, client: client)
+                            }
+                        },
+                        onSelectProfile: { profile in
+                            path.append(NavigationDestination.profile(profile.did.didString()))
+                        },
+                        onRefresh: {
+                            Task {
+                                await viewModel.refreshSuggestedProfiles(client: client)
+                            }
+                        }
+                    )
+                }
                 // SRCH-007: Quick Actions Section
                 quickActionsSection
                 
@@ -75,6 +132,23 @@ struct DiscoveryView: View {
         .refreshable {
             guard let client = appState.atProtoClient else { return }
             await viewModel.refreshDiscoveryContent(client: client)
+            await appState.liveEventService.fetchLiveEvents(force: true)
+        }
+        .sheet(isPresented: $showInterestPicker) {
+            InterestPickerSheet(
+                currentInterests: viewModel.userInterests,
+                onSave: { updatedInterests in
+                    await viewModel.updateInterests(updatedInterests)
+                }
+            )
+        }
+        .sheet(isPresented: $showInviteFriends) {
+            InviteFriendsView()
+        }
+        .sheet(isPresented: $showInviteScanner) {
+            InviteScannerView(onScannedProfile: { handleOrDID in
+                path.append(NavigationDestination.profile(handleOrDID))
+            })
         }
     }
     
@@ -103,6 +177,24 @@ struct DiscoveryView: View {
                     color: .blue
                 ) {
                     showSuggestedProfiles = true
+                }
+                
+                quickActionButton(
+                    icon: "person.badge.plus",
+                    title: "Invite Friends",
+                    description: "Share your invite card",
+                    color: .green
+                ) {
+                    showInviteFriends = true
+                }
+                
+                quickActionButton(
+                    icon: "qrcode.viewfinder",
+                    title: "Scan QR",
+                    description: "Scan profile QR codes",
+                    color: .teal
+                ) {
+                    showInviteScanner = true
                 }
                 
                 quickActionButton(

@@ -27,6 +27,7 @@ final class CreateListViewModel {
   var isCreating = false
   var errorMessage: String?
   var showingError = false
+  var onCreated: ((AppBskyGraphDefs.ListView) async -> Void)?
   
   // Validation
   var isValid: Bool {
@@ -35,11 +36,19 @@ final class CreateListViewModel {
   
   // MARK: - Initialization
   
-  init(appState: AppState) {
+  init(
+    appState: AppState,
+    initialName: String = "",
+    initialDescription: String = "",
+    initialPurpose: AppBskyGraphDefs.ListPurpose = .appbskygraphdefscuratelist,
+    onCreated: ((AppBskyGraphDefs.ListView) async -> Void)? = nil
+  ) {
     self.appState = appState
+    self.name = initialName
+    self.description = initialDescription
+    self.purpose = initialPurpose
+    self.onCreated = onCreated
   }
-  
-  // MARK: - Avatar Management
   
   func setAvatar(_ image: PlatformImage) {
     avatarImage = image
@@ -71,11 +80,12 @@ final class CreateListViewModel {
   // MARK: - List Creation
   
   @MainActor
-  func createList() async {
+  @discardableResult
+  func createList() async -> AppBskyGraphDefs.ListView? {
     guard isValid else {
       errorMessage = "Please enter a name for your list"
       showingError = true
-      return
+      return nil
     }
     
     isCreating = true
@@ -87,7 +97,7 @@ final class CreateListViewModel {
       
       logger.info("Creating list: \(trimmedName)")
       
-      let _ = try await appState.listManager.createList(
+      let createdList = try await appState.listManager.createList(
         name: trimmedName,
         description: trimmedDescription.isEmpty ? nil : trimmedDescription,
         purpose: purpose,
@@ -96,16 +106,22 @@ final class CreateListViewModel {
       
       logger.info("Successfully created list: \(trimmedName)")
       
+      if let onCreated = onCreated {
+        await onCreated(createdList)
+      }
+      
       // Reset form
       resetForm()
+      isCreating = false
+      return createdList
       
     } catch {
       logger.error("Failed to create list: \(error.localizedDescription)")
       errorMessage = error.localizedDescription
       showingError = true
+      isCreating = false
+      return nil
     }
-    
-    isCreating = false
   }
   
   private func resetForm() {
@@ -124,12 +140,26 @@ struct CreateListView: View {
   @State private var photoPickerItem: PhotosPickerItem?
   @FocusState private var isNameFieldFocused: Bool
   
+  // Initial values and callbacks
+  private let initialName: String
+  private let initialDescription: String
+  private let initialPurpose: AppBskyGraphDefs.ListPurpose
+  private let onCreated: ((AppBskyGraphDefs.ListView) async -> Void)?
+  
   // Character limits
   private let maxNameLength = 64
   private let maxDescriptionLength = 300
   
-  init() {
-    // ViewModel will be initialized in onAppear
+  init(
+    initialName: String = "",
+    initialDescription: String = "",
+    initialPurpose: AppBskyGraphDefs.ListPurpose = .appbskygraphdefscuratelist,
+    onCreated: ((AppBskyGraphDefs.ListView) async -> Void)? = nil
+  ) {
+    self.initialName = initialName
+    self.initialDescription = initialDescription
+    self.initialPurpose = initialPurpose
+    self.onCreated = onCreated
   }
   
   var body: some View {
@@ -151,7 +181,13 @@ struct CreateListView: View {
       }
       .task {
         if viewModel == nil {
-          viewModel = CreateListViewModel(appState: appState)
+          viewModel = CreateListViewModel(
+            appState: appState,
+            initialName: initialName,
+            initialDescription: initialDescription,
+            initialPurpose: initialPurpose,
+            onCreated: onCreated
+          )
         }
       }
       .onAppear {
@@ -172,9 +208,6 @@ struct CreateListView: View {
       )
       .onChange(of: photoPickerItem) { _, newItem in
         handlePhotoSelection(newItem)
-      }
-      .overlay {
-        loadingOverlay
       }
     }
   }
@@ -351,7 +384,13 @@ struct CreateListView: View {
   // MARK: - Helper Methods
   
   private func setupView() {
-    viewModel = CreateListViewModel(appState: appState)
+    viewModel = CreateListViewModel(
+      appState: appState,
+      initialName: initialName,
+      initialDescription: initialDescription,
+      initialPurpose: initialPurpose,
+      onCreated: onCreated
+    )
     isNameFieldFocused = true
   }
   

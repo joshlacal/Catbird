@@ -9,6 +9,7 @@ import Petrel
 import SwiftUI
 
 struct RepostHeaderView: View {
+    @Environment(AppState.self) private var appState: AppState?
     let reposter: AppBskyActorDefs.ProfileViewBasic
     @Binding var path: NavigationPath
     
@@ -44,14 +45,16 @@ struct RepostHeaderView: View {
     /// badge keeps the surrounding typography and truncation.
     private var repostedByText: Text {
         let base = Text("reposted by \(reposterName)")
-        if let badge = VerificationBadge.inlineText(for: reposter.verification, did: reposter.did) {
+        let hideBadges = appState?.preferencesManager.hideVerificationBadges ?? false
+        if let badge = VerificationBadge.inlineText(for: reposter.verification, did: reposter.did, hideBadges: hideBadges) {
           return base + Text(verbatim: " ") + badge.font(.caption2)
         }
         return base
     }
 
     private var repostedByAccessibilityLabel: String {
-        if let kind = VerificationBadge.kind(for: reposter.verification, did: reposter.did) {
+        let hideBadges = appState?.preferencesManager.hideVerificationBadges ?? false
+        if let kind = VerificationBadge.kind(for: reposter.verification, did: reposter.did, hideBadges: hideBadges) {
             return "reposted by \(reposterName), \(kind.accessibilityLabel)"
         }
         return "reposted by \(reposterName)"

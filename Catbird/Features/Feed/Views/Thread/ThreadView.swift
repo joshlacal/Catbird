@@ -28,11 +28,101 @@ struct ThreadView: View {
     }
     
     var body: some View {
-        #if os(iOS)
-        UIKitThreadViewWrapper(postURI: postURI, path: $path, appState: appState, visibilityContext: visibilityContext)
-        #elseif os(macOS)
-        SwiftUIThreadView(postURI: postURI, path: $path, visibilityContext: visibilityContext)
-        #endif
+        Group {
+            #if os(iOS)
+            UIKitThreadViewWrapper(postURI: postURI, path: $path, appState: appState, visibilityContext: visibilityContext)
+            #elseif os(macOS)
+            SwiftUIThreadView(postURI: postURI, path: $path, visibilityContext: visibilityContext)
+            #endif
+        }
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    Section("Sort replies") {
+                        Button {
+                            updateSort("hot")
+                        } label: {
+                            HStack {
+                                Text("Hot")
+                                if appState.appSettings.threadSortOrder == "hot" {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+
+                        Button {
+                            updateSort("top")
+                        } label: {
+                            HStack {
+                                Text("Top")
+                                if appState.appSettings.threadSortOrder == "top" {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+
+                        Button {
+                            updateSort("newest")
+                        } label: {
+                            HStack {
+                                Text("Latest")
+                                if appState.appSettings.threadSortOrder == "newest" {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+
+                        Button {
+                            updateSort("oldest")
+                        } label: {
+                            HStack {
+                                Text("Oldest")
+                                if appState.appSettings.threadSortOrder == "oldest" {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+
+                    Section("Layout") {
+                        Button {
+                            appState.appSettings.threadedReplies = false
+                        } label: {
+                            HStack {
+                                Text("Linear")
+                                if !appState.appSettings.threadedReplies {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+
+                        Button {
+                            appState.appSettings.threadedReplies = true
+                        } label: {
+                            HStack {
+                                Text("Threaded")
+                                if appState.appSettings.threadedReplies {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .accessibilityLabel("Thread options")
+                }
+            }
+        }
+    }
+
+    private func updateSort(_ sort: String) {
+        appState.appSettings.threadSortOrder = sort
+        Task {
+            try? await appState.preferencesManager.setThreadViewPreferences(
+                sort: sort,
+                prioritizeFollowedUsers: appState.appSettings.prioritizeFollowedUsers
+            )
+        }
     }
 }
 
@@ -72,11 +162,12 @@ private struct SwiftUIThreadView: View {
     // V2 types: ParentPost and ReplyWrapper from ThreadManager.swift
     @State private var parentPosts: [ParentPost] = []
     @State private var mainPost: AppBskyFeedDefs.PostView?
+    @State private var mainPostIndex: Int?
+    @State private var mainPostCount: Int?
     @State private var mainItemIsBlocked = false
     @State private var blockedAnchorItem: AppBskyUnspeccedDefs.ThreadItemBlocked?
     @State private var mainItemIsNotFound = false
     @State private var replyWrappers: [ReplyWrapper] = []
-    @State private var hasMoreParents = false
 
     private static let mainPostID = "main-post-id"
 
@@ -190,8 +281,12 @@ private struct SwiftUIThreadView: View {
         }
         .contentMargins(.top, 8, for: .scrollContent)
         .scrollPosition($scrollPosition, anchor: .top)
+        .safeAreaInset(edge: .bottom) {
+            if let post = mainPost {
+                ThreadComposePrompt(post: post, appState: appState)
+            }
+        }
     }
-
     private var parentsSection: some View {
         LazyVStack(spacing: 8) {
             if isLoadingMoreParents {
@@ -240,10 +335,11 @@ private struct SwiftUIThreadView: View {
                 showLine: false,
                 path: $path,
                 appState: appState,
-                visibilityContext: visibilityContext
+                visibilityContext: visibilityContext,
+                opThreadPostIndex: mainPostIndex,
+                opThreadPostCount: mainPostCount
             )
             .padding(.vertical, 8)
-
             Divider()
                 .padding(.horizontal, -16)
         }
@@ -281,7 +377,9 @@ private struct SwiftUIThreadView: View {
                 path: $path,
                 appState: appState,
                 hasVisibleThreadContext: true,
-                visibilityContext: visibilityContext
+                visibilityContext: visibilityContext,
+                opThreadPostIndex: itemPost.opThreadPostIndex,
+                opThreadPostCount: itemPost.opThreadPostCount
             )
             .onTapGesture {
                 path.append(NavigationDestination.post(itemPost.post.uri))
@@ -346,7 +444,9 @@ private struct SwiftUIThreadView: View {
                     path: $path,
                     appState: appState,
                     hasVisibleThreadContext: wrapper.hasReplies,
-                    visibilityContext: visibilityContext
+                    visibilityContext: visibilityContext,
+                    opThreadPostIndex: itemPost.opThreadPostIndex,
+                    opThreadPostCount: itemPost.opThreadPostCount
                 )
                 .onTapGesture {
                     path.append(NavigationDestination.post(itemPost.post.uri))
@@ -476,6 +576,8 @@ private struct SwiftUIThreadView: View {
             // No anchor found - clear everything
             parentPosts = []
             mainPost = nil
+            mainPostIndex = nil
+            mainPostCount = nil
             mainItemIsBlocked = false
             blockedAnchorItem = nil
             mainItemIsNotFound = false
@@ -488,26 +590,33 @@ private struct SwiftUIThreadView: View {
         switch anchorItem.value {
         case .appBskyUnspeccedDefsThreadItemPost(let itemPost):
             mainPost = itemPost.post
+            mainPostIndex = itemPost.opThreadPostIndex
+            mainPostCount = itemPost.opThreadPostCount
             mainItemIsBlocked = false
             blockedAnchorItem = nil
             mainItemIsNotFound = false
         case .appBskyUnspeccedDefsThreadItemBlocked(let blocked):
             mainPost = nil
+            mainPostIndex = nil
+            mainPostCount = nil
             mainItemIsBlocked = true
             blockedAnchorItem = blocked
             mainItemIsNotFound = false
         case .appBskyUnspeccedDefsThreadItemNotFound:
             mainPost = nil
+            mainPostIndex = nil
+            mainPostCount = nil
             mainItemIsBlocked = false
             blockedAnchorItem = nil
             mainItemIsNotFound = true
         default:
             mainPost = nil
+            mainPostIndex = nil
+            mainPostCount = nil
             mainItemIsBlocked = false
             blockedAnchorItem = nil
             mainItemIsNotFound = false
         }
-
         // Extract parent posts (depth < 0), sorted from most negative (oldest) to -1 (closest to anchor)
         let parentItems = thread
             .filter { $0.depth < 0 }

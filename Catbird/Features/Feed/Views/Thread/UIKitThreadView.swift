@@ -28,40 +28,6 @@ extension UIView {
     }
 }
 
-// MARK: - Custom Thread Layout
-@available(iOS 18.0, *)
-final class ThreadCompositionalLayout: UICollectionViewCompositionalLayout {
-  private var isPerformingUpdate = false
-  private var mainPostSectionIndex: Int = 2
-  
-  private let layoutLogger = Logger(
-    subsystem: "blue.catbird", category: "ThreadCompositionalLayout")
-
-  override func prepare(forCollectionViewUpdates updateItems: [UICollectionViewUpdateItem]) {
-    super.prepare(forCollectionViewUpdates: updateItems)
-    
-    guard let _ = collectionView, !updateItems.isEmpty else { return }
-    
-    // We'll handle position restoration manually in updateDataWithNewParents
-    isPerformingUpdate = true
-  }
-
-  override func targetContentOffset(forProposedContentOffset proposedContentOffset: CGPoint)
-    -> CGPoint {
-    // Let the manual adjustment in updateDataWithNewParents handle position restoration
-    return proposedContentOffset
-  }
-
-  override func finalizeCollectionViewUpdates() {
-    super.finalizeCollectionViewUpdates()
-    isPerformingUpdate = false
-  }
-
-  func setMainPostSectionIndex(_ index: Int) {
-    mainPostSectionIndex = index
-  }
-}
-
 @available(iOS 18.0, *)
 final class ThreadViewController: UIViewController, StateInvalidationSubscriber {
   // MARK: - Properties
@@ -79,7 +45,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   private var parentLoadAttempts = 0
   private var hasReachedTopOfThread = false
   private var pendingLoadTask: Task<Void, Never>?
-  
+  private var loadGeneration = 0
   // Hidden replies state
   private var hasOtherReplies = false  // Whether the thread has additional hidden replies
   private var isLoadingHiddenReplies = false  // Loading state for hidden replies
@@ -97,10 +63,15 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
 
   private var parentPosts: [ParentPost] = []
   private var mainPost: AppBskyFeedDefs.PostView?
+  private var mainPostIndex: Int?
+  private var mainPostCount: Int?
   private var opThreadContinuations: [ReplyWrapper] = []  // OP's thread continuations
   private var replyWrappers: [ReplyWrapper] = []  // Regular replies only
   private var nestedRepliesMap: [String: [ReplyWrapper]] = [:]  // Maps reply URI to nested replies
 
+  // Bottom quick reply prompt
+  private let composePromptContainer = UIView()
+  private var composePromptHostingController: UIHostingController<AnyView>?
   // MARK: - Snapshot Serialization
   // Prevent overlapping diffable snapshot applications which can cause
   // UICollectionView invalid item count crashes under rapid updates.
@@ -250,7 +221,6 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     self.path = path
     self.visibilityContext = visibilityContext
     super.init(nibName: nil, bundle: nil)
-    
     // Subscribe to state invalidation events for reply updates
     appState.stateInvalidationBus.subscribe(self)
   }
@@ -260,6 +230,9 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   }
   
   deinit {
+    // Cancel any pending load task
+    pendingLoadTask?.cancel()
+
     // Clean up UIUpdateLink
     #if os(iOS) && !targetEnvironment(macCatalyst)
     if #available(iOS 18.0, *) {
@@ -295,7 +268,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     collectionView.accessibilityTraits = .none
     collectionView.shouldGroupAccessibilityChildren = true
     
-    loadInitialThread()
+    reloadThread()
   }
   
   override func viewWillAppear(_ animated: Bool) {
@@ -452,11 +425,6 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     }
   }
   
-  private func configureParentNavigationTheme() {
-    // Theme configuration is handled by SwiftUI's themedNavigationBar modifier
-    // No need to modify UIKit navigation bar appearance directly
-  }
-
   // MARK: - UIUpdateLink Setup
   #if os(iOS) && !targetEnvironment(macCatalyst)
   @available(iOS 18.0, *)
@@ -491,7 +459,12 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     // Start collection view hidden, will fade in after layout settles
     collectionView.alpha = 0
 
+    composePromptContainer.translatesAutoresizingMaskIntoConstraints = false
+    composePromptContainer.backgroundColor = .clear
+    composePromptContainer.isHidden = true
+
     view.addSubview(collectionView)
+    view.addSubview(composePromptContainer)
     view.addSubview(loadingView)
 
     // Disable implicit Core Animation on common layer actions to prevent fly-in
@@ -508,7 +481,11 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       collectionView.topAnchor.constraint(equalTo: view.topAnchor),
       collectionView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
       collectionView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-      collectionView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+      collectionView.bottomAnchor.constraint(equalTo: composePromptContainer.topAnchor),
+
+      composePromptContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+      composePromptContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+      composePromptContainer.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor),
 
       loadingView.topAnchor.constraint(equalTo: view.topAnchor),
       loadingView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -642,11 +619,9 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       return self.createSection(with: estimatedHeight, for: section)
     }
 
-    // Use our custom layout that maintains scroll position
-    let layout = ThreadCompositionalLayout(sectionProvider: layoutProvider)
-
-    // Tell the layout which section contains the main post
-    layout.setMainPostSectionIndex(Section.mainPost.rawValue)
+    // Use a stock compositional layout; scroll position is preserved
+    // manually by the update/restore helpers, so no custom subclass is needed.
+    let layout = UICollectionViewCompositionalLayout(sectionProvider: layoutProvider)
 
     // Add configuration for self-sizing cells
     let config = UICollectionViewCompositionalLayoutConfiguration()
@@ -691,10 +666,11 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
           post: post,
           appState: self.appState,
           path: self.path,
+          opThreadPostIndex: self.mainPostIndex,
+          opThreadPostCount: self.mainPostCount,
           visibilityContext: self.visibilityContext
         )
         return cell
-
       case .blockedAnchor:
         let cell =
           collectionView.dequeueReusableCell(withReuseIdentifier: "BlockedAnchorCell", for: indexPath)
@@ -774,107 +750,127 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   }
 
   // MARK: - Thread Loading Logic
-  private func loadInitialThread() {
-    Task(priority: .userInitiated) { @MainActor in
-      controllerLogger.debug("🧵 THREAD LOAD: Starting initial thread load for URI: \(self.postURI.uriString())")
-      isLoading = true
-
-      threadManager = ThreadManager(appState: appState)
-      await threadManager?.loadThread(uri: postURI, visibilityContext: visibilityContext, circleService: appState.circleService)
-
-      // Check if the thread has no parent posts
-      if let threadData = threadManager?.threadData {
-        if threadData.thread.filter({ $0.depth < 0 }).isEmpty {
-          controllerLogger.debug("🧵 THREAD LOAD: This thread has no parent posts, marking as top of thread")
-          hasReachedTopOfThread = true
-        }
-        
-        // Track whether there are hidden replies available
-        hasOtherReplies = threadData.hasOtherReplies
-        
-        // If auto-load setting is enabled, load hidden replies automatically
-        // Otherwise, we'll show a "Show More Replies" button
-        if appState.appSettings.showHiddenPosts && threadData.hasOtherReplies {
-          await threadManager?.loadHiddenReplies(uri: postURI)
-          hasLoadedHiddenReplies = true
-        }
+  @MainActor
+  private func loadInitialThread() async {
+    loadGeneration += 1
+    let thisGeneration = loadGeneration
+    defer {
+      if self.loadGeneration == thisGeneration {
+        self.pendingLoadTask = nil
       }
+    }
 
-      processThreadData()
-      processHiddenReplies()
+    controllerLogger.debug("🧵 THREAD LOAD: Starting initial thread load for URI: \(self.postURI.uriString()) [gen: \(thisGeneration)]")
+    isLoading = true
 
-      // Pre-calculate all post heights
-      if let mainPost = self.mainPost {
-        _ = heightCalculator.calculateHeight(for: mainPost, mode: .mainPost)
-        
-        for parent in parentPosts {
-          _ = heightCalculator.calculateParentPostHeight(for: parent)
-        }
-        
-        for reply in replyWrappers {
-          _ = heightCalculator.calculateReplyHeight(for: reply, showingNestedReply: reply.hasReplies)
-        }
+    let manager = ThreadManager(appState: appState)
+    await manager.loadThread(uri: postURI, visibilityContext: visibilityContext, circleService: appState.circleService)
+
+    guard !Task.isCancelled && self.loadGeneration == thisGeneration else {
+      controllerLogger.debug("🧵 THREAD LOAD: Task cancelled or superseded after loadThread [gen: \(thisGeneration)]")
+      return
+    }
+
+    threadManager = manager
+
+    // Check if the thread has no parent posts
+    if let threadData = manager.threadData {
+      if threadData.thread.filter({ $0.depth < 0 }).isEmpty {
+        controllerLogger.debug("🧵 THREAD LOAD: This thread has no parent posts, marking as top of thread")
+        hasReachedTopOfThread = true
       }
-
-      loadingView.isHidden = true
       
-      // Apply snapshot synchronously without animations
+      // Track whether there are hidden replies available
+      hasOtherReplies = threadData.hasOtherReplies
+      
+      // If auto-load setting is enabled, load hidden replies automatically
+      // Otherwise, we'll show a "Show More Replies" button
+      if appState.appSettings.showHiddenPosts && threadData.hasOtherReplies {
+        await manager.loadHiddenReplies(uri: postURI)
+        guard !Task.isCancelled && self.loadGeneration == thisGeneration else {
+          controllerLogger.debug("🧵 THREAD LOAD: Task cancelled or superseded after loadHiddenReplies [gen: \(thisGeneration)]")
+          return
+        }
+        hasLoadedHiddenReplies = true
+      }
+    }
+
+    guard !Task.isCancelled && self.loadGeneration == thisGeneration else { return }
+
+    processThreadData()
+    processHiddenReplies()
+
+    // Pre-calculate all post heights
+    if let mainPost = self.mainPost {
+      _ = heightCalculator.calculateHeight(for: mainPost, mode: .mainPost)
+      
+      for parent in parentPosts {
+        _ = heightCalculator.calculateParentPostHeight(for: parent)
+      }
+      
+      for reply in replyWrappers {
+        _ = heightCalculator.calculateReplyHeight(for: reply, showingNestedReply: reply.hasReplies)
+      }
+    }
+
+    loadingView.isHidden = true
+    
+    // Apply snapshot synchronously without animations
+    controllerLogger.debug(
+      "🧪 TEMP THREAD JUMP: about to apply initial snapshot - parents: \(self.parentPosts.count), replies: \(self.replyWrappers.count), hasMainPost: \(self.mainPost != nil)"
+    )
+    updateDataSnapshot(animatingDifferences: false)
+    
+    isLoading = false
+
+    if mainPost != nil && !hasScrolledToMainPost {
+      // Wait for collection view to complete layout after snapshot application
+      // This is crucial when load more cell is present
       controllerLogger.debug(
-        "🧪 TEMP THREAD JUMP: about to apply initial snapshot - parents: \(self.parentPosts.count), replies: \(self.replyWrappers.count), hasMainPost: \(self.mainPost != nil)"
+        "🧪 TEMP THREAD JUMP: initial layout pass begin - contentOffsetY: \(self.collectionView.contentOffset.y)"
       )
-      updateDataSnapshot(animatingDifferences: false)
-      
-      isLoading = false
-
-      if mainPost != nil && !hasScrolledToMainPost {
-        // Wait for collection view to complete layout after snapshot application
-        // This is crucial when load more cell is present
-        controllerLogger.debug(
-          "🧪 TEMP THREAD JUMP: initial layout pass begin - contentOffsetY: \(self.collectionView.contentOffset.y)"
-        )
-        UIView.performWithoutAnimation {
-          collectionView.performBatchUpdates({
-            // Force layout update
-            self.controllerLogger.debug("🧪 TEMP THREAD JUMP: initial layoutIfNeeded begin")
-            self.collectionView.layoutIfNeeded()
-            self.controllerLogger.debug(
-              "🧪 TEMP THREAD JUMP: initial layoutIfNeeded end - contentOffsetY: \(self.collectionView.contentOffset.y)"
-            )
-          }) { _ in }
-        }
-        controllerLogger.debug(
-          "🧪 TEMP THREAD JUMP: initial layout pass end - contentOffsetY: \(self.collectionView.contentOffset.y)"
-        )
-        // Proceed immediately after ensuring layout without animations
-        do {
-          // Now scroll to main post after layout is complete
+      UIView.performWithoutAnimation {
+        collectionView.performBatchUpdates({
+          // Force layout update
+          self.controllerLogger.debug("🧪 TEMP THREAD JUMP: initial layoutIfNeeded begin")
+          self.collectionView.layoutIfNeeded()
           self.controllerLogger.debug(
-            "🧪 TEMP THREAD JUMP: before scrollToMainPostWithPartialParentVisibility - contentOffsetY: \(self.collectionView.contentOffset.y)"
+            "🧪 TEMP THREAD JUMP: initial layoutIfNeeded end - contentOffsetY: \(self.collectionView.contentOffset.y)"
           )
-          self.scrollToMainPostWithPartialParentVisibility(animated: false) { [weak self] in
-            guard let self else { return }
-            self.controllerLogger.debug(
-              "🧪 TEMP THREAD JUMP: initial stabilization complete - contentOffsetY: \(self.collectionView.contentOffset.y)"
-            )
-            // Fade in collection view only after stabilization completes
-            self.runInitialRevealAnimation(sequence: "initial-scroll-path")
-            // If VoiceOver is running, post focus to main post
-            if UIAccessibility.isVoiceOverRunning {
-              self.focusVoiceOverOnMainPost()
-            }
+        }) { _ in }
+      }
+      controllerLogger.debug(
+        "🧪 TEMP THREAD JUMP: initial layout pass end - contentOffsetY: \(self.collectionView.contentOffset.y)"
+      )
+      // Proceed immediately after ensuring layout without animations
+      do {
+        // Now scroll to main post after layout is complete
+        self.controllerLogger.debug(
+          "🧪 TEMP THREAD JUMP: before scrollToMainPostWithPartialParentVisibility - contentOffsetY: \(self.collectionView.contentOffset.y)"
+        )
+        self.scrollToMainPostWithPartialParentVisibility(animated: false) { [weak self] in
+          guard let self, !Task.isCancelled, self.loadGeneration == thisGeneration else { return }
+          self.controllerLogger.debug(
+            "🧪 TEMP THREAD JUMP: initial stabilization complete - contentOffsetY: \(self.collectionView.contentOffset.y)"
+          )
+          // Fade in collection view only after stabilization completes
+          self.runInitialRevealAnimation(sequence: "initial-scroll-path")
+          // If VoiceOver is running, post focus to main post
+          if UIAccessibility.isVoiceOverRunning {
+            self.focusVoiceOverOnMainPost()
           }
-          self.controllerLogger.debug(
-            "🧪 TEMP THREAD JUMP: after scrollToMainPostWithPartialParentVisibility - contentOffsetY: \(self.collectionView.contentOffset.y)"
-          )
-          self.hasScrolledToMainPost = true
         }
-      } else {
-        // Fade in collection view to mask any layout settling animations
-        self.runInitialRevealAnimation(sequence: "initial-no-scroll-path")
-        // If VoiceOver is running, post focus to main post
-        if UIAccessibility.isVoiceOverRunning {
-          self.focusVoiceOverOnMainPost()
-        }
+        self.controllerLogger.debug(
+          "🧪 TEMP THREAD JUMP: after scrollToMainPostWithPartialParentVisibility - contentOffsetY: \(self.collectionView.contentOffset.y)"
+        )
+        self.hasScrolledToMainPost = true
+      }
+    } else {
+      // Fade in collection view to mask any layout settling animations
+      self.runInitialRevealAnimation(sequence: "initial-no-scroll-path")
+      // If VoiceOver is running, post focus to main post
+      if UIAccessibility.isVoiceOverRunning {
+        self.focusVoiceOverOnMainPost()
       }
     }
   }
@@ -905,6 +901,8 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     guard let mainItem = threadData.thread.first(where: { $0.depth == 0 }) else {
       parentPosts = []
       mainPost = nil
+      mainPostIndex = nil
+      mainPostCount = nil
       replyWrappers = []
       return
     }
@@ -912,7 +910,8 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     // Extract main post
     if case .appBskyUnspeccedDefsThreadItemPost(let threadItemPost) = mainItem.value {
       mainPost = threadItemPost.post
-      
+      mainPostIndex = threadItemPost.opThreadPostIndex
+      mainPostCount = threadItemPost.opThreadPostCount
       // Collect parent posts (depth < 0), sorted by depth (oldest = most negative)
       let parentItems = threadData.thread.filter { $0.depth < 0 }.sorted { $0.depth < $1.depth }
       parentPosts = collectParentPostsV2(from: parentItems)
@@ -972,6 +971,8 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       // returns its parents and replies. Keep them so the conversation stays
       // reachable — the anchor slot renders a BlockedContentCard(.anchor).
       mainPost = nil
+      mainPostIndex = nil
+      mainPostCount = nil
 
       let parentItems = threadData.thread.filter { $0.depth < 0 }.sorted { $0.depth < $1.depth }
       parentPosts = collectParentPostsV2(from: parentItems)
@@ -985,6 +986,8 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     } else {
       parentPosts = []
       mainPost = nil
+      mainPostIndex = nil
+      mainPostCount = nil
       opThreadContinuations = []
       replyWrappers = []
     }
@@ -1056,8 +1059,54 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     }
   }
 
+  // MARK: - Compose Prompt Management
+
+  private func updateComposePrompt() {
+    guard isViewLoaded else { return }
+    if let mainPost = self.mainPost {
+      setupComposePrompt(with: mainPost)
+    } else {
+      hideComposePrompt()
+    }
+  }
+
+  private func setupComposePrompt(with post: AppBskyFeedDefs.PostView) {
+    let promptView = ThreadComposePrompt(post: post, appState: appState)
+      .applyAppStateEnvironment(appState)
+
+    if let existingHC = composePromptHostingController {
+      existingHC.rootView = AnyView(promptView)
+      composePromptContainer.isHidden = false
+      return
+    }
+
+    let hostingController = UIHostingController(rootView: AnyView(promptView))
+    hostingController.view.translatesAutoresizingMaskIntoConstraints = false
+    hostingController.view.backgroundColor = .clear
+
+    addChild(hostingController)
+    composePromptContainer.addSubview(hostingController.view)
+
+    NSLayoutConstraint.activate([
+      hostingController.view.topAnchor.constraint(equalTo: composePromptContainer.topAnchor),
+      hostingController.view.leadingAnchor.constraint(equalTo: composePromptContainer.leadingAnchor),
+      hostingController.view.trailingAnchor.constraint(equalTo: composePromptContainer.trailingAnchor),
+      hostingController.view.bottomAnchor.constraint(equalTo: composePromptContainer.bottomAnchor)
+    ])
+
+    hostingController.didMove(toParent: self)
+    composePromptHostingController = hostingController
+    composePromptContainer.isHidden = false
+  }
+
+  private func hideComposePrompt() {
+    composePromptHostingController?.rootView = AnyView(EmptyView())
+    composePromptContainer.isHidden = true
+  }
+
   private func updateDataSnapshot(animatingDifferences: Bool = false) {
     seedThreadEntityCache()
+    updateComposePrompt()
     var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
 
     // Add all sections
@@ -1111,56 +1160,6 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     snapshot.reconfigureItems([loadMoreItem])
     applySnapshot(snapshot, animatingDifferences: false)
     controllerLogger.debug("⬆️ LOAD MORE PARENTS: Updated loading cell, isLoading = \(isLoading)")
-  }
-
-  // Helper method to detect content changes between parent posts arrays
-  private func hasParentPostContentChanged(oldPosts: [ParentPost], newPosts: [ParentPost]) -> Bool {
-    // Different length means different content
-    if oldPosts.count != newPosts.count {
-      return true
-    }
-
-    // Check for content differences
-    for i in 0..<oldPosts.count {
-      let oldPost = oldPosts[i]
-      let newPost = newPosts[i]
-
-      // If IDs are different, content has definitely changed
-      if oldPost.id != newPost.id {
-        return true
-      }
-
-      // Check for content differences in the post data
-      // Even if IDs match, the post content could have been updated
-      switch (oldPost.threadItem.value, newPost.threadItem.value) {
-      case (
-        .appBskyUnspeccedDefsThreadItemPost(let oldThreadPost),
-        .appBskyUnspeccedDefsThreadItemPost(let newThreadPost)
-      ):
-        // Compare post URIs
-        if oldThreadPost.post.uri.uriString() != newThreadPost.post.uri.uriString() {
-          return true
-        }
-
-        // With v2, we can check moreParents and moreReplies flags
-        if oldThreadPost.moreParents != newThreadPost.moreParents {
-          return true
-        }
-        
-        if oldThreadPost.moreReplies != newThreadPost.moreReplies {
-          return true
-        }
-
-      default:
-        // Different post types
-        if type(of: oldPost.threadItem.value) != type(of: newPost.threadItem.value) {
-          return true
-        }
-      }
-    }
-
-    // If we got here, no significant differences were found
-    return false
   }
 
   private func runInitialRevealAnimation(sequence: String) {
@@ -2084,35 +2083,6 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   }
 
   // MARK: - Helper Functions
-  /// Gets the measured height of a cell if it has already been rendered
-  private func getMeasuredCellHeight(section: Section, item: Int) -> CGFloat? {
-    // Only try to get measured height if section exists and has items
-    let snapshot = dataSource.snapshot()
-    guard snapshot.numberOfSections > 0,
-      snapshot.indexOfSection(section) != nil
-    else {
-      return nil
-    }
-
-    let items = snapshot.itemIdentifiers(inSection: section)
-    guard items.count > item else {
-      return nil
-    }
-
-    // Create an index path for the specified section and item
-    let indexPath = IndexPath(item: item, section: section.rawValue)
-
-    // Try to get the layout attributes for this cell
-    if let attributes = collectionView.layoutAttributesForItem(at: indexPath) {
-      // Return the measured height if the cell has been laid out
-      let height = attributes.frame.height
-      return height > 0 ? height : nil
-    }
-
-    // No valid measurement available
-    return nil
-  }
-
   private func collectParentPostsV2(from parentItems: [AppBskyUnspeccedGetPostThreadV2.ThreadItem]) -> [ParentPost] {
     var parents: [ParentPost] = []
     var grandparentAuthor: AppBskyActorDefs.ProfileViewBasic?
@@ -2151,27 +2121,6 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     return parents
   }
 
-  private func collectParentPosts(from initialPost: AppBskyFeedDefs.ThreadViewPostParentUnion?) async
-    -> [ParentPost] {
-    var parents: [ParentPost] = []
-    var currentPost = initialPost
-    var grandparentAuthor: AppBskyActorDefs.ProfileViewBasic?
-    var depth = 0
-
-    while let post = currentPost {
-      depth += 1
-      // This method should never be called with v2 API - it's kept for backwards compatibility only
-      controllerLogger.error("collectParentPosts: Old API method called - this should not happen with v2 API")
-      currentPost = nil
-    }
-
-    if !parents.isEmpty {
-      //        controllerLogger.debug("collectParentPosts: Parent URIs in order: \(parents.map { $0.id }.joined(separator: ", ")}")
-    }
-
-    return parents
-  }
-
   // MARK: - State Invalidation Handling
   
   // Properties for optimistic updates
@@ -2196,7 +2145,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     case .threadUpdated(let rootUri):
       // Check if this is our thread being updated
       let currentPostUri = postURI.uriString()
-      if rootUri == currentPostUri || isThreadRelated(rootUri) {
+      if rootUri == currentPostUri {
         await MainActor.run {
           // Only reload if we don't already have the updates from optimistic additions
           if !hasOptimisticUpdates {
@@ -2209,12 +2158,6 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       // Ignore other events
       break
     }
-  }
-  
-  /// Helper function to check if a reply wrapper contains a post with given URI
-  private func checkReplyWrapper(_ wrapper: ReplyWrapper, containsPostWithURI uri: String) -> Bool {
-    // With v2 flat structure, just check the direct URI
-    return wrapper.threadItem.uri.uriString() == uri
   }
   
   /// Check if a post URI is a reply to any post in this thread
@@ -2230,18 +2173,11 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     }
     
     // Check existing replies
-    for wrapper in replyWrappers {
-      if checkReplyWrapper(wrapper, containsPostWithURI: parentUri) {
-        return true
-      }
+    if replyWrappers.contains(where: { $0.threadItem.uri.uriString() == parentUri }) {
+      return true
     }
     
     return false
-  }
-  
-  /// Check if a root URI is related to this thread
-  private func isThreadRelated(_ rootUri: String) -> Bool {
-    return rootUri == postURI.uriString()
   }
   
   /// Reload the thread to pick up new content
@@ -2252,9 +2188,22 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     pendingLoadTask?.cancel()
     
     // Start a new load task
-    pendingLoadTask = Task { [weak self] in
+    pendingLoadTask = Task { @MainActor [weak self] in
       await self?.loadInitialThread()
     }
+  }
+
+  @MainActor
+  func reloadThreadFromSettingsChange() {
+    reloadThread()
+  }
+
+  @MainActor
+  func rebuildReplyCellsFromLayoutChange() {
+    for reply in replyWrappers {
+      _ = heightCalculator.calculateReplyHeight(for: reply, showingNestedReply: reply.hasReplies)
+    }
+    updateDataSnapshot(animatingDifferences: true)
   }
   
   // MARK: - Optimistic Updates
@@ -2613,6 +2562,8 @@ final class MainPostCell: UICollectionViewCell {
     post: AppBskyFeedDefs.PostView,
     appState: AppState,
     path: Binding<NavigationPath>,
+    opThreadPostIndex: Int? = nil,
+    opThreadPostCount: Int? = nil,
     visibilityContext: PostVisibilityContext = .public
   ) {
     let postIdentity = post.uri.uriString()
@@ -2640,9 +2591,10 @@ final class MainPostCell: UICollectionViewCell {
             showLine: false,
             path: path,
             appState: appState,
-            visibilityContext: visibilityContext
+            visibilityContext: visibilityContext,
+            opThreadPostIndex: opThreadPostIndex,
+            opThreadPostCount: opThreadPostCount
           )
-          .equatable()
           .padding(.horizontal, 6)
           .padding(.vertical, 6)
         }
@@ -2923,17 +2875,6 @@ final class LoadMoreCell: UICollectionViewCell {
     }
   }
 
-  private func findParentViewController() -> UIViewController? {
-    var responder: UIResponder? = self
-    while let nextResponder = responder?.next {
-      responder = nextResponder
-      if let viewController = responder as? UIViewController {
-        return viewController
-      }
-    }
-    return nil
-  }
-
   override func prepareForReuse() {
     super.prepareForReuse()
     activityIndicator.stopAnimating()
@@ -3088,15 +3029,26 @@ struct WidthLimitedContainer<Content: View>: View {
   }
 }
 
+/// Root post URI for a thread item: the record's reply root, falling back to the post itself.
+private func threadRootURI(for post: AppBskyFeedDefs.PostView) -> ATProtocolURI? {
+  if case let .knownType(record) = post.record,
+     let feedPost = record as? AppBskyFeedPost,
+     let root = feedPost.reply?.root.uri {
+    return root
+  }
+  return post.uri
+}
+
 struct ParentPostView: View {
   let parentPost: ParentPost
   @Binding var path: NavigationPath
   var appState: AppState
   var visibilityContext: PostVisibilityContext = .public
-
   var body: some View {
     switch parentPost.threadItem.value {
     case .appBskyUnspeccedDefsThreadItemPost(let threadItemPost):
+      let parentRootURI = threadRootURI(for: threadItemPost.post)
+
       PostView(
         post: threadItemPost.post,
         grandparentAuthor: nil,
@@ -3105,13 +3057,16 @@ struct ParentPostView: View {
         path: $path,
         appState: appState,
         hasVisibleThreadContext: true,
-        visibilityContext: visibilityContext
+        visibilityContext: visibilityContext,
+        rootPostURI: parentRootURI,
+        rootAuthorDID: parentRootURI?.authority,
+        isReplyHiddenByThreadgate: threadItemPost.hiddenByThreadgate,
+        opThreadPostIndex: threadItemPost.opThreadPostIndex,
+        opThreadPostCount: threadItemPost.opThreadPostCount
       )
-      .contentShape(Rectangle())
       .onTapGesture {
         path.append(NavigationDestination.post(threadItemPost.post.uri))
       }
-
     case .appBskyUnspeccedDefsThreadItemNotFound:
       PostNotFoundView(
         uri: parentPost.threadItem.uri,
@@ -3150,11 +3105,9 @@ struct ReplyView: View {
   @Binding var path: NavigationPath
   var appState: AppState
   var visibilityContext: PostVisibilityContext = .public
-
   private var isThreadedRepliesMode: Bool {
     appState.appSettings.threadedReplies
   }
-
   private var maxDepth: Int {
     ThreadReplyPresentationMetrics.maximumDepth(isEnabled: isThreadedRepliesMode)
   }
@@ -3197,6 +3150,8 @@ struct ReplyView: View {
     VStack(alignment: .leading, spacing: 0) {
       switch replyWrapper.threadItem.value {
       case .appBskyUnspeccedDefsThreadItemPost(let threadItemPost):
+        let replyRootURI = threadRootURI(for: threadItemPost.post)
+
         // Root post connects to the first nested reply when the layout says so.
         PostView(
           post: threadItemPost.post,
@@ -3207,15 +3162,18 @@ struct ReplyView: View {
           appState: appState,
           hasVisibleThreadContext: true,
           avatarScale: .regular,
-          visibilityContext: visibilityContext
+          visibilityContext: visibilityContext,
+          rootPostURI: replyRootURI,
+          rootAuthorDID: replyRootURI?.authority,
+          isReplyHiddenByThreadgate: threadItemPost.hiddenByThreadgate,
+          opThreadPostIndex: threadItemPost.opThreadPostIndex,
+          opThreadPostCount: threadItemPost.opThreadPostCount
         )
-        .contentShape(Rectangle())
         .onTapGesture {
           path.append(NavigationDestination.post(threadItemPost.post.uri))
         }
         .padding(.vertical, 3)
         .frame(maxWidth: 550, alignment: .leading)
-
       case .appBskyUnspeccedDefsThreadItemNotFound:
         PostNotFoundView(
           uri: replyWrapper.threadItem.uri,
@@ -3261,97 +3219,107 @@ struct ReplyView: View {
     if !layout.items.isEmpty {
       ForEach(layout.items) { item in
         if let nestedWrapper = visibleReplies.first(where: { $0.id == item.id }) {
-          switch nestedWrapper.threadItem.value {
-
-          case .appBskyUnspeccedDefsThreadItemPost(let nestedPost):
-            PostView(
-              post: nestedPost.post,
-              grandparentAuthor: parentAuthor(for: nestedWrapper),
-              isParentPost: item.connectsToNext,
-              isSelectable: false,
-              path: $path,
-              appState: appState,
-              hasVisibleThreadContext: true,
-              avatarScale: ThreadReplyPresentationMetrics.avatarScale(
-                forDepth: nestedWrapper.depth,
-                isEnabled: isThreadedRepliesMode
-              ),
-              visibilityContext: visibilityContext
-            )
-            .contentShape(Rectangle())
-            .onTapGesture { path.append(NavigationDestination.post(nestedPost.post.uri)) }
-            .padding(.vertical, 3)
-            .padding(
-              .leading,
-              ThreadReplyPresentationMetrics.leadingIndent(
-                forDepth: nestedWrapper.depth,
-                isEnabled: isThreadedRepliesMode
-              )
-            )
-            .frame(maxWidth: 550, alignment: .leading)
-
-            if item.hasAdditionalReplies {
-              Button {
-                // Jump into the last rendered post; the server will expand from here
-                path.append(NavigationDestination.post(nestedPost.post.uri))
-              } label: {
-                HStack {
-                  Text("Continue thread").appFont(AppTextRole.subheadline)
-                  Image(systemName: "chevron.right").appFont(AppTextRole.subheadline)
-                }
-                .foregroundColor(.accentColor)
-                .padding(.vertical, 8)
-                .padding(.horizontal, 12)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
-              }
-            }
-
-          case .appBskyUnspeccedDefsThreadItemNotFound:
-            PostNotFoundView(
-              uri: nestedWrapper.threadItem.uri,
-              reason: .notFound,
-              path: $path
-            )
-            .applyAppStateEnvironment(appState)
-
-            // Offer a way to jump into the missing leg of the chain
-            Button {
-              path.append(NavigationDestination.post(nestedWrapper.uri))
-            } label: {
-              HStack {
-                Text("Continue thread").appFont(AppTextRole.subheadline)
-                Image(systemName: "chevron.right").appFont(AppTextRole.subheadline)
-              }
-              .foregroundColor(.accentColor)
-              .padding(.vertical, 6)
-            }
-
-          case .appBskyUnspeccedDefsThreadItemBlocked(let blocked):
-            BlockedContentCard(
-              relationship: BlockRelationship(threadItemBlocked: blocked),
-              authorDid: blocked.author.did.didString(),
-              postUri: nestedWrapper.threadItem.uri,
-              variant: .thread,
-              path: $path
-            )
-            .applyAppStateEnvironment(appState)
-
-          case .appBskyUnspeccedDefsThreadItemNoUnauthenticated:
-            Text("Reply not available (authentication required)")
-              .appFont(AppTextRole.subheadline)
-              .foregroundColor(.gray)
-
-          case .unexpected(let unexpected):
-            Text("Unexpected reply type: \(unexpected.textRepresentation)")
-              .foregroundColor(.orange)
-          }
+          nestedReplyRow(item: item, nestedWrapper: nestedWrapper)
         }
       }
     }
   }
-}
 
+  @ViewBuilder
+  private func nestedReplyRow(item: ThreadReplyLayoutItem, nestedWrapper: ReplyWrapper) -> some View {
+    switch nestedWrapper.threadItem.value {
+    case .appBskyUnspeccedDefsThreadItemPost(let nestedPost):
+      let nestedRootURI = threadRootURI(for: nestedPost.post)
+
+      PostView(
+        post: nestedPost.post,
+        grandparentAuthor: parentAuthor(for: nestedWrapper),
+        isParentPost: item.connectsToNext,
+        isSelectable: false,
+        path: $path,
+        appState: appState,
+        hasVisibleThreadContext: true,
+        avatarScale: ThreadReplyPresentationMetrics.avatarScale(
+          forDepth: nestedWrapper.depth,
+          isEnabled: isThreadedRepliesMode
+        ),
+        visibilityContext: visibilityContext,
+        rootPostURI: nestedRootURI,
+        rootAuthorDID: nestedRootURI?.authority,
+        isReplyHiddenByThreadgate: nestedPost.hiddenByThreadgate,
+        opThreadPostIndex: nestedPost.opThreadPostIndex,
+        opThreadPostCount: nestedPost.opThreadPostCount
+      )
+      .contentShape(Rectangle())
+      .onTapGesture { path.append(NavigationDestination.post(nestedPost.post.uri)) }
+      .padding(.vertical, 3)
+      .padding(
+        .leading,
+        ThreadReplyPresentationMetrics.leadingIndent(
+          forDepth: nestedWrapper.depth,
+          isEnabled: isThreadedRepliesMode
+        )
+      )
+      .frame(maxWidth: 550, alignment: .leading)
+
+      if item.hasAdditionalReplies {
+        Button {
+          // Jump into the last rendered post; the server will expand from here
+          path.append(NavigationDestination.post(nestedPost.post.uri))
+        } label: {
+          HStack {
+            Text("Continue thread").appFont(AppTextRole.subheadline)
+            Image(systemName: "chevron.right").appFont(AppTextRole.subheadline)
+          }
+          .foregroundColor(.accentColor)
+          .padding(.vertical, 8)
+          .padding(.horizontal, 12)
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .contentShape(Rectangle())
+        }
+      }
+
+    case .appBskyUnspeccedDefsThreadItemNotFound:
+      PostNotFoundView(
+        uri: nestedWrapper.threadItem.uri,
+        reason: .notFound,
+        path: $path
+      )
+      .applyAppStateEnvironment(appState)
+
+      // Offer a way to jump into the missing leg of the chain
+      Button {
+        path.append(NavigationDestination.post(nestedWrapper.uri))
+      } label: {
+        HStack {
+          Text("Continue thread").appFont(AppTextRole.subheadline)
+          Image(systemName: "chevron.right").appFont(AppTextRole.subheadline)
+        }
+        .foregroundColor(.accentColor)
+        .padding(.vertical, 6)
+      }
+
+    case .appBskyUnspeccedDefsThreadItemBlocked(let blocked):
+      BlockedContentCard(
+        relationship: BlockRelationship(threadItemBlocked: blocked),
+        authorDid: blocked.author.did.didString(),
+        postUri: nestedWrapper.threadItem.uri,
+        variant: .thread,
+        path: $path
+      )
+      .applyAppStateEnvironment(appState)
+
+    case .appBskyUnspeccedDefsThreadItemNoUnauthenticated:
+      Text("Reply not available (authentication required)")
+        .appFont(AppTextRole.subheadline)
+        .foregroundColor(.gray)
+
+    case .unexpected(let unexpected):
+      Text("Unexpected reply type: \(unexpected.textRepresentation)")
+        .foregroundColor(.orange)
+    }
+  }
+}
 // MARK: - SwiftUI Integration
 @available(iOS 18.0, *)
 struct ThreadViewControllerRepresentable: UIViewControllerRepresentable {
@@ -3360,22 +3328,49 @@ struct ThreadViewControllerRepresentable: UIViewControllerRepresentable {
   @Binding var path: NavigationPath
   let visibilityContext: PostVisibilityContext
 
-  init(postURI: ATProtocolURI, path: Binding<NavigationPath>, visibilityContext: PostVisibilityContext = .public) {
+  init(
+    postURI: ATProtocolURI,
+    path: Binding<NavigationPath>,
+    visibilityContext: PostVisibilityContext = .public
+  ) {
     self.postURI = postURI
     self._path = path
     self.visibilityContext = visibilityContext
   }
 
   func makeUIViewController(context: Context) -> ThreadViewController {
-    return ThreadViewController(
+    let controller = ThreadViewController(
       appState: appState,
       postURI: postURI,
       path: $path,
       visibilityContext: visibilityContext
     )
+    context.coordinator.lastSortOrder = appState.appSettings.threadSortOrder
+    context.coordinator.lastThreadedReplies = appState.appSettings.threadedReplies
+    return controller
   }
   func updateUIViewController(_ uiViewController: ThreadViewController, context: Context) {
-    // Update controller if needed
+    let currentSort = appState.appSettings.threadSortOrder
+    let currentThreaded = appState.appSettings.threadedReplies
+
+    if !context.coordinator.lastSortOrder.isEmpty && context.coordinator.lastSortOrder != currentSort {
+      uiViewController.reloadThreadFromSettingsChange()
+    }
+    context.coordinator.lastSortOrder = currentSort
+
+    if context.coordinator.lastThreadedReplies != currentThreaded {
+      context.coordinator.lastThreadedReplies = currentThreaded
+      uiViewController.rebuildReplyCellsFromLayoutChange()
+    }
+  }
+
+  func makeCoordinator() -> Coordinator {
+    Coordinator()
+  }
+
+  class Coordinator {
+    var lastSortOrder: String = ""
+    var lastThreadedReplies: Bool = false
   }
 }
 

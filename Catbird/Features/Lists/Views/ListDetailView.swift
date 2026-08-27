@@ -126,6 +126,7 @@ struct ListDetailView: View {
   @State private var feedSelectedTab: Int = 0
   @State private var isConfirmingListBlock = false
   @State private var isConfirmingListUnblock = false
+  @State private var isShowingReportSheet = false
   @Binding var path: NavigationPath
   
   let listURIString: String
@@ -197,39 +198,7 @@ struct ListDetailView: View {
     .toolbar {
       ToolbarItem(placement: .primaryAction) {
         Menu {
-          if viewModel.isOwnList {
-            Button {
-              path.append(NavigationDestination.editList(viewModel.listURI))
-            } label: {
-              Label("Edit List", systemImage: "pencil")
-            }
-            
-            Button {
-              path.append(NavigationDestination.listMembers(viewModel.listURI))
-            } label: {
-              Label("Manage Members", systemImage: "person.2.badge.gearshape")
-            }
-          }
-          
-          Button {
-            Task { await viewModel.refreshData() }
-          } label: {
-            Label("Refresh", systemImage: "arrow.clockwise")
-          }
-
-          if let listDetails = viewModel.listDetails, listDetails.purpose == .appbskygraphdefsmodlist {
-            Divider()
-
-            if listDetails.viewer?.blocked != nil {
-              Button("Stop blocking accounts on this list", role: .destructive) {
-                isConfirmingListUnblock = true
-              }
-            } else {
-              Button("Block accounts on this list", role: .destructive) {
-                isConfirmingListBlock = true
-              }
-            }
-          }
+          listToolbarMenu(viewModel: viewModel)
         } label: {
           Image(systemName: "ellipsis.circle")
         }
@@ -264,6 +233,67 @@ struct ListDetailView: View {
       }
     } message: {
       Text("Stop blocking accounts on this list? Accounts you blocked directly stay blocked.")
+    }
+    .sheet(isPresented: $isShowingReportSheet) {
+      reportSheet(viewModel: viewModel)
+    }
+  }
+
+  @ViewBuilder
+  private func listToolbarMenu(viewModel: ListDetailViewModel) -> some View {
+    if viewModel.isOwnList {
+      Button {
+        path.append(NavigationDestination.editList(viewModel.listURI))
+      } label: {
+        Label("Edit List", systemImage: "pencil")
+      }
+      
+      Button {
+        path.append(NavigationDestination.listMembers(viewModel.listURI))
+      } label: {
+        Label("Manage Members", systemImage: "person.2.badge.gearshape")
+      }
+    }
+    
+    Button {
+      Task { await viewModel.refreshData() }
+    } label: {
+      Label("Refresh", systemImage: "arrow.clockwise")
+    }
+
+    if let listDetails = viewModel.listDetails {
+      Divider()
+      Button {
+        isShowingReportSheet = true
+      } label: {
+        Label("Report List", systemImage: "flag")
+      }
+    }
+    if let listDetails = viewModel.listDetails, listDetails.purpose.rawValue == "app.bsky.graph.defs#modlist" {
+      Divider()
+
+      if listDetails.viewer?.blocked != nil {
+        Button("Stop blocking accounts on this list", role: .destructive) {
+          isConfirmingListUnblock = true
+        }
+      } else {
+        Button("Block accounts on this list", role: .destructive) {
+          isConfirmingListBlock = true
+        }
+      }
+    }
+  }
+
+  @ViewBuilder
+  private func reportSheet(viewModel: ListDetailViewModel) -> some View {
+    if let listDetails = viewModel.listDetails, let client = appState.atProtoClient {
+      let reportingService = ReportingService(client: client)
+      let subject = reportingService.createListSubject(uri: viewModel.listURI, cid: listDetails.cid)
+      ReportFormView(
+        reportingService: reportingService,
+        subject: subject,
+        contentDescription: "List \"\(listDetails.name)\""
+      )
     }
   }
   

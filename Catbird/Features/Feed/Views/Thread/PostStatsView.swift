@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import NukeUI
 import Petrel
 
 struct PostStatsView: View {
@@ -21,12 +22,25 @@ struct PostStatsView: View {
         (post.likeCount != nil && post.likeCount! > 0) ||
         (post.quoteCount != nil && post.quoteCount! > 0)
     }
+
+    private var hasKnownLikers: Bool {
+        if let knownLikers = post.viewer?.knownLikers, !knownLikers.actors.isEmpty {
+            return true
+        }
+        return false
+    }
     
     var body: some View {
-        if hasAnyStats {
+        if hasAnyStats || hasKnownLikers {
             VStack(alignment: .leading, spacing: 0) {
                 Divider()
                     .padding(.horizontal, Self.baseUnit * 2)
+                // Known likers preview row
+                if let knownLikers = post.viewer?.knownLikers, !knownLikers.actors.isEmpty {
+                    knownLikersView(knownLikers)
+                }
+
+                if hasAnyStats {
                 
                 FlowLayout(
                     horizontalSpacing: Self.baseUnit * 4,
@@ -84,11 +98,11 @@ struct PostStatsView: View {
                         }
                     }
                 }
-                .padding(.top, Self.baseUnit * 2)
-                .padding(.horizontal, Self.baseUnit * 2)
-                .padding(.vertical, Self.baseUnit * 3)
-                .appFont(AppTextRole.headline)
-                
+                    .padding(.top, Self.baseUnit * 2)
+                    .padding(.horizontal, Self.baseUnit * 2)
+                    .padding(.vertical, Self.baseUnit * 3)
+                    .appFont(AppTextRole.headline)
+                }
                 Divider()
                     .padding(.horizontal, Self.baseUnit * 2)
                     .padding(.vertical, Self.baseUnit * 2)
@@ -106,8 +120,71 @@ private extension PostStatsView {
         let resolvedPlural = plural ?? singular + "s"
         return count == 1 ? singular : resolvedPlural
     }
-}
 
+    @ViewBuilder
+    func knownLikersView(_ knownLikers: AppBskyFeedDefs.KnownLikers) -> some View {
+        let maxAvatars = 3
+        let avatarSize: CGFloat = 20
+        let actorsToShow = Array(knownLikers.actors.prefix(maxAvatars))
+
+        HStack(spacing: 8) {
+            // Overlapping avatars
+            HStack(spacing: -6) {
+                ForEach(Array(actorsToShow.enumerated()), id: \.element.did) { index, actor in
+                    LazyImage(url: URL(string: actor.avatar?.uriString() ?? "")) { state in
+                        if let image = state.image {
+                            image.resizable().aspectRatio(contentMode: .fill)
+                        } else {
+                            Circle().fill(Color.secondary.opacity(0.3))
+                        }
+                    }
+                    .frame(width: avatarSize, height: avatarSize)
+                    .clipShape(Circle())
+                    .overlay(
+                        Circle().stroke(Color(platformColor: .platformSystemBackground), lineWidth: 1.5)
+                    )
+                    .zIndex(Double(maxAvatars - index))
+                }
+            }
+
+            // Text: "Liked by [name] and X others"
+            Text(knownLikersText(knownLikers))
+                .appFont(AppTextRole.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+
+            Spacer()
+        }
+        .padding(.horizontal, Self.baseUnit * 2)
+        .padding(.top, Self.baseUnit * 2)
+        .padding(.bottom, hasAnyStats ? Self.baseUnit : Self.baseUnit * 2)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            path.append(NavigationDestination.postLikes(post.uri.uriString()))
+        }
+    }
+
+    func knownLikersText(_ knownLikers: AppBskyFeedDefs.KnownLikers) -> String {
+        let actors = knownLikers.actors
+        guard let first = actors.first else { return "" }
+        let firstName = first.displayName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            ? first.displayName!
+            : "@\(first.handle)"
+
+        let remaining = knownLikers.count - 1
+        if remaining <= 0 || actors.count == 1 {
+            return "Liked by \(firstName)"
+        } else if actors.count == 2 && remaining == 1 {
+            let second = actors[1]
+            let secondName = second.displayName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+                ? second.displayName!
+                : "@\(second.handle)"
+            return "Liked by \(firstName) and \(secondName)"
+        } else {
+            return "Liked by \(firstName) and \(remaining) \(remaining == 1 ? "other" : "others")"
+        }
+    }
+}
 /// A layout that arranges views in a horizontal flow, wrapping to the next line when needed.
 struct FlowLayout: Layout {
     var horizontalSpacing: CGFloat

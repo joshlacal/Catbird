@@ -3,26 +3,38 @@
 //  Catbird
 //
 //  Created on 3/9/25.
-//  SRCH-008: Enhanced with swipe-to-delete and improved clear functionality
+//  Updated for G05: Structured query + filter state persistence and active filter badges.
 //
 
 import SwiftUI
 
-/// A section displaying recent search queries with interactive chips and swipe-to-delete
-struct RecentSearchesSection: View {
-  let searches: [String]
-  let onSelect: (String) -> Void
-  let onDelete: (String) -> Void  // SRCH-008: Individual delete callback
-  let onClear: () -> Void
+/// A section displaying recent search queries with active filter badges and swipe-to-delete (G05).
+public struct RecentSearchesSection: View {
+  public let entries: [RecentSearchEntry]
+  public let onSelect: (RecentSearchEntry) -> Void
+  public let onDelete: (RecentSearchEntry) -> Void
+  public let onClear: () -> Void
 
-  @State private var showClearConfirmation = false  // SRCH-008: Confirmation dialog
-  @State private var revealedSearch: String?
+  @State private var showClearConfirmation = false
+  @State private var revealedEntryId: UUID?
   @Environment(AppState.self) private var appState
   @Environment(\.colorScheme) private var colorScheme
 
   private static let deleteRevealWidth: CGFloat = 80
 
-  var body: some View {
+  public init(
+    entries: [RecentSearchEntry],
+    onSelect: @escaping (RecentSearchEntry) -> Void,
+    onDelete: @escaping (RecentSearchEntry) -> Void,
+    onClear: @escaping () -> Void
+  ) {
+    self.entries = entries
+    self.onSelect = onSelect
+    self.onDelete = onDelete
+    self.onClear = onClear
+  }
+
+  public var body: some View {
     VStack(alignment: .leading, spacing: 0) {
       HStack {
         HStack(spacing: 6) {
@@ -44,16 +56,15 @@ struct RecentSearchesSection: View {
             .foregroundColor(.accentColor)
             .labelStyle(.titleOnly)
         }
-        .disabled(searches.isEmpty)
+        .disabled(entries.isEmpty)
       }
       .padding(.horizontal, 16)
       .padding(.bottom, 8)
 
-      // SRCH-008: List-based layout with swipe-to-delete
-      if !searches.isEmpty {
+      if !entries.isEmpty {
         VStack(spacing: 0) {
-          ForEach(searches.prefix(10), id: \.self) { search in
-            searchRow(search)
+          ForEach(entries.prefix(10)) { entry in
+            searchRow(entry)
           }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -77,26 +88,24 @@ struct RecentSearchesSection: View {
     } message: {
       Text("This will remove all recent searches from this device.")
     }
-    .onChange(of: searches) { _, newValue in
-      if let current = revealedSearch, !newValue.contains(current) {
-        revealedSearch = nil
+    .onChange(of: entries) { _, newValue in
+      if let current = revealedEntryId, !newValue.contains(where: { $0.id == current }) {
+        revealedEntryId = nil
       }
     }
   }
 
-  // Individual search row. `.searchSuggestions` does not host us inside a real
-  // SwiftUI List, so SwiftUI's `.swipeActions` modifier falls through to the
-  // enclosing system row and stacks one delete button per recent-search row.
-  // Implement the swipe-to-reveal manually so each delete affects only its row.
   @ViewBuilder
-  private func searchRow(_ search: String) -> some View {
-    let isRevealed = revealedSearch == search
+  private func searchRow(_ entry: RecentSearchEntry) -> some View {
+    let isRevealed = revealedEntryId == entry.id
+    let filterCount = entry.filters.activeFilterCount
+
     ZStack(alignment: .trailing) {
-      // Underlay delete action, revealed by swipe.
+      // Underlay delete action
       Button {
         withAnimation(.easeInOut(duration: 0.2)) {
-          revealedSearch = nil
-          onDelete(search)
+          revealedEntryId = nil
+          onDelete(entry)
         }
       } label: {
         Label("Delete", systemImage: "trash")
@@ -107,14 +116,14 @@ struct RecentSearchesSection: View {
           .background(Color.red)
       }
       .buttonStyle(.plain)
-      .accessibilityLabel("Delete \(search)")
+      .accessibilityLabel("Delete \(entry.query)")
       .opacity(isRevealed ? 1 : 0)
 
       Button {
         if isRevealed {
-          withAnimation(.easeInOut(duration: 0.2)) { revealedSearch = nil }
+          withAnimation(.easeInOut(duration: 0.2)) { revealedEntryId = nil }
         } else {
-          onSelect(search)
+          onSelect(entry)
         }
       } label: {
         HStack(spacing: 12) {
@@ -123,11 +132,26 @@ struct RecentSearchesSection: View {
             .foregroundColor(.secondary)
             .frame(width: 20, height: 20)
 
-          Text(search)
+          Text(entry.query)
             .appFont(AppTextRole.body)
             .lineLimit(1)
             .foregroundColor(
               Color.dynamicText(appState.themeManager, style: .primary, currentScheme: colorScheme))
+
+          if filterCount > 0 {
+            HStack(spacing: 3) {
+              Image(systemName: "line.3.horizontal.decrease.circle.fill")
+                .font(.system(size: 11))
+              Text("\(filterCount)")
+                .font(.system(size: 11, weight: .semibold))
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .foregroundColor(.accentColor)
+            .background(Color.accentColor.opacity(0.15))
+            .clipShape(Capsule())
+            .accessibilityLabel("\(filterCount) active filters")
+          }
 
           Spacer()
 
@@ -150,9 +174,9 @@ struct RecentSearchesSection: View {
             guard abs(horizontal) > abs(vertical) else { return }
             withAnimation(.easeInOut(duration: 0.2)) {
               if horizontal < -40 {
-                revealedSearch = search
+                revealedEntryId = entry.id
               } else if horizontal > 40 {
-                revealedSearch = nil
+                revealedEntryId = nil
               }
             }
           }
@@ -160,12 +184,11 @@ struct RecentSearchesSection: View {
     }
     .clipped()
 
-    if search != searches.prefix(10).last {
+    if entry.id != entries.prefix(10).last?.id {
       Divider()
     }
   }
 
-  // SRCH-008: Empty state for when no recent searches
   private var emptyStateView: some View {
     HStack(spacing: 12) {
       Image(systemName: "magnifyingglass")
@@ -187,39 +210,5 @@ struct RecentSearchesSection: View {
     .padding(16)
     .frame(maxWidth: .infinity, alignment: .leading)
     .background(Color.systemBackground)
-  }
-}
-
-// MARK: - iOS 26 Liquid Glass Support
-
-@available(iOS 26.0, macOS 26.0, *)
-@available(iOS 26.0, macOS 26.0, *)
-private struct SearchHistoryGlassEffectModifier: ViewModifier {
-  func body(content: Content) -> some View {
-    content
-      .glassEffect(.regular, in: .rect(cornerRadius: 12))
-  }
-}
-
-extension View {
-  @ViewBuilder
-  fileprivate func applySearchHistoryGlassEffectIfAvailable() -> some View {
-    if #available(iOS 26.0, macOS 26.0, *) {
-      self.modifier(SearchHistoryGlassEffectModifier())
-    } else {
-      self
-    }
-  }
-}
-
-#Preview {
-  AsyncPreviewContent { appState in
-    RecentSearchesSection(
-        searches: ["bluesky", "atproto", "trending", "blockchain", "pets"],
-        onSelect: { _ in },
-        onDelete: { _ in },
-        onClear: {}
-      )
-      .padding()
   }
 }

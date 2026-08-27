@@ -24,6 +24,8 @@ import os
     private enum Section: Int, CaseIterable { case main }
     private enum Item: Hashable {
       case header
+      case liveEvent(id: String)
+      case trendingInterstitial
       case post(account: String, feed: String, id: String)
     }
 
@@ -285,6 +287,13 @@ import os
       // Capture scroll position when view disappears to preserve it
       captureCurrentScrollPosition()
     }
+    override func viewDidLayoutSubviews() {
+      super.viewDidLayoutSubviews()
+      if let collectionView = collectionView, let bgView = collectionView.backgroundView {
+        bgView.frame = collectionView.bounds
+      }
+    }
+
 
     deinit {
       stateObserver?.stopObserving()
@@ -534,6 +543,53 @@ import os
         cell.contentConfiguration = UIHostingConfiguration { header }
           .margins(.all, 0)
       }
+      // Registration for live event cell
+      let liveEventRegistration = UICollectionView.CellRegistration<UICollectionViewListCell, String> {
+        [weak self] cell, indexPath, eventId in
+        guard let self = self else {
+          cell.contentConfiguration = nil
+          return
+        }
+        let appState = self.stateManager.appState
+        guard let event = appState.liveEventService.activeEvents.first(where: { $0.id == eventId }) else {
+          cell.contentConfiguration = nil
+          return
+        }
+        cell.layoutMargins = .zero
+        cell.directionalLayoutMargins = NSDirectionalEdgeInsets.zero
+        cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
+        cell.selectedBackgroundView = nil
+
+        cell.contentConfiguration = UIHostingConfiguration {
+          LiveEventBanner(event: event, style: .wide)
+            .applyAppStateEnvironment(appState)
+            .padding(.horizontal)
+            .padding(.vertical, 4)
+        }
+        .margins(.all, 0)
+      }
+
+      // Registration for trending interstitial cell
+      let trendingInterstitialRegistration = UICollectionView.CellRegistration<UICollectionViewListCell, Void> {
+        [weak self] cell, indexPath, _ in
+        guard let self = self else {
+          cell.contentConfiguration = nil
+          return
+        }
+        let appState = self.stateManager.appState
+        cell.layoutMargins = .zero
+        cell.directionalLayoutMargins = NSDirectionalEdgeInsets.zero
+        cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
+        cell.selectedBackgroundView = nil
+
+        cell.contentConfiguration = UIHostingConfiguration {
+          TrendingFeedInterstitialView()
+            .applyAppStateEnvironment(appState)
+            .padding(.vertical, 4)
+        }
+        .margins(.all, 0)
+      }
+
 
       dataSource = UICollectionViewDiffableDataSource<Section, Item>(
         collectionView: collectionView
@@ -542,12 +598,17 @@ import os
         case .header:
           return collectionView.dequeueConfiguredReusableCell(
             using: headerRegistration, for: indexPath, item: ())
+        case .liveEvent(let id):
+          return collectionView.dequeueConfiguredReusableCell(
+            using: liveEventRegistration, for: indexPath, item: id)
+        case .trendingInterstitial:
+          return collectionView.dequeueConfiguredReusableCell(
+            using: trendingInterstitialRegistration, for: indexPath, item: ())
         case .post(_, _, let id):
           return collectionView.dequeueConfiguredReusableCell(
             using: postRegistration, for: indexPath, item: id)
         }
       }
-
       // Defensive: provide a no-op supplementary provider to satisfy any unexpected requests
       let emptyHeaderReg = UICollectionView.SupplementaryRegistration<UICollectionReusableView>(
         elementKind: UICollectionView.elementKindSectionHeader
@@ -664,10 +725,25 @@ import os
           snapshot.appendItems([.header], toSection: .main)
         }
 
-        let items = capturedPosts.map { Item.post(account: accountID, feed: feedID, id: $0.id) }
+        let isDiscoverFeed = feedID.contains("whats-hot") || feedID.contains("discover")
+        if isDiscoverFeed, let liveEvent = stateManager.appState.liveEventService.activeEvents.first {
+          snapshot.appendItems([.liveEvent(id: liveEvent.id)], toSection: .main)
+        }
+
+        var items: [Item] = []
+        let shouldShowTrending = (stateManager.appState.appSettings.showTrendingTopics || stateManager.appState.appSettings.showTrendingVideos)
+        let isEligibleFeed = stateManager.currentFeedType == .timeline || feedID.contains("discover") || feedID == "timeline"
+        let insertIndex = 6
+
+        for (index, post) in capturedPosts.enumerated() {
+          if shouldShowTrending && isEligibleFeed && capturedPosts.count >= 7 && index == insertIndex {
+            items.append(.trendingInterstitial)
+          }
+          items.append(.post(account: accountID, feed: feedID, id: post.id))
+        }
+
         snapshot.appendItems(items, toSection: .main)
         postsByID = capturedPostsByID
-
         guard !Task.isCancelled else { return }
 
         let currentItemIdentifiers = dataSource.snapshot().itemIdentifiers
@@ -820,16 +896,21 @@ import os
     /// Restores scroll position from the state manager's scroll anchor
     private func restoreScrollPosition() {
       guard let collectionView = collectionView,
-        let anchor = stateManager.getScrollAnchor(),
-        let postIndex = stateManager.index(of: anchor.postID)
+        let anchor = stateManager.getScrollAnchor()
       else {
         // No saved position or post not found, scroll to top
         resetScrollToTop()
         return
       }
 
-      let indexPath = IndexPath(item: postIndex, section: 0)
-
+      guard let item = dataSource.snapshot().itemIdentifiers.first(where: {
+        if case .post(_, _, let id) = $0 { return id == anchor.postID }
+        return false
+      }), let indexPath = dataSource.indexPath(for: item) else {
+        // Post not found in current snapshot, scroll to top
+        resetScrollToTop()
+        return
+      }
       // Scroll to the post first
       collectionView.scrollToItem(at: indexPath, at: .top, animated: false)
 
@@ -881,9 +962,13 @@ import os
     }
 
     private func postIndexForRow(at indexPath: IndexPath) -> Int? {
-      let postIndex = headerPresent ? indexPath.item - 1 : indexPath.item
-      guard postIndex >= .zero, postIndex < stateManager.posts.count else { return nil }
-      return postIndex
+      guard let item = dataSource.itemIdentifier(for: indexPath) else { return nil }
+      switch item {
+      case .post(_, _, let id):
+        return stateManager.posts.firstIndex(where: { $0.id == id })
+      default:
+        return nil
+      }
     }
     
     private func trackPostSeenIfNeeded(at indexPath: IndexPath) {
@@ -948,7 +1033,7 @@ import os
     // MARK: - App Lifecycle
 
     private func setupAppLifecycleObservers() {
-      #if os(iOS)
+      #if !targetEnvironment(macCatalyst)
         backgroundObserver = NotificationCenter.default.addObserver(
           forName: UIApplication.didEnterBackgroundNotification,
           object: nil,
@@ -1052,10 +1137,10 @@ import os
   extension FeedCollectionViewControllerIntegrated: UICollectionViewDataSourcePrefetching {
     func collectionView(_ collectionView: UICollectionView, prefetchItemsAt indexPaths: [IndexPath])
     {
-      // Prefetch images for upcoming cells
       let posts = indexPaths.compactMap { indexPath -> CachedFeedViewPost? in
-        guard indexPath.item < stateManager.posts.count else { return nil }
-        return stateManager.posts[indexPath.item]
+        guard let postIndex = self.postIndexForRow(at: indexPath),
+              postIndex < self.stateManager.posts.count else { return nil }
+        return self.stateManager.posts[postIndex]
       }
       
       guard !posts.isEmpty else { return }
@@ -1174,12 +1259,6 @@ import os
       }
     }
 
-    override func viewDidLayoutSubviews() {
-      super.viewDidLayoutSubviews()
-      if let collectionView = collectionView, let bgView = collectionView.backgroundView {
-        bgView.frame = collectionView.bounds
-      }
-    }
   }
 
 #else

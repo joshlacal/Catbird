@@ -344,6 +344,9 @@ struct EmbeddedMediaWebView: View {
             return URL(string: "https://tenor.com/embed/\(gifId)")!
         case .flickr(let photoId):
             return URL(string: "https://live.staticflickr.com/embed/\(photoId)")!
+        case .bandcamp(let trackOrAlbumUrl):
+            let encodedUrl = trackOrAlbumUrl.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+            return URL(string: "https://bandcamp.com/EmbeddedPlayer/url=\(encodedUrl)/size=large/bgcol=ffffff/linkcol=0687f5/tracklist=false/artwork=small/transparent=true/") ?? URL(string: "https://bandcamp.com/EmbeddedPlayer/url=\(encodedUrl)")!
         }
     }
     
@@ -355,6 +358,8 @@ struct EmbeddedMediaWebView: View {
             return 250 // Slightly taller for Twitch chat
         case .spotify, .appleMusic, .soundcloud:
             return 152 // Music player height
+        case .bandcamp:
+            return 120 // Bandcamp audio player height
         case .giphy, .tenor:
             return 300 // GIF display height
         case .flickr:
@@ -459,7 +464,23 @@ enum ExternalMediaType: Equatable {
     case giphy(gifId: String)
     case tenor(gifId: String)
     case flickr(photoId: String)
+    case bandcamp(url: String)
     
+    var provider: ExternalMediaProvider {
+        switch self {
+        case .youtube: return .youtube
+        case .youtubeShorts: return .youtubeShorts
+        case .vimeo: return .vimeo
+        case .twitch: return .twitch
+        case .spotify: return .spotify
+        case .appleMusic: return .appleMusic
+        case .soundcloud: return .soundcloud
+        case .giphy: return .giphy
+        case .tenor: return .tenor
+        case .flickr: return .flickr
+        case .bandcamp: return .bandcamp
+        }
+    }
     enum SpotifyContentType: String {
         case track, album, playlist, artist, show, episode
     }
@@ -509,6 +530,10 @@ enum ExternalMediaType: Equatable {
         } else if host.contains("flickr.com") {
             if let photoId = extractFlickrId(from: url) {
                 return .flickr(photoId: photoId)
+            }
+        } else if host.hasSuffix(".bandcamp.com") || host == "bandcamp.com" {
+            if path.contains("/album/") || path.contains("/track/") {
+                return .bandcamp(url: url.absoluteString)
             }
         }
         

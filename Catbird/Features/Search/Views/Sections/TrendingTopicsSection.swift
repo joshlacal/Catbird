@@ -19,7 +19,8 @@ struct TrendingTopicsSection: View {
     let maxItems: Int
     @State private var copilotTopic: AppBskyUnspeccedDefs.TrendView?
     @State private var isShowingCopilot = false
-    
+    @State private var pendingDedicatedProposal: CopilotProposal?
+    @State private var showHideConfirmation = false
     init(
         topics: [AppBskyUnspeccedDefs.TrendView],
         onSelect: @escaping (String) -> Void,
@@ -40,16 +41,33 @@ struct TrendingTopicsSection: View {
 
                 Spacer()
                 
-                if topics.count > maxItems {
-                    Button(action: onSeeAll) {
-                        HStack(spacing: 4) {
-                            Text("See All")
-                            Image(systemName: "chevron.right")
-                                .appFont(AppTextRole.caption)
+                HStack(spacing: 8) {
+                    if topics.count > maxItems {
+                        Button(action: onSeeAll) {
+                            HStack(spacing: 4) {
+                                Text("See All")
+                                Image(systemName: "chevron.right")
+                                    .appFont(AppTextRole.caption)
+                            }
+                            .appFont(AppTextRole.subheadline)
+                            .foregroundColor(.accentColor)
                         }
-                        .appFont(AppTextRole.subheadline)
-                        .foregroundColor(.accentColor)
                     }
+
+                    Menu {
+                        Button(role: .destructive) {
+                            showHideConfirmation = true
+                        } label: {
+                            Label("Hide trending topics", systemImage: "eye.slash")
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis")
+                            .appFont(AppTextRole.subheadline)
+                            .foregroundColor(.secondary)
+                            .frame(width: 28, height: 28)
+                            .contentShape(Rectangle())
+                    }
+                    .accessibilityLabel("Trending options")
                 }
             }
             .padding(.horizontal)
@@ -62,14 +80,38 @@ struct TrendingTopicsSection: View {
         }
         .sheet(isPresented: $isShowingCopilot) {
             if let topic = copilotTopic {
+                let context = CopilotContext.topic(
+                    name: topic.displayName,
+                    description: TrendingTopicPresentation.description(for: topic),
+                    link: topic.link
+                )
                 CatbirdCopilotSheet(
-                    context: .topic(
-                        name: topic.displayName,
-                        description: TrendingTopicPresentation.description(for: topic),
-                        link: topic.link
-                    )
+                    context: context,
+                    onDedicatedAction: { proposal in
+                        pendingDedicatedProposal = proposal
+                    }
                 )
             }
+        }
+        .onChange(of: isShowingCopilot) { wasShowing, isShowing in
+            if wasShowing && !isShowing, let proposal = pendingDedicatedProposal {
+                pendingDedicatedProposal = nil
+                if case .preparePostDraft(let text) = proposal {
+                    appState.presentPostComposer(initialText: text)
+                }
+            }
+        }
+        .confirmationDialog(
+            "Hide trending topics?",
+            isPresented: $showHideConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Hide", role: .destructive) {
+                appState.appSettings.showTrendingTopics = false
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("You can turn trending topics back on anytime in Settings > Content & Media.")
         }
     }
     

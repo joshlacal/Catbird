@@ -13,7 +13,9 @@ struct FeedScreen: View {
   @State private var generatorView: AppBskyFeedDefs.GeneratorView?
   @State private var isSubscribed: Bool = false
   @State private var isLoading: Bool = false
-
+  @State private var isShowingCopilot: Bool = false
+  @State private var isShowingReportSheet: Bool = false
+  @State private var pendingDedicatedProposal: CopilotProposal?
   private let logger = Logger(subsystem: "blue.catbird", category: "FeedScreen")
 
   var body: some View {
@@ -25,6 +27,59 @@ struct FeedScreen: View {
     .modifier(FeedHeaderInjector(
       header: headerAnyView
     ))
+    .toolbar {
+      ToolbarItem(placement: .primaryAction) {
+        Menu {
+          if generatorView != nil {
+            Button(role: .destructive) {
+              isShowingReportSheet = true
+            } label: {
+              Label("Report Feed", systemImage: "exclamationmark.circle")
+            }
+          }
+        } label: {
+          Image(systemName: "ellipsis")
+        }
+      }
+    }
+    .sheet(isPresented: $isShowingReportSheet) {
+      if let client = appState.atProtoClient, let generatorView = generatorView {
+        let reportingService = ReportingService(client: client)
+        let subject = reportingService.createFeedSubject(uri: generatorView.uri, cid: generatorView.cid)
+        ReportFormView(
+          reportingService: reportingService,
+          subject: subject,
+          contentDescription: "Feed: \(generatorView.displayName)"
+        )
+      }
+    }
+    .sheet(isPresented: $isShowingCopilot) {
+      let feedName = generatorView?.displayName ?? "Feed"
+      let feedURI = uri.uriString()
+      CatbirdCopilotSheet(
+        context: .feed(uri: feedURI, name: feedName),
+        onConfirmedAction: { proposal in
+          try await CopilotProposalCoordinator.executeConfirmed(
+            proposal,
+            context: .feed(uri: feedURI, name: feedName),
+            expectedAccountDID: appState.userDID,
+            appState: appState
+          )
+          await updateSubscriptionStatus()
+        },
+        onDedicatedAction: { proposal in
+          pendingDedicatedProposal = proposal
+        }
+      )
+    }
+    .onChange(of: isShowingCopilot) { wasShowing, isShowing in
+      if wasShowing && !isShowing, let proposal = pendingDedicatedProposal {
+        pendingDedicatedProposal = nil
+        if case .preparePostDraft(let text) = proposal {
+          appState.presentPostComposer(initialText: text)
+        }
+      }
+    }
     .task(id: uri.uriString()) {
       await loadGenerator()
       await updateSubscriptionStatus()
@@ -38,7 +93,16 @@ struct FeedScreen: View {
       FeedDiscoveryHeaderView(
         feed: generatorView,
         isSubscribed: isSubscribed,
-        onSubscriptionToggle: { await toggleFeedSubscription(generatorView) }
+        onSubscriptionToggle: { await toggleFeedSubscription(generatorView) },
+        onLikedByTap: {
+          path.append(NavigationDestination.postLikes(generatorView.uri.uriString()))
+        },
+        onAskCatbird: {
+          isShowingCopilot = true
+        },
+        onReportTap: {
+          isShowingReportSheet = true
+        }
       )
       .padding(.horizontal)
       .padding(.top, 8)

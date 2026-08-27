@@ -2,14 +2,14 @@ import Petrel
 import SwiftUI
 
 /// Enum representing date filter options retained for existing search metadata.
-enum FilterDate: String, CaseIterable {
+public enum FilterDate: String, CaseIterable, Sendable {
   case anytime
   case today
   case week
   case month
   case year
 
-  var displayName: String {
+  public var displayName: String {
     switch self {
     case .anytime: return "Anytime"
     case .today: return "Today"
@@ -19,7 +19,7 @@ enum FilterDate: String, CaseIterable {
     }
   }
 
-  var icon: String {
+  public var icon: String {
     switch self {
     case .anytime: return "clock"
     case .today: return "calendar.day.timeline.left"
@@ -30,61 +30,65 @@ enum FilterDate: String, CaseIterable {
   }
 }
 
-/// Enum representing content type filter options.
-enum ContentType: String, CaseIterable {
-  case all
-  case profiles
-  case posts
+/// Enum representing content type filter options (G01 segmentation).
+public enum ContentType: String, CaseIterable, Codable, Sendable {
+  case top
+  case latest
+  case people
   case feeds
+  case starterPacks
 
-  var title: String {
+  public var title: String {
     switch self {
-    case .all: return "All"
-    case .profiles: return "Profiles"
-    case .posts: return "Posts"
+    case .top: return "Top"
+    case .latest: return "Latest"
+    case .people: return "People"
     case .feeds: return "Feeds"
+    case .starterPacks: return "Starter Packs"
     }
   }
 
-  var icon: String {
+  public var icon: String {
     switch self {
-    case .all: return "rectangle.grid.2x2"
-    case .profiles: return "person"
-    case .posts: return "text.bubble"
-    case .feeds: return "rectangle.grid.1x2"
+    case .top: return "sparkles"
+    case .latest: return "clock"
+    case .people: return "person.2"
+    case .feeds: return "number"
+    case .starterPacks: return "rectangle.stack.badge.person.crop"
     }
   }
 
-  var emptyIcon: String {
+  public var emptyIcon: String {
     switch self {
-    case .all: return "magnifyingglass"
-    case .profiles: return "person.slash"
-    case .posts: return "text.bubble.slash"
+    case .top: return "text.bubble.slash"
+    case .latest: return "text.bubble.slash"
+    case .people: return "person.slash"
     case .feeds: return "rectangle.slash"
+    case .starterPacks: return "rectangle.stack.badge.person.crop"
     }
   }
 }
 
 /// Enum for API-supported search result sorting options.
-enum SearchSort: String, CaseIterable, Codable, Sendable {
+public enum SearchSort: String, CaseIterable, Codable, Sendable {
   case top
   case latest
 
-  var displayName: String {
+  public var displayName: String {
     switch self {
     case .top: return "Top"
     case .latest: return "Latest"
     }
   }
 
-  var icon: String {
+  public var icon: String {
     switch self {
     case .top: return "star.fill"
     case .latest: return "clock.fill"
     }
   }
 
-  var description: String {
+  public var description: String {
     switch self {
     case .top: return "Most relevant and popular results"
     case .latest: return "Most recent results first"
@@ -93,23 +97,23 @@ enum SearchSort: String, CaseIterable, Codable, Sendable {
 }
 
 /// Model for language selection options.
-struct LanguageOption: Identifiable, Hashable {
-  let id = UUID()
-  let code: String
-  let name: String
-  let isPreferred: Bool
+public struct LanguageOption: Identifiable, Hashable, Sendable {
+  public let id = UUID()
+  public let code: String
+  public let name: String
+  public let isPreferred: Bool
 
-  var displayName: String { name }
+  public var displayName: String { name }
 
-  func hash(into hasher: inout Hasher) {
+  public func hash(into hasher: inout Hasher) {
     hasher.combine(code)
   }
 
-  static func == (lhs: LanguageOption, rhs: LanguageOption) -> Bool {
+  public static func == (lhs: LanguageOption, rhs: LanguageOption) -> Bool {
     lhs.code == rhs.code
   }
 
-  static let supportedLanguages: [LanguageOption] = [
+  public static let supportedLanguages: [LanguageOption] = [
     LanguageOption(code: "en", name: "English", isPreferred: true),
     LanguageOption(code: "es", name: "Spanish", isPreferred: false),
     LanguageOption(code: "ja", name: "Japanese", isPreferred: false),

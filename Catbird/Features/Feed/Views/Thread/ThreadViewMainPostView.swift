@@ -4,7 +4,7 @@ import SwiftUI
 
 struct ThreadViewMainPostView: View, Equatable {
     static func == (lhs: ThreadViewMainPostView, rhs: ThreadViewMainPostView) -> Bool {
-        lhs.post.uri == rhs.post.uri && lhs.post.indexedAt == rhs.post.indexedAt && lhs.viewModel.isBookmarked == rhs.viewModel.isBookmarked
+        lhs.post.uri == rhs.post.uri && lhs.post.indexedAt == rhs.post.indexedAt && lhs.viewModel.isBookmarked == rhs.viewModel.isBookmarked && lhs.opThreadPostIndex == rhs.opThreadPostIndex && lhs.opThreadPostCount == rhs.opThreadPostCount
     }
     
     let post: AppBskyFeedDefs.PostView
@@ -12,6 +12,8 @@ struct ThreadViewMainPostView: View, Equatable {
     let appState: AppState
     let visibilityContext: PostVisibilityContext
     @Binding var path: NavigationPath
+    let opThreadPostIndex: Int?
+    let opThreadPostCount: Int?
     @Environment(\.colorScheme) var colorScheme
     @State private var viewModel: PostViewModel
     @State private var contextMenuViewModel: PostContextMenuViewModel
@@ -20,7 +22,8 @@ struct ThreadViewMainPostView: View, Equatable {
     @State private var showingAddToListSheet = false
     @State private var showDeleteConfirmation = false
     @State private var showBlockConfirmation = false
-    
+    @State private var showingInteractionSettings = false
+    @State private var showingLabelsOnPost = false
     // Using multiples of 3 for spacing
     private static let baseUnit: CGFloat = 3
     private static let avatarSize: CGFloat = 48
@@ -42,15 +45,35 @@ struct ThreadViewMainPostView: View, Equatable {
         showLine: Bool,
         path: Binding<NavigationPath>,
         appState: AppState,
-        visibilityContext: PostVisibilityContext = .public
+        visibilityContext: PostVisibilityContext = .public,
+        opThreadPostIndex: Int? = nil,
+        opThreadPostCount: Int? = nil
     ) {
         self.post = post
         self.showLine = showLine
         self._path = path
         self.appState = appState
         self.visibilityContext = visibilityContext
+        self.opThreadPostIndex = opThreadPostIndex
+        self.opThreadPostCount = opThreadPostCount
         _viewModel = State(initialValue: PostViewModel(post: post, appState: appState, visibilityContext: visibilityContext))
-        _contextMenuViewModel = State(initialValue: PostContextMenuViewModel(appState: appState, post: post, visibilityContext: visibilityContext))
+        let actualRootURI: ATProtocolURI = {
+            if case let .knownType(record) = post.record,
+               let feedPost = record as? AppBskyFeedPost,
+               let root = feedPost.reply?.root.uri {
+                return root
+            }
+            return post.uri
+        }()
+        _contextMenuViewModel = State(
+            initialValue: PostContextMenuViewModel(
+                appState: appState,
+                post: post,
+                visibilityContext: visibilityContext,
+                rootPostURI: actualRootURI,
+                rootAuthorDID: actualRootURI.authority
+            )
+        )
     }
     
     private var authorAvatarColumn: some View {
@@ -155,12 +178,15 @@ struct ThreadViewMainPostView: View, Equatable {
                                     path.append(NavigationDestination.profile(post.author.did.didString()))
                                     
                                 }
-                                
                                 Spacer()
+                                
+                                if let opThreadPostIndex, let opThreadPostCount {
+                                    ThreadPostNumberView(index: opThreadPostIndex, count: opThreadPostCount)
+                                        .padding(.trailing, 8)
+                                }
                                 
                                 postEllipsisMenuView
                             }
-                            
                             .frame(height: 60, alignment: .center)
                             .padding(.bottom, 3)
 
@@ -281,6 +307,35 @@ struct ThreadViewMainPostView: View, Equatable {
                     userDisplayName: post.author.displayName
                 )
             }
+            .sheet(isPresented: $showingInteractionSettings) {
+                let actualRootURI: ATProtocolURI = {
+                    if case let .knownType(record) = post.record,
+                       let feedPost = record as? AppBskyFeedPost,
+                       let root = feedPost.reply?.root.uri {
+                        return root
+                    }
+                    return post.uri
+                }()
+                let isRootAuthor = (actualRootURI.authority ?? post.author.did.didString()) == appState.userDID
+
+                PostInteractionSettingsView(
+                    post: post,
+                    rootPostURI: actualRootURI,
+                    isRootAuthor: isRootAuthor
+                )
+            }
+            .sheet(isPresented: $showingLabelsOnPost) {
+                if let client = appState.atProtoClient {
+                    let reportingService = ReportingService(client: client)
+                    let handle = post.author.handle.description
+                    LabelsOnMeView(
+                        labels: allPostLabels,
+                        targetDescription: "Post by @\(handle)",
+                        viewerDID: appState.userDID,
+                        reportingService: reportingService
+                    )
+                }
+            }
             .alert("Delete Post", isPresented: $showDeleteConfirmation) {
                 Button("Cancel", role: .cancel) { }
                 Button("Delete", role: .destructive) {
@@ -394,8 +449,67 @@ struct ThreadViewMainPostView: View, Equatable {
             }
             
             // Use currentUserDid and post
+            if post.author.did.didString() != currentUserDid {
+                // Threadgate OP Moderation (G13): Root author can hide/show replies for everyone
+                if contextMenuViewModel.isRootAuthor {
+                    Button(action: {
+                        Task {
+                            if contextMenuViewModel.isReplyHiddenByThreadgate {
+                                await contextMenuViewModel.unhideReplyForEveryone()
+                            } else {
+                                await contextMenuViewModel.hideReplyForEveryone()
+                            }
+                        }
+                    }) {
+                        Label(
+                            contextMenuViewModel.isReplyHiddenByThreadgate ? "Show reply for everyone" : "Hide reply for everyone",
+                            systemImage: contextMenuViewModel.isReplyHiddenByThreadgate ? "eye" : "eye.slash"
+                        )
+                    }
+                }
+
+                // Postgate Quote Detachment (G14): Author of quoted post can detach/re-attach quote
+                if contextMenuViewModel.quotedPostURI != nil {
+                    Button(action: {
+                        Task {
+                            if contextMenuViewModel.isQuoteDetached {
+                                await contextMenuViewModel.reattachQuote()
+                            } else {
+                                await contextMenuViewModel.detachQuote()
+                            }
+                        }
+                    }) {
+                        Label(
+                            contextMenuViewModel.isQuoteDetached ? "Re-attach quote" : "Detach quote",
+                            systemImage: contextMenuViewModel.isQuoteDetached ? "link" : "arrow.branch"
+                        )
+                    }
+                }
+            }
+
             if let currentUserDid = currentUserDid,
                post.author.did.didString() == currentUserDid {
+                Button(action: {
+                    Task { await contextMenuViewModel.togglePin() }
+                }) {
+                    if contextMenuViewModel.isPinned {
+                        Label("Unpin from profile", systemImage: "pin.slash")
+                    } else {
+                        Label("Pin to your profile", systemImage: "pin")
+                    }
+                }
+
+                Button(action: {
+                    showingInteractionSettings = true
+                }) {
+                    Label("Edit interaction settings", systemImage: "slider.horizontal.3")
+                }
+
+                Button(action: {
+                    showingLabelsOnPost = true
+                }) {
+                    Label("Labels applied to this post", systemImage: "tag")
+                }
                 Button(role: .destructive, action: {
                     showDeleteConfirmation = true
                 }) {
@@ -417,6 +531,17 @@ struct ThreadViewMainPostView: View, Equatable {
                 .accessibilityAddTraits(.isButton)
             
         }
+    }
+
+    private var allPostLabels: [ComAtprotoLabelDefs.Label] {
+        var combined: [ComAtprotoLabelDefs.Label] = []
+        if let postLabels = post.labels {
+            combined.append(contentsOf: postLabels)
+        }
+        if let authorLabels = post.author.labels {
+            combined.append(contentsOf: authorLabels)
+        }
+        return combined
     }
 
 }

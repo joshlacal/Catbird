@@ -63,6 +63,11 @@ struct PostView: View, Equatable, Identifiable {
   let hasVisibleThreadContext: Bool
   let avatarScale: PostAvatarScale
   let visibilityContext: PostVisibilityContext
+  let rootPostURI: ATProtocolURI?
+  let rootAuthorDID: String?
+  let isReplyHiddenByThreadgate: Bool
+  let opThreadPostIndex: Int?
+  let opThreadPostCount: Int?
   @Binding var path: NavigationPath
   @Environment(\.feedPostID) private var feedPostID
   // MARK: - State
@@ -83,8 +88,10 @@ struct PostView: View, Equatable, Identifiable {
   @State private var showMuteUserConfirmation = false
   @State private var showMuteThreadConfirmation = false
   @State private var isShowingCopilot = false
-
-  // MARK: - Computed Properties
+  @State private var copilotContextToPresent: CopilotContext? = nil
+  @State private var pendingDedicatedProposal: CopilotProposal?
+  @State private var showingInteractionSettings = false
+  @State private var showingLabelsOnPost = false
 var id: String {
     // Base ID from post URI and CID
     let postID = post.uri.uriString() + post.cid.string
@@ -114,7 +121,12 @@ var id: String {
     isToYou: Bool = false,
     hasVisibleThreadContext: Bool = false,
     avatarScale: PostAvatarScale = .regular,
-    visibilityContext: PostVisibilityContext = .public
+    visibilityContext: PostVisibilityContext = .public,
+    rootPostURI: ATProtocolURI? = nil,
+    rootAuthorDID: String? = nil,
+    isReplyHiddenByThreadgate: Bool = false,
+    opThreadPostIndex: Int? = nil,
+    opThreadPostCount: Int? = nil
   ) {
     self.post = post
     self.grandparentAuthor = grandparentAuthor
@@ -125,8 +137,11 @@ var id: String {
     self.hasVisibleThreadContext = hasVisibleThreadContext
     self.avatarScale = avatarScale
     self.visibilityContext = visibilityContext
-
-    // Initialize states
+    self.rootPostURI = rootPostURI
+    self.rootAuthorDID = rootAuthorDID
+    self.isReplyHiddenByThreadgate = isReplyHiddenByThreadgate
+    self.opThreadPostIndex = opThreadPostIndex
+    self.opThreadPostCount = opThreadPostCount
     _postState = State(initialValue: PostState(post: post))  // Initialize consolidated state
     _viewModel = State(initialValue: PostViewModel(post: post, appState: appState, visibilityContext: visibilityContext))
     _contextMenuViewModel = State(
@@ -134,7 +149,10 @@ var id: String {
         appState: appState,
         post: post,
         allowsThreadSummary: (hasVisibleThreadContext || isParentPost) && (post.replyCount ?? 0) > 0,
-        visibilityContext: visibilityContext
+        visibilityContext: visibilityContext,
+        rootPostURI: rootPostURI,
+        rootAuthorDID: rootAuthorDID,
+        isReplyHiddenByThreadgate: isReplyHiddenByThreadgate
       ))
   }
   // MARK: - Body
@@ -219,8 +237,42 @@ var id: String {
         post: postState.currentPost
       )
     }
+    .sheet(isPresented: $showingInteractionSettings) {
+      PostInteractionSettingsView(
+        post: postState.currentPost,
+        rootPostURI: contextMenuViewModel.resolvedRootPostURI ?? postState.currentPost.uri,
+        isRootAuthor: contextMenuViewModel.isRootAuthor
+      )
+    }
+    .sheet(isPresented: $showingLabelsOnPost) {
+      if let client = appState.atProtoClient {
+        let reportingService = ReportingService(client: client)
+        let handle = postState.currentPost.author.handle.description
+        LabelsOnMeView(
+          labels: allPostLabels,
+          targetDescription: "Post by @\(handle)",
+          viewerDID: appState.userDID,
+          reportingService: reportingService
+        )
+      }
+    }
     .sheet(isPresented: $isShowingCopilot) {
-      CatbirdCopilotSheet(context: copilotContext)
+      let activeContext = copilotContextToPresent ?? copilotContext
+      CatbirdCopilotSheet(
+        context: activeContext,
+        onConfirmedAction: { proposal in
+          try await handleConfirmedCopilotAction(proposal, context: activeContext)
+        },
+        onDedicatedAction: { proposal in
+          pendingDedicatedProposal = proposal
+        }
+      )
+    }
+    .onChange(of: isShowingCopilot) { wasShowing, isShowing in
+      if wasShowing && !isShowing, let proposal = pendingDedicatedProposal {
+        pendingDedicatedProposal = nil
+        handleDedicatedProposal(proposal)
+      }
     }
     .alert("Delete Post", isPresented: $showDeleteConfirmation) {
       Button("Cancel", role: .cancel) { }
@@ -346,6 +398,10 @@ var id: String {
 
           Spacer()
 
+          if let opThreadPostIndex, let opThreadPostCount {
+            ThreadPostNumberView(index: opThreadPostIndex, count: opThreadPostCount)
+              .padding(.trailing, 6)
+          }
           if appState.appSettings.showReadingTimeEstimates,
              let minutes = PostReadingTime.minutes(for: feedPost.text) {
             Text("\(minutes) min read")
@@ -399,6 +455,7 @@ var id: String {
   private var postEllipsisMenuView: some View {
     Menu {
       Button {
+        copilotContextToPresent = copilotContext
         isShowingCopilot = true
       } label: {
         Label("Ask Catbird", systemImage: "sparkles")
@@ -407,7 +464,7 @@ var id: String {
       Divider()
 
       // Only show "Add to List" for other users' posts
-      if postState.currentPost.author.did.didString() != postState.currentUserDid {
+      if !isOwnPost {
         Button(action: {
           contextMenuViewModel.addAuthorToList()
         }) {
@@ -420,9 +477,18 @@ var id: String {
 #if canImport(FoundationModels)
       if #available(iOS 26.0, macOS 26.0, *), contextMenuViewModel.allowsThreadSummary {
         Button(action: {
-          contextMenuViewModel.summarizeThread()
+          let rootURI: String
+          if case .knownType(let record) = postState.currentPost.record,
+             let feedPost = record as? AppBskyFeedPost,
+             let replyRootUri = feedPost.reply?.root.uri.uriString() {
+            rootURI = replyRootUri
+          } else {
+            rootURI = postState.currentPost.uri.uriString()
+          }
+          copilotContextToPresent = .thread(anchorURI: rootURI)
+          isShowingCopilot = true
         }) {
-          Label("Summarize Thread", systemImage: "text.append")
+          Label("Ask Catbird About Thread", systemImage: "sparkles")
         }
 
         Divider()
@@ -459,7 +525,7 @@ var id: String {
       Divider()
       
       // Only show mute/block for other users' posts
-      if postState.currentPost.author.did.didString() != postState.currentUserDid {
+      if !isOwnPost {
         Button(action: {
           if DestructiveActionConfirmation.shouldConfirm(
             isEnabled: appState.appSettings.confirmBeforeActions
@@ -494,7 +560,7 @@ var id: String {
       }
       
       // Only show hide/report for other users' posts
-      if postState.currentPost.author.did.didString() != postState.currentUserDid {
+      if !isOwnPost {
         // Hide/Unhide post option
         Button(action: {
           Task {
@@ -516,11 +582,66 @@ var id: String {
         }) {
           Label("Report Post", systemImage: "flag")
         }
+
+        // Threadgate OP Moderation (G13): Root author can hide/show replies for everyone
+        if contextMenuViewModel.isRootAuthor {
+          Button(action: {
+            Task {
+              if contextMenuViewModel.isReplyHiddenByThreadgate {
+                await contextMenuViewModel.unhideReplyForEveryone()
+              } else {
+                await contextMenuViewModel.hideReplyForEveryone()
+              }
+            }
+          }) {
+            Label(
+              contextMenuViewModel.isReplyHiddenByThreadgate ? "Show reply for everyone" : "Hide reply for everyone",
+              systemImage: contextMenuViewModel.isReplyHiddenByThreadgate ? "eye" : "eye.slash"
+            )
+          }
+        }
+
+        // Postgate Quote Detachment (G14): Author of quoted post can detach/re-attach quote
+        if contextMenuViewModel.quotedPostURI != nil {
+          Button(action: {
+            Task {
+              if contextMenuViewModel.isQuoteDetached {
+                await contextMenuViewModel.reattachQuote()
+              } else {
+                await contextMenuViewModel.detachQuote()
+              }
+            }
+          }) {
+            Label(
+              contextMenuViewModel.isQuoteDetached ? "Re-attach quote" : "Detach quote",
+              systemImage: contextMenuViewModel.isQuoteDetached ? "link" : "arrow.branch"
+            )
+          }
+        }
       }
 
-      // Use postState.currentUserDid and postState.currentPost
-      if let currentUserDid = postState.currentUserDid,
-        postState.currentPost.author.did.didString() == currentUserDid {
+      if isOwnPost {
+        Button(action: {
+          Task { await contextMenuViewModel.togglePin() }
+        }) {
+          if contextMenuViewModel.isPinned {
+            Label("Unpin from profile", systemImage: "pin.slash")
+          } else {
+            Label("Pin to your profile", systemImage: "pin")
+          }
+        }
+
+        Button(action: {
+          showingInteractionSettings = true
+        }) {
+          Label("Edit interaction settings", systemImage: "slider.horizontal.3")
+        }
+
+        Button(action: {
+          showingLabelsOnPost = true
+        }) {
+          Label("Labels applied to this post", systemImage: "tag")
+        }
         Button(role: .destructive, action: {
           showDeleteConfirmation = true
         }) {
@@ -537,6 +658,22 @@ var id: String {
         
     }
   }
+  private var allPostLabels: [ComAtprotoLabelDefs.Label] {
+    var combined: [ComAtprotoLabelDefs.Label] = []
+    if let postLabels = postState.currentPost.labels {
+      combined.append(contentsOf: postLabels)
+    }
+    if let authorLabels = postState.currentPost.author.labels {
+      combined.append(contentsOf: authorLabels)
+    }
+    return combined
+  }
+
+  /// Whether the post was authored by the signed-in user.
+  private var isOwnPost: Bool {
+    postState.currentPost.author.did.didString() == postState.currentUserDid
+  }
+
 
   private var copilotContext: CopilotContext {
     let text: String
@@ -548,9 +685,125 @@ var id: String {
     }
     return .post(
       uri: postState.currentPost.uri.uriString(),
+      cid: postState.currentPost.cid.string,
       authorDID: postState.currentPost.author.did.didString(),
       text: text
     )
+  }
+
+  @MainActor
+  private func handleConfirmedCopilotAction(_ proposal: CopilotProposal, context: CopilotContext) async throws {
+    let currentURI = postState.currentPost.uri.uriString()
+    let currentCID = postState.currentPost.cid.string
+    switch proposal {
+    case .likePost(let uri, let cid):
+      guard uri == currentURI && cid == currentCID else {
+        throw CopilotProposalError.staleTarget
+      }
+      if !viewModel.isLiked {
+        try await viewModel.toggleLike()
+      }
+
+    case .unlikePost(let uri, let cid):
+      guard uri == currentURI && cid == currentCID else {
+        throw CopilotProposalError.staleTarget
+      }
+      if viewModel.isLiked {
+        try await viewModel.toggleLike()
+      }
+
+    case .repostPost(let uri, let cid):
+      guard uri == currentURI && cid == currentCID else {
+        throw CopilotProposalError.staleTarget
+      }
+      if !viewModel.isReposted {
+        try await viewModel.toggleRepost()
+      }
+
+    case .unrepostPost(let uri, let cid):
+      guard uri == currentURI && cid == currentCID else {
+        throw CopilotProposalError.staleTarget
+      }
+      if viewModel.isReposted {
+        try await viewModel.toggleRepost()
+      }
+
+    case .bookmarkPost(let uri, let cid):
+      guard uri == currentURI && cid == currentCID else {
+        throw CopilotProposalError.staleTarget
+      }
+      if !viewModel.isBookmarked {
+        try await viewModel.toggleBookmark()
+      }
+
+    case .unbookmarkPost(let uri, let cid):
+      guard uri == currentURI && cid == currentCID else {
+        throw CopilotProposalError.staleTarget
+      }
+      if viewModel.isBookmarked {
+        try await viewModel.toggleBookmark()
+      }
+
+    case .hidePost(let uri, let cid):
+      guard uri == currentURI && cid == currentCID else {
+        throw CopilotProposalError.staleTarget
+      }
+      if !contextMenuViewModel.isPostHidden {
+        await contextMenuViewModel.hidePost()
+      }
+
+    case .unhidePost(let uri, let cid):
+      guard uri == currentURI && cid == currentCID else {
+        throw CopilotProposalError.staleTarget
+      }
+      if contextMenuViewModel.isPostHidden {
+        await contextMenuViewModel.unhidePost()
+      }
+
+    default:
+      try await CopilotProposalCoordinator.executeConfirmed(
+        proposal,
+        context: context,
+        expectedAccountDID: appState.userDID,
+        appState: appState
+      )
+    }
+  }
+
+  @MainActor
+  private func handleDedicatedProposal(_ proposal: CopilotProposal) {
+    let currentURI = postState.currentPost.uri.uriString()
+    let currentCID = postState.currentPost.cid.string
+    let authorDID = postState.currentPost.author.did.didString()
+
+    switch proposal {
+    case .reportPost(let uri, let cid):
+      guard uri == currentURI && cid == currentCID else { return }
+      postState.showingReportView = true
+
+    case .deletePost(let uri, let cid):
+      guard uri == currentURI && cid == currentCID else { return }
+      guard authorDID == appState.userDID else { return }
+      showDeleteConfirmation = true
+
+    case .addActorToList(let actorDID):
+      guard actorDID == authorDID else { return }
+      postState.showingAddToListSheet = true
+
+    case .prepareReply(let uri, let cid, let text):
+      guard uri == currentURI && cid == currentCID else { return }
+      appState.presentPostComposer(initialText: text, parentPost: postState.currentPost)
+
+    case .prepareQuote(let uri, let cid, let text):
+      guard uri == currentURI && cid == currentCID else { return }
+      appState.presentPostComposer(initialText: text, quotedPost: postState.currentPost)
+
+    case .preparePostDraft(let text):
+      appState.presentPostComposer(initialText: text)
+
+    default:
+      break
+    }
   }
 
   // Reply indicator text
@@ -813,6 +1066,8 @@ var id: String {
           return ("There isn't enough conversation to summarize yet.", false)
         }
         return ("Couldn’t generate a summary for this thread. Try again.", true)
+      case .contextLimitExceeded:
+        return ("This thread is too long to summarize.", false)
       case .underlying(let underlying):
         let message = (underlying as? LocalizedError)?.errorDescription ?? underlying.localizedDescription
         return (message, true)

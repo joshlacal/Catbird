@@ -16,12 +16,15 @@ struct FeedDiscoveryHeaderView: View {
   /// Invoked when the row body (avatar + text) is tapped. When `nil` the row is
   /// non-tappable — used when this view is the header of an already-open feed.
   var onTap: (() -> Void)? = nil
-
+  var onLikedByTap: (() -> Void)? = nil
+  var onAskCatbird: (() -> Void)? = nil
+  var onReportTap: (() -> Void)? = nil
   @State private var isTogglingSubscription = false
   @State private var isLiking = false
   @State private var liked = false
   @State private var likeUri: ATProtocolURI?
   @State private var didSeedViewerState = false
+  @State private var isShowingReportSheet = false
   
   private let logger = Logger(subsystem: "blue.catbird", category: "FeedDiscoveryHeaderView")
   
@@ -54,11 +57,21 @@ struct FeedDiscoveryHeaderView: View {
       moreMenu
     }
     .padding(.vertical, 8)
+    .sheet(isPresented: $isShowingReportSheet) {
+      if let client = appState.atProtoClient {
+        let reportingService = ReportingService(client: client)
+        let subject = reportingService.createFeedSubject(uri: feed.uri, cid: feed.cid)
+        ReportFormView(
+          reportingService: reportingService,
+          subject: subject,
+          contentDescription: "Feed: \(feed.displayName)"
+        )
+      }
+    }
     .task(id: feed.uri.uriString()) {
       seedFromFeedViewer()
     }
   }
-
   // MARK: - Avatar
 
   private var feedAvatar: some View {
@@ -159,18 +172,41 @@ struct FeedDiscoveryHeaderView: View {
 
   private var moreMenu: some View {
     Menu {
+      if let onAskCatbird {
+        Button {
+          onAskCatbird()
+        } label: {
+          Label("Ask Catbird", systemImage: "sparkles")
+        }
+      }
+
       Button {
         if liked { unlikeFeed() } else { likeFeed() }
       } label: {
         Label(liked ? "Unlike" : "Like", systemImage: liked ? "heart.fill" : "heart")
       }
       .disabled(isLiking)
+      if let onLikedByTap {
+        Button {
+          onLikedByTap()
+        } label: {
+          Label("Liked by", systemImage: "heart")
+        }
+      }
+
 
       Button { shareFeed() } label: {
         Label("Share", systemImage: "square.and.arrow.up")
       }
 
-      Button(role: .destructive) { reportFeed() } label: {
+      Button(role: .destructive) {
+        PlatformHaptics.light()
+        if let onReportTap {
+          onReportTap()
+        } else {
+          isShowingReportSheet = true
+        }
+      } label: {
         Label("Report", systemImage: "exclamationmark.circle")
       }
     } label: {
@@ -295,26 +331,6 @@ struct FeedDiscoveryHeaderView: View {
     #endif
   }
   
-  private func reportFeed() {
-    PlatformHaptics.light()
-    
-    Task {
-      do {
-        guard let client = appState.atProtoClient else { return }
-        let reportInput = ComAtprotoModerationCreateReport.Input(
-          reasonType: .comatprotomoderationdefsreasonspam,
-          reason: "Feed reported from header",
-          subject: .comAtprotoAdminDefsRepoRef(.init(
-            did: try DID(didString: feed.creator.did.didString())
-          ))
-        )
-        let (code, _) = try await client.com.atproto.moderation.createReport(input: reportInput)
-        logger.info("Report result: \(code)")
-      } catch {
-        logger.error("Report failed: \(error.localizedDescription)")
-      }
-    }
-  }
   
   /// Seed from inline viewer state exposed by Petrel's GeneratorView
   private func seedFromFeedViewer() {

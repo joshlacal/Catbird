@@ -2,246 +2,244 @@
 //  SuggestedProfilesSection.swift
 //  Catbird
 //
-//  Created on 3/9/25.
+//  Explore Suggested Accounts with Interest Tabs (G04).
 //
 
-import SwiftUI
-import Petrel
+import NukeUI
 import OSLog
+import Petrel
+import SwiftUI
 
-/// A section displaying suggested profiles for the user to follow
-struct SuggestedProfilesSection: View {
-    let profiles: [AppBskyActorDefs.ProfileView]
-    let onSelect: (AppBskyActorDefs.ProfileView) -> Void
-    let onRefresh: () -> Void
-    @Environment(AppState.self) private var appState
-    @Environment(\.colorScheme) private var colorScheme
-    
-    private let logger = Logger(subsystem: "blue.catbird", category: "SuggestedProfilesSection")
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                Label("Suggested Profiles", systemImage: "person.2")
-                    .appFont(.customSystemFont(size: 17, weight: .medium, width: 120, relativeTo: .headline))
-                
-                Spacer()
-                
-                Button {
-                    onRefresh()
-                } label: {
-                    Image(systemName: "arrow.triangle.2.circlepath")
-                        .appFont(AppTextRole.subheadline)
-                        .foregroundColor(.accentColor)
-                        .frame(width: 32, height: 32)
-                        .background(
-                            Circle()
-                                .fill(Color.accentColor.opacity(0.1))
-                        )
-                }
-            }
-            .padding(.horizontal, 16)
-            
-            if profiles.isEmpty {
-                emptyStateView
-            } else {
-                profilesCardView
-            }
-        }
-    }
-    
-    private var emptyStateView: some View {
-        VStack(spacing: 12) {
-            ProgressView()
-                .scaleEffect(1.2)
-            
-            Text("Finding profiles for you...")
-                .appFont(AppTextRole.subheadline)
-                .foregroundColor(.secondary)
-        }
-        .padding(.vertical, 24)
-        .frame(maxWidth: .infinity)
-        .background(Color.dynamicSecondaryBackground(appState.themeManager, currentScheme: colorScheme))
-        .cornerRadius(12)
-        .padding(.horizontal, 16)
-    }
-    
-    private var profilesCardView: some View {
-        VStack(spacing: 12) {
-            ForEach(profiles.prefix(5), id: \.did) { profile in
-                profileCard(profile: profile)
-            }
-        }
-        .padding(.horizontal, 16)
-    }
-    
-    private func profileCard(profile: AppBskyActorDefs.ProfileView) -> some View {
-        Button {
-            onSelect(profile)
-        } label: {
-            HStack(alignment: .top, spacing: 14) {
-                AsyncProfileImage(url: URL(string: profile.avatar?.uriString() ?? ""), size: 56)
-                
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(alignment: .center, spacing: 6) {
-                        Text(profile.displayName ?? profile.handle.description)
-                            .appFont(AppTextRole.body.weight(.semibold))
-                            .foregroundColor(Color.dynamicText(appState.themeManager, style: .primary, currentScheme: colorScheme))
-                            .lineLimit(1)
-                            .truncationMode(.tail)
+/// A section displaying suggested profiles categorized by interest tabs (G04).
+public struct SuggestedProfilesSection: View {
+  public let profiles: [AppBskyActorDefs.ProfileView]
+  public let selectedCategory: String?
+  public let userInterests: [String]
+  public let isLoading: Bool
+  public let onSelectCategory: (String?) -> Void
+  public let onSelectProfile: (AppBskyActorDefs.ProfileView) -> Void
+  public let onRefresh: () -> Void
 
-                        if let badgeKind = VerificationBadge.kind(
-                            for: profile.verification,
-                            did: profile.did
-                        ) {
-                            VerificationBadgeView(kind: badgeKind)
-                                .font(.callout)
-                        }
-                    }
-                    
-                    Text("@\(profile.handle)")
-                        .appFont(AppTextRole.subheadline)
-                        .foregroundColor(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    
-                    if let description = profile.description, !description.isEmpty {
-                        Text(description)
-                            .appFont(AppTextRole.footnote)
-                            .foregroundColor(Color.dynamicText(appState.themeManager, style: .tertiary, currentScheme: colorScheme))
-                            .lineLimit(2)
-                            .multilineTextAlignment(.leading)
-                            .padding(.top, 2)
-                    }
-                    
-                    HStack(spacing: 12) {
-                        if let viewer = profile.viewer, let knownFollowers = viewer.knownFollowers, knownFollowers.count > 0 {
-                            Label {
-                                Text("\(knownFollowers.count) mutual")
-                                    .appFont(AppTextRole.caption)
-                            } icon: {
-                                Image(systemName: "person.2.fill")
-                                    .font(.system(size: 10))
-                            }
-                            .foregroundColor(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
-                        }
-                        
-                        if let createdAt = profile.createdAt {
-                            Label {
-                                Text("Joined \(formatJoinDate(createdAt))")
-                                    .appFont(AppTextRole.caption)
-                            } icon: {
-                                Image(systemName: "calendar")
-                                    .font(.system(size: 10))
-                            }
-                            .foregroundColor(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
-                        }
-                    }
-                    .padding(.top, 4)
-                }
-                
-                Spacer()
-                
-                followButtonView(profile: profile)
-            }
-            .padding(16)
-            .frame(maxWidth: .infinity)
-            .background(
-                Color.dynamicSecondaryBackground(appState.themeManager, currentScheme: colorScheme)
-                    
-//                Group {
-//                    switch appState.themeManager.currentTheme {
-//                    case .light:
-//                        Color.white
-//                    case .dark:
-//                        Color(uiColor: UIColor.secondarySystemGroupedBackground)
-//                    case .dim:
-//                        Color(white: 0.08)
-//                    }
-//                }
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 14)
-                    .stroke(Color.dynamicBorder(appState.themeManager, currentScheme: colorScheme).opacity(0.3), lineWidth: 0.5)
-            )
-            .cornerRadius(14)
-        }
-        .buttonStyle(.plain)
-    }
-    
-    @ViewBuilder
-    private func followButtonView(profile: AppBskyActorDefs.ProfileView) -> some View {
-        if profile.viewer?.following == nil {
-            Button {
-                // Follow action
-            } label: {
-                Text("Follow")
-                    .appFont(AppTextRole.footnote.weight(.semibold))
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 10)
-                            .fill(Color.accentColor)
-                    )
-            }
-            .buttonStyle(.plain)
-        } else {
-            HStack(spacing: 4) {
-                Image(systemName: "checkmark")
-                    .font(.system(size: 11, weight: .medium))
-                Text("Following")
-                    .appFont(AppTextRole.footnote.weight(.medium))
-            }
-            .foregroundColor(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .stroke(Color.dynamicBorder(appState.themeManager, currentScheme: colorScheme), lineWidth: 1)
-            )
-        }
-    }
-    
-    private func formatFollowerCount(_ count: Int) -> String {
-        if count >= 1_000_000 {
-            let formatted = Double(count) / 1_000_000.0
-            return String(format: "%.1fM", formatted)
-        } else if count >= 1_000 {
-            let formatted = Double(count) / 1_000.0
-            return String(format: "%.1fK", formatted)
-        } else {
-            return "\(count)"
-        }
-    }
-    
-    private func formatJoinDate(_ date: ATProtocolDate) -> String {
-        let now = Date()
-        let joinDate = date.toDate
-        let components = Calendar.current.dateComponents([.year, .month], from: joinDate, to: now)
-        
-        if let years = components.year, years > 0 {
-            return "\(years)y ago"
-        } else if let months = components.month, months > 0 {
-            return "\(months)mo ago"
-        } else {
-            return "recently"
-        }
-    }
-}
+  @Environment(AppState.self) private var appState
+  @Environment(\.colorScheme) private var colorScheme
 
-#Preview("Suggested Profiles") {
-  AsyncPreviewDataContent { appState in
-    await PreviewData.suggestedProfiles(from: appState)
-  } content: { _, profiles in
-    NavigationStack {
-      ScrollView {
-        SuggestedProfilesSection(
-          profiles: Array(profiles.prefix(5)),
-          onSelect: { _ in },
-          onRefresh: {}
-        )
+  public static let standardCategories: [String] = [
+    "Art",
+    "Gaming",
+    "Sports",
+    "Music",
+    "Politics",
+    "Photography",
+    "Science",
+    "News",
+    "Technology",
+  ]
+
+  public init(
+    profiles: [AppBskyActorDefs.ProfileView],
+    selectedCategory: String? = nil,
+    userInterests: [String] = [],
+    isLoading: Bool = false,
+    onSelectCategory: @escaping (String?) -> Void,
+    onSelectProfile: @escaping (AppBskyActorDefs.ProfileView) -> Void,
+    onRefresh: @escaping () -> Void
+  ) {
+    self.profiles = profiles
+    self.selectedCategory = selectedCategory
+    self.userInterests = userInterests
+    self.isLoading = isLoading
+    self.onSelectCategory = onSelectCategory
+    self.onSelectProfile = onSelectProfile
+    self.onRefresh = onRefresh
+  }
+
+  /// Category tabs with "For You" first, followed by user interests boosted, then standard categories.
+  private var allCategories: [String?] {
+    var categories: [String?] = [nil]  // nil represents "For You"
+
+    var seen = Set<String>()
+
+    // Boosted user interests
+    for interest in userInterests {
+      let formatted = interest.trimmingCharacters(in: .whitespacesAndNewlines).capitalized
+      if !formatted.isEmpty && !seen.contains(formatted.lowercased()) {
+        categories.append(formatted)
+        seen.insert(formatted.lowercased())
       }
     }
+
+    // Standard categories
+    for cat in Self.standardCategories {
+      if !seen.contains(cat.lowercased()) {
+        categories.append(cat)
+        seen.insert(cat.lowercased())
+      }
+    }
+
+    return categories
+  }
+
+  public var body: some View {
+    VStack(alignment: .leading, spacing: DesignTokens.Spacing.base) {
+      headerView
+      categoryTabBar
+      contentArea
+    }
+  }
+
+  private var headerView: some View {
+    HStack {
+      HStack(spacing: 6) {
+        Image(systemName: "person.2.fill")
+          .appFont(AppTextRole.subheadline)
+          .foregroundColor(.accentColor)
+
+        Text("Suggested Accounts")
+          .appFont(.customSystemFont(size: 17, weight: .bold, width: 120, relativeTo: .headline))
+      }
+
+      Spacer()
+
+      Button(action: onRefresh) {
+        Image(systemName: "arrow.triangle.2.circlepath")
+          .appFont(AppTextRole.subheadline)
+          .foregroundColor(.accentColor)
+          .frame(width: 32, height: 32)
+          .background(
+            Circle()
+              .fill(Color.accentColor.opacity(0.1))
+          )
+      }
+    }
+    .padding(.horizontal)
+  }
+
+  private var categoryTabBar: some View {
+    ScrollView(.horizontal, showsIndicators: false) {
+      HStack(spacing: 8) {
+        ForEach(allCategories, id: \.self) { category in
+          categoryPill(category)
+        }
+      }
+      .padding(.horizontal)
+    }
+  }
+
+  private func categoryPill(_ category: String?) -> some View {
+    let isSelected = (selectedCategory?.lowercased() == category?.lowercased())
+    let title = category ?? "For You"
+
+    return Button {
+      onSelectCategory(category)
+    } label: {
+      Text(title)
+        .appFont(AppTextRole.subheadline)
+        .fontWeight(isSelected ? .semibold : .regular)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 6)
+        .foregroundStyle(isSelected ? Color.white : Color.primary)
+        .background(
+          Capsule()
+            .fill(isSelected ? Color.accentColor : Color.secondary.opacity(0.12))
+        )
+    }
+    .buttonStyle(.plain)
+    .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+  }
+
+  @ViewBuilder
+  private var contentArea: some View {
+    if isLoading && profiles.isEmpty {
+      VStack(spacing: 12) {
+        ProgressView()
+          .scaleEffect(1.1)
+        Text("Loading accounts...")
+          .appFont(AppTextRole.subheadline)
+          .foregroundColor(.secondary)
+      }
+      .frame(maxWidth: .infinity)
+      .padding(.vertical, 24)
+      .background(Color.dynamicSecondaryBackground(appState.themeManager, currentScheme: colorScheme))
+      .cornerRadius(12)
+      .padding(.horizontal)
+    } else if profiles.isEmpty {
+      VStack(spacing: 8) {
+        Image(systemName: "person.slash")
+          .font(.system(size: 28))
+          .foregroundColor(.secondary)
+        Text("No suggestions available")
+          .appFont(AppTextRole.subheadline)
+          .foregroundColor(.secondary)
+      }
+      .frame(maxWidth: .infinity)
+      .padding(.vertical, 20)
+      .background(Color.dynamicSecondaryBackground(appState.themeManager, currentScheme: colorScheme))
+      .cornerRadius(12)
+      .padding(.horizontal)
+    } else {
+      VStack(spacing: 10) {
+        ForEach(profiles.prefix(5), id: \.did) { profile in
+          profileCard(profile: profile)
+        }
+      }
+      .padding(.horizontal)
+    }
+  }
+
+  private func profileCard(profile: AppBskyActorDefs.ProfileView) -> some View {
+    Button {
+      onSelectProfile(profile)
+    } label: {
+      HStack(alignment: .center, spacing: 12) {
+        AsyncProfileImage(url: URL(string: profile.avatar?.uriString() ?? ""), size: 48)
+
+        VStack(alignment: .leading, spacing: 3) {
+          HStack(alignment: .center, spacing: 4) {
+            Text(profile.displayName ?? profile.handle.description)
+              .appFont(AppTextRole.body.weight(.semibold))
+              .foregroundColor(Color.dynamicText(appState.themeManager, style: .primary, currentScheme: colorScheme))
+              .lineLimit(1)
+              .truncationMode(.tail)
+
+            if let badgeKind = VerificationBadge.kind(
+              for: profile.verification,
+              did: profile.did
+            ) {
+              VerificationBadgeView(kind: badgeKind)
+                .font(.caption)
+            }
+          }
+
+          Text("@\(profile.handle)")
+            .appFont(AppTextRole.subheadline)
+            .foregroundColor(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
+            .lineLimit(1)
+            .truncationMode(.middle)
+
+          if let description = profile.description, !description.isEmpty {
+            Text(description)
+              .appFont(AppTextRole.footnote)
+              .foregroundColor(Color.dynamicText(appState.themeManager, style: .tertiary, currentScheme: colorScheme))
+              .lineLimit(2)
+              .multilineTextAlignment(.leading)
+          }
+        }
+
+        Spacer(minLength: 8)
+
+        EnhancedFollowButton(profile: profile)
+      }
+      .padding(12)
+      .frame(maxWidth: .infinity)
+      .background(
+        Color.dynamicSecondaryBackground(appState.themeManager, currentScheme: colorScheme)
+      )
+      .overlay(
+        RoundedRectangle(cornerRadius: 12)
+          .stroke(Color.dynamicBorder(appState.themeManager, currentScheme: colorScheme).opacity(0.3), lineWidth: 0.5)
+      )
+      .cornerRadius(12)
+    }
+    .buttonStyle(.plain)
   }
 }

@@ -454,30 +454,6 @@ struct ContentLabelManager<Content: View>: View {
         }
     }
     
-    /// Check if the current user is a minor (under 18) based on their birthdate
-    private func isMinorAccount() async -> Bool {
-        do {
-            let preferences = try await appState.preferencesManager.getPreferences()
-            guard let birthDate = preferences.birthDate else {
-                // If no birthdate is set, err on the side of caution for adult content
-                return false
-            }
-            
-            let calendar = Calendar.current
-            let now = Date()
-            let ageComponents = calendar.dateComponents([.year], from: birthDate, to: now)
-            
-            guard let age = ageComponents.year else {
-                return false
-            }
-            
-            return age < 18
-        } catch {
-            // If we can't determine age, don't apply minor restrictions
-            return false
-        }
-    }
-    
     private var hiddenContentPlaceholder: some View {
         VStack(spacing: 8) {
             // Show labels at the top so users know why content was hidden

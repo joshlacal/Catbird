@@ -9,8 +9,9 @@ struct ExternalEmbedView: View {
     let shouldBlur: Bool
     let postID: String
     @State private var isBlurred: Bool
-    @State private var userOverrideBlock = false
     @State private var userTappedToShowEmbed = false
+    @State private var showingConsentDialog = false
+    @State private var pendingConsentProvider: ExternalMediaProvider?
     @Environment(\.appSettings) private var appSettings
     @ObservationIgnored @Environment(AppState.self) private var appState
     @Environment(\.openURL) private var openURL
@@ -25,6 +26,13 @@ struct ExternalEmbedView: View {
     
     private let logger = Logger(subsystem: "blue.catbird", category: "ExternalEmbedView")
 
+    /// Whether external media consent is explicitly allowed for this GIF provider
+    private var isGifProviderAllowed: Bool {
+        guard let url = destinationURL, isGifURL else { return false }
+        guard let provider = provider(for: url) else { return false }
+        return appSettings.externalMediaConsent(for: provider) == .allow
+    }
+
     /// Whether this external embed URL is a known GIF host (Tenor/Giphy/Klipy)
     private var isGifURL: Bool {
         guard let url = destinationURL else { return false }
@@ -32,13 +40,55 @@ struct ExternalEmbedView: View {
     }
 
     private static func isGifHost(_ url: URL) -> Bool {
-        let host = url.host ?? ""
+        let host = url.host?.lowercased() ?? ""
         return host == "media.tenor.com"
+            || host.contains("tenor.com")
             || host.contains("giphy.com")
             || host.contains("media.giphy.com")
             || host == "static.klipy.com"
+            || host.contains("klipy.com")
     }
 
+    private func provider(for url: URL) -> ExternalMediaProvider? {
+        if let embedType = ExternalMediaType.detect(from: url) {
+            return embedType.provider
+        }
+        let host = url.host?.lowercased() ?? ""
+        if host == "media.tenor.com" || host.contains("tenor.com") {
+            return .tenor
+        }
+        if host.contains("giphy.com") {
+            return .giphy
+        }
+        if host == "static.klipy.com" || host.contains("klipy.com") {
+            return .klipy
+        }
+        if host.contains("youtube.com") || host.contains("youtu.be") {
+            return host.contains("shorts") ? .youtubeShorts : .youtube
+        }
+        if host.contains("vimeo.com") {
+            return .vimeo
+        }
+        if host.contains("twitch.tv") {
+            return .twitch
+        }
+        if host.contains("spotify.com") {
+            return .spotify
+        }
+        if host.contains("music.apple.com") {
+            return .appleMusic
+        }
+        if host.contains("soundcloud.com") {
+            return .soundcloud
+        }
+        if host.contains("flickr.com") || host.contains("flic.kr") {
+            return .flickr
+        }
+        if host.contains("bandcamp.com") {
+            return .bandcamp
+        }
+        return nil
+    }
     init(external: AppBskyEmbedExternal.ViewExternal, shouldBlur: Bool, postID: String) {
         self.external = external
         self.shouldBlur = shouldBlur
@@ -66,24 +116,52 @@ struct ExternalEmbedView: View {
     }
     
     var body: some View {
-        if shouldShowExternalEmbed(for: external.uri) || userOverrideBlock {
-            VStack(alignment: .leading, spacing: 0) {
-                content
-                    .frame(maxWidth: .infinity)
+        Group {
+            if shouldShowExternalEmbed(for: external.uri) {
+                VStack(alignment: .leading, spacing: 0) {
+                    content
+                        .frame(maxWidth: .infinity)
+                }
+                .environment(
+                    \.openURL,
+                     OpenURLAction { url in
+                         let result = appState.urlHandler.handle(url)
+                         return result
+                     })
+                .onAppear {
+                    setupVideoIfNeeded()
+                }
+                // Fixed sizing to prevent layout jumps
+                .fixedSize(horizontal: false, vertical: true)
+            } else {
+                blockedExternalMediaView
             }
-            .environment(
-                \.openURL,
-                 OpenURLAction { url in
-                     let result = appState.urlHandler.handle(url)
-                     return result
-                 })
-            .onAppear {
+        }
+        .confirmationDialog(
+            "Enable \(pendingConsentProvider?.displayName ?? "External Media")?",
+            isPresented: $showingConsentDialog,
+            titleVisibility: .visible,
+            presenting: pendingConsentProvider
+        ) { provider in
+            Button("Enable external media") {
+                appState.appSettings.setExternalMediaConsentForAllProviders(.allow)
+                withAnimation(.easeInOut(duration: 0.3)) {
+                    userTappedToShowEmbed = true
+                }
                 setupVideoIfNeeded()
             }
-            // Fixed sizing to prevent layout jumps
-            .fixedSize(horizontal: false, vertical: true)
-        } else {
-            blockedExternalMediaView
+            Button("Enable \(provider.displayName) only") {
+                appState.appSettings.setExternalMediaConsent(.allow, for: provider)
+                withAnimation(.easeInOut(duration: 0.3)) {
+                    userTappedToShowEmbed = true
+                }
+                setupVideoIfNeeded()
+            }
+            Button("No thanks", role: .cancel) {
+                appState.appSettings.setExternalMediaConsent(.hide, for: provider)
+            }
+        } message: { provider in
+            Text("Playing embeds connects directly to third-party servers and may share your IP address or tracking data with \(provider.displayName).")
         }
     }
 
@@ -95,7 +173,7 @@ struct ExternalEmbedView: View {
             gifErrorContent(error: gifError)
         } else if let inlineImageURL = inlineImageURL {
             inlineImageContent(url: inlineImageURL)
-        } else if isLoadingGif || isGifURL {
+        } else if isGifProviderAllowed && (isLoadingGif || isGifURL) {
             // `isGifURL` (unlike `isLoadingGif`) is available on the very first
             // render, before `onAppear`/`setupVideoIfNeeded` ever runs — this is
             // what actually prevents the small link-card from ever appearing for a
@@ -203,13 +281,11 @@ struct ExternalEmbedView: View {
     
     @ViewBuilder
     private func linkCardContent() -> some View {
-        let canShowEmbed: Bool = {
-            if let url = destinationURL,
-               let embedType = ExternalMediaType.detect(from: url) {
-                return appSettings.useWebViewEmbeds && shouldShowWebViewEmbed(for: embedType)
-            } else {
-                return false
+        let detectedEmbedType: ExternalMediaType? = {
+            if let url = destinationURL {
+                return ExternalMediaType.detect(from: url)
             }
+            return nil
         }()
 
         // ContentLabelManager handles all blur logic now - no need for shouldBlur checks
@@ -226,7 +302,7 @@ struct ExternalEmbedView: View {
         )
         .contentShape(Rectangle())
         .onTapGesture {
-            handleCardTap(canShowEmbed: canShowEmbed)
+            handleCardTap(embedType: detectedEmbedType)
         }
     }
     
@@ -324,8 +400,17 @@ struct ExternalEmbedView: View {
             return
         }
         
+        // Gate all GIF setup, validation, and player branches on `.allow`
+        if let provider = provider(for: url) {
+            let consent = appSettings.externalMediaConsent(for: provider)
+            guard consent == .allow else {
+                logger.debug("⏸️ Skipping video setup for \(provider.displayName) - consent is \(consent.rawValue)")
+                return
+            }
+        }
+        
         // Handle Tenor GIFs
-        if url.host == "media.tenor.com" {
+        if url.host == "media.tenor.com" || url.host?.contains("tenor.com") == true {
             // Extract aspect ratio BEFORE setting loading state
             let hintedAspectRatio = Self.tenorAspectRatioHint(from: url)
             if let hintedAspectRatio {
@@ -340,7 +425,7 @@ struct ExternalEmbedView: View {
             setupTenorVideo(from: url, aspectRatio: gifAspectRatio)
         }
         // Handle Giphy GIFs
-        else if url.host?.contains("giphy.com") == true || url.host?.contains("media.giphy.com") == true {
+        else if url.host?.contains("giphy.com") == true {
             logger.debug("🎬 Detected Giphy GIF, attempting conversion...")
 
             // Set default aspect ratio for Giphy BEFORE loading state
@@ -350,7 +435,7 @@ struct ExternalEmbedView: View {
             setupGiphyVideo(from: url)
         }
         // Handle Klipy GIFs
-        else if url.host == "static.klipy.com" {
+        else if url.host == "static.klipy.com" || url.host?.contains("klipy.com") == true {
             let hintedAspectRatio = Self.tenorAspectRatioHint(from: url)
             gifAspectRatio = hintedAspectRatio ?? 1.0
             logger.debug("🎬 Detected Klipy media, aspect ratio = \(gifAspectRatio)")
@@ -737,6 +822,8 @@ struct ExternalEmbedView: View {
             return "Tenor"
         case .flickr:
             return "Flickr"
+        case .bandcamp:
+            return "Bandcamp"
         }
     }
     
@@ -752,15 +839,35 @@ struct ExternalEmbedView: View {
         }
     }
 
-    private func handleCardTap(canShowEmbed: Bool) {
-        if canShowEmbed {
-            withAnimation(.easeInOut(duration: 0.3)) {
-                userTappedToShowEmbed = true
-            }
-        } else if let url = destinationURL {
-            _ = appState.urlHandler.handle(url)
-        } else {
+    private func handleCardTap(embedType: ExternalMediaType?) {
+        guard let url = destinationURL else {
             logger.error("❌ External embed missing valid URL for card tap")
+            return
+        }
+        
+        let targetProvider = embedType?.provider ?? provider(for: url)
+        
+        if let provider = targetProvider {
+            let consent = appSettings.externalMediaConsent(for: provider)
+            switch consent {
+            case .allow:
+                if isGifURL {
+                    setupVideoIfNeeded()
+                } else if appSettings.useWebViewEmbeds, let embedType = embedType ?? ExternalMediaType.detect(from: url) {
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        userTappedToShowEmbed = true
+                    }
+                } else {
+                    _ = appState.urlHandler.handle(url)
+                }
+            case .undecided:
+                pendingConsentProvider = provider
+                showingConsentDialog = true
+            case .hide:
+                _ = appState.urlHandler.handle(url)
+            }
+        } else {
+            _ = appState.urlHandler.handle(url)
         }
     }
     
@@ -768,62 +875,19 @@ struct ExternalEmbedView: View {
     
     /// Check if external media should be shown based on user settings
     private func shouldShowExternalEmbed(for uri: URI) -> Bool {
-        guard let host = URL(string: uri.uriString())?.host?.lowercased() else { return true }
-        
-        switch host {
-        case let h where h.contains("youtube.com") || h.contains("youtu.be"):
-            // Check for YouTube Shorts specifically
-            if uri.uriString().contains("/shorts/") {
-                return appSettings.allowYouTubeShorts
-            }
-            return appSettings.allowYouTube
-        case let h where h.contains("vimeo.com"):
-            return appSettings.allowVimeo
-        case let h where h.contains("twitch.tv"):
-            return appSettings.allowTwitch
-        case let h where h.contains("giphy.com"):
-            return appSettings.allowGiphy
-        case let h where h.contains("tenor.com"):
-            return appSettings.allowTenor
-        case let h where h.contains("spotify.com"):
-            return appSettings.allowSpotify
-        case let h where h.contains("music.apple.com"):
-            return appSettings.allowAppleMusic
-        case let h where h.contains("soundcloud.com"):
-            return appSettings.allowSoundCloud
-        case let h where h.contains("flickr.com"):
-            return appSettings.allowFlickr
-        default:
-            return true // Allow unknown external sites by default
+        guard let url = destinationURL ?? uri.url ?? URL(string: uri.uriString()),
+              let provider = provider(for: url) else {
+            return true
         }
+        let consent = appSettings.externalMediaConsent(for: provider)
+        return consent != .hide
     }
     
     /// Check if WebView embeds should be shown for specific media types
     private func shouldShowWebViewEmbed(for embedType: ExternalMediaType) -> Bool {
-        switch embedType {
-        case .youtube:
-            return appSettings.allowYouTube
-        case .youtubeShorts:
-            return appSettings.allowYouTubeShorts
-        case .vimeo:
-            return appSettings.allowVimeo
-        case .twitch:
-            return appSettings.allowTwitch
-        case .spotify:
-            return appSettings.allowSpotify
-        case .appleMusic:
-            return appSettings.allowAppleMusic
-        case .soundcloud:
-            return appSettings.allowSoundCloud
-        case .giphy:
-            return appSettings.allowGiphy
-        case .tenor:
-            return appSettings.allowTenor
-        case .flickr:
-            return appSettings.allowFlickr
-        }
+        let consent = appSettings.externalMediaConsent(for: embedType.provider)
+        return consent == .allow
     }
-    
     /// View shown when GIF loading fails
     @ViewBuilder
     private func gifErrorContent(error: String) -> some View {
@@ -926,18 +990,21 @@ struct ExternalEmbedView: View {
     @ViewBuilder
     private var blockedMediaButtons: some View {
         HStack(spacing: 12) {
-            Button("Show Anyway") {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    userOverrideBlock = true
-                }
+            Button("Settings") {
+                appState.navigationManager.navigate(to: .settings(.contentAndMedia))
             }
             .appFont(AppTextRole.caption)
             .foregroundStyle(.blue)
             
             Spacer()
             
-            // Note: Settings access is handled through the main profile tab
-            // Users can access Content & Media settings from there
+            Button("Open Link") {
+                if let url = destinationURL {
+                    _ = appState.urlHandler.handle(url)
+                }
+            }
+            .appFont(AppTextRole.caption)
+            .foregroundStyle(.secondary)
         }
     }
 }

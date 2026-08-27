@@ -33,6 +33,8 @@ struct RefinedSearchView: View {
     @State private var lastHandledSearchRequestID: UUID?
     @State private var isApplyingPendingSearchRequest = false
     @State private var showingSettings = false
+    @State private var isShowingCopilot = false
+    @State private var pendingDedicatedProposal: CopilotProposal?
 
     private let logger = Logger(subsystem: "blue.catbird", category: "RefinedSearchView")
     
@@ -151,10 +153,17 @@ struct RefinedSearchView: View {
         appState.navigationManager.pathBinding(for: 1)
     }
 
-    /// The sort/filter bar only applies to post results (All + Posts scopes).
+    /// The sort/filter bar only applies to post results (Top + Latest scopes).
     private var shouldShowFilterBar: Bool {
         viewModel.searchState == .results
-            && (viewModel.selectedContentType == .all || viewModel.selectedContentType == .posts)
+            && (viewModel.selectedContentType == .top || viewModel.selectedContentType == .latest)
+    }
+
+    private var availableScopes: [ContentType] {
+        if viewModel.filterState.hasPostOnlyFilters {
+            return [.top, .latest]
+        }
+        return ContentType.allCases
     }
     
     @ViewBuilder
@@ -169,13 +178,7 @@ struct RefinedSearchView: View {
             VStack(spacing: 0) {
                 if shouldShowFilterBar {
                     SearchFilterBar(
-                        sort: viewModel.filterState.sort,
                         activeFilterCount: viewModel.filterState.activeFilterCount,
-                        onSortChange: { newSort in
-                            if let client = appState.atProtoClient {
-                                viewModel.setSort(newSort, client: client)
-                            }
-                        },
                         onFiltersTap: { isShowingFiltersSheet = true }
                     )
                     .transition(.move(edge: .top).combined(with: .opacity))
@@ -194,7 +197,7 @@ struct RefinedSearchView: View {
         )
         .searchPresentationToolbarBehavior(.avoidHidingContent)
         .searchScopes($bindableViewModel.selectedContentType) {
-            ForEach(ContentType.allCases, id: \.self) { scope in
+            ForEach(availableScopes, id: \.self) { scope in
                 Text(scope.title).tag(scope)
             }
         }
@@ -238,7 +241,7 @@ struct RefinedSearchView: View {
         )
         .searchFocused($isSearchFieldFocused)
         .searchScopes($bindableViewModel.selectedContentType) {
-            ForEach(ContentType.allCases, id: \.self) { scope in
+            ForEach(availableScopes, id: \.self) { scope in
                 Text(scope.title).tag(scope)
             }
         }
@@ -298,6 +301,23 @@ struct RefinedSearchView: View {
             SettingsView()
                 .applyAppStateEnvironment(appState)
                 .environment(appState)
+        }
+        .sheet(isPresented: $isShowingCopilot) {
+            let query = activeSearchQuery
+            CatbirdCopilotSheet(
+                context: .search(query: query),
+                onDedicatedAction: { proposal in
+                    pendingDedicatedProposal = proposal
+                }
+            )
+        }
+        .onChange(of: isShowingCopilot) { wasShowing, isShowing in
+            if wasShowing && !isShowing, let proposal = pendingDedicatedProposal {
+                pendingDedicatedProposal = nil
+                if case .preparePostDraft(let text) = proposal {
+                    appState.presentPostComposer(initialText: text)
+                }
+            }
         }
         .navigationDestination(for: NavigationDestination.self) { destination in
             destinationView(for: destination)
@@ -371,8 +391,24 @@ struct RefinedSearchView: View {
     
     // MARK: - Search Menu
     
+    private var activeSearchQuery: String {
+        let text = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !text.isEmpty { return text }
+        return viewModel.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     private var searchMenuButton: some View {
         Menu {
+            if !activeSearchQuery.isEmpty {
+                Button {
+                    isShowingCopilot = true
+                } label: {
+                    Label("Ask Catbird", systemImage: "sparkles")
+                }
+
+                Divider()
+            }
+
             // SRCH-015: Save Search option
             if viewModel.isCommittedSearch && !viewModel.searchQuery.isEmpty {
                 Button {
@@ -487,18 +523,19 @@ struct RefinedSearchView: View {
                 .listRowBackground(Color.clear)
             }
             
-            // Recent searches
-            if !viewModel.recentSearches.isEmpty, let client = appState.atProtoClient {
+            // Recent searches (G05)
+            if !viewModel.recentSearchEntries.isEmpty, let client = appState.atProtoClient {
                 RecentSearchesSection(
-                    searches: viewModel.recentSearches,
-                    onSelect: { search in
-                        searchText = search
-                        viewModel.searchQuery = search
-                        viewModel.commitSearch(client: client)
+                    entries: viewModel.recentSearchEntries,
+                    onSelect: { entry in
+                        viewModel.applyRecentSearchEntry(
+                            entry,
+                            client: client,
+                            onQueryLoaded: { searchText = $0 }
+                        )
                     },
-                    onDelete: { search in
-                        // SRCH-008: Delete individual search
-                        viewModel.deleteRecentSearch(search)
+                    onDelete: { entry in
+                        viewModel.deleteRecentSearch(entry)
                     },
                     onClear: {
                         viewModel.clearRecentSearches()
@@ -589,11 +626,11 @@ struct RefinedSearchView: View {
     private func contentType(for focus: AppState.SearchRequest.Focus) -> ContentType? {
         switch focus {
         case .all:
-            return .all
+            return .top
         case .profiles:
-            return .profiles
+            return .people
         case .posts:
-            return .posts
+            return .top
         case .feeds:
             return .feeds
         }

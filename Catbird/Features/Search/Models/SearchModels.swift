@@ -65,31 +65,36 @@ struct SearchMetadata {
 
 // MARK: - Search History Models
 
-/// Model for search history persistence
-struct SearchHistoryItem: Codable, Identifiable {
-    let id: UUID
-    let query: String
-    let timestamp: Date
-    let resultCount: Int
+/// Model for structured search history persistence with filter state (G05).
+public struct RecentSearchEntry: Codable, Identifiable, Equatable, Sendable {
+    public let id: UUID
+    public let query: String
+    public let filters: SearchFilterState
+    public let timestamp: Date
     
-    init(query: String, resultCount: Int) {
-        self.id = UUID()
+    public init(
+        id: UUID = UUID(),
+        query: String,
+        filters: SearchFilterState = SearchFilterState(),
+        timestamp: Date = Date()
+    ) {
+        self.id = id
         self.query = query
-        self.timestamp = Date()
-        self.resultCount = resultCount
+        self.filters = filters
+        self.timestamp = timestamp
     }
 }
 
 /// Model for saved searches
-struct SavedSearch: Codable, Identifiable {
-    let id: UUID
-    let name: String
-    let query: String
-    let filters: SearchFilterState
-    let createdAt: Date
-    var lastUsed: Date
+public struct SavedSearch: Codable, Identifiable, Sendable {
+    public let id: UUID
+    public let name: String
+    public let query: String
+    public let filters: SearchFilterState
+    public let createdAt: Date
+    public var lastUsed: Date
     
-    init(name: String, query: String, filters: SearchFilterState) {
+    public init(name: String, query: String, filters: SearchFilterState) {
         self.id = UUID()
         self.name = name
         self.query = query
@@ -98,7 +103,7 @@ struct SavedSearch: Codable, Identifiable {
         self.lastUsed = Date()
     }
     
-    func withUpdatedLastUsed() -> SavedSearch {
+    public func withUpdatedLastUsed() -> SavedSearch {
         var copy = self
         copy.lastUsed = Date()
         return copy
@@ -114,53 +119,102 @@ struct SavedSearch: Codable, Identifiable {
     }
 }
 
-/// Enhanced search history manager
-class SearchHistoryManager {
+/// Enhanced search history manager supporting JSON-serialized entries with filter state and legacy migration (G05).
+public final class SearchHistoryManager: @unchecked Sendable {
     private let userDefaults = UserDefaults(suiteName: "group.blue.catbird.shared")
-    private let maxHistoryItems = 50
+    private let maxHistoryItems = 20
     private let maxSavedSearches = 20
     
-    /// Save a search to history
-    func saveToHistory(_ query: String, resultCount: Int, userDID: String?) {
-        let key = historyKey(for: userDID)
-        var history = loadHistory(for: userDID)
+    public init() {}
+    
+    /// Save a search query with its complete filter state to history.
+    public func saveRecentSearch(query: String, filters: SearchFilterState, userDID: String?) {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
         
-        // Remove duplicates
-        history.removeAll { $0.query == query }
+        var history = loadRecentSearches(for: userDID)
         
-        // Add new item
-        let item = SearchHistoryItem(query: query, resultCount: resultCount)
-        history.insert(item, at: 0)
+        // Remove duplicate query + filter combination
+        history.removeAll { $0.query == trimmed && $0.filters == filters }
         
-        // Limit size
+        // Add to beginning
+        let entry = RecentSearchEntry(query: trimmed, filters: filters, timestamp: Date())
+        history.insert(entry, at: 0)
+        
         if history.count > maxHistoryItems {
             history = Array(history.prefix(maxHistoryItems))
         }
         
-        // Save to UserDefaults
+        saveHistoryList(history, for: userDID)
+    }
+    
+    /// Load recent search entries with filter state, migrating legacy [String] entries if present.
+    public func loadRecentSearches(for userDID: String?) -> [RecentSearchEntry] {
+        let jsonKey = historyJSONKey(for: userDID)
+        
+        // 1. Try decoding JSON entries
+        if let data = userDefaults?.data(forKey: jsonKey),
+           let history = try? JSONDecoder().decode([RecentSearchEntry].self, from: data) {
+            return history
+        }
+        
+        // 2. One-time migration from legacy [String] recentSearches_<DID>
+        let legacyKey = legacyRecentSearchesKey(for: userDID)
+        if let legacyStrings = userDefaults?.array(forKey: legacyKey) as? [String], !legacyStrings.isEmpty {
+            let migrated = legacyStrings.map {
+                RecentSearchEntry(query: $0, filters: SearchFilterState(), timestamp: Date())
+            }
+            if let encoded = try? JSONEncoder().encode(migrated) {
+                userDefaults?.set(encoded, forKey: jsonKey)
+                // Remove obsolete legacy key only after successful encode/save
+                userDefaults?.removeObject(forKey: legacyKey)
+            }
+            return migrated
+        }
+        
+        return []
+    }
+    
+    /// Delete a specific recent search entry.
+    public func deleteRecentSearch(_ id: UUID, userDID: String?) {
+        var history = loadRecentSearches(for: userDID)
+        history.removeAll { $0.id == id }
+        saveHistoryList(history, for: userDID)
+    }
+    
+    /// Clear all recent searches.
+    public func clearRecentSearches(for userDID: String?) {
+        let jsonKey = historyJSONKey(for: userDID)
+        let legacyKey = legacyRecentSearchesKey(for: userDID)
+        userDefaults?.removeObject(forKey: jsonKey)
+        userDefaults?.removeObject(forKey: legacyKey)
+    }
+    
+    private func saveHistoryList(_ history: [RecentSearchEntry], for userDID: String?) {
+        let jsonKey = historyJSONKey(for: userDID)
         if let encoded = try? JSONEncoder().encode(history) {
-            userDefaults?.set(encoded, forKey: key)
+            userDefaults?.set(encoded, forKey: jsonKey)
         }
     }
     
-    /// Load search history
-    func loadHistory(for userDID: String?) -> [SearchHistoryItem] {
-        let key = historyKey(for: userDID)
-        guard let data = userDefaults?.data(forKey: key),
-              let history = try? JSONDecoder().decode([SearchHistoryItem].self, from: data) else {
-            return []
+    public func historyJSONKey(for userDID: String?) -> String {
+        if let userDID = userDID, !userDID.isEmpty {
+            return "searchHistory_json_\(userDID)"
         }
-        return history
+        return "searchHistory_json_default"
     }
     
-    /// Clear search history
-    func clearHistory(for userDID: String?) {
-        let key = historyKey(for: userDID)
-        userDefaults?.removeObject(forKey: key)
+    public func legacyRecentSearchesKey(for userDID: String?) -> String {
+        if let userDID = userDID, !userDID.isEmpty {
+            return "recentSearches_\(userDID)"
+        }
+        return "recentSearches_default"
     }
+    
+    // MARK: - Saved Searches
     
     /// Save a search for later use
-    func saveSearch(_ savedSearch: SavedSearch, userDID: String?) {
+    public func saveSearch(_ savedSearch: SavedSearch, userDID: String?) {
         let key = savedSearchesKey(for: userDID)
         var savedSearches = loadSavedSearches(for: userDID)
         
@@ -182,7 +236,7 @@ class SearchHistoryManager {
     }
     
     /// Load saved searches
-    func loadSavedSearches(for userDID: String?) -> [SavedSearch] {
+    public func loadSavedSearches(for userDID: String?) -> [SavedSearch] {
         let key = savedSearchesKey(for: userDID)
         guard let data = userDefaults?.data(forKey: key),
               let savedSearches = try? JSONDecoder().decode([SavedSearch].self, from: data) else {
@@ -192,7 +246,7 @@ class SearchHistoryManager {
     }
     
     /// Delete a saved search
-    func deleteSavedSearch(_ id: UUID, userDID: String?) {
+    public func deleteSavedSearch(_ id: UUID, userDID: String?) {
         let key = savedSearchesKey(for: userDID)
         var savedSearches = loadSavedSearches(for: userDID)
         savedSearches.removeAll { $0.id == id }
@@ -203,7 +257,7 @@ class SearchHistoryManager {
     }
     
     /// Update last used time for a saved search
-    func updateLastUsed(_ id: UUID, userDID: String?) {
+    public func updateLastUsed(_ id: UUID, userDID: String?) {
         let key = savedSearchesKey(for: userDID)
         var savedSearches = loadSavedSearches(for: userDID)
         
@@ -216,15 +270,8 @@ class SearchHistoryManager {
         }
     }
     
-    private func historyKey(for userDID: String?) -> String {
-        if let userDID = userDID {
-            return "searchHistory_\(userDID)"
-        }
-        return "searchHistory_default"
-    }
-    
     private func savedSearchesKey(for userDID: String?) -> String {
-        if let userDID = userDID {
+        if let userDID = userDID, !userDID.isEmpty {
             return "savedSearches_v2_\(userDID)"
         }
         return "savedSearches_v2_default"
@@ -322,29 +369,5 @@ enum SearchUtilities {
         return query.components(separatedBy: allowedCharacters.inverted)
             .joined()
             .trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-}
-
-// Tagged suggestion category
-struct SuggestionCategory: Identifiable {
-    var id: String { tag }
-    let tag: String
-    let items: [TaggedSuggestionItem]
-    
-    init(tag: String, items: [AppBskyUnspeccedGetTaggedSuggestions.Suggestion]) {
-        self.tag = tag
-        self.items = items.map { TaggedSuggestionItem(from: $0) }
-    }
-}
-
-// Individual tagged suggestion item
-struct TaggedSuggestionItem: Identifiable {
-    var id: String { subject }
-    let subjectType: String
-    let subject: String
-    
-    init(from suggestion: AppBskyUnspeccedGetTaggedSuggestions.Suggestion) {
-        self.subjectType = suggestion.subjectType
-        self.subject = suggestion.subject.uriString()
     }
 }
