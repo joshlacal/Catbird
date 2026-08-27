@@ -7,13 +7,12 @@ struct ProfileSectionView: View {
     let tab: ProfileTab
     @Binding var path: NavigationPath
     @Environment(AppState.self) private var appState
-    
     // Add state tracking to diagnose loading issues
     @State private var isInitialLoading = true
     @State private var loadError: Error?
+    @State private var showingCreateStarterPack = false
     
     private static let baseUnit: CGFloat = 3
-
     var body: some View {
         Group {
             if tab == .videos {
@@ -49,12 +48,15 @@ struct ProfileSectionView: View {
             }
         }
         .navigationTitle(tab.title)
-    #if os(iOS)
-    .toolbarTitleDisplayMode(.inline)
-    #endif
         .task {
-            // Load content on appearance
             await loadContent()
+        }
+        .sheet(isPresented: $showingCreateStarterPack) {
+            StarterPackWizardView(mode: .create) { _ in
+                Task {
+                    await viewModel.loadStarterPacks()
+                }
+            }
         }
     }
     
@@ -222,34 +224,73 @@ struct ProfileSectionView: View {
         .frame(maxWidth: .infinity, minHeight: 100)
         .padding()
     } else if viewModel.starterPacks.isEmpty {
-      emptyContentView("No Starter Packs", "This user hasn't created any starter packs yet.")
-    } else {
-        ForEach(viewModel.starterPacks, id: \.uri) { pack in
+      VStack(spacing: 16) {
+        emptyContentView("No Starter Packs", viewModel.isCurrentUser ? "You haven't created any starter packs yet." : "This user hasn't created any starter packs yet.")
+        
+        if viewModel.isCurrentUser {
           Button {
-            path.append(NavigationDestination.starterPack(pack.uri))
+            showingCreateStarterPack = true
           } label: {
-            StarterPackRowView(pack: pack)
+            HStack(spacing: 8) {
+              Image(systemName: "plus")
+              Text("Create Starter Pack")
+                .fontWeight(.semibold)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .background(Capsule().fill(Color.accentColor))
+            .foregroundColor(.white)
           }
-
-          // Load more when reaching the end
-          if pack == viewModel.starterPacks.last && !viewModel.isLoadingMorePosts
-            && viewModel.hasMoreStarterPacks {
-            Color.clear.frame(height: 20)
-              .onAppear {
-                Task { await viewModel.loadStarterPacks() }
-              }
+          .buttonStyle(.plain)
+        }
+      }
+    } else {
+      if viewModel.isCurrentUser {
+        Button {
+          showingCreateStarterPack = true
+        } label: {
+          HStack {
+            Image(systemName: "plus.circle.fill")
+              .foregroundColor(.accentColor)
+            Text("Create Starter Pack")
+              .appFont(AppTextRole.subheadline)
+              .fontWeight(.semibold)
+              .foregroundColor(.accentColor)
+            Spacer()
           }
+          .padding(.horizontal)
+          .padding(.vertical, 8)
+        }
+        .buttonStyle(.plain)
+        
+        Divider()
+      }
+      
+      ForEach(viewModel.starterPacks, id: \.uri) { pack in
+        Button {
+          path.append(NavigationDestination.starterPack(pack.uri))
+        } label: {
+          StarterPackRowView(pack: pack)
         }
 
-        // Loading indicator for pagination
-        if viewModel.isLoadingMorePosts && viewModel.hasMoreStarterPacks {
-          ProgressView()
-            .padding()
-            .frame(maxWidth: .infinity)
+        // Load more when reaching the end
+        if pack == viewModel.starterPacks.last && !viewModel.isLoadingMorePosts
+          && viewModel.hasMoreStarterPacks {
+          Color.clear.frame(height: 20)
+            .onAppear {
+              Task { await viewModel.loadStarterPacks() }
+            }
         }
+      }
+
+      // Loading indicator for pagination
+      if viewModel.isLoadingMorePosts && viewModel.hasMoreStarterPacks {
+        ProgressView()
+          .padding()
+          .frame(maxWidth: .infinity)
+      }
     }
   }
-
   @ViewBuilder
   private var feedsList: some View {
     if viewModel.isLoading && viewModel.feeds.isEmpty {

@@ -126,3 +126,31 @@ struct OnboardingTips {
     showArrow: true
   )
 }
+
+/// Interactive onboarding wizard steps
+public enum OnboardingFlowStep: Int, CaseIterable, Identifiable, Sendable {
+  case avatar = 0
+  case interests = 1
+  case suggestedAccounts = 2
+  case finish = 3
+  
+  public var id: Int { rawValue }
+  
+  public var title: String {
+    switch self {
+    case .avatar: return "Your Profile"
+    case .interests: return "Your Interests"
+    case .suggestedAccounts: return "Suggested Accounts"
+    case .finish: return "You're All Set!"
+    }
+  }
+  
+  public var subtitle: String {
+    switch self {
+    case .avatar: return "Choose a photo or build an avatar to help others find you."
+    case .interests: return "Select topics you care about to personalize your experience."
+    case .suggestedAccounts: return "Follow interesting people to kickstart your timeline."
+    case .finish: return "Catbird is ready for you. Let's dive in!"
+    }
+  }
+}

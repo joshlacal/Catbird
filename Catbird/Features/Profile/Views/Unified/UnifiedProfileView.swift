@@ -25,10 +25,14 @@ struct UnifiedProfileView: View {
   @State private var isShowingReportSheet = false
   @State private var isEditingProfile = false
   @State private var isShowingAccountSwitcher = false
-  @State private var isShowingBlockConfirmation = false
+  @State private var isShowingUnblockConfirmation = false
+  @State private var isShowingBlockSheet = false
+  @State private var isShowingLiveStatusEditor = false
+  @State private var isShowingLabelsOnMe = false
   @State private var isShowingMuteConfirmation = false
   @State private var isShowingAddToListSheet = false
   @State private var isShowingCopilot = false
+  @State private var pendingDedicatedProposal: CopilotProposal?
   @State private var isShowingSmartFilterEditor = false
   @State private var isBlocking = false
   /// Conversations the current user would auto-leave if they block this profile.
@@ -651,43 +655,88 @@ struct UnifiedProfileView: View {
 
   // MARK: - Alert Content
   @ViewBuilder
-  private var alertButtons: some View {
+  private var unblockAlertButtons: some View {
     Button("Cancel", role: .cancel) {}
 
-    Button(isBlocking ? "Unblock" : "Block", role: .destructive) {
-      toggleBlock()
+    Button("Unblock", role: .destructive) {
+      Task { await performUnblock() }
     }
   }
 
   @ViewBuilder
-  private var alertMessage: some View {
+  private var unblockAlertMessage: some View {
     if let profile = viewModel.profile {
-      if isBlocking {
-        Text(BlockConfirmation.unblockMessage(handle: profile.handle.description))
+      Text(BlockConfirmation.unblockMessage(handle: profile.handle.description))
+    }
+  }
+
+  private func performBlock() async {
+    await performBlockMutation(blocking: true)
+  }
+
+  private func performUnblock() async {
+    await performBlockMutation(blocking: false)
+  }
+
+  private func performBlockMutation(blocking: Bool) async {
+    guard let profile = viewModel.profile, !viewModel.isCurrentUser else { return }
+    let did = profile.did.didString()
+    let previousState = isBlocking
+    isBlocking = blocking
+    do {
+      if let coord = appState.mlsBlockCoordinator {
+        if blocking {
+          try await coord.block(did: did)
+        } else {
+          try await coord.unblock(did: did)
+        }
       } else {
-        Text(
-          BlockConfirmation.blockMessage(
-            handle: profile.handle.description, affectedConvoCount: blockAffectedConvos.count)
-        )
+        let success = blocking ? try await appState.block(did: did) : try await appState.unblock(did: did)
+        if !success {
+          isBlocking = previousState
+        }
       }
+    } catch {
+      isBlocking = previousState
+      logger.error("Failed to \(blocking ? "block" : "unblock") user: \(error.localizedDescription)")
     }
   }
 
   /// Compute the list of MLS conversations that would be left when blocking
-  /// the displayed profile, then present the confirmation alert.
-  ///
-  /// When the MLS coordinator isn't available (e.g. user hasn't signed in
-  /// with MLS yet), the list is simply empty and the alert falls back to the
-  /// non-MLS message.
+  /// the displayed profile, then present the confirmation sheet or alert.
   private func prepareBlockConfirmation() async {
-    if let profile = viewModel.profile,
-       let coord = appState.mlsBlockCoordinator {
-      let did = profile.did.didString()
-      blockAffectedConvos = await coord.affectedConversations(for: did)
+    if isBlocking {
+      isShowingUnblockConfirmation = true
     } else {
-      blockAffectedConvos = []
+      if let profile = viewModel.profile,
+         let coord = appState.mlsBlockCoordinator {
+        let did = profile.did.didString()
+        blockAffectedConvos = await coord.affectedConversations(for: did)
+      } else {
+        blockAffectedConvos = []
+      }
+      isShowingBlockSheet = true
     }
-    isShowingBlockConfirmation = true
+  }
+
+  /// Refreshes the live block state for a Copilot proposal and opens the
+  /// block/unblock confirmation only when the state matches the requested
+  /// action (`confirmWhenBlocking`).
+  private func confirmBlockAction(did: String, confirmWhenBlocking: Bool) {
+    Task {
+      do {
+        let state = try await appState.graphManager.freshRelationshipState(did: did)
+        self.isBlocking = state.blocking
+        if state.blocking == confirmWhenBlocking {
+          await prepareBlockConfirmation()
+        }
+      } catch {
+        logger.error("Failed to verify block state before confirmation: \(error.localizedDescription)")
+        appState.toastManager.show(
+          ToastItem(message: "Failed to verify block status", icon: "exclamationmark.triangle.fill")
+        )
+      }
+    }
   }
 
   // MARK: - Event Handlers
@@ -717,7 +766,6 @@ struct UnifiedProfileView: View {
     }
 
     selectedTab = 1
-    appState.navigationManager.updateCurrentTab(1)
     lastTappedTab = nil
 
     appState.pendingSearchRequest = AppState.SearchRequest(
@@ -775,16 +823,43 @@ struct UnifiedProfileView: View {
     }
   }
 
-  // MARK: - Keep existing functionality
-  // Keeping all existing functions like showReportProfileSheet, toggleMute, toggleBlock, etc.
-  
   private func showReportProfileSheet() {
     isShowingReportSheet = true
   }
-  
+
   private func showAddToListSheet(_ profile: AppBskyActorDefs.ProfileViewDetailed) {
     profileForAddToList = profile
     isShowingAddToListSheet = true
+  }
+
+  @MainActor
+  private func handleDedicatedProposal(_ proposal: CopilotProposal) {
+    guard let profile = viewModel.profile else { return }
+    let targetDID = profile.did.didString()
+
+    switch proposal {
+    case .reportActor(let did):
+      guard did == targetDID else { return }
+      showReportProfileSheet()
+
+    case .addActorToList(let did):
+      guard did == targetDID else { return }
+      showAddToListSheet(profile)
+
+    case .blockActor(let did):
+      guard did == targetDID else { return }
+      confirmBlockAction(did: did, confirmWhenBlocking: false)
+
+    case .unblockActor(let did):
+      guard did == targetDID else { return }
+      confirmBlockAction(did: did, confirmWhenBlocking: true)
+
+    case .preparePostDraft(let text):
+      appState.presentPostComposer(initialText: text)
+
+    default:
+      break
+    }
   }
 
   private func toggleMute() {
@@ -829,44 +904,6 @@ struct UnifiedProfileView: View {
     }
   }
 
-  private func toggleBlock() {
-    guard let profile = viewModel.profile, !viewModel.isCurrentUser else { return }
-
-    let did = profile.did.didString()
-    Task {
-      let previousState = isBlocking
-
-      // Optimistically update UI
-      isBlocking.toggle()
-
-      do {
-        // Prefer the MLS-aware coordinator when available — it publishes the
-        // block record AND leaves any shared MLS groups in one step. Falls
-        // back to the raw graph-block call on non-MLS installs.
-        if let coord = appState.mlsBlockCoordinator {
-          if previousState {
-            try await coord.unblock(did: did)
-          } else {
-            try await coord.block(did: did)
-          }
-        } else {
-          let success: Bool
-          if previousState {
-            success = try await appState.unblock(did: did)
-          } else {
-            success = try await appState.block(did: did)
-          }
-          if !success {
-            isBlocking = previousState
-          }
-        }
-      } catch {
-        // Revert on error
-        isBlocking = previousState
-        logger.error("Failed to toggle block: \(error.localizedDescription)")
-      }
-    }
-  }
 
   // MARK: - View Components
   private var loadingView: some View {
@@ -973,7 +1010,7 @@ struct UnifiedProfileView: View {
     
   // MARK: - View Configuration
   @ViewBuilder
-  private func profileViewConfiguration(contentMaxWidth: CGFloat) -> some View {
+  private func profileNavigationConfiguration(contentMaxWidth: CGFloat) -> some View {
     Group {
       if !hasAttemptedLoad || (viewModel.isLoading && viewModel.profile == nil) {
         loadingView
@@ -1008,101 +1045,192 @@ struct UnifiedProfileView: View {
           .id(did)
       }
     }
-    // FIXED: Apply modifiers directly instead of using recursive computed properties
-    .sheet(isPresented: $isShowingReportSheet) {
-      if let profile = viewModel.profile,
-         let atProtoClient = appState.atProtoClient {
-        let reportingService = ReportingService(client: atProtoClient)
-        ReportProfileView(
-          profile: profile,
-          reportingService: reportingService,
-          onComplete: { _ in isShowingReportSheet = false }
-        )
+  }
+
+  @ViewBuilder
+  private func profilePresentationConfiguration(contentMaxWidth: CGFloat) -> some View {
+    profileNavigationConfiguration(contentMaxWidth: contentMaxWidth)
+      .sheet(isPresented: $isShowingReportSheet) {
+        if let profile = viewModel.profile,
+           let atProtoClient = appState.atProtoClient {
+          let reportingService = ReportingService(client: atProtoClient)
+          ReportProfileView(
+            profile: profile,
+            reportingService: reportingService,
+            onComplete: { _ in isShowingReportSheet = false }
+          )
+        }
       }
-    }
-    .sheet(isPresented: $isEditingProfile) {
-      EditProfileView(isPresented: $isEditingProfile, viewModel: viewModel)
-    }
-    .sheet(isPresented: $isShowingAccountSwitcher) {
-      AccountSwitcherView()
-        .environment(AppStateManager.shared)
-    }
-    .sheet(isPresented: $isShowingAddToListSheet) {
-      if let profile = profileForAddToList {
-        AddToListSheet(
-          userDID: profile.did.didString(),
-          userHandle: profile.handle.description,
-          userDisplayName: profile.displayName
-        )
+      .sheet(isPresented: $isEditingProfile) {
+        EditProfileView(isPresented: $isEditingProfile, viewModel: viewModel)
       }
-    }
-    .sheet(isPresented: $isShowingCopilot) {
-      if let profile = viewModel.profile {
-        CatbirdCopilotSheet(
-          context: .profile(
+      .sheet(isPresented: $isShowingAccountSwitcher) {
+        AccountSwitcherView()
+          .environment(AppStateManager.shared)
+      }
+      .sheet(isPresented: $isShowingAddToListSheet) {
+        if let profile = profileForAddToList {
+          AddToListSheet(
+            userDID: profile.did.didString(),
+            userHandle: profile.handle.description,
+            userDisplayName: profile.displayName
+          )
+        }
+      }
+      .sheet(isPresented: $isShowingCopilot) {
+        if let profile = viewModel.profile {
+          let context = CopilotContext.profile(
             did: profile.did.didString(),
             handle: profile.handle.description,
             displayName: profile.displayName
           )
-        )
-      }
-    }
-    .sheet(isPresented: $isShowingSmartFilterEditor) {
-      if let profile = viewModel.profile {
-        SmartFilterEditorSheet(
-          targetActorDID: profile.did.didString(),
-          actorName: "@\(profile.handle.description)"
-        )
-      }
-    }
-    .toolbar {
-      if let profile = viewModel.profile {
-        ToolbarItem(placement: .principal) {
-          Text(profile.displayName ?? profile.handle.description)
-            .appFont(AppTextRole.headline)
-        }
-        
-        if viewModel.isCurrentUser {
-          ToolbarItem(placement: .primaryAction) {
-            currentUserMenu
-          }
-        } else {
-          ToolbarItem(placement: .primaryAction) {
-            otherUserMenu
-          }
+          CatbirdCopilotSheet(
+            context: context,
+            onConfirmedAction: { proposal in
+              try await CopilotProposalCoordinator.executeConfirmed(
+                proposal,
+                context: context,
+                expectedAccountDID: appState.userDID,
+                appState: appState
+              )
+              await viewModel.loadProfile()
+            },
+            onDedicatedAction: { proposal in
+              pendingDedicatedProposal = proposal
+            }
+          )
         }
       }
-    }
-    .alert(isBlocking ? "Unblock User" : "Block User", isPresented: $isShowingBlockConfirmation) {
-      alertButtons
-    } message: {
-      alertMessage
-    }
-    .alert("Mute User", isPresented: $isShowingMuteConfirmation) {
-      Button("Cancel", role: .cancel) { }
-      Button("Mute", role: .destructive) { toggleMute() }
-    } message: {
-      if let profile = viewModel.profile {
-        Text("Mute @\(profile.handle)? You won't see their posts and replies in your feeds.")
+      .onChange(of: isShowingCopilot) { wasShowing, isShowing in
+        if wasShowing && !isShowing, let proposal = pendingDedicatedProposal {
+          pendingDedicatedProposal = nil
+          handleDedicatedProposal(proposal)
+        }
       }
-    }
-    .onChange(of: lastTappedTab) { _, newValue in
-      handleTabChange(newValue)
-    }
-    .task {
-      // Wrap in error handling to prevent crashes
-      do {
-        await initialLoad()
-      } catch {
-        logger.error("Failed to load initial profile data: \(error.localizedDescription)")
-        // Let the error state be handled by the view model
+      .sheet(isPresented: $isShowingSmartFilterEditor) {
+        if let profile = viewModel.profile {
+          SmartFilterEditorSheet(
+            targetActorDID: profile.did.didString(),
+            actorName: "@\(profile.handle.description)"
+          )
+        }
       }
-    }
+      .sheet(isPresented: $isShowingBlockSheet) {
+        if let profile = viewModel.profile {
+          let basic = AppBskyActorDefs.ProfileViewBasic(
+            did: profile.did,
+            handle: profile.handle,
+            displayName: profile.displayName,
+            pronouns: profile.pronouns,
+            avatar: profile.avatar,
+            associated: profile.associated,
+            viewer: profile.viewer,
+            labels: profile.labels,
+            createdAt: profile.createdAt,
+            verification: profile.verification,
+            status: profile.status,
+            debug: nil
+          )
+          BlockAccountView(
+            profile: basic,
+            mlsAffectedConvoCount: blockAffectedConvos.count,
+            onConfirmBlock: {
+              await performBlock()
+            }
+          )
+        }
+      }
+      .sheet(isPresented: $isShowingLiveStatusEditor, onDismiss: {
+        Task {
+          await viewModel.loadProfile()
+        }
+      }) {
+        LiveStatusEditorSheet()
+      }
+      .sheet(isPresented: $isShowingLabelsOnMe) {
+        if let profile = viewModel.profile,
+           let client = appState.atProtoClient {
+          let reportingService = ReportingService(client: client)
+          LabelsOnMeView(
+            labels: profile.labels ?? [],
+            targetDescription: "Account @\(profile.handle.description)",
+            viewerDID: appState.userDID,
+            reportingService: reportingService
+          )
+        }
+      }
+  }
+
+  @ViewBuilder
+  private func profileViewConfiguration(contentMaxWidth: CGFloat) -> some View {
+    profilePresentationConfiguration(contentMaxWidth: contentMaxWidth)
+      .toolbar {
+        if let profile = viewModel.profile {
+          ToolbarItem(placement: .principal) {
+            Text(profile.displayName ?? profile.handle.description)
+              .appFont(AppTextRole.headline)
+          }
+          
+          if viewModel.isCurrentUser {
+            ToolbarItem(placement: .primaryAction) {
+              currentUserMenu
+            }
+          } else {
+            ToolbarItem(placement: .primaryAction) {
+              otherUserMenu
+            }
+          }
+        }
+      }
+      .alert("Unblock User", isPresented: $isShowingUnblockConfirmation) {
+        unblockAlertButtons
+      } message: {
+        unblockAlertMessage
+      }
+      .alert("Mute User", isPresented: $isShowingMuteConfirmation) {
+        Button("Cancel", role: .cancel) { }
+        Button("Mute", role: .destructive) { toggleMute() }
+      } message: {
+        if let profile = viewModel.profile {
+          Text("Mute @\(profile.handle)? You won't see their posts and replies in your feeds.")
+        }
+      }
+      .onChange(of: lastTappedTab) { _, newValue in
+        handleTabChange(newValue)
+      }
+      .task {
+        // Wrap in error handling to prevent crashes
+        do {
+          await initialLoad()
+        } catch {
+          logger.error("Failed to load initial profile data: \(error.localizedDescription)")
+          // Let the error state be handled by the view model
+        }
+      }
   }
   
   @ViewBuilder
   private var currentUserMenu: some View {
     Menu {
+      Button {
+        Task {
+          await appState.liveStatusManager.fetchCurrentStatus()
+          isShowingLiveStatusEditor = true
+        }
+      } label: {
+        if appState.liveStatusManager.hasActiveLiveStatus {
+          Label("Edit Live", systemImage: "antenna.radiowaves.left.and.right")
+        } else {
+          Label("Go Live", systemImage: "antenna.radiowaves.left.and.right")
+        }
+      }
+
+      Button {
+        isShowingLabelsOnMe = true
+      } label: {
+        Label("Labels on your account", systemImage: "tag")
+      }
+
       Button {
         isShowingAccountSwitcher = true
       } label: {
@@ -1257,13 +1385,10 @@ struct ProfileHeader: View {
     @State private var isShowingProfileImageViewer = false
     @State private var verificationInfoKind: VerificationBadgeKind?
     @State private var showUnfollowConfirmation = false
+    @State private var showingSuggestedFollows = false
     @Namespace private var imageTransition
-    
-    private let avatarSize: CGFloat = 80
-    
-    // Standardized spacing constants
-    private let horizontalPadding: CGFloat = 16
     private let verticalSpacing: CGFloat = 12
+    private let avatarSize: CGFloat = 80
     
     private let logger = Logger(subsystem: "blue.catbird", category: "ProfileHeader")
     
@@ -1332,13 +1457,18 @@ struct ProfileHeader: View {
         } message: {
             Text("Unfollow @\(profile.handle)? You'll stop seeing their posts in your following feed.")
         }
+        .sheet(isPresented: $showingSuggestedFollows) {
+            ContextualSuggestedFollowsSheet(
+                actorDID: profile.did.didString(),
+                actorHandle: profile.handle.description,
+                path: $path
+            )
+        }
     }
     
     private var activitySubscriptionService: ActivitySubscriptionService {
         appState.activitySubscriptionService
     }
-
-    // Snapshot type to ensure Equatable conformance for onChange
     private struct SubscriptionSnapshot: Equatable {
         let id: String
         let post: Bool
@@ -1725,18 +1855,22 @@ struct ProfileHeader: View {
                     }
 
                 }
-
                 HStack(spacing: 8) {
                     Text("@\(profile.handle)")
                         .enhancedAppSubheadline()
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
+                    
+                    NewskieBadge(
+                        profile: profile,
+                        isSelf: viewModel.isCurrentUser,
+                        path: $path
+                    )
 
                     if profile.viewer?.followedBy != nil {
                         FollowsBadgeView()
                     }
                 }
-
             }
             
             // Bio
@@ -2054,11 +2188,11 @@ struct ProfileHeader: View {
                         let success = try await appState.follow(did: profile.did.didString())  // Use performFollow
                         
                         if success {
+                            showingSuggestedFollows = true
                             // Add a small delay before reloading
                             try? await Task.sleep(for: .seconds(0.5))
                             await viewModel.loadProfile()
                         } else {
-                            // Revert local state if operation failed
                             localIsFollowing = false
                         }
                     } catch {
@@ -2155,49 +2289,63 @@ struct ProfileHeader: View {
             }
         }
     }
-    
     @ViewBuilder
     private var labelerLikeButton: some View {
-        Button(action: {
-            Task(priority: .userInitiated) {
-                isLikeButtonLoading = true
-                do {
-                    if viewModel.isLabelerLiked {
-                        try await viewModel.unlikeLabeler()
-                    } else {
-                        try await viewModel.likeLabeler()
+        HStack(spacing: 8) {
+            Button(action: {
+                Task(priority: .userInitiated) {
+                    isLikeButtonLoading = true
+                    do {
+                        if viewModel.isLabelerLiked {
+                            try await viewModel.unlikeLabeler()
+                        } else {
+                            try await viewModel.likeLabeler()
+                        }
+                    } catch {
+                        logger.error("Error toggling labeler like: \(error.localizedDescription)")
                     }
-                } catch {
-                    logger.error("Error toggling labeler like: \(error.localizedDescription)")
+                    isLikeButtonLoading = false
                 }
-                isLikeButtonLoading = false
+            }) {
+                HStack(spacing: 6) {
+                    if isLikeButtonLoading {
+                        ProgressView()
+                            .frame(width: 16, height: 16)
+                    } else {
+                        Image(systemName: viewModel.isLabelerLiked ? "heart.fill" : "heart")
+                            .foregroundStyle(viewModel.isLabelerLiked ? .red : .primary)
+                    }
+                }
+                .padding(8)
+                .background(
+                    Circle()
+                        .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
+                )
             }
-        }) {
-            HStack(spacing: 6) {
-                if isLikeButtonLoading {
-                    ProgressView()
-                        .frame(width: 16, height: 16)
-                } else {
-                    Image(systemName: viewModel.isLabelerLiked ? "heart.fill" : "heart")
-                        .foregroundStyle(viewModel.isLabelerLiked ? .red : .primary)
-                }
-                
-                if viewModel.labelerLikeCount > 0 {
+            .buttonStyle(.plain)
+            .disabled(isLikeButtonLoading)
+            .accessibilityLabel(viewModel.isLabelerLiked ? "Unlike labeler" : "Like labeler")
+            
+            if viewModel.labelerLikeCount > 0, let labelerUri = viewModel.labelerDetails?.uri {
+                Button {
+                    path.append(NavigationDestination.postLikes(labelerUri.uriString()))
+                } label: {
                     Text("\(viewModel.labelerLikeCount)")
                         .appCaption()
+                        .foregroundColor(.secondary)
+                        .padding(.vertical, 6)
+                        .padding(.horizontal, 10)
+                        .background(
+                            Capsule()
+                                .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
+                        )
                 }
+                .buttonStyle(.plain)
+                .accessibilityLabel("View subscribers")
+                .accessibilityHint("Opens list of users who subscribed to or liked this labeler")
             }
-            .padding(8)
-            .background(
-                Circle()
-                    .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
-            )
         }
-        .buttonStyle(.plain)
-        .disabled(isLikeButtonLoading)
     }
-    
-    // MARK: - Helper Functions
     private func getAvatarModerationState(_ labels: [ComAtprotoLabelDefs.Label]?) -> AvatarModerationState {
         guard let labels = labels, !labels.isEmpty else { return .show }
         

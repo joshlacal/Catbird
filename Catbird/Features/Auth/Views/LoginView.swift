@@ -15,8 +15,9 @@ struct LoginView: View {
     @Environment(\.colorScheme) private var colorScheme
     
     // MARK: - Initialization
-    init(isAddingNewAccount: Bool = false) {
+    init(isAddingNewAccount: Bool = false, initialAuthMode: AuthMode = .selection) {
         self.isAddingNewAccount = isAddingNewAccount
+        self._authMode = State(initialValue: initialAuthMode)
     }
     
     // MARK: - State
@@ -160,6 +161,22 @@ struct LoginView: View {
                     
                     // Authentication Options
                     VStack(spacing: adaptiveSpacing(geometry, factor: 0.7)) {
+                        if let pendingContext = StarterPackOnboardingManager.shared.pendingContext {
+                            HStack(spacing: 8) {
+                                Image(systemName: "sparkles")
+                                    .foregroundStyle(Color.accentColor)
+                                Text("Joining \(pendingContext.name ?? "Starter Pack")")
+                                    .appFont(AppTextRole.subheadline)
+                                    .fontWeight(.medium)
+                                    .foregroundStyle(.primary)
+                            }
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 8)
+                            .background(.ultraThinMaterial)
+                            .clipShape(Capsule())
+                            .padding(.bottom, 4)
+                        }
+
                         // Selection Mode - Vertically stacked buttons
                         if authMode == .selection {
                             authSelectionButtons

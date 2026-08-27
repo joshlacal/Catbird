@@ -5,6 +5,18 @@ import SwiftUI
 
 // MARK: - Relationship Types
 
+public struct ActorRelationshipState: Sendable, Equatable, Hashable {
+    public let following: Bool
+    public let muted: Bool
+    public let blocking: Bool
+
+    public init(following: Bool, muted: Bool, blocking: Bool) {
+        self.following = following
+        self.muted = muted
+        self.blocking = blocking
+    }
+}
+
 struct RelationshipInfo: Sendable, Codable {
     let did: DID
     let following: Bool
@@ -373,6 +385,52 @@ final class GraphManager {
       logger.error("Error unfollowing user: \(error.localizedDescription)")
       throw error
     }
+  }
+
+  /// Fetches fresh relationship state directly from the server, bypassing caches.
+  /// - Parameter did: The DID of the target user.
+  /// - Returns: Fresh ActorRelationshipState (following, muted, blocking).
+  /// - Throws: GraphError if client is not configured, response is invalid/non-2xx, or on network failure.
+  func freshRelationshipState(did: String) async throws -> ActorRelationshipState {
+    guard let client = atProtoClient else {
+      logger.error("ATProtoClient is nil, cannot fetch fresh relationship state")
+      throw GraphError.clientNotInitialized
+    }
+
+    let params = AppBskyActorGetProfile.Parameters(actor: try ATIdentifier(string: did))
+    let (code, profile) = try await client.app.bsky.actor.getProfile(input: params)
+
+    guard (200...299).contains(code), let profile else {
+      logger.error("Failed to fetch fresh profile for \(did): HTTP status \(code)")
+      throw GraphError.invalidResponse
+    }
+
+    let followingUri = profile.viewer?.following
+    let isFollowing = followingUri != nil
+    let isMuted = profile.viewer?.muted ?? false
+    let isBlocking = profile.viewer?.blocking != nil
+
+    if let followingUri {
+      await updateFollowingCache(did: did, uri: followingUri)
+    } else {
+      _ = await MainActor.run { followingCache.removeValue(forKey: did) }
+    }
+    if isMuted {
+      await addToMuteCache(did: did)
+    } else {
+      await removeFromMuteCache(did: did)
+    }
+    if isBlocking {
+      await addToBlockCache(did: did)
+    } else {
+      await removeFromBlockCache(did: did)
+    }
+
+    return ActorRelationshipState(
+      following: isFollowing,
+      muted: isMuted,
+      blocking: isBlocking
+    )
   }
 
   /// Checks if the current user is following a specific user
