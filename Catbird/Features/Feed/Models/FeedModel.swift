@@ -98,6 +98,28 @@ final class FeedModel: StateInvalidationSubscriber {
         await self?.handleSocialGraphChange()
       }
     }
+    
+    // Subscribe to intent rule changes
+    NotificationCenter.default.addObserver(
+      forName: .intentRulesDidChange,
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      Task { @MainActor in
+        await self?.handleSocialGraphChange()
+      }
+    }
+
+    // Subscribe to intent control feature flag changes
+    NotificationCenter.default.addObserver(
+      forName: .intentControlsFeatureFlagDidChange,
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      Task { @MainActor in
+        await self?.handleSocialGraphChange()
+      }
+    }
   }
   
   deinit {
@@ -763,11 +785,20 @@ final class FeedModel: StateInvalidationSubscriber {
     }
 
     // Apply deduplication if the filter is active
+    let deduplicatedPosts: [CachedFeedViewPost]
     if shouldDeduplicate {
-      return deduplicatePosts(standardFilteredPosts)
+      deduplicatedPosts = deduplicatePosts(standardFilteredPosts)
     } else {
-      return standardFilteredPosts
+      deduplicatedPosts = standardFilteredPosts
     }
+
+    if feedType == .timeline {
+      return await IntentControlCoordinator.shared.applyIntentControls(
+        to: deduplicatedPosts,
+        accountDID: appState.userDID
+      )
+    }
+    return deduplicatedPosts
   }
 
   // Enhanced loadFeed method with filtering capabilities
@@ -1067,13 +1098,23 @@ final class FeedModel: StateInvalidationSubscriber {
       return CachedFeedViewPost(from: slice, feedType: feedKey)
     }
     
+    var finalReprocessed = reprocessedPosts
+    if lastFeedType == .timeline {
+      finalReprocessed = await IntentControlCoordinator.shared.applyIntentControls(
+        to: reprocessedPosts,
+        accountDID: appState.userDID
+      )
+    }
+
     // Only update if the filtered content actually changed
-    let currentIds = Set(posts.map { $0.id })
-    let newIds = Set(reprocessedPosts.map { $0.id })
+    let currentIds = posts.map { $0.id }
+    let newIds = finalReprocessed.map { $0.id }
+    let currentHidden = posts.map { $0.intentHiddenRuleText }
+    let newHidden = finalReprocessed.map { $0.intentHiddenRuleText }
     
-    if currentIds != newIds {
-      posts = reprocessedPosts
-      logger.debug("Feed content updated after social graph change: \(currentIds.count) -> \(newIds.count) posts")
+    if currentIds != newIds || currentHidden != newHidden {
+      posts = finalReprocessed
+      logger.debug("Feed content updated after social graph/intent change: \(currentIds.count) -> \(newIds.count) posts")
     }
   }
   

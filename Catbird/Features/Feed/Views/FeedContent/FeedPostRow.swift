@@ -30,6 +30,7 @@ struct FeedPostRow: View, Equatable, Identifiable {
     var visibilityContext: PostVisibilityContext = .public
     @Environment(AppState.self) private var appState
     @State private var isSmartFilterRevealed = false
+    @State private var isIntentRevealed = false
     @State private var isPendingIndicatorVisible = true
 
     init(
@@ -49,7 +50,24 @@ struct FeedPostRow: View, Equatable, Identifiable {
     
     var body: some View {
         VStack(spacing: 0) {
-            if viewModel.post.smartFilterCollapseRuleID != nil && !isSmartFilterRevealed {
+            if let ruleText = viewModel.post.intentHiddenRuleText, !isIntentRevealed {
+                HStack(spacing: 12) {
+                    Image(systemName: "sparkles")
+                        .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Hidden by your rule: \(ruleText)")
+                            .appFont(AppTextRole.subheadline.weight(.semibold))
+                        Text("Filtered on-device by intent controls.")
+                            .appFont(AppTextRole.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Show") { isIntentRevealed = true }
+                        .buttonStyle(.bordered)
+                }
+                .padding()
+                .accessibilityElement(children: .combine)
+            } else if viewModel.post.smartFilterCollapseRuleID != nil && !isSmartFilterRevealed {
                 HStack(spacing: 12) {
                     Image(systemName: "line.3.horizontal.decrease.circle")
                         .foregroundStyle(.secondary)

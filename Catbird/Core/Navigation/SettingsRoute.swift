@@ -15,6 +15,7 @@ public enum SettingsRoute: String, Hashable, Sendable, CaseIterable {
     case appPasswords = "app-passwords"
     case interests = "interests"
     case appIcon = "app-icon"
+    case intentControls = "intent-controls"
 
     public init?(routePath: String) {
         let clean = routePath.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
@@ -47,6 +48,8 @@ public enum SettingsRoute: String, Hashable, Sendable, CaseIterable {
             self = .interests
         case "app-icon":
             self = .appIcon
+        case "intent-controls", "intent":
+            self = .intentControls
         default:
             if let match = SettingsRoute(rawValue: clean) {
                 self = match

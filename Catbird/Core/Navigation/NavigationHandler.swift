@@ -245,6 +245,8 @@ struct NavigationHandler {
       ModerationSettingsView()
     case .savedFeeds:
       ListsManagerView()
+    case .intentControls:
+      IntentControlsSettingsView()
     }
   }
 
@@ -303,6 +305,7 @@ struct NavigationHandler {
       case .appPasswords: return "App Passwords"
       case .interests: return "Interests"
       case .appIcon: return "App Icon"
+      case .intentControls: return "Intent Controls"
       }
     #if os(iOS)
     case .conversation:

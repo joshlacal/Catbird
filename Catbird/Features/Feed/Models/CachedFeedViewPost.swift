@@ -53,6 +53,10 @@ final class CachedFeedViewPost: Identifiable {
     @Transient var smartFilterCollapseRuleID: String?
     @Transient var isSmartFilterPending: Bool = false
 
+    /// Runtime-only Intent Control state.
+    @Transient var intentHiddenRuleText: String?
+    @Transient var isIntentDemoted: Bool = false
+
     /// Cached decoded FeedViewPost to avoid repeated JSON decoding
     @Transient private var _cachedFeedViewPost: AppBskyFeedDefs.FeedViewPost?
 
