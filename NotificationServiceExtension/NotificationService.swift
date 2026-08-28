@@ -2008,7 +2008,7 @@ class NotificationService: UNNotificationServiceExtension {
   /// App Group container. We reverse the sanitization to recover the DID, hash it,
   /// and compare against the received hash.
   private func resolveRecipientDID(fromHash hash: String) -> String? {
-    let mlsDir = MLSStoragePaths.baseContainerURL().appendingPathComponent("MLS", isDirectory: true)
+    let mlsDir = MLSStoragePaths.grdbDatabaseDirectory()
 
     guard let contents = try? FileManager.default.contentsOfDirectory(
       at: mlsDir, includingPropertiesForKeys: nil)
