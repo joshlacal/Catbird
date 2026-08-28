@@ -2008,7 +2008,13 @@ class NotificationService: UNNotificationServiceExtension {
   /// App Group container. We reverse the sanitization to recover the DID, hash it,
   /// and compare against the received hash.
   private func resolveRecipientDID(fromHash hash: String) -> String? {
-    let mlsDir = MLSStoragePaths.grdbDatabaseDirectory()
+    guard let container = FileManager.default.containerURL(
+      forSecurityApplicationGroupIdentifier: Self.appGroupSuite
+    ) else {
+      logger.error("❌ [NSE] App Group container unavailable")
+      return nil
+    }
+    let mlsDir = container.appendingPathComponent("MLS-clean-v2-openmls-v09", isDirectory: true)
 
     guard let contents = try? FileManager.default.contentsOfDirectory(
       at: mlsDir, includingPropertiesForKeys: nil)

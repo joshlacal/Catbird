@@ -584,24 +584,28 @@ struct AccountSwitcherView: View {
 
     private func removeAccount(_ account: AccountViewModel) async {
       isLoading = true
+      defer { isLoading = false }
 
-      await appStateManager.authentication.removeAccount(did: account.did)
-
-      // Refresh account list
-      await loadAccounts()
-
-      isLoading = false
+      do {
+        try await appStateManager.authentication.removeAccount(did: account.did)
+        // Refresh account list
+        await loadAccounts()
+      } catch {
+        logger.error("Failed to remove account \(account.did): \(error.localizedDescription)")
+      }
     }
 
   private func removeAccount(_ account: AuthenticationManager.AccountInfo) async {
     isLoading = true
+    defer { isLoading = false }
 
-    await appStateManager.authentication.removeAccount(did: account.did)
-
-    // Refresh account list
-    await loadAccounts()
-
-    isLoading = false
+    do {
+      try await appStateManager.authentication.removeAccount(did: account.did)
+      // Refresh account list
+      await loadAccounts()
+    } catch {
+      logger.error("Failed to remove account \(account.did): \(error.localizedDescription)")
+    }
   }
 
   private func addNewAccount() {

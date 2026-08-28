@@ -655,26 +655,28 @@ final class AppStateManager {
 
   /// Remove a specific account completely and destroy all persisted MLS data
   /// - Parameter userDID: The DID of the account to remove
-  func removeAccount(_ userDID: String) async {
+  func removeAccount(_ userDID: String) async throws {
     logger.info("🗑️ Removing account state and completely destroying MLS data: \(userDID)")
 
-    // CRITICAL FIX: Properly cleanup MLS resources before removing
     if let appState = authenticatedStates[userDID] {
       #if os(iOS)
         // Use async shutdown to properly close database connections
         await appState.prepareMLSStorageReset()
       #endif
+    }
+
+    // Purge decrypted image cache for this user
+    await MLSImageCache.shared.purge(for: userDID)
+
+    // Authoritative throwing reset: MUST succeed before in-memory state is cleared
+    try await MLSClient.shared.clearStorage(for: userDID)
+
+    if let appState = authenticatedStates[userDID] {
       appState.cleanup()
     }
 
     authenticatedStates.removeValue(forKey: userDID)
     accessOrder.removeAll { $0 == userDID }
-
-    // Purge decrypted image cache for this user
-    await MLSImageCache.shared.purge(for: userDID)
-
-    // Completely destroy all MLS databases, WAL/SHM files, Keychain materials, credentials, and preferences
-    await MLSClient.shared.destroyStorageCompletely(for: userDID)
 
     // Update widget account list after removal
     writeAccountsToAppGroup()
