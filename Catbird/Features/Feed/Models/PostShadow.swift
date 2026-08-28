@@ -274,7 +274,8 @@ actor PostShadowManager {
             threadMuted: post.viewer?.threadMuted,
             replyDisabled: post.viewer?.replyDisabled,
             embeddingDisabled: post.viewer?.embeddingDisabled,
-            pinned: shadow.pinned
+            pinned: shadow.pinned,
+            knownLikers: post.viewer?.knownLikers
         )
         
         // Handle embed merging

@@ -511,7 +511,8 @@ final class PostManager {
         threadMuted: false,
         replyDisabled: false,
         embeddingDisabled: false,
-        pinned: false
+        pinned: false,
+        knownLikers: nil
       ),
       labels: [],
       threadgate: nil,

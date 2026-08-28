@@ -2838,8 +2838,12 @@ extension NotificationManager: UNUserNotificationCenterDelegate {
 
       // 🛡️ RACE CONDITION FIX: Coordinate with other processes (NSE)
       // Wait if another process is currently processing the Welcome for this conversation
-      try await MLSWelcomeGate.shared.waitForWelcomeIfPending(
+      let welcomeReady = await MLSWelcomeGate.shared.waitForWelcomeIfPending(
         for: convoId, userDID: recipientDid, timeout: .seconds(5))
+      guard welcomeReady else {
+        notificationLogger.warning("⚠️ [FG] Welcome still pending after wait - deferring join for retry")
+        return false
+      }
 
       // Check if group appeared while we were waiting (processed by NSE)
       if try context.groupExists(groupId: groupID) {

@@ -104,7 +104,7 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/joshlacal/Petrel",
       "state" : {
-        "revision" : "64c7574ebfb5e46b260aa1dd808802635ca38851"
+        "revision" : "77879aa416a0e0b3c072514d52b8ea0ade745a32"
       }
     },
     {
@@ -121,7 +121,7 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/joshlacal/PetrelCatbird",
       "state" : {
-        "revision" : "c7f668ff3189682ef0e62e9c22afa9ace7909b87"
+        "revision" : "a4a0539c8e8aa85f6578b25ea030329d6b0890ed"
       }
     },
     {

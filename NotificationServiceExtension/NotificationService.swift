@@ -21,6 +21,7 @@ class NotificationService: UNNotificationServiceExtension {
   private let databaseManager = MLSGRDBManager()
   private var activeRecipientDID: String?
   private var isObservingAppStop = false
+  private var activeProcessingTask: Task<Void, Error>?
 
   // MARK: - Profile Cache (shared via App Group UserDefaults)
 
@@ -34,6 +35,7 @@ class NotificationService: UNNotificationServiceExtension {
   private static let mlsServiceDID = "did:web:chat.catbird.blue#atproto_mls"
   private static let mlsServiceNamespace = "blue.catbird.mls"
   private static let mlsChatNamespace = "blue.catbird.chat"
+
   deinit {
     stopObservingAppStop()
   }
@@ -80,15 +82,22 @@ class NotificationService: UNNotificationServiceExtension {
       }
 
       self.logger.warning(
-        "🛑 [NSE] App requested stop - releasing DB for \(userDID.prefix(24))...")
-      await MLSCoreContext.shared.removeContext(for: userDID)
-      let released = await self.databaseManager.releaseConnectionWithoutCheckpoint(
-        for: userDID)
-      if released {
-        self.logger.info("✅ [NSE] Released DB for \(userDID.prefix(24))...")
-      } else {
-        self.logger.warning("⚠️ [NSE] Failed to release DB for \(userDID.prefix(24))...")
+        "🛑 [NSE] App requested stop - cancelling in-flight work and releasing all handles for \(userDID.prefix(24))...")
+
+      // Cancel and await in-flight notification processing task
+      if let processingTask = self.activeProcessingTask {
+        processingTask.cancel()
+        _ = try? await processingTask.value
+        self.activeProcessingTask = nil
       }
+
+      await MLSCoreContext.shared.removeContext(for: userDID)
+      let drained = await self.databaseManager.closeDatabaseAndDrain(for: userDID, timeout: 2.0)
+      if !drained {
+        self.logger.warning("⚠️ [NSE] closeDatabaseAndDrain timed out on app stop for \(userDID.prefix(24))...")
+      }
+      await self.databaseManager.closeDatabase(for: userDID)
+      self.logger.info("✅ [NSE] Closed all handles for \(userDID.prefix(24))...")
       self.activeRecipientDID = nil
     }
   }
@@ -246,14 +255,31 @@ class NotificationService: UNNotificationServiceExtension {
       logger.warning(
         "⏭️ [NSE] rustFull authority: avoiding direct NSE MLS decrypt; using cache-only notification path"
       )
-      Task { @MainActor in
+      let initialGen = (try? MLSCoordinationStore.shared.getState().coordinationGeneration) ?? 0
+      let rustFullTask = Task<Void, Error> { @MainActor in
         self.activeRecipientDID = recipientDid
         defer {
+          self.activeProcessingTask = nil
           self.activeRecipientDID = nil
           self.bestEffortNSECleanup(recipientDid: recipientDid)
         }
 
+        // Cross-boundary reset gate: if the main app is shutting down / resetting
+        // storage (Swift or Rust), do NOT open any database resource. Deliver a
+        // generic notification and defer; the app will re-deliver after reset.
+        if MLSAppActivityState.isShuttingDown(for: recipientDid) || MLSStoragePaths.isResetActive(for: recipientDid) {
+          logger.warning("⏭️ [NSE] rustFull cache path skipped - storage reset in progress")
+          bestAttemptContent.title = "New Message"
+          bestAttemptContent.body = "New Encrypted Message"
+          contentHandler(bestAttemptContent)
+          return
+        }
+
         for attempt in 0..<10 {
+          guard !Task.isCancelled else { return }
+          guard !MLSStoragePaths.isResetActive(for: recipientDid) else { return }
+          guard ((try? MLSCoordinationStore.shared.getState().coordinationGeneration) ?? 0) == initialGen else { return }
+
           if await self.deliverCachedNotificationIfAvailable(
             content: bestAttemptContent,
             contentHandler: contentHandler,
@@ -268,10 +294,12 @@ class NotificationService: UNNotificationServiceExtension {
           if attempt < 9 { try? await Task.sleep(nanoseconds: 200_000_000) }
         }
 
+        guard !Task.isCancelled else { return }
         bestAttemptContent.title = "New Message"
         bestAttemptContent.body = "New Encrypted Message"
         contentHandler(bestAttemptContent)
       }
+      self.activeProcessingTask = rustFullTask
       return
     }
 
@@ -300,19 +328,22 @@ class NotificationService: UNNotificationServiceExtension {
     // ensure contentHandler is called even if decryption takes too long.
     let capturedContentHandler = contentHandler
     let capturedBestAttemptContent = bestAttemptContent
+    let initialGeneration = (try? MLSCoordinationStore.shared.getState().coordinationGeneration) ?? 0
 
-    Task { @MainActor in
+    let processingTask = Task<Void, Error> { @MainActor in
       self.activeRecipientDID = recipientDid
       defer {
-        // ═══════════════════════════════════════════════════════════════
-        // GUARANTEED CLEANUP: Runs on every exit path (cache-hit, error,
-        // timeout, expiry, normal completion). Prevents leaked SQLite
-        // handles in the App Group container that cause 0xdead10cc.
-        // ═══════════════════════════════════════════════════════════════
+        self.activeProcessingTask = nil
         self.activeRecipientDID = nil
         self.bestEffortNSECleanup(recipientDid: recipientDid)
       }
-
+      guard !Task.isCancelled else { return }
+      guard let currentGen = try? MLSCoordinationStore.shared.getState().coordinationGeneration,
+            currentGen == initialGeneration,
+            !MLSStoragePaths.isResetActive(for: recipientDid) else {
+        self.logger.warning("🛑 [NSE] Aborting notification processing - storage reset or generation mismatch")
+        return
+      }
       // Check per-conversation mute before expensive decryption
       do {
         let conversation = try await self.databaseManager.nseRead(for: recipientDid) { db in
@@ -608,10 +639,6 @@ class NotificationService: UNNotificationServiceExtension {
         //
         // SecretReuseSkipped: Message was already decrypted (by Main App or previous NSE run).
         //                     The decryption key has been consumed - this is NOT an error.
-        //
-        // CannotDecryptOwnMessage: MLS protocol prevents sender from decrypting own messages.
-        //                          This happens when testing with two accounts on same device.
-        //
         // ═══════════════════════════════════════════════════════════════════════════
         if case .secretReuseSkipped(let messageID) = error {
           MLSNotificationMetrics.increment(
@@ -647,16 +674,6 @@ class NotificationService: UNNotificationServiceExtension {
           capturedBestAttemptContent.title = "New Message"
           capturedBestAttemptContent.body = "New Encrypted Message"
           capturedContentHandler(capturedBestAttemptContent)
-          return
-        }
-
-        // Check for CannotDecryptOwnMessage (sender == recipient on same device)
-        let errorDesc = error.localizedDescription
-        if errorDesc.contains("CannotDecryptOwnMessage") {
-          self.logger.info(
-            "ℹ️ [NSE] CannotDecryptOwnMessage - this is our own sent message")
-          self.logger.info("   Suppressing notification for self-sent message")
-          // Don't show notification for own messages - they're already visible in the UI
           return
         }
 
@@ -802,13 +819,6 @@ class NotificationService: UNNotificationServiceExtension {
           return
         }
 
-        // Check for CannotDecryptOwnMessage (can come from FFI as well)
-        if errorDesc.contains("cannotdecryptownmessage")
-          || errorDesc.contains("own message") {
-          self.logger.info("ℹ️ [NSE] CannotDecryptOwnMessage in FFI error - suppressing")
-          return
-        }
-
         // Try to extract more details from the error
         if let nsError = error as NSError? {
           self.logger.error("❌ [NSE] NSError domain=\(nsError.domain), code=\(nsError.code)")
@@ -855,9 +865,13 @@ class NotificationService: UNNotificationServiceExtension {
 
       // Step 1: Post nseWillClose notification
       self.logger.info("📢 [NSE] Posting nseWillClose notification")
-      let token = MLSNotificationCoordinator.prepareNSECloseHandshake(userDID: recipientDid)
-
-      // Step 2: Wait for app acknowledgment (with timeout)
+      let token: UInt64
+      do {
+        token = try MLSNotificationCoordinator.prepareNSECloseHandshake(userDID: recipientDid)
+      } catch {
+        self.logger.warning("⚠️ [NSE] prepareNSECloseHandshake failed: \(error.localizedDescription)")
+        return
+      }
       let acked = await MLSNotificationCoordinator.waitForAppAcknowledgment(
         userDID: recipientDid,
         token: token,
@@ -895,6 +909,7 @@ class NotificationService: UNNotificationServiceExtension {
       MLSNotificationCoordinator.postStateChanged()
       self.logger.info("📢 [NSE] Posted state change notification to main app")
     }
+    self.activeProcessingTask = processingTask
   }
 
   override func serviceExtensionTimeWillExpire() {
@@ -1209,7 +1224,8 @@ class NotificationService: UNNotificationServiceExtension {
       timeout: .seconds(2)
     )
     if !welcomeReady {
-      logger.info("⏱️ [NSE] Welcome gate timeout - proceeding with NSE join attempt")
+      logger.warning("⏱️ [NSE] Welcome gate timeout - deferring NSE join attempt for retry")
+      return false
     }
 
     if await MLSCoreContext.shared.groupExists(userDid: recipientDid, groupId: groupIdData) {
@@ -1224,7 +1240,12 @@ class NotificationService: UNNotificationServiceExtension {
     convoId: String,
     recipientDid: String
   ) async -> Bool {
-    await MLSWelcomeGate.shared.beginWelcomeProcessing(for: convoId, userDID: recipientDid)
+    do {
+      try await MLSWelcomeGate.shared.beginWelcomeProcessing(for: convoId, userDID: recipientDid)
+    } catch {
+      logger.warning("⚠️ [NSE] Welcome gate contention/error - deferring join for retry: \(error.localizedDescription)")
+      return false
+    }
     defer {
       Task {
         await MLSWelcomeGate.shared.completeWelcomeProcessing(
@@ -1786,11 +1807,6 @@ class NotificationService: UNNotificationServiceExtension {
       return did
     }
     if let hash = userInfo["recipient_account"] as? String {
-      if let defaults = UserDefaults(suiteName: Self.appGroupSuite),
-        let knownDids = defaults.stringArray(forKey: "knownAccountDIDs"),
-        let match = knownDids.first(where: { self.hashForAccountMatching($0) == hash }) {
-        return match
-      }
       return resolveRecipientDID(fromHash: hash)
     }
     return nil
@@ -1996,71 +2012,28 @@ class NotificationService: UNNotificationServiceExtension {
 
   // MARK: - Privacy-Preserving Account Matching
 
-  /// Compute SHA-256 hash of a DID for push notification account matching.
-  /// Must produce the same output as `hash_for_push` on the server.
-  private func hashForAccountMatching(_ did: String) -> String {
-    let digest = SHA256.hash(data: Data(did.utf8))
-    return digest.map { String(format: "%02x", $0) }.joined()
-  }
-
-  /// Resolve a recipient DID from a SHA-256 hash by enumerating local account databases.
-  /// Each account has a database file named `mls_messages_{sanitized_did}.db` in the
-  /// App Group container. We reverse the sanitization to recover the DID, hash it,
-  /// and compare against the received hash.
+  /// Resolve a recipient DID from a SHA-256 hash using the Core database-owner mapping.
+  /// Validates hash syntax (64 lowercase hex characters) and looks up the exact mapping key in App Group defaults.
   private func resolveRecipientDID(fromHash hash: String) -> String? {
-    guard let container = FileManager.default.containerURL(
-      forSecurityApplicationGroupIdentifier: Self.appGroupSuite
-    ) else {
-      logger.error("❌ [NSE] App Group container unavailable")
-      return nil
-    }
-    let mlsDir = container.appendingPathComponent("MLS-clean-v2-openmls-v09", isDirectory: true)
-
-    guard let contents = try? FileManager.default.contentsOfDirectory(
-      at: mlsDir, includingPropertiesForKeys: nil)
+    let normalizedHash = hash.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    guard normalizedHash.count == 64,
+      normalizedHash.utf8.allSatisfy({ ($0 >= UInt8(ascii: "0") && $0 <= UInt8(ascii: "9")) || ($0 >= UInt8(ascii: "a") && $0 <= UInt8(ascii: "f")) })
     else {
-      logger.error("❌ [NSE] Cannot list MLS database directory")
+      logger.warning("⚠️ [NSE] Invalid recipient_account hash format: \(hash)")
       return nil
     }
 
-    for fileURL in contents {
-      let filename = fileURL.lastPathComponent
-      // Pattern: mls_messages_{sanitized_did}.db
-      guard filename.hasPrefix("mls_messages_"), filename.hasSuffix(".db") else { continue }
-
-      let sanitized = String(
-        filename
-          .dropFirst("mls_messages_".count)
-          .dropLast(".db".count))
-
-      // Reverse sanitization: the sanitizer replaces :, /, #, ? with -
-      // DIDs are formatted as did:plc:xxx or did:web:xxx
-      // "did-plc-xxx" → "did:plc:xxx"
-      let did = unsanitizeDID(sanitized)
-      if hashForAccountMatching(did) == hash {
+    do {
+      if let did = try MLSStoragePaths.resolveDatabaseOwnerDID(forNormalizedDIDHash: normalizedHash) {
         logger.info("✅ [NSE] Resolved recipient_account hash to local account")
         return did
+      } else {
+        logger.warning("⚠️ [NSE] No local account matched recipient_account hash")
+        return nil
       }
+    } catch {
+      logger.error("❌ [NSE] Failed to resolve recipient_account hash: \(error.localizedDescription)")
+      return nil
     }
-
-    logger.warning("⚠️ [NSE] No local account matched recipient_account hash")
-    return nil
-  }
-
-  /// Reverse the DID sanitization applied by MLSGRDBManager.
-  /// Converts "did-plc-xxx" back to "did:plc:xxx" by restoring the first two
-  /// hyphens to colons (matching the `did:method:identifier` structure).
-  private func unsanitizeDID(_ sanitized: String) -> String {
-    var result = sanitized
-    // Restore first two hyphens to colons: "did-plc-..." → "did:plc:..."
-    if let firstDash = result.firstIndex(of: "-") {
-      result.replaceSubrange(firstDash...firstDash, with: ":")
-      // Find next dash (now after first colon)
-      let afterFirst = result.index(after: result.firstIndex(of: ":")!)
-      if let secondDash = result[afterFirst...].firstIndex(of: "-") {
-        result.replaceSubrange(secondDash...secondDash, with: ":")
-      }
-    }
-    return result
   }
 }
