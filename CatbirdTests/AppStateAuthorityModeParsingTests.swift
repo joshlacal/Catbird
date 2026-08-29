@@ -96,6 +96,25 @@ final class AppStateAuthorityModeParsingTests: XCTestCase {
       try XCTUnwrap(receiveBody.range(of: "MLSCoreContext.shared.ensureContext")).lowerBound
     )
   }
+  func testNSEResolvesRecipientDIDViaCoreExactResolverWithoutLegacyEnumeration() throws {
+    let source = try String(
+      contentsOf: sourceFileURL(relativePath: "NotificationServiceExtension/NotificationService.swift"),
+      encoding: .utf8
+    )
+    let resolveBody = try XCTUnwrap(
+      extractFunctionBody(
+        signature: "private func resolveRecipientDID(fromHash hash: String)",
+        from: source
+      )
+    )
+
+    XCTAssertTrue(resolveBody.contains("MLSStoragePaths.resolveDatabaseOwnerDID(forNormalizedDIDHash:"))
+    XCTAssertFalse(resolveBody.contains("contentsOfDirectory"))
+    XCTAssertFalse(resolveBody.contains("unsanitizeDID"))
+    XCTAssertFalse(resolveBody.contains("mls_messages_"))
+    XCTAssertFalse(source.contains("func unsanitizeDID"))
+  }
+
 
   func testE2ERegisterDeviceRoutesRustFullThroughManager() throws {
     let source = try String(

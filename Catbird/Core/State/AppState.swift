@@ -2025,22 +2025,22 @@ final class AppState {
     /// After this method completes, the caller should post appAcknowledged to signal
     /// the NSE that it can proceed with the checkpoint.
     @MainActor
-    func releaseMLSDatabaseReaders() async -> Bool {
-        logger.info("🔓 [AppState] Releasing MLS database readers for NSE handshake")
+    func releaseMLSDatabaseReaders(for requestDID: String? = nil) async -> Bool {
+        let targetDID = requestDID ?? userDID
+        logger.info("🔓 [AppState] Releasing MLS database readers for NSE handshake (target: \(targetDID.prefix(20), privacy: .private)...)")
 
-        // Release our database connection WITHOUT checkpointing.
-        // Fail-closed: if we can't close cleanly, do not acknowledge the handshake.
-        if mlsConversationManagerStorage != nil {
-            let released = await MLSGRDBManager.shared.releaseConnectionWithoutCheckpoint(for: userDID)
-            if released {
-                logger.info("✅ [AppState] Database readers released for NSE checkpoint")
+        let released = await MLSGRDBManager.closeAndDrainAllManagers(for: targetDID)
+        if released {
+            logger.info("✅ [AppState] All MLS database readers released for NSE checkpoint")
+            let normTarget = targetDID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let normUser = userDID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if normTarget == normUser {
                 mlsDatabase = nil
             }
-            return released
         } else {
-            logger.debug("⏭️ [AppState] No active database readers to release")
-            return true
+            logger.warning("⚠️ [AppState] Failed to release all database readers for NSE checkpoint")
         }
+        return released
     }
 
     /// Recover MLS database after a codec error by reconnecting
@@ -2538,15 +2538,16 @@ final class AppState {
                     self.logger.info("   NSE advanced the ratchet - reloading state from disk")
                     await self.reloadMLSStateFromDisk()
                 },
-                onNSEWillClose: { [weak self] _ in
+                onNSEWillClose: { [weak self] request in
                     guard let self else { return false }
-                    self.logger.info("📥 [Handshake] App received nseWillClose, releasing readers")
+                    let reqDID = request.userDID
+                    self.logger.info("📥 [Handshake] App received nseWillClose for \(reqDID.prefix(20), privacy: .private)..., releasing readers")
 
-                    // Release database readers by closing our cached connection.
-                    let released = await self.releaseMLSDatabaseReaders()
+                    // Release database readers by closing cached connection for the requested account.
+                    let released = await self.releaseMLSDatabaseReaders(for: reqDID)
 
                     if released {
-                        self.logger.info("📤 [Handshake] App acknowledged nseWillClose")
+                        self.logger.info("📤 [Handshake] App acknowledged nseWillClose for \(reqDID.prefix(20), privacy: .private)...")
                     } else {
                         self.logger.warning("🚫 [Handshake] Did not release DB readers in time; not acknowledging")
                     }

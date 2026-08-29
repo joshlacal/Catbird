@@ -33,7 +33,7 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/joshlacal/CatbirdMLSCore",
       "state" : {
-        "revision" : "4af15b25b144e9f2f77d0902762510d34fe4fc41"
+        "revision" : "5eec74af8047a655e8d6a73bab81aae70087836b"
       }
     },
     {
@@ -86,7 +86,7 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/joshlacal/Petrel",
       "state" : {
-        "revision" : "77879aa416a0e0b3c072514d52b8ea0ade745a32"
+        "revision" : "a4caf64fd837e72ded5f6843c630a4d032c9d872"
       }
     },
     {
@@ -103,7 +103,7 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/joshlacal/PetrelCatbird",
       "state" : {
-        "revision" : "a4a0539c8e8aa85f6578b25ea030329d6b0890ed"
+        "revision" : "a7c789bd5a2b6b6033dc5aece54cfd49d1480f0d"
       }
     },
     {
@@ -212,6 +212,15 @@
       "state" : {
         "revision" : "fd929a6d8f7651ce0f63fc99397fd5762358cc29",
         "version" : "0.6.0"
+      }
+    },
+    {
+      "identity" : "zstd",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/facebook/zstd.git",
+      "state" : {
+        "revision" : "f8745da6ff1ad1e7bab384bd1f9d742439278e99",
+        "version" : "1.5.7"
       }
     }
   ],

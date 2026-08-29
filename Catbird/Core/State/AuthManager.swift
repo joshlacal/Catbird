@@ -2375,7 +2375,7 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
 
   /// Remove an account completely (including stored handle and on-disk/keychain MLS data)
   @MainActor
-  func removeAccount(did: String) async {
+  func removeAccount(did: String) async throws {
     logger.info(.accountRemovalStarted)
 
     NotificationCenter.default.post(
@@ -2383,6 +2383,9 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
       object: nil,
       userInfo: ["accountDID": did]
     )
+
+    // Clean up cached AppState and completely destroy all persistent MLS files, databases, and Keychain materials
+    try await AppStateManager.shared.removeAccount(did)
 
     removeStoredHandle(for: did)
     if inFlightPermission?.did == did {
@@ -2396,9 +2399,6 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
         logger.error(.accountRemovalFailed)
       }
     }
-
-    // Clean up cached AppState and completely destroy all persistent MLS files, databases, and Keychain materials
-    await AppStateManager.shared.removeAccount(did)
 
     // Purge memory-only Circle caches for the removed account.
     await CircleFeedCache.shared.purge(accountDID: did)
