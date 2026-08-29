@@ -39,7 +39,6 @@ class NotificationService: UNNotificationServiceExtension {
   deinit {
     stopObservingAppStop()
   }
-
   private func startObservingAppStop() {
     guard !isObservingAppStop else { return }
     let center = CFNotificationCenterGetDarwinNotifyCenter()
