@@ -1032,8 +1032,7 @@ struct CircleNotificationTests {
     // 2. Stored-handle reauth
     let recorder2 = RecordingAuthLogHandler()
     let overrides2 = AuthenticationDependencyOverrides(
-      startOAuth: { _, _, _, _ in URL(string: "https://catbird.blue/oauth")! },
-      prepareGatewayLogin: { _ in throw controlledError }
+      startOAuth: { _, _, _, _ in throw controlledError }
     )
     let manager2 = AuthenticationManager(logHandler: recorder2, dependencyOverrides: overrides2)
     manager2.setClientForTesting(dummyClient)
@@ -1078,7 +1077,7 @@ struct CircleNotificationTests {
     // 4. Gateway callback
     let recorder4 = RecordingAuthLogHandler()
     let overrides4 = AuthenticationDependencyOverrides(
-      redeemGatewayCallback: { _ in throw controlledError }
+      handleOAuthCallback: { _, _ in throw controlledError }
     )
     let manager4 = AuthenticationManager(logHandler: recorder4, dependencyOverrides: overrides4)
     manager4.setClientForTesting(dummyClient)

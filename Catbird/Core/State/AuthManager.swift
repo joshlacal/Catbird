@@ -487,22 +487,16 @@ struct AuthLogger: Sendable {
 /// Injectable dependency overrides for AuthenticationManager unit testing.
 public struct AuthenticationDependencyOverrides: Sendable {
   public var startOAuth: (@Sendable (ATProtoClient, String, String, String) async throws -> URL)?
-  public var prepareGatewayLogin: (@Sendable (URL) async throws -> URL)?
   public var handleOAuthCallback: (@Sendable (ATProtoClient, URL) async throws -> Void)?
-  public var redeemGatewayCallback: (@Sendable (URL) async throws -> String)?
   public var switchAccount: (@Sendable (ATProtoClient, String) async throws -> Void)?
 
   public init(
     startOAuth: (@Sendable (ATProtoClient, String, String, String) async throws -> URL)? = nil,
-    prepareGatewayLogin: (@Sendable (URL) async throws -> URL)? = nil,
     handleOAuthCallback: (@Sendable (ATProtoClient, URL) async throws -> Void)? = nil,
-    redeemGatewayCallback: (@Sendable (URL) async throws -> String)? = nil,
     switchAccount: (@Sendable (ATProtoClient, String) async throws -> Void)? = nil
   ) {
     self.startOAuth = startOAuth
-    self.prepareGatewayLogin = prepareGatewayLogin
     self.handleOAuthCallback = handleOAuthCallback
-    self.redeemGatewayCallback = redeemGatewayCallback
     self.switchAccount = switchAccount
   }
 }
@@ -585,11 +579,6 @@ final class AuthenticationManager: AuthProgressDelegate {
     scope: "atproto transition:generic transition:chat.bsky"
   )
 
-  @ObservationIgnored
-  private let gatewayOAuthExchange = GatewayOAuthExchange(
-    gatewayURL: AuthenticationManager.gatewayURL,
-    callbackURL: URL(string: "https://catbird.blue/oauth/callback")!
-  )
 
   // MARK: - Progressive Gateway Permissions
 
@@ -1282,15 +1271,9 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
             }
           }
 
-          let boundAuthURL: URL
-          if let prepare = self.dependencyOverrides.prepareGatewayLogin {
-            boundAuthURL = try await prepare(authURL)
-          } else {
-            boundAuthURL = try await gatewayOAuthExchange.prepareLogin(authURL)
-          }
           logger.info(.oauthURLGenerated)
           await self.updateState(.authenticating(progress: .openingBrowser))
-          return boundAuthURL
+          return authURL
         } catch {
           lastError = error
           self.logger.warning(.oauthFlowAttemptFailed)
@@ -1583,10 +1566,33 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
         finalError = AuthError.timeout
       } else if let authError = error as? AuthError {
         finalError = authError
+      } else if let petrelAuth = error as? Petrel.AuthError {
+        switch petrelAuth {
+        case .cancelled:
+          finalError = .cancelled
+        case .timeout:
+          finalError = .timeout
+        case .invalidCallbackURL:
+          finalError = .invalidCallbackURL
+        case .invalidCredentials:
+          finalError = .invalidCredentials
+        case .tokenRefreshFailed:
+          finalError = .invalidSession
+        default:
+          finalError = .unknown(error)
+        }
+      } else if "\(type(of: error))".contains("GatewayError") && "\(error)".contains("invalidCallbackURL") {
+        finalError = .invalidCallbackURL
       } else {
         finalError = AuthError.unknown(error)
       }
 
+      if case .invalidCallbackURL = finalError {
+        logger.debug("Ignoring unmatched or invalid OAuth callback without cancelling in-flight login.")
+        throw finalError
+      }
+
+      await client.cancelOAuthFlow()
       logger.error(.callbackFailed)
       updateState(.error(message: finalError.localizedDescription))
       throw finalError
@@ -1616,25 +1622,14 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
     do {
       updateState(.authenticating(progress: .creatingSession))
 
-      let sessionID: String
-      if let redeem = dependencyOverrides.redeemGatewayCallback {
-        sessionID = try await redeem(url)
-      } else {
-        sessionID = try await gatewayOAuthExchange.redeem(url)
-      }
-      var internalCallback = URLComponents()
-      internalCallback.scheme = "https"
-      internalCallback.host = "catbird.blue"
-      internalCallback.path = "/oauth/callback"
-      internalCallback.fragment = "session_id=\(sessionID)"
-      guard let sessionCallbackURL = internalCallback.url else {
-        throw AuthError.invalidCallbackURL
-      }
-
       guard let activeClient = client else {
         throw AuthError.clientNotInitialized
       }
-      try await activeClient.handleOAuthCallback(url: sessionCallbackURL)
+      if let handleCallback = dependencyOverrides.handleOAuthCallback {
+        try await handleCallback(activeClient, url)
+      } else {
+        try await activeClient.handleOAuthCallback(url: url)
+      }
 
       updateState(.authenticating(progress: .finalizing))
 
@@ -1662,22 +1657,48 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
       logger.info(.gatewayCallbackCompleted)
     } catch {
       let finalError: AuthError
-      if let authError = error as? AuthError {
+      if error is CancellationError {
+        finalError = AuthError.cancelled
+      } else if case AuthError.timeout = error {
+        finalError = AuthError.timeout
+      } else if let authError = error as? AuthError {
         finalError = authError
+      } else if let petrelAuth = error as? Petrel.AuthError {
+        switch petrelAuth {
+        case .cancelled:
+          finalError = .cancelled
+        case .timeout:
+          finalError = .timeout
+        case .invalidCallbackURL:
+          finalError = .invalidCallbackURL
+        case .invalidCredentials:
+          finalError = .invalidCredentials
+        case .tokenRefreshFailed:
+          finalError = .invalidSession
+        default:
+          finalError = .unknown(error)
+        }
+      } else if "\(type(of: error))".contains("GatewayError") && "\(error)".contains("invalidCallbackURL") {
+        finalError = .invalidCallbackURL
       } else {
         finalError = AuthError.unknown(error)
       }
 
+      if case .invalidCallbackURL = finalError {
+        logger.debug("Ignoring unmatched or invalid gateway callback without cancelling in-flight login.")
+        throw finalError
+      }
+
+      await client?.cancelOAuthFlow()
       logger.error(.gatewayCallbackFailed)
       updateState(.error(message: finalError.localizedDescription))
       throw finalError
     }
   }
-
   @MainActor
   func cancelGatewayOAuthFlow() async {
     cancelInFlightPermissionUpgrade()
-    await gatewayOAuthExchange.cancelPendingLogin()
+    await client?.cancelOAuthFlow()
   }
   /// Logout the current user
   /// - Parameter isManual: If true, this is a user-initiated logout and we should clear expiredAccountInfo
@@ -2845,11 +2866,10 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
       let authURL = try await withTimeout(timeout: networkTimeout) {
         try await client.startOAuthFlow(identifier: handle)
       }
-      let boundAuthURL = try await gatewayOAuthExchange.prepareLogin(authURL)
       self.logger.debug(.addAccountOAuthURLGenerated)
 
       updateState(.authenticating(progress: .openingBrowser))
-      return boundAuthURL
+      return authURL
     } catch {
       let finalError: AuthError
       if error is CancellationError {
@@ -2875,9 +2895,8 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
       throw AuthError.clientNotInitialized
     }
     let authURL = try await client.startSignUpFlow(pdsURL: pdsURL)
-    return try await gatewayOAuthExchange.prepareLogin(authURL)
+    return authURL
   }
-
   /// Get current active account info
   @MainActor
   func getCurrentAccountInfo() async -> AccountInfo? {
