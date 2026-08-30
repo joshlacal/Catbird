@@ -2420,6 +2420,7 @@ private extension CatbirdApp {
   /// Format: blue.catbird://e2e/{command}?{params}
   /// Commands:
   /// - create-conversation?targetDID=... - Create/join a conversation with the target user
+  /// - accept-conversation?conversationId=... - Accept a pending clean-chat invitation
   /// - send-message?text=...&conversationId=... - Send a message to a conversation
   /// - dump-state - Write MLS state dump to app container
   /// - block?did=... - Block a DID and leave shared MLS conversations
@@ -2472,6 +2473,9 @@ private extension CatbirdApp {
       
     case "create-conversation":
       await handleCreateConversation(params: params, manager: manager, logger: e2eLogger)
+
+    case "accept-conversation":
+      await handleAcceptConversation(params: params, manager: manager, logger: e2eLogger)
       
     case "send-message":
       await handleSendMessage(params: params, manager: manager, logger: e2eLogger)
@@ -2768,6 +2772,50 @@ private extension CatbirdApp {
     } catch {
       e2eLogger.error("[E2E] Failed to create conversation: \(error.localizedDescription)")
       await writeE2EResult(command: "create-conversation", success: false, error: error.localizedDescription)
+    }
+  }
+
+  private func handleAcceptConversation(
+    params: [String: String],
+    manager: AppStateManager,
+    logger e2eLogger: Logger
+  ) async {
+    guard let conversationId = params["conversationId"],
+          MLSConversationIdentityBoundary.isCanonicalStableID(conversationId) else {
+      e2eLogger.error("[E2E] accept-conversation requires a canonical conversationId")
+      await writeE2EResult(
+        command: "accept-conversation",
+        success: false,
+        error: "Missing or invalid conversationId"
+      )
+      return
+    }
+
+    guard let appState = manager.lifecycle.appState,
+          let conversationManager = await appState.getMLSConversationManager() else {
+      e2eLogger.error("[E2E] MLS not initialized - cannot accept conversation")
+      await writeE2EResult(
+        command: "accept-conversation",
+        success: false,
+        error: "MLS not initialized"
+      )
+      return
+    }
+
+    do {
+      try await conversationManager.acceptConversationRequest(convoId: conversationId)
+      await writeE2EResult(
+        command: "accept-conversation",
+        success: true,
+        data: ["conversationId": conversationId]
+      )
+    } catch {
+      e2eLogger.error("[E2E] Failed to accept conversation: \(error.localizedDescription)")
+      await writeE2EResult(
+        command: "accept-conversation",
+        success: false,
+        error: error.localizedDescription
+      )
     }
   }
   
