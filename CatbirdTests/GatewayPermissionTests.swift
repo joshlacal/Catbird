@@ -52,7 +52,11 @@ struct GatewayPermissionTests {
     #expect(GatewayPermission.accountEmailManage.rawValue == "account:email?action=manage")
     #expect(GatewayPermission.accountStatusManage.rawValue == "account:status?action=manage")
     #expect(GatewayPermission.identityHandle.scopeString == "identity:handle")
-    #expect(GatewayPermission.allCases.count == 3)
+    #expect(
+      GatewayPermission.circleSpaces.rawValue
+        == "space:blue.catbird.circle?action=create&action=delete&action=read_self&action=update&authority=*&collection=*&manage=create&manage=delete&manage=update"
+    )
+    #expect(GatewayPermission.allCases.count == 4)
     #expect(GatewayPermission.permissionCallbackURL == URL(string: "https://catbird.blue/oauth/permission-callback")!)
   }
 

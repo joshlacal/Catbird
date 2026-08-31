@@ -6,6 +6,8 @@ import PetrelCatbird
 struct CreateCircleView: View {
   @Environment(AppState.self) private var appState
   @Environment(\.dismiss) private var dismiss
+  @Environment(AppStateManager.self) private var appStateManager
+  @Environment(\.webAuthenticationSession) private var webAuthenticationSession
 
   @State private var viewModel: CircleManagementViewModel?
   @State private var name: String = ""
@@ -140,17 +142,51 @@ struct CreateCircleView: View {
     return (1...64).contains(trimmed.count)
   }
 
+  /// Ensures the Circle Space scope is granted, presenting the gateway's
+  /// consent page if the session lacks it. Creating a Space requires
+  /// `manage=create` on `space:blue.catbird.circle`, which is not part of the
+  /// initial sign-in grant.
+  @MainActor
+  private func ensureCirclePermission() async throws {
+    let expectedDID = appState.userDID
+    try await appStateManager.authentication.ensureGatewayPermission(.circleSpaces) { authURL in
+      if #available(iOS 17.4, macOS 14.4, *) {
+        return try await webAuthenticationSession.authenticate(
+          using: authURL,
+          callback: .https(host: "catbird.blue", path: "/oauth/permission-callback"),
+          preferredBrowserSession: .shared,
+          additionalHeaderFields: [:]
+        )
+      } else {
+        return try await webAuthenticationSession.authenticate(
+          using: authURL,
+          callbackURLScheme: "catbird",
+          preferredBrowserSession: .shared
+        )
+      }
+    }
+    guard appState.userDID == expectedDID else {
+      throw GatewayPermissionError.stateChanged
+    }
+  }
+
   private func createCircle() {
     guard let vm = viewModel else { return }
     vm.memberDIDsInput = memberDIDsText
 
     Task {
       do {
+        try await ensureCirclePermission()
         _ = try await vm.createCircle(name: name)
         if vm.state == .complete {
           dismiss()
         }
+      } catch is CancellationError {
+        // User dismissed the consent sheet; nothing to surface.
+      } catch GatewayPermissionError.cancelled {
+        // User dismissed the consent sheet; nothing to surface.
       } catch {
+        vm.state = .failed(message: error.localizedDescription)
         showingErrorAlert = true
       }
     }

@@ -12,6 +12,13 @@ public enum GatewayPermission: String, CaseIterable, Sendable, Hashable, Equatab
   /// Scope for managing account status such as deactivation (`com.atproto.server.deactivateAccount`).
   case accountStatusManage = "account:status?action=manage"
 
+  /// Scope for Circle Spaces on the user's own PDS: read_self plus record
+  /// create/update/delete in any `blue.catbird.circle` space, and space
+  /// create/update/delete management. Raw value is the jacquard-normalized
+  /// form (params sorted, `authority=self`/`skey=*` defaults omitted) so it
+  /// string-matches the gateway's normalized granted scopes.
+  case circleSpaces = "space:blue.catbird.circle?action=create&action=delete&action=read_self&action=update&authority=*&collection=*&manage=create&manage=delete&manage=update"
+
   /// The raw OAuth scope string requested from the authorization server.
   public var scopeString: String {
     rawValue
