@@ -11,7 +11,7 @@ struct CircleManagementView: View {
   @Environment(\.dismiss) private var dismiss
 
   @State private var viewModel: CircleManagementViewModel?
-  @State private var newMemberDIDText: String = ""
+  @State private var membersToAdd: [AppBskyActorDefs.ProfileViewBasic] = []
   @State private var showingAddMemberSheet = false
   @State private var memberToRemove: DID?
   @State private var showingDeleteConfirmation = false
@@ -55,8 +55,12 @@ struct CircleManagementView: View {
           await vm.loadMembers()
         }
       }
-      .sheet(isPresented: $showingAddMemberSheet) {
-        addMemberSheet
+      .sheet(isPresented: $showingAddMemberSheet, onDismiss: commitPendingMembers) {
+        CircleMemberPickerView(
+          selection: $membersToAdd,
+          excludedDIDs: Set((viewModel?.members ?? []).map { $0.didString() }),
+          disclosure: CircleManagementCopy.addMemberDisclosure
+        )
       }
       .confirmationDialog(
         "Remove Member",
@@ -158,13 +162,14 @@ struct CircleManagementView: View {
       }
 
       Button {
+        membersToAdd = []
         showingAddMemberSheet = true
       } label: {
-        Label("Add Member", systemImage: "person.badge.plus")
+        Label("Add Members", systemImage: "person.badge.plus")
       }
       .disabled(vm.members.count >= 150)
-      .accessibilityLabel("Add Member")
-      .accessibilityHint("Add a new member by DID to this Circle")
+      .accessibilityLabel("Add Members")
+      .accessibilityHint("Search for people to add to this Circle")
     }
   }
 
@@ -250,55 +255,24 @@ struct CircleManagementView: View {
     }
   }
 
-  // MARK: - Add Member Sheet
+  // MARK: - Add Members
 
-  private var isValidNewMemberDID: Bool {
-    let trimmed = newMemberDIDText.trimmingCharacters(in: .whitespacesAndNewlines)
-    return (try? DID(didString: trimmed)) != nil
-  }
-
-  private var addMemberSheet: some View {
-    NavigationStack {
-      Form {
-        Section("Member DID") {
-          TextField("did:plc:...", text: $newMemberDIDText)
-            .textInputAutocapitalization(.never)
-            .autocorrectionDisabled()
-            .accessibilityLabel("Member DID to add")
-        }
-
-        Section("Disclosure") {
-          Text(CircleManagementCopy.addMemberDisclosure)
-            .font(.caption)
-            .foregroundStyle(.secondary)
+  /// Adds everyone picked in the member sheet once it is dismissed. Failures
+  /// surface through `viewModel.state` in `operationStateSection`.
+  private func commitPendingMembers() {
+    guard let vm = viewModel, !membersToAdd.isEmpty else { return }
+    let dids = membersToAdd.map(\.did)
+    membersToAdd = []
+    Task {
+      for did in dids {
+        do {
+          try await vm.addMember(did: did)
+        } catch {
+          // State already carries the failure; remaining adds would repeat it.
+          break
         }
       }
-      .navigationTitle("Add Member")
-      #if os(iOS)
-      .navigationBarTitleDisplayMode(.inline)
-      #endif
-      .toolbar {
-        ToolbarItem(placement: .cancellationAction) {
-          Button("Cancel") {
-            showingAddMemberSheet = false
-            newMemberDIDText = ""
-          }
-        }
-
-        ToolbarItem(placement: .confirmationAction) {
-          Button("Add") {
-            if let did = try? DID(didString: newMemberDIDText.trimmingCharacters(in: .whitespacesAndNewlines)) {
-              Task {
-                _ = try? await viewModel?.addMember(did: did)
-                showingAddMemberSheet = false
-                newMemberDIDText = ""
-              }
-            }
-          }
-          .disabled(!isValidNewMemberDID)
-          .accessibilityLabel("Confirm add member")
-        }
-      }
+      await vm.loadMembers()
     }
   }
 }

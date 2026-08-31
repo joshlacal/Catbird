@@ -33,7 +33,6 @@ final class CircleManagementViewModel {
   var circle: CircleSummary
   var state: CircleManagementState = .idle
   var name: String = ""
-  var memberDIDsInput: String = ""
   var members: [DID] = []
   var validationError: String?
 
@@ -126,24 +125,6 @@ final class CircleManagementViewModel {
     return .success(uniqueDIDs)
   }
 
-  /// Parses comma/space/newline-separated DID strings and validates uniqueness and count.
-  static func parseAndValidateDIDs(from input: String) -> Result<[DID], CircleError> {
-    let rawTokens = input.components(separatedBy: CharacterSet(charactersIn: ", \n\t;"))
-      .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-      .filter { !$0.isEmpty }
-
-    var dids: [DID] = []
-    for token in rawTokens {
-      do {
-        let did = try DID(didString: token)
-        dids.append(did)
-      } catch {
-        return .failure(.invalidParameter("Invalid DID format: \(token)"))
-      }
-    }
-    return validateMemberDIDs(dids)
-  }
-
   // MARK: - Operations
 
   /// Creates a new named Circle following the 5-step sequence:
@@ -169,16 +150,6 @@ final class CircleManagementViewModel {
     let finalDIDs: [DID]
     if let memberDIDs {
       switch Self.validateMemberDIDs(memberDIDs) {
-      case .success(let d):
-        finalDIDs = d
-        self.validationError = nil
-      case .failure(let error):
-        self.validationError = error.localizedDescription
-        self.state = .failed(message: error.localizedDescription)
-        throw error
-      }
-    } else if !memberDIDsInput.isEmpty {
-      switch Self.parseAndValidateDIDs(from: memberDIDsInput) {
       case .success(let d):
         finalDIDs = d
         self.validationError = nil

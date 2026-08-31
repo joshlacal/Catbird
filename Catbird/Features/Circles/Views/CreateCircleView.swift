@@ -11,7 +11,8 @@ struct CreateCircleView: View {
 
   @State private var viewModel: CircleManagementViewModel?
   @State private var name: String = ""
-  @State private var memberDIDsText: String = ""
+  @State private var selectedMembers: [AppBskyActorDefs.ProfileViewBasic] = []
+  @State private var showingMemberPicker = false
   @State private var showingErrorAlert = false
 
   var body: some View {
@@ -27,15 +28,43 @@ struct CreateCircleView: View {
             .foregroundStyle(name.trimmingCharacters(in: .whitespacesAndNewlines).count > 64 ? .red : .secondary)
         }
 
-        Section("Initial Members") {
-          TextField("did:plc:..., did:plc:...", text: $memberDIDsText, axis: .vertical)
-            .lineLimit(3...6)
-            .accessibilityLabel("Initial member DIDs")
-            .accessibilityHint("Comma- or newline-separated DIDs, maximum 150 members")
+        Section {
+          ForEach(selectedMembers, id: \.did) { profile in
+            HStack(spacing: 12) {
+              AsyncProfileImage(url: URL(string: profile.avatar?.uriString() ?? ""), size: 36)
+              VStack(alignment: .leading, spacing: 2) {
+                Text(profile.displayName ?? "@\(profile.handle)")
+                  .font(.subheadline.weight(.medium))
+                  .lineLimit(1)
+                Text("@\(profile.handle)")
+                  .font(.caption)
+                  .foregroundStyle(.secondary)
+                  .lineLimit(1)
+              }
+              Spacer()
+              Button(role: .destructive) {
+                selectedMembers.removeAll { $0.did.didString() == profile.did.didString() }
+              } label: {
+                Image(systemName: "minus.circle.fill")
+                  .foregroundStyle(.red)
+              }
+              .buttonStyle(.borderless)
+              .accessibilityLabel("Remove \(profile.displayName ?? "@\(profile.handle)")")
+            }
+          }
 
-          Text("Enter up to 150 member DIDs separated by commas or newlines.")
-            .font(.caption)
-            .foregroundStyle(.secondary)
+          Button {
+            showingMemberPicker = true
+          } label: {
+            Label("Add Members", systemImage: "person.badge.plus")
+          }
+          .disabled(selectedMembers.count >= 150)
+          .accessibilityLabel("Add Members")
+          .accessibilityHint("Search for people to add to this Circle")
+        } header: {
+          Text("Initial Members (\(selectedMembers.count)/150)")
+        } footer: {
+          Text("You can also add members after the Circle is created.")
         }
 
         Section("Privacy & History Disclosure") {
@@ -126,6 +155,12 @@ struct CreateCircleView: View {
           }
         }
       }
+      .sheet(isPresented: $showingMemberPicker) {
+        CircleMemberPickerView(
+          selection: $selectedMembers,
+          disclosure: CircleManagementCopy.addMemberDisclosure
+        )
+      }
       .task {
         if viewModel == nil {
           viewModel = CircleManagementViewModel(
@@ -172,12 +207,12 @@ struct CreateCircleView: View {
 
   private func createCircle() {
     guard let vm = viewModel else { return }
-    vm.memberDIDsInput = memberDIDsText
+    let memberDIDs = selectedMembers.map(\.did)
 
     Task {
       do {
         try await ensureCirclePermission()
-        _ = try await vm.createCircle(name: name)
+        _ = try await vm.createCircle(name: name, memberDIDs: memberDIDs)
         if vm.state == .complete {
           dismiss()
         }
