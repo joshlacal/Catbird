@@ -673,8 +673,8 @@ struct CircleNotificationTests {
 
     // Overlap: during listNotifications await, trigger account purge
     await service.setOnListNotifications {
-      await MainActor.run {
-        Task<Void, Never> {
+      await MainActor.run { () -> Void in
+        _ = Task<Void, Never> {
           await model.purgeAccount()
         }
       }
