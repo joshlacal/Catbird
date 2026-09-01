@@ -854,10 +854,10 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
 				CODE_SIGN_ENTITLEMENTS = CatbirdNotificationWidgetExtension.entitlements;
-				CODE_SIGN_STYLE = Automatic;
 				CODE_SIGN_IDENTITY = "Apple Development";
-				DEVELOPMENT_TEAM = 44U2ZPNQPK;
+				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 2;
+				DEVELOPMENT_TEAM = 44U2ZPNQPK;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
@@ -892,10 +892,10 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
 				CODE_SIGN_ENTITLEMENTS = CatbirdNotificationWidgetExtension.entitlements;
-				CODE_SIGN_STYLE = Automatic;
 				CODE_SIGN_IDENTITY = "Apple Development";
-				DEVELOPMENT_TEAM = 44U2ZPNQPK;
+				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 2;
+				DEVELOPMENT_TEAM = 44U2ZPNQPK;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
@@ -1482,11 +1482,11 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
 				CODE_SIGN_ENTITLEMENTS = CatbirdFeedWidget/CatbirdFeedWidget.entitlements;
-				CODE_SIGN_STYLE = Automatic;
 				CODE_SIGN_IDENTITY = "Apple Development";
-				DEVELOPMENT_TEAM = 44U2ZPNQPK;
+				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 2;
 				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = 44U2ZPNQPK;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -1525,11 +1525,11 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
 				CODE_SIGN_ENTITLEMENTS = CatbirdFeedWidget/CatbirdFeedWidget.entitlements;
-				CODE_SIGN_STYLE = Automatic;
 				CODE_SIGN_IDENTITY = "Apple Development";
-				DEVELOPMENT_TEAM = 44U2ZPNQPK;
+				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 2;
 				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = 44U2ZPNQPK;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -1677,7 +1677,7 @@
 			repositoryURL = "https://github.com/joshlacal/Petrel";
 			requirement = {
 				kind = revision;
-				revision = 7c02d80b9aa10cab32f9134658162738bb7447b1;
+				revision = e457465cd286852155177f60ac9c5758bd4f6868;
 			};
 		};
 		2188669A300B600600215DE7 /* XCRemoteSwiftPackageReference "PetrelCatbird" */ = {
@@ -1685,7 +1685,7 @@
 			repositoryURL = "https://github.com/joshlacal/PetrelCatbird";
 			requirement = {
 				kind = revision;
-				revision = e29a1281ea377093fdf42455806b594980816244;
+				revision = 3f727bd92f281da1d7d2baa026a852a66771c18a;
 			};
 		};
 		2188669D300B606F00215DE7 /* XCRemoteSwiftPackageReference "CatbirdMLSCore" */ = {
@@ -1693,7 +1693,7 @@
 			repositoryURL = "https://github.com/joshlacal/CatbirdMLSCore";
 			requirement = {
 				kind = revision;
-				revision = 83fad4347486255356405774c4ae57f3d2740469;
+				revision = 60fff471b944736d7814658763c3af795fcf8ff7;
 			};
 		};
 		218866A0300B61AC00215DE7 /* XCRemoteSwiftPackageReference "CatbirdBrand" */ = {
