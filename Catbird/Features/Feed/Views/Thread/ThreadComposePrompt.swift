@@ -15,17 +15,6 @@ struct ThreadComposePrompt: View {
   var onOpenComposer: (() -> Void)?
 
   @State private var showingComposer = false
-  @Environment(\.colorScheme) private var colorScheme
-
-  init(
-    post: AppBskyFeedDefs.PostView?,
-    appState: AppState,
-    onOpenComposer: (() -> Void)? = nil
-  ) {
-    self.post = post
-    self.appState = appState
-    self.onOpenComposer = onOpenComposer
-  }
 
   private var isReplyDisabled: Bool {
     guard let post else { return true }
@@ -33,36 +22,30 @@ struct ThreadComposePrompt: View {
   }
 
   var body: some View {
-    VStack(spacing: 0) {
-      Divider()
-
-      HStack(spacing: 12) {
-        AvatarView(
-          did: appState.userDID,
-          client: appState.atProtoClient,
-          size: 28,
-          avatarURL: appState.currentUserProfile?.finalAvatarURL()
-        )
-        .clipShape(Circle())
-
-        Text("Write your reply")
-          .font(.subheadline)
-          .foregroundStyle(.secondary)
-          .frame(maxWidth: .infinity, alignment: .leading)
-      }
-      .padding(.horizontal, 14)
-      .padding(.vertical, 8)
-      .background(
-        Capsule()
-          .fill(Color(platformColor: PlatformColor.platformSecondarySystemBackground))
+    HStack(spacing: 12) {
+      AvatarView(
+        did: appState.userDID,
+        client: appState.atProtoClient,
+        size: 28,
+        avatarURL: appState.currentUserProfile?.finalAvatarURL()
       )
-      .opacity(isReplyDisabled ? 0.6 : 1.0)
-      .padding(.horizontal, 16)
-      .padding(.vertical, 8)
+      .clipShape(Circle())
+
+      Text("Write your reply")
+        .font(.subheadline)
+        .foregroundStyle(.secondary)
     }
-    .background(
-      Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme)
-    )
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .padding(.horizontal, 14)
+    .padding(.vertical, 8)
+    #if os(iOS)
+    .adaptiveGlassEffect(style: .regular, in: Capsule(), interactive: true)
+    #else
+    .background(.ultraThinMaterial, in: Capsule())
+    #endif
+    .opacity(isReplyDisabled ? 0.6 : 1.0)
+    .padding(.horizontal, 16)
+    .padding(.vertical, 8)
     .contentShape(Rectangle())
     .onTapGesture {
       guard !isReplyDisabled, post != nil else { return }
@@ -79,21 +62,17 @@ struct ThreadComposePrompt: View {
     .accessibilityAddTraits(.isButton)
     .sheet(isPresented: $showingComposer) {
       if let post {
-        Group {
-          PostComposerViewUIKit(
-            parentPost: post,
-            appState: appState
-          )
-          .applyAppStateEnvironment(appState)
-          #if os(iOS)
-          .presentationDetents({
-            if #available(iOS 26.0, *) { return [.large] } else { return [PresentationDetent.large] }
-          }())
-          .presentationDragIndicator({
-            if #available(iOS 26.0, *) { return .visible } else { return .hidden }
-          }())
-          #endif
-        }
+        PostComposerViewUIKit(
+          parentPost: post,
+          appState: appState
+        )
+        .applyAppStateEnvironment(appState)
+        #if os(iOS)
+        .presentationDetents([.large])
+        .presentationDragIndicator({
+          if #available(iOS 26.0, *) { return .visible } else { return .hidden }
+        }())
+        #endif
       }
     }
   }

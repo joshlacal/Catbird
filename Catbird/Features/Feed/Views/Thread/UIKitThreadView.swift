@@ -1061,6 +1061,14 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
 
   // MARK: - Compose Prompt Management
 
+  static func makeComposePromptHostingController(
+    rootView: AnyView
+  ) -> UIHostingController<AnyView> {
+    let hostingController = UIHostingController(rootView: rootView)
+    hostingController.sizingOptions = .intrinsicContentSize
+    return hostingController
+  }
+
   private func updateComposePrompt() {
     guard isViewLoaded else { return }
     if let mainPost = self.mainPost {
@@ -1080,7 +1088,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       return
     }
 
-    let hostingController = UIHostingController(rootView: AnyView(promptView))
+    let hostingController = Self.makeComposePromptHostingController(rootView: AnyView(promptView))
     hostingController.view.translatesAutoresizingMaskIntoConstraints = false
     hostingController.view.backgroundColor = .clear
 
