@@ -12,6 +12,8 @@ struct CircleManagementView: View {
 
   @State private var viewModel: CircleManagementViewModel?
   @State private var membersToAdd: [AppBskyActorDefs.ProfileViewBasic] = []
+  /// Hydrated profiles for the member roster, keyed by DID string.
+  @State private var memberProfiles: [String: AppBskyActorDefs.ProfileViewDetailed] = [:]
   @State private var showingAddMemberSheet = false
   @State private var memberToRemove: DID?
   @State private var showingDeleteConfirmation = false
@@ -53,6 +55,7 @@ struct CircleManagementView: View {
           )
           self.viewModel = vm
           await vm.loadMembers()
+          await hydrateMemberProfiles()
         }
       }
       .sheet(isPresented: $showingAddMemberSheet, onDismiss: commitPendingMembers) {
@@ -139,13 +142,26 @@ struct CircleManagementView: View {
           .foregroundStyle(.secondary)
       } else {
         ForEach(vm.members, id: \.self) { did in
-          HStack {
-            Image(systemName: "person.circle")
-              .foregroundStyle(.secondary)
-            Text(did.didString())
-              .font(.subheadline)
-              .lineLimit(1)
-              .truncationMode(.middle)
+          HStack(spacing: 12) {
+            if let profile = memberProfiles[did.didString()] {
+              AsyncProfileImage(url: URL(string: profile.avatar?.uriString() ?? ""), size: 36)
+              VStack(alignment: .leading, spacing: 2) {
+                Text(profile.displayName ?? "@\(profile.handle)")
+                  .font(.subheadline.weight(.medium))
+                  .lineLimit(1)
+                Text("@\(profile.handle)")
+                  .font(.caption)
+                  .foregroundStyle(.secondary)
+                  .lineLimit(1)
+              }
+            } else {
+              Image(systemName: "person.circle")
+                .foregroundStyle(.secondary)
+              Text(did.didString())
+                .font(.subheadline)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            }
             Spacer()
             Button(role: .destructive) {
               memberToRemove = did
@@ -155,7 +171,7 @@ struct CircleManagementView: View {
                 .foregroundStyle(.red)
             }
             .buttonStyle(.borderless)
-            .accessibilityLabel("Remove member \(did.didString())")
+            .accessibilityLabel("Remove member \(memberProfiles[did.didString()].map { $0.displayName ?? "@\($0.handle)" } ?? did.didString())")
             .accessibilityHint("Removes member from this Circle")
           }
         }
@@ -273,6 +289,38 @@ struct CircleManagementView: View {
         }
       }
       await vm.loadMembers()
+      await hydrateMemberProfiles()
+    }
+  }
+
+  // MARK: - Profile Hydration
+
+  /// Resolves the roster's DIDs to profiles via batched `getProfiles` calls
+  /// (25 per request, the endpoint's cap). Unresolvable DIDs keep their raw
+  /// DID row; a failed batch never clears profiles already loaded.
+  private func hydrateMemberProfiles() async {
+    guard let vm = viewModel, !vm.members.isEmpty,
+          let client = appState.atProtoClient
+    else { return }
+
+    let missing = vm.members.filter { memberProfiles[$0.didString()] == nil }
+    guard !missing.isEmpty else { return }
+
+    for chunkStart in stride(from: 0, to: missing.count, by: 25) {
+      let chunk = Array(missing[chunkStart..<min(chunkStart + 25, missing.count)])
+      do {
+        let actors = try chunk.map { try ATIdentifier(string: $0.didString()) }
+        let (code, response) = try await client.app.bsky.actor.getProfiles(
+          input: AppBskyActorGetProfiles.Parameters(actors: actors)
+        )
+        guard (200..<300).contains(code), let profiles = response?.profiles else { continue }
+        for profile in profiles {
+          memberProfiles[profile.did.didString()] = profile
+        }
+      } catch {
+        // Leave this chunk's rows as raw DIDs; the next appearance retries.
+        continue
+      }
     }
   }
 }
