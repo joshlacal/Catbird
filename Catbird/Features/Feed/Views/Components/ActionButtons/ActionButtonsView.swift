@@ -31,19 +31,17 @@ import UIKit
   }
 
   func update(from post: AppBskyFeedDefs.PostView) {
-    let oldLikeCount = self.likeCount  // For debug logging
+    let newIsLiked = post.viewer?.like != nil
+    let newIsReposted = post.viewer?.repost != nil
+    let newLikeCount = post.likeCount ?? 0
+    let newRepostCount = post.repostCount ?? 0
+    let newReplyCount = post.replyCount ?? 0
 
-    self.isLiked = post.viewer?.like != nil
-    self.isReposted = post.viewer?.repost != nil
-    self.likeCount = post.likeCount ?? 0
-    self.repostCount = post.repostCount ?? 0
-    self.replyCount = post.replyCount ?? 0
-
-    #if DEBUG
-      if oldLikeCount != self.likeCount {
-        logger.debug("Like count changed: \(oldLikeCount) -> \(self.likeCount)")
-      }
-    #endif
+    if self.isLiked != newIsLiked { self.isLiked = newIsLiked }
+    if self.isReposted != newIsReposted { self.isReposted = newIsReposted }
+    if self.likeCount != newLikeCount { self.likeCount = newLikeCount }
+    if self.repostCount != newRepostCount { self.repostCount = newRepostCount }
+    if self.replyCount != newReplyCount { self.replyCount = newReplyCount }
   }
 }
 
@@ -69,7 +67,6 @@ struct ActionButtonsView: View {
 
   // State for managing animations and loading
   @State private var initialLoadComplete: Bool = false
-  @State private var updateTask: Task<Void, Error>?  // Task for shadow updates
 
   // Customization option
   let isBig: Bool
@@ -200,33 +197,39 @@ struct ActionButtonsView: View {
         isFirstAppear = false
       }
     }
-    .task {
+    .task(id: post) {
+      if viewModel.postId != post.uri.uriString() {
+        viewModel = ActionButtonViewModel(
+          postId: post.uri.uriString(),
+          postViewModel: postViewModel,
+          appState: postViewModel.appState
+        )
+      }
+
       // Initial state setup
       await refreshState()
+      guard !Task.isCancelled else { return }
 
-      // Wait 0.5 seconds then mark initial load complete
-      try? await Task.sleep(for: .milliseconds(500))
-      await MainActor.run { initialLoadComplete = true }
+      // Mark initial load complete after brief delay
+      async let markInitialLoad: Void = {
+        try? await Task.sleep(for: .milliseconds(500))
+        guard !Task.isCancelled else { return }
+        initialLoadComplete = true
+      }()
 
-      // Start cancellable task for continuous updates with debouncing
-      updateTask = Task {
-        var lastUpdate = Date.distantPast
-        let debounceInterval: TimeInterval = 0.1  // 100ms debounce to prevent excessive re-renders
+      // Structured task loop for continuous updates with debouncing
+      var lastUpdate = Date.distantPast
+      let debounceInterval: TimeInterval = 0.1  // 100ms debounce to prevent excessive re-renders
 
-        for await _ in await appState.postShadowManager.shadowUpdates(forUri: post.uri.uriString()) {
-          try Task.checkCancellation()  // Check if task was cancelled
-          let now = Date()
-          if now.timeIntervalSince(lastUpdate) >= debounceInterval {
-            lastUpdate = now
-            await refreshState()
-          }
+      for await _ in await appState.postShadowManager.shadowUpdates(forUri: post.uri.uriString()) {
+        guard !Task.isCancelled else { break }
+        let now = Date()
+        if now.timeIntervalSince(lastUpdate) >= debounceInterval {
+          lastUpdate = now
+          await refreshState()
         }
       }
-    }
-    .onDisappear {
-      // Cancel the update task when the view disappears
-      updateTask?.cancel()
-      updateTask = nil
+      _ = await markInitialLoad
     }
     .sheet(isPresented: $showingPostComposer) {
       Group {
@@ -251,6 +254,13 @@ struct ActionButtonsView: View {
         #endif
       }
     .onChange(of: post) { _, newPost in
+      if viewModel.postId != newPost.uri.uriString() {
+        viewModel = ActionButtonViewModel(
+          postId: newPost.uri.uriString(),
+          postViewModel: postViewModel,
+          appState: postViewModel.appState
+        )
+      }
       interactionState.update(from: newPost)
     }
       #if os(iOS)
@@ -412,9 +422,7 @@ struct ActionButtonsView: View {
   // MARK: - State Management
   private func refreshState() async {
     let mergedPost = await appState.postShadowManager.mergeShadow(post: post)
-    await MainActor.run {
-      interactionState.update(from: mergedPost)
-    }
+    interactionState.update(from: mergedPost)
   }
 }
 

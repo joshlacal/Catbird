@@ -352,7 +352,7 @@ struct ThreadViewMainPostView: View, Equatable {
             } message: {
                 Text("Block @\(post.author.handle)? You won't see each other's posts, and they won't be able to follow you.")
             }
-            .task {
+            .task(id: post) {
                 await setupContextMenu()
             }
         }
@@ -375,6 +375,12 @@ struct ThreadViewMainPostView: View, Equatable {
 
     /// Set up the context menu and its callbacks
     private func setupContextMenu() async {
+        guard !Task.isCancelled else { return }
+        if viewModel.postId != post.uri.uriString() || viewModel.postCid != post.cid {
+            viewModel = PostViewModel(post: post, appState: appState, visibilityContext: visibilityContext)
+        }
+        await viewModel.start(post: post)
+        guard !Task.isCancelled else { return }
         // Set up report callback
         contextMenuViewModel.onReportPost = {
             showingReportView = true

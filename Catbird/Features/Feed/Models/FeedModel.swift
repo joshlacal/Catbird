@@ -516,12 +516,7 @@ final class FeedModel: StateInvalidationSubscriber {
       for post in posts {
         group.addTask {
           await self.appState.postShadowManager.updateShadow(forUri: post.post.uri.uriString()) { shadow in
-            if let like = post.post.viewer?.like {
-              shadow.likeUri = like
-            }
-            if let repost = post.post.viewer?.repost {
-              shadow.repostUri = repost
-            }
+            shadow.hydrateFromServer(likeUri: post.post.viewer?.like, repostUri: post.post.viewer?.repost)
           }
         }
       }

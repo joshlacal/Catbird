@@ -13,19 +13,73 @@ import Petrel
 /// A shadow state representation for posts
 /// Maintains the UI state separate from server state for optimistic updates
 struct PostShadow: Equatable, Sendable {
-    var likeUri: ATProtocolURI?
-    var repostUri: ATProtocolURI?
+    private(set) var likeUri: ATProtocolURI?
+    private(set) var repostUri: ATProtocolURI?
+    private(set) var likeDecided: Bool = false
+    private(set) var repostDecided: Bool = false
     var bookmarked: Bool?  // Changed from bookmarkUri to bookmarked since AT Protocol uses Bool
     var isDeleted: Bool = false
     var pinned: Bool = false
     var embed: AppBskyFeedDefs.PostViewEmbedUnion?
     
-    // Shadow state for counts (for optimistic updates)
-    var likeCount: Int?
-    var repostCount: Int?
-    
     // Flag to indicate this is an optimistic/temporary post
     var isOptimistic: Bool = false
+
+    init(
+        likeUri: ATProtocolURI? = nil,
+        repostUri: ATProtocolURI? = nil,
+        likeDecided: Bool = false,
+        repostDecided: Bool = false,
+        bookmarked: Bool? = nil,
+        isDeleted: Bool = false,
+        pinned: Bool = false,
+        embed: AppBskyFeedDefs.PostViewEmbedUnion? = nil,
+        isOptimistic: Bool = false
+    ) {
+        self.likeUri = likeUri
+        self.repostUri = repostUri
+        self.likeDecided = likeDecided
+        self.repostDecided = repostDecided
+        self.bookmarked = bookmarked
+        self.isDeleted = isDeleted
+        self.pinned = pinned
+        self.embed = embed
+        self.isOptimistic = isOptimistic
+    }
+
+    /// Explicitly records a user/local decision for liking or unliking
+    mutating func decideLike(_ uri: ATProtocolURI?) {
+        self.likeUri = uri
+        self.likeDecided = true
+    }
+
+    /// Explicitly records a user/local decision for reposting or unreposting
+    mutating func decideRepost(_ uri: ATProtocolURI?) {
+        self.repostUri = uri
+        self.repostDecided = true
+    }
+
+    /// Reconciles shadow state with server viewer state.
+    /// Undecided state updates from server while remaining undecided.
+    /// Decided state: if server caught up to local decision, retires decision;
+    /// if server still disagrees, preserves local decision.
+    mutating func hydrateFromServer(likeUri serverLikeUri: ATProtocolURI?, repostUri serverRepostUri: ATProtocolURI?) {
+        if !likeDecided {
+            self.likeUri = serverLikeUri
+        } else if (self.likeUri != nil) == (serverLikeUri != nil) {
+            // Server has caught up to our decision
+            self.likeDecided = false
+            self.likeUri = serverLikeUri
+        }
+
+        if !repostDecided {
+            self.repostUri = serverRepostUri
+        } else if (self.repostUri != nil) == (serverRepostUri != nil) {
+            // Server has caught up to our decision
+            self.repostDecided = false
+            self.repostUri = serverRepostUri
+        }
+    }
 }
 
 /// Actor for managing post shadow state
@@ -120,7 +174,8 @@ actor PostShadowManager {
     /// - Parameter postUri: The post URI
     /// - Returns: True if the post is liked
     func isLiked(postUri: String) -> Bool {
-        return getShadow(forUri: postUri)?.likeUri != nil
+        guard let shadow = getShadow(forUri: postUri) else { return false }
+        return shadow.likeDecided && shadow.likeUri != nil
     }
     
     /// Sets the liked state for a post
@@ -130,40 +185,26 @@ actor PostShadowManager {
     func setLiked(postUri: String, isLiked: Bool) {
         updateShadow(forUri: postUri) { shadow in
             if isLiked {
-                // Only create a placeholder URI if one doesn't exist
                 if shadow.likeUri == nil {
                     // Create a URI with a proper structure so recordKey access works
                     let likeId = UUID().uuidString
-                    shadow.likeUri = try? ATProtocolURI(uriString: "at://did:placeholder/app.bsky.feed.like/\(likeId)")
+                    shadow.decideLike(try? ATProtocolURI(uriString: "at://did:plc:placeholder/app.bsky.feed.like/\(likeId)"))
+                } else {
+                    shadow.decideLike(shadow.likeUri)
                 }
             } else {
-                shadow.likeUri = nil
+                shadow.decideLike(nil)
             }
         }
     }
     
-    /// Gets the like count for a post
-    /// - Parameter postUri: The post URI
-    /// - Returns: The like count or 0 if not available
-    func getLikeCount(postUri: String) -> Int {
-        return getShadow(forUri: postUri)?.likeCount ?? 0
-    }
-    
-    /// Sets the like count for a post
-    /// - Parameters:
-    ///   - postUri: The post URI
-    ///   - count: The new like count
-    func setLikeCount(postUri: String, count: Int) {
-        updateShadow(forUri: postUri) { shadow in
-            shadow.likeCount = count
-        }
-    }
     
     /// Checks if a post is reposted in the shadow state
     /// - Parameter postUri: The post URI
     /// - Returns: True if the post is reposted
     func isReposted(postUri: String) -> Bool {
-        return getShadow(forUri: postUri)?.repostUri != nil
+        guard let shadow = getShadow(forUri: postUri) else { return false }
+        return shadow.repostDecided && shadow.repostUri != nil
     }
     
     /// Sets the reposted state for a post
@@ -177,30 +218,16 @@ actor PostShadowManager {
                 if shadow.repostUri == nil {
                     // Create a URI with a proper structure so recordKey access works
                     let repostId = UUID().uuidString
-                    shadow.repostUri = try? ATProtocolURI(uriString: "at://did:placeholder/app.bsky.feed.repost/\(repostId)")
+                    shadow.decideRepost(try? ATProtocolURI(uriString: "at://did:plc:placeholder/app.bsky.feed.repost/\(repostId)"))
+                } else {
+                    shadow.decideRepost(shadow.repostUri)
                 }
             } else {
-                shadow.repostUri = nil
+                shadow.decideRepost(nil)
             }
         }
     }
     
-    /// Gets the repost count for a post
-    /// - Parameter postUri: The post URI
-    /// - Returns: The repost count or 0 if not available
-    func getRepostCount(postUri: String) -> Int {
-        return getShadow(forUri: postUri)?.repostCount ?? 0
-    }
-    
-    /// Sets the repost count for a post
-    /// - Parameters:
-    ///   - postUri: The post URI
-    ///   - count: The new repost count
-    func setRepostCount(postUri: String, count: Int) {
-        updateShadow(forUri: postUri) { shadow in
-            shadow.repostCount = count
-        }
-    }
     
     /// Checks if a post is bookmarked in the shadow state
     /// - Parameter postUri: The post URI
@@ -239,28 +266,42 @@ actor PostShadowManager {
             return post // Or handle deleted state as needed
         }
         
-        // Use shadow counts if available, otherwise use post counts
+        // Use shadow decisions if available, otherwise use post counts
+        let finalLikeUri: ATProtocolURI?
         let likeCount: Int
-        if shadow.likeUri != nil && post.viewer?.like == nil {
-            // We liked but server doesn't know yet - add 1 to server count
-            likeCount = (post.likeCount ?? 0) + 1
-        } else if shadow.likeUri == nil && post.viewer?.like != nil {
-            // We unliked but server doesn't know yet - subtract 1 from server count
-            likeCount = max(0, (post.likeCount ?? 0) - 1)
+        if shadow.likeDecided {
+            finalLikeUri = shadow.likeUri
+            if shadow.likeUri != nil && post.viewer?.like == nil {
+                // We liked but server doesn't know yet - add 1 to server count
+                likeCount = (post.likeCount ?? 0) + 1
+            } else if shadow.likeUri == nil && post.viewer?.like != nil {
+                // We unliked but server doesn't know yet - subtract 1 from server count
+                likeCount = max(0, (post.likeCount ?? 0) - 1)
+            } else {
+                // Server and local state are in sync - use server count
+                likeCount = post.likeCount ?? 0
+            }
         } else {
-            // Server and local state are in sync - use server count
+            finalLikeUri = post.viewer?.like
             likeCount = post.likeCount ?? 0
         }
 
+        let finalRepostUri: ATProtocolURI?
         let repostCount: Int
-        if shadow.repostUri != nil && post.viewer?.repost == nil {
-            // We reposted but server doesn't know yet - add 1 to server count
-            repostCount = (post.repostCount ?? 0) + 1
-        } else if shadow.repostUri == nil && post.viewer?.repost != nil {
-            // We unreposted but server doesn't know yet - subtract 1 from server count
-            repostCount = max(0, (post.repostCount ?? 0) - 1)
+        if shadow.repostDecided {
+            finalRepostUri = shadow.repostUri
+            if shadow.repostUri != nil && post.viewer?.repost == nil {
+                // We reposted but server doesn't know yet - add 1 to server count
+                repostCount = (post.repostCount ?? 0) + 1
+            } else if shadow.repostUri == nil && post.viewer?.repost != nil {
+                // We unreposted but server doesn't know yet - subtract 1 from server count
+                repostCount = max(0, (post.repostCount ?? 0) - 1)
+            } else {
+                // Server and local state are in sync - use server count
+                repostCount = post.repostCount ?? 0
+            }
         } else {
-            // Server and local state are in sync - use server count
+            finalRepostUri = post.viewer?.repost
             repostCount = post.repostCount ?? 0
         }
         
@@ -268,8 +309,8 @@ actor PostShadowManager {
         
         // Create a new viewer state with the shadow information
         let viewerState = AppBskyFeedDefs.ViewerState(
-            repost: shadow.repostUri,
-            like: shadow.likeUri,
+            repost: finalRepostUri,
+            like: finalLikeUri,
             bookmarked: shadow.bookmarked ?? post.viewer?.bookmarked,
             threadMuted: post.viewer?.threadMuted,
             replyDisabled: post.viewer?.replyDisabled,
@@ -277,7 +318,6 @@ actor PostShadowManager {
             pinned: shadow.pinned,
             knownLikers: post.viewer?.knownLikers
         )
-        
         // Handle embed merging
         var finalEmbed = post.embed
         if let shadowEmbed = shadow.embed {

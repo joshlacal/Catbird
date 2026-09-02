@@ -74,7 +74,6 @@ struct PostView: View, Equatable, Identifiable {
   @State private var postState: PostState  // Consolidated state
   @State private var contextMenuViewModel: PostContextMenuViewModel
   @State private var viewModel: PostViewModel
-  @State private var shadowUpdateTask: Task<Void, Error>?  // For AsyncStream management
   @State private var initialLoadComplete = false  // For transaction animation control
   @State private var postError: PostViewError?  // Error state tracking
   @State private var isShowingThreadSummary = false
@@ -190,15 +189,16 @@ var id: String {
     }
     .fixedSize(horizontal: false, vertical: true)
     .entityContext(EntityIdentifier(for: PostEntity.self, identifier: post.uri.uriString()))
-    .task {
+    .task(id: post) {
       await setupPost()
     }
     .onChange(of: post) { _, newPost in
       postState.currentPost = newPost
+      if viewModel.postId != newPost.uri.uriString() || viewModel.postCid != newPost.cid {
+        viewModel = PostViewModel(post: newPost, appState: appState, visibilityContext: visibilityContext)
+      }
     }
     .onDisappear {
-      shadowUpdateTask?.cancel()
-      shadowUpdateTask = nil
       threadSummaryTask?.cancel()
       threadSummaryTask = nil
     }
@@ -905,13 +905,21 @@ var id: String {
 
   /// Set up the post and its observers
   private func setupPost() async {
+    guard !Task.isCancelled else { return }
+
+    if postState.currentPost != post {
+      postState.currentPost = post
+    }
+    if viewModel.postId != post.uri.uriString() || viewModel.postCid != post.cid {
+      viewModel = PostViewModel(post: post, appState: appState, visibilityContext: visibilityContext)
+    }
+
     // Check for error conditions first
     if let error = detectPostError() {
       postError = error
       initialLoadComplete = true
       return
     }
-
     // Seed before any lifecycle wait or image prefetch. The responder may be
     // visible to AppIntentsTesting as soon as this view renders.
     if #available(iOS 18.0, *) {
@@ -950,23 +958,30 @@ var id: String {
     // Fetch user data
     fetchCurrentUserDid()
 
-    // Replace fixed sleep with waiting for app state cycle (if available)
-    // try? await Task.sleep(for: .milliseconds(100)) // Removed
-    await appState.waitForNextRefreshCycle()  // Added - Ensure AppState has this method
+    // Deterministic async initialization of PostViewModel
+    await viewModel.start(post: post)
+    guard !Task.isCancelled else { return }
+
+    // Preserve the thermally scaled delay
+    await appState.waitForNextRefreshCycle()
+    guard !Task.isCancelled else { return }
 
     // Prefetch the avatar image
     await prefetchAvatar()
-
-    // Set up shadow observation for real-time updates
-    shadowUpdateTask = Task {  // Manage task lifecycle
-      for await _ in await appState.postShadowManager.shadowUpdates(forUri: post.uri.uriString()) {
-        try Task.checkCancellation()  // Check for cancellation
-        postState.currentPost = await appState.postShadowManager.mergeShadow(post: post)  // Use consolidated state
-      }
-    }
+    guard !Task.isCancelled else { return }
 
     // Mark initial load as complete for transaction animation control
     initialLoadComplete = true
+
+    // Structured shadow observation loop for real-time updates
+    for await _ in await appState.postShadowManager.shadowUpdates(forUri: post.uri.uriString()) {
+      guard !Task.isCancelled else { break }
+      let merged = await appState.postShadowManager.mergeShadow(post: post)
+      guard !Task.isCancelled else { break }
+      if merged != postState.currentPost {
+        postState.currentPost = merged
+      }
+    }
   }
   
 #if canImport(FoundationModels)

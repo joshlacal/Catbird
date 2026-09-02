@@ -8,7 +8,6 @@ import SwiftUI
 //
 
 struct PostHeaderView: View {
-    @Environment(AppState.self) private var appState
     let displayName: String
     let handle: String
     let timeAgo: Date
@@ -30,11 +29,12 @@ struct PostHeaderView: View {
     }
     
     // Constants for layout
-    private let profileImageSize: CGFloat = 40
     private let spacing: CGFloat = 8
-    private let handleCharacterLimit: Int = 15
     
     var body: some View {
+        let shortTimeAgo = shortTimeAgoString(from: timeAgo)
+        let accessibleTimeAgo = formatTimeAgo(from: timeAgo, forAccessibility: true)
+
         HStack(alignment: .top) {
             // Main Content
             HStack(alignment: .top, spacing: spacing) {
@@ -92,10 +92,10 @@ struct PostHeaderView: View {
                     .truncationMode(.tail)
                     .layoutPriority(1)
 
-                Text(formatTimeAgo(from: timeAgo))
+                Text(shortTimeAgo)
                     .appBody()
                     .foregroundStyle(.gray)
-                    .accessibilityLabel(formatTimeAgo(from: timeAgo, forAccessibility: true))
+                    .accessibilityLabel(accessibleTimeAgo)
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .layoutPriority(1)

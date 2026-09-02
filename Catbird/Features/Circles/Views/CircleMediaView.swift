@@ -28,9 +28,13 @@ struct CircleMediaView: View {
   let shouldBlur: Bool
 
   @Environment(AppState.self) private var appState
+  @Environment(\.displayScale) private var displayScale: CGFloat
   @State private var platformImage: PlatformImage?
-  @State private var isLoading: Bool = false
-  @State private var errorMessage: String?
+  @State private var hasError = false
+  @State private var targetBucket: Int? = nil
+  @State private var renderedBucket: Int = 0
+
+  private static let pixelBuckets = [120, 240, 360, 480, 720, 960, 1280, 1920]
 
   init(
     space: SpaceRef,
@@ -81,40 +85,34 @@ struct CircleMediaView: View {
     self.cid = (try? CID.parse(cidString)) ?? CID.fromBlob(Data(cidString.utf8))
   }
 
-  /// Convenience initializer with non-optional author DID.
-  init?(
-    viewImage: AppBskyEmbedImages.ViewImage,
-    circle: CircleSummary,
-    authorDID: DID,
-    contentMode: ContentMode = .fill,
-    cornerRadius: CGFloat = 10,
-    shouldBlur: Bool = false
-  ) {
-    self.init(
-      viewImage: viewImage,
-      circle: circle,
-      authorDID: Optional(authorDID),
-      contentMode: contentMode,
-      cornerRadius: cornerRadius,
-      shouldBlur: shouldBlur
-    )
-  }
-
   var body: some View {
     ZStack {
       if let platformImage {
         imageView(platformImage)
-      } else if isLoading {
-        loadingView
-      } else if errorMessage != nil {
+      } else if hasError {
         errorPlaceholderView
       } else {
         loadingView
       }
     }
     .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
-    .task(id: "\(space.description)|\(authorDID.description)|\(cid.description)") {
-      await loadImage()
+    .onGeometryChange(for: CGSize.self) { proxy in
+      proxy.size
+    } action: { newSize in
+      guard newSize.width > 0, newSize.height > 0 else { return }
+      let maxDim = max(newSize.width, newSize.height) * displayScale
+      let bucket = Self.bucket(for: maxDim)
+      if let current = targetBucket {
+        if bucket > current {
+          targetBucket = bucket
+        }
+      } else {
+        targetBucket = bucket
+      }
+    }
+    .task(id: "\(space.description)|\(authorDID.description)|\(cid.description)|\(targetBucket?.description ?? "nil")") {
+      guard let targetBucket else { return }
+      await loadImage(bucket: targetBucket)
     }
   }
 
@@ -156,10 +154,9 @@ struct CircleMediaView: View {
     .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
 
-  private func loadImage() async {
-    guard platformImage == nil else { return }
-    isLoading = true
-    errorMessage = nil
+  private func loadImage(bucket: Int) async {
+    guard platformImage == nil || bucket > renderedBucket else { return }
+    hasError = false
 
     do {
       let image = try await CircleMediaLoader.shared.image(
@@ -167,14 +164,24 @@ struct CircleMediaView: View {
         space: space,
         authorDID: authorDID,
         cid: cid,
+        targetBucket: bucket,
         service: appState.circleService
       )
+      if Task.isCancelled { return }
       self.platformImage = image
-      self.isLoading = false
+      self.renderedBucket = bucket
     } catch {
-      self.errorMessage = error.localizedDescription
-      self.isLoading = false
+      if Task.isCancelled { return }
+      if platformImage == nil {
+        hasError = true
+      }
     }
+  }
+
+  static func bucket(for maxPixelDimension: CGFloat) -> Int {
+    guard maxPixelDimension > 0 else { return 360 }
+    let target = Int(ceil(maxPixelDimension))
+    return pixelBuckets.first(where: { $0 >= target }) ?? max(target, 1920)
   }
 
   private static func extractCID(from uriString: String) -> String? {

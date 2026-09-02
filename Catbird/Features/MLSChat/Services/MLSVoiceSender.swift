@@ -173,12 +173,19 @@ final class MLSVoiceSender {
 
   // MARK: - Display Link for Duration Updates
 
+  private func updateRecordingTick(elapsed: TimeInterval) {
+    let currentSecond = Int(elapsed)
+    if case let .recording(currentDuration) = state {
+      guard Int(currentDuration) != currentSecond else { return }
+    }
+    state = .recording(duration: elapsed)
+  }
+
   #if os(iOS)
   private func startDisplayLink() {
     let link = CADisplayLink(target: DisplayLinkTarget { [weak self] in
       guard let self, let start = self.recordingStartTime else { return }
-      let duration = Date().timeIntervalSince(start)
-      self.state = .recording(duration: duration)
+      self.updateRecordingTick(elapsed: Date().timeIntervalSince(start))
     }, selector: #selector(DisplayLinkTarget.tick))
     link.preferredFrameRateRange = CAFrameRateRange(minimum: 10, maximum: 15)
     link.add(to: .main, forMode: .common)

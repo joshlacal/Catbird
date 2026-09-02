@@ -39,8 +39,8 @@ final class PostViewModel {
     @MainActor private(set) var replyCount: Int = 0
     
     // Store the actual like, repost, and bookmark URIs
-    private var likeUri: ATProtocolURI?
-    private var repostUri: ATProtocolURI?
+    private(set) var likeUri: ATProtocolURI?
+    private(set) var repostUri: ATProtocolURI?
 
     /// Visibility context for the post (public or circle)
     var visibilityContext: PostVisibilityContext = .public
@@ -51,8 +51,6 @@ final class PostViewModel {
         let isAuthor = authorDid != nil && authorDid == appState.userDID
         return PostCapabilities.forContext(visibilityContext, isAuthor: isAuthor)
     }
-    private var initializationTask: Task<Void, Never>?
-    
     /// Logger for debugging
     let logger = Logger(subsystem: "blue.catbird", category: "PostViewModel")
     
@@ -65,6 +63,7 @@ final class PostViewModel {
     ///   - appState: The app state
     ///   - authorDid: Optional author DID of the post
     ///   - visibilityContext: The visibility context of the post
+    @MainActor
     init(
         postId: String,
         postCid: CID,
@@ -77,14 +76,10 @@ final class PostViewModel {
         self.appState = appState
         self.authorDid = authorDid
         self.visibilityContext = visibilityContext
-        
-        // Check initial state from post shadow manager
-        Task {
-            await checkInteractionState()
-        }
     }
     
     /// Convenience initializer from a post view
+    @MainActor
     convenience init(
         post: AppBskyFeedDefs.PostView,
         appState: AppState,
@@ -98,88 +93,98 @@ final class PostViewModel {
             visibilityContext: visibilityContext
         )
         
-        // Initialize shadow state from the server's post data
-        // Properly managed task
-        initializationTask = Task {
-            // Check for cancellation before starting
-            guard !Task.isCancelled else { return }
-            await initializeFromServerState(post: post)
-        }
-    }
-    
-    // MARK: - Deinitialization
-    
-    deinit {
-        initializationTask?.cancel()
+        self.isLiked = post.viewer?.like != nil
+        self.isReposted = post.viewer?.repost != nil
+        self.isBookmarked = post.viewer?.bookmarked == true
+        self.likeCount = post.likeCount ?? 0
+        self.repostCount = post.repostCount ?? 0
+        self.replyCount = post.replyCount ?? 0
+        self.likeUri = post.viewer?.like
+        self.repostUri = post.viewer?.repost
     }
     
     // MARK: - State Management
     
+    /// Starts deterministic async initialization of the view model, reconciling shadow and server state
+    @MainActor
+    func start(post: AppBskyFeedDefs.PostView? = nil) async {
+        if let post {
+            await initializeFromServerState(post: post)
+            guard !Task.isCancelled else { return }
+        }
+        await checkInteractionState()
+    }
+    
     /// Initialize the shadow state when a post is loaded
     @MainActor
     func initializeFromServerState(post: AppBskyFeedDefs.PostView) async {
-        // First update the local state
-        isLiked = post.viewer?.like != nil
-        isReposted = post.viewer?.repost != nil
-        isBookmarked = post.viewer?.bookmarked == true
-        likeCount = post.likeCount ?? 0
-        repostCount = post.repostCount ?? 0
-        replyCount = post.replyCount ?? 0
+        guard !Task.isCancelled else { return }
         
-        // Store URIs directly in view model for backup
-        likeUri = post.viewer?.like
-        repostUri = post.viewer?.repost
-        // bookmarkUri will be set separately from the shadow since bookmarked is Bool, not URI
-        
-        // Check if shadow already exists to avoid redundant initialization
-        let existingShadow = await appState.postShadowManager.getShadow(forUri: post.uri.uriString())
-        
-        // Batch shadow updates if needed
-        var needsShadowUpdate = false
-        var likeUriToSet: ATProtocolURI?
-        var repostUriToSet: ATProtocolURI?
-        
-        if let likeUri = post.viewer?.like, existingShadow?.likeUri == nil {
-            likeUriToSet = likeUri
-            needsShadowUpdate = true
+        // Reconcile shadow with server state
+        await appState.postShadowManager.updateShadow(forUri: post.uri.uriString()) { shadow in
+            shadow.hydrateFromServer(likeUri: post.viewer?.like, repostUri: post.viewer?.repost)
         }
+        guard !Task.isCancelled else { return }
         
-        if let repostUri = post.viewer?.repost, existingShadow?.repostUri == nil {
-            repostUriToSet = repostUri
-            needsShadowUpdate = true
-        }
+        let shadow = await appState.postShadowManager.getShadow(forUri: post.uri.uriString())
+        guard !Task.isCancelled else { return }
         
-        // For bookmarks, we only track the boolean state in the post, not the URI
-        // The URI is managed by BookmarksManager
-        
-        if needsShadowUpdate {
-            await appState.postShadowManager.updateShadow(forUri: post.uri.uriString()) { shadow in
-                if let likeUri = likeUriToSet {
-                    shadow.likeUri = likeUri
-                    shadow.likeCount = post.likeCount
-                }
-                if let repostUri = repostUriToSet {
-                    shadow.repostUri = repostUri
-                    shadow.repostCount = post.repostCount
-                }
+        if let shadow, shadow.likeDecided {
+            isLiked = shadow.likeUri != nil
+            likeUri = shadow.likeUri
+            if shadow.likeUri != nil && post.viewer?.like == nil {
+                likeCount = (post.likeCount ?? 0) + 1
+            } else if shadow.likeUri == nil && post.viewer?.like != nil {
+                likeCount = max(0, (post.likeCount ?? 0) - 1)
+            } else {
+                likeCount = post.likeCount ?? 0
             }
+        } else {
+            isLiked = post.viewer?.like != nil
+            likeUri = post.viewer?.like
+            likeCount = post.likeCount ?? 0
         }
+        
+        if let shadow, shadow.repostDecided {
+            isReposted = shadow.repostUri != nil
+            repostUri = shadow.repostUri
+            if shadow.repostUri != nil && post.viewer?.repost == nil {
+                repostCount = (post.repostCount ?? 0) + 1
+            } else if shadow.repostUri == nil && post.viewer?.repost != nil {
+                repostCount = max(0, (post.repostCount ?? 0) - 1)
+            } else {
+                repostCount = post.repostCount ?? 0
+            }
+        } else {
+            isReposted = post.viewer?.repost != nil
+            repostUri = post.viewer?.repost
+            repostCount = post.repostCount ?? 0
+        }
+        
+        if let shadow, let bookmarked = shadow.bookmarked {
+            isBookmarked = bookmarked
+        } else {
+            isBookmarked = post.viewer?.bookmarked == true
+        }
+        replyCount = post.replyCount ?? 0
     }
     
     /// Updates the interaction state from the shadow manager
     @MainActor
     func checkInteractionState() async {
+        guard !Task.isCancelled else { return }
         if let shadow = await appState.postShadowManager.getShadow(forUri: postId) {
-            isLiked = shadow.likeUri != nil
-            isReposted = shadow.repostUri != nil
-            isBookmarked = shadow.bookmarked == true
-            
-            // Update our backup copy of URIs
-            if isLiked && likeUri == nil {
+            guard !Task.isCancelled else { return }
+            if shadow.likeDecided {
+                isLiked = shadow.likeUri != nil
                 likeUri = shadow.likeUri
             }
-            if isReposted && repostUri == nil {
+            if shadow.repostDecided {
+                isReposted = shadow.repostUri != nil
                 repostUri = shadow.repostUri
+            }
+            if let bookmarked = shadow.bookmarked {
+                isBookmarked = bookmarked
             }
         }
     }
@@ -200,32 +205,27 @@ final class PostViewModel {
     // MARK: - Post Interactions
     
     /// Reverts the like state optimistically
-    private func revertLikeState(wasLiked: Bool, originalCount: Int) async {
+    private func revertLikeState(wasLiked: Bool) async {
         await withTaskGroup(of: Void.self) { group in
             group.addTask { @MainActor in
                 self.isLiked = wasLiked
-                // Note: likeCount is already @MainActor, direct update is fine if needed,
-                // but shadow manager handles count revert.
             }
             
             group.addTask { 
                 await self.appState.postShadowManager.setLiked(postUri: self.postId, isLiked: wasLiked)
-                await self.appState.postShadowManager.setLikeCount(postUri: self.postId, count: originalCount)
             }
         }
     }
     
     /// Reverts the repost state optimistically
-    private func revertRepostState(wasReposted: Bool, originalCount: Int) async {
+    private func revertRepostState(wasReposted: Bool) async {
         await withTaskGroup(of: Void.self) { group in
             group.addTask { @MainActor in
                 self.isReposted = wasReposted
-                // Note: repostCount is already @MainActor.
             }
             
             group.addTask {
                 await self.appState.postShadowManager.setReposted(postUri: self.postId, isReposted: wasReposted)
-                await self.appState.postShadowManager.setRepostCount(postUri: self.postId, count: originalCount)
             }
         }
     }
@@ -257,7 +257,6 @@ final class PostViewModel {
         
         // Local copy for reverting if needed
         let wasLiked = isLiked
-        let currentLikeCount = await likeCount // Read MainActor property
         
         // Use task groups for optimistic updates
         await withTaskGroup(of: Void.self) { group in
@@ -267,11 +266,6 @@ final class PostViewModel {
             
             group.addTask {
                 await self.appState.postShadowManager.setLiked(postUri: self.postId, isLiked: !wasLiked)
-                // Optimistically update count in shadow
-                await self.appState.postShadowManager.setLikeCount(
-                    postUri: self.postId,
-                    count: wasLiked ? max(0, currentLikeCount - 1) : currentLikeCount + 1
-                )
             }
         }
         
@@ -311,7 +305,7 @@ final class PostViewModel {
                     
                     // Update shadow with real URI
                     await appState.postShadowManager.updateShadow(forUri: postId) { shadow in
-                        shadow.likeUri = response.uri
+                        shadow.decideLike(response.uri)
                     }
                     
                     // Track interaction for feed feedback
@@ -369,7 +363,7 @@ final class PostViewModel {
                     let responseUri = try await service.like(post: postView, circle: circle)
                     self.likeUri = responseUri
                     await appState.postShadowManager.updateShadow(forUri: postId) { shadow in
-                        shadow.likeUri = responseUri
+                        shadow.decideLike(responseUri)
                     }
                 }
             } else { // Deleting an existing like
@@ -394,7 +388,7 @@ final class PostViewModel {
                     
                     self.likeUri = nil
                     await appState.postShadowManager.updateShadow(forUri: postId) { shadow in
-                        shadow.likeUri = nil
+                        shadow.decideLike(nil)
                     }
                 case let .circle(circle):
                     guard let uri = likeUri else {
@@ -404,14 +398,14 @@ final class PostViewModel {
                     try await service.deleteLike(uri: uri, circle: circle)
                     self.likeUri = nil
                     await appState.postShadowManager.updateShadow(forUri: postId) { shadow in
-                        shadow.likeUri = nil
+                        shadow.decideLike(nil)
                     }
                 }
             }
             return true
         } catch {
             // Revert optimistic update on any error
-            await revertLikeState(wasLiked: wasLiked, originalCount: currentLikeCount)
+            await revertLikeState(wasLiked: wasLiked)
             #if DEBUG
             logger.error("Error toggling like: \(error)")
             #endif
@@ -438,7 +432,6 @@ final class PostViewModel {
         
         // Local copy for reverting if needed
         let wasReposted = isReposted
-        let currentRepostCount = await repostCount // Read MainActor property
         
         // Use task groups for optimistic updates
         await withTaskGroup(of: Void.self) { group in
@@ -448,10 +441,6 @@ final class PostViewModel {
             
             group.addTask {
                 await self.appState.postShadowManager.setReposted(postUri: self.postId, isReposted: !wasReposted)
-                await self.appState.postShadowManager.setRepostCount(
-                    postUri: self.postId,
-                    count: wasReposted ? max(0, currentRepostCount - 1) : currentRepostCount + 1
-                )
             }
         }
         
@@ -488,7 +477,7 @@ final class PostViewModel {
                 
                 // Update shadow with real URI
                 await appState.postShadowManager.updateShadow(forUri: postId) { shadow in
-                    shadow.repostUri = response.uri
+                    shadow.decideRepost(response.uri)
                 }
                 
                 // Track interaction for feed feedback
@@ -516,7 +505,7 @@ final class PostViewModel {
                 
                 guard !recordKey.isEmpty else {
                     // Revert optimistic update
-                    await revertRepostState(wasReposted: wasReposted, originalCount: currentRepostCount)
+                    await revertRepostState(wasReposted: wasReposted)
                     return false // Indicate failure
                 }
                 
@@ -537,7 +526,7 @@ final class PostViewModel {
             }
         } catch {
             // Revert optimistic update on any error
-            await revertRepostState(wasReposted: wasReposted, originalCount: currentRepostCount)
+            await revertRepostState(wasReposted: wasReposted)
             #if DEBUG
             logger.error("Error toggling repost: \(error)")
             #endif
@@ -615,21 +604,6 @@ final class PostViewModel {
             throw PostViewModelError.missingClient
         }
         
-        // Get current state for reverting if needed
-        // Note: Quote posting *adds* a new post, it doesn't modify the original's repost state directly
-        // in the same way a simple repost does. The UI might show the original as "reposted"
-        // conceptually, but the action creates a *new* post record.
-        // We'll optimistically update the shadow's repost count for immediate feedback,
-        // but we won't toggle `isReposted` here as it refers to a direct repost record.
-        // The server response doesn't give us a direct repost URI for the *original* post
-        // when quoting.
-        
-        let currentRepostCount = await repostCount // Read MainActor property
-        
-        // Optimistically update shadow state count
-        await appState.postShadowManager.setRepostCount(postUri: postId, count: currentRepostCount + 1)
-        // We don't set `isReposted = true` or `setReposted` because this isn't a direct repost record.
-        
         do {
             // Create quote post record
             let postRef = ComAtprotoRepoStrongRef(
@@ -657,19 +631,13 @@ final class PostViewModel {
             )
             
             // Use try for result handling
-            let response = try await client.com.atproto.repo.createRecord(input: input)
+            _ = try await client.com.atproto.repo.createRecord(input: input)
             
             // We don't save this URI as `self.repostUri` because it's the URI of the *new* quote post,
             // not a direct repost record of the original post.
             // We also don't update the shadow's `repostUri` for the original post.
-                        
-            // The optimistic count update remains.
             return true
-            
         } catch {
-            // Revert optimistic count update on error
-            await appState.postShadowManager.setRepostCount(postUri: postId, count: currentRepostCount)
-            
             #if DEBUG
             logger.error("Error creating quote post: \(error)")
             #endif
@@ -694,6 +662,7 @@ final class PostViewModel {
 }
 
 extension PostViewModel {
+    @MainActor
     public static func forCircleItem(
         _ item: BlueCatbirdCircleDefs.FeedItem,
         appState: AppState
@@ -705,6 +674,7 @@ extension PostViewModel {
         )
     }
 
+    @MainActor
     public static func forCircle(
         post: AppBskyFeedDefs.PostView,
         circle: CircleSummary,

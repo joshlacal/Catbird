@@ -28,8 +28,13 @@ final class StateInvalidationBus {
   
   private let logger = Logger(OSLog.stateInvalidation)
   
+  /// Weak wrapper for subscribers
+  private struct WeakSubscriber {
+    weak var value: (any StateInvalidationSubscriber)?
+  }
+
   /// Subscribers to state invalidation events
-  private var subscribers: [StateInvalidationSubscriber] = []
+  private var subscribers: [WeakSubscriber] = []
   
   /// Event history for debugging (keep last 50 events)
   private var eventHistory: [StateInvalidationEvent] = []
@@ -41,23 +46,33 @@ final class StateInvalidationBus {
   
   // MARK: - Subscription Management
   
+  /// Compacts deallocated subscriber entries
+  private func compact() {
+    subscribers.removeAll { $0.value == nil }
+  }
+  
   /// Subscribe to state invalidation events
   func subscribe(_ subscriber: StateInvalidationSubscriber) {
-    subscribers.append(subscriber)
+    compact()
+    guard !subscribers.contains(where: { $0.value === subscriber }) else {
+      logger.debug("Subscriber already subscribed: \(type(of: subscriber))")
+      return
+    }
+    subscribers.append(WeakSubscriber(value: subscriber))
     logger.debug("New subscriber added: \(type(of: subscriber))")
   }
   
   /// Unsubscribe from state invalidation events
   func unsubscribe(_ subscriber: StateInvalidationSubscriber) {
-    subscribers.removeAll { $0 === subscriber }
+    subscribers.removeAll { $0.value == nil || $0.value === subscriber }
     logger.debug("Subscriber removed: \(type(of: subscriber))")
   }
-  
   // MARK: - Event Broadcasting
   
   /// Notify all subscribers of a state invalidation event
   @MainActor
   func notify(_ event: StateInvalidationEvent) {
+    compact()
     let eventKey = self.eventKey(event)
     let now = Date()
     
@@ -79,7 +94,8 @@ final class StateInvalidationBus {
     
     // Only notify subscribers that are interested in this event
     var interestedCount = 0
-    for subscriber in subscribers {
+    for entry in subscribers {
+      guard let subscriber = entry.value else { continue }
       if subscriber.isInterestedIn(event) {
         interestedCount += 1
         Task { @MainActor in
@@ -144,6 +160,7 @@ final class StateInvalidationBus {
   
   /// Get current subscriber count
   var subscriberCount: Int {
+    compact()
     return subscribers.count
   }
   

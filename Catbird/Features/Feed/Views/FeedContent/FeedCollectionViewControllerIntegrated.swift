@@ -122,12 +122,8 @@ import os
       // Observe ThemeManager's @Observable properties directly
       themeObserver = UIKitStateObserver(observing: stateManager.appState.themeManager) {
         [weak self] _ in
-        Task { @MainActor [weak self] in
-          self?.handleThemeChange()
-        }
+        self?.handleThemeChange()
       }
-      themeObserver?.startObserving()
-
       // Keep the notification observer as a fallback for explicit theme changes
       NotificationCenter.default.addObserver(
         self,
@@ -166,7 +162,6 @@ import os
       dataSource.apply(currentSnapshot, animatingDifferences: false)
     }
 
-    // INSERTED
     private func reloadAllCells() {
       guard let dataSource = dataSource else { return }
       let snapshot = dataSource.snapshot()
@@ -182,13 +177,18 @@ import os
     }
 
     private func setupFeedbackObserver() {
-      feedbackObserver = UIKitStateObserver(observing: stateManager.appState.feedFeedbackManager) {
-        [weak self] _ in
-        Task { @MainActor [weak self] in
-          self?.handleFeedFeedbackChange()
-        }
+      let feedback = stateManager.appState.feedFeedbackManager
+      var previousEnabled = feedback.isEnabled
+      var previousFeedID = feedback.currentFeedType?.identifier
+      feedbackObserver = UIKitStateObserver(observing: feedback) {
+        [weak self] manager in
+        let currentEnabled = manager.isEnabled
+        let currentFeedID = manager.currentFeedType?.identifier
+        guard currentEnabled != previousEnabled || currentFeedID != previousFeedID else { return }
+        previousEnabled = currentEnabled
+        previousFeedID = currentFeedID
+        self?.handleFeedFeedbackChange()
       }
-      feedbackObserver?.startObserving()
     }
 
     private func handleFeedFeedbackChange() {
@@ -218,28 +218,18 @@ import os
           previous = now
         }
       }
-      appStateObserver?.startObserving()
     }
     
     // Observe tab tap to scroll to top and refresh
     private func setupTabTapObserver() {
       tabTapObserver = UIKitStateObserver(observing: stateManager.appState) { [weak self] _ in
-        Task { @MainActor [weak self] in
-          guard let self = self else { return }
-          
-          // Check if home tab (0) was tapped again
-          if let tappedTab = self.stateManager.appState.tabTappedAgain, tappedTab == 0 {
-            self.controllerLogger.debug("🏠 Home tab tapped again - scrolling to top and refreshing")
-            
-            // Clear the signal immediately to prevent re-triggering
-            self.stateManager.appState.tabTappedAgain = nil
-            
-            // Scroll to top and refresh
-            self.scrollToTopAndRefresh()
-          }
+        guard let self else { return }
+        if self.stateManager.appState.tabTappedAgain == 0 {
+          self.controllerLogger.debug("🏠 Home tab tapped again - scrolling to top and refreshing")
+          self.stateManager.appState.tabTappedAgain = nil
+          self.scrollToTopAndRefresh()
         }
       }
-      tabTapObserver?.startObserving()
     }
     
     // MARK: - Lifecycle
@@ -296,11 +286,6 @@ import os
 
 
     deinit {
-      stateObserver?.stopObserving()
-      themeObserver?.stopObserving()
-      feedbackObserver?.stopObserving()
-      appStateObserver?.stopObserving()
-      tabTapObserver?.stopObserving()
       cancelPendingLoadMoreRequest()
       updateTask?.cancel()
       initialLoadTask?.cancel()
@@ -807,19 +792,12 @@ import os
     // MARK: - Observers
 
     private func setupObservers() {
-      stateObserver = UIKitStateObserver.observeFeedStateManager(
-        stateManager,
-        onPostsChanged: { [weak self] _ in
-          Task { @MainActor in
-            await self?.performUpdate()
-          }
-        },
-        onLoadingStateChanged: { [weak self] _ in
-          self?.updateBackgroundState()
-        },
-        onScrollAnchorChanged: { _ in }
-      )
-      stateObserver?.startObserving()
+      stateObserver = UIKitStateObserver(observing: stateManager) { [weak self] _ in
+        Task { @MainActor [weak self] in
+          await self?.performUpdate()
+        }
+        self?.updateBackgroundState()
+      }
     }
 
     private func setupScrollToTopCallback() {

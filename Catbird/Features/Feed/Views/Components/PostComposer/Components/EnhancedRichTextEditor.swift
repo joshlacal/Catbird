@@ -222,7 +222,7 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
 
     // Notify the callback that the text view was created
     onTextViewCreated?(textView)
-    onHeightChange?(max(textView.contentSize.height, 1))
+    context.coordinator.updateHeight(for: textView, force: true)
 
     return textView
   }
@@ -234,10 +234,12 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
   
   func updateUIView(_ uiView: UITextView, context: Context) {
     // Update font if needed
+    var fontChanged = false
     let newFont = getAppropriateFont()
     if uiView.font != newFont {
       uiView.font = newFont
       context.coordinator.updateFontRelatedSettings(in: uiView)
+      fontChanged = true
     }
     
     // CRITICAL: Skip ALL updates during IME composition (markedTextRange != nil)
@@ -266,6 +268,7 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
       // Exception: Always update if text content differs (e.g., draft restoration)
       if !uiView.isFirstResponder || textChanged {
         uiView.attributedText = displayText
+        context.coordinator.lastAppliedSource = NSAttributedString(attributedString: attributedText)
         
         // Restore selection only if no pending selection
         if pendingSelectionRange == nil {
@@ -293,13 +296,14 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
     // This restores facet-based highlighting (mentions, hashtags, links)
     // without resetting selection.
     if uiView.isFirstResponder,
-       uiView.markedTextRange == nil,
        uiView.text == attributedText.string {
-      context.coordinator.applyVisualAttributes(from: attributedText, to: uiView)
+      if context.coordinator.lastAppliedSource?.isEqual(to: attributedText) != true {
+        context.coordinator.applyVisualAttributes(from: attributedText, to: uiView)
+      }
     }
 
     // Handle explicit focus re-activation
-    if context.coordinator.lastFocusID != focusActivationID, let _ = focusActivationID {
+    if context.coordinator.lastFocusID != focusActivationID, focusActivationID != nil {
       context.coordinator.lastFocusID = focusActivationID
       if !uiView.isFirstResponder {
         DispatchQueue.main.async {
@@ -310,8 +314,6 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
 
     // Apply any requested selection change (e.g., after inserting a link or mention)
     if let requested = pendingSelectionRange {
-      // IME Guard: Prevent selection changes during multi-keystroke character composition
-      guard uiView.markedTextRange == nil else { return }
       let total = (uiView.text as NSString).length
       let safeLoc = max(0, min(requested.location, total))
       let safeLen = max(0, min(requested.length, total - safeLoc))
@@ -329,11 +331,8 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
     }
 
     // Propagate intrinsic height changes so SwiftUI can grow the editor instead of scrolling
-    uiView.layoutIfNeeded()
-    let width = uiView.bounds.width > 0 ? uiView.bounds.width : uiView.superview?.bounds.width ?? UIScreen.main.bounds.width - 84
-    let fittingSize = uiView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
-    let measuredHeight = max(fittingSize.height, uiView.contentSize.height, 1)
-    onHeightChange?(measuredHeight)
+    let needsMeasurement = needsFullUpdate || fontChanged || context.coordinator.lastMeasuredWidth == 0
+    context.coordinator.updateHeight(for: uiView, force: needsMeasurement)
   }
   
   func makeCoordinator() -> Coordinator {
@@ -352,15 +351,33 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
     var needsAttributeSync = false
     var lastTextSnapshot: String = ""
     var hasPerformedInitialCursorPositioning = false
-    private func notifyHeightChange(_ textView: UITextView) {
-      // Force layout to ensure contentSize is accurate
+    var lastMeasuredWidth: CGFloat = 0
+    var lastReportedHeight: CGFloat = 0
+    var lastAppliedSource: NSAttributedString?
+
+    func updateHeight(for textView: UITextView, force: Bool = false) {
+      let width = textView.bounds.width > 0 ? textView.bounds.width : (textView.superview?.bounds.width ?? (UIScreen.main.bounds.width - 84))
+      let widthChanged = abs(width - lastMeasuredWidth) > 0.5
+
+      if !force && !widthChanged {
+        return
+      }
+
       textView.layoutIfNeeded()
-      
-      // Use sizeThatFits for more accurate height calculation when width is constrained
-      let width = textView.bounds.width > 0 ? textView.bounds.width : textView.superview?.bounds.width ?? UIScreen.main.bounds.width - 84
+
       let fittingSize = textView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
-      let targetHeight = max(fittingSize.height, textView.contentSize.height, 1)
-      parent.onHeightChange?(targetHeight)
+      let measuredHeight = max(fittingSize.height, textView.contentSize.height, 1)
+
+      lastMeasuredWidth = width
+
+      if lastReportedHeight == 0 || abs(measuredHeight - lastReportedHeight) >= 0.5 {
+        lastReportedHeight = measuredHeight
+        parent.onHeightChange?(measuredHeight)
+      }
+    }
+
+    private func notifyHeightChange(_ textView: UITextView) {
+      updateHeight(for: textView, force: true)
     }
     
   #if targetEnvironment(macCatalyst)
@@ -697,6 +714,10 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
       // If strings differ, a full replace will (and should) occur elsewhere.
       guard textView.text == source.string else { return }
       guard textView.markedTextRange == nil else { return }
+      if textView.attributedText.isEqual(to: source) || lastAppliedSource?.isEqual(to: source) == true {
+        lastAppliedSource = NSAttributedString(attributedString: source)
+        return
+      }
 
       let storage = textView.textStorage
       let nsLen = storage.length
@@ -741,6 +762,7 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
           ]
         }
       }
+      lastAppliedSource = NSAttributedString(attributedString: source)
     }
 
     // Apply a default font and text color to any ranges that lack these attributes.

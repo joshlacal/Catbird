@@ -5,29 +5,6 @@ import AppIntents
 import UIKit
 import os
 
-// MARK: - UIKit Color Scheme Helper
-extension UIViewController {
-    func getCurrentColorScheme() -> ColorScheme {
-        let systemScheme: ColorScheme = traitCollection.userInterfaceStyle == .dark ? .dark : .light
-        // Use ThemeManager's effective color scheme to account for manual overrides
-        if let activeState = AppStateManager.shared.lifecycle.appState {
-            return activeState.themeManager.effectiveColorScheme(for: systemScheme)
-        }
-        return systemScheme
-    }
-}
-
-extension UIView {
-    func getCurrentColorScheme() -> ColorScheme {
-        let systemScheme: ColorScheme = traitCollection.userInterfaceStyle == .dark ? .dark : .light
-        // Use ThemeManager's effective color scheme to account for manual overrides
-        if let activeState = AppStateManager.shared.lifecycle.appState {
-            return activeState.themeManager.effectiveColorScheme(for: systemScheme)
-        }
-        return systemScheme
-    }
-}
-
 @available(iOS 18.0, *)
 final class ThreadViewController: UIViewController, StateInvalidationSubscriber {
   // MARK: - Properties
@@ -45,6 +22,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   private var parentLoadAttempts = 0
   private var hasReachedTopOfThread = false
   private var pendingLoadTask: Task<Void, Never>?
+  private var optimisticRetryTasks: [String: Task<Void, Never>] = [:]
   private var loadGeneration = 0
   // Hidden replies state
   private var hasOtherReplies = false  // Whether the thread has additional hidden replies
@@ -229,9 +207,20 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     fatalError("init(coder:) has not been implemented")
   }
   
-  deinit {
+  isolated deinit {
+    tearDown()
+  }
+
+  func tearDown() {
     // Cancel any pending load task
     pendingLoadTask?.cancel()
+    pendingLoadTask = nil
+
+    // Cancel all optimistic retry tasks
+    for task in optimisticRetryTasks.values {
+      task.cancel()
+    }
+    optimisticRetryTasks.removeAll()
 
     // Clean up UIUpdateLink
     #if os(iOS) && !targetEnvironment(macCatalyst)
@@ -252,7 +241,6 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     // Unsubscribe from state invalidation events
     appState.stateInvalidationBus.unsubscribe(self)
   }
-
   // MARK: - Lifecycle Methods
   override func viewDidLoad() {
     super.viewDidLoad()
@@ -924,9 +912,10 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       let grouped = buildReplyWrappers(items: replyItems, mainPost: threadItemPost.post)
       let topLevelReplies = grouped.topLevel
 
+      let previousNestedRepliesMap = self.nestedRepliesMap
       // Store the nested replies map
       self.nestedRepliesMap = grouped.nested
-      
+      var topLevelParentIdsToReconfigure = Set<String>()
       // Separate OP thread continuations from regular replies (only depth-1)
       opThreadContinuations = topLevelReplies.filter { $0.isOpThread }
       var regularReplies = topLevelReplies.filter { !$0.isOpThread }
@@ -936,24 +925,61 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
         // Keep track of which optimistic replies are confirmed by server
         var confirmedOptimisticUris = Set<String>()
         
-        // Check if any server replies match our optimistic URIs
+        // Check if any server replies match our optimistic URIs (top-level and nested)
         for wrapper in regularReplies {
-          if case .appBskyUnspeccedDefsThreadItemPost(let itemPost) = wrapper.threadItem.value {
-            if optimisticReplyUris.contains(itemPost.post.uri.uriString()) {
-              confirmedOptimisticUris.insert(itemPost.post.uri.uriString())
-            }
+          guard let uri = wrapper.post?.uri.uriString(),
+                optimisticReplyUris.contains(uri)
+          else { continue }
+          confirmedOptimisticUris.insert(uri)
+        }
+        for (parentId, nestedList) in nestedRepliesMap {
+          for wrapper in nestedList {
+            guard let uri = wrapper.post?.uri.uriString(),
+                  optimisticReplyUris.contains(uri)
+            else { continue }
+            confirmedOptimisticUris.insert(uri)
+            topLevelParentIdsToReconfigure.insert(parentId)
           }
         }
         
-        // Add unconfirmed optimistic replies back to the list
+        // Add unconfirmed optimistic top-level replies back to the list
         for existingWrapper in replyWrappers {
-          if case .appBskyUnspeccedDefsThreadItemPost(let itemPost) = existingWrapper.threadItem.value {
-            let uri = itemPost.post.uri.uriString()
-            if optimisticReplyUris.contains(uri) && !confirmedOptimisticUris.contains(uri) {
-              // This is an optimistic reply not yet on server, keep it
-              regularReplies.append(existingWrapper)
+          guard let uri = existingWrapper.post?.uri.uriString(),
+                optimisticReplyUris.contains(uri),
+                !confirmedOptimisticUris.contains(uri),
+                !regularReplies.contains(where: { $0.id == existingWrapper.id })
+          else { continue }
+          regularReplies.append(existingWrapper)
+        }
+
+        // Add unconfirmed optimistic nested replies back to nestedRepliesMap
+        for (parentId, nestedList) in previousNestedRepliesMap {
+          for existingWrapper in nestedList {
+            guard let uri = existingWrapper.post?.uri.uriString(),
+                  optimisticReplyUris.contains(uri),
+                  !confirmedOptimisticUris.contains(uri),
+                  !nestedRepliesMap[parentId, default: []].contains(where: { $0.id == existingWrapper.id })
+            else { continue }
+            nestedRepliesMap[parentId, default: []].append(existingWrapper)
+            topLevelParentIdsToReconfigure.insert(parentId)
+            if let parentIndex = regularReplies.firstIndex(where: { $0.id == parentId }) {
+              let parent = regularReplies[parentIndex]
+              regularReplies[parentIndex] = ReplyWrapper(
+                id: parent.id,
+                threadItem: parent.threadItem,
+                depth: parent.depth,
+                isFromOP: parent.isFromOP,
+                isOpThread: parent.isOpThread,
+                hasReplies: true
+              )
             }
           }
+        }
+
+        // Cancel retry tasks for confirmed replies
+        for confirmedUri in confirmedOptimisticUris {
+          optimisticRetryTasks[confirmedUri]?.cancel()
+          optimisticRetryTasks.removeValue(forKey: confirmedUri)
         }
         
         // Remove confirmed optimistic URIs
@@ -966,6 +992,17 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       }
       
       replyWrappers = regularReplies
+      if !topLevelParentIdsToReconfigure.isEmpty {
+        var snapshot = dataSource.snapshot()
+        let itemsToReconfigure = replyWrappers
+          .filter { topLevelParentIdsToReconfigure.contains($0.id) }
+          .map { Item.reply($0) }
+          .filter { snapshot.indexOfItem($0) != nil }
+        if !itemsToReconfigure.isEmpty {
+          snapshot.reconfigureItems(itemsToReconfigure)
+          applySnapshot(snapshot, animatingDifferences: false)
+        }
+      }
     } else if case .appBskyUnspeccedDefsThreadItemBlocked = mainItem.value {
       // Blocked anchor: the original post is hidden, but the AppView still
       // returns its parents and replies. Keep them so the conversation stays
@@ -2127,6 +2164,15 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   private var hasOptimisticUpdates = false
   private var optimisticReplyUris = Set<String>()
   
+  nonisolated func isInterestedIn(_ event: StateInvalidationEvent) -> Bool {
+    switch event {
+    case .replyCreated, .threadUpdated:
+      return true
+    default:
+      return false
+    }
+  }
+
   /// Handle state invalidation events from the central event bus
   func handleStateInvalidation(_ event: StateInvalidationEvent) async {
     controllerLogger.debug("Thread handling state invalidation event: \(String(describing: event))")
@@ -2176,6 +2222,13 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     if replyWrappers.contains(where: { $0.threadItem.uri.uriString() == parentUri }) {
       return true
     }
+
+    // Check nested replies
+    for nestedList in nestedRepliesMap.values {
+      if nestedList.contains(where: { $0.threadItem.uri.uriString() == parentUri }) {
+        return true
+      }
+    }
     
     return false
   }
@@ -2210,76 +2263,111 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   
   @MainActor
   private func addReplyOptimistically(_ reply: AppBskyFeedDefs.PostView, toParentUri parentUri: String) {
-    controllerLogger.info("Adding reply optimistically: \(reply.uri.uriString()) to parent: \(parentUri)")
-    
-    // Mark that we have optimistic updates
-    hasOptimisticUpdates = true
-    optimisticReplyUris.insert(reply.uri.uriString())
+    let replyUriString = reply.uri.uriString()
+    controllerLogger.info("Adding reply optimistically: \(replyUriString) to parent: \(parentUri)")
     
     // Find where to insert the reply
     if parentUri == mainPost?.uri.uriString() {
       // Reply to main post - add to replies section
-      let newReply = createReplyWrapper(from: reply)
+      let newReply = createReplyWrapper(from: reply, depth: 1)
       replyWrappers.append(newReply)
-      
-      // Update the collection view
       applySnapshotOptimistically()
+    } else if let parentIndex = replyWrappers.firstIndex(where: { $0.threadItem.uri.uriString() == parentUri }) {
+      // Reply to a top-level reply
+      let parentWrapper = replyWrappers[parentIndex]
+      let updatedParent = ReplyWrapper(
+        id: parentWrapper.id,
+        threadItem: parentWrapper.threadItem,
+        depth: parentWrapper.depth,
+        isFromOP: parentWrapper.isFromOP,
+        isOpThread: parentWrapper.isOpThread,
+        hasReplies: true
+      )
+      replyWrappers[parentIndex] = updatedParent
+      let newReply = createReplyWrapper(from: reply, depth: parentWrapper.depth + 1)
+      nestedRepliesMap[parentWrapper.id, default: []].append(newReply)
+      applySnapshotOptimistically(reconfiguring: [.reply(updatedParent)])
     } else {
-      // Reply to another reply - need to find and update the parent
-      for (index, var wrapper) in replyWrappers.enumerated() {
-        if updateReplyWrapper(&wrapper, withNewReply: reply, toParent: parentUri) {
-          // Update the specific reply wrapper
-          replyWrappers[index] = wrapper
-          
-          applySnapshotOptimistically()
+      // Reply to a nested reply (or continuation)
+      var insertedTopLevelParent: ReplyWrapper?
+      for (topLevelId, var nestedList) in nestedRepliesMap {
+        if let matchedParent = nestedList.first(where: { $0.threadItem.uri.uriString() == parentUri }) {
+          let newReply = createReplyWrapper(from: reply, depth: matchedParent.depth + 1)
+          nestedList.append(newReply)
+          nestedRepliesMap[topLevelId] = nestedList
+          if let idx = replyWrappers.firstIndex(where: { $0.id == topLevelId }) {
+            let p = replyWrappers[idx]
+            let updated = ReplyWrapper(
+              id: p.id,
+              threadItem: p.threadItem,
+              depth: p.depth,
+              isFromOP: p.isFromOP,
+              isOpThread: p.isOpThread,
+              hasReplies: true
+            )
+            replyWrappers[idx] = updated
+            insertedTopLevelParent = updated
+          }
           break
         }
       }
+      if let insertedTopLevelParent {
+        applySnapshotOptimistically(reconfiguring: [.reply(insertedTopLevelParent)])
+      } else {
+        // Reply is to an ancestor post or unknown parent - do not falsely insert top-level
+        return
+      }
     }
+    hasOptimisticUpdates = true
+    optimisticReplyUris.insert(replyUriString)
     
     // Schedule a background refresh to get real data with retries
-    Task {
-      // Try multiple times to get the real data from server
+    optimisticRetryTasks[replyUriString]?.cancel()
+    optimisticRetryTasks[replyUriString] = Task { [weak self] in
       for attempt in 1...5 {
-        try? await Task.sleep(for: .seconds(Double(attempt) * 1.5)) // 1.5s, 3s, 4.5s, 6s, 7.5s
+        do {
+          try await Task.sleep(for: .seconds(Double(attempt) * 1.5)) // 1.5s, 3s, 4.5s, 6s, 7.5s
+        } catch {
+          return // Task cancelled
+        }
+        guard !Task.isCancelled else { return }
         
-        await MainActor.run {
-          // Only reload if we still have unconfirmed optimistic updates
-          if hasOptimisticUpdates && optimisticReplyUris.contains(reply.uri.uriString()) {
-            controllerLogger.debug("Optimistic update refresh attempt \(attempt) for reply: \(reply.uri.uriString())")
-            reloadThread()
+        let stillUnconfirmed = await MainActor.run { [weak self] () -> Bool in
+          guard let self = self else { return false }
+          if self.hasOptimisticUpdates && self.optimisticReplyUris.contains(replyUriString) {
+            self.controllerLogger.debug("Optimistic update refresh attempt \(attempt) for reply: \(replyUriString)")
+            self.reloadThread()
           }
+          return self.optimisticReplyUris.contains(replyUriString)
         }
         
-        // Check if the optimistic update was confirmed
-        let isConfirmed = await MainActor.run {
-          !optimisticReplyUris.contains(reply.uri.uriString())
-        }
-        
-        if isConfirmed {
-          controllerLogger.debug("Optimistic reply confirmed after attempt \(attempt)")
-          break
+        if !stillUnconfirmed {
+          await MainActor.run { [weak self] in
+            self?.controllerLogger.debug("Optimistic reply confirmed after attempt \(attempt)")
+            self?.optimisticRetryTasks.removeValue(forKey: replyUriString)
+          }
+          return
         }
       }
       
       // Final cleanup after all attempts
-      await MainActor.run {
-        if optimisticReplyUris.contains(reply.uri.uriString()) {
-          controllerLogger.warning("Failed to confirm optimistic reply after 5 attempts, removing: \(reply.uri.uriString())")
-          // Remove this specific optimistic reply
-          optimisticReplyUris.remove(reply.uri.uriString())
-          if optimisticReplyUris.isEmpty {
-            hasOptimisticUpdates = false
+      await MainActor.run { [weak self] in
+        guard let self = self else { return }
+        defer { self.optimisticRetryTasks.removeValue(forKey: replyUriString) }
+        if self.optimisticReplyUris.contains(replyUriString) {
+          self.controllerLogger.warning("Failed to confirm optimistic reply after 5 attempts, removing: \(replyUriString)")
+          self.optimisticReplyUris.remove(replyUriString)
+          if self.optimisticReplyUris.isEmpty {
+            self.hasOptimisticUpdates = false
           }
-          // Reload one more time to clean up
-          reloadThread()
+          self.reloadThread()
         }
       }
     }
   }
   
   // Helper to create a reply wrapper from a PostView
-  private func createReplyWrapper(from post: AppBskyFeedDefs.PostView) -> ReplyWrapper {
+  private func createReplyWrapper(from post: AppBskyFeedDefs.PostView, depth: Int = 1) -> ReplyWrapper {
     // Create a ThreadItem for the optimistic reply with v2 structure
     let threadItemPost = AppBskyUnspeccedDefs.ThreadItemPost(
       post: post,
@@ -2294,7 +2382,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     
     let threadItem = AppBskyUnspeccedGetPostThreadV2.ThreadItem(
       uri: post.uri,
-      depth: 1, // Direct reply depth
+      depth: depth,
       value: .appBskyUnspeccedDefsThreadItemPost(threadItemPost)
     )
     
@@ -2303,23 +2391,16 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     return ReplyWrapper(
       id: post.uri.uriString(),
       threadItem: threadItem,
-      depth: 1,
+      depth: depth,
       isFromOP: isFromOP,
       isOpThread: false,  // Optimistic replies are not part of OP thread
       hasReplies: false
     )
   }
   
-  // Helper to update nested replies - simplified for v2 flat structure
-  private func updateReplyWrapper(_ wrapper: inout ReplyWrapper, withNewReply reply: AppBskyFeedDefs.PostView, toParent parentUri: String) -> Bool {
-    // In v2 flat structure, we don't have nested reply structures to update
-    // This would need to be handled differently, potentially by reloading the thread
-    return false
-  }
-  
   // Helper to apply snapshot with optimistic updates
   @MainActor
-  private func applySnapshotOptimistically() {
+  private func applySnapshotOptimistically(reconfiguring itemsToReconfigure: [Item] = []) {
     seedThreadEntityCache()
     var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
     
@@ -2330,7 +2411,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       snapshot.appendItems([.loadMoreParentsTrigger], toSection: .loadMoreParents)
     }
     
-    let parentItems = parentPosts.reversed().map { Item.parentPost($0) }
+    let parentItems = parentPosts.map { Item.parentPost($0) }
     snapshot.appendItems(parentItems, toSection: .parentPosts)
     
     if let mainPost = mainPost {
@@ -2341,6 +2422,13 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     snapshot.appendItems(replyItems, toSection: .replies)
     
     snapshot.appendItems([.spacer], toSection: .bottomSpacer)
+    
+    if !itemsToReconfigure.isEmpty {
+      let validReconfigureItems = itemsToReconfigure.filter { snapshot.indexOfItem($0) != nil }
+      if !validReconfigureItems.isEmpty {
+        snapshot.reconfigureItems(validReconfigureItems)
+      }
+    }
     
     // Apply without animation for optimistic updates to avoid fly-in
     applySnapshot(snapshot, animatingDifferences: false)
@@ -2356,21 +2444,6 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     posts.append(contentsOf: replyWrappers.compactMap(\.post))
     posts.append(contentsOf: nestedRepliesMap.values.flatMap { $0 }.compactMap(\.post))
     PostEntityCache.upsert(posts)
-  }
-}
-
-// MARK: - ParentPost Extensions
-extension ParentPost {
-  /// Safely extracts URI from parent post thread item
-  var uri: ATProtocolURI? {
-    return threadItem.uri
-  }
-
-  var post: AppBskyFeedDefs.PostView? {
-    guard case .appBskyUnspeccedDefsThreadItemPost(let item) = threadItem.value else {
-      return nil
-    }
-    return item.post
   }
 }
 
@@ -2436,1033 +2509,6 @@ extension ThreadViewController: UICollectionViewDelegate, UICollectionViewDataSo
     _ collectionView: UICollectionView, cancelPrefetchingForItemsAt indexPaths: [IndexPath]
   ) {
     // Cancel any pending prefetch operations
-  }
-}
-
-// MARK: - Cell Types
-@available(iOS 18.0, *)
-final class ParentPostCell: UICollectionViewCell {
-  private var configuredIdentity: String?
-
-  override init(frame: CGRect) {
-    super.init(frame: frame)
-    // Background color will be set in configure method
-    // Disable implicit layer animations on this cell
-    let noAnim: [String: CAAction] = [
-      "bounds": NSNull(),
-      "position": NSNull(),
-      "frame": NSNull(),
-      "contents": NSNull(),
-      "onOrderIn": NSNull(),
-      "onOrderOut": NSNull()
-    ]
-    layer.actions = noAnim
-    contentView.layer.actions = noAnim
-  }
-
-  required init?(coder: NSCoder) {
-    fatalError("init(coder:) has not been implemented")
-  }
-
-  func configure(
-    parentPost: ParentPost,
-    appState: AppState,
-    path: Binding<NavigationPath>,
-    visibilityContext: PostVisibilityContext = .public
-  ) {
-    // Set themed background color
-      contentView.backgroundColor = UIColor(
-        Color.dynamicBackground(appState.themeManager, currentScheme: contentView.getCurrentColorScheme())
-      )
-
-    // Responder-level onscreen-context annotation — SwiftUI modifiers inside
-    // UIHostingConfiguration content aren't collected by the system.
-    // Only annotate if the id is a real at-uri; synthetic ids (e.g. from
-    // .unexpected thread items) can't be resolved and would cause ATProtocolError.
-#if compiler(>=7.0)
-    if #available(iOS 26.0, *),
-      let entityURI = AppEntityAnnotationIdentifiers.postURI(parentPost.id) {
-      appEntityIdentifier = EntityIdentifier(for: PostEntity.self, identifier: entityURI)
-    } else if #available(iOS 26.0, *) {
-      appEntityIdentifier = nil
-    }
-#endif
-    
-    let content = AnyView(
-      WidthLimitedContainer(maxWidth: 600) {
-        ParentPostView(
-          parentPost: parentPost,
-          path: path,
-          appState: appState,
-          visibilityContext: visibilityContext
-        )
-        .padding(.horizontal, 3)
-        .padding(.vertical, 3)
-      }
-    )
-
-    // Only reconfigure if needed (using post id as identity check)
-    if contentConfiguration == nil
-      || parentPost.id != configuredIdentity {
-
-      configuredIdentity = parentPost.id
-
-      // Configure with SwiftUI content
-      contentConfiguration = UIHostingConfiguration {
-        content.transaction { txn in txn.animation = nil }.fixedSize(horizontal: false, vertical: true)
-      }
-      .margins(.all, .zero)
-    }
-  }
-
-  override func prepareForReuse() {
-    super.prepareForReuse()
-#if compiler(>=7.0)
-    if #available(anyAppleOS 26.0, *) {
-      appEntityIdentifier = nil
-    }
-#endif
-    // Clean up resources when cell is reused
-    contentConfiguration = nil
-    configuredIdentity = nil
-  }
-}
-
-@available(iOS 18.0, *)
-final class MainPostCell: UICollectionViewCell {
-  private var configuredIdentity: String?
-
-  override init(frame: CGRect) {
-    super.init(frame: frame)
-    // Background color will be set in configure method
-    
-    // Make this an accessibility element container
-    isAccessibilityElement = false
-    contentView.isAccessibilityElement = false
-    contentView.shouldGroupAccessibilityChildren = true
-
-    // Disable implicit layer animations on this cell
-    let noAnim: [String: CAAction] = [
-      "bounds": NSNull(),
-      "position": NSNull(),
-      "frame": NSNull(),
-      "contents": NSNull(),
-      "onOrderIn": NSNull(),
-      "onOrderOut": NSNull()
-    ]
-    layer.actions = noAnim
-    contentView.layer.actions = noAnim
-  }
-
-  required init?(coder: NSCoder) {
-    fatalError("init(coder:) has not been implemented")
-  }
-
-  func configure(
-    post: AppBskyFeedDefs.PostView,
-    appState: AppState,
-    path: Binding<NavigationPath>,
-    opThreadPostIndex: Int? = nil,
-    opThreadPostCount: Int? = nil,
-    visibilityContext: PostVisibilityContext = .public
-  ) {
-    let postIdentity = post.uri.uriString()
-
-#if compiler(>=7.0)
-    if #available(anyAppleOS 26.0, *),
-      let entityURI = AppEntityAnnotationIdentifiers.postURI(postIdentity) {
-      appEntityIdentifier = EntityIdentifier(for: PostEntity.self, identifier: entityURI)
-    } else if #available(anyAppleOS 26.0, *) {
-      appEntityIdentifier = nil
-    }
-#endif
-
-    // Set themed background color
-      contentView.backgroundColor = UIColor(
-        Color.dynamicBackground(appState.themeManager, currentScheme: contentView.getCurrentColorScheme())
-      )
-    
-    // Avoid removing/readding subviews if configuration hasn't changed
-    let content =
-      VStack(spacing: 0) {
-        WidthLimitedContainer(maxWidth: 600) {
-          ThreadViewMainPostView(
-            post: post,
-            showLine: false,
-            path: path,
-            appState: appState,
-            visibilityContext: visibilityContext,
-            opThreadPostIndex: opThreadPostIndex,
-            opThreadPostCount: opThreadPostCount
-          )
-          .padding(.horizontal, 6)
-          .padding(.vertical, 6)
-        }
-
-        // Full-bleed divider across entire screen width
-        Divider()
-          .padding(.bottom, 9)
-      }
-    .id(postIdentity)
-
-    // Only reconfigure if needed (using post URI as identity check)
-    if contentConfiguration == nil
-      || postIdentity != configuredIdentity {
-
-      configuredIdentity = postIdentity
-
-      // Configure with SwiftUI content
-      contentConfiguration = UIHostingConfiguration {
-          content.transaction { txn in txn.animation = nil }.fixedSize(horizontal: false, vertical: true)
-      }
-      .margins(.all, .zero)
-    }
-  }
-
-  override func prepareForReuse() {
-    super.prepareForReuse()
-#if compiler(>=7.0)
-    if #available(anyAppleOS 26.0, *) {
-      appEntityIdentifier = nil
-    }
-#endif
-    contentConfiguration = nil
-    configuredIdentity = nil
-  }
-}
-
-/// Hosts the `BlockedContentCard(.anchor)` in the main-post slot when the
-/// thread's depth-0 post is blocked.
-@available(iOS 18.0, *)
-final class BlockedAnchorCell: UICollectionViewCell {
-  private var configuredIdentity: String?
-
-  override init(frame: CGRect) {
-    super.init(frame: frame)
-    isAccessibilityElement = false
-    contentView.isAccessibilityElement = false
-    contentView.shouldGroupAccessibilityChildren = true
-
-    let noAnim: [String: CAAction] = [
-      "bounds": NSNull(),
-      "position": NSNull(),
-      "frame": NSNull(),
-      "contents": NSNull(),
-      "onOrderIn": NSNull(),
-      "onOrderOut": NSNull()
-    ]
-    layer.actions = noAnim
-    contentView.layer.actions = noAnim
-  }
-
-  required init?(coder: NSCoder) {
-    fatalError("init(coder:) has not been implemented")
-  }
-
-  func configure(
-    blocked: AppBskyUnspeccedDefs.ThreadItemBlocked,
-    anchorURI: ATProtocolURI,
-    appState: AppState,
-    path: Binding<NavigationPath>
-  ) {
-    contentView.backgroundColor = UIColor(
-      Color.dynamicBackground(appState.themeManager, currentScheme: contentView.getCurrentColorScheme())
-    )
-
-    let identity = anchorURI.uriString() + "|" + blocked.author.did.didString()
-    guard contentConfiguration == nil || identity != configuredIdentity else { return }
-    configuredIdentity = identity
-
-    let content =
-      VStack(spacing: 0) {
-        WidthLimitedContainer(maxWidth: 600) {
-          BlockedContentCard(
-            relationship: BlockRelationship(threadItemBlocked: blocked),
-            authorDid: blocked.author.did.didString(),
-            postUri: anchorURI,
-            variant: .anchor,
-            path: path
-          )
-          .applyAppStateEnvironment(appState)
-          .padding(.horizontal, 6)
-          .padding(.vertical, 6)
-        }
-
-        Divider()
-          .padding(.bottom, 9)
-      }
-      .id(identity)
-
-    contentConfiguration = UIHostingConfiguration {
-      content.transaction { txn in txn.animation = nil }.fixedSize(horizontal: false, vertical: true)
-    }
-    .margins(.all, .zero)
-  }
-
-  override func prepareForReuse() {
-    super.prepareForReuse()
-    contentConfiguration = nil
-    configuredIdentity = nil
-  }
-}
-
-@available(iOS 18.0, *)
-final class ReplyCell: UICollectionViewCell {
-  private var configuredIdentity: String?
-
-  override init(frame: CGRect) {
-    super.init(frame: frame)
-    // Background color will be set in configure method
-    // Disable implicit layer animations on this cell
-    let noAnim: [String: CAAction] = [
-      "bounds": NSNull(),
-      "position": NSNull(),
-      "frame": NSNull(),
-      "contents": NSNull(),
-      "onOrderIn": NSNull(),
-      "onOrderOut": NSNull()
-    ]
-    layer.actions = noAnim
-    contentView.layer.actions = noAnim
-  }
-
-  required init?(coder: NSCoder) {
-    fatalError("init(coder:) has not been implemented")
-  }
-
-  func configure(
-    replyWrapper: ReplyWrapper, 
-    nestedReplies: [ReplyWrapper],
-    opAuthorID: String, 
-    appState: AppState,
-    path: Binding<NavigationPath>,
-    visibilityContext: PostVisibilityContext = .public
-  ) {
-#if compiler(>=7.0)
-    if #available(anyAppleOS 26.0, *),
-      let entityURI = AppEntityAnnotationIdentifiers.postURI(replyWrapper.id) {
-      appEntityIdentifier = EntityIdentifier(for: PostEntity.self, identifier: entityURI)
-    } else if #available(anyAppleOS 26.0, *) {
-      appEntityIdentifier = nil
-    }
-#endif
-
-    // Set themed background color
-      contentView.backgroundColor = UIColor(
-        Color.dynamicBackground(appState.themeManager, currentScheme: contentView.getCurrentColorScheme())
-      )
-    
-    let content = AnyView(
-      VStack(spacing: 0) {
-        WidthLimitedContainer(maxWidth: 600) {
-          ReplyView(
-            replyWrapper: replyWrapper,
-            opAuthorID: opAuthorID,
-            nestedReplies: nestedReplies,
-            path: path,
-            appState: appState,
-            visibilityContext: visibilityContext
-          )
-          .padding(.horizontal, 10)
-        }
-
-        // Full-bleed divider across entire screen width
-        Divider()
-          .padding(.vertical, 3)
-      }
-    )
-
-    // Only reconfigure if needed (using reply id as identity check)
-    if contentConfiguration == nil
-      || replyWrapper.id != configuredIdentity {
-
-      configuredIdentity = replyWrapper.id
-
-      // Configure with SwiftUI content
-      contentConfiguration = UIHostingConfiguration {
-        content.transaction { txn in txn.animation = nil }.fixedSize(horizontal: false, vertical: true)
-      }
-      .margins(.all, .zero)
-    }
-  }
-
-  override func prepareForReuse() {
-    super.prepareForReuse()
-#if compiler(>=7.0)
-    if #available(anyAppleOS 26.0, *) {
-      appEntityIdentifier = nil
-    }
-#endif
-    contentConfiguration = nil
-    configuredIdentity = nil
-  }
-}
-
-@available(iOS 18.0, *)
-final class LoadMoreCell: UICollectionViewCell {
-  private let activityIndicator = UIActivityIndicatorView(style: .medium)
-  private let label = UILabel()
-  private var isCurrentlyLoading = false
-
-  override init(frame: CGRect) {
-    super.init(frame: frame)
-    setupViews()
-    // Disable implicit layer animations on this cell
-    let noAnim: [String: CAAction] = [
-      "bounds": NSNull(),
-      "position": NSNull(),
-      "frame": NSNull(),
-      "contents": NSNull(),
-      "onOrderIn": NSNull(),
-      "onOrderOut": NSNull()
-    ]
-    layer.actions = noAnim
-    contentView.layer.actions = noAnim
-  }
-
-  required init?(coder: NSCoder) {
-    fatalError("init(coder:) has not been implemented")
-  }
-
-  private func setupViews() {
-    // Background color will be set when we have access to appState
-    
-    // Make the entire cell invisible to VoiceOver
-    isAccessibilityElement = false
-    contentView.isAccessibilityElement = false
-    contentView.accessibilityElementsHidden = true
-    
-    activityIndicator.translatesAutoresizingMaskIntoConstraints = false
-    activityIndicator.isAccessibilityElement = false
-    
-    label.translatesAutoresizingMaskIntoConstraints = false
-    label.text = "Loading more parents..."
-      label.font = UIFont.preferredFont(forTextStyle: UIFont.TextStyle.subheadline)
-    label.textColor = UIColor.systemGray
-    label.isAccessibilityElement = false
-    
-    let stackView = UIStackView(arrangedSubviews: [activityIndicator, label])
-    stackView.translatesAutoresizingMaskIntoConstraints = false
-    stackView.axis = .horizontal
-    stackView.spacing = 8
-    stackView.alignment = .center
-    stackView.isAccessibilityElement = false
-    
-    contentView.addSubview(stackView)
-    
-    NSLayoutConstraint.activate([
-      stackView.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
-      stackView.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
-      stackView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 10),
-      stackView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -10)
-    ])
-  }
-
-  func configure(isLoading: Bool) {
-    // Only update if the state is changing to avoid unnecessary UI updates
-    guard isLoading != isCurrentlyLoading else { return }
-
-    isCurrentlyLoading = isLoading
-
-    if isLoading {
-      activityIndicator.startAnimating()
-      label.isHidden = false
-      label.text = "Loading more parents..."
-      label.alpha = 1.0
-    } else {
-      activityIndicator.stopAnimating()
-      label.isHidden = true
-    }
-  }
-
-  override func prepareForReuse() {
-    super.prepareForReuse()
-    activityIndicator.stopAnimating()
-  }
-}
-
-// MARK: - Show More Replies Cell
-@available(iOS 18.0, *)
-final class ShowMoreRepliesCell: UICollectionViewCell {
-  private let button = UIButton(type: .system)
-  private let activityIndicator = UIActivityIndicatorView(style: .medium)
-  private var tapAction: (() -> Void)?
-  private var isCurrentlyLoading = false
-  
-  override init(frame: CGRect) {
-    super.init(frame: frame)
-    setupViews()
-    
-    // Disable implicit layer animations
-    let noAnim: [String: CAAction] = [
-      "bounds": NSNull(),
-      "position": NSNull(),
-      "frame": NSNull(),
-      "contents": NSNull(),
-      "onOrderIn": NSNull(),
-      "onOrderOut": NSNull()
-    ]
-    layer.actions = noAnim
-    contentView.layer.actions = noAnim
-  }
-  
-  required init?(coder: NSCoder) {
-    fatalError("init(coder:) has not been implemented")
-  }
-  
-  private func setupViews() {
-    // Configure button
-    button.translatesAutoresizingMaskIntoConstraints = false
-    button.setTitle("Show More Replies", for: .normal)
-    // Apply medium weight to the preferred subheadline font without using non-existent withWeight API
-      let baseFont = UIFont.preferredFont(forTextStyle: UIFont.TextStyle.subheadline)
-    let descriptor = baseFont.fontDescriptor.addingAttributes([.traits: [UIFontDescriptor.TraitKey.weight: UIFont.Weight.medium]])
-    button.titleLabel?.font = UIFont(descriptor: descriptor, size: 0)
-    button.setTitleColor(.systemBlue, for: .normal)
-    button.addTarget(self, action: #selector(buttonTapped), for: .touchUpInside)
-    
-    // Configure activity indicator
-    activityIndicator.translatesAutoresizingMaskIntoConstraints = false
-    activityIndicator.hidesWhenStopped = true
-    
-    // Container stack
-    let stackView = UIStackView(arrangedSubviews: [button, activityIndicator])
-    stackView.translatesAutoresizingMaskIntoConstraints = false
-    stackView.axis = .horizontal
-    stackView.spacing = 8
-    stackView.alignment = .center
-    
-    contentView.addSubview(stackView)
-    
-    NSLayoutConstraint.activate([
-      stackView.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
-      stackView.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
-      stackView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 12),
-      stackView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -12)
-    ])
-    
-    // Accessibility
-    isAccessibilityElement = true
-    accessibilityLabel = "Show more replies"
-    accessibilityTraits = .button
-  }
-  
-  func configure(isLoading: Bool, onTap: @escaping () -> Void) {
-    tapAction = onTap
-    
-    guard isLoading != isCurrentlyLoading else { return }
-    isCurrentlyLoading = isLoading
-    
-    if isLoading {
-      button.isEnabled = false
-      button.setTitle("Loading...", for: .normal)
-      activityIndicator.startAnimating()
-    } else {
-      button.isEnabled = true
-      button.setTitle("Show More Replies", for: .normal)
-      activityIndicator.stopAnimating()
-    }
-  }
-  
-  @objc private func buttonTapped() {
-    tapAction?()
-  }
-  
-  override func prepareForReuse() {
-    super.prepareForReuse()
-    tapAction = nil
-    isCurrentlyLoading = false
-    button.isEnabled = true
-    button.setTitle("Show More Replies", for: .normal)
-    activityIndicator.stopAnimating()
-  }
-}
-
-@available(iOS 18.0, *)
-final class SpacerCell: UICollectionViewCell {
-  override init(frame: CGRect) {
-    super.init(frame: frame)
-    // This cell doesn't need special background handling
-    // Disable implicit layer animations on this cell
-    let noAnim: [String: CAAction] = [
-      "bounds": NSNull(),
-      "position": NSNull(),
-      "frame": NSNull(),
-      "contents": NSNull(),
-      "onOrderIn": NSNull(),
-      "onOrderOut": NSNull()
-    ]
-    layer.actions = noAnim
-    contentView.layer.actions = noAnim
-  }
-
-  required init?(coder: NSCoder) {
-    fatalError("init(coder:) has not been implemented")
-  }
-}
-
-// MARK: - Supporting SwiftUI Views
-/// Centers its content and constrains it to a maximum width while allowing the
-/// surrounding container (e.g., collection view cell) to be full-width.
-struct WidthLimitedContainer<Content: View>: View {
-  @Environment(\.horizontalSizeClass) private var hSizeClass
-  let maxWidth: CGFloat
-  @ViewBuilder var content: Content
-
-  private var effectiveMaxWidth: CGFloat {
-    hSizeClass == .compact ? .infinity : maxWidth
-  }
-
-  init(maxWidth: CGFloat = 600, @ViewBuilder content: () -> Content) {
-    self.maxWidth = maxWidth
-    self.content = content()
-  }
-
-  var body: some View {
-    HStack(spacing: 0) {
-      Spacer(minLength: 0)
-      content
-        .frame(maxWidth: effectiveMaxWidth, alignment: .center)
-      Spacer(minLength: 0)
-    }
-    .frame(maxWidth: .infinity)
-  }
-}
-
-/// Root post URI for a thread item: the record's reply root, falling back to the post itself.
-private func threadRootURI(for post: AppBskyFeedDefs.PostView) -> ATProtocolURI? {
-  if case let .knownType(record) = post.record,
-     let feedPost = record as? AppBskyFeedPost,
-     let root = feedPost.reply?.root.uri {
-    return root
-  }
-  return post.uri
-}
-
-struct ParentPostView: View {
-  let parentPost: ParentPost
-  @Binding var path: NavigationPath
-  var appState: AppState
-  var visibilityContext: PostVisibilityContext = .public
-  var body: some View {
-    switch parentPost.threadItem.value {
-    case .appBskyUnspeccedDefsThreadItemPost(let threadItemPost):
-      let parentRootURI = threadRootURI(for: threadItemPost.post)
-
-      PostView(
-        post: threadItemPost.post,
-        grandparentAuthor: nil,
-        isParentPost: true,
-        isSelectable: false,
-        path: $path,
-        appState: appState,
-        hasVisibleThreadContext: true,
-        visibilityContext: visibilityContext,
-        rootPostURI: parentRootURI,
-        rootAuthorDID: parentRootURI?.authority,
-        isReplyHiddenByThreadgate: threadItemPost.hiddenByThreadgate,
-        opThreadPostIndex: threadItemPost.opThreadPostIndex,
-        opThreadPostCount: threadItemPost.opThreadPostCount
-      )
-      .onTapGesture {
-        path.append(NavigationDestination.post(threadItemPost.post.uri))
-      }
-    case .appBskyUnspeccedDefsThreadItemNotFound:
-      PostNotFoundView(
-        uri: parentPost.threadItem.uri,
-        reason: .notFound,
-        path: $path
-      )
-      .applyAppStateEnvironment(appState)
-
-    case .appBskyUnspeccedDefsThreadItemBlocked(let blocked):
-      BlockedContentCard(
-        relationship: BlockRelationship(threadItemBlocked: blocked),
-        authorDid: blocked.author.did.didString(),
-        postUri: parentPost.threadItem.uri,
-        variant: .thread,
-        path: $path
-      )
-      .applyAppStateEnvironment(appState)
-
-    case .appBskyUnspeccedDefsThreadItemNoUnauthenticated:
-      Text("Post not available (authentication required)")
-        .appFont(AppTextRole.subheadline)
-        .foregroundColor(.gray)
-
-    case .unexpected(let unexpected):
-      Text("Unexpected parent post type: \(unexpected.textRepresentation)")
-        .appFont(AppTextRole.subheadline)
-        .foregroundColor(.orange)
-    }
-  }
-}
-
-struct ReplyView: View {
-  let replyWrapper: ReplyWrapper
-  let opAuthorID: String
-  let nestedReplies: [ReplyWrapper]  // Nested replies for this post
-  @Binding var path: NavigationPath
-  var appState: AppState
-  var visibilityContext: PostVisibilityContext = .public
-  private var isThreadedRepliesMode: Bool {
-    appState.appSettings.threadedReplies
-  }
-  private var maxDepth: Int {
-    ThreadReplyPresentationMetrics.maximumDepth(isEnabled: isThreadedRepliesMode)
-  }
-
-  private var visibleNestedReplies: [ReplyWrapper] {
-    Array(nestedReplies.prefix(max(0, maxDepth - 1)))
-  }
-
-  private var nestedLayout: ThreadReplyLayout {
-    ThreadReplyLayoutBuilder.build(
-      rootID: replyWrapper.id,
-      nestedItems: nestedReplies.map {
-        ThreadReplyLayoutInput(
-          id: $0.id,
-          parentID: $0.parentURI,
-          hasUnloadedReplies: $0.hasReplies
-        )
-      },
-      visibleLimit: maxDepth - 1
-    )
-  }
-
-  private func parentAuthor(
-    for reply: ReplyWrapper
-  ) -> AppBskyActorDefs.ProfileViewBasic? {
-    guard let parentURI = reply.parentURI else { return nil }
-
-    if parentURI == replyWrapper.id {
-      return replyWrapper.post?.author
-    }
-
-    return nestedReplies.first(where: { $0.id == parentURI })?.post?.author
-  }
-
-  var body: some View {
-    // Every root arm — post or tombstone — renders `nestedRepliesSection` so
-    // the depth-2+ subtree stays visible even when the chain root is blocked /
-    // not-found / no-auth. Dropping the subtree with the root would defeat the
-    // whole "keep replies under a blocked post reachable" goal.
-    VStack(alignment: .leading, spacing: 0) {
-      switch replyWrapper.threadItem.value {
-      case .appBskyUnspeccedDefsThreadItemPost(let threadItemPost):
-        let replyRootURI = threadRootURI(for: threadItemPost.post)
-
-        // Root post connects to the first nested reply when the layout says so.
-        PostView(
-          post: threadItemPost.post,
-          grandparentAuthor: nil,
-          isParentPost: nestedLayout.connectsRootToFirst,
-          isSelectable: false,
-          path: $path,
-          appState: appState,
-          hasVisibleThreadContext: true,
-          avatarScale: .regular,
-          visibilityContext: visibilityContext,
-          rootPostURI: replyRootURI,
-          rootAuthorDID: replyRootURI?.authority,
-          isReplyHiddenByThreadgate: threadItemPost.hiddenByThreadgate,
-          opThreadPostIndex: threadItemPost.opThreadPostIndex,
-          opThreadPostCount: threadItemPost.opThreadPostCount
-        )
-        .onTapGesture {
-          path.append(NavigationDestination.post(threadItemPost.post.uri))
-        }
-        .padding(.vertical, 3)
-        .frame(maxWidth: 550, alignment: .leading)
-      case .appBskyUnspeccedDefsThreadItemNotFound:
-        PostNotFoundView(
-          uri: replyWrapper.threadItem.uri,
-          reason: .notFound,
-          path: $path
-        )
-        .applyAppStateEnvironment(appState)
-
-      case .appBskyUnspeccedDefsThreadItemBlocked(let blocked):
-        BlockedContentCard(
-          relationship: BlockRelationship(threadItemBlocked: blocked),
-          authorDid: blocked.author.did.didString(),
-          postUri: replyWrapper.threadItem.uri,
-          variant: .thread,
-          path: $path
-        )
-        .applyAppStateEnvironment(appState)
-
-      case .appBskyUnspeccedDefsThreadItemNoUnauthenticated:
-        Text("Reply not available (authentication required)")
-          .appFont(AppTextRole.subheadline)
-          .foregroundColor(.gray)
-
-      case .unexpected(let unexpected):
-        Text("Unexpected reply type: \(unexpected.textRepresentation)")
-          .foregroundColor(.orange)
-      }
-
-      // Nested subtree, shared across all root arms above.
-      nestedRepliesSection
-    }
-  }
-
-  /// Renders the depth-2+ nested replies for this chain using their actual
-  /// parent relationships. Invoked from every root arm so a blocked / not-found
-  /// / no-auth root keeps its subtree. `parentAuthor(for:)` returns nil for a
-  /// tombstone root (its `post` is nil), so nested rows degrade to no
-  /// grandparent label rather than crashing or mislabeling.
-  @ViewBuilder
-  private var nestedRepliesSection: some View {
-    let layout = nestedLayout
-    let visibleReplies = visibleNestedReplies
-    if !layout.items.isEmpty {
-      ForEach(layout.items) { item in
-        if let nestedWrapper = visibleReplies.first(where: { $0.id == item.id }) {
-          nestedReplyRow(item: item, nestedWrapper: nestedWrapper)
-        }
-      }
-    }
-  }
-
-  @ViewBuilder
-  private func nestedReplyRow(item: ThreadReplyLayoutItem, nestedWrapper: ReplyWrapper) -> some View {
-    switch nestedWrapper.threadItem.value {
-    case .appBskyUnspeccedDefsThreadItemPost(let nestedPost):
-      let nestedRootURI = threadRootURI(for: nestedPost.post)
-
-      PostView(
-        post: nestedPost.post,
-        grandparentAuthor: parentAuthor(for: nestedWrapper),
-        isParentPost: item.connectsToNext,
-        isSelectable: false,
-        path: $path,
-        appState: appState,
-        hasVisibleThreadContext: true,
-        avatarScale: ThreadReplyPresentationMetrics.avatarScale(
-          forDepth: nestedWrapper.depth,
-          isEnabled: isThreadedRepliesMode
-        ),
-        visibilityContext: visibilityContext,
-        rootPostURI: nestedRootURI,
-        rootAuthorDID: nestedRootURI?.authority,
-        isReplyHiddenByThreadgate: nestedPost.hiddenByThreadgate,
-        opThreadPostIndex: nestedPost.opThreadPostIndex,
-        opThreadPostCount: nestedPost.opThreadPostCount
-      )
-      .contentShape(Rectangle())
-      .onTapGesture { path.append(NavigationDestination.post(nestedPost.post.uri)) }
-      .padding(.vertical, 3)
-      .padding(
-        .leading,
-        ThreadReplyPresentationMetrics.leadingIndent(
-          forDepth: nestedWrapper.depth,
-          isEnabled: isThreadedRepliesMode
-        )
-      )
-      .frame(maxWidth: 550, alignment: .leading)
-
-      if item.hasAdditionalReplies {
-        Button {
-          // Jump into the last rendered post; the server will expand from here
-          path.append(NavigationDestination.post(nestedPost.post.uri))
-        } label: {
-          HStack {
-            Text("Continue thread").appFont(AppTextRole.subheadline)
-            Image(systemName: "chevron.right").appFont(AppTextRole.subheadline)
-          }
-          .foregroundColor(.accentColor)
-          .padding(.vertical, 8)
-          .padding(.horizontal, 12)
-          .frame(maxWidth: .infinity, alignment: .leading)
-          .contentShape(Rectangle())
-        }
-      }
-
-    case .appBskyUnspeccedDefsThreadItemNotFound:
-      PostNotFoundView(
-        uri: nestedWrapper.threadItem.uri,
-        reason: .notFound,
-        path: $path
-      )
-      .applyAppStateEnvironment(appState)
-
-      // Offer a way to jump into the missing leg of the chain
-      Button {
-        path.append(NavigationDestination.post(nestedWrapper.uri))
-      } label: {
-        HStack {
-          Text("Continue thread").appFont(AppTextRole.subheadline)
-          Image(systemName: "chevron.right").appFont(AppTextRole.subheadline)
-        }
-        .foregroundColor(.accentColor)
-        .padding(.vertical, 6)
-      }
-
-    case .appBskyUnspeccedDefsThreadItemBlocked(let blocked):
-      BlockedContentCard(
-        relationship: BlockRelationship(threadItemBlocked: blocked),
-        authorDid: blocked.author.did.didString(),
-        postUri: nestedWrapper.threadItem.uri,
-        variant: .thread,
-        path: $path
-      )
-      .applyAppStateEnvironment(appState)
-
-    case .appBskyUnspeccedDefsThreadItemNoUnauthenticated:
-      Text("Reply not available (authentication required)")
-        .appFont(AppTextRole.subheadline)
-        .foregroundColor(.gray)
-
-    case .unexpected(let unexpected):
-      Text("Unexpected reply type: \(unexpected.textRepresentation)")
-        .foregroundColor(.orange)
-    }
-  }
-}
-// MARK: - SwiftUI Integration
-@available(iOS 18.0, *)
-struct ThreadViewControllerRepresentable: UIViewControllerRepresentable {
-  @Environment(AppState.self) private var appState: AppState
-  let postURI: ATProtocolURI
-  @Binding var path: NavigationPath
-  let visibilityContext: PostVisibilityContext
-
-  init(
-    postURI: ATProtocolURI,
-    path: Binding<NavigationPath>,
-    visibilityContext: PostVisibilityContext = .public
-  ) {
-    self.postURI = postURI
-    self._path = path
-    self.visibilityContext = visibilityContext
-  }
-
-  func makeUIViewController(context: Context) -> ThreadViewController {
-    let controller = ThreadViewController(
-      appState: appState,
-      postURI: postURI,
-      path: $path,
-      visibilityContext: visibilityContext
-    )
-    context.coordinator.lastSortOrder = appState.appSettings.threadSortOrder
-    context.coordinator.lastThreadedReplies = appState.appSettings.threadedReplies
-    return controller
-  }
-  func updateUIViewController(_ uiViewController: ThreadViewController, context: Context) {
-    let currentSort = appState.appSettings.threadSortOrder
-    let currentThreaded = appState.appSettings.threadedReplies
-
-    if !context.coordinator.lastSortOrder.isEmpty && context.coordinator.lastSortOrder != currentSort {
-      uiViewController.reloadThreadFromSettingsChange()
-    }
-    context.coordinator.lastSortOrder = currentSort
-
-    if context.coordinator.lastThreadedReplies != currentThreaded {
-      context.coordinator.lastThreadedReplies = currentThreaded
-      uiViewController.rebuildReplyCellsFromLayoutChange()
-    }
-  }
-
-  func makeCoordinator() -> Coordinator {
-    Coordinator()
-  }
-
-  class Coordinator {
-    var lastSortOrder: String = ""
-    var lastThreadedReplies: Bool = false
-  }
-}
-
-// MARK: - Reply grouping
-
-/// Groups depth-ordered V2 reply `items` into top-level chains and their nested
-/// descendants, preserving API order.
-///
-/// - `depth == 1` starts a new chain (top-level reply to the main post).
-/// - `depth > 1` appends to the current chain root's nested list.
-///
-/// Blocked / not-found / no-auth items become neutral tombstone wrappers rather
-/// than being dropped, so a subtree under a blocked reply stays reachable and
-/// the chain root can itself be a tombstone. Pure and side-effect free for tests.
-func buildReplyWrappers(
-  items: [AppBskyUnspeccedGetPostThreadV2.ThreadItem],
-  mainPost: AppBskyFeedDefs.PostView?
-) -> (topLevel: [ReplyWrapper], nested: [String: [ReplyWrapper]]) {
-  var topLevelReplies: [ReplyWrapper] = []
-  var nestedMap: [String: [ReplyWrapper]] = [:]
-  var currentChainTopLevelURI: String?
-
-  for item in items {
-    let id = item.uri.uriString()
-    let wrapper: ReplyWrapper
-    if case .appBskyUnspeccedDefsThreadItemPost(let threadItemPost) = item.value {
-      // Optional-safe: with a blocked anchor there is no OP to compare against,
-      // so `mainPost == nil` yields `isFromOP == false`.
-      let isFromOP = mainPost?.author.did.didString() == threadItemPost.post.author.did.didString()
-      wrapper = ReplyWrapper(
-        id: id,
-        threadItem: item,
-        depth: item.depth,
-        isFromOP: isFromOP,
-        isOpThread: threadItemPost.opThread,
-        hasReplies: threadItemPost.moreReplies > 0
-      )
-    } else {
-      // Tombstone wrapper for blocked / not-found / no-auth replies.
-      wrapper = ReplyWrapper(
-        id: id,
-        threadItem: item,
-        depth: item.depth,
-        isFromOP: false,
-        isOpThread: false,
-        hasReplies: false
-      )
-    }
-
-    if item.depth == 1 {
-      // Top-level reply to main post - starts a new chain.
-      topLevelReplies.append(wrapper)
-      currentChainTopLevelURI = id
-      nestedMap[id] = []
-    } else if item.depth > 1, let chainRoot = currentChainTopLevelURI {
-      // Nested reply (depth 2+) - belongs to the current chain.
-      nestedMap[chainRoot]?.append(wrapper)
-    }
-  }
-
-  return (topLevelReplies, nestedMap)
-}
-
-// MARK: - ReplyWrapper Extensions
-extension ReplyWrapper {
-  /// Computed property to access the post from the thread item
-  /// Returns nil for non-accessible post types (not found, blocked, etc.)
-  var post: AppBskyFeedDefs.PostView? {
-    switch threadItem.value {
-    case .appBskyUnspeccedDefsThreadItemPost(let threadItemPost):
-      return threadItemPost.post
-    case .appBskyUnspeccedDefsThreadItemNotFound, .appBskyUnspeccedDefsThreadItemBlocked,
-         .appBskyUnspeccedDefsThreadItemNoUnauthenticated, .unexpected:
-      return nil
-    }
-  }
-
-  /// The URI this post directly replies to, when its record is available.
-  var parentURI: String? {
-    guard let post,
-      case .knownType(let record) = post.record,
-      let feedPost = record as? AppBskyFeedPost
-    else {
-      return nil
-    }
-
-    return feedPost.reply?.parent.uri.uriString()
-  }
-
-  /// URI accessor that works for all thread item types
-  var uri: ATProtocolURI {
-    return threadItem.uri
   }
 }
 

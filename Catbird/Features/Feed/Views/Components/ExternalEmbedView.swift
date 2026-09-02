@@ -4,6 +4,24 @@ import Petrel
 import WebKit
 import os.log
 
+/// Bounded success-only cache for validated derived MP4 URLs.
+private final class DerivedMP4ValidationCache: @unchecked Sendable {
+    static let shared = DerivedMP4ValidationCache()
+    private let cache = NSCache<NSURL, NSNumber>()
+
+    private init() {
+        cache.countLimit = 256
+    }
+
+    func isValidated(_ url: URL) -> Bool {
+        cache.object(forKey: url as NSURL) != nil
+    }
+
+    func setValidated(_ url: URL) {
+        cache.setObject(NSNumber(value: true), forKey: url as NSURL)
+    }
+}
+
 struct ExternalEmbedView: View {
     let external: AppBskyEmbedExternal.ViewExternal
     let shouldBlur: Bool
@@ -23,6 +41,13 @@ struct ExternalEmbedView: View {
     /// embed URI is a .gif). Rendered inline as a static image so it doesn't
     /// fall back to the link card.
     @State private var inlineImageURL: URL?
+    @State private var retryAttempt: Int = 0
+
+    private struct ValidationIdentity: Hashable {
+        let url: URL?
+        let isAllowed: Bool
+        let attempt: Int
+    }
     
     private let logger = Logger(subsystem: "blue.catbird", category: "ExternalEmbedView")
 
@@ -128,8 +153,8 @@ struct ExternalEmbedView: View {
                          let result = appState.urlHandler.handle(url)
                          return result
                      })
-                .onAppear {
-                    setupVideoIfNeeded()
+                .task(id: ValidationIdentity(url: destinationURL, isAllowed: isGifProviderAllowed, attempt: retryAttempt)) {
+                    await setupVideo()
                 }
                 // Fixed sizing to prevent layout jumps
                 .fixedSize(horizontal: false, vertical: true)
@@ -148,14 +173,14 @@ struct ExternalEmbedView: View {
                 withAnimation(.easeInOut(duration: 0.3)) {
                     userTappedToShowEmbed = true
                 }
-                setupVideoIfNeeded()
+                retryAttempt += 1
             }
             Button("Enable \(provider.displayName) only") {
                 appState.appSettings.setExternalMediaConsent(.allow, for: provider)
                 withAnimation(.easeInOut(duration: 0.3)) {
                     userTappedToShowEmbed = true
                 }
-                setupVideoIfNeeded()
+                retryAttempt += 1
             }
             Button("No thanks", role: .cancel) {
                 appState.appSettings.setExternalMediaConsent(.hide, for: provider)
@@ -394,7 +419,15 @@ struct ExternalEmbedView: View {
     }
     
 
-    private func setupVideoIfNeeded() {
+    private func setupVideo() async {
+        // Reset derived media state so destination changes do not keep or republish stale media
+        videoModel = nil
+        inlineImageURL = nil
+        gifError = nil
+        isLoadingGif = false
+
+        guard !Task.isCancelled else { return }
+
         guard let url = destinationURL else {
             logger.debug("❌ Failed to create URL from external URI: \(external.uri.uriString())")
             return
@@ -409,6 +442,8 @@ struct ExternalEmbedView: View {
             }
         }
         
+        guard !Task.isCancelled else { return }
+
         // Handle Tenor GIFs
         if url.host == "media.tenor.com" || url.host?.contains("tenor.com") == true {
             // Extract aspect ratio BEFORE setting loading state
@@ -422,7 +457,7 @@ struct ExternalEmbedView: View {
             }
             
             isLoadingGif = true
-            setupTenorVideo(from: url, aspectRatio: gifAspectRatio)
+            await setupTenorVideo(from: url, aspectRatio: gifAspectRatio)
         }
         // Handle Giphy GIFs
         else if url.host?.contains("giphy.com") == true {
@@ -432,7 +467,7 @@ struct ExternalEmbedView: View {
             gifAspectRatio = 1.0
 
             isLoadingGif = true
-            setupGiphyVideo(from: url)
+            await setupGiphyVideo(from: url)
         }
         // Handle Klipy GIFs
         else if url.host == "static.klipy.com" || url.host?.contains("klipy.com") == true {
@@ -459,7 +494,8 @@ struct ExternalEmbedView: View {
         return ratio
     }
     
-    private func setupTenorVideo(from url: URL, aspectRatio: CGFloat) {
+    private func setupTenorVideo(from url: URL, aspectRatio: CGFloat) async {
+        guard !Task.isCancelled else { return }
         logger.debug("🎬 Setting up Tenor video from URL: \(url.absoluteString)")
 
         // Transform Tenor URL to direct MP4 URL
@@ -472,21 +508,20 @@ struct ExternalEmbedView: View {
 
             if let mp4URL = URL(string: "https://media.tenor.com/\(videoId)/video.mp4") {
                 logger.debug("✅ Created Tenor MP4 URL: \(mp4URL.absoluteString)")
-
-                Task {
-                    await validateAndCreateTenorModel(
-                        mp4URL: mp4URL,
-                        aspectRatio: aspectRatio,
-                        originalURL: url
-                    )
-                }
+                await validateAndCreateTenorModel(
+                    mp4URL: mp4URL,
+                    aspectRatio: aspectRatio,
+                    originalURL: url
+                )
             } else {
                 logger.debug("❌ Failed to create MP4 URL for Tenor video ID: \(videoId)")
+                guard !Task.isCancelled else { return }
                 isLoadingGif = false
                 gifError = "Failed to create MP4 URL"
             }
         } else {
             logger.debug("❌ No path components found in Tenor URL: \(url.path)")
+            guard !Task.isCancelled else { return }
             isLoadingGif = false
             gifError = "Failed to parse Tenor GIF URL"
         }
@@ -497,45 +532,66 @@ struct ExternalEmbedView: View {
         aspectRatio: CGFloat,
         originalURL: URL
     ) async {
+        guard !Task.isCancelled else { return }
+
+        if DerivedMP4ValidationCache.shared.isValidated(mp4URL) {
+            guard !Task.isCancelled else { return }
+            let model = VideoModel(
+                id: "\(postID)-tenor-\(originalURL.absoluteString)",
+                url: mp4URL,
+                type: .tenorGif(external.uri),
+                aspectRatio: aspectRatio,
+                thumbnailURL: external.thumb?.url
+            )
+            guard !Task.isCancelled else { return }
+            videoModel = model
+            isLoadingGif = false
+            gifError = nil
+            logger.debug("✅ Used cached validation for Tenor GIF: \(model.id)")
+            return
+        }
+
         do {
             var request = URLRequest(url: mp4URL)
             request.httpMethod = "HEAD"
             request.timeoutInterval = 5.0
 
             let (_, response) = try await URLSession.shared.data(for: request)
+            guard !Task.isCancelled else { return }
 
             if let httpResponse = response as? HTTPURLResponse {
                 if httpResponse.statusCode == 200 {
-                    logger.debug("✅ Tenor MP4 URL validated: \(mp4URL.absoluteString)")
-
-                    await MainActor.run {
-                        let model = VideoModel(
-                            id: "\(postID)-tenor-\(originalURL.absoluteString)",
-                            url: mp4URL,
-                            type: .tenorGif(external.uri),
-                            aspectRatio: aspectRatio,
-                            thumbnailURL: external.thumb?.url
-                        )
-                        videoModel = model
-                        isLoadingGif = false
-                        logger.debug("✅ Created VideoModel for Tenor GIF: \(model.id)")
-                    }
+                    DerivedMP4ValidationCache.shared.setValidated(mp4URL)
+                    guard !Task.isCancelled else { return }
+                    let model = VideoModel(
+                        id: "\(postID)-tenor-\(originalURL.absoluteString)",
+                        url: mp4URL,
+                        type: .tenorGif(external.uri),
+                        aspectRatio: aspectRatio,
+                        thumbnailURL: external.thumb?.url
+                    )
+                    videoModel = model
+                    isLoadingGif = false
+                    gifError = nil
+                    logger.debug("✅ Created VideoModel for Tenor GIF: \(model.id)")
                 } else {
                     logger.debug("❌ Tenor MP4 URL returned status \(httpResponse.statusCode): \(mp4URL.absoluteString)")
-                    await MainActor.run {
-                        isLoadingGif = false
-                        gifError = "MP4 conversion failed (status \(httpResponse.statusCode))"
-                    }
+                    guard !Task.isCancelled else { return }
+                    isLoadingGif = false
+                    gifError = "MP4 conversion failed (status \(httpResponse.statusCode))"
                 }
             }
         } catch {
+            guard !Task.isCancelled,
+                  !(error is CancellationError),
+                  (error as? URLError)?.code != .cancelled
+            else { return }
             logger.debug("❌ Failed to validate Tenor MP4 URL: \(error)")
-            await MainActor.run {
-                isLoadingGif = false
-                gifError = "Unable to load MP4 version"
-            }
+            isLoadingGif = false
+            gifError = "Unable to load MP4 version"
         }
     }
+
     
     /// Klipy's `.gif` and `.mp4` URLs share a path prefix but have unrelated
     /// per-format filenames (unlike Tenor's `AAAAC → AAAPo` swap on a single
@@ -544,6 +600,7 @@ struct ExternalEmbedView: View {
     /// query-param slug carrying the video variant's filename — reconstruct the
     /// playable video URL by substituting that slug into the same directory.
     private func setupKlipyMedia(from url: URL, aspectRatio: CGFloat) {
+        guard !Task.isCancelled else { return }
         if let mp4Slug = url.queryParameters?["mp4"], !mp4Slug.isEmpty,
            let videoURL = klipyVideoURL(from: url, filename: "\(mp4Slug).mp4") {
             let model = VideoModel(
@@ -584,7 +641,8 @@ struct ExternalEmbedView: View {
         url.deletingLastPathComponent().appendingPathComponent(filename)
     }
 
-    private func setupGiphyVideo(from url: URL) {
+    private func setupGiphyVideo(from url: URL) async {
+        guard !Task.isCancelled else { return }
         logger.debug("🎬 Setting up Giphy video from URL: \(url.absoluteString)")
         
         // Extract GIF ID from various Giphy URL formats
@@ -631,6 +689,7 @@ struct ExternalEmbedView: View {
         
         guard let gifId = giphyId else {
             logger.debug("❌ No Giphy ID found, cannot convert to MP4")
+            guard !Task.isCancelled else { return }
             isLoadingGif = false
             gifError = "Failed to parse Giphy GIF URL"
             return
@@ -639,58 +698,76 @@ struct ExternalEmbedView: View {
         // Create MP4 URL for Giphy
         if let mp4URL = URL(string: "https://media.giphy.com/media/\(gifId)/giphy.mp4") {
             logger.debug("✅ Created Giphy MP4 URL: \(mp4URL.absoluteString)")
-            
-            // Validate the MP4 URL before creating VideoModel
-            Task {
-                await validateAndCreateGiphyModel(mp4URL: mp4URL, gifId: gifId)
-            }
+            await validateAndCreateGiphyModel(mp4URL: mp4URL, gifId: gifId)
         } else {
             logger.debug("❌ Failed to create MP4 URL for Giphy ID: \(gifId)")
+            guard !Task.isCancelled else { return }
             isLoadingGif = false
             gifError = "Failed to create MP4 URL"
         }
     }
     
     private func validateAndCreateGiphyModel(mp4URL: URL, gifId: String) async {
+        guard !Task.isCancelled else { return }
+
+        if DerivedMP4ValidationCache.shared.isValidated(mp4URL) {
+            guard !Task.isCancelled else { return }
+            let model = VideoModel(
+                id: "\(postID)-giphy-\(gifId)",
+                url: mp4URL,
+                type: .giphyGif(external.uri),
+                aspectRatio: gifAspectRatio,
+                thumbnailURL: external.thumb?.url
+            )
+            guard !Task.isCancelled else { return }
+            videoModel = model
+            isLoadingGif = false
+            gifError = nil
+            logger.debug("✅ Used cached validation for Giphy GIF: \(model.id)")
+            return
+        }
+
         do {
             var request = URLRequest(url: mp4URL)
             request.httpMethod = "HEAD"
             request.timeoutInterval = 5.0
 
             let (_, response) = try await URLSession.shared.data(for: request)
+            guard !Task.isCancelled else { return }
 
             if let httpResponse = response as? HTTPURLResponse {
                 if httpResponse.statusCode == 200 {
-                    logger.debug("✅ Giphy MP4 URL validated: \(mp4URL.absoluteString)")
-
-                    await MainActor.run {
-                        let model = VideoModel(
-                            id: "\(postID)-giphy-\(gifId)",
-                            url: mp4URL,
-                            type: .giphyGif(external.uri),
-                            aspectRatio: gifAspectRatio,
-                            thumbnailURL: external.thumb?.url
-                        )
-                        videoModel = model
-                        isLoadingGif = false
-                        logger.debug("✅ Created VideoModel for Giphy GIF: \(model.id)")
-                    }
+                    DerivedMP4ValidationCache.shared.setValidated(mp4URL)
+                    guard !Task.isCancelled else { return }
+                    let model = VideoModel(
+                        id: "\(postID)-giphy-\(gifId)",
+                        url: mp4URL,
+                        type: .giphyGif(external.uri),
+                        aspectRatio: gifAspectRatio,
+                        thumbnailURL: external.thumb?.url
+                    )
+                    videoModel = model
+                    isLoadingGif = false
+                    gifError = nil
+                    logger.debug("✅ Created VideoModel for Giphy GIF: \(model.id)")
                 } else {
                     logger.debug("❌ Giphy MP4 URL returned status \(httpResponse.statusCode): \(mp4URL.absoluteString)")
-                    await MainActor.run {
-                        isLoadingGif = false
-                        gifError = "MP4 conversion failed (status \(httpResponse.statusCode))"
-                    }
+                    guard !Task.isCancelled else { return }
+                    isLoadingGif = false
+                    gifError = "MP4 conversion failed (status \(httpResponse.statusCode))"
                 }
             }
         } catch {
+            guard !Task.isCancelled,
+                  !(error is CancellationError),
+                  (error as? URLError)?.code != .cancelled
+            else { return }
             logger.debug("❌ Failed to validate Giphy MP4 URL: \(error)")
-            await MainActor.run {
-                isLoadingGif = false
-                gifError = "Unable to load MP4 version"
-            }
+            isLoadingGif = false
+            gifError = "Unable to load MP4 version"
         }
     }
+    
     
     @ViewBuilder
     private var blurOverlay: some View {
@@ -852,7 +929,8 @@ struct ExternalEmbedView: View {
             switch consent {
             case .allow:
                 if isGifURL {
-                    setupVideoIfNeeded()
+                    retryAttempt += 1
+
                 } else if appSettings.useWebViewEmbeds, let embedType = embedType ?? ExternalMediaType.detect(from: url) {
                     withAnimation(.easeInOut(duration: 0.3)) {
                         userTappedToShowEmbed = true
@@ -913,7 +991,7 @@ struct ExternalEmbedView: View {
             HStack(spacing: 12) {
                 Button("Try Again") {
                     gifError = nil
-                    setupVideoIfNeeded()
+                    retryAttempt += 1
                 }
                 .appFont(AppTextRole.caption)
                 .foregroundStyle(.blue)

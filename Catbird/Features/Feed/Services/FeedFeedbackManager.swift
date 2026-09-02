@@ -28,7 +28,7 @@ final class FeedFeedbackManager {
   /// Queue of interactions to send
   private var interactionQueue: Set<String> = []
   
-  /// History of sent interactions (weak to avoid memory leaks)
+  /// History of sent interactions
   private var sentInteractions: Set<String> = []
   
   /// Timer for throttled sending
@@ -56,10 +56,6 @@ final class FeedFeedbackManager {
   /// Throttle interval for sending interactions (10 seconds)
   private static let sendThrottleInterval: TimeInterval = 10.0
   
-  // MARK: - Initialization
-  
-  init() {}
-  
   // MARK: - Configuration
   
   /// Configure the feedback manager for a specific feed
@@ -70,32 +66,44 @@ final class FeedFeedbackManager {
     feedGeneratorDID: String? = nil,
     canSendInteractions: Bool = false
   ) {
-    self.currentFeedType = feedType
+    // Only write observable properties when the value actually changes;
+    // @Observable notifies on every assignment, and configure(for:) runs on every feed load.
+    if currentFeedType != feedType {
+      currentFeedType = feedType
+    }
     self.client = client
     self.feedGeneratorDID = feedGeneratorDID
     
     // Enable feedback for custom feeds only (not timeline)
+    let shouldEnable: Bool
     switch feedType {
     case .feed(let feed):
         // if can send interactions or is Discover feed
         if canSendInteractions || feed.uriString() == "at://did:plc:z72i7hdynmk6r22z27h6tvur/app.bsky.feed.generator/whats-hot" {
-            isEnabled = true
+            shouldEnable = true
             logger.debug("FeedFeedback ENABLED for \(feedType.identifier) (canSend: \(canSendInteractions))")
         } else {
-            isEnabled = false
+            shouldEnable = false
             logger.debug("FeedFeedback DISABLED for \(feedType.identifier) - interactions not accepted by generator")
         }
     case .timeline, .list, .author, .likes:
-      isEnabled = false
+      shouldEnable = false
       logger.debug("FeedFeedback DISABLED for \(feedType.identifier) - not a custom feed")
+    }
+    if isEnabled != shouldEnable {
+      isEnabled = shouldEnable
     }
   }
   
   /// Disable feedback and clear state
   @MainActor
   func disable() {
-    isEnabled = false
-    currentFeedType = nil
+    if isEnabled {
+      isEnabled = false
+    }
+    if currentFeedType != nil {
+      currentFeedType = nil
+    }
     feedGeneratorDID = nil
     
     // Flush any pending interactions before disabling

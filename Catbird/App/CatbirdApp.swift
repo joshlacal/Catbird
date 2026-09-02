@@ -636,12 +636,6 @@ struct CatbirdApp: App {
     // before any responses containing custom types are decoded.
     PetrelCatbirdLexicons.register()
 
-    // Signal-style: TRUNCATE checkpoint at launch to clear any leftover WAL from previous session.
-    // If the previous session was terminated before budget checkpoints ran, WAL could be large.
-    // This is cheap (no-op if WAL is already empty) and prevents stale WAL accumulation.
-    if !ProcessInfo.processInfo.isLowPowerModeEnabled {
-      MLSGRDBManager.syncTruncatingCheckpointAtLaunch()
-    }
 
     // Bridge Petrel logs into Sentry (Sentry is initialized in AppDelegate)
     PetrelSentryBridge.enable()
@@ -1213,48 +1207,6 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
     //      """)
   }
 
-  // MARK: - Cache Preloading
-
-  /// Pre-load cached feed data for instant display at startup
-  @MainActor
-  private func preloadCachedFeedData(container: ModelContainer) async {
-    logger.debug("📦 Pre-loading cached feed data for instant startup")
-
-    let modelContext = container.mainContext
-
-    // Query recent cached posts for the main timeline
-    let sortDescriptors = [SortDescriptor<CachedFeedViewPost>(\.createdAt, order: .reverse)]
-    let descriptor = FetchDescriptor<CachedFeedViewPost>(
-      predicate: #Predicate<CachedFeedViewPost> { post in
-        post.feedType == "following" || post.feedType == "notification-prefetch" || post.feedType == "thread-cache"
-      },
-      sortBy: sortDescriptors
-    )
-
-    do {
-      let cachedPosts = try modelContext.fetch(descriptor)
-      let postCount = cachedPosts.prefix(50).count
-
-      if postCount > 0 {
-        logger.info("✅ Pre-loaded \(postCount) cached posts for instant display")
-
-        // Prefetch images for cached posts to make display truly instant
-        let imageURLs = cachedPosts.prefix(20).compactMap { cachedPost -> URL? in
-            return try? cachedPost.feedViewPost.post.author.finalAvatarURL()
-        }
-
-        if !imageURLs.isEmpty {
-          let imageManager = ImageLoadingManager.shared
-          await imageManager.startPrefetching(urls: imageURLs)
-          logger.debug("🖼️ Pre-fetched \(imageURLs.count) avatar images")
-        }
-      } else {
-        logger.debug("No cached posts found for pre-loading")
-      }
-    } catch {
-      logger.error("Failed to pre-load cached feed data: \(error.localizedDescription)")
-    }
-  }
 
   #if os(macOS)
   // MARK: - macOS Window Scenes
@@ -1575,7 +1527,6 @@ private extension CatbirdApp {
         appState.notificationManager.setModelContext(container.mainContext)
       }
       FeedStateStore.shared.setModelContext(modelContext)
-      await preloadCachedFeedData(container: container)
     }
 
     if #available(iOS 26.0, macOS 26.0, *) {

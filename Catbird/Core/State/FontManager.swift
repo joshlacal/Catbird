@@ -120,26 +120,121 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
     // MARK: - Properties
     
     /// Current font style setting
-    var fontStyle: String = "system"
-    
+    var fontStyle: String = "system" {
+        didSet { invalidateFontCache() }
+    }
+
     /// Current font size setting
-    var fontSize: String = "default"
-    
+    var fontSize: String = "default" {
+        didSet { invalidateFontCache() }
+    }
+
     /// Current line spacing setting
     var lineSpacing: String = "normal"
-    
+
     /// Current letter spacing setting
     var letterSpacing: String = "normal"
-    
+
     /// Whether Dynamic Type is enabled
-    var dynamicTypeEnabled: Bool = true
-    
+    var dynamicTypeEnabled: Bool = true {
+        didSet { invalidateFontCache() }
+    }
+
     /// Maximum Dynamic Type size to allow
-    var maxDynamicTypeSize: String = "accessibility1"
-    
+    var maxDynamicTypeSize: String = "accessibility1" {
+        didSet { invalidateFontCache() }
+    }
+
     /// Current system content size category
-    private(set) var currentContentSizeCategory: CrossPlatformContentSizeCategory = .current
-    
+    private(set) var currentContentSizeCategory: CrossPlatformContentSizeCategory = .current {
+        didSet { invalidateFontCache() }
+    }
+
+    // MARK: - Font Memo Cache
+
+    /// Identifies a resolved `Font` by every input that affects how it is built.
+    /// Settings that only feed separate modifiers (`lineSpacing`, `letterSpacing`) are
+    /// deliberately excluded because they never change the `Font` value itself.
+    private struct FontCacheKey: Hashable {
+        let baseSize: CGFloat
+        let weight: Font.Weight
+        let design: Font.Design
+        let textStyle: Font.TextStyle?
+        let sizeScale: CGFloat
+        let maxContentSizeCategory: CrossPlatformContentSizeCategory
+        let contentSizeCategory: CrossPlatformContentSizeCategory
+    }
+
+    /// Upper bound on cached fonts; the cache is dropped wholesale when exceeded.
+    private static let fontCacheLimit = 512
+
+    /// Memoized fonts built by `scaledFont`/`accessibleFont`/`fontForTextRole`.
+    ///
+    /// Building a Dynamic Type font on iOS goes through several UIKit allocations, and
+    /// `.appFont` sites re-run on every body evaluation, so results are memoized here.
+    /// Guarded by `fontCacheLock` because FontManager is not actor-isolated; reads and
+    /// writes are excluded from observation so cache fills never trigger view updates.
+    @ObservationIgnored private var fontCache: [FontCacheKey: Font] = [:]
+    private let fontCacheLock = NSLock()
+
+    /// Drop every memoized font. Runs from the `didSet` of each input property, which
+    /// covers `applyFontSettings`, the content-size-category handler, and direct
+    /// assignments from outside this type.
+    private func invalidateFontCache() {
+        fontCacheLock.withLock {
+            fontCache.removeAll(keepingCapacity: true)
+        }
+    }
+
+    /// Resolve (and memoize) the font for the given inputs.
+    ///
+    /// `textStyle` is `nil` when the caller wants a fixed-size font; when non-nil the
+    /// font scales with Dynamic Type from the app-scaled base size.
+    private func resolvedFont(
+        baseSize: CGFloat,
+        weight: Font.Weight,
+        relativeTo textStyle: Font.TextStyle?
+    ) -> Font {
+        let design = fontDesign
+        let scale = sizeScale
+        let maxCategory = maxContentSizeCategory
+        let key = FontCacheKey(
+            baseSize: baseSize,
+            weight: weight,
+            design: design,
+            textStyle: textStyle,
+            sizeScale: scale,
+            maxContentSizeCategory: maxCategory,
+            contentSizeCategory: currentContentSizeCategory
+        )
+
+        if let cached = fontCacheLock.withLock({ fontCache[key] }) {
+            return cached
+        }
+
+        let scaledSize = baseSize * scale
+        let font: Font
+        if let textStyle {
+            font = Font.customDynamicFont(
+                baseSize: scaledSize,
+                weight: weight,
+                design: design,
+                relativeTo: textStyle,
+                maxContentSizeCategory: maxCategory
+            )
+        } else {
+            font = Font.system(size: scaledSize, weight: weight, design: design)
+        }
+
+        fontCacheLock.withLock {
+            if fontCache.count >= Self.fontCacheLimit {
+                fontCache.removeAll(keepingCapacity: true)
+            }
+            fontCache[key] = font
+        }
+        return font
+    }
+
     // MARK: - Initialization
     
     init() {
@@ -588,26 +683,15 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
         weight: Font.Weight = .regular,
         relativeTo textStyle: Font.TextStyle? = nil
     ) -> Font {
-        let scaledSize = self.scaledSize(size)
+        logger.debug("scaledFont called: baseSize=\(size), dynamicType=\(self.dynamicTypeEnabled), textStyle=\(String(describing: textStyle))")
 
-        logger.debug("scaledFont called: baseSize=\(size), scaledSize=\(scaledSize), dynamicType=\(self.dynamicTypeEnabled), textStyle=\(String(describing: textStyle))")
-
-        if dynamicTypeEnabled, let textStyle = textStyle {
-            // Use Dynamic Type scaling WITH our size preference
-            // This properly combines app scaling with system Dynamic Type
-            logger.debug("Using Dynamic Type with custom base size: \(scaledSize)")
-            return Font.customDynamicFont(
-                baseSize: scaledSize,
-                weight: weight,
-                design: fontDesign,
-                relativeTo: textStyle,
-                maxContentSizeCategory: maxContentSizeCategory
-            )
-        } else {
-            // Use only our fixed size with user's size preference
-            logger.debug("Using fixed size font: \(scaledSize)")
-            return Font.system(size: scaledSize, weight: weight, design: fontDesign)
-        }
+        // Dynamic Type scaling WITH our size preference when enabled and a text style
+        // is given; otherwise a fixed size with only the user's size preference.
+        return resolvedFont(
+            baseSize: size,
+            weight: weight,
+            relativeTo: dynamicTypeEnabled ? textStyle : nil
+        )
     }
     
     /// Create a scaled custom font with width variant
@@ -643,23 +727,11 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
         weight: Font.Weight = .regular,
         relativeTo textStyle: Font.TextStyle
     ) -> Font {
-        // Apply user's font size preference to the base size
-        let scaledBaseSize = self.scaledSize(size)
-        
-        if dynamicTypeEnabled {
-            // HIJACK APPROACH: Create a custom UIFont that scales with Dynamic Type
-            // but starts from our user-preferred base size instead of system default
-            return Font.customDynamicFont(
-                baseSize: scaledBaseSize,
-                weight: weight,
-                design: fontDesign,
-                relativeTo: textStyle,
-                maxContentSizeCategory: maxContentSizeCategory
-            )
-        } else {
-            // Use only our app's font size preference (no Dynamic Type)
-            return Font.system(size: scaledBaseSize, weight: weight, design: fontDesign)
-        }
+        return resolvedFont(
+            baseSize: size,
+            weight: weight,
+            relativeTo: dynamicTypeEnabled ? textStyle : nil
+        )
     }
     
     /// Get appropriate font for a specific text role

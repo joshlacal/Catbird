@@ -88,7 +88,6 @@ struct EnhancedFeedPost: View, Equatable {
   var body: some View {
     if let feedViewPost {
       content(for: feedViewPost)
-        .id(appState.feedFeedbackManager.currentFeedType?.identifier ?? "unknown-feed-\(id)")
     }
   }
 

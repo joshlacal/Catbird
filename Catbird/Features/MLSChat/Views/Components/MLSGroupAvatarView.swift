@@ -1,4 +1,5 @@
 import SwiftUI
+import ImageIO
 import NukeUI
 import CatbirdMLSCore
 
@@ -10,6 +11,13 @@ struct MLSGroupAvatarView: View {
   let size: CGFloat
   var groupAvatarData: Data? = nil
   var currentUserDID: String? = nil
+  @Environment(\.displayScale) private var displayScale
+  @State private var decodedAvatar: PlatformImage?
+
+  private struct AvatarDecodeKey: Equatable {
+    let data: Data?
+    let pixelSize: CGFloat
+  }
 
   // MARK: - Computed Properties
 
@@ -22,14 +30,16 @@ struct MLSGroupAvatarView: View {
 
   private var bubbleSize: CGFloat { size * 0.42 }
 
+  private var targetPixelSize: CGFloat {
+    max(1, size * displayScale)
+  }
+
   // MARK: - Body
 
   var body: some View {
     Group {
-      if let avatarData = groupAvatarData,
-        let platformImage = PlatformImage(data: avatarData)
-      {
-        platformSwiftUIImage(platformImage)
+      if let decodedAvatar {
+        platformSwiftUIImage(decodedAvatar)
           .resizable()
           .scaledToFill()
       } else if filteredParticipants.count <= 1 {
@@ -45,6 +55,15 @@ struct MLSGroupAvatarView: View {
     .frame(width: size, height: size)
     .clipShape(Circle())
     .overlay(Circle().stroke(Color.gray.opacity(0.1), lineWidth: 1))
+    .task(id: AvatarDecodeKey(data: groupAvatarData, pixelSize: targetPixelSize)) {
+      guard let avatarData = groupAvatarData, !avatarData.isEmpty else {
+        decodedAvatar = nil
+        return
+      }
+      let image = await Self.decodeThumbnailAsync(from: avatarData, pixelSize: targetPixelSize)
+      guard !Task.isCancelled else { return }
+      decodedAvatar = image
+    }
   }
 
   // MARK: - Single Avatar
@@ -180,6 +199,34 @@ struct MLSGroupAvatarView: View {
     Image(uiImage: img)
     #else
     Image(nsImage: img)
+    #endif
+  }
+
+  // MARK: - Image Decoding
+
+  nonisolated static func decodeThumbnailAsync(from data: Data, pixelSize: CGFloat) async -> PlatformImage? {
+    decodeThumbnail(from: data, pixelSize: pixelSize)
+  }
+
+  nonisolated static func decodeThumbnail(from data: Data, pixelSize: CGFloat) -> PlatformImage? {
+    guard !data.isEmpty else { return nil }
+    guard !Task.isCancelled else { return nil }
+    let maxPixelSize = max(1, pixelSize)
+    let options: [CFString: Any] = [
+      kCGImageSourceCreateThumbnailFromImageAlways: true,
+      kCGImageSourceCreateThumbnailWithTransform: true,
+      kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
+      kCGImageSourceShouldCacheImmediately: true
+    ]
+    guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+          let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
+    else {
+      return nil
+    }
+    #if os(iOS)
+    return UIImage(cgImage: cgImage)
+    #elseif os(macOS)
+    return NSImage(cgImage: cgImage, size: CGSize(width: cgImage.width, height: cgImage.height))
     #endif
   }
 

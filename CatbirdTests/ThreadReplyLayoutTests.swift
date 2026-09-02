@@ -3,9 +3,11 @@
 //  CatbirdTests
 //
 
+import Petrel
+import SwiftUI
 import Testing
+import UIKit
 @testable import Catbird
-
 @Suite("Thread reply layout")
 struct ThreadReplyLayoutTests {
   @Test("Threaded replies progressively reduce avatar size and cap indentation")
@@ -80,5 +82,101 @@ struct ThreadReplyLayoutTests {
     let visible = try #require(layout.items.first)
     #expect(!visible.connectsToNext)
     #expect(visible.hasAdditionalReplies)
+  }
+
+  @MainActor
+  @Test("ReplyCell updates contentConfiguration on reconfiguration and resets on prepareForReuse")
+  func replyCellReconfigurationAndReuse() async throws {
+    guard #available(iOS 18.0, *) else { return }
+    let cell = ReplyCell(frame: .zero)
+    #expect(cell.contentConfiguration == nil)
+
+    let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
+    let appState = AppState(userDID: "did:plc:testuser", client: client)
+
+    let postView = CircleTestFixtures.makePostView(
+      uri: try ATProtocolURI(uriString: "at://did:plc:testuser/app.bsky.feed.post/reply1"),
+      authorDID: try DID(didString: "did:plc:testuser"),
+      text: "Optimistic reply"
+    )
+    let threadItem = AppBskyUnspeccedDefs.ThreadItemPost(
+      post: postView,
+      moreParents: false,
+      moreReplies: 0,
+      opThread: false,
+      opThreadPostIndex: nil,
+      opThreadPostCount: nil,
+      hiddenByThreadgate: false,
+      mutedByViewer: false
+    )
+    let replyWrapper = ReplyWrapper(
+      id: postView.uri.uriString(),
+      threadItem: AppBskyUnspeccedGetPostThreadV2.ThreadItem(
+        uri: postView.uri,
+        depth: 1,
+        value: .appBskyUnspeccedDefsThreadItemPost(threadItem)
+      ),
+      depth: 1,
+      isFromOP: false,
+      isOpThread: false,
+      hasReplies: false
+    )
+
+    let binding = Binding.constant(NavigationPath())
+
+    cell.configure(
+      replyWrapper: replyWrapper,
+      nestedReplies: [],
+      opAuthorID: "did:plc:opauthor",
+      appState: appState,
+      path: binding
+    )
+
+    #expect(cell.contentConfiguration != nil)
+
+    let sentinel = UIListContentConfiguration.cell()
+    cell.contentConfiguration = sentinel
+    // Reconfigure with updated/confirmed data
+    let confirmedPostView = CircleTestFixtures.makePostView(
+      uri: try ATProtocolURI(uriString: "at://did:plc:testuser/app.bsky.feed.post/reply1"),
+      authorDID: try DID(didString: "did:plc:testuser"),
+      text: "Confirmed reply"
+    )
+    let confirmedThreadItem = AppBskyUnspeccedDefs.ThreadItemPost(
+      post: confirmedPostView,
+      moreParents: false,
+      moreReplies: 0,
+      opThread: false,
+      opThreadPostIndex: nil,
+      opThreadPostCount: nil,
+      hiddenByThreadgate: false,
+      mutedByViewer: false
+    )
+    let confirmedWrapper = ReplyWrapper(
+      id: confirmedPostView.uri.uriString(),
+      threadItem: AppBskyUnspeccedGetPostThreadV2.ThreadItem(
+        uri: confirmedPostView.uri,
+        depth: 1,
+        value: .appBskyUnspeccedDefsThreadItemPost(confirmedThreadItem)
+      ),
+      depth: 1,
+      isFromOP: false,
+      isOpThread: false,
+      hasReplies: false
+    )
+
+    cell.configure(
+      replyWrapper: confirmedWrapper,
+      nestedReplies: [],
+      opAuthorID: "did:plc:opauthor",
+      appState: appState,
+      path: binding
+    )
+
+    #expect(cell.contentConfiguration != nil)
+    #expect(!(cell.contentConfiguration is UIListContentConfiguration))
+    // Verify prepareForReuse clears configuration
+    cell.prepareForReuse()
+    #expect(cell.contentConfiguration == nil)
   }
 }

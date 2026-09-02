@@ -13,6 +13,7 @@ struct GifVideoView: View {
     @State private var hasError = false
     @State private var isVisibleOnScreen = false
     private let visibilityThreshold: Double = 0.2
+    @State private var observerToken: (any NSObjectProtocol)?
     
     var body: some View {
         Button(action: onTap) {
@@ -153,22 +154,12 @@ struct GifVideoView: View {
         let playerItem = AVPlayerItem(url: videoURL)
         let avPlayer = AVPlayer(playerItem: playerItem)
         
-        // Configure for GIF-like behavior
+        // Configure for GIF-like behavior (PlayerLayerView manages playback looping)
         avPlayer.isMuted = true // GIFs are silent
         avPlayer.actionAtItemEnd = .none
         
-        // Set up looping notification
-        NotificationCenter.default.addObserver(
-            forName: .AVPlayerItemDidPlayToEndTime,
-            object: playerItem,
-            queue: .main
-        ) { _ in
-            avPlayer.seek(to: .zero)
-            avPlayer.play()
-        }
-        
         // Monitor for player errors
-        NotificationCenter.default.addObserver(
+        observerToken = NotificationCenter.default.addObserver(
             forName: .AVPlayerItemFailedToPlayToEndTime,
             object: playerItem,
             queue: .main
@@ -184,9 +175,12 @@ struct GifVideoView: View {
     
     @MainActor
     private func cleanupPlayer() {
+        if let observerToken {
+            NotificationCenter.default.removeObserver(observerToken)
+            self.observerToken = nil
+        }
         player?.pause()
         player = nil
-        NotificationCenter.default.removeObserver(self)
     }
 
     /// Get the best video URL for animation from Tenor's media formats

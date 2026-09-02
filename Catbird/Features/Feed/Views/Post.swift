@@ -37,6 +37,10 @@ struct Post: View, Equatable {
     @Environment(AppState.self) private var appState
     @Environment(\.adultContentEnabled) private var adultContentEnabled
     @State private var bluemojiEnriched: AttributedString?
+    /// Facet-styled body text, built once per `PostStyledTextKey` and reused by every
+    /// body evaluation and by the bluemoji enrichment task.
+    @State private var baseAttributed: AttributedString?
+    @State private var baseAttributedKey: PostStyledTextKey?
     @State private var showLanguageSelection = false
     private let textSize: CGFloat?
     private let textStyle: Font.TextStyle
@@ -116,6 +120,15 @@ struct Post: View, Equatable {
     }
     
     var body: some View {
+        let key = styledTextKey
+        let baseForBody: AttributedString = {
+            if let cached = baseAttributed, baseAttributedKey == key {
+                return cached
+            }
+            return Self.buildBaseStyledString(post: post, key: key)
+        }()
+        let displayString = displayAttributedString(base: baseForBody, key: key)
+
         VStack(alignment: .leading, spacing: 6) {
             // Translation button with enhanced styling
             if shouldShowTranslationButton || indicatorLanguage != nil {
@@ -141,7 +154,7 @@ struct Post: View, Equatable {
                     #if os(iOS)
                     if useUIKitSelectableText && isSelectable {
                         SelectableTextView(
-                            attributedString: displayAttributedString,
+                            attributedString: displayString,
                             textSize: textSize,
                             textStyle: textStyle,
                             textDesign: textDesign,
@@ -156,7 +169,7 @@ struct Post: View, Equatable {
                         .layoutPriority(1)
                     } else {
                         TappableTextView(
-                            attributedString: displayAttributedString,
+                            attributedString: displayString,
                             textSize: textSize,
                             textStyle: textStyle,
                         textDesign: textDesign,
@@ -174,7 +187,7 @@ struct Post: View, Equatable {
                     }
                 #else
                     TappableTextView(
-                        attributedString: displayAttributedString,
+                        attributedString: displayString,
                         textSize: textSize,
                         textStyle: textStyle,
                         textDesign: textDesign,
@@ -203,12 +216,20 @@ struct Post: View, Equatable {
                 }
             }
         .animation(.easeInOut(duration: 0.2), value: shouldAnimateTranslation)
-        .task(id: post.text) {
+        .task(id: BluemojiTaskKey(styledTextKey: key, adultContentEnabled: adultContentEnabled)) {
+            let base: AttributedString
+            if let cached = baseAttributed, baseAttributedKey == key {
+                base = cached
+            } else {
+                base = baseForBody
+                baseAttributed = base
+                baseAttributedKey = key
+            }
             bluemojiEnriched = nil
             guard !post.text.isEmpty, let facets = post.facets, !facets.isEmpty else { return }
-            let base = bluemojiBaseString
             let enriched = await appState.bluemojiRenderer.enrich(
                 base, text: post.text, facets: facets, allowAdult: adultContentEnabled)
+            guard !Task.isCancelled, baseAttributedKey == key else { return }
             if enriched != base { bluemojiEnriched = enriched }
         }
         .modifier(TranslationTaskModifier(config: translationConfig) { session in
@@ -276,22 +297,36 @@ struct Post: View, Equatable {
         targetLanguage.baseLanguageCode?.lowercased() ?? "en"
     }
 
-    // Computed property to prevent repeated complex ternary expressions
-    private var displayAttributedString: AttributedString {
+    private func displayAttributedString(
+        base: AttributedString,
+        key: PostStyledTextKey
+    ) -> AttributedString {
         if showTranslation, let translated = translatedText {
             return AttributedString(translated)
         }
-        return bluemojiEnriched ?? post.facetsAsAttributedString.applyingPostBodyLinkAccent(
+        if baseAttributedKey == key, let enriched = bluemojiEnriched {
+            return enriched
+        }
+        return base
+    }
+
+    /// Identity of the facet-styled base string: the inputs that feed
+    /// `facetsAsAttributedString` plus the two link-accent settings.
+    private var styledTextKey: PostStyledTextKey {
+        PostStyledTextKey(
+            text: post.text,
+            facets: post.facets,
             highlightLinks: appState.appSettings.highlightLinks,
             linkStyle: appState.appSettings.linkStyle
         )
     }
 
-    /// Base string enrichment is applied over: matches the non-translated path above.
-    private var bluemojiBaseString: AttributedString {
+    /// Builds the facet-styled base string. Called once per key by the enrichment
+    /// task, and inline by `body` only until that task has populated the cache.
+    private static func buildBaseStyledString(post: AppBskyFeedPost, key: PostStyledTextKey) -> AttributedString {
         post.facetsAsAttributedString.applyingPostBodyLinkAccent(
-            highlightLinks: appState.appSettings.highlightLinks,
-            linkStyle: appState.appSettings.linkStyle
+            highlightLinks: key.highlightLinks,
+            linkStyle: key.linkStyle
         )
     }
 
@@ -563,6 +598,22 @@ enum PostLanguageIndicators {
     static func shouldShow(isEnabled: Bool, languageCount: Int) -> Bool {
         isEnabled && languageCount > 0
     }
+}
+
+/// Cache key for `Post`'s facet-styled base string. Changing any field changes
+/// the output of `facetsAsAttributedString.applyingPostBodyLinkAccent`.
+private struct PostStyledTextKey: Hashable, Sendable {
+    let text: String
+    let facets: [AppBskyRichtextFacet]?
+    let highlightLinks: Bool
+    let linkStyle: String
+}
+
+/// Task identity for Bluemoji enrichment, combining the facet-styled text key
+/// with the user's adult-content policy preference.
+private struct BluemojiTaskKey: Hashable, Sendable {
+    let styledTextKey: PostStyledTextKey
+    let adultContentEnabled: Bool
 }
 
 // MARK: - Typography Configuration

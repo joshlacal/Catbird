@@ -46,10 +46,11 @@ struct MLSImageView: View {
   /// image fills the full bubble width.
   private let maxImageWidth: CGFloat = 280
   private let maxImageHeight: CGFloat = 400
+  /// Maximum pixel dimension for decoded chat thumbnail bitmaps in memory.
+  private let thumbnailMaxPixelSize: CGFloat = 800
   /// Corner radius matches the bubble in `UnifiedMessageBubble` so the image
   /// surface IS the bubble surface (no padding ring).
   private let bubbleCornerRadius: CGFloat = 18
-
   /// Placeholder dimensions derived from (clamped) metadata.
   private var placeholderSize: CGSize {
     fittedSize(forAspectRatio: metadataAspectRatio)
@@ -143,12 +144,20 @@ struct MLSImageView: View {
         .onTapGesture { showFullscreen = true }
         #if os(iOS)
         .fullScreenCover(isPresented: $showFullscreen) {
-          MLSFullscreenImageView(image: platformImg, altText: imageEmbed.altText)
-            .navigationTransition(.zoom(sourceID: imageEmbed.blobId, in: imageTransition))
+          MLSFullscreenImageView(
+            thumbnail: platformImg,
+            imageEmbed: imageEmbed,
+            userDID: appState.userDID
+          )
+          .navigationTransition(.zoom(sourceID: imageEmbed.blobId, in: imageTransition))
         }
         #else
         .sheet(isPresented: $showFullscreen) {
-          MLSFullscreenImageView(image: platformImg, altText: imageEmbed.altText)
+          MLSFullscreenImageView(
+            thumbnail: platformImg,
+            imageEmbed: imageEmbed,
+            userDID: appState.userDID
+          )
         }
         #endif
     }
@@ -204,12 +213,20 @@ struct MLSImageView: View {
     }
     #if os(iOS)
     .fullScreenCover(isPresented: $showFullscreen) {
-      MLSFullscreenImageView(image: platformImg, altText: imageEmbed.altText)
-        .navigationTransition(.zoom(sourceID: imageEmbed.blobId, in: imageTransition))
+      MLSFullscreenImageView(
+        thumbnail: platformImg,
+        imageEmbed: imageEmbed,
+        userDID: appState.userDID
+      )
+      .navigationTransition(.zoom(sourceID: imageEmbed.blobId, in: imageTransition))
     }
     #else
     .sheet(isPresented: $showFullscreen) {
-      MLSFullscreenImageView(image: platformImg, altText: imageEmbed.altText)
+      MLSFullscreenImageView(
+        thumbnail: platformImg,
+        imageEmbed: imageEmbed,
+        userDID: appState.userDID
+      )
     }
     #endif
   }
@@ -325,18 +342,26 @@ struct MLSImageView: View {
 
   private func loadImage() async {
     let userDID = appState.userDID
-    // Check cache first (partitioned by user DID)
-    if let cached = await MLSImageCache.shared.get(blobId: imageEmbed.blobId, userDID: userDID) {
+    // Check thumbnail cache first (partitioned by user DID)
+    if let cached = await MLSImageCache.shared.getThumbnail(
+      blobId: imageEmbed.blobId,
+      userDID: userDID,
+      maxPixelSize: thumbnailMaxPixelSize
+    ) {
       image = cached
-      logImageDimensions(decoded: cached, source: "cache")
-      // Run SCA on cached image too (respects app-level toggle)
+      logImageDimensions(decoded: cached, source: "cache-thumbnail")
+      // Run SCA on cached image too (respects app-level toggle and uses memoized verdict)
       #if os(iOS)
       let cgImage = cached.cgImage
       #else
       let cgImage = cached.cgImage(forProposedRect: nil, context: nil, hints: nil)
       #endif
       if appState.appSettings.sensitiveContentScanningEnabled, let cgImage {
-        analysisResult = await ImageContentAnalyzer.shared.analyze(cgImage)
+        analysisResult = await ImageContentAnalyzer.shared.analyze(
+          cgImage,
+          accountDID: userDID,
+          blobId: imageEmbed.blobId
+        )
       }
       loadState = .loaded
       return
@@ -374,29 +399,43 @@ struct MLSImageView: View {
         expectedSHA256: imageEmbed.sha256
       )
 
-      // Validate image format
-      guard let decodedImage = PlatformImage(data: plaintext) else {
+      // Write original decrypted bytes to disk cache
+      await MLSImageCache.shared.put(blobId: imageEmbed.blobId, userDID: userDID, imageData: plaintext)
+
+      // Decode and retain downsampled thumbnail
+      guard let thumbnail = await MLSImageCache.shared.getThumbnail(
+        blobId: imageEmbed.blobId,
+        userDID: userDID,
+        maxPixelSize: thumbnailMaxPixelSize,
+        knownData: plaintext
+      ) else {
         loadState = .error("Invalid image data")
         return
       }
 
-      logImageDimensions(decoded: decodedImage, source: "network", payloadBytes: plaintext.count)
+      logImageDimensions(decoded: thumbnail, source: "network-thumbnail", payloadBytes: plaintext.count)
 
-      // Cache (partitioned by user DID)
-      await MLSImageCache.shared.put(blobId: imageEmbed.blobId, userDID: userDID, imageData: plaintext)
-      // SensitiveContentAnalysis check (respects app-level toggle)
+      // SensitiveContentAnalysis check (respects app-level toggle and uses memoized verdict)
       #if os(iOS)
-      if appState.appSettings.sensitiveContentScanningEnabled, let cgImage = decodedImage.cgImage {
-        analysisResult = await ImageContentAnalyzer.shared.analyze(cgImage)
+      if appState.appSettings.sensitiveContentScanningEnabled, let cgImage = thumbnail.cgImage {
+        analysisResult = await ImageContentAnalyzer.shared.analyze(
+          cgImage,
+          accountDID: userDID,
+          blobId: imageEmbed.blobId
+        )
       }
       #else
       if appState.appSettings.sensitiveContentScanningEnabled,
-         let cgImage = decodedImage.cgImage(forProposedRect: nil, context: nil, hints: nil) {
-        analysisResult = await ImageContentAnalyzer.shared.analyze(cgImage)
+         let cgImage = thumbnail.cgImage(forProposedRect: nil, context: nil, hints: nil) {
+        analysisResult = await ImageContentAnalyzer.shared.analyze(
+          cgImage,
+          accountDID: userDID,
+          blobId: imageEmbed.blobId
+        )
       }
       #endif
 
-      image = decodedImage
+      image = thumbnail
       loadState = .loaded
     } catch is BlobCryptoError {
       loadState = .error("Image could not be verified")

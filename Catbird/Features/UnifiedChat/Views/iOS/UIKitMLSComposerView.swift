@@ -81,11 +81,15 @@ final class UIKitMLSComposerView: UIView, UITextViewDelegate {
   private(set) var mode: ComposerMode = .compose
 
   var embedPreviewImage: UIImage? {
-    didSet { updateEmbedPreview() }
+    didSet {
+      guard oldValue !== embedPreviewImage else { return }
+      updateEmbedPreview()
+    }
   }
 
   var hasEmbed: Bool = false {
     didSet {
+      guard oldValue != hasEmbed else { return }
       updateEmbedPreview()
       updateSendButtonState()
     }
