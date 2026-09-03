@@ -20,6 +20,7 @@ import Foundation
         let iconName: String
         let showsProgress: Bool
         let showsRetry: Bool
+        var showsReset: Bool = false
     }
 
     func rejoinStatusPresentation(for recoveryState: RecoveryState) -> RejoinStatusPresentation? {

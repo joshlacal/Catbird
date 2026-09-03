@@ -42,6 +42,17 @@ struct SendBlockedNotice: Equatable {
   let detail: String
   let iconName: String
   let showsProgress: Bool
+  /// Offer a user-confirmed conversation reset: the local group is gone and
+  /// automatic recovery has nothing left to wait for.
+  let offersReset: Bool
+
+  init(title: String, detail: String, iconName: String, showsProgress: Bool, offersReset: Bool = false) {
+    self.title = title
+    self.detail = detail
+    self.iconName = iconName
+    self.showsProgress = showsProgress
+    self.offersReset = offersReset
+  }
 
   /// Returns the user-facing notice for a blocking recovery state, or `nil`
   /// when sends are not blocked.
@@ -60,7 +71,8 @@ struct SendBlockedNotice: Equatable {
         title: "Secure session needs repair",
         detail: "Sending is paused until this conversation rejoins the encrypted group.",
         iconName: "exclamationmark.shield.fill",
-        showsProgress: true
+        showsProgress: true,
+        offersReset: true
       )
     case .resetPending:
       return SendBlockedNotice(
@@ -72,9 +84,10 @@ struct SendBlockedNotice: Equatable {
     case .unrecoverableLocal:
       return SendBlockedNotice(
         title: "Secure session unavailable",
-        detail: "Waiting for this conversation to be reset. You can't send messages right now.",
+        detail: "This device can't rejoin the encrypted group. Reset to start a fresh session.",
         iconName: "exclamationmark.shield.fill",
-        showsProgress: false
+        showsProgress: false,
+        offersReset: true
       )
     case .healthy, .epochBehind, .groupMissing:
       return nil

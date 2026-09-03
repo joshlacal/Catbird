@@ -45,4 +45,13 @@ struct MLSSendBlockingTests {
     let notice = SendBlockedNotice.notice(for: .recovering)
     #expect(notice?.showsProgress == true)
   }
+
+  @Test func resetIsOfferedOnlyWhereWaitingCannotHelp() {
+    // A dead local group (unrecoverable / needs rejoin) is what a
+    // user-confirmed reset exists for; in-flight states must not offer it.
+    #expect(SendBlockedNotice.notice(for: .unrecoverableLocal)?.offersReset == true)
+    #expect(SendBlockedNotice.notice(for: .needsRejoin)?.offersReset == true)
+    #expect(SendBlockedNotice.notice(for: .recovering)?.offersReset == false)
+    #expect(SendBlockedNotice.notice(for: .resetPending)?.offersReset == false)
+  }
 }

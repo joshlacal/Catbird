@@ -42,6 +42,9 @@ import SwiftUI
         @State private var isCurrentUserAdmin = false
         @State private var recoveryState: RecoveryState = .none
         @State private var showingRecoveryError = false
+        @State private var showingResetConfirmation = false
+        @State private var isResettingConversation = false
+        @State private var resetErrorMessage: String?
         @State private var showingReportSpamSheet = false
         @State private var reportSpamDID: String?
         @State private var reportSpamDisplayName: String?
@@ -328,7 +331,8 @@ import SwiftUI
                                 detail: notice.detail,
                                 iconName: notice.iconName,
                                 showsProgress: notice.showsProgress,
-                                showsRetry: false
+                                showsRetry: false,
+                                showsReset: notice.offersReset
                             )
                         )
                         .padding(.horizontal)
@@ -804,6 +808,15 @@ import SwiftUI
                     }
                     .font(.caption.weight(.semibold))
                 }
+
+                if status.showsReset {
+                    Button("Reset") {
+                        showingResetConfirmation = true
+                    }
+                    .font(.caption.weight(.semibold))
+                    .disabled(isResettingConversation)
+                    .accessibilityHint("Starts a fresh encrypted session for this conversation")
+                }
             }
             .padding(.horizontal, DesignTokens.Spacing.base)
             .padding(.vertical, DesignTokens.Spacing.sm)
@@ -944,6 +957,31 @@ import SwiftUI
                     }
                 } message: {
                     recoveryFailedMessage
+                }
+                .confirmationDialog(
+                    "Reset secure session?",
+                    isPresented: $showingResetConfirmation,
+                    titleVisibility: .visible
+                ) {
+                    Button("Reset Conversation", role: .destructive) {
+                        Task { await performConversationReset() }
+                    }
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text(
+                        "This starts a fresh encrypted session. Messages already on this device stay; other members rejoin automatically the next time they open the conversation."
+                    )
+                }
+                .alert(
+                    "Reset Failed",
+                    isPresented: Binding(
+                        get: { resetErrorMessage != nil },
+                        set: { if !$0 { resetErrorMessage = nil } }
+                    )
+                ) {
+                    Button("OK", role: .cancel) { resetErrorMessage = nil }
+                } message: {
+                    Text(resetErrorMessage ?? "")
                 }
         }
 
@@ -3751,6 +3789,31 @@ import SwiftUI
                 name: Notification.Name("MLSConversationLeft"),
                 object: conversationId
             )
+        }
+
+        /// User-confirmed clean-chat reset: Rust records `requestReset` and, as
+        /// an admin, activates a fresh generation from server state — the only
+        /// recovery left once this device's MLS group is gone and no peer leaf
+        /// can re-add it.
+        @MainActor
+        private func performConversationReset() async {
+            guard !isResettingConversation else { return }
+            isResettingConversation = true
+            defer { isResettingConversation = false }
+            logger.info("Resetting secure session for conversation: \(conversationId.prefix(16), privacy: .private)")
+
+            guard let manager = await appState.getMLSConversationManager() else {
+                resetErrorMessage = "Secure messaging is unavailable right now. Please restart the app and try again."
+                return
+            }
+            do {
+                try await manager.resetConversation(conversationId: conversationId)
+                await unifiedDataSource?.refreshRecoveryState()
+                await loadConversationAndMessages()
+            } catch {
+                logger.error("Conversation reset failed: \(error.localizedDescription, privacy: .public)")
+                resetErrorMessage = recoveryFailureMessage(for: error)
+            }
         }
 
         /// Perform key package desync recovery by generating fresh key package and requesting rejoin
