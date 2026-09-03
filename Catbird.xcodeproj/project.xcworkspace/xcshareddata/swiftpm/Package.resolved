@@ -33,7 +33,7 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/joshlacal/CatbirdMLSCore",
       "state" : {
-        "revision" : "60fff471b944736d7814658763c3af795fcf8ff7"
+        "revision" : "094dd26fa44a60b2851dc8a2bf0a9d1e33a374c9"
       }
     },
     {
@@ -86,7 +86,7 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/joshlacal/Petrel",
       "state" : {
-        "revision" : "e457465cd286852155177f60ac9c5758bd4f6868"
+        "revision" : "dd2ad04bafa1176d45e18be13267349f2d5ec33a"
       }
     },
     {
@@ -103,7 +103,7 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/joshlacal/PetrelCatbird",
       "state" : {
-        "revision" : "3f727bd92f281da1d7d2baa026a852a66771c18a"
+        "revision" : "0e68066f0024d05d820be64c0e999771f829d3aa"
       }
     },
     {
@@ -156,8 +156,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-asn1.git",
       "state" : {
-        "revision" : "a9a5efd40eaf558a2bcd48d64b1d1646be686008",
-        "version" : "1.7.1"
+        "revision" : "d9a5b37470adc940d22c3bcd5ca6953a516b727f",
+        "version" : "1.7.2"
       }
     },
     {
