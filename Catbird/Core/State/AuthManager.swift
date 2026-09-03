@@ -2037,6 +2037,7 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
     do {
       returnedCallbackURL = try await present(authURL)
     } catch {
+      await snapshot.client.cancelOAuthFlow()
       if Task.isCancelled || error is CancellationError {
         logger.info("Gateway permission upgrade cancelled by user for \(permission.rawValue)")
         throw GatewayPermissionError.cancelled

@@ -217,9 +217,11 @@ struct CreateCircleView: View {
           dismiss()
         }
       } catch is CancellationError {
-        // User dismissed the consent sheet; nothing to surface.
+        // User dismissed the consent sheet; preserve form in idle state
+        vm.state = .idle
       } catch GatewayPermissionError.cancelled {
-        // User dismissed the consent sheet; nothing to surface.
+        // User dismissed the consent sheet; preserve form in idle state
+        vm.state = .idle
       } catch {
         vm.state = .failed(message: error.localizedDescription)
         showingErrorAlert = true
