@@ -1069,6 +1069,7 @@
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.social-networking";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Catbird needs camera access to let you capture photos and videos for your posts.";
+				INFOPLIST_KEY_NSContactsUsageDescription = "Catbird uses your contacts to help you find and connect with friends on Bluesky.";
 				INFOPLIST_KEY_NSFaceIDUsageDescription = "Catbird needs permission to lock with Face ID.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Catbird needs microphone access to record audio for voice notes and video posts.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -1157,6 +1158,7 @@
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.social-networking";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Catbird needs camera access to let you capture photos and videos for your posts.";
+				INFOPLIST_KEY_NSContactsUsageDescription = "Catbird uses your contacts to help you find and connect with friends on Bluesky.";
 				INFOPLIST_KEY_NSFaceIDUsageDescription = "Catbird needs permission to lock with Face ID.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Catbird needs microphone access to record audio for voice notes and video posts.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -1693,7 +1695,7 @@
 			repositoryURL = "https://github.com/joshlacal/CatbirdMLSCore";
 			requirement = {
 				kind = revision;
-				revision = a2a1f6469030b79e4c1a04f2bad5d5496b6b0937;
+				revision = 94fee34e5692739c8304789d2cea21988cf1be66;
 			};
 		};
 		218866A0300B61AC00215DE7 /* XCRemoteSwiftPackageReference "CatbirdBrand" */ = {
