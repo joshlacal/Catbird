@@ -1,0 +1,84 @@
+name: MLS published dependency validation
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [release/mls-v2-published-dependencies]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mls-published-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  xcode:
+    runs-on: macos-26
+    timeout-minutes: 90
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify published package references
+        run: |
+          mkdir -p validation
+          xcodebuild -version | tee validation/xcode-version.txt
+          sw_vers > validation/macos-version.txt
+          uname -m > validation/architecture.txt
+          python3 scripts/verify_mls_published_dependencies.py before
+      - name: Resolve exact published dependencies
+        run: |
+          set -o pipefail
+          xcodebuild -resolvePackageDependencies -project Catbird.xcodeproj -scheme Catbird \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/SourcePackages" \
+            -onlyUsePackageVersionsFromResolvedFile | tee validation/resolve.log
+          python3 scripts/verify_mls_published_dependencies.py resolved
+      - name: Build and test MLS lifecycle against published packages
+        run: |
+          set -o pipefail
+          xcrun simctl list devices available -j > validation/simulators.json
+          python3 scripts/verify_mls_published_dependencies.py simulator
+          simulator_id="$(cat validation/simulator-id.txt)"
+          xcodebuild test -project Catbird.xcodeproj -scheme Catbird -configuration Debug \
+            -destination "platform=iOS Simulator,id=$simulator_id" \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/SourcePackages" \
+            -disableAutomaticPackageResolution -skipPackageUpdates \
+            -parallel-testing-enabled NO \
+            -resultBundlePath "$RUNNER_TEMP/mls-tests.xcresult" \
+            -only-testing:CatbirdTests/MLSSendBlockingTests \
+            -only-testing:CatbirdTests/MLSConversationIdentityBoundaryTests \
+            -only-testing:CatbirdTests/MLSSystemMessageAdapterTests \
+            CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO \
+            | tee validation/simulator-tests.log
+          xcrun xcresulttool get test-results tests --path "$RUNNER_TEMP/mls-tests.xcresult" \
+            --compact > validation/tests.json
+          python3 scripts/verify_mls_published_dependencies.py tests
+      - name: Launch clean app and capture screen
+        run: |
+          set -o pipefail
+          simulator_id="$(cat validation/simulator-id.txt)"
+          app="$RUNNER_TEMP/DerivedData/Build/Products/Debug-iphonesimulator/Catbird.app"
+          bundle_id=$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$app/Info.plist")
+          xcrun simctl launch --terminate-running-process "$simulator_id" "$bundle_id" | tee validation/launch.txt
+          sleep 5
+          xcrun simctl io "$simulator_id" screenshot validation/clean-launch.png
+      - name: Build iPhone application and extensions
+        run: |
+          set -o pipefail
+          xcodebuild build -project Catbird.xcodeproj -scheme Catbird -configuration Debug \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/SourcePackages" \
+            -disableAutomaticPackageResolution -skipPackageUpdates \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+            | tee validation/device-build.log
+          python3 scripts/verify_mls_published_dependencies.py resolved
+      - name: Preserve validation reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mls-published-dependency-validation
+          path: validation/
+          if-no-files-found: error
