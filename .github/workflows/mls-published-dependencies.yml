@@ -52,7 +52,7 @@ jobs:
             -only-testing:CatbirdTests/MLSSendBlockingTests \
             -only-testing:CatbirdTests/MLSConversationIdentityBoundaryTests \
             -only-testing:CatbirdTests/MLSSystemMessageAdapterTests \
-            CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO DEBUG_INFORMATION_FORMAT=dwarf \
             | tee validation/simulator-tests.log
           xcrun xcresulttool get test-results tests --path "$RUNNER_TEMP/mls-tests.xcresult" \
             --compact > validation/tests.json
@@ -63,6 +63,8 @@ jobs:
           simulator_id="$(cat validation/simulator-id.txt)"
           app="$RUNNER_TEMP/DerivedData/Build/Products/Debug-iphonesimulator/Catbird.app"
           bundle_id=$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$app/Info.plist")
+          xcrun simctl bootstatus "$simulator_id" -b
+          xcrun simctl install "$simulator_id" "$app"
           xcrun simctl launch --terminate-running-process "$simulator_id" "$bundle_id" | tee validation/launch.txt
           sleep 5
           xcrun simctl io "$simulator_id" screenshot validation/clean-launch.png
@@ -74,7 +76,7 @@ jobs:
             -derivedDataPath "$RUNNER_TEMP/DerivedData" \
             -clonedSourcePackagesDirPath "$RUNNER_TEMP/SourcePackages" \
             -disableAutomaticPackageResolution -skipPackageUpdates \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO DEBUG_INFORMATION_FORMAT=dwarf \
             | tee validation/device-build.log
           python3 scripts/verify_mls_published_dependencies.py resolved
       - name: Preserve validation reports
