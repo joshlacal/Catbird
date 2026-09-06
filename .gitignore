@@ -254,6 +254,8 @@ MLSFFIFramework.xcframework/
 # Build and profiling outputs
 fault_ordering_output/
 *.xcresult/
+/validation/
+/scripts/__pycache__/
 
 # Build helper scripts (project-specific)
 extract_order_file.sh
