@@ -382,8 +382,8 @@ struct ContactSearchList: View {
       searchResults = actors
 
       if !showMLSStatus {
-        let targetDids = actors.compactMap { try? DID(didString: $0.did.description) }
-        let relationships = (try? await appState.batchCheckRelationships(targets: targetDids)) ?? [:]
+        let targetDids = actors.filter { $0.viewer == nil }.map(\.did)
+        let relationships = (try? await fetchFollowedBy(client: client, targets: targetDids)) ?? [:]
         guard isCurrentSearch(query: query, generation: generation) else { return }
 
         for actor in actors {
@@ -392,7 +392,7 @@ struct ContactSearchList: View {
           if let viewer = actor.viewer {
             followedBy = viewer.followedBy != nil
           } else if let didObj = try? DID(didString: didString), let rel = relationships[didObj] {
-            followedBy = rel.followedBy
+            followedBy = rel
           } else {
             followedBy = false
           }
@@ -423,6 +423,26 @@ struct ContactSearchList: View {
       guard isCurrentSearch(query: query, generation: generation) else { return }
       searchError = error.localizedDescription
     }
+  }
+
+  @MainActor
+  private func fetchFollowedBy(client: ATProtoClient, targets: [DID]) async throws -> [DID: Bool] {
+    guard !targets.isEmpty else { return [:] }
+    let actor = try DID(didString: await client.getDid())
+    let parameters = AppBskyGraphGetRelationships.Parameters(
+      actor: .did(actor),
+      others: targets.map { .did($0) }
+    )
+    let (code, response) = try await client.app.bsky.graph.getRelationships(input: parameters)
+    guard (200...299).contains(code), let response else { return [:] }
+
+    var followedBy: [DID: Bool] = [:]
+    for relationship in response.relationships {
+      if case .appBskyGraphDefsRelationship(let info) = relationship {
+        followedBy[info.did] = info.followedBy != nil
+      }
+    }
+    return followedBy
   }
 
   @MainActor

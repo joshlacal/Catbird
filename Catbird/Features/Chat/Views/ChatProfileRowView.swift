@@ -133,9 +133,11 @@ struct ChatProfileRowView: View {
             if viewerStatePresent {
                 return profileFollowsMe
             }
-            // Viewer state missing: check batched relationship cache
-            if let targetDid = try? DID(didString: profile.did.didString()),
-               let info = try? await appState.getRelationship(target: targetDid) {
+            // Viewer state missing: check the account-scoped relationship cache.
+            if let client = appState.atProtoClient,
+               let actorDid = try? DID(didString: await client.getDid()),
+               let targetDid = try? DID(didString: profile.did.didString()),
+               let info = try? await appState.graphManager.getRelationship(actor: actorDid, target: targetDid) {
                 return info.followedBy
             }
             return false
