@@ -27,6 +27,8 @@ jobs:
           sw_vers > validation/macos-version.txt
           uname -m > validation/architecture.txt
           python3 scripts/verify_mls_published_dependencies.py before
+      - name: Install the Xcode Metal compiler component
+        run: xcodebuild -downloadComponent MetalToolchain
       - name: Resolve exact published dependencies
         run: |
           set -o pipefail
