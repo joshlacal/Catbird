@@ -22,11 +22,28 @@ struct RelationshipInfo: Sendable, Codable {
     let following: Bool
     let followedBy: Bool
     let blocked: Bool
+    let followUri: ATProtocolURI?
+    let blockUri: ATProtocolURI?
+
+    init(
+        did: DID,
+        following: Bool,
+        followedBy: Bool,
+        blocked: Bool,
+        followUri: ATProtocolURI? = nil,
+        blockUri: ATProtocolURI? = nil
+    ) {
+        self.did = did
+        self.following = following
+        self.followedBy = followedBy
+        self.blocked = blocked
+        self.followUri = followUri
+        self.blockUri = blockUri
+    }
 }
 
 enum RelationshipError: Error {
     case clientNotConfigured
-    case actorNotFound(DID)
     case invalidResponse
     case networkError(Error)
 }
@@ -34,21 +51,45 @@ enum RelationshipError: Error {
 // MARK: - Relationship Cache
 
 actor RelationshipCache {
-    private var cache: [String: RelationshipInfo] = [:]
+    private struct CacheEntry {
+        let info: RelationshipInfo
+        let timestamp: Date
+    }
+    
+    private var cache: [String: CacheEntry] = [:]
+    private let ttl: TimeInterval
+    
+    init(ttl: TimeInterval = 60.0) {
+        self.ttl = ttl
+    }
     
     func get(actor: DID, target: DID) -> RelationshipInfo? {
         let key = cacheKey(actor: actor, target: target)
-        return cache[key]
+        guard let entry = cache[key] else { return nil }
+        if Date().timeIntervalSince(entry.timestamp) > ttl {
+            cache.removeValue(forKey: key)
+            return nil
+        }
+        return entry.info
     }
     
     func set(actor: DID, target: DID, info: RelationshipInfo) {
         let key = cacheKey(actor: actor, target: target)
-        cache[key] = info
+        cache[key] = CacheEntry(info: info, timestamp: Date())
     }
     
     func remove(actor: DID, target: DID) {
         let key = cacheKey(actor: actor, target: target)
         cache.removeValue(forKey: key)
+    }
+    
+    func removeAll(target: DID) {
+        let targetSuffix = "-\(target.didString())"
+        cache = cache.filter { !$0.key.hasSuffix(targetSuffix) }
+    }
+    
+    func removeAll() {
+        cache.removeAll()
     }
     
     private func cacheKey(actor: DID, target: DID) -> String {
@@ -145,6 +186,9 @@ final class GraphManager {
         lastBlocksUpdate = nil
       }
     }
+    Task {
+      await relationshipCache.removeAll()
+    }
     
     // Log cache state for debugging
     logger.debug("Cache invalidated. Remaining items - Following: \(self.followingCache.count), Mutes: \(self.muteCache.count), Blocks: \(self.blockCache.count)")
@@ -210,6 +254,9 @@ final class GraphManager {
       lastMutesUpdate = nil
       lastBlocksUpdate = nil
     }
+    Task {
+      await relationshipCache.removeAll()
+    }
   }
 
   // MARK: - Following Methods
@@ -272,6 +319,9 @@ final class GraphManager {
       await MainActor.run {
         invalidateCache(for: .relationshipChanged, cacheTypes: .following)
       }
+      if let targetDid = try? DID(didString: did) {
+        await relationshipCache.removeAll(target: targetDid)
+      }
 
       logger.debug("Successfully followed user: \(did)")
       return true
@@ -325,6 +375,7 @@ final class GraphManager {
       await MainActor.run {
         invalidateCache(for: .relationshipChanged, cacheTypes: .following)
       }
+      await relationshipCache.removeAll()
 
       logger.debug("Successfully unfollowed user using URI")
       return true
@@ -382,6 +433,9 @@ final class GraphManager {
       // Now unfollow using the record URI
       return try await unfollowByUri(followingUri: followingUri)
     } catch {
+      if let targetDid = try? DID(didString: did) {
+        await relationshipCache.removeAll(target: targetDid)
+      }
       logger.error("Error unfollowing user: \(error.localizedDescription)")
       throw error
     }
@@ -451,17 +505,17 @@ final class GraphManager {
     }
 
     do {
-      // We can check a single profile to see if we're following them
-      let params = AppBskyActorGetProfile.Parameters(actor: try ATIdentifier(string: did))
-      let (_, response) = try await client.app.bsky.actor.getProfile(input: params)
-
-      // Update cache for this user if we're following them
-      if let following = response?.viewer?.following {
-        await updateFollowingCache(did: did, uri: following)
-        return true
+      guard let userDID = try? await client.getDid(),
+            let actorDid = try? DID(didString: userDID),
+            let targetDid = try? DID(didString: did) else {
+        return false
       }
 
-      return false
+      let info = try await getRelationship(actor: actorDid, target: targetDid)
+      if info.following, let uri = info.followUri {
+        await updateFollowingCache(did: did, uri: uri)
+      }
+      return info.following
     } catch {
       logger.error("Error checking follow status: \(error.localizedDescription)")
       return false
@@ -544,6 +598,9 @@ final class GraphManager {
 
       // Update the block cache
       await addToBlockCache(did: did)
+      if let targetDid = try? DID(didString: did) {
+        await relationshipCache.removeAll(target: targetDid)
+      }
       
       // Notify that graph has changed
       NotificationCenter.default.post(name: NSNotification.Name("UserGraphChanged"), object: nil)
@@ -589,6 +646,7 @@ final class GraphManager {
       }
 
       logger.debug("Successfully unblocked user using URI")
+      await relationshipCache.removeAll()
       return true
     } catch {
       logger.error("Error unblocking user: \(error.localizedDescription)")
@@ -638,6 +696,9 @@ final class GraphManager {
         // Remove from block cache
         await removeFromBlockCache(did: did)
         
+        if let targetDid = try? DID(didString: did) {
+          await relationshipCache.removeAll(target: targetDid)
+        }
         // Notify that graph has changed
         NotificationCenter.default.post(name: NSNotification.Name("UserGraphChanged"), object: nil)
       }
@@ -759,17 +820,18 @@ final class GraphManager {
     }
 
     do {
-      // Check the profile to see if we're blocking them
-      let params = AppBskyActorGetProfile.Parameters(actor: try ATIdentifier(string: did))
-      let (_, response) = try await client.app.bsky.actor.getProfile(input: params)
-
-      // Update cache for this user if we're blocking them
-      let isBlocked = response?.viewer?.blocking != nil
-      if isBlocked {
-        await addToBlockCache(did: did)
+      guard let userDID = try? await client.getDid(),
+            let actorDid = try? DID(didString: userDID),
+            let targetDid = try? DID(didString: did) else {
+        return false
       }
 
-      return isBlocked
+      let info = try await getRelationship(actor: actorDid, target: targetDid)
+      let isDirectlyBlocking = info.blockUri != nil
+      if isDirectlyBlocking {
+        await addToBlockCache(did: did)
+      }
+      return isDirectlyBlocking
     } catch {
       logger.error("Error checking block status: \(error.localizedDescription)")
       return false
@@ -1090,6 +1152,19 @@ final class GraphManager {
     return info.following
   }
   
+  /// Get complete relationship information between the current user and a target
+  /// - Parameter target: The DID of the target
+  /// - Returns: RelationshipInfo containing the relationship details
+  /// - Throws: RelationshipError if the fetch fails
+  func getRelationship(target: DID) async throws -> RelationshipInfo {
+    guard let client = atProtoClient else {
+      throw RelationshipError.clientNotConfigured
+    }
+    let userDID = try await client.getDid()
+    let actorDid = try DID(didString: userDID)
+    return try await getRelationship(actor: actorDid, target: target)
+  }
+
   /// Get complete relationship information between an actor and target
   /// - Parameters:
   ///   - actor: The DID of the actor
@@ -1111,42 +1186,58 @@ final class GraphManager {
     return info
   }
   
-  /// Batch check follow relationships for multiple targets
+  /// Batch check complete relationship info for multiple targets where the actor is the current user
+  /// - Parameter targets: Array of target DIDs to check
+  /// - Returns: Dictionary mapping each target DID to its RelationshipInfo
+  /// - Throws: RelationshipError if the batch check fails
+  func batchCheckRelationships(targets: [DID]) async throws -> [DID: RelationshipInfo] {
+    guard let client = atProtoClient else {
+      throw RelationshipError.clientNotConfigured
+    }
+    let userDID = try await client.getDid()
+    let actorDid = try DID(didString: userDID)
+    return try await batchCheckRelationships(actor: actorDid, targets: targets)
+  }
+
+  /// Batch check complete relationship info for multiple targets
   /// - Parameters:
   ///   - actor: The DID of the actor
   ///   - targets: Array of target DIDs to check
-  /// - Returns: Dictionary mapping each target DID to whether the actor is following them
+  /// - Returns: Dictionary mapping each target DID to its RelationshipInfo
   /// - Throws: RelationshipError if the batch check fails
-  func batchCheckFollows(actor: DID, targets: [DID]) async throws -> [DID: Bool] {
+  func batchCheckRelationships(actor: DID, targets: [DID]) async throws -> [DID: RelationshipInfo] {
     guard !targets.isEmpty else {
       return [:]
     }
-    
-    // Check which targets are already cached
-    var result: [DID: Bool] = [:]
+
+    // Seed default false relationships for all requested targets (duplicates overwrite)
+    var result: [DID: RelationshipInfo] = [:]
+    for target in targets {
+      result[target] = RelationshipInfo(did: target, following: false, followedBy: false, blocked: false)
+    }
     var uncachedTargets: [DID] = []
-    
+
     for target in targets {
       if let cached = await relationshipCache.get(actor: actor, target: target) {
-        result[target] = cached.following
+        result[target] = cached
       } else {
         uncachedTargets.append(target)
       }
     }
-    
+
     // Fetch uncached targets
     guard !uncachedTargets.isEmpty else {
       return result
     }
-    
+
     let relationships = try await fetchRelationships(actor: actor, targets: uncachedTargets)
-    
-    // Cache and add to result
+
+    // Cache and add to result (overwrites seeded defaults with recognized responses)
     for info in relationships {
-      result[info.did] = info.following
+      result[info.did] = info
       await relationshipCache.set(actor: actor, target: info.did, info: info)
     }
-    
+
     return result
   }
   
@@ -1162,7 +1253,7 @@ final class GraphManager {
     let relationships = try await fetchRelationships(actor: actor, targets: [target])
     
     guard let info = relationships.first else {
-      throw RelationshipError.actorNotFound(target)
+      return RelationshipInfo(did: target, following: false, followedBy: false, blocked: false)
     }
     
     return info
@@ -1170,46 +1261,77 @@ final class GraphManager {
   
   private func fetchRelationships(actor: DID, targets: [DID]) async throws -> [RelationshipInfo] {
     guard let client = atProtoClient else {
-        throw RelationshipError.clientNotConfigured
+      throw RelationshipError.clientNotConfigured
     }
-    
-    let parameters = AppBskyGraphGetRelationships.Parameters(
-      actor: .did(actor),
-      others: targets.map { .did($0) }
-    )
-    
-    let (responseCode, output) = try await client.app.bsky.graph.getRelationships(input: parameters)
-    
-    guard (200...299).contains(responseCode), let output = output else {
-      throw RelationshipError.invalidResponse
+
+    guard !targets.isEmpty else { return [] }
+
+    // Seed default false RelationshipInfo entries for all targets in this batch (duplicates overwrite)
+    var resultsByDid: [DID: RelationshipInfo] = [:]
+    for target in targets {
+      resultsByDid[target] = RelationshipInfo(did: target, following: false, followedBy: false, blocked: false)
     }
-    
-    var results: [RelationshipInfo] = []
-    
-    for relationshipUnion in output.relationships {
-      switch relationshipUnion {
-      case .appBskyGraphDefsRelationship(let relationship):
-        let info = RelationshipInfo(
-          did: relationship.did,
-          following: relationship.following != nil,
-          followedBy: relationship.followedBy != nil,
-          blocked: false
-        )
-        results.append(info)
-        
-      case .appBskyGraphDefsNotFoundActor(let notFound):
-        // Actor not found - skip or handle differently
-        continue
-        
-      case .unexpected:
-        // Skip unexpected response types
-        continue
+
+    // Chunk targets into batches of at most 30 (API limit)
+    let chunkSize = 30
+    let chunks = stride(from: 0, to: targets.count, by: chunkSize).map {
+      Array(targets[$0..<min($0 + chunkSize, targets.count)])
+    }
+
+    for chunk in chunks {
+      let parameters = AppBskyGraphGetRelationships.Parameters(
+        actor: .did(actor),
+        others: chunk.map { .did($0) }
+      )
+
+      let (responseCode, output) = try await client.app.bsky.graph.getRelationships(input: parameters)
+
+      guard (200...299).contains(responseCode), let output = output else {
+        throw RelationshipError.invalidResponse
+      }
+
+      for relationshipUnion in output.relationships {
+        switch relationshipUnion {
+        case .appBskyGraphDefsRelationship(let relationship):
+          let isFollowing = relationship.following != nil
+          let isFollowedBy = relationship.followedBy != nil
+          let isBlocking = relationship.blocking != nil || relationship.blockingByList != nil
+          let info = RelationshipInfo(
+            did: relationship.did,
+            following: isFollowing,
+            followedBy: isFollowedBy,
+            blocked: isBlocking,
+            followUri: relationship.following,
+            blockUri: relationship.blocking
+          )
+          resultsByDid[relationship.did] = info
+
+        case .appBskyGraphDefsNotFoundActor(let notFound):
+          let targetDid: DID?
+          switch notFound.actor {
+          case .did(let did):
+            targetDid = did
+          case .handle:
+            targetDid = try? DID(didString: notFound.actor.description)
+          }
+          if let targetDid {
+            let info = RelationshipInfo(
+              did: targetDid,
+              following: false,
+              followedBy: false,
+              blocked: false
+            )
+            resultsByDid[targetDid] = info
+          }
+
+        case .unexpected:
+          continue
+        }
       }
     }
-    
-    return results
-  }
 
+    return targets.compactMap { resultsByDid[$0] }
+  }
   // MARK: - Following Cache Management
 
   /// Refreshes the list of users the current user is following
@@ -1366,6 +1488,16 @@ extension AppState {
   /// Checks if the current user is following a user
   func isFollowing(did: String) async -> Bool {
     await graphManager.isFollowing(did: did)
+  }
+
+  /// Batch check complete relationships for multiple target DIDs
+  func batchCheckRelationships(targets: [DID]) async throws -> [DID: RelationshipInfo] {
+    try await graphManager.batchCheckRelationships(targets: targets)
+  }
+
+  /// Gets complete relationship between current user and target DID
+  func getRelationship(target: DID) async throws -> RelationshipInfo {
+    try await graphManager.getRelationship(target: target)
   }
 
   /// Gets the followers count for a user
