@@ -221,7 +221,7 @@ enum MLSConversationIdentityBoundary {
     let conversations: [MLSConversationModel]
     let membersByConvoID: [String: [MLSMemberModel]]
     let unreadCounts: [String: Int]
-    let lastMessages: [String: (senderDID: String, text: String)]
+    let lastMessages: [String: MLSLastMessagePreview]
     let latestActivityByConvo: [String: Date]
 
     static func == (lhs: LiveListTransformationResult, rhs: LiveListTransformationResult) -> Bool {
@@ -265,7 +265,7 @@ enum MLSConversationIdentityBoundary {
     conversations: [MLSConversationModel],
     membersByConvoID: [String: [MLSMemberModel]] = [:],
     rawUnreadCounts: [String: Int] = [:],
-    lastMessages: [String: (senderDID: String, text: String)] = [:],
+    lastMessages: [String: MLSLastMessagePreview] = [:],
     latestActivityByConvo: [String: Date] = [:]
   ) -> LiveListTransformationResult? {
     let identityRecords = conversations.map(record(for:))
@@ -321,7 +321,7 @@ enum MLSConversationIdentityBoundary {
       canonicalUnread[canonicalID, default: 0] += count
     }
 
-    var canonicalLastMsgs: [String: (senderDID: String, text: String)] = [:]
+    var canonicalLastMsgs: [String: MLSLastMessagePreview] = [:]
     for (requestedID, msg) in lastMessages {
       guard let canonicalID = canonicalKey(requestedID), canonicalIDs.contains(canonicalID) else { continue }
       canonicalLastMsgs[canonicalID] = msg

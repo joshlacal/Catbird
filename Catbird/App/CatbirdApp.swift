@@ -2418,6 +2418,10 @@ private extension CatbirdApp {
     switch command {
     case "login":
       await handleLogin(params: params, manager: manager, logger: e2eLogger)
+#if DEBUG
+    case "login-fixture":
+      await handleLoginFixture(manager: manager, logger: e2eLogger)
+#endif
       
     case "register-device":
       await handleRegisterDevice(params: params, manager: manager, logger: e2eLogger)
@@ -2566,6 +2570,33 @@ private extension CatbirdApp {
     }
   }
   
+#if DEBUG
+  /// Dedicated simulator fixture input. Credentials never travel in a URL,
+  /// process argument, or result file; consume the fixed sandbox file once.
+  private func handleLoginFixture(manager: AppStateManager, logger e2eLogger: Logger) async {
+    guard manager.isE2EMode,
+          let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+      await writeE2EResult(command: "login-fixture", success: false, error: "E2E mode required")
+      return
+    }
+    let fixture = documents.appendingPathComponent("e2e-login-fixture.json")
+    do {
+      let data = try Data(contentsOf: fixture)
+      // Remove before decoding or awaiting authentication so malformed input
+      // and interrupted logins cannot leave credentials behind on disk.
+      try FileManager.default.removeItem(at: fixture)
+      let params = try JSONDecoder().decode([String: String].self, from: data)
+      guard params["handle"] != nil, params["password"] != nil else {
+        await writeE2EResult(command: "login-fixture", success: false, error: "Incomplete login fixture")
+        return
+      }
+      await handleLogin(params: params, manager: manager, logger: e2eLogger)
+    } catch {
+      await writeE2EResult(command: "login-fixture", success: false, error: "Could not consume login fixture")
+    }
+  }
+#endif
+
   private func handleLogin(params: [String: String], manager: AppStateManager, logger e2eLogger: Logger) async {
     guard let handle = params["handle"], let password = params["password"] else {
       e2eLogger.error("[E2E] login requires handle and password parameters")
@@ -3544,6 +3575,10 @@ private extension CatbirdApp {
       return ("unrecoverableLocal", "UnrecoverableLocal")
     case .resetPending:
       return ("resetPending", "ResetPending")
+    case .deviceRemoved:
+      return ("deviceRemoved", "DeviceRemoved")
+    case .closed:
+      return ("closed", "Closed")
     }
   }
 
@@ -3654,6 +3689,10 @@ private extension CatbirdApp {
         stateName = "unrecoverableLocal"; externalName = "UnrecoverableLocal"
       case .resetPending:
         stateName = "resetPending"; externalName = "ResetPending"
+      case .deviceRemoved:
+        stateName = "deviceRemoved"; externalName = "DeviceRemoved"
+      case .closed:
+        stateName = "closed"; externalName = "Closed"
       }
 
       // FFI-actual epoch is authoritative (mirrors handleGetEpoch). Falls

@@ -2619,57 +2619,20 @@ final class AppState {
     }
 
     @MainActor
-    private func makeMLSGlobalWebSocketHandler() -> MLSWebSocketManager.EventHandler {
-        MLSWebSocketManager.EventHandler(
-            onCanonicalConversationInventoryState: { [weak self] _ in
-                guard let self else { return }
-                await MainActor.run {
-                    self.updateMLSUnreadCount()
-                    self.stateInvalidationBus.notify(.mlsConversationListChanged)
-                }
-            },
-            onCanonicalConversationRemovalTombstone: { [weak self] _ in
-                guard let self else { return }
-                await MainActor.run {
-                    self.updateMLSUnreadCount()
-                    self.stateInvalidationBus.notify(.mlsConversationListChanged)
-                }
-            },
-            onCanonicalConversationCloseTombstone: { [weak self] _ in
-                guard let self else { return }
-                await MainActor.run {
-                    self.updateMLSUnreadCount()
-                    self.stateInvalidationBus.notify(.mlsConversationListChanged)
-                }
-            },
-            onMembershipChanged: { [weak self] convoId, did, action in
-                guard let self else { return }
-                self.logger.info("MLS WS [global]: membership \(action.rawValue) for \(did) in \(convoId.prefix(8))")
-                await MainActor.run {
-                    self.stateInvalidationBus.notify(.mlsConversationListChanged)
-                }
-            },
-            onKickedFromConversation: { [weak self] convoId, byDID, _ in
-                guard let self else { return }
-                self.logger.info("MLS WS [global]: kicked from \(convoId.prefix(8)) by \(byDID)")
-                await MainActor.run {
-                    self.updateMLSUnreadCount()
-                    self.stateInvalidationBus.notify(.mlsConversationListChanged)
-                }
-            },
-            onConversationNeedsRecovery: { [weak self] convoId, reason in
-                guard let self else { return }
-                self.logger.warning("MLS WS [global]: recovery needed for \(convoId.prefix(8)): \(reason.rawValue)")
-            },
-            onReconnected: { [weak self] in
-                guard let self else { return }
-                self.logger.info("MLS WS [global]: reconnected, refreshing all conversations")
-                await MainActor.run {
-                    self.updateMLSUnreadCount()
-                    self.stateInvalidationBus.notify(.mlsConversationListChanged)
-                }
+    private func makeMLSGlobalWebSocketHandler() async -> MLSWebSocketManager.EventHandler? {
+        guard let manager = await getMLSConversationManager() else { return nil }
+        var handler = await manager.makeCanonicalWebSocketHandler()
+        handler.onReconnected = { [weak self] in
+            guard let self else { return }
+            await MainActor.run {
+                self.updateMLSUnreadCount()
+                self.stateInvalidationBus.notify(.mlsConversationListChanged)
             }
-        )
+        }
+        handler.onError = { [weak self] error in
+            self?.logger.warning("MLS stream paused: \(error.localizedDescription)")
+        }
+        return handler
     }
 
     @MainActor
@@ -2695,7 +2658,8 @@ final class AppState {
         }
 
         logger.info("MLS: \(forceReconnect ? "Refreshing" : "Starting") global WebSocket subscription (\(reason))")
-        await wsManager.subscribe(to: nil, handler: makeMLSGlobalWebSocketHandler())
+        guard let handler = await makeMLSGlobalWebSocketHandler() else { return }
+        await wsManager.subscribe(to: nil, handler: handler)
         mlsGlobalWebSocketSubscriptionStarted = true
         if forceReconnect {
             mlsGlobalWebSocketLastRefreshAt = Date()

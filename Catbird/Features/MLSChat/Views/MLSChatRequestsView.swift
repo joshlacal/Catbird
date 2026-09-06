@@ -45,11 +45,13 @@ struct MLSChatRequestsView: View {
 
   @State private var requests: [MLSConversationModel] = []
   @State private var senderProfiles: [String: MLSProfileEnricher.ProfileData] = [:]
+  @State private var groupConversationIDs: Set<String> = []
   @State private var membersByConvo: [String: [String]] = [:]  // convoId -> member DIDs
   @State private var isLoading = false
   @State private var processingConvoIDs: Set<String> = []
   @State private var errorMessage: String?
   @State private var showingErrorAlert = false
+  @State private var loadGeneration = UUID()
 
   // Block sheet state
   @State private var requestToBlock: MLSConversationModel?
@@ -80,6 +82,10 @@ struct MLSChatRequestsView: View {
                 request: request,
                 senderDID: senderDID,
                 senderProfile: senderProfiles[senderDID],
+                isGroup: groupConversationIDs.contains(request.conversationID),
+                memberPreview: members.filter { $0 != appState.userDID }.map { did in
+                  senderProfiles[did].map { $0.displayName ?? "@\($0.handle)" } ?? String(did.prefix(20))
+                }.joined(separator: ", "),
                 isProcessing: processingConvoIDs.contains(request.conversationID),
                 onAccept: {
                   Task { await accept(request) }
@@ -88,11 +94,13 @@ struct MLSChatRequestsView: View {
                   Task { await decline(request) }
                 },
                 onBlock: {
+                  guard !groupConversationIDs.contains(request.conversationID) else { return }
                   requestToBlock = request
                   showingBlockSheet = true
                 }
               )
               .listRowSeparator(.visible)
+              .accessibilityIdentifier("mls.request.\(request.conversationID)")
             }
           }
           .listStyle(.plain)
@@ -121,9 +129,17 @@ struct MLSChatRequestsView: View {
       .refreshable {
         await loadRequests()
       }
-      .task {
+      .task(id: appState.userDID) {
+        loadGeneration = UUID()
+        requests = []
+        membersByConvo = [:]
+        groupConversationIDs = []
+        senderProfiles = [:]
+        processingConvoIDs = []
+        isLoading = false
         await loadRequests()
       }
+      .onDisappear { loadGeneration = UUID() }
       .alert("Chat Requests", isPresented: $showingErrorAlert) {
         Button("OK", role: .cancel) {}
       } message: {
@@ -151,91 +167,119 @@ struct MLSChatRequestsView: View {
   @MainActor
   private func loadRequests() async {
     guard !isLoading else { return }
-
+    let userDID = appState.userDID
+    let generation = loadGeneration
     isLoading = true
-    defer { isLoading = false }
+    defer { if loadGeneration == generation { isLoading = false } }
 
     do {
-      guard let manager = await appState.getMLSConversationManager() else {
-        throw MLSAPIError.serverUnavailable
+      let candidate = await appState.getMLSConversationManager()
+      guard !Task.isCancelled, appState.userDID == userDID, loadGeneration == generation else {
+        throw CancellationError()
       }
-
-      // Fetch pending request conversations from local storage
-      requests = try await manager.fetchPendingRequestConversations()
+      guard let manager = candidate else { throw MLSAPIError.serverUnavailable }
+      guard isCurrent(manager, userDID: userDID, generation: generation) else { throw CancellationError() }
+      let loaded = try await manager.fetchPendingRequestConversations()
+        .filter { $0.currentUserDID == userDID }
         .sorted { $0.createdAt > $1.createdAt }
-
-      // Load members for each conversation to get sender DIDs
-      for request in requests {
-        if let convoMembers = try? await manager.fetchConversationMembers(convoId: request.conversationID) {
-          membersByConvo[request.conversationID] = convoMembers.map(\.did)
-        }
+      var members: [String: [String]] = [:]
+      for request in loaded {
+        guard isCurrent(manager, userDID: userDID, generation: generation) else { throw CancellationError() }
+        members[request.conversationID] = try await manager.fetchConversationMembers(convoId: request.conversationID).map(\.did)
       }
-
-      // Get all unique sender DIDs (non-current user members)
-      let senderDIDs = Array(Set(membersByConvo.values.flatMap { $0 }.filter { $0 != appState.userDID }))
-      senderProfiles = await appState.mlsProfileEnricher.ensureProfiles(
-        for: senderDIDs,
-        using: appState.client,
-        currentUserDID: appState.userDID
-      )
-
+      let senders = Array(Set(members.values.flatMap { $0 }.filter { $0 != userDID }))
+      let profiles = await appState.mlsProfileEnricher.ensureProfiles(
+        for: senders, using: appState.client, currentUserDID: userDID)
+      guard isCurrent(manager, userDID: userDID, generation: generation) else { throw CancellationError() }
+      requests = loaded
+      groupConversationIDs = Set(loaded.filter {
+        manager.conversations[$0.conversationID]?.conversationKind == .value_group
+      }.map(\.conversationID))
+      membersByConvo = members
+      senderProfiles = profiles
+    } catch is CancellationError {
     } catch {
-      logger.error("Failed to load chat requests: \(error.localizedDescription)")
-      errorMessage = error.localizedDescription
+      guard appState.userDID == userDID, loadGeneration == generation else { return }
+      errorMessage = "Could not load Catbird chat requests. Please try again."
       showingErrorAlert = true
     }
   }
 
   @MainActor
+  private func isCurrent(_ manager: MLSConversationManager, userDID: String, generation: UUID) -> Bool {
+    !Task.isCancelled && appState.userDID == userDID && loadGeneration == generation
+      && manager.currentUserDID == userDID && !manager.isShuttingDown
+      && appState.mlsConversationManager === manager
+  }
+
+  @MainActor
   private func accept(_ request: MLSConversationModel) async {
-    guard processingConvoIDs.insert(request.conversationID).inserted else { return }
-    defer { processingConvoIDs.remove(request.conversationID) }
+    let userDID = appState.userDID
+    let generation = loadGeneration
+    guard request.currentUserDID == userDID,
+          processingConvoIDs.insert(request.conversationID).inserted else { return }
+    defer { if loadGeneration == generation { processingConvoIDs.remove(request.conversationID) } }
 
     do {
-      guard let manager = await appState.getMLSConversationManager() else {
-        throw MLSAPIError.serverUnavailable
+      let candidate = await appState.getMLSConversationManager()
+      guard !Task.isCancelled, appState.userDID == userDID, loadGeneration == generation else { throw CancellationError() }
+      guard let manager = candidate else { throw MLSAPIError.serverUnavailable }
+      guard isCurrent(manager, userDID: userDID, generation: generation) else { throw CancellationError() }
+      let pending = try await manager.fetchPendingRequestConversations()
+      guard pending.contains(where: { $0.conversationID == request.conversationID && $0.currentUserDID == userDID }) else {
+        await loadRequests()
+        return
       }
-
-      // Accept is local-only - just update the requestState
-      try await manager.acceptConversationRequest(convoId: request.conversationID)
-
-      if let onAcceptedConversation {
-        await onAcceptedConversation(request.conversationID)
-      }
-
-      dismiss()
+      try await MLSChatRequestAcceptance.perform(
+        conversationID: request.conversationID,
+        isCurrent: { isCurrent(manager, userDID: userDID, generation: generation) },
+        accept: { try await manager.acceptConversationRequest(convoId: $0) },
+        didAccept: { conversationID in
+          if let onAcceptedConversation { await onAcceptedConversation(conversationID) }
+          dismiss()
+        })
+    } catch is CancellationError {
     } catch {
-      logger.error("Failed to accept chat request: \(error.localizedDescription)")
-      errorMessage = error.localizedDescription
+      guard appState.userDID == userDID, loadGeneration == generation else { return }
+      errorMessage = "Could not accept this chat request. It has been kept so you can try again."
       showingErrorAlert = true
     }
   }
 
   @MainActor
   private func decline(_ request: MLSConversationModel) async {
-    guard processingConvoIDs.insert(request.conversationID).inserted else { return }
-    defer { processingConvoIDs.remove(request.conversationID) }
-
+    let userDID = appState.userDID
+    let generation = loadGeneration
+    guard request.currentUserDID == userDID,
+          processingConvoIDs.insert(request.conversationID).inserted else { return }
+    defer { if loadGeneration == generation { processingConvoIDs.remove(request.conversationID) } }
     do {
-      guard let manager = await appState.getMLSConversationManager() else {
-        throw MLSAPIError.serverUnavailable
-      }
-
-      // Decline leaves the MLS group on server and deletes local data
+      let candidate = await appState.getMLSConversationManager()
+      guard !Task.isCancelled, appState.userDID == userDID, loadGeneration == generation else { throw CancellationError() }
+      guard let manager = candidate else { throw MLSAPIError.serverUnavailable }
+      guard isCurrent(manager, userDID: userDID, generation: generation) else { throw CancellationError() }
+      let pending = try await manager.fetchPendingRequestConversations()
+      guard pending.contains(where: { $0.conversationID == request.conversationID && $0.currentUserDID == userDID }),
+            isCurrent(manager, userDID: userDID, generation: generation) else { throw CancellationError() }
       try await manager.declineConversationRequest(convoId: request.conversationID)
+      guard isCurrent(manager, userDID: userDID, generation: generation) else { throw CancellationError() }
       await loadRequests()
+    } catch is CancellationError {
     } catch {
-      logger.error("Failed to decline chat request: \(error.localizedDescription)")
-      errorMessage = error.localizedDescription
+      guard appState.userDID == userDID, loadGeneration == generation else { return }
+      errorMessage = "Could not decline this chat request. Please try again."
       showingErrorAlert = true
     }
   }
+
 }
 
 private struct MLSChatRequestRow: View {
   let request: MLSConversationModel
   let senderDID: String
   let senderProfile: MLSProfileEnricher.ProfileData?
+  let isGroup: Bool
+  let memberPreview: String
   let isProcessing: Bool
   let onAccept: () -> Void
   let onDecline: () -> Void
@@ -244,7 +288,13 @@ private struct MLSChatRequestRow: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
       HStack(alignment: .top, spacing: 12) {
-        AsyncProfileImage(url: senderProfile?.avatarURL, size: 44)
+        if isGroup {
+          Image(systemName: "person.2.fill")
+            .frame(width: 44, height: 44)
+            .background(.quaternary, in: Circle())
+        } else {
+          AsyncProfileImage(url: senderProfile?.avatarURL, size: 44)
+        }
 
         VStack(alignment: .leading, spacing: 4) {
           Text(displayName)
@@ -257,7 +307,7 @@ private struct MLSChatRequestRow: View {
             .foregroundColor(.secondary)
             .lineLimit(1)
 
-          if let title = request.title, !title.isEmpty {
+          if !isGroup, let title = request.title, !title.isEmpty {
             Text(title)
               .designFootnote()
               .foregroundColor(.secondary)
@@ -290,12 +340,14 @@ private struct MLSChatRequestRow: View {
         .buttonStyle(.bordered)
         .disabled(isProcessing)
 
-        Button(role: .destructive, action: onBlock) {
-          Text("Block")
+        if !isGroup {
+          Button(role: .destructive, action: onBlock) {
+            Text("Block")
+          }
+          .buttonStyle(.bordered)
+          .tint(.red)
+          .disabled(isProcessing)
         }
-        .buttonStyle(.bordered)
-        .tint(.red)
-        .disabled(isProcessing)
 
         Spacer()
 
@@ -315,6 +367,7 @@ private struct MLSChatRequestRow: View {
   }
 
   private var displayName: String {
+    if isGroup { return MLSChatRequestPresentation.groupTitle(request.title) }
     if let profile = senderProfile {
       return profile.displayName ?? "@\(profile.handle)"
     }
@@ -322,6 +375,7 @@ private struct MLSChatRequestRow: View {
   }
 
   private var handleText: String {
+    if isGroup { return memberPreview.isEmpty ? "Encrypted group conversation" : "With \(memberPreview)" }
     if let profile = senderProfile {
       return "@\(profile.handle)"
     }
@@ -340,4 +394,28 @@ private struct MLSChatRequestRow: View {
     MLSChatRequestsView(onAcceptedConversation: nil)
   }
   .previewWithAuthenticatedState()
+}
+
+
+@MainActor
+enum MLSChatRequestAcceptance {
+  static func perform(
+    conversationID: String,
+    isCurrent: () -> Bool,
+    accept: (String) async throws -> Void,
+    didAccept: (String) async -> Void
+  ) async throws {
+    guard isCurrent() else { throw CancellationError() }
+    try await accept(conversationID)
+    guard isCurrent() else { throw CancellationError() }
+    await didAccept(conversationID)
+  }
+}
+
+
+enum MLSChatRequestPresentation {
+  static func groupTitle(_ title: String?) -> String {
+    let knownTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    return knownTitle.isEmpty ? "Group chat invitation" : knownTitle
+  }
 }

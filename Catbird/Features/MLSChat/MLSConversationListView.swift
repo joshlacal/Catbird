@@ -37,7 +37,7 @@ struct MLSConversationListView: View {
     @State private var conversations: [MLSConversationModel] = []
     @State private var conversationParticipants: [String: [MLSParticipantViewModel]] = [:]
     @State private var conversationUnreadCounts: [String: Int] = [:]
-    @State private var conversationLastMessages: [String: (senderDID: String, text: String)] = [:]
+    @State private var conversationLastMessages: [String: MLSLastMessagePreview] = [:]
     @State private var conversationLatestActivity: [String: Date] = [:]
     @State private var pollingTask: Task<Void, Never>?
     @State private var stateObserver: MLSStateObserver?
@@ -48,6 +48,7 @@ struct MLSConversationListView: View {
     @State private var pollCycleCount: Int = 0  // OOM FIX: Track poll cycles for periodic checkpoint
     @State private var conversationToLeave: MLSConversationModel?
     @State private var showingLeaveConfirmation = false
+    @State private var leaveStatus: (title: String, message: String)?
     @State private var isLeavingConversation = false
     
     // ACCOUNT SWITCH FIX: Track stale AppState after account switch
@@ -105,7 +106,7 @@ struct MLSConversationListView: View {
         let conversations: [MLSConversationModel]
         let conversationParticipants: [String: [MLSParticipantViewModel]]
         let conversationUnreadCounts: [String: Int]
-        let conversationLastMessages: [String: (senderDID: String, text: String)]
+        let conversationLastMessages: [String: MLSLastMessagePreview]
         let conversationLatestActivity: [String: Date]
         let recentMemberChanges: [String: MemberChangeInfo]
         let pendingChatRequestCount: Int
@@ -231,6 +232,14 @@ struct MLSConversationListView: View {
             if case .retrying(let attempt) = appState.mlsServiceState.status {
                 Text("\nRetrying... (attempt \(attempt) of \(appState.mlsServiceState.maxRetries))")
             }
+        }
+        .alert(leaveStatus?.title ?? "Could Not Leave", isPresented: .init(
+            get: { leaveStatus != nil },
+            set: { if !$0 { leaveStatus = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(leaveStatus?.message ?? "")
         }
         .alert("Leave Conversation?", isPresented: $showingLeaveConfirmation) {
             Button("Cancel", role: .cancel) {
@@ -850,7 +859,7 @@ struct MLSConversationListView: View {
                     recentMemberChange: recentMemberChanges[conversation.conversationID],
                     unreadCount: conversationUnreadCounts[conversation.conversationID] ?? 0,
                     lastMessage: conversationLastMessages[conversation.conversationID].map {
-                        MLSLastMessagePreview(senderDID: $0.senderDID, text: $0.text)
+                        MLSLastMessagePreview(senderDID: $0.senderDID, text: $0.text, isSystemMessage: $0.isSystemMessage)
                     }
                 )
                     .tag(conversation.conversationID)
@@ -1089,7 +1098,7 @@ struct MLSConversationListView: View {
             guard let canonicalID = canonicalKey(requestedID) else { continue }
             canonicalUnreadCounts[canonicalID, default: 0] += count
         }
-        var canonicalLastMessages: [String: (senderDID: String, text: String)] = [:]
+        var canonicalLastMessages: [String: MLSLastMessagePreview] = [:]
         for (requestedID, value) in snapshot.conversationLastMessages {
             guard let canonicalID = canonicalKey(requestedID) else { continue }
             canonicalLastMessages[canonicalID] = value
@@ -1249,10 +1258,11 @@ struct MLSConversationListView: View {
                 previewMlsContext = nil
             }
 
+            let previewDeviceID = (try? MLSOrchestratorCredentialAdapter().getDeviceUuid(userDid: userDID)) ?? ""
             // Fetch last message preview and latest activity timestamp per conversation
             // Single DB read for both preview text and sort timestamps
-            let (lastMessages, latestActivityByConvo) = try await MLSGRDBManager.shared.read(for: userDID) { db -> ([String: (senderDID: String, text: String)], [String: Date]) in
-                var previews: [String: (senderDID: String, text: String)] = [:]
+            let (lastMessages, latestActivityByConvo) = try await MLSGRDBManager.shared.read(for: userDID) { db -> ([String: MLSLastMessagePreview], [String: Date]) in
+                var previews: [String: MLSLastMessagePreview] = [:]
                 var latestActivity: [String: Date] = [:]
                 for conversation in acceptedConversations {
                     let convoID = conversation.conversationID
@@ -1289,14 +1299,28 @@ struct MLSConversationListView: View {
                             switch payload.messageType {
                             case .text, .system, nil:
                                 if let plaintext = payload.text, !plaintext.isEmpty {
-                                    previews[convoID] = (senderDID: message.senderID, text: plaintext)
+                                    let terminal: String?
+                                    if MLSSystemMessagePresentation.isSystem(payload), payload.text == "membership.left" {
+                                      terminal = try? String.fetchOne(db,
+                                        sql: "SELECT state FROM mls_orchestrator_terminal_access WHERE user_did = ? AND conversation_id = ?",
+                                        arguments: [userDID, convoID])
+                                    } else {
+                                      terminal = nil
+                                    }
+                                    let verifiedLeave = MLSSystemMessagePresentation.isVerifiedAccountLeave(
+                                      payload: payload, messageID: message.messageID, senderDID: message.senderID,
+                                      currentUserDID: userDID, currentDeviceID: previewDeviceID, terminalState: terminal)
+                                    previews[convoID] = MLSLastMessagePreview(
+                                      senderDID: message.senderID,
+                                      text: MLSSystemMessagePresentation.text(payload, verifiedAccountLeave: verifiedLeave),
+                                      isSystemMessage: MLSSystemMessagePresentation.isSystem(payload))
                                 } else if case .some(.image(_)) = payload.embed {
-                                    previews[convoID] = (senderDID: message.senderID, text: "Sent a photo")
+                                    previews[convoID] = MLSLastMessagePreview(senderDID: message.senderID, text: "Sent a photo")
                                 } else {
                                     continue
                                 }
                             case .reaction:
-                                previews[convoID] = (senderDID: message.senderID, text: "Reacted to a message")
+                                previews[convoID] = MLSLastMessagePreview(senderDID: message.senderID, text: "Reacted to a message")
                             case .readReceipt, .typing, .adminRoster, .adminAction, .deliveryAck, .recoveryRequest,
                                  // B1-TODO: apply edit/tombstone (a later milestone implements real behavior).
                                  .edit, .delete, .unknown:
@@ -1327,7 +1351,7 @@ struct MLSConversationListView: View {
                 let countsChanged = transformResult.unreadCounts != conversationUnreadCounts
                 let activityChanged = transformResult.latestActivityByConvo != conversationLatestActivity
                 let messagesChanged = transformResult.lastMessages.keys != conversationLastMessages.keys
-                    || transformResult.lastMessages.contains { key, val in conversationLastMessages[key]?.text != val.text || conversationLastMessages[key]?.senderDID != val.senderDID }
+                    || transformResult.lastMessages.contains { key, val in conversationLastMessages[key]?.text != val.text || conversationLastMessages[key]?.senderDID != val.senderDID || conversationLastMessages[key]?.isSystemMessage != val.isSystemMessage }
 
                 if convoIDs != existingIDs || countsChanged || messagesChanged || activityChanged {
                     // Apply the bulk swap without animation. When this async refresh
@@ -1452,8 +1476,7 @@ struct MLSConversationListView: View {
                 guard let manager = await appState.getMLSConversationManager(timeout: 10.0) else {
                     await MainActor.run {
                         isLeavingConversation = false
-                        errorMessage = "MLS service not available."
-                        showingErrorAlert = true
+                        leaveStatus = ("Could Not Leave", "Secure chat is not available. Please try again in a moment.")
                     }
                     return
                 }
@@ -1488,8 +1511,11 @@ struct MLSConversationListView: View {
                 logger.error("Failed to leave conversation: \(error.localizedDescription)")
                 await MainActor.run {
                     isLeavingConversation = false
-                    errorMessage = "Failed to leave conversation: \(error.localizedDescription)"
-                    showingErrorAlert = true
+                    var title = "Could Not Leave"
+                    if let lifecycleError = error as? MLSConversationLifecycleError, case .leavePending = lifecycleError {
+                        title = "Leave Requested"
+                    }
+                    leaveStatus = (title, error.localizedDescription)
                 }
             }
         }

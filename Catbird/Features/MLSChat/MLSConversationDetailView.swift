@@ -36,7 +36,9 @@ import SwiftUI
             @State private var showingMLSDiagnostics = false
         #endif
         @State private var pipelineError: String?
+        @State private var waitingForDeviceAccess = false
         @State private var showingLeaveConfirmation = false
+        @State private var leaveStatus: (title: String, message: String)?
         @State private var showingGroupDetail = false
         @State private var showingAdminDashboard = false
         @State private var isCurrentUserAdmin = false
@@ -138,7 +140,17 @@ import SwiftUI
 
         /// Whether this conversation is a pending chat request that needs acceptance
         private var isPendingRequest: Bool {
-            conversationModel?.requestState == .pendingInbound
+            conversationModel?.currentUserDID == appState.userDID
+                && unifiedDataSource?.isPendingRequest == true
+        }
+
+        private var showsComposer: Bool {
+            guard let model = conversationModel,
+                  model.currentUserDID == appState.userDID,
+                  !isPendingRequest, !waitingForDeviceAccess,
+                  let dataSource = unifiedDataSource, dataSource.hasResolvedConsent else { return false }
+            return !SendBlockedNotice.hidesComposer(
+                for: dataSource.conversationRecoveryState, leave: dataSource.leavePresentation)
         }
 
         /// Whether we currently have any message content visible in either legacy or unified chat state.
@@ -174,9 +186,8 @@ import SwiftUI
                             guard message.canUnsend else { return }
                             Task { await unifiedDataSource?.unsendMessage(messageID: message.id) }
                         },
-                        composerConfig: isPendingRequest ? nil : InlineComposerConfig(
-                            placeholderText: dataSource.isSendBlockedByRecovery
-                                ? "Sending paused during recovery" : "Message",
+                        composerConfig: !showsComposer ? nil : InlineComposerConfig(
+                            placeholderText: dataSource.composerPlaceholder,
                             isSendBlocked: dataSource.isSendBlockedByRecovery,
                             onSend: { text in
                                 if let messageToEdit = editSession.prepareSubmission(draftText: text) {
@@ -198,12 +209,15 @@ import SwiftUI
                             },
                             onAttachTapped: {},
                             onPhotoPicker: {
+                                guard showsComposer else { return }
                                 showingPhotoPicker = true
                             },
                             onGifPicker: {
+                                guard showsComposer else { return }
                                 showingGifPicker = true
                             },
                             onPostPicker: {
+                                guard showsComposer else { return }
                                 showingPostPicker = true
                             },
                             embedPreviewImage: embedPreviewUIImage,
@@ -250,6 +264,36 @@ import SwiftUI
                         )
                     )
                     .ignoresSafeArea(.container)
+                    .onChange(of: dataSource.conversationRecoveryState) { _, state in
+                        guard waitingForDeviceAccess,
+                              !SendBlockedNotice.keepsWaitingForDeviceAccess(state) else { return }
+                        waitingForDeviceAccess = false
+                    }
+                    .task(id: "\(conversationId):\(appState.userDID):\(waitingForDeviceAccess)") {
+                        let userDID = appState.userDID
+                        guard waitingForDeviceAccess, !userDID.isEmpty,
+                              let manager = appState.mlsConversationManager else { return }
+                        let generation = MLSCoordinationAwareTask.captureGeneration()
+                        // A diagnostics fallback may remain identically healthy while this
+                        // device lacks a leaf. Only successful readiness releases the wait.
+                        while waitingForDeviceAccess && !Task.isCancelled {
+                            do { try await Task.sleep(for: .seconds(5)) } catch { return }
+                            guard waitingForDeviceAccess, !Task.isCancelled,
+                                  (try? MLSCoordinationAwareTask.validateGeneration(generation)) != nil,
+                                  appState.userDID == userDID, manager.currentUserDID == userDID,
+                                  appState.mlsConversationManager === manager, !manager.isShuttingDown else { return }
+                            launchConversationPipeline()
+                        }
+                    }
+                    .onChange(of: showsComposer) { _, isShown in
+                        guard !isShown else { return }
+                        showingPhotoPicker = false
+                        showingGifPicker = false
+                        showingPostPicker = false
+                        cancelVoiceRecording()
+                        discardVoicePreview()
+                        editSession.cancel()
+                    }
                     .onChange(of: selectedEmoji) { _, newEmoji in
                         guard let messageID = emojiPickerMessageID, !newEmoji.isEmpty else { return }
                         dataSource.addReaction(messageID: messageID, emoji: newEmoji)
@@ -277,14 +321,14 @@ import SwiftUI
                     }
                 }
 
-                if isLoadingMessages && !isLoadingProfiles && !hasVisibleMessages {
+                if !isPendingRequest && !waitingForDeviceAccess && isLoadingMessages && !isLoadingProfiles && !hasVisibleMessages {
                     ProgressView("Loading messages...")
                         .padding()
                         .background(.regularMaterial)
                         .clipShape(RoundedRectangle(cornerRadius: 10))
                 }
 
-                if let pipelineError, !isLoadingMessages, !hasVisibleMessages {
+                if !isPendingRequest, !waitingForDeviceAccess, let pipelineError, !isLoadingMessages, !hasVisibleMessages {
                     VStack(spacing: 12) {
                         Text("Couldn't load messages")
                             .font(.headline)
@@ -312,15 +356,26 @@ import SwiftUI
                     .padding()
                 }
 
-                if let status = rejoinStatusPresentation(for: recoveryState) {
+                if !isPendingRequest, waitingForDeviceAccess {
+                    let notice = SendBlockedNotice.pendingDeviceAccess
+                    VStack {
+                        secureRejoinStatusBanner(RejoinStatusPresentation(
+                            title: notice.title, detail: notice.detail, iconName: notice.iconName,
+                            showsProgress: notice.showsProgress, showsRetry: false, showsReset: false))
+                            .padding(.horizontal)
+                            .padding(.top, 8)
+                        Spacer()
+                    }
+                } else if !isPendingRequest, (unifiedDataSource?.leavePresentation ?? .none) == .none,
+                   let status = rejoinStatusPresentation(for: recoveryState) {
                     VStack {
                         secureRejoinStatusBanner(status)
                             .padding(.horizontal)
                             .padding(.top, 8)
                         Spacer()
                     }
-                } else if let dataSource = unifiedDataSource,
-                          let notice = SendBlockedNotice.notice(for: dataSource.conversationRecoveryState)
+                } else if !isPendingRequest, let dataSource = unifiedDataSource,
+                          let notice = SendBlockedNotice.notice(for: dataSource.conversationRecoveryState, leave: dataSource.leavePresentation)
                 {
                     // WS-6.5: sends are blocked while the conversation is in active
                     // recovery/rejoin — surface a visible state instead of a swallowed error.
@@ -342,13 +397,22 @@ import SwiftUI
                 }
 
                 // Show initialization overlay when conversation is initializing
-                if let state = viewModel?.conversationState, case let .initializing(progress) = state {
+                if !isPendingRequest, let state = viewModel?.conversationState, case let .initializing(progress) = state {
                     initializationOverlay(progress: progress)
                 }
 
                 // Show recovery overlay when key package desync is detected
-                if case .needed = recoveryState {
+                if !isPendingRequest, case .needed = recoveryState {
                     recoveryOverlay()
+                }
+            }
+            .safeAreaInset(edge: .bottom) {
+                if isPendingRequest {
+                    ChatRequestActionBar(
+                        conversationId: conversationId,
+                        onAccept: { await acceptChatRequest() },
+                        onDecline: { await declineChatRequest() }
+                    )
                 }
             }
             .sheet(isPresented: $showingGifPicker) {
@@ -488,12 +552,17 @@ import SwiftUI
 
         @MainActor
         private func startVoiceRecording() async {
+            guard showsComposer else { return }
             guard let client = appState.atProtoClient else { return }
             if voiceSender == nil {
                 voiceSender = MLSVoiceSender(client: client)
             }
             do {
                 try await voiceSender?.startRecording()
+                guard showsComposer else {
+                    cancelVoiceRecording()
+                    return
+                }
                 voiceComposerMode = .recording(locked: false)
             } catch {
                 logger.error("Failed to start voice recording: \(error.localizedDescription)")
@@ -626,10 +695,10 @@ import SwiftUI
                             ChatRequestActionBar(
                                 conversationId: conversationId,
                                 onAccept: {
-                                    Task { await acceptChatRequest() }
+                                    await acceptChatRequest()
                                 },
                                 onDecline: {
-                                    Task { await declineChatRequest() }
+                                    await declineChatRequest()
                                 }
                             )
                         } else {
@@ -937,6 +1006,14 @@ import SwiftUI
                     Button("OK", role: .cancel) {}
                 } message: {
                     Text(sendError ?? "Failed to send message. Please try again.")
+                }
+                .alert(leaveStatus?.title ?? "Could Not Leave", isPresented: .init(
+                    get: { leaveStatus != nil },
+                    set: { if !$0 { leaveStatus = nil } }
+                )) {
+                    Button("OK", role: .cancel) {}
+                } message: {
+                    Text(leaveStatus?.message ?? "")
                 }
                 .alert("Leave Conversation", isPresented: $showingLeaveConfirmation) {
                     Button("Cancel", role: .cancel) {}
@@ -1665,6 +1742,7 @@ import SwiftUI
 
         @MainActor
         private func showPipelineError(_ message: String) {
+            waitingForDeviceAccess = false
             guard !hasVisibleMessages else {
                 logger.info("Suppressing pipeline overlay because cached messages are already visible")
                 return
@@ -1686,10 +1764,31 @@ import SwiftUI
             launchConversationPipeline()
         }
 
+        @MainActor
+        private func isCurrentPipeline(
+            scope: MLSConversationPipelineAccess.Scope,
+            generation: Int,
+            manager: MLSConversationManager?
+        ) -> Bool {
+            guard !Task.isCancelled
+                && (try? MLSCoordinationAwareTask.validateGeneration(generation)) != nil
+                && appState.userDID == scope.userDID
+                && conversationId == scope.conversationID
+                && conversationModel?.conversationID == scope.conversationID
+                && conversationModel?.currentUserDID == scope.userDID
+                && conversationModel?.groupID == scope.groupID else { return false }
+            guard let manager else { return true }
+            return manager.currentUserDID == scope.userDID
+                && appState.mlsConversationManager === manager
+                && !manager.isShuttingDown
+        }
+
         /// MLS conversation pipeline that runs independently of view lifecycle
         /// This function is called from a detached task to ensure MLS state updates
         /// complete even if the user navigates away from the view
+        @MainActor
         private func runConversationPipeline() async {
+            let expectedGeneration = MLSCoordinationAwareTask.captureGeneration()
             guard ConversationPipelineGate.shared.begin(conversationID: conversationId) else {
                 logger.debug(
                     "🚫 [PIPELINE] Skipping duplicate pipeline run for conversation: \(conversationId)"
@@ -1706,21 +1805,26 @@ import SwiftUI
 
             // PHASE 0: Fetch conversation metadata
             // Even if the view is dismissed, we need conversation metadata for subsequent operations
-            guard await ensureConversationMetadata() != nil else {
+            guard let model = await ensureConversationMetadata() else {
                 logger.error("❌ [PIPELINE] Conversation metadata unavailable for \(conversationId)")
                 await showPipelineError("Couldn't load conversation details. Tap Retry to try again.")
                 return
             }
+            let scope = MLSConversationPipelineAccess.Scope(
+                userDID: model.currentUserDID, conversationID: conversationId, groupID: model.groupID)
+            guard model.currentUserDID == appState.userDID,
+                  (try? MLSCoordinationAwareTask.validateGeneration(expectedGeneration)) != nil else { return }
+
+            var pipelineManager: MLSConversationManager?
+            guard isCurrentPipeline(scope: scope, generation: expectedGeneration, manager: pipelineManager) else { return }
 
             logger.info("📍 [PIPELINE] Starting Phase 1: Fetch new messages from server")
 
             // PHASE 1: Fetch and decrypt new messages from server
-            await MainActor.run {
-                pipelineError = nil
-                isLoadingMessages = true
-            }
+            pipelineError = nil
+            isLoadingMessages = true
             defer {
-                Task { @MainActor in
+                if isCurrentPipeline(scope: scope, generation: expectedGeneration, manager: pipelineManager) {
                     isLoadingMessages = false
                 }
             }
@@ -1729,51 +1833,108 @@ import SwiftUI
             let fetchMessagesTimeoutSeconds: TimeInterval = 20
             let processMessagesTimeoutSeconds: TimeInterval = 30
 
-            guard let manager = await appState.getMLSConversationManager(timeout: 15.0) else {
-                logger.error("Failed to get MLS conversation manager")
-                await showPipelineError("MLS service unavailable. Please try again.")
-                return
-            }
-
             // Ensure the MLS group is initialized for this conversation
             do {
-                try await withTimeout(seconds: groupInitializationTimeoutSeconds, operationName: "initializing secure messaging") {
-                    try await manager.ensureGroupInitialized(for: conversationId)
-                }
+                let preparation = try await MLSConversationPipelineAccess.prepare(
+                    isCurrent: { isCurrentPipeline(scope: scope, generation: expectedGeneration, manager: pipelineManager) },
+                    readAccess: {
+                        if let manager = pipelineManager {
+                            return try await manager.database.read { db in
+                                try MLSConversationPipelineAccess.read(in: db, scope: scope)
+                            }
+                        }
+                        return try await MLSGRDBManager.shared.read(for: scope.userDID) { db in
+                            try MLSConversationPipelineAccess.read(in: db, scope: scope)
+                        }
+                    },
+                    ensureReady: {
+                        guard let manager = await appState.getMLSConversationManager(timeout: 15.0) else {
+                            throw MLSConversationPipelineAccess.Failure.managerUnavailable
+                        }
+                        guard isCurrentPipeline(scope: scope, generation: expectedGeneration, manager: manager) else {
+                            throw CancellationError()
+                        }
+                        pipelineManager = manager
+                        try await withTimeout(seconds: groupInitializationTimeoutSeconds, operationName: "initializing secure messaging") {
+                            try await manager.ensureGroupInitialized(for: conversationId)
+                        }
+                    },
+                    loadLocalHistory: {
+                        guard isCurrentPipeline(scope: scope, generation: expectedGeneration, manager: pipelineManager) else { return }
+                        pipelineError = nil
+                        waitingForDeviceAccess = false
+                        isLoadingMessages = false
+                        recoveryState = .none
+                        let dataSource = unifiedDataSource
+                        // Only the obsolete readiness overlay is cleared. The
+                        // data source retains any saved-history read error.
+                        await dataSource?.loadMessages()
+                        guard isCurrentPipeline(scope: scope, generation: expectedGeneration, manager: pipelineManager),
+                              unifiedDataSource === dataSource else { return }
+                        await dataSource?.refreshRecoveryState()
+                    })
+                guard case .ready = preparation else { return }
+                guard isCurrentPipeline(scope: scope, generation: expectedGeneration, manager: pipelineManager) else { return }
+                waitingForDeviceAccess = false
                 logger.info("MLS group initialized for conversation \(conversationId)")
+            } catch is CancellationError {
+                return
+            } catch MLSConversationPipelineAccess.Failure.managerUnavailable {
+                guard isCurrentPipeline(scope: scope, generation: expectedGeneration, manager: pipelineManager) else { return }
+                logger.error("Failed to get MLS conversation manager")
+                showPipelineError("MLS service unavailable. Please try again.")
+                return
+            } catch MLSConversationLifecycleError.deviceAccessPending {
+                guard isCurrentPipeline(scope: scope, generation: expectedGeneration, manager: pipelineManager) else { return }
+                pipelineError = nil
+                waitingForDeviceAccess = true
+                isLoadingMessages = false
+                recoveryState = .none
+                await unifiedDataSource?.refreshRecoveryState()
+                guard isCurrentPipeline(scope: scope, generation: expectedGeneration, manager: pipelineManager) else { return }
+                if let state = unifiedDataSource?.conversationRecoveryState,
+                   !SendBlockedNotice.keepsWaitingForDeviceAccess(state) {
+                    waitingForDeviceAccess = false
+                }
+                return
             } catch is PipelineTimeoutError {
+                guard isCurrentPipeline(scope: scope, generation: expectedGeneration, manager: pipelineManager) else { return }
                 logger.error("⏱️ [PIPELINE] Timed out initializing MLS group for \(conversationId)")
-                await showPipelineError("Timed out initializing secure messaging. Tap Retry to try again.")
+                showPipelineError("Timed out initializing secure messaging. Tap Retry to try again.")
                 return
             } catch let error as MLSConversationError {
+                guard isCurrentPipeline(scope: scope, generation: expectedGeneration, manager: pipelineManager) else { return }
                 if case .keyPackageDesyncRecoveryInitiated = error {
-                    await MainActor.run {
-                        recoveryState = .needed
-                    }
+                    recoveryState = .needed
                     logger.warning("Key package desync detected - showing recovery UI")
                     return
                 }
                 logger.error(
                     "❌ Failed to initialize MLS group for \(conversationId): MLSConversationError - \(error.localizedDescription)"
                 )
-                await showPipelineError("Failed to initialize secure messaging. Tap Retry to try again.")
+                showPipelineError("Failed to initialize secure messaging. Tap Retry to try again.")
                 return
             } catch let error as MLSAPIError {
+                guard isCurrentPipeline(scope: scope, generation: expectedGeneration, manager: pipelineManager) else { return }
                 logger.error(
                     "❌ Failed to initialize MLS group for \(conversationId): MLSAPIError - \(error.localizedDescription)"
                 )
                 if case let .invalidResponse(message) = error {
                     logger.error("  → Invalid response details: \(message)")
                 }
-                await showPipelineError("Failed to initialize secure messaging. Tap Retry to try again.")
+                showPipelineError("Failed to initialize secure messaging. Tap Retry to try again.")
                 return
             } catch {
+                guard isCurrentPipeline(scope: scope, generation: expectedGeneration, manager: pipelineManager) else { return }
                 logger.error(
                     "❌ Failed to initialize MLS group for \(conversationId): Unexpected error - \(type(of: error)) - \(error.localizedDescription)"
                 )
-                await showPipelineError("Failed to initialize secure messaging. Tap Retry to try again.")
+                showPipelineError("Failed to initialize secure messaging. Tap Retry to try again.")
                 return
             }
+
+            guard let manager = pipelineManager,
+                  isCurrentPipeline(scope: scope, generation: expectedGeneration, manager: manager) else { return }
 
             do {
                 // Get current user DID for plaintext isolation
@@ -1990,6 +2151,7 @@ import SwiftUI
             } onCancel: {
                 logger.debug("Conversation metadata fetch was cancelled, but allowing completion")
             }
+            guard !isPendingRequest else { return }
 
             logger.info("📍 [ENTRY] Starting Phase 1: Fetch new messages from server")
 
@@ -3534,20 +3696,32 @@ import SwiftUI
 
         /// Accept a pending chat request, moving it to the main inbox
         private func acceptChatRequest() async {
+            await unifiedDataSource?.refreshRecoveryState()
+            guard isPendingRequest else { return }
+            let expectedUserDID = appState.userDID
+            let expectedGeneration = MLSCoordinationAwareTask.captureGeneration()
             guard let manager = await appState.getMLSConversationManager() else {
                 logger.error("Cannot accept: no conversation manager")
                 return
             }
 
             do {
+                try MLSCoordinationAwareTask.validateGeneration(expectedGeneration)
+                guard manager.currentUserDID == expectedUserDID, appState.userDID == expectedUserDID,
+                      isPendingRequest else { return }
                 try await manager.acceptConversationRequest(convoId: conversationId)
+                try MLSCoordinationAwareTask.validateGeneration(expectedGeneration)
+                guard manager.currentUserDID == expectedUserDID, appState.userDID == expectedUserDID else { return }
 
                 // Update local state
                 await MainActor.run {
-                    if var model = conversationModel {
-                        conversationModel = model.withRequestState(.none)
-                    }
+                    recoveryState = .none
+                    pipelineError = nil
                 }
+
+                await reloadConversationMetadata(userDID: appState.userDID)
+                await unifiedDataSource?.refreshRecoveryState()
+                if !isPendingRequest { launchConversationPipeline() }
 
                 logger.info("✅ Accepted chat request: \(conversationId.prefix(16))...")
             } catch {
@@ -3559,13 +3733,22 @@ import SwiftUI
 
         /// Decline a pending chat request, leaving the conversation
         private func declineChatRequest() async {
+            await unifiedDataSource?.refreshRecoveryState()
+            guard isPendingRequest else { return }
+            let expectedUserDID = appState.userDID
+            let expectedGeneration = MLSCoordinationAwareTask.captureGeneration()
             guard let manager = await appState.getMLSConversationManager() else {
                 logger.error("Cannot decline: no conversation manager")
                 return
             }
 
             do {
+                try MLSCoordinationAwareTask.validateGeneration(expectedGeneration)
+                guard manager.currentUserDID == expectedUserDID, appState.userDID == expectedUserDID,
+                      isPendingRequest else { return }
                 try await manager.declineConversationRequest(convoId: conversationId)
+                try MLSCoordinationAwareTask.validateGeneration(expectedGeneration)
+                guard manager.currentUserDID == expectedUserDID, appState.userDID == expectedUserDID else { return }
 
                 // Navigate back since the conversation is now deleted
                 await MainActor.run {
@@ -3601,35 +3784,15 @@ import SwiftUI
 
                 logger.info("📡 WS: Calling subscribe() for convoId: \(conversationId)")
 
-                // Subscribe to conversation events
-                // CRITICAL FIX: Use proper @MainActor async closures that synchronously await handlers
-                // Previous pattern used fire-and-forget Tasks which could be delayed by Swift's scheduler
-                await wsManager.subscribe(
-                    to: conversationId,
-                    handler: MLSWebSocketManager.EventHandler(
-                        onMembershipChanged: { @MainActor convoId, did, action in
-                            self.logger.info("📡 WS: onMembershipChanged handler called")
-                            await self.handleMembershipChanged(convoId: convoId, did: did, action: action)
-                        },
-                        onKickedFromConversation: { @MainActor convoId, byDID, reason in
-                            self.logger.info("📡 WS: onKickedFromConversation handler called")
-                            await self.handleKickedFromConversation(convoId: convoId, byDID: byDID, reason: reason)
-                        },
-                        onError: { @MainActor error in
-                            self.logger.error("📡 WS: onError handler called: \(error.localizedDescription)")
-                        },
-                        onReconnected: { @MainActor [weak appState] in
-                            self.logger.info("📡 WS: onReconnected handler called - triggering catchup")
-                            guard let appState = appState,
-                                  let manager = await appState.getMLSConversationManager()
-                            else {
-                                self.logger.warning("⚠️ Cannot trigger catchup - manager not available")
-                                return
-                            }
-                            await manager.triggerCatchup(for: self.conversationId)
-                        }
-                    )
-                )
+                guard let manager = await appState.getMLSConversationManager() else { return }
+                var handler = await manager.makeCanonicalWebSocketHandler()
+                handler.onError = { @MainActor error in
+                    self.logger.error("MLS stream paused: \(error.localizedDescription)")
+                }
+                handler.onReconnected = { @MainActor in
+                    await self.refreshMembersAfterMembershipChange()
+                }
+                await wsManager.subscribe(to: conversationId, handler: handler)
                 logger.info("📡 WS: subscribe() returned for convoId: \(conversationId)")
             }
         }
@@ -3753,8 +3916,7 @@ import SwiftUI
                     guard let manager = await appState.getMLSConversationManager() else {
                         await MainActor.run {
                             logger.error("Failed to get MLS conversation manager")
-                            sendError = "MLS service not available. Please try restarting the app."
-                            showingSendError = true
+                            leaveStatus = ("Could Not Leave", "Secure chat is not available. Please try again in a moment.")
                         }
                         return
                     }
@@ -3768,9 +3930,13 @@ import SwiftUI
                 } catch {
                     await MainActor.run {
                         logger.error("Failed to leave conversation: \(error.localizedDescription)")
-                        sendError = "Failed to leave conversation: \(error.localizedDescription)"
-                        showingSendError = true
+                        var title = "Could Not Leave"
+                        if let lifecycleError = error as? MLSConversationLifecycleError, case .leavePending = lifecycleError {
+                            title = "Leave Requested"
+                        }
+                        leaveStatus = (title, error.localizedDescription)
                     }
+                    await unifiedDataSource?.refreshRecoveryState()
                 }
             }
         }

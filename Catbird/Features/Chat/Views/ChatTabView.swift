@@ -184,7 +184,6 @@ struct ChatTabView: View {
       } else {
         ForEach(coordinator.conversations) { item in
           unifiedRow(for: item)
-            .id("\(appState.userDID):\(item.id)")
         }
 
         if shouldShowPagination {
@@ -198,6 +197,10 @@ struct ChatTabView: View {
           .listRowBackground(Color.clear)
       }
     }
+    // Keyed on the account, not per row: explicit `.id()` on rows inside a List's
+    // ForEach breaks the collection view diff (UICollectionView "invalid number of
+    // items in section" crash when an update lands mid-transition).
+    .id(appState.userDID)
     .listStyle(.plain)
     .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
     .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "Search")
@@ -336,7 +339,6 @@ struct ChatTabView: View {
       Section("Conversations") {
         ForEach(appState.chatManager.filteredConversations) { convo in
           ConversationRow(convo: convo, currentUserDID: appState.userDID)
-            .id("\(appState.userDID):search:\(convo.id)")
             .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
             .modifier(ConditionalSwipeActions(conversation: convo, enabled: true))
             .modifier(ConversationContextMenu(conversation: convo))
@@ -597,8 +599,12 @@ struct ChatTabView: View {
         try? MLSConversationIdentityBoundary.resolve(requestedID, in: identityRecords)
       }
 
+      let pendingConsentIDs = try await MLSGRDBManager.shared.read(for: userDID) { db in
+        Set(try loadedConversations.filter { try $0.hasPendingConsent(in: db) }.map(\.conversationID))
+      }
+      guard appState.userDID == userDID else { return }
       let acceptedConversations = loadedConversations.filter {
-        canonicalIDs.contains($0.conversationID) && $0.requestState != .pendingInbound
+        canonicalIDs.contains($0.conversationID) && !pendingConsentIDs.contains($0.conversationID)
       }
 
       var canonicalMembersByConvoID: [String: [MLSMemberModel]] = [:]

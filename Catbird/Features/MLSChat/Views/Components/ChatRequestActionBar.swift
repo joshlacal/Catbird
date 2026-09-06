@@ -7,15 +7,15 @@ import SwiftUI
         /// is a pending inbound chat request that needs acceptance.
         struct ChatRequestActionBar: View {
             let conversationId: String
-            let onAccept: () -> Void
-            let onDecline: () -> Void
+            let onAccept: () async -> Void
+            let onDecline: () async -> Void
 
             @State private var isProcessing = false
 
             internal init(
                 conversationId: String,
-                onAccept: @escaping () -> Void,
-                onDecline: @escaping () -> Void
+                onAccept: @escaping () async -> Void,
+                onDecline: @escaping () async -> Void
             ) {
                 self.conversationId = conversationId
                 self.onAccept = onAccept
@@ -38,7 +38,10 @@ import SwiftUI
                         HStack(spacing: 16) {
                             Button(role: .destructive) {
                                 isProcessing = true
-                                onDecline()
+                                Task { @MainActor in
+                                    defer { isProcessing = false }
+                                    await onDecline()
+                                }
                             } label: {
                                 HStack {
                                     Image(systemName: "xmark")
@@ -51,7 +54,10 @@ import SwiftUI
 
                             Button {
                                 isProcessing = true
-                                onAccept()
+                                Task { @MainActor in
+                                    defer { isProcessing = false }
+                                    await onAccept()
+                                }
                             } label: {
                                 HStack {
                                     if isProcessing {

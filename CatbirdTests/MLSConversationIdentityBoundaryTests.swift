@@ -188,9 +188,9 @@ struct MLSConversationIdentityBoundaryTests {
     ]
 
     let rawLastMessages = [
-      healthyID1: (senderDID: "did:plc:bob", text: "Hello Alice"),
-      rawOnlyGroupID: (senderDID: "did:plc:phantom", text: "Ghost message"),
-      healthyID2: (senderDID: "did:plc:charlie", text: "Meeting at 3")
+      healthyID1: MLSLastMessagePreview(senderDID: "did:plc:bob", text: "Hello Alice"),
+      rawOnlyGroupID: MLSLastMessagePreview(senderDID: "did:plc:phantom", text: "Ghost message"),
+      healthyID2: MLSLastMessagePreview(senderDID: "did:plc:charlie", text: "You joined this conversation", isSystemMessage: true)
     ]
 
     let rawLatestActivity = [
@@ -250,7 +250,9 @@ struct MLSConversationIdentityBoundaryTests {
 
     #expect(result.lastMessages[rawOnlyGroupID] == nil)
     #expect(result.lastMessages[healthyID1]?.text == "Hello Alice")
-    #expect(result.lastMessages[healthyID2]?.text == "Meeting at 3")
+    #expect(result.lastMessages[healthyID2]?.text == "You joined this conversation")
+    #expect(result.lastMessages[healthyID2]?.isSystemMessage == true)
+    #expect(result.lastMessages[healthyID1]?.isSystemMessage == false)
 
     #expect(result.latestActivityByConvo[rawOnlyGroupID] == nil)
     #expect(result.latestActivityByConvo[healthyID1] == date1)
@@ -261,3 +263,102 @@ struct MLSConversationIdentityBoundaryTests {
     #expect(result.membersByConvoID[healthyID2]?.count == 1)
   }
 }
+
+#if os(iOS)
+import SwiftUI
+import UIKit
+
+extension MLSConversationIdentityBoundaryTests {
+  @MainActor
+  @Test("main Inbox exposes both providers without stealing an explicit selection")
+  func requestProviderPickerRoutesActualHostedContent() async throws {
+    var visible: [MessageRequestProvider] = []
+    let controller = UIHostingController(rootView: MessageRequestProviderContainer(
+      initialProvider: .initial(pendingCatbirdCount: 1),
+      bluesky: { Text("Bluesky requests").onAppear { visible.append(.bluesky) } },
+      catbird: { Text("Catbird requests").onAppear { visible.append(.catbird) } }))
+    let window = UIWindow(frame: UIScreen.main.bounds)
+    window.rootViewController = controller
+    window.makeKeyAndVisible()
+    defer { window.isHidden = true; window.rootViewController = nil }
+    controller.view.layoutIfNeeded()
+    func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
+    for _ in 0..<100 where visible.isEmpty { try await Task.sleep(for: .milliseconds(20)) }
+    #expect(visible.last == .catbird)
+    let picker = try #require(descendants(controller.view).compactMap { $0 as? UISegmentedControl }.first)
+    #expect(picker.numberOfSegments == 2)
+    #expect(picker.titleForSegment(at: 0) == "Bluesky")
+    #expect(picker.titleForSegment(at: 1) == "Catbird")
+    picker.selectedSegmentIndex = 0
+    picker.sendActions(for: .valueChanged)
+    for _ in 0..<100 where visible.last != .bluesky { try await Task.sleep(for: .milliseconds(20)) }
+    #expect(visible.last == .bluesky)
+    // Re-rendering for a changed pending count must keep the user's choice.
+    controller.rootView = MessageRequestProviderContainer(initialProvider: .catbird,
+      bluesky: { Text("Bluesky requests").onAppear { visible.append(.bluesky) } },
+      catbird: { Text("Catbird requests").onAppear { visible.append(.catbird) } })
+    try await Task.sleep(for: .milliseconds(40))
+    #expect(picker.selectedSegmentIndex == 0)
+    #expect(visible.last == .bluesky)
+  }
+
+  @MainActor
+  @Test("the first actual Inbox sheet renders its pending Catbird presentation item")
+  func requestSheetFirstPresentationUsesItem() async throws {
+    let state = InboxSheetTestPresentation()
+    let controller = UIHostingController(rootView: InboxSheetTestHarness(state: state))
+    let window = UIWindow(frame: UIScreen.main.bounds)
+    window.rootViewController = controller
+    window.makeKeyAndVisible()
+    defer { controller.dismiss(animated: false); window.isHidden = true; window.rootViewController = nil }
+    controller.view.layoutIfNeeded()
+    try await Task.sleep(for: .milliseconds(80))
+    state.provider = .initial(pendingCatbirdCount: 1)
+    for _ in 0..<100 where state.visible == nil { try await Task.sleep(for: .milliseconds(20)) }
+    #expect(controller.presentedViewController != nil)
+    #expect(state.visible == .catbird)
+  }
+
+  @MainActor
+  @Test("accept keeps failure retryable and only routes the accepted stable conversation")
+  func requestAcceptanceFailureRetryAndSessionFence() async throws {
+    enum Failure: Error { case unavailable }
+    let id = "29154b98-20dc-4488-b366-d2c3b69485e8"
+    var routed: [String] = []
+    var calls: [String] = []
+    do {
+      try await MLSChatRequestAcceptance.perform(conversationID: id, isCurrent: { true },
+        accept: { calls.append($0); throw Failure.unavailable },
+        didAccept: { routed.append($0) })
+      Issue.record("Failed acceptance must not complete the Inbox route")
+    } catch Failure.unavailable { }
+    #expect(routed.isEmpty)
+    try await MLSChatRequestAcceptance.perform(conversationID: id, isCurrent: { true },
+      accept: { calls.append($0) }, didAccept: { routed.append($0) })
+    #expect(calls == [id, id])
+    #expect(routed == [id])
+    var current = true
+    do {
+      try await MLSChatRequestAcceptance.perform(conversationID: id, isCurrent: { current },
+        accept: { _ in current = false }, didAccept: { routed.append($0) })
+      Issue.record("A retired account must not navigate or dismiss after an awaited acceptance")
+    } catch is CancellationError { }
+    #expect(routed == [id])
+  }
+}
+@MainActor @Observable private final class InboxSheetTestPresentation {
+      var provider: MessageRequestProvider?
+      var visible: MessageRequestProvider?
+    }
+@MainActor private struct InboxSheetTestHarness: View {
+      @Bindable var state: InboxSheetTestPresentation
+      var body: some View {
+        Text("Inbox").modifier(MessageRequestSheet(provider: $state.provider, onDismiss: {}, sheetContent: { provider in
+          MessageRequestProviderContainer(initialProvider: provider,
+            bluesky: { Text("Bluesky").onAppear { state.visible = .bluesky } },
+            catbird: { Text("Catbird").onAppear { state.visible = .catbird } })
+        }))
+      }
+    }
+
+#endif

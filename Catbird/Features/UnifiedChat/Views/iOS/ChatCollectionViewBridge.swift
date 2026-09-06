@@ -66,9 +66,7 @@ struct ChatCollectionViewBridge<DataSource: UnifiedChatDataSource>: UIViewContro
     controller.onEditMessage = onEditMessage
     controller.onUnsendMessage = onUnsendMessage
     controller.onReply = onReply
-    if let config = composerConfig {
-      controller.installComposer(config: config)
-    }
+    controller.updateComposer(config: composerConfig)
     return controller
   }
 
@@ -84,21 +82,7 @@ struct ChatCollectionViewBridge<DataSource: UnifiedChatDataSource>: UIViewContro
     controller.onEditMessage = onEditMessage
     controller.onUnsendMessage = onUnsendMessage
     controller.onReply = onReply
-    if let config = composerConfig {
-      controller.updateComposerCallbacks(config: config)
-      controller.updateComposerEmbedState(hasEmbed: config.hasEmbed, previewImage: config.embedPreviewImage)
-      controller.updateComposerVoiceMode(config: config)
-      controller.updateComposerEditState(
-        isEditMode: config.isEditMode,
-        text: config.editMessageText,
-        onCancelEdit: config.onCancelEdit
-      )
-      if let prefill = config.prefillText, !config.isEditMode,
-        controller.applyComposerPrefill(text: prefill)
-      {
-        config.onPrefillApplied?()
-      }
-    }
+    controller.updateComposer(config: composerConfig)
   }
 }
 #endif

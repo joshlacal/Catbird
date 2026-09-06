@@ -124,11 +124,19 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
   /// the persisted GRDB columns and overlaid with the recovery manager's
   /// transient state. Drives send-blocking UX (WS-6.5).
   private(set) var conversationRecoveryState: ConversationRecoveryState = .healthy
+  private(set) var leavePresentation: MLSConversationLeavePresentation = .none
+  private(set) var isPendingRequest: Bool = false
+  private(set) var hasResolvedConsent: Bool = false
+  private var recoveryResolutionID = UUID()
+
+  var composerPlaceholder: String {
+    SendBlockedNotice.composerPlaceholder(for: conversationRecoveryState, leave: leavePresentation)
+  }
 
   /// Whether outgoing sends should be blocked right now (visible state, not a
   /// swallowed error — the composer disables and a banner explains why).
   var isSendBlockedByRecovery: Bool {
-    conversationRecoveryState.blocksSending
+    isPendingRequest || conversationRecoveryState.blocksSending
   }
 
   private(set) var isLoading: Bool = false
@@ -398,10 +406,15 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
     let userDID = currentUserDID
 
     let observation = ValueObservation.tracking { db in
-      try MLSConversationModel
+      let terminal = try String.fetchOne(db,
+        sql: "SELECT state FROM mls_orchestrator_terminal_access WHERE user_did = ? AND conversation_id = ?",
+        arguments: [userDID, convoId])
+      let model = try MLSConversationModel
         .filter(MLSConversationModel.Columns.conversationID == convoId)
         .filter(MLSConversationModel.Columns.currentUserDID == userDID)
         .fetchOne(db)
+      let pendingConsent = try model?.hasPendingConsent(in: db) ?? false
+      return (model, terminal, pendingConsent)
     }
 
     conversationObservation = observation.start(
@@ -411,9 +424,19 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
         self?.logger.error(
           "Conversation recovery observation error: \(error.localizedDescription)")
       },
-      onChange: { [weak self] model in
+      onChange: { [weak self] projection in
         Task { @MainActor [weak self] in
-          await self?.resolveRecoveryState(model: model)
+          guard let self else { return }
+          let previousRecovery = self.conversationRecoveryState
+          let previousLeave = self.leavePresentation
+          await self.resolveRecoveryState(model: projection.0)
+          if let manager = await self.appState?.getMLSConversationManager(timeout: 2.0),
+             manager.userDid == self.currentUserDID {
+            self.leavePresentation = await manager.conversationLeavePresentation(conversationID: self.conversationId)
+          }
+          if previousRecovery != self.conversationRecoveryState || previousLeave != self.leavePresentation {
+            await self.reloadObservedMessages(database: database)
+          }
         }
       }
     )
@@ -421,11 +444,48 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
 
   /// Resolve the spec §8.1 state. In rustFull, Rust owns transient recovery;
   /// legacy modes still overlay Swift `MLSRecoveryManager` state on DB flags.
-  private func resolveRecoveryState(model: MLSConversationModel?) async {
-    var resolved = model?.persistedRecoveryState ?? .healthy
+  private func resolveRecoveryState(model _: MLSConversationModel?) async {
+    let resolutionID = UUID()
+    recoveryResolutionID = resolutionID
+    let expectedGeneration = MLSCoordinationAwareTask.captureGeneration()
+    guard let appState, appState.userDID == currentUserDID,
+          let database = appState.mlsDatabase else {
+      isPendingRequest = false
+      hasResolvedConsent = false
+      return
+    }
+    let userDID = currentUserDID
+    let convoID = conversationId
+    let durableModel: MLSConversationModel?
+    do {
+      let projection = try await database.read { db in
+        let current = try MLSConversationModel.fetchOne(db,
+          sql: "SELECT * FROM MLSConversationModel WHERE currentUserDID = ? AND conversationID = ?",
+          arguments: [userDID, convoID])
+        return (current, try current?.hasPendingConsent(in: db) ?? false)
+      }
+      try MLSCoordinationAwareTask.validateGeneration(expectedGeneration)
+      guard recoveryResolutionID == resolutionID, appState.userDID == currentUserDID else { return }
+      durableModel = projection.0
+      isPendingRequest = projection.1
+      hasResolvedConsent = projection.0 != nil
+    } catch {
+      guard recoveryResolutionID == resolutionID, appState.userDID == currentUserDID else { return }
+      hasResolvedConsent = false
+      isPendingRequest = false
+      logger.warning("Consent projection unavailable: \(error.localizedDescription, privacy: .public)")
+      return
+    }
+    // Consent precedes secure-session setup. A zero-leaf invitation needs
+    // acceptance, not a recovery diagnosis or reset prompt.
+    if isPendingRequest {
+      conversationRecoveryState = .healthy
+      return
+    }
+    var resolved = durableModel?.persistedRecoveryState ?? .healthy
 
-    if let appState,
-      let manager = await appState.getMLSConversationManager(timeout: 2.0)
+    if let manager = await appState.getMLSConversationManager(timeout: 2.0),
+      manager.userDid == currentUserDID
     {
       if manager.protocolAuthorityMode == .rustFull {
         do {
@@ -442,10 +502,12 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
       } else if let userDid = manager.userDid,
         let recovery = await manager.mlsClient.recovery(for: userDid)
       {
-        resolved = await recovery.recoveryState(for: conversationId, model: model)
+        resolved = await recovery.recoveryState(for: conversationId, model: durableModel)
       }
     }
 
+    guard recoveryResolutionID == resolutionID, appState.userDID == currentUserDID,
+          (try? MLSCoordinationAwareTask.validateGeneration(expectedGeneration)) != nil else { return }
     if conversationRecoveryState != resolved {
       logger.info(
         "Recovery state for \(self.conversationId.prefix(16)) → \(resolved.rawValue, privacy: .public) (sends \(resolved.blocksSending ? "blocked" : "allowed", privacy: .public))"
@@ -464,7 +526,15 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
       currentUserDID: currentUserDID,
       database: database
     )
+    let previousRecovery = conversationRecoveryState
+    let previousLeave = leavePresentation
     await resolveRecoveryState(model: model)
+    if let manager = await appState.getMLSConversationManager(timeout: 2.0), manager.userDid == currentUserDID {
+      leavePresentation = await manager.conversationLeavePresentation(conversationID: conversationId, refresh: true)
+    }
+    if previousRecovery != conversationRecoveryState || previousLeave != leavePresentation {
+      await reloadObservedMessages(database: database)
+    }
   }
 
   /// Core conversion logic: turns raw `MLSMessageModel` rows into
@@ -554,6 +624,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
       mlsContext = nil
     }
 
+    let currentDeviceID = (try? MLSOrchestratorCredentialAdapter().getDeviceUuid(userDid: currentUserDID)) ?? ""
     for model in models {
       let payloadOpt: MLSMessagePayload?
       if let ctx = mlsContext {
@@ -581,20 +652,14 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
         continue
       }
 
-      // Map system message content keys to display text
-      let displayText: String
-      if payload.messageType == .system {
-        switch text {
-        case "history_boundary.new_member":
-          displayText = "You joined this conversation"
-        case "history_boundary.device_rejoined":
-          displayText = "Messages before this point aren't available on this device"
-        default:
-          displayText = text
-        }
-      } else {
-        displayText = text
-      }
+      let displayText = MLSSystemMessagePresentation.text(
+        payload,
+        verifiedAccountLeave: MLSSystemMessagePresentation.isVerifiedAccountLeave(
+          payload: payload, messageID: model.messageID, senderDID: model.senderID,
+          currentUserDID: currentUserDID,
+          currentDeviceID: currentDeviceID,
+          terminalState: conversationRecoveryState == .closed ? "closed" : (conversationRecoveryState == .deviceRemoved ? "device_removed" : nil))
+      )
 
       let canonicalSenderDID = MLSProfileEnricher.canonicalDID(model.senderID)
       let profile = profileCache[canonicalSenderDID]
@@ -643,6 +708,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
         senderDID: model.senderID,
         currentUserDID: currentUserDID,
         sentAt: model.timestamp,
+        isSystemMessage: MLSSystemMessagePresentation.isSystem(payload),
         isEdited: model.isEdited != 0,
         editedAt: model.editedAt,
         isTombstone: model.isTombstone != 0,
@@ -768,6 +834,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
       senderDID: adapter.senderID,
       currentUserDID: currentUserDID,
       sentAt: adapter.sentAt,
+      isSystemMessage: adapter.isSystemMessage,
       isEdited: adapter.isEdited,
       editedAt: adapter.editedAt,
       isTombstone: adapter.isTombstone,
@@ -862,6 +929,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
         senderDID: adapter.senderID,
         currentUserDID: currentUserDID,
         sentAt: adapter.sentAt,
+        isSystemMessage: adapter.isSystemMessage,
         isEdited: adapter.isEdited,
         editedAt: adapter.editedAt,
         isTombstone: adapter.isTombstone,
@@ -985,6 +1053,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
         senderDID: adapter.senderID,
         currentUserDID: currentUserDID,
         sentAt: adapter.sentAt,
+        isSystemMessage: adapter.isSystemMessage,
         isEdited: adapter.isEdited,
         editedAt: adapter.editedAt,
         isTombstone: adapter.isTombstone,
@@ -1167,6 +1236,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
         mlsContext = nil
       }
 
+      let currentDeviceID = (try? MLSOrchestratorCredentialAdapter().getDeviceUuid(userDid: currentUserDID)) ?? ""
       for model in olderModels {
         let payloadOpt: MLSMessagePayload?
         if let ctx = mlsContext {
@@ -1194,20 +1264,14 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
           continue
         }
 
-        // Map system message content keys to display text
-        let displayText: String
-        if payload.messageType == .system {
-          switch text {
-          case "history_boundary.new_member":
-            displayText = "You joined this conversation"
-          case "history_boundary.device_rejoined":
-            displayText = "Messages before this point aren't available on this device"
-          default:
-            displayText = text
-          }
-        } else {
-          displayText = text
-        }
+        let displayText = MLSSystemMessagePresentation.text(
+          payload,
+          verifiedAccountLeave: MLSSystemMessagePresentation.isVerifiedAccountLeave(
+          payload: payload, messageID: model.messageID, senderDID: model.senderID,
+          currentUserDID: currentUserDID,
+          currentDeviceID: currentDeviceID,
+          terminalState: conversationRecoveryState == .closed ? "closed" : (conversationRecoveryState == .deviceRemoved ? "device_removed" : nil))
+        )
 
         let canonicalSenderDID = MLSProfileEnricher.canonicalDID(model.senderID)
         let profile = profileCache[canonicalSenderDID]
@@ -1244,6 +1308,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
           senderDID: model.senderID,
           currentUserDID: currentUserDID,
           sentAt: model.timestamp,
+          isSystemMessage: MLSSystemMessagePresentation.isSystem(payload),
           isEdited: model.isEdited != 0,
           editedAt: model.editedAt,
           isTombstone: model.isTombstone != 0,
@@ -1552,6 +1617,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
             senderDID: oldAdapter.senderID,
             currentUserDID: currentUserDID,
             sentAt: oldAdapter.sentAt,
+            isSystemMessage: oldAdapter.isSystemMessage,
             isEdited: oldAdapter.isEdited,
             editedAt: oldAdapter.editedAt,
             isTombstone: oldAdapter.isTombstone,
@@ -1625,6 +1691,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
             senderDID: oldAdapter.senderID,
             currentUserDID: currentUserDID,
             sentAt: oldAdapter.sentAt,
+            isSystemMessage: oldAdapter.isSystemMessage,
             isEdited: oldAdapter.isEdited,
             editedAt: oldAdapter.editedAt,
             isTombstone: oldAdapter.isTombstone,
@@ -1709,6 +1776,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
       senderDID: oldAdapter.senderID,
       currentUserDID: currentUserDID,
       sentAt: oldAdapter.sentAt,
+      isSystemMessage: oldAdapter.isSystemMessage,
       isEdited: oldAdapter.isEdited,
       editedAt: oldAdapter.editedAt,
       isTombstone: oldAdapter.isTombstone,
@@ -1910,6 +1978,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
         senderDID: adapter.senderID,
         currentUserDID: currentUserDID,
         sentAt: adapter.sentAt,
+        isSystemMessage: adapter.isSystemMessage,
         isEdited: adapter.isEdited,
         editedAt: adapter.editedAt,
         isTombstone: adapter.isTombstone,

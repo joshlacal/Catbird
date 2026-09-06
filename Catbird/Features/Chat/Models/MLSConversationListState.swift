@@ -6,6 +6,13 @@ import SwiftUI
 struct MLSLastMessagePreview: Equatable, Sendable {
   let senderDID: String
   let text: String
+  let isSystemMessage: Bool
+
+  init(senderDID: String, text: String, isSystemMessage: Bool = false) {
+    self.senderDID = senderDID
+    self.text = text
+    self.isSystemMessage = isSystemMessage
+  }
 }
 
 /// Bundles all MLS conversation list state into a single struct.

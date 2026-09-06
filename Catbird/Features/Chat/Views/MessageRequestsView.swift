@@ -1,6 +1,7 @@
 import OSLog
 import SwiftUI
 import Petrel
+import CatbirdMLSCore
 
 /// View for managing message requests (conversations with status "request")
 struct MessageRequestsView: View {
@@ -612,5 +613,83 @@ struct MessageRequestPreviewView: View {
   AsyncPreviewContent { appState in
     MessageRequestsView()
         .environment(AppStateManager.shared)
+  }
+}
+
+
+/// Both providers share one Inbox entry point while retaining their own request flows.
+enum MessageRequestProvider: String, CaseIterable, Identifiable {
+  case bluesky = "Bluesky"
+  case catbird = "Catbird"
+  var id: Self { self }
+
+  static func initial(pendingCatbirdCount: Int) -> Self {
+    pendingCatbirdCount > 0 ? .catbird : .bluesky
+  }
+}
+
+/// The presentation item carries the initial provider into the first sheet render.
+struct MessageRequestSheet<SheetContent: View>: ViewModifier {
+  @Binding var provider: MessageRequestProvider?
+  var onDismiss: () -> Void
+  @ViewBuilder var sheetContent: (MessageRequestProvider) -> SheetContent
+
+  func body(content: Content) -> some View {
+    content.sheet(item: $provider, onDismiss: onDismiss, content: sheetContent)
+  }
+}
+
+struct MessageRequestProviderContainer<Bluesky: View, Catbird: View>: View {
+  @State private var provider: MessageRequestProvider
+  let bluesky: Bluesky
+  let catbird: Catbird
+
+  init(initialProvider: MessageRequestProvider,
+       @ViewBuilder bluesky: () -> Bluesky, @ViewBuilder catbird: () -> Catbird) {
+    _provider = State(initialValue: initialProvider)
+    self.bluesky = bluesky()
+    self.catbird = catbird()
+  }
+
+  var body: some View {
+    VStack(spacing: 0) {
+      Picker("Request type", selection: $provider) {
+        ForEach(MessageRequestProvider.allCases) { provider in
+          Text(provider.rawValue).tag(provider)
+        }
+      }
+      .pickerStyle(.segmented)
+      .accessibilityIdentifier("messageRequests.provider")
+      .padding()
+      switch provider {
+      case .bluesky: bluesky
+      case .catbird: catbird
+      }
+    }
+  }
+}
+
+struct UnifiedMessageRequestsView: View {
+  @Environment(AppState.self) private var appState
+  @Environment(\.dismiss) private var dismiss
+  let initialProvider: MessageRequestProvider
+
+  var body: some View {
+    let userDID = appState.userDID
+    let manager = appState.mlsConversationManager
+    return MessageRequestProviderContainer(initialProvider: initialProvider) {
+      MessageRequestsView()
+    } catbird: {
+      MLSChatRequestsView(onAcceptedConversation: { conversationID in
+        await MainActor.run {
+          guard appState.userDID == userDID, let manager,
+                appState.mlsConversationManager === manager,
+                manager.currentUserDID == userDID, !manager.isShuttingDown else { return }
+          appState.navigationManager.targetMLSConversationId = conversationID
+          dismiss()
+        }
+      })
+    }
+    .id(appState.userDID)
   }
 }

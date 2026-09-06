@@ -65,6 +65,7 @@ struct MLSMessageAdapter: UnifiedChatMessage {
     let id: String
     let convoID: String
     let text: String
+    let isSystemMessage: Bool
     let senderDID: String
     let sentAt: Date
     let embed: MLSEmbedData?
@@ -102,7 +103,8 @@ struct MLSMessageAdapter: UnifiedChatMessage {
     let metadata = MessageMetadata(
       id: messageView.id,
       convoID: messageView.convoId,
-      text: payload.text ?? "",
+      text: MLSSystemMessagePresentation.text(payload),
+      isSystemMessage: MLSSystemMessagePresentation.isSystem(payload),
       senderDID: senderDID,
       sentAt: messageView.createdAt.date,
       embed: payload.embed,
@@ -140,7 +142,8 @@ struct MLSMessageAdapter: UnifiedChatMessage {
     self.metadata = MessageMetadata(
       id: message.id,
       convoID: message.convoId,
-      text: message.text ?? "",
+      text: MLSSystemMessagePresentation.text(message.payload),
+      isSystemMessage: MLSSystemMessagePresentation.isSystem(message.payload),
       senderDID: message.senderDID,
       sentAt: message.createdAt,
       embed: message.embed,
@@ -170,6 +173,7 @@ struct MLSMessageAdapter: UnifiedChatMessage {
     senderDID: String,
     currentUserDID: String,
     sentAt: Date,
+    isSystemMessage: Bool = false,
     isEdited: Bool = false,
     editedAt: Date? = nil,
     isTombstone: Bool = false,
@@ -189,6 +193,7 @@ struct MLSMessageAdapter: UnifiedChatMessage {
       id: id,
       convoID: convoID,
       text: text,
+      isSystemMessage: isSystemMessage,
       senderDID: senderDID,
       sentAt: sentAt,
       embed: embed,
@@ -313,11 +318,11 @@ struct MLSMessageAdapter: UnifiedChatMessage {
   }
 
   var canEdit: Bool {
-    isFromCurrentUser && !isTombstone && embed == nil && isServerConfirmed
+    isFromCurrentUser && !isSystemMessage && !isTombstone && embed == nil && isServerConfirmed
   }
 
   var canUnsend: Bool {
-    isFromCurrentUser && !isTombstone && isServerConfirmed
+    isFromCurrentUser && !isSystemMessage && !isTombstone && isServerConfirmed
   }
 
   private var isServerConfirmed: Bool {
@@ -371,6 +376,8 @@ struct MLSMessageAdapter: UnifiedChatMessage {
 
   var text: String { metadata.text }
 
+  var isSystemMessage: Bool { metadata.isSystemMessage }
+
   var senderID: String { metadata.senderDID }
 
   var senderDisplayName: String? {
@@ -423,7 +430,7 @@ struct MLSMessageAdapter: UnifiedChatMessage {
   }
 
   static func == (lhs: MLSMessageAdapter, rhs: MLSMessageAdapter) -> Bool {
-    lhs.id == rhs.id && lhs.text == rhs.text && lhs.sendState == rhs.sendState
+    lhs.id == rhs.id && lhs.text == rhs.text && lhs.isSystemMessage == rhs.isSystemMessage && lhs.sendState == rhs.sendState
       && lhs.reactions == rhs.reactions && lhs.isEdited == rhs.isEdited
       && lhs.editedAt == rhs.editedAt && lhs.isTombstone == rhs.isTombstone
       && lhs.deletedAt == rhs.deletedAt

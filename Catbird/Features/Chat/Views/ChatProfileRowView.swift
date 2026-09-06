@@ -87,7 +87,7 @@ struct ChatProfileRowView: View {
     /// Checks if the user can be messaged using authoritative server-side check
     private func checkMessageability() async {
         // First do a quick local check to avoid unnecessary server calls
-        let localCheck = performLocalMessageabilityCheck()
+        let localCheck = await performLocalMessageabilityCheck()
         
         // If local check says definitely not messageable, don't bother with server check
         if localCheck == false {
@@ -100,38 +100,48 @@ struct ChatProfileRowView: View {
     }
     
     /// Performs local heuristic check for obvious non-messageability cases
-    private func performLocalMessageabilityCheck() -> Bool? {
-        // Check if chat is explicitly disabled for this profile
+    private func performLocalMessageabilityCheck() async -> Bool? {
+        let chatSetting: String
+        let viewerStatePresent: Bool
+        let profileFollowsMe: Bool
+
         if let profileView = profile as? AppBskyActorDefs.ProfileView {
-            // Check if chat is available via associated chat settings
-            
-            let chatSetting = profileView.associated?.chat?.allowIncoming ?? "all"
-            let profileFollowsMe = profileView.viewer?.followedBy != nil
-            
-            return canMessageLocally(chatSetting: chatSetting, profileFollowsMe: profileFollowsMe)
-            
+            chatSetting = profileView.associated?.chat?.allowIncoming ?? "all"
+            viewerStatePresent = profileView.viewer != nil
+            profileFollowsMe = profileView.viewer?.followedBy != nil
         } else if let profileViewBasic = profile as? AppBskyActorDefs.ProfileViewBasic {
-            // Check if chat is available via associated chat settings
-            
-            let chatSetting = profileViewBasic.associated?.chat?.allowIncoming ?? "all"
-            let profileFollowsMe = profileViewBasic.viewer?.followedBy != nil
-            
-            return canMessageLocally(chatSetting: chatSetting, profileFollowsMe: profileFollowsMe)
-            
+            chatSetting = profileViewBasic.associated?.chat?.allowIncoming ?? "all"
+            viewerStatePresent = profileViewBasic.viewer != nil
+            profileFollowsMe = profileViewBasic.viewer?.followedBy != nil
         } else if let chatProfile = profile as? ChatBskyActorDefs.ProfileViewBasic {
-            // Chat disabled takes precedence
             if chatProfile.chatDisabled == true {
                 return false
             }
-            
-            let chatSetting = chatProfile.associated?.chat?.allowIncoming ?? "all"
-            let profileFollowsMe = chatProfile.viewer?.followedBy != nil
-            
-            return canMessageLocally(chatSetting: chatSetting, profileFollowsMe: profileFollowsMe)
+            chatSetting = chatProfile.associated?.chat?.allowIncoming ?? "all"
+            viewerStatePresent = chatProfile.viewer != nil
+            profileFollowsMe = chatProfile.viewer?.followedBy != nil
+        } else {
+            return nil
         }
-        
-        // If we can't determine from profile type, assume messageable but verify with server
-        return nil
+
+        switch chatSetting {
+        case "all":
+            return true
+        case "none":
+            return false
+        case "following":
+            if viewerStatePresent {
+                return profileFollowsMe
+            }
+            // Viewer state missing: check batched relationship cache
+            if let targetDid = try? DID(didString: profile.did.didString()),
+               let info = try? await appState.getRelationship(target: targetDid) {
+                return info.followedBy
+            }
+            return false
+        default:
+            return nil
+        }
     }
     
     /// Performs authoritative server-side messageability check
@@ -171,22 +181,6 @@ struct ChatProfileRowView: View {
         isMessageable = canChat
     }
 
-    /// Local heuristic check based on chat settings and follow relationships
-    private func canMessageLocally(chatSetting: String, profileFollowsMe: Bool) -> Bool? {
-        switch chatSetting {
-        case "all":
-            return true
-        case "following":
-            // User's setting is "following" - only people they follow can message them
-            // So we need to check if this profile follows the current user
-            return profileFollowsMe
-        case "none":
-            return false
-        default:
-            // Unknown setting, let server decide
-            return nil
-        }
-    }
     
     private func extractLabels(from profile: ProfileDisplayable) -> [ComAtprotoLabelDefs.Label]? {
         if let profileView = profile as? AppBskyActorDefs.ProfileView {

@@ -16,7 +16,7 @@ struct MLSConversationRowView: View {
   private var hasUnread: Bool { unreadCount > 0 }
 
   private var lastMessageSenderName: String {
-    guard let lastMessage else { return "" }
+    guard let lastMessage, !lastMessage.isSystemMessage else { return "" }
     let did = lastMessage.senderDID
     if did.lowercased() == appState.userDID.lowercased() {
       return "You"

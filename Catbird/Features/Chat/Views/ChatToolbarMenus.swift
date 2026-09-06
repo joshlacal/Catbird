@@ -1,5 +1,6 @@
 import SwiftUI
 import Petrel
+import CatbirdMLSCore
 
 
 // MARK: - Toolbar and Context Menu Components
@@ -180,10 +181,12 @@ struct ConversationContextMenu: ViewModifier {
 /// Button to show message requests with badge for unread count
 struct MessageRequestsButton: View {
   @Environment(AppState.self) private var appState
-  @State private var showingRequests = false
+  @State private var requestProvider: MessageRequestProvider?
+  @State private var pendingCatbirdCount = 0
+  @State private var countGeneration = UUID()
   
   private var requestsCount: Int {
-    appState.chatManager.messageRequestsCount
+    appState.chatManager.messageRequestsCount + pendingCatbirdCount
   }
   
   private var unreadRequestsCount: Int {
@@ -192,7 +195,12 @@ struct MessageRequestsButton: View {
   
   var body: some View {
     Button {
-      showingRequests = true
+      Task { @MainActor in
+        let userDID = appState.userDID
+        await refreshCatbirdCount()
+        guard !Task.isCancelled, appState.userDID == userDID else { return }
+        requestProvider = .initial(pendingCatbirdCount: pendingCatbirdCount)
+      }
     } label: {
       ZStack {
         Image(systemName: "tray")
@@ -212,10 +220,55 @@ struct MessageRequestsButton: View {
         }
       }
     }
-    .sheet(isPresented: $showingRequests) {
-      MessageRequestsView()
+    .accessibilityLabel(requestsCount == 0 ? "Message requests" : "Message requests, \(requestsCount) pending")
+    .modifier(MessageRequestSheet(provider: $requestProvider, onDismiss: {
+      Task { await refreshCatbirdCount() }
+    }, sheetContent: { provider in
+      UnifiedMessageRequestsView(initialProvider: provider)
+    }))
+    .task(id: appState.userDID) {
+      requestProvider = nil
+      pendingCatbirdCount = 0
+      let bus = appState.stateInvalidationBus
+      let stream = AsyncStream<Void> { continuation in
+        let observer = MessageRequestsChangeObserver(continuation: continuation)
+        bus.subscribe(observer)
+        continuation.onTermination = { _ in bus.unsubscribe(observer) }
+      }
+      await refreshCatbirdCount()
+      for await _ in stream {
+        guard !Task.isCancelled else { return }
+        await refreshCatbirdCount()
+      }
     }
   }
+
+  @MainActor
+  private func refreshCatbirdCount() async {
+    let generation = UUID()
+    countGeneration = generation
+    let userDID = appState.userDID
+    guard let manager = await appState.getMLSConversationManager(),
+          manager.currentUserDID == userDID, !manager.isShuttingDown else { return }
+    do {
+      let count = try await manager.fetchPendingRequestConversations().count
+      guard !Task.isCancelled, countGeneration == generation, appState.userDID == userDID,
+            appState.mlsConversationManager === manager, !manager.isShuttingDown else { return }
+      pendingCatbirdCount = count
+    } catch {
+      // Keep the last known badge; the Inbox shows actionable load failures.
+    }
+  }
+}
+
+private final class MessageRequestsChangeObserver: StateInvalidationSubscriber {
+  let continuation: AsyncStream<Void>.Continuation
+  init(continuation: AsyncStream<Void>.Continuation) { self.continuation = continuation }
+  func isInterestedIn(_ event: StateInvalidationEvent) -> Bool {
+    if case .mlsConversationListChanged = event { return true }
+    return false
+  }
+  func handleStateInvalidation(_ event: StateInvalidationEvent) async { continuation.yield() }
 }
 
 #Preview("ChatToolbarMenu") {

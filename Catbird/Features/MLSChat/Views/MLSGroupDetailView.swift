@@ -32,6 +32,7 @@ struct MLSGroupDetailView: View {
   @State private var isSaving = false
   @State private var isLeaving = false
   @State private var showingLeaveConfirmation = false
+  @State private var lifecycleStatus: (title: String, message: String)?
   @State private var showingMuteOptions = false
   @State private var mutedUntil: Date?
   @State private var errorMessage: String?
@@ -145,6 +146,14 @@ struct MLSGroupDetailView: View {
             database: conversationManager.database
           )
         }
+      }
+      .alert(lifecycleStatus?.title ?? "Could Not Leave", isPresented: .init(
+          get: { lifecycleStatus != nil },
+          set: { if !$0 { lifecycleStatus = nil } }
+      )) {
+          Button("OK", role: .cancel) {}
+      } message: {
+          Text(lifecycleStatus?.message ?? "")
       }
       .alert("Error", isPresented: .init(
         get: { errorMessage != nil },
@@ -653,7 +662,11 @@ struct MLSGroupDetailView: View {
       dismiss()
     } catch {
       logger.error("Failed to leave conversation: \(error.localizedDescription)")
-      errorMessage = "Failed to leave conversation."
+      var title = "Could Not Leave"
+      if let lifecycleError = error as? MLSConversationLifecycleError, case .leavePending = lifecycleError {
+          title = "Leave Requested"
+      }
+      lifecycleStatus = (title, error.localizedDescription)
       isLeaving = false
     }
   }
@@ -667,7 +680,12 @@ struct MLSGroupDetailView: View {
       logger.info("Removed member \(member.did) from conversation")
     } catch {
       logger.error("Failed to remove member: \(error.localizedDescription)")
-      errorMessage = "Failed to remove member."
+      if let lifecycleError = error as? MLSConversationLifecycleError,
+         case .memberRemovalPending = lifecycleError {
+        lifecycleStatus = ("Removal Requested", error.localizedDescription)
+      } else {
+        errorMessage = error.localizedDescription
+      }
     }
     isPerformingMemberAction = false
   }

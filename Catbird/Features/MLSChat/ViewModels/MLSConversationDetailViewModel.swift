@@ -237,10 +237,20 @@ final class MLSConversationDetailViewModel {
         guard !isLoadingMessages else { return }
 
         isLoadingMessages = true
+        defer { isLoadingMessages = false }
 
         do {
             let expectedGen = MLSCoordinationAwareTask.captureGeneration()
             try MLSCoordinationAwareTask.validateGeneration(expectedGen)
+            guard let userDID = conversationManager.currentUserDID else { return }
+            let stored = try await MLSStorage.shared.fetchConversation(
+                conversationID: conversationId, currentUserDID: userDID, database: database)
+            try MLSCoordinationAwareTask.validateGeneration(expectedGen)
+            guard conversationManager.currentUserDID == userDID,
+                  let stored else { return }
+            let pendingConsent = try await database.read { db in try stored.hasPendingConsent(in: db) }
+            try MLSCoordinationAwareTask.validateGeneration(expectedGen)
+            guard conversationManager.currentUserDID == userDID, !pendingConsent else { return }
 
             let (messageViews, lastSeq) = try await apiClient.getMessages(
                 convoId: conversationId,
@@ -270,7 +280,6 @@ final class MLSConversationDetailViewModel {
             logger.error("Failed to load messages: \(error.localizedDescription)")
         }
 
-        isLoadingMessages = false
     }
 
     /// Load more messages (pagination)
