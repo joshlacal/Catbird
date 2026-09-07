@@ -639,6 +639,8 @@ struct CatbirdApp: App {
 
     // Bridge Petrel logs into Sentry (Sentry is initialized in AppDelegate)
     PetrelSentryBridge.enable()
+    // Bridge MLS diagnostic records into Sentry
+    MLSSentryBridge.enable()
     // Bridge Petrel auth incidents to UI to prevent silent auto-switching UX
     PetrelAuthUIBridge.enable()
 

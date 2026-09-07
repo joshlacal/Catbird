@@ -259,6 +259,18 @@ struct MLSMessageView: View {
           .foregroundColor(isCurrentUser ? .white.opacity(0.7) : .secondary)
           .help("Sending...")
 
+      case .retrying(let attempt, let nextAttemptAt, let reason):
+        let remaining = max(1, Int(ceil(nextAttemptAt.timeIntervalSinceNow)))
+        Image(systemName: "arrow.clockwise")
+          .symbolEffect(.rotate)
+          .foregroundColor(.orange)
+          .help("\(reason) (retrying in \(remaining)s, attempt \(attempt))")
+
+      case .waitingForPeer(let reason):
+        Image(systemName: "person.crop.circle.badge.clock")
+          .foregroundColor(.orange)
+          .help(reason)
+
       case .sent:
         Image(systemName: "checkmark")
           .foregroundColor(isCurrentUser ? .white.opacity(0.7) : .secondary)

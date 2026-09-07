@@ -330,7 +330,7 @@ struct MLSMessageAdapter: UnifiedChatMessage {
     switch sendState {
     case .sent, .delivered, .read:
       return true
-    case .sending, .failed:
+    case .sending, .retrying, .waitingForPeer, .failed:
       return false
     }
   }

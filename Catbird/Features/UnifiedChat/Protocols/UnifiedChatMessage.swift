@@ -114,6 +114,8 @@ struct UnifiedSystemEvent: Hashable, Sendable {
 /// Message send state
 enum MessageSendState: Hashable, Sendable {
   case sending
+  case retrying(attempt: Int, nextAttemptAt: Date, reason: String)
+  case waitingForPeer(reason: String)
   case sent
   case delivered
   case read

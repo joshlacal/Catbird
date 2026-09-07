@@ -1642,10 +1642,6 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		21A0C1AA300D0001000000A3 /* XCLocalSwiftPackageReference "../CatbirdMLSCore" */ = {
-			isa = XCLocalSwiftPackageReference;
-			relativePath = ../CatbirdMLSCore;
-		};
 		21A0C1AA300D0001000000A1 /* XCLocalSwiftPackageReference "../Petrel" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = ../Petrel;
@@ -1653,6 +1649,10 @@
 		21A0C1AA300D0001000000A2 /* XCLocalSwiftPackageReference "../PetrelCatbird" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = ../PetrelCatbird;
+		};
+		21A0C1AA300D0001000000A3 /* XCLocalSwiftPackageReference "../CatbirdMLSCore" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../CatbirdMLSCore;
 		};
 /* End XCLocalSwiftPackageReference section */
 

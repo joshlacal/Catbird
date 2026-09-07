@@ -17,6 +17,21 @@ struct DiagnosticsSettingsView: View {
             .appFont(AppTextRole.caption)
         }
 
+        Section("Encrypted Chat") {
+          NavigationLink(destination: MLSChatDiagnosticsView()) {
+            Label {
+              VStack(alignment: .leading, spacing: 2) {
+                Text("Chat Diagnostics")
+                Text("Recent send failures, coordinates, and recovery events")
+                  .font(.caption)
+                  .foregroundStyle(.secondary)
+              }
+            } icon: {
+              Image(systemName: "bubble.left.and.exclamationmark.bubble.right")
+                .foregroundStyle(.blue)
+            }
+          }
+        }
         Section("MLS Storage") {
           Button(role: .destructive) {
             showResetConfirmation = true

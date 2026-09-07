@@ -36,6 +36,7 @@ import SwiftUI
             @State private var showingMLSDiagnostics = false
         #endif
         @State private var pipelineError: String?
+        @State private var pipelineErrorHeadline: String?
         @State private var waitingForDeviceAccess = false
         @State private var showingLeaveConfirmation = false
         @State private var leaveStatus: (title: String, message: String)?
@@ -330,7 +331,7 @@ import SwiftUI
 
                 if !isPendingRequest, !waitingForDeviceAccess, let pipelineError, !isLoadingMessages, !hasVisibleMessages {
                     VStack(spacing: 12) {
-                        Text("Couldn't load messages")
+                        Text(pipelineErrorHeadline ?? "Couldn't load messages")
                             .font(.headline)
 
                         Text(pipelineError)
@@ -1751,13 +1752,26 @@ import SwiftUI
         // MARK: - Actions
 
         @MainActor
-        private func showPipelineError(_ message: String) {
+        private func showPipelineError(_ message: String, headline: String? = nil) {
             waitingForDeviceAccess = false
             guard !hasVisibleMessages else {
                 logger.info("Suppressing pipeline overlay because cached messages are already visible")
                 return
             }
+            pipelineErrorHeadline = headline
             pipelineError = message
+        }
+
+        @MainActor
+        private func showPipelineError(for error: Error) {
+            let classification = MLSConversationLifecycleError.classifyPipelineError(error)
+            MLSDiagnostics.record(
+                .conversationLoadFailed,
+                code: classification.diagnosticCode,
+                conversation: conversationId,
+                detail: ["reason": classification.userVisibleReason]
+            )
+            showPipelineError(classification.presentationDetail, headline: classification.presentationHeadline)
         }
 
         private func launchConversationPipeline() {
@@ -1769,6 +1783,7 @@ import SwiftUI
         private func retryConversationPipeline() {
             Task { @MainActor in
                 pipelineError = nil
+                pipelineErrorHeadline = nil
             }
 
             launchConversationPipeline()
@@ -1922,7 +1937,7 @@ import SwiftUI
                 logger.error(
                     "❌ Failed to initialize MLS group for \(conversationId): MLSConversationError - \(error.localizedDescription)"
                 )
-                showPipelineError("Failed to initialize secure messaging. Tap Retry to try again.")
+                showPipelineError(for: error)
                 return
             } catch let error as MLSAPIError {
                 guard isCurrentPipeline(scope: scope, generation: expectedGeneration, manager: pipelineManager) else { return }
@@ -1932,14 +1947,14 @@ import SwiftUI
                 if case let .invalidResponse(message) = error {
                     logger.error("  → Invalid response details: \(message)")
                 }
-                showPipelineError("Failed to initialize secure messaging. Tap Retry to try again.")
+                showPipelineError(for: error)
                 return
             } catch {
                 guard isCurrentPipeline(scope: scope, generation: expectedGeneration, manager: pipelineManager) else { return }
                 logger.error(
                     "❌ Failed to initialize MLS group for \(conversationId): Unexpected error - \(type(of: error)) - \(error.localizedDescription)"
                 )
-                showPipelineError("Failed to initialize secure messaging. Tap Retry to try again.")
+                showPipelineError(for: error)
                 return
             }
 
@@ -2100,12 +2115,12 @@ import SwiftUI
                         return
                     } else {
                         logger.error("❌ Failed to process messages in order: \(error.localizedDescription)")
-                        await showPipelineError("Failed to decrypt messages. Tap Retry to try again.")
+                        await showPipelineError(for: error)
                         return
                     }
                 } catch {
                     logger.error("❌ Failed to process messages in order: \(error.localizedDescription)")
-                    await showPipelineError("Failed to decrypt messages. Tap Retry to try again.")
+                    await showPipelineError(for: error)
                     return
                 }
 
@@ -2135,8 +2150,7 @@ import SwiftUI
                 }
             } catch {
                 logger.error("Failed to load messages: \(error.localizedDescription)")
-                await showPipelineError("Failed to load messages. Tap Retry to try again.")
-
+                await showPipelineError(for: error)
                 // Fallback: Attempt to connect WebSocket even if REST fetch fails
                 // This ensures real-time updates work even if the initial sync hits a 500 error
                 await MainActor.run {
@@ -3523,7 +3537,19 @@ import SwiftUI
                 let (messageId, receivedAt, seq, epoch) = try await manager.sendMessage(
                     convoId: conversationId,
                     plaintext: trimmed,
-                    embed: embed
+                    embed: embed,
+                    onRetryProgress: { progress in
+                        Task { @MainActor in
+                            if let pendingSendId {
+                                unifiedDataSource?.updatePendingSendRetrying(
+                                    id: pendingSendId,
+                                    attempt: progress.attempt,
+                                    nextAttemptAt: progress.nextAttemptAt,
+                                    reason: progress.classification.userVisibleReason
+                                )
+                            }
+                        }
+                    }
                 )
 
                 logger.debug("Message sent successfully: \(messageId) with seq=\(seq), epoch=\(epoch)")
@@ -3629,27 +3655,30 @@ import SwiftUI
                 // failure, and is exactly what was missing when triaging cross-platform DM breakage.
                 let diag = await sendFailureDiagnostics(senderDID: senderDID, error: error)
                 await MainActor.run {
+                    let classification = MLSConversationLifecycleError.classifySendError(error)
                     logger.error(
-                        "❌ [SEND-FAIL] \(diag) recovery=\(String(describing: self.recoveryState)) err=\(String(reflecting: type(of: error))): \(error.localizedDescription)"
+                        "❌ [SEND-FAIL] \(diag) recovery=\(String(describing: self.recoveryState)) err=\(String(reflecting: type(of: error))): \(error.localizedDescription) [\(classification.diagnosticCode)]"
                     )
-                    // WS-6.5: surface the failure on the message itself (failed indicator
-                    // + tap-to-retry) instead of leaving an eternally pending bubble.
                     if let pendingSendId {
-                        unifiedDataSource?.failPendingSend(
-                            id: pendingSendId,
-                            reason: error.localizedDescription
-                        )
+                        if classification.isWaitingForPeer {
+                            unifiedDataSource?.setPendingSendWaiting(
+                                id: pendingSendId,
+                                reason: classification.userVisibleReason
+                            )
+                        } else {
+                            unifiedDataSource?.failPendingSend(
+                                id: pendingSendId,
+                                reason: classification.userVisibleReason
+                            )
+                        }
                     } else {
-                        sendError = "Failed to send message: \(error.localizedDescription)"
+                        sendError = classification.userVisibleReason
                         showingSendError = true
                     }
                 }
-                // Sends often fail because recovery was flagged mid-send; re-resolve the
-                // blocking state so the composer reflects reality immediately.
                 await unifiedDataSource?.refreshRecoveryState()
             }
         }
-
         /// Retries a failed pending send (WS-6.5). Pulls the failed entry's content
         /// out of the data source and re-runs the full send pipeline; a fresh
         /// pending entry is created so the message shows as sending again.

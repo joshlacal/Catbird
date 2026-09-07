@@ -80,6 +80,32 @@ enum SentryService {
         #endif
     }
 
+    static func captureEvent(
+        message: String,
+        level: String,
+        category: String,
+        tags: [String: String]? = nil,
+        extras: [String: Any]? = nil,
+        fingerprint: [String]? = nil
+    ) {
+        #if canImport(Sentry)
+        let event = Event(level: mapLevel(level))
+        event.message = SentryMessage(formatted: message)
+        var combinedTags = tags ?? [:]
+        combinedTags["category"] = category
+        event.tags = combinedTags
+        if let extras {
+            var filtered: [String: Any] = [:]
+            for (k, v) in extras { filtered[k] = v }
+            event.extra = filtered
+        }
+        if let fingerprint {
+            event.fingerprint = fingerprint
+        }
+        SentrySDK.capture(event: event)
+        #endif
+    }
+
     // MARK: - Helpers
 
     private static func resolveDSN() -> String? {
@@ -91,6 +117,10 @@ enum SentryService {
 
     #if canImport(Sentry)
     private static func filterEvent(_ event: Event) -> Event? {
+        // Explicitly allowlist MLS.Chat events so they are never dropped by benign/system pattern filters
+        if let tags = event.tags, tags["category"] == "MLS.Chat" {
+            return event
+        }
         // Drop events that are clearly noise
         if let message = event.message?.formatted {
             // Filter out verbose debug messages
@@ -205,6 +235,7 @@ enum SentryService {
         switch level {
         case "debug": return .debug
         case "info": return .info
+        case "warning": return .warning
         case "error": return .error
         default: return .info
         }

@@ -163,20 +163,48 @@ import SwiftUI
             deliveryBadge
           }
 
-          // Failed-send retry affordance (WS-6.5)
-          if deliveryState?.isFailed == true {
-            HStack {
-              Spacer()
-              Button {
-                onRetry?()
-              } label: {
-                Text("Not delivered. Tap to retry.")
-                  .font(.caption)
-                  .foregroundStyle(.red)
+          // Status affordance for retry, waiting, and failed states
+          if let state = deliveryState {
+            switch state {
+            case .retrying(let attempt, let nextAttemptAt, let reason):
+              HStack {
+                Spacer()
+                HStack(spacing: 4) {
+                  Image(systemName: "arrow.clockwise")
+                    .font(.caption2)
+                  let remaining = max(1, Int(ceil(nextAttemptAt.timeIntervalSinceNow)))
+                  Text("\(reason) (retrying in \(remaining)s, attempt \(attempt))")
+                    .font(.caption)
+                }
+                .foregroundStyle(.secondary)
               }
-              .buttonStyle(.plain)
-              .accessibilityLabel("Message failed to send")
-              .accessibilityHint("Tap to retry sending this message")
+            case .waitingForPeer(let reason):
+              HStack {
+                Spacer()
+                HStack(spacing: 4) {
+                  Image(systemName: "person.crop.circle.badge.clock")
+                    .font(.caption2)
+                  Text(reason)
+                    .font(.caption)
+                }
+                .foregroundStyle(.orange)
+              }
+            case .failed(let reason):
+              HStack {
+                Spacer()
+                Button {
+                  onRetry?()
+                } label: {
+                  Text("Not delivered: \(reason). Tap to retry.")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Message failed to send: \(reason)")
+                .accessibilityHint("Tap to retry sending this message")
+              }
+            default:
+              EmptyView()
             }
           }
         }
@@ -257,6 +285,16 @@ import SwiftUI
             Image(systemName: "clock")
               .font(.system(size: 10))
               .foregroundStyle(.secondary)
+
+          case .retrying:
+            Image(systemName: "arrow.clockwise")
+              .font(.system(size: 10))
+              .foregroundStyle(.orange)
+
+          case .waitingForPeer:
+            Image(systemName: "person.crop.circle.badge.clock")
+              .font(.system(size: 10))
+              .foregroundStyle(.orange)
 
           case .sent:
             Image(systemName: "checkmark")

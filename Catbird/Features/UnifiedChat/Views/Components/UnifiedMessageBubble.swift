@@ -321,22 +321,48 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
         }
       }
 
-      // Failed-send retry affordance (WS-6.5): always visible regardless of
-      // grouping so a failed message can never hide its retry control.
-      if message.isFromCurrentUser, case .failed = message.sendState {
-        Button {
-          onRetry?()
-        } label: {
+      // Status & retry affordance for in-flight / failed states
+      if message.isFromCurrentUser {
+        switch message.sendState {
+        case .retrying(let attempt, let nextAttemptAt, let reason):
           HStack(spacing: 4) {
-            Image(systemName: "exclamationmark.circle.fill")
-            Text("Not delivered. Tap to retry.")
+            Image(systemName: "arrow.clockwise")
+              .font(.caption2)
+            let remaining = max(1, Int(ceil(nextAttemptAt.timeIntervalSinceNow)))
+            Text("\(reason) (retrying in \(remaining)s, attempt \(attempt))")
+              .font(.caption)
           }
-          .font(.caption)
-          .foregroundStyle(.red)
+          .foregroundStyle(.secondary)
+          .accessibilityLabel("Retrying message send: \(reason)")
+
+        case .waitingForPeer(let reason):
+          HStack(spacing: 4) {
+            Image(systemName: "person.crop.circle.badge.clock")
+              .font(.caption2)
+            Text(reason)
+              .font(.caption)
+          }
+          .foregroundStyle(.orange)
+          .accessibilityLabel("Waiting for peer device action: \(reason)")
+
+        case .failed(let reason):
+          Button {
+            onRetry?()
+          } label: {
+            HStack(spacing: 4) {
+              Image(systemName: "exclamationmark.circle.fill")
+              Text("Not delivered: \(reason). Tap to retry.")
+            }
+            .font(.caption)
+            .foregroundStyle(.red)
+          }
+          .buttonStyle(.plain)
+          .accessibilityLabel("Message failed to send: \(reason)")
+          .accessibilityHint("Tap to retry sending this message")
+
+        default:
+          EmptyView()
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Message failed to send")
-        .accessibilityHint("Tap to retry sending this message")
       }
     }
   }
@@ -550,6 +576,15 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
         .font(.caption2)
         .foregroundStyle(.secondary)
         .symbolEffect(.pulse)
+    case .retrying:
+      Image(systemName: "arrow.clockwise")
+        .font(.caption2)
+        .foregroundStyle(.orange)
+        .symbolEffect(.rotate)
+    case .waitingForPeer:
+      Image(systemName: "person.crop.circle.badge.clock")
+        .font(.caption2)
+        .foregroundStyle(.orange)
     case .sent, .delivered:
       EmptyView()
     case .read:

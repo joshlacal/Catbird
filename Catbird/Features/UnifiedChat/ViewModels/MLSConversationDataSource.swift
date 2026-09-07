@@ -370,6 +370,19 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
     return confirmedMessages.first(where: { $0.diffableID == id })?.id ?? id
   }
 
+  /// Marks a pending entry as retrying with backoff.
+  func updatePendingSendRetrying(id: String, attempt: Int, nextAttemptAt: Date, reason: String) {
+    guard let index = pendingSends.firstIndex(where: { $0.id == id }) else { return }
+    pendingSends[index].state = .retrying(attempt: attempt, nextAttemptAt: nextAttemptAt, reason: reason)
+  }
+
+  /// Marks a pending entry as waiting for peer/device action.
+  func setPendingSendWaiting(id: String, reason: String) {
+    guard let index = pendingSends.firstIndex(where: { $0.id == id }) else { return }
+    pendingSends[index].state = .waitingForPeer(reason: reason)
+    logger.info("Send waiting for peer for pending message \(id.prefix(24)): \(reason, privacy: .public)")
+  }
+
   /// Marks a pending entry as terminally failed so the UI renders a failed
   /// indicator with a retry affordance instead of an eternally pending state.
   func failPendingSend(id: String, reason: String) {
@@ -379,14 +392,17 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
       "Send failed for pending message \(id.prefix(24)): \(reason, privacy: .public)")
   }
 
-  /// Removes and returns a *failed* pending entry so its content can be
+  /// Removes and returns a *failed* or *waiting* pending entry so its content can be
   /// re-submitted through the send pipeline. Returns `nil` if the entry is
-  /// missing or not in a failed state (a retry of an in-flight send is a no-op).
+  /// missing or actively in-flight.
   func takeFailedPendingSend(id: String) -> PendingMLSSend? {
-    guard let index = pendingSends.firstIndex(where: { $0.id == id }),
-      case .failed = pendingSends[index].state
-    else { return nil }
-    return pendingSends.remove(at: index)
+    guard let index = pendingSends.firstIndex(where: { $0.id == id }) else { return nil }
+    switch pendingSends[index].state {
+    case .failed, .waitingForPeer:
+      return pendingSends.remove(at: index)
+    default:
+      return nil
+    }
   }
 
   // MARK: - Recovery State (WS-6.5)
@@ -1510,7 +1526,17 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
       let (messageId, receivedAt, seq, epoch) = try await manager.sendMessage(
         convoId: conversationId,
         plaintext: trimmedText,
-        embed: embed
+        embed: embed,
+        onRetryProgress: { [weak self] progress in
+          Task { @MainActor [weak self] in
+            self?.updatePendingSendRetrying(
+              id: pendingId,
+              attempt: progress.attempt,
+              nextAttemptAt: progress.nextAttemptAt,
+              reason: progress.classification.userVisibleReason
+            )
+          }
+        }
       )
 
       completePendingSend(id: pendingId, realMessageID: messageId)
@@ -1548,14 +1574,16 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
 
     } catch {
       self.error = error
-      // WS-6.5: keep the message visible in a failed state with retry instead
-      // of dropping it.
-      failPendingSend(id: pendingId, reason: error.localizedDescription)
-      logger.error("Failed to send MLS message: \(error.localizedDescription)")
+      let classification = MLSConversationLifecycleError.classifySendError(error)
+      if classification.isWaitingForPeer {
+        setPendingSendWaiting(id: pendingId, reason: classification.userVisibleReason)
+      } else {
+        failPendingSend(id: pendingId, reason: classification.userVisibleReason)
+      }
+      logger.error("Failed to send MLS message: \(error.localizedDescription) [\(classification.diagnosticCode)]")
       await refreshRecoveryState()
     }
   }
-
   func toggleReaction(messageID: String, emoji: String) {
     let messageID = resolveRealMessageID(messageID)
     Task {

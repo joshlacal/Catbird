@@ -373,7 +373,19 @@ final class MLSConversationDetailViewModel {
                 let (msgId, _, _, _) = try await manager.sendMessage(
                     convoId: convoId,
                     plaintext: plaintext,
-                    embed: embed
+                    embed: embed,
+                    onRetryProgress: { progress in
+                        Task { @MainActor [weak self] in
+                            guard let self else { return }
+                            if let index = self.optimisticMessages.firstIndex(where: { $0.id == optimisticMessage.id }) {
+                                self.optimisticMessages[index].state = .retrying(
+                                    attempt: progress.attempt,
+                                    nextAttemptAt: progress.nextAttemptAt,
+                                    reason: progress.classification.userVisibleReason
+                                )
+                            }
+                        }
+                    }
                 )
                 return msgId
             }.value
@@ -396,14 +408,18 @@ final class MLSConversationDetailViewModel {
             optimisticMessages.removeAll { $0.id == optimisticMessage.id }
             logger.info("sendMessage cancelled (account switch)")
         } catch {
-            // Mark optimistic message as failed
+            let classification = MLSConversationLifecycleError.classifySendError(error)
             if let index = optimisticMessages.firstIndex(where: { $0.id == optimisticMessage.id }) {
-                optimisticMessages[index].state = .failed(error.localizedDescription)
+                if classification.isWaitingForPeer {
+                    optimisticMessages[index].state = .waitingForPeer(reason: classification.userVisibleReason)
+                } else {
+                    optimisticMessages[index].state = .failed(classification.userVisibleReason)
+                }
             }
 
             self.error = error
             errorSubject.send(error)
-            logger.error("Failed to send message after \(Int(Date().timeIntervalSince(startTime) * 1000))ms: \(error.localizedDescription)")
+            logger.error("Failed to send message after \(Int(Date().timeIntervalSince(startTime) * 1000))ms: \(error.localizedDescription) [\(classification.diagnosticCode)]")
         }
 
         isSendingMessage = false
@@ -490,7 +506,19 @@ final class MLSConversationDetailViewModel {
                 let (msgId, _, _, _) = try await manager.sendMessage(
                     convoId: convoId,
                     plaintext: message.text,
-                    embed: message.embed
+                    embed: message.embed,
+                    onRetryProgress: { progress in
+                        Task { @MainActor [weak self] in
+                            guard let self else { return }
+                            if let index = self.optimisticMessages.firstIndex(where: { $0.id == optimisticId }) {
+                                self.optimisticMessages[index].state = .retrying(
+                                    attempt: progress.attempt,
+                                    nextAttemptAt: progress.nextAttemptAt,
+                                    reason: progress.classification.userVisibleReason
+                                )
+                            }
+                        }
+                    }
                 )
                 return msgId
             }.value
@@ -508,17 +536,20 @@ final class MLSConversationDetailViewModel {
         } catch is MLSCoordinationAwareTask.GenerationStaleError {
             logger.info("retryMessage cancelled (account switch)")
         } catch {
-            // Mark as failed again
+            let classification = MLSConversationLifecycleError.classifySendError(error)
             if let idx = optimisticMessages.firstIndex(where: { $0.id == optimisticId }) {
-                optimisticMessages[idx].state = .failed(error.localizedDescription)
+                if classification.isWaitingForPeer {
+                    optimisticMessages[idx].state = .waitingForPeer(reason: classification.userVisibleReason)
+                } else {
+                    optimisticMessages[idx].state = .failed(classification.userVisibleReason)
+                }
             }
 
             self.error = error
             errorSubject.send(error)
-            logger.error("Retry failed after \(Int(Date().timeIntervalSince(startTime) * 1000))ms: \(error.localizedDescription)")
+            logger.error("Retry failed after \(Int(Date().timeIntervalSince(startTime) * 1000))ms: \(error.localizedDescription) [\(classification.diagnosticCode)]")
         }
     }
-
     /// Clear error state
     @MainActor
     func clearError() {

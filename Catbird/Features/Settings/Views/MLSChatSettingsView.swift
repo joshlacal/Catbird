@@ -88,6 +88,23 @@ struct MLSChatSettingsView: View {
         .appFont(AppTextRole.caption)
         .foregroundStyle(.secondary)
       }
+      // MARK: - Diagnostics
+
+      Section("Diagnostics") {
+        NavigationLink(destination: MLSChatDiagnosticsView()) {
+          Label {
+            VStack(alignment: .leading, spacing: 2) {
+              Text("Chat Diagnostics")
+              Text("View delivery errors, recovery events, and export logs")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+          } icon: {
+            Image(systemName: "stethoscope")
+              .foregroundStyle(.blue)
+          }
+        }
+      }
 
       // MARK: - Disable MLS Chat
 

@@ -5,13 +5,16 @@
 //  Derived delivery state for outgoing MLS messages.
 //  Pure function — no side effects, no async.
 //
-
+import Foundation
 import CatbirdMLSCore
-
 /// The display state for an outgoing message's delivery indicator.
 public enum MessageDeliveryState: Equatable {
   /// Message is being sent (not yet confirmed by server).
   case sending
+  /// Message failed an initial send attempt and is automatically retrying with backoff.
+  case retrying(attempt: Int, nextAttemptAt: Date, reason: String)
+  /// Message is blocked waiting for a peer device or participant to act before delivery can proceed.
+  case waitingForPeer(reason: String)
   /// Server confirmed receipt; no member has acked yet.
   case sent
   /// Some but not all non-sender members have acked.
@@ -32,6 +35,18 @@ public extension MessageDeliveryState {
   /// True when the message terminally failed to send.
   var isFailed: Bool {
     if case .failed = self { return true }
+    return false
+  }
+
+  /// True when the message is currently in an automatic retry backoff cycle.
+  var isRetrying: Bool {
+    if case .retrying = self { return true }
+    return false
+  }
+
+  /// True when the message is blocked waiting for an external device or participant action.
+  var isWaitingForPeer: Bool {
+    if case .waitingForPeer = self { return true }
     return false
   }
 }
