@@ -1458,33 +1458,15 @@ final class AppState {
                 "MLS: ⏳ Waiting for existing initialization task to complete (timeout: \(timeout)s)..."
             )
 
-            // CRITICAL FIX: Add timeout to prevent indefinite hang during account switching
-            // Race the existing task against a timeout task
-            let result = await withTaskGroup(of: MLSConversationManager?.self) { group in
-                group.addTask { @MainActor in
-                    return await existingTask.value
-                }
-                group.addTask { @MainActor in
-                    try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
-                    return nil
-                }
-
-                // Return first completed result
-                let first = await group.next()
-                group.cancelAll()
-                return first ?? nil
+            switch await MLSInitializationWaiter.wait(for: existingTask, timeout: timeout) {
+            case .completed(let manager):
+                return manager
+            case .cancelled:
+                return nil
+            case .timedOut:
+                logger.warning("MLS: Timed out waiting for shared initialization after \(timeout)s; initialization continues")
+                return nil
             }
-
-            if result == nil {
-                logger.warning(
-                    "MLS: ⏰ Initialization task timed out after \(timeout)s - cancelling and clearing stale task"
-                )
-                existingTask.cancel() // CRITICAL FIX: Cancel the stuck task to release locks/resources
-                mlsConversationManagerInitTask = nil
-                mlsServiceState.status = .failed("Initialization timed out. Please tap retry.")
-            }
-
-            return result
         }
 
         // Update status to initializing
@@ -1493,6 +1475,11 @@ final class AppState {
         // Create new initialization task
         logger.info("MLS: 🆕 Starting new conversation manager initialization for user: \(userDid)")
         let initTask = Task<MLSConversationManager?, Never> { @MainActor in
+            defer {
+                if !Task.isCancelled {
+                    mlsConversationManagerInitTask = nil
+                }
+            }
             guard !Task.isCancelled,
                 !MLSCoreContext.isSuspensionInProgress,
                 !MLSClient.isSuspensionInProgress
@@ -1603,7 +1590,6 @@ final class AppState {
                 try await manager.initialize()
                 logger.info("MLS: ✅ Created and initialized new conversation manager successfully")
                 mlsConversationManagerStorage = manager
-                mlsConversationManagerInitTask = nil
                 mlsServiceState.status = .ready
                 mlsServiceState.retryCount = 0 // Reset retry count on success
                 mlsServiceState.lastError = nil
@@ -1613,7 +1599,6 @@ final class AppState {
                     "MLS: ❌ Failed to initialize conversation manager: \(error.localizedDescription)"
                 )
                 logger.error("MLS: Initialization error details: \(String(describing: error))")
-                mlsConversationManagerInitTask = nil
                 mlsServiceState.status = .failed(error.localizedDescription)
                 mlsServiceState.lastError = error
                 return nil
@@ -1621,44 +1606,15 @@ final class AppState {
         }
 
         mlsConversationManagerInitTask = initTask
-        let initStartedAt = Date()
-
-        // CRITICAL FIX: Apply timeout to NEW task creation (not just existing task wait)
-        // Without this, the init task can block indefinitely if FFI permit acquisition hangs
-        let result = await withTaskGroup(of: MLSConversationManager?.self) { group in
-            group.addTask { @MainActor in
-                return await initTask.value
-            }
-            group.addTask { @MainActor in
-                try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
-                return nil
-            }
-
-            let first = await group.next()
-            group.cancelAll()
-            return first ?? nil
+        switch await MLSInitializationWaiter.wait(for: initTask, timeout: timeout) {
+        case .completed(let manager):
+            return manager
+        case .cancelled:
+            return nil
+        case .timedOut:
+            logger.warning("MLS: Timed out waiting for initialization after \(timeout)s; initialization continues")
+            return nil
         }
-
-        if result == nil {
-            // Both group branches yield nil, so a fast abort/failure inside initTask is
-            // indistinguishable from the sleep winning. Only claim a timeout when the clock
-            // agrees; otherwise preserve the status and error the task already recorded,
-            // which name the real cause.
-            let elapsed = Date().timeIntervalSince(initStartedAt)
-            if elapsed >= timeout {
-                logger.warning("MLS: ⏰ New initialization task timed out after \(timeout)s")
-                initTask.cancel()
-                mlsConversationManagerInitTask = nil
-                mlsServiceState.status = .failed("Initialization timed out. Please tap retry.")
-            } else {
-                logger.warning(
-                    "MLS: ⚠️ Initialization produced no manager after \(String(format: "%.2f", elapsed))s - preserving recorded cause"
-                )
-                mlsConversationManagerInitTask = nil
-            }
-        }
-
-        return result
     }
 
     /// Retry MLS initialization with exponential backoff
@@ -2800,6 +2756,7 @@ final class AppState {
                 mlsConversations = conversations
                 mlsConversationsDidChange += 1
                 updateMLSUnreadCount()
+                stateInvalidationBus.notify(.mlsConversationListChanged)
 
                 // Enrich participant data with Bluesky profiles off the main actor
                 if let client = atProtoClient {

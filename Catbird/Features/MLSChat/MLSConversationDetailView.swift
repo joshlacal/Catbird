@@ -1326,6 +1326,12 @@ import SwiftUI
             case .syncCompleted:
                 await reloadConversationMetadata(userDID: userDID)
 
+            case .conversationDeleted(let id), .conversationLeft(let id):
+                guard id == convoId else { return }
+                logger.info("Conversation \(convoId) was \(event.description) — dismissing detail")
+                appState.mlsConversations.removeAll { $0.id == convoId }
+                appState.navigationManager.clearPath(for: 4)
+                dismiss()
             default:
                 // Ignore other events
                 break
@@ -1547,6 +1553,10 @@ import SwiftUI
                     participantProfiles: participantProfiles,
                     onLeft: {
                         finishLeavingConversationCleanup()
+                        dismiss()
+                    },
+                    onDeleted: {
+                        finishDeletingConversationCleanup()
                         dismiss()
                     }
                 )
@@ -3954,6 +3964,19 @@ import SwiftUI
             NotificationCenter.default.post(
                 name: Notification.Name("MLSConversationLeft"),
                 object: conversationId
+            )
+        }
+
+        @MainActor
+        private func finishDeletingConversationCleanup() {
+            logger.info("Successfully deleted conversation for me: \(conversationId)")
+            let targetDID = appState.userDID
+            appState.mlsConversations.removeAll { $0.id == conversationId }
+            appState.navigationManager.clearPath(for: 4)
+            NotificationCenter.default.post(
+                name: Notification.Name("MLSConversationDeleted"),
+                object: conversationId,
+                userInfo: ["userDID": targetDID]
             )
         }
 

@@ -39,31 +39,25 @@ struct MLSMessageActionPerformer {
 
 enum MLSDisplayableMessageQuery {
   static func request(
+    in db: Database,
     conversationID: String,
     currentUserDID: String
-  ) -> QueryInterfaceRequest<MLSMessageModel> {
-    MLSMessageModel
-      .filter(MLSMessageModel.Columns.conversationID == conversationID)
-      .filter(MLSMessageModel.Columns.currentUserDID == currentUserDID)
-      .filter(MLSMessageModel.Columns.payloadExpired == false)
-      .filter(MLSMessageModel.Columns.isTombstone == 0)
-      .order(
-        MLSMessageModel.Columns.sequenceNumber.asc,
-        MLSMessageModel.Columns.timestamp.asc,
-        MLSMessageModel.Columns.messageID.asc
-      )
+  ) throws -> QueryInterfaceRequest<MLSMessageModel> {
+    try MLSStorageHelpers.makeDisplayableMessagesRequest(
+      in: db,
+      conversationID: conversationID,
+      currentUserDID: currentUserDID
+    )
   }
 
   static func observation(
     conversationID: String,
     currentUserDID: String
   ) -> ValueObservation<ValueReducers.Fetch<[MLSMessageModel]>> {
-    ValueObservation.tracking { db in
-      try request(
-        conversationID: conversationID,
-        currentUserDID: currentUserDID
-      ).fetchAll(db)
-    }
+    MLSStorageHelpers.makeDisplayableMessagesObservation(
+      conversationID: conversationID,
+      currentUserDID: currentUserDID
+    )
   }
 
   static func fetchAll(
@@ -72,6 +66,7 @@ enum MLSDisplayableMessageQuery {
     currentUserDID: String
   ) throws -> [MLSMessageModel] {
     try request(
+      in: db,
       conversationID: conversationID,
       currentUserDID: currentUserDID
     ).fetchAll(db)

@@ -22,6 +22,8 @@ struct MLSGroupDetailView: View {
   /// its own toolbar-leave action already does — without it, this sheet only closed
   /// itself, leaving the now-invalid conversation still showing underneath.
   var onLeft: () -> Void = {}
+  /// Called after successfully deleting the conversation locally for this user.
+  var onDeleted: (() -> Void)? = nil
 
   @Environment(\.dismiss) private var dismiss
   @Environment(\.toastManager) private var toastManager
@@ -32,6 +34,8 @@ struct MLSGroupDetailView: View {
   @State private var isSaving = false
   @State private var isLeaving = false
   @State private var showingLeaveConfirmation = false
+  @State private var isDeleting = false
+  @State private var showingDeleteForMeConfirmation = false
   @State private var lifecycleStatus: (title: String, message: String)?
   @State private var showingMuteOptions = false
   @State private var mutedUntil: Date?
@@ -122,6 +126,17 @@ struct MLSGroupDetailView: View {
         }
       } message: {
         Text("You will no longer receive messages from this conversation. This cannot be undone.")
+      }
+      .confirmationDialog(
+        "Delete for Me",
+        isPresented: $showingDeleteForMeConfirmation,
+        titleVisibility: .visible
+      ) {
+        Button("Delete for Me", role: .destructive) {
+          Task { await deleteConversationForMe() }
+        }
+      } message: {
+        Text("This will remove the conversation and its message history from this device only. You will not leave the conversation, and other participants will not be affected. This cannot be undone.")
       }
       .confirmationDialog(
         "Remove Member",
@@ -404,6 +419,23 @@ struct MLSGroupDetailView: View {
   private var leaveSection: some View {
     Section {
       Button(role: .destructive) {
+        showingDeleteForMeConfirmation = true
+      } label: {
+        HStack {
+          Spacer()
+          if isDeleting {
+            ProgressView()
+              .controlSize(.small)
+              .tint(.red)
+          } else {
+            Text("Delete for Me")
+          }
+          Spacer()
+        }
+      }
+      .disabled(isLeaving || isDeleting)
+
+      Button(role: .destructive) {
         showingLeaveConfirmation = true
       } label: {
         HStack {
@@ -418,7 +450,7 @@ struct MLSGroupDetailView: View {
           Spacer()
         }
       }
-      .disabled(isLeaving)
+      .disabled(isLeaving || isDeleting)
     }
   }
 
@@ -668,6 +700,25 @@ struct MLSGroupDetailView: View {
       }
       lifecycleStatus = (title, error.localizedDescription)
       isLeaving = false
+    }
+  }
+
+  @MainActor
+  private func deleteConversationForMe() async {
+    let targetDID = currentUserDID
+    isDeleting = true
+    do {
+      try await conversationManager.deleteConversationForMe(convoId: conversationId, expectedUserDID: targetDID)
+      if let onDeleted {
+        onDeleted()
+      } else {
+        onLeft()
+      }
+      dismiss()
+    } catch {
+      logger.error("Failed to delete conversation for me: \(error.localizedDescription)")
+      lifecycleStatus = ("Could Not Delete", error.localizedDescription)
+      isDeleting = false
     }
   }
 

@@ -19,6 +19,7 @@ struct NewConversationView: View {
   @State private var groupName = ""
   @State private var isCreating = false
   @State private var creationProgress = ""
+  @State private var creationTask: Task<Void, Never>?
   @State private var showingError = false
   @State private var errorMessage: String?
   @State private var isCheckingExisting = false
@@ -82,8 +83,10 @@ struct NewConversationView: View {
               }
             }
           } else {
-            Button("Cancel") { dismiss() }
-              .disabled(isCreating)
+            Button("Cancel") {
+              creationTask?.cancel()
+              dismiss()
+            }
           }
         }
         ToolbarItem(placement: .confirmationAction) {
@@ -97,7 +100,17 @@ struct NewConversationView: View {
           Text(errorMessage)
         }
       }
+      .onDisappear { creationTask?.cancel() }
       .onChange(of: mode) { _, _ in
+        creationTask?.cancel()
+        step = .selectContacts
+        selectedDIDs.removeAll()
+        selectionOrder.removeAll()
+        selectedProfiles.removeAll()
+        groupName = ""
+      }
+      .onChange(of: appState.userDID) { _, _ in
+        creationTask?.cancel()
         step = .selectContacts
         selectedDIDs.removeAll()
         selectionOrder.removeAll()
@@ -217,7 +230,7 @@ struct NewConversationView: View {
 
       Button {
         if !isBlueskyGroup && selectedDIDs.count == 1 {
-          Task { await handleDirectMLSMessage() }
+          creationTask = Task { await handleDirectMLSMessage() }
         } else {
           withAnimation(.spring(response: 0.25)) {
             step = .configureGroup
@@ -264,7 +277,7 @@ struct NewConversationView: View {
     case (.catbirdGroup, .selectContacts) where mlsEnabled:
       Button("Next") {
         if selectedDIDs.count == 1 {
-          Task { await handleDirectMLSMessage() }
+          creationTask = Task { await handleDirectMLSMessage() }
         } else {
           withAnimation(.spring(response: 0.25)) {
             step = .configureGroup
@@ -275,7 +288,7 @@ struct NewConversationView: View {
       .fontWeight(.semibold)
     case (.catbirdGroup, .configureGroup):
       Button("Create") {
-        Task { await createMLSGroup() }
+        creationTask = Task { await createMLSGroup() }
       }
       .disabled(isCreating)
       .fontWeight(.semibold)
@@ -398,28 +411,50 @@ struct NewConversationView: View {
 
   @MainActor
   private func handleDirectMLSMessage() async {
+    let accountDID = appState.userDID
     guard selectedDIDs.count == 1,
           let participantDid = selectedDIDs.first else { return }
 
     isCheckingExisting = true
     defer { isCheckingExisting = false }
 
-    if let conversationManager = await appState.getMLSConversationManager() {
-      do {
-        let did = try DID(didString: participantDid)
-        if let existingConvoId = try await conversationManager.findDirectConversation(with: did) {
-          dismiss()
-          appState.navigationManager.targetMLSConversationId = existingConvoId
+    guard let conversationManager = await appState.getMLSConversationManager() else {
+      guard !Task.isCancelled else { return }
+      errorMessage = "MLS service not available"
+      showingError = true
+      return
+    }
+
+    do {
+      let did = try DID(didString: participantDid)
+      if let existingConvoId = try await conversationManager.findDirectConversation(with: did) {
+        guard !Task.isCancelled, AppStateManager.shared.lifecycle.userDID == accountDID else { return }
+        do {
+          try await conversationManager.clearLocalConversationDeletion(convoId: existingConvoId)
+        } catch {
+          guard !Task.isCancelled, AppStateManager.shared.lifecycle.userDID == accountDID else { return }
+          logger.error("Failed to restore deleted 1:1 conversation: \(error.localizedDescription)")
+          errorMessage = "Failed to restore conversation: \(error.localizedDescription)"
+          showingError = true
           return
         }
-      } catch {
-        logger.warning("Failed to check existing 1:1: \(error.localizedDescription)")
+        guard !Task.isCancelled, AppStateManager.shared.lifecycle.userDID == accountDID else { return }
+        dismiss()
+        appState.navigationManager.targetMLSConversationId = existingConvoId
+        return
       }
+    } catch {
+      guard !Task.isCancelled, AppStateManager.shared.lifecycle.userDID == accountDID else { return }
+      logger.error("Failed to check existing 1:1: \(error.localizedDescription)")
+      errorMessage = "Failed to check existing conversation: \(error.localizedDescription)"
+      showingError = true
+      return
     }
 
     withAnimation(.spring(response: 0.25)) {
       step = .creating
     }
+    guard !Task.isCancelled, AppStateManager.shared.lifecycle.userDID == accountDID else { return }
     await createMLSGroup()
   }
 
@@ -427,15 +462,21 @@ struct NewConversationView: View {
 
   @MainActor
   private func createMLSGroup() async {
-    guard !selectedDIDs.isEmpty,
+    let accountDID = appState.userDID
+    let membersSnapshot = Array(selectedDIDs)
+    let nameSnapshot = groupName
+    guard !membersSnapshot.isEmpty,
           let database = appState.mlsDatabase,
           let conversationManager = await appState.getMLSConversationManager() else {
+      guard !Task.isCancelled else { return }
       errorMessage = "MLS service not available"
       showingError = true
       return
     }
 
+    guard !Task.isCancelled, AppStateManager.shared.lifecycle.userDID == accountDID else { return }
     isCreating = true
+    defer { isCreating = false }
     step = .creating
 
     do {
@@ -446,25 +487,28 @@ struct NewConversationView: View {
         conversationManager: conversationManager
       )
 
-      if !groupName.isEmpty {
-        viewModel.conversationName = groupName
+      if !nameSnapshot.isEmpty {
+        viewModel.conversationName = nameSnapshot
       }
 
-      viewModel.selectedMembers = Array(selectedDIDs)
+      viewModel.selectedMembers = membersSnapshot
 
       creationProgress = "Setting up secure group..."
-      await viewModel.createConversation()
-
-      if let error = viewModel.error {
-        throw error
+      guard await viewModel.createConversation(onProgress: { creationProgress = $0 }) != nil else {
+        guard !Task.isCancelled, AppStateManager.shared.lifecycle.userDID == accountDID else { return }
+        if let error = viewModel.error { throw error }
+        return
       }
+      guard !Task.isCancelled, AppStateManager.shared.lifecycle.userDID == accountDID else { return }
 
       creationProgress = "Finalizing..."
       await appState.reloadMLSConversations()
 
+      guard !Task.isCancelled, AppStateManager.shared.lifecycle.userDID == accountDID else { return }
       logger.info("Successfully created MLS conversation")
       dismiss()
     } catch {
+      guard !Task.isCancelled, !(error is CancellationError), AppStateManager.shared.lifecycle.userDID == accountDID else { return }
       logger.error("Failed to create MLS conversation: \(error.localizedDescription)")
       errorMessage = error.localizedDescription
       showingError = true

@@ -37,11 +37,27 @@ final class MLSNewConversationViewModel {
     /// Error state
     private(set) var error: Error?
 
+    @ObservationIgnored
+    private var searchTask: Task<Void, Never>?
+    @ObservationIgnored
+    private var searchGeneration = UUID()
+
     /// Search query for finding members
     var memberSearchQuery = "" {
         didSet {
             if memberSearchQuery != oldValue {
-                Task { await searchMembers() }
+                let trimmed = memberSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+                let generation = UUID()
+                searchGeneration = generation
+                searchTask?.cancel()
+                guard !trimmed.isEmpty else {
+                    searchResults = []
+                    isSearching = false
+                    return
+                }
+                searchTask = Task { @MainActor in
+                    await searchMembers(query: trimmed, generation: generation)
+                }
             }
         }
     }
@@ -51,7 +67,6 @@ final class MLSNewConversationViewModel {
 
     /// Whether search is in progress
     private(set) var isSearching = false
-
     /// Available cipher suites
     let availableCipherSuites = [
         "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519",
@@ -108,7 +123,7 @@ final class MLSNewConversationViewModel {
     /// Create a new conversation
     @MainActor
     @discardableResult
-    func createConversation() async -> BlueCatbirdChatDefs.ConversationState? {
+    func createConversation(onProgress: (String) -> Void = { _ in }) async -> BlueCatbirdChatDefs.ConversationState? {
         guard isValid, !isCreating else {
             logger.warning("⚠️ createConversation called but validation failed - isValid: \(self.isValid), isCreating: \(self.isCreating)")
             
@@ -124,6 +139,17 @@ final class MLSNewConversationViewModel {
 
         isCreating = true
         error = nil
+        defer { isCreating = false }
+        let accountDID = conversationManager.userDid
+        let membersSnapshot = selectedMembers
+        let trimmedName = conversationName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedDesc = conversationDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+        let isCurrent = {
+            accountDID != nil && self.conversationManager.userDid == accountDID
+                && AppStateManager.shared.lifecycle.userDID == accountDID
+                && !AppStateManager.shared.isTransitioning
+        }
+        guard !Task.isCancelled, isCurrent() else { return nil }
 
         logger.info("🟦 [MLSNewConversationViewModel.createConversation] START")
         logger.info("   - name: '\(self.conversationName)'")
@@ -142,11 +168,11 @@ final class MLSNewConversationViewModel {
         }
 
         do {
-            let trimmedName = conversationName.trimmingCharacters(in: .whitespacesAndNewlines)
-            let trimmedDesc = conversationDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+            try Task.checkCancellation()
+            guard isCurrent() else { throw CancellationError() }
 
             logger.debug("📍 Converting \(self.selectedMembers.count) members to DIDs...")
-            let memberDids = try selectedMembers.map { try DID(didString: $0) }
+            let memberDids = try membersSnapshot.map { try DID(didString: $0) }
             logger.info("✅ Converted \(memberDids.count) DIDs")
 
             logger.info("📍 Calling conversationManager.createGroup...")
@@ -156,13 +182,23 @@ final class MLSNewConversationViewModel {
             // Use MLSConversationManager to create the group properly
             // This will create the MLS group locally, generate the real group ID,
             // and register it with the server
-            let convoView = try await Task.detached(priority: .userInitiated) {
-                try await self.conversationManager.createGroup(
-                    initialMembers: memberDids.isEmpty ? nil : memberDids,
-                    name: trimmedName,
-                    description: trimmedDesc.isEmpty ? nil : trimmedDesc
-                )
-            }.value
+            let convoView = try await MLSConversationCreationRetry.run(
+                isCurrent: isCurrent,
+                retryAfter: {
+                    guard membersSnapshot.count == 1,
+                          membersSnapshot[0].lowercased() != accountDID?.lowercased() else { return nil }
+                    return ($0 as? MLSConversationLifecycleError)?.retryAfter
+                },
+                onProgress: onProgress
+            ) {
+                try await Task.detached(priority: .userInitiated) {
+                    try await self.conversationManager.createGroup(
+                        initialMembers: memberDids.isEmpty ? nil : memberDids,
+                        name: trimmedName,
+                        description: trimmedDesc.isEmpty ? nil : trimmedDesc
+                    )
+                }.value
+            }
 
             guard MLSConversationIdentityBoundary.isCanonicalStableID(convoView.conversationId) else {
                 throw MLSConversationIdentityBoundary.Error.invalidStableID(convoView.conversationId)
@@ -179,6 +215,7 @@ final class MLSNewConversationViewModel {
             logger.info("🟦 [MLSNewConversationViewModel.createConversation] COMPLETE (isCreating = false)")
             return convoView
         } catch {
+            guard !Task.isCancelled, !(error is CancellationError), isCurrent() else { return nil }
             self.error = error
             errorSubject.send(error)
             logger.error("❌ [MLSNewConversationViewModel.createConversation] FAILED: \(error.localizedDescription)")
@@ -216,38 +253,95 @@ final class MLSNewConversationViewModel {
 
     /// Search for members
     @MainActor
-    private func searchMembers() async {
-        guard !memberSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            searchResults = []
+    private func searchMembers(query: String, generation: UUID) async {
+        let accountDID = conversationManager.userDid
+        guard !Task.isCancelled, searchGeneration == generation, !query.isEmpty, conversationManager.userDid == accountDID else { return }
+
+        isSearching = true
+        defer {
+            if searchGeneration == generation && conversationManager.userDid == accountDID {
+                isSearching = false
+            }
+        }
+
+        // 1. If query is already a DID, validate and return immediately (keeps test/DID compatibility)
+        if query.starts(with: "did:") {
+            if searchGeneration == generation && conversationManager.userDid == accountDID {
+                searchResults = [query]
+            }
+            logger.debug("Search completed with exact DID: \(query)")
             return
         }
 
-        isSearching = true
+        // 2. Perform live handle/actor typeahead and exact lookup if ATProto client available
+        let client = conversationManager.atProtoClient
+        let cleanQuery = query.hasPrefix("@") ? String(query.dropFirst()) : query
+        let isExactCandidate = cleanQuery.contains(".") || cleanQuery.hasPrefix("did:")
 
-        // Simulate search - in production, this would call an API
-        // to search for users by DID or handle
-        try? await Task.sleep(nanoseconds: 300_000_000) // 300ms delay
+        do {
+            async let typeaheadTask: Result<(Int, AppBskyActorSearchActorsTypeahead.Output?), Error> = {
+                do {
+                    let params = AppBskyActorSearchActorsTypeahead.Parameters(q: cleanQuery, limit: 20)
+                    let res = try await client.app.bsky.actor.searchActorsTypeahead(input: params)
+                    return .success(res)
+                } catch {
+                    return .failure(error)
+                }
+            }()
 
-        // For now, validate DID format and add to results
-        let query = memberSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        if query.starts(with: "did:") {
-            searchResults = [query]
-        } else {
-            searchResults = []
+            async let exactProfileTask: AppBskyActorDefs.ProfileViewDetailed? = {
+                guard isExactCandidate else { return nil }
+                do {
+                    let (code, profile) = try await client.app.bsky.actor.getProfile(
+                        input: .init(actor: try ATIdentifier(string: cleanQuery))
+                    )
+                    return (200..<300).contains(code) ? profile : nil
+                } catch {
+                    return nil
+                }
+            }()
+
+            let typeaheadResult = await typeaheadTask
+            let exactProfile = await exactProfileTask
+            guard !Task.isCancelled, searchGeneration == generation, conversationManager.userDid == accountDID else { return }
+
+            var didList: [String] = []
+            if let exact = exactProfile {
+                didList.append(exact.did.didString())
+            }
+
+            if case .success(let (code, response)) = typeaheadResult, (200..<300).contains(code), let actors = response?.actors {
+                for actor in actors {
+                    let did = actor.did.didString()
+                    if !didList.contains(did) {
+                        didList.append(did)
+                    }
+                }
+            }
+
+            if searchGeneration == generation && conversationManager.userDid == accountDID {
+                searchResults = didList
+            }
+            logger.debug("Search completed with \(self.searchResults.count) results")
+        } catch {
+            guard !Task.isCancelled, searchGeneration == generation, conversationManager.userDid == accountDID else { return }
+            logger.debug("Live search unavailable, falling back to empty results")
+            if searchGeneration == generation && conversationManager.userDid == accountDID {
+                searchResults = []
+            }
         }
-
-        isSearching = false
-        logger.debug("Search completed with \(self.searchResults.count) results")
     }
 
     /// Reset the form
     @MainActor
     func reset() {
+        searchTask?.cancel()
         conversationName = ""
         conversationDescription = ""
         selectedMembers = []
         memberSearchQuery = ""
         searchResults = []
+        isSearching = false
         error = nil
         logger.debug("Form reset")
     }

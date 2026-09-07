@@ -46,10 +46,9 @@ struct MLSConversationListView: View {
     @State private var recentMemberChanges: [String: MemberChangeInfo] = [:]
     @State private var pendingChatRequestCount: Int = 0
     @State private var pollCycleCount: Int = 0  // OOM FIX: Track poll cycles for periodic checkpoint
-    @State private var conversationToLeave: MLSConversationModel?
-    @State private var showingLeaveConfirmation = false
-    @State private var leaveStatus: (title: String, message: String)?
+    @State private var conversationPrompt: MLSConversationPrompt?
     @State private var isLeavingConversation = false
+    @State private var isDeletingConversation = false
     
     // ACCOUNT SWITCH FIX: Track stale AppState after account switch
     @State private var initialUserDID: String?  // Capture which user this view was created for
@@ -209,6 +208,51 @@ struct MLSConversationListView: View {
             // Ensure the split view detail clears when leaving a conversation
             selectedConvoId = nil
         }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("MLSConversationDeleted"))) { notification in
+            guard let convoID = notification.object as? String else { return }
+            if let noteDID = notification.userInfo?["userDID"] as? String {
+                guard noteDID == appState.userDID else { return }
+            }
+            conversations.removeAll { $0.conversationID == convoID }
+            conversationParticipants.removeValue(forKey: convoID)
+            conversationUnreadCounts.removeValue(forKey: convoID)
+            conversationLastMessages.removeValue(forKey: convoID)
+            recentMemberChanges.removeValue(forKey: convoID)
+            if selectedConvoId == convoID {
+                selectedConvoId = nil
+            }
+            cacheCurrentSnapshot()
+        }
+        // One alert layer for every destructive-action prompt. See
+        // MLSConversationPrompt: separate alerts per action grew this body's
+        // composed value enough to overflow the device main-thread stack.
+        .alert(
+            conversationPrompt?.title ?? "",
+            isPresented: .init(
+                get: { conversationPrompt != nil },
+                set: { if !$0 { conversationPrompt = nil } }
+            ),
+            presenting: conversationPrompt
+        ) { prompt in
+            switch prompt.kind {
+            case .confirmDeleteForMe(let conversation, let targetDID):
+                Button("Cancel", role: .cancel) { conversationPrompt = nil }
+                Button("Delete for Me", role: .destructive) {
+                    conversationPrompt = nil
+                    deleteConversationForMe(conversation, targetDID: targetDID)
+                }
+            case .confirmLeave(let conversation):
+                Button("Cancel", role: .cancel) { conversationPrompt = nil }
+                Button("Leave", role: .destructive) {
+                    conversationPrompt = nil
+                    leaveConversation(conversation)
+                }
+            case .status:
+                Button("OK", role: .cancel) { conversationPrompt = nil }
+            }
+        } message: { prompt in
+            Text(prompt.message)
+        }
         .alert("Error", isPresented: $showingErrorAlert) {
             Button("OK", role: .cancel) {}
 
@@ -233,27 +277,7 @@ struct MLSConversationListView: View {
                 Text("\nRetrying... (attempt \(attempt) of \(appState.mlsServiceState.maxRetries))")
             }
         }
-        .alert(leaveStatus?.title ?? "Could Not Leave", isPresented: .init(
-            get: { leaveStatus != nil },
-            set: { if !$0 { leaveStatus = nil } }
-        )) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(leaveStatus?.message ?? "")
-        }
-        .alert("Leave Conversation?", isPresented: $showingLeaveConfirmation) {
-            Button("Cancel", role: .cancel) {
-                conversationToLeave = nil
-            }
-            Button("Leave", role: .destructive) {
-                if let conversation = conversationToLeave {
-                    leaveConversation(conversation)
-                }
-                conversationToLeave = nil
-            }
-        } message: {
-            Text("Are you sure you want to leave this conversation? You will no longer be able to send or receive messages.")
-        }
+
         .sheet(isPresented: $showingNewConversation) {
             MLSNewConversationView(
                 onConversationCreated: {
@@ -456,8 +480,18 @@ struct MLSConversationListView: View {
         guard !isAppStateStale else { return }
 
         switch event {
-        case .syncCompleted, .messagesUpdated:
+        case .syncCompleted, .messagesUpdated, .conversationCreated, .conversationJoined:
             await loadMLSConversations()
+        case .conversationDeleted(let id), .conversationLeft(let id):
+            conversations.removeAll { $0.conversationID == id }
+            conversationParticipants.removeValue(forKey: id)
+            conversationUnreadCounts.removeValue(forKey: id)
+            conversationLastMessages.removeValue(forKey: id)
+            recentMemberChanges.removeValue(forKey: id)
+            if selectedConvoId == id {
+                selectedConvoId = nil
+            }
+            cacheCurrentSnapshot()
         default:
             break
         }
@@ -866,10 +900,15 @@ struct MLSConversationListView: View {
                     .accessibilityIdentifier("mls.convoRow.\(accessibilitySafeIdPrefix(conversation.conversationID))")
                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                         Button(role: .destructive) {
-                            conversationToLeave = conversation
-                            showingLeaveConfirmation = true
+                            conversationPrompt = .deleteForMe(conversation, targetDID: appState.userDID)
                         } label: {
-                            Label("Leave", systemImage: "trash")
+                            Label("Delete for Me", systemImage: "trash")
+                        }
+
+                        Button(role: .destructive) {
+                            conversationPrompt = .leave(conversation)
+                        } label: {
+                            Label("Leave", systemImage: "rectangle.portrait.and.arrow.right")
                         }
 
                         Button {
@@ -1476,7 +1515,7 @@ struct MLSConversationListView: View {
                 guard let manager = await appState.getMLSConversationManager(timeout: 10.0) else {
                     await MainActor.run {
                         isLeavingConversation = false
-                        leaveStatus = ("Could Not Leave", "Secure chat is not available. Please try again in a moment.")
+                        conversationPrompt = .status(title: "Could Not Leave", message: "Secure chat is not available. Please try again in a moment.")
                     }
                     return
                 }
@@ -1515,7 +1554,78 @@ struct MLSConversationListView: View {
                     if let lifecycleError = error as? MLSConversationLifecycleError, case .leavePending = lifecycleError {
                         title = "Leave Requested"
                     }
-                    leaveStatus = (title, error.localizedDescription)
+                    conversationPrompt = .status(title: title, message: error.localizedDescription)
+                }
+            }
+        }
+    }
+
+    private func deleteConversationForMe(_ conversation: MLSConversationModel, targetDID: String) {
+        let convoID = conversation.conversationID
+        guard appState.userDID == targetDID else {
+            logger.warning("Account switched before deleteConversationForMe confirmed; dropping mutation")
+            return
+        }
+        logger.info("Deleting conversation for me: \(convoID) for account \(targetDID)")
+        isDeletingConversation = true
+
+        Task {
+            do {
+                guard let manager = await appState.getMLSConversationManager(timeout: 10.0) else {
+                    await MainActor.run {
+                        isDeletingConversation = false
+                        guard appState.userDID == targetDID else { return }
+                        conversationPrompt = .status(title: "Could Not Delete", message: "Secure chat is not available. Please try again in a moment.")
+                    }
+                    return
+                }
+
+                // Revalidate account before mutating manager
+                guard await MainActor.run(body: { appState.userDID == targetDID }) else {
+                    logger.warning("Account switched during manager resolution; dropping mutation")
+                    await MainActor.run { isDeletingConversation = false }
+                    return
+                }
+
+                try await manager.deleteConversationForMe(convoId: convoID, expectedUserDID: targetDID)
+
+                await MainActor.run {
+                    guard appState.userDID == targetDID else {
+                        logger.warning("Account switched during deleteConversationForMe; dropping UI mutation")
+                        isDeletingConversation = false
+                        return
+                    }
+
+                    logger.info("Successfully deleted conversation for me: \(convoID)")
+                    conversations.removeAll { $0.conversationID == convoID }
+                    conversationParticipants.removeValue(forKey: convoID)
+                    conversationUnreadCounts.removeValue(forKey: convoID)
+                    conversationLastMessages.removeValue(forKey: convoID)
+                    recentMemberChanges.removeValue(forKey: convoID)
+
+                    if selectedConvoId == convoID {
+                        selectedConvoId = nil
+                    }
+
+                    isDeletingConversation = false
+                    cacheCurrentSnapshot()
+
+                    NotificationCenter.default.post(
+                        name: Notification.Name("MLSConversationDeleted"),
+                        object: convoID,
+                        userInfo: ["userDID": targetDID]
+                    )
+                }
+
+                if await MainActor.run(body: { appState.userDID == targetDID }) {
+                    await appState.updateMLSUnreadCount()
+                }
+            } catch {
+                logger.error("Failed to delete conversation for me: \(error.localizedDescription)")
+                await MainActor.run {
+                    isDeletingConversation = false
+                    guard appState.userDID == targetDID else { return }
+                    conversationPrompt = .status(title: "Could Not Delete", message: error.localizedDescription)
                 }
             }
         }

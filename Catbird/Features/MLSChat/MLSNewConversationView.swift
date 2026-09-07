@@ -19,13 +19,17 @@ struct MLSNewConversationView: View {
     @State private var selectedParticipantDetails: [String: MLSParticipantViewModel] = [:]
     @State private var isCreatingConversation = false
     @State private var creationProgress: String = ""
+    @State private var creationTask: Task<Void, Never>?
     @State private var showingError = false
     @State private var errorMessage: String?
     @State private var searchResults: [MLSParticipantViewModel] = []
     @State private var isSearching = false
     @State private var currentStep: CreationStep = .selectParticipants
     @State private var searchTask: Task<Void, Never>?
-    @State private var participantOptInStatus: [String: Bool] = [:]  // Track which participants have opted into MLS
+    @State private var searchGeneration = UUID()
+    @State private var participantAvailability: [String: MLSAPIClient.MLSChatAvailability] = [:]
+    @State private var checkingAvailability: Set<String> = []
+    @State private var availabilityRequests: [String: UUID] = [:]
     @State private var isCheckingExistingConversation = false
     @State private var showCreateBlockWarning = false
     @State private var createBlockWarningMessage = ""
@@ -90,9 +94,9 @@ struct MLSNewConversationView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
+                        creationTask?.cancel()
                         dismiss()
                     }
-                    .disabled(isCreatingConversation)
                 }
                 
                 ToolbarItem(placement: .confirmationAction) {
@@ -127,6 +131,19 @@ struct MLSNewConversationView: View {
             prompt: "Search by name or handle"
         )
         #endif
+        .onDisappear { creationTask?.cancel() }
+        .onChange(of: appState.userDID) { _, _ in
+            creationTask?.cancel()
+            searchGeneration = UUID()
+            searchTask?.cancel()
+            searchResults = []
+            selectedParticipants.removeAll()
+            selectionOrder.removeAll()
+            selectedParticipantDetails.removeAll()
+            participantAvailability.removeAll()
+            checkingAvailability.removeAll()
+            availabilityRequests.removeAll()
+        }
     }
     
     // MARK: - Content Views
@@ -175,11 +192,20 @@ struct MLSNewConversationView: View {
             .listStyle(.inset)
             #endif
             .onChange(of: searchText) { _, newValue in
+                let generation = UUID()
+                searchGeneration = generation
                 searchTask?.cancel()
+                let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else {
+                    isSearching = false
+                    searchResults = []
+                    return
+                }
                 searchTask = Task {
                     do {
                         try await Task.sleep(for: searchDebounceInterval)
-                        await searchParticipants(query: newValue)
+                        guard !Task.isCancelled, searchGeneration == generation else { return }
+                        await searchParticipants(query: trimmed, generation: generation)
                     } catch {
                         // Task cancelled - ignore
                     }
@@ -294,7 +320,7 @@ struct MLSNewConversationView: View {
                 
                 Button {
                     if selectedParticipants.count == 1 {
-                        Task { await handleDirectMessageContinue() }
+                        creationTask = Task { await handleDirectMessageContinue() }
                     } else {
                         withAnimation(.spring(response: 0.25)) {
                             currentStep = .configure
@@ -489,18 +515,58 @@ struct MLSNewConversationView: View {
                 )
             } else {
                 ForEach(searchResults, id: \.id) { participant in
-                    let isOptedIn = participantOptInStatus[participant.id] ?? false
-                    ParticipantRow(
-                        participant: participant,
-                        isSelected: selectedParticipants.contains(participant.id),
-                        isMLSAvailable: isOptedIn
-                    ) {
-                        if isOptedIn {
-                            toggleParticipant(participant)
+                    let availability = participantAvailability[participant.id]
+                    let isChecking = checkingAvailability.contains(participant.id) || availability == nil
+                    if isChecking || availability == .unknown {
+                        Button {
+                            Task { await checkMLSOptIn(for: participant.id) }
+                        } label: {
+                            HStack(spacing: DesignTokens.Spacing.base) {
+                                AsyncProfileImage(url: participant.avatarURL, size: DesignTokens.Size.avatarMD)
+                                VStack(alignment: .leading, spacing: 4) {
+                                    if let displayName = participant.displayName {
+                                        Text(displayName)
+                                            .designCallout()
+                                            .foregroundColor(.primary)
+                                            .lineLimit(1)
+                                    }
+                                    Text("@\(participant.handle)")
+                                        .designCaption()
+                                        .foregroundColor(.secondary)
+                                        .lineLimit(1)
+                                    Text(isChecking ? "Checking chat availability…" : "Couldn't check availability")
+                                        .designCaption()
+                                        .foregroundColor(.secondary)
+                                }
+                                Spacer()
+                                if isChecking {
+                                    ProgressView()
+                                } else {
+                                    Label("Retry", systemImage: "arrow.clockwise")
+                                        .designCaption()
+                                }
+                            }
+                            .contentShape(Rectangle())
                         }
+                        .buttonStyle(.plain)
+                        .disabled(isChecking)
+                        .accessibilityHint(isChecking ? "" : "Checks whether this person can receive Catbird chats")
+                    } else {
+                        let isAvailable = availability == .available
+                        ParticipantRow(
+                            participant: participant,
+                            isSelected: selectedParticipants.contains(participant.id),
+                            isMLSAvailable: isAvailable,
+                            showsEncryptionBadge: true,
+                            unavailableLabel: "Not available"
+                        ) {
+                            if isAvailable {
+                                toggleParticipant(participant)
+                            }
+                        }
+                        .disabled(!isAvailable)
+                        .opacity(isAvailable ? 1.0 : 0.6)
                     }
-                    .disabled(!isOptedIn)
-                    .opacity(isOptedIn ? 1.0 : 0.6)
                 }
             }
         } header: {
@@ -509,7 +575,7 @@ struct MLSNewConversationView: View {
                     .designCaption()
             }
         } footer: {
-            if !searchResults.isEmpty && searchResults.contains(where: { participantOptInStatus[$0.id] == false }) {
+            if !searchResults.isEmpty && searchResults.contains(where: { participantAvailability[$0.id] == .unavailable }) {
                 Text("Users without the lock icon haven't enabled Catbird Groups yet.")
                     .designCaption()
                     .foregroundColor(.secondary)
@@ -522,7 +588,7 @@ struct MLSNewConversationView: View {
         if currentStep == .selectParticipants {
             Button("Next") {
                 if selectedParticipants.count == 1 {
-                    Task { await handleDirectMessageContinue() }
+                    creationTask = Task { await handleDirectMessageContinue() }
                 } else {
                     withAnimation {
                         currentStep = .configure
@@ -533,7 +599,7 @@ struct MLSNewConversationView: View {
             .fontWeight(.semibold)
         } else if currentStep == .configure {
             Button("Create") {
-                Task {
+                creationTask = Task {
                     await createMLSConversation()
                 }
             }
@@ -617,30 +683,93 @@ struct MLSNewConversationView: View {
     }
     
     @MainActor
-    private func searchParticipants(query: String) async {
-        guard !query.isEmpty else {
-            searchResults = []
-            return
-        }
-        
+    private func searchParticipants(query: String, generation: UUID) async {
+        let accountDID = appState.userDID
+        guard !Task.isCancelled, searchGeneration == generation, !query.isEmpty, appState.userDID == accountDID else { return }
+
         isSearching = true
-        defer { isSearching = false }
-        
+        defer {
+            if searchGeneration == generation && appState.userDID == accountDID {
+                isSearching = false
+            }
+        }
+
         do {
             logger.info("Searching for participants: \(query)")
-            
-             let client = appState.client
-            let params = AppBskyActorSearchActorsTypeahead.Parameters(q: query, limit: 20)
-            let (code, response) = try await client.app.bsky.actor.searchActorsTypeahead(input: params)
-            
-            guard code >= 200 && code < 300, let actors = response?.actors else {
-                logger.warning("Search failed with code: \(code)")
-                searchResults = []
+
+            let client = appState.client
+            let cleanQuery = query.hasPrefix("@") ? String(query.dropFirst()) : query
+            let isExactCandidate = cleanQuery.contains(".") || cleanQuery.hasPrefix("did:")
+
+            async let typeaheadTask: Result<(Int, AppBskyActorSearchActorsTypeahead.Output?), Error> = {
+                do {
+                    let params = AppBskyActorSearchActorsTypeahead.Parameters(q: cleanQuery, limit: 20)
+                    let res = try await client.app.bsky.actor.searchActorsTypeahead(input: params)
+                    return .success(res)
+                } catch {
+                    return .failure(error)
+                }
+            }()
+
+            async let exactProfileTask: AppBskyActorDefs.ProfileViewDetailed? = {
+                guard isExactCandidate else { return nil }
+                do {
+                    let (code, profile) = try await client.app.bsky.actor.getProfile(
+                        input: .init(actor: try ATIdentifier(string: cleanQuery))
+                    )
+                    return (200..<300).contains(code) ? profile : nil
+                } catch {
+                    return nil
+                }
+            }()
+
+            let typeaheadResult = await typeaheadTask
+            let exactProfile = await exactProfileTask
+            guard !Task.isCancelled, searchGeneration == generation, appState.userDID == accountDID else { return }
+
+            var actors: [AppBskyActorDefs.ProfileViewBasic] = []
+            var typeaheadCode: Int?
+            var typeaheadError: Error?
+
+            switch typeaheadResult {
+            case .success(let (code, response)):
+                typeaheadCode = code
+                actors = response?.actors ?? []
+            case .failure(let error):
+                typeaheadError = error
+            }
+
+            if let exact = exactProfile {
+                let exactDid = exact.did.didString()
+                actors.removeAll { $0.did.didString() == exactDid }
+                let basic = AppBskyActorDefs.ProfileViewBasic(
+                    did: exact.did,
+                    handle: exact.handle,
+                    displayName: exact.displayName,
+                    avatar: exact.avatar,
+                    associated: exact.associated,
+                    viewer: exact.viewer,
+                    labels: exact.labels,
+                    createdAt: exact.createdAt
+                )
+                actors.insert(basic, at: 0)
+            }
+
+            if actors.isEmpty {
+                if let typeaheadError {
+                    logger.warning("Search failed with error: \(typeaheadError.localizedDescription)")
+                } else if let typeaheadCode, !(200..<300).contains(typeaheadCode) {
+                    logger.warning("Search failed with code: \(typeaheadCode)")
+                }
+                if searchGeneration == generation && appState.userDID == accountDID {
+                    searchResults = []
+                    isSearching = false
+                }
                 return
             }
-            
+
             // Map actors to view models
-            var results = actors.map { actor in
+            let results = actors.map { actor in
                 MLSParticipantViewModel(
                     id: actor.did.description,
                     handle: actor.handle.description,
@@ -648,61 +777,112 @@ struct MLSNewConversationView: View {
                     avatarURL: actor.avatar.flatMap { URL(string: $0.uriString()) }
                 )
             }
-            
-            // Check MLS opt-in status for all search results
-            if let apiClient = await appState.getMLSAPIClient() {
-                let dids = results.compactMap { try? DID(didString: $0.id) }
-                if !dids.isEmpty {
-                    do {
-                        let statuses = try await apiClient.getOptInStatus(dids: dids)
-                        for status in statuses {
-                            participantOptInStatus[status.did.didString()] = status.optedIn
-                        }
-                        logger.info("Checked MLS opt-in status for \(statuses.count) users")
-                    } catch {
-                        logger.warning("Failed to check MLS opt-in status: \(error.localizedDescription)")
-                        // Continue without opt-in status - will show warning on selection
-                    }
-                }
-            }
-            
+
+            // PROGRESSIVE UPDATE: Show search results immediately without waiting on availability!
             searchResults = results
-            
+            isSearching = false
+
             for participant in searchResults where selectedParticipants.contains(participant.id) {
                 selectedParticipantDetails[participant.id] = participant
             }
-            
+
+            // Background progressive MLS availability check
+            await checkMLSOptInBatch(dids: results.map(\.id))
         } catch {
+            guard !Task.isCancelled, searchGeneration == generation, appState.userDID == accountDID else { return }
             logger.error("Failed to search participants: \(error.localizedDescription)")
+            isSearching = false
         }
     }
-    
+
+    @MainActor
+    private func checkMLSOptInBatch(dids: [String]) async {
+        let didObjects = dids.compactMap { try? DID(didString: $0) }
+        guard !didObjects.isEmpty else { return }
+        let accountDID = appState.userDID
+        let requestID = UUID()
+        for did in didObjects {
+            let key = did.didString()
+            availabilityRequests[key] = requestID
+            checkingAvailability.insert(key)
+        }
+
+        var resolved: [String: MLSAPIClient.MLSChatAvailability] = [:]
+        if let apiClient = await appState.getMLSAPIClient(), !Task.isCancelled, appState.userDID == accountDID {
+            let statuses = await apiClient.getChatAvailability(dids: didObjects)
+            if !Task.isCancelled, appState.userDID == accountDID {
+                for status in statuses { resolved[status.did.didString()] = status.availability }
+            }
+        }
+
+        guard !Task.isCancelled, appState.userDID == accountDID else { return }
+
+        for did in didObjects {
+            let key = did.didString()
+            guard availabilityRequests[key] == requestID else { continue }
+            participantAvailability[key] = resolved[key] ?? .unknown
+            checkingAvailability.remove(key)
+            availabilityRequests.removeValue(forKey: key)
+        }
+    }
+
+    @MainActor
+    private func checkMLSOptIn(for did: String) async {
+        await checkMLSOptInBatch(dids: [did])
+    }
+
     @MainActor
     private func handleDirectMessageContinue() async {
+        let accountDID = appState.userDID
         guard selectedParticipants.count == 1,
               let participantDid = selectedParticipants.first else { return }
 
         isCheckingExistingConversation = true
         defer { isCheckingExistingConversation = false }
 
-        if let conversationManager = await appState.getMLSConversationManager() {
-            do {
-                let did = try DID(didString: participantDid)
-                if let existingConvoId = try await conversationManager.findDirectConversation(with: did) {
-                    let records = Array(conversationManager.conversations.values).map(
-                        MLSConversationIdentityBoundary.record(for:)
-                    )
-                    if let canonicalID = try? MLSConversationIdentityBoundary.resolve(existingConvoId, in: records) {
-                        logger.info("Found existing 1:1 conversation: \(canonicalID.prefix(16))...")
-                        dismiss()
-                        onNavigateToConversation?(canonicalID)
-                        return
-                    }
-                    logger.warning("Refusing unresolved existing 1:1 conversation route")
+        guard let conversationManager = await appState.getMLSConversationManager() else {
+            guard !Task.isCancelled else { return }
+            errorMessage = "MLS service not available"
+            showingError = true
+            return
+        }
+
+        do {
+            let did = try DID(didString: participantDid)
+            if let existingConvoId = try await conversationManager.findDirectConversation(with: did) {
+                guard !Task.isCancelled, AppStateManager.shared.lifecycle.userDID == accountDID else { return }
+                do {
+                    try await conversationManager.clearLocalConversationDeletion(convoId: existingConvoId)
+                } catch {
+                    guard !Task.isCancelled, AppStateManager.shared.lifecycle.userDID == accountDID else { return }
+                    logger.error("Failed to restore deleted 1:1 conversation: \(error.localizedDescription)")
+                    errorMessage = "Failed to restore conversation: \(error.localizedDescription)"
+                    showingError = true
+                    return
                 }
-            } catch {
-                logger.warning("Failed to check for existing 1:1 conversation: \(error.localizedDescription)")
+
+                let records = Array(conversationManager.conversations.values).map(
+                    MLSConversationIdentityBoundary.record(for:)
+                )
+                guard let canonicalID = try? MLSConversationIdentityBoundary.resolve(existingConvoId, in: records) else {
+                    logger.warning("Refusing unresolved existing 1:1 conversation route")
+                    errorMessage = "Could not resolve existing conversation"
+                    showingError = true
+                    return
+                }
+
+                logger.info("Found existing 1:1 conversation: \(canonicalID.prefix(16))...")
+                guard !Task.isCancelled, AppStateManager.shared.lifecycle.userDID == accountDID else { return }
+                dismiss()
+                onNavigateToConversation?(canonicalID)
+                return
             }
+        } catch {
+            guard !Task.isCancelled, AppStateManager.shared.lifecycle.userDID == accountDID else { return }
+            logger.error("Failed to check for existing 1:1 conversation: \(error.localizedDescription)")
+            errorMessage = "Failed to check for existing conversation: \(error.localizedDescription)"
+            showingError = true
+            return
         }
 
         // Don't set a conversation title for 1:1 — it will be resolved
@@ -710,14 +890,19 @@ struct MLSNewConversationView: View {
         withAnimation(.spring(response: 0.25)) {
             currentStep = .creating
         }
+        guard !Task.isCancelled, AppStateManager.shared.lifecycle.userDID == accountDID else { return }
         await createMLSConversation()
     }
-
     @MainActor
     private func createMLSConversation() async {
-        guard !selectedParticipants.isEmpty else { return }
+        let accountDID = appState.userDID
+        let membersSnapshot = Array(selectedParticipants)
+        let nameSnapshot = conversationName
+        let profilesSnapshot = Array(selectedParticipantDetails.values)
+        guard !membersSnapshot.isEmpty, !Task.isCancelled else { return }
         guard let database = appState.mlsDatabase,
               let conversationManager = await appState.getMLSConversationManager() else {
+            guard !Task.isCancelled else { return }
             errorMessage = "MLS service not available"
             showingError = true
             return
@@ -726,13 +911,14 @@ struct MLSNewConversationView: View {
         // Pre-check: warn up front if any participants have a block edge.
         // Server enforces the same rule (HTTP 403) — this is UX only.
         do {
-            var didStrings = Array(selectedParticipants)
+            var didStrings = membersSnapshot
             if let myDid = conversationManager.userDid {
                 didStrings.append(myDid)
             }
             let dids = didStrings.compactMap { try? DID(didString: $0) }
             if dids.count >= 2 {
                 let (_, output) = try await conversationManager.apiClient.checkBlocks(dids: dids)
+                guard !Task.isCancelled, AppStateManager.shared.lifecycle.userDID == accountDID else { return }
                 if let output, !output.isEmpty {
                     createBlockWarningMessage = "Can't create this conversation: a block relationship exists between two or more participants."
                     showCreateBlockWarning = true
@@ -746,7 +932,9 @@ struct MLSNewConversationView: View {
             logger.warning("checkBlocks failed: \(String(describing: error))")
         }
 
+        guard !Task.isCancelled, AppStateManager.shared.lifecycle.userDID == accountDID else { return }
         isCreatingConversation = true
+        defer { isCreatingConversation = false }
         currentStep = .creating
 
         do {
@@ -758,25 +946,27 @@ struct MLSNewConversationView: View {
                 conversationManager: conversationManager
             )
             
-            if !conversationName.isEmpty {
-                viewModel.conversationName = conversationName
+            if !nameSnapshot.isEmpty {
+                viewModel.conversationName = nameSnapshot
             }
             
-            viewModel.selectedMembers = Array(selectedParticipants)
+            viewModel.selectedMembers = membersSnapshot
             
             creationProgress = "Setting up secure group..."
             
             // Create the conversation and retain the stable identity for
             // immediate navigation.  The raw MLS group ID remains crypto-only.
-            guard let createdConversation = await viewModel.createConversation() else {
+            guard let createdConversation = await viewModel.createConversation(onProgress: { creationProgress = $0 }) else {
+                guard !Task.isCancelled, AppStateManager.shared.lifecycle.userDID == accountDID else { return }
                 if let error = viewModel.error { throw error }
                 throw MLSConversationIdentityBoundary.Error.unresolved("created conversation")
             }
+            guard !Task.isCancelled, AppStateManager.shared.lifecycle.userDID == accountDID else { return }
             let stableConversationID = createdConversation.conversationId
 
             // Seed the selected profile rows before the detail screen opens so
             // the first render never falls back to a DID-only participant.
-            let seededProfiles = selectedParticipantDetails.values.map { participant in
+            let seededProfiles = profilesSnapshot.map { participant in
                 MLSProfileEnricher.ProfileData(
                     did: participant.id,
                     handle: participant.handle,
@@ -787,6 +977,7 @@ struct MLSNewConversationView: View {
             await appState.mlsProfileEnricher.seedFromDatabase(seededProfiles)
 
             // Navigate using the canonical ID before the slower list refresh.
+            guard !Task.isCancelled, AppStateManager.shared.lifecycle.userDID == accountDID else { return }
             onNavigateToConversation?(stableConversationID)
 
             if let error = viewModel.error {
@@ -797,14 +988,17 @@ struct MLSNewConversationView: View {
             
             // Reload conversations
             await appState.reloadMLSConversations()
+            guard !Task.isCancelled, AppStateManager.shared.lifecycle.userDID == accountDID else { return }
             if let onConversationCreated {
                 await onConversationCreated()
             }
             
+            guard !Task.isCancelled, AppStateManager.shared.lifecycle.userDID == accountDID else { return }
             logger.info("Successfully created MLS conversation")
             dismiss()
             
         } catch {
+            guard !Task.isCancelled, !(error is CancellationError), AppStateManager.shared.lifecycle.userDID == accountDID else { return }
             logger.error("Failed to create MLS conversation: \(error.localizedDescription)")
             errorMessage = error.localizedDescription
             showingError = true

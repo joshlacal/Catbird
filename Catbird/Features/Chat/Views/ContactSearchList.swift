@@ -88,6 +88,18 @@ struct ContactSearchList: View {
     .onChange(of: searchText) { _, newValue in
       handleSearchTextChange(newValue)
     }
+    .onChange(of: appState.userDID) { _, _ in
+      searchGeneration = UUID()
+      searchTask?.cancel()
+      searchResults = []
+      mlsSearchResults = []
+      followingProfiles = []
+      participantAvailability = [:]
+      checkingAvailability = []
+      availabilityRequests = [:]
+      blueskyChatAvailability = [:]
+      Task { await loadFollowing() }
+    }
     .task {
       await loadFollowing()
     }
@@ -351,13 +363,14 @@ struct ContactSearchList: View {
   }
 
   @MainActor
-  private func isCurrentSearch(query: String, generation: UUID) -> Bool {
-    !Task.isCancelled && searchGeneration == generation && searchText == query
+  private func isCurrentSearch(query: String, generation: UUID, accountDID: String) -> Bool {
+    !Task.isCancelled && searchGeneration == generation && searchText == query && appState.userDID == accountDID
   }
 
   @MainActor
   private func performSearch(query: String, generation: UUID) async {
-    guard isCurrentSearch(query: query, generation: generation) else { return }
+    let accountDID = appState.userDID
+    guard isCurrentSearch(query: query, generation: generation, accountDID: accountDID) else { return }
     guard let client = appState.atProtoClient else {
       searchError = "Not connected"
       return
@@ -365,18 +378,77 @@ struct ContactSearchList: View {
 
     isSearching = true
     defer {
-      if searchGeneration == generation { isSearching = false }
+      if searchGeneration == generation && appState.userDID == accountDID { isSearching = false }
     }
 
     do {
-      let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
-      let params = AppBskyActorSearchActorsTypeahead.Parameters(q: term, limit: 20)
-      let (code, response) = try await client.app.bsky.actor.searchActorsTypeahead(input: params)
-      guard isCurrentSearch(query: query, generation: generation) else { return }
+      let rawTerm = query.trimmingCharacters(in: .whitespacesAndNewlines)
+      let term = rawTerm.hasPrefix("@") ? String(rawTerm.dropFirst()) : rawTerm
+      let isExactCandidate = term.contains(".") || term.hasPrefix("did:")
 
-      guard code >= 200 && code < 300, let actors = response?.actors else {
-        searchError = "Search failed"
-        return
+      async let typeaheadTask: Result<(Int, AppBskyActorSearchActorsTypeahead.Output?), Error> = {
+        do {
+          let params = AppBskyActorSearchActorsTypeahead.Parameters(q: term, limit: 20)
+          let res = try await client.app.bsky.actor.searchActorsTypeahead(input: params)
+          return .success(res)
+        } catch {
+          return .failure(error)
+        }
+      }()
+
+      async let exactProfileTask: AppBskyActorDefs.ProfileViewDetailed? = {
+        guard isExactCandidate else { return nil }
+        do {
+          let (code, profile) = try await client.app.bsky.actor.getProfile(
+            input: .init(actor: try ATIdentifier(string: term))
+          )
+          return (200..<300).contains(code) ? profile : nil
+        } catch {
+          return nil
+        }
+      }()
+
+      let typeaheadResult = await typeaheadTask
+      let exactProfile = await exactProfileTask
+      guard isCurrentSearch(query: query, generation: generation, accountDID: accountDID) else { return }
+
+      var actors: [AppBskyActorDefs.ProfileViewBasic] = []
+      var typeaheadCode: Int?
+      var typeaheadError: Error?
+
+      switch typeaheadResult {
+      case .success(let (code, response)):
+        typeaheadCode = code
+        actors = response?.actors ?? []
+      case .failure(let error):
+        typeaheadError = error
+      }
+
+      if let exact = exactProfile {
+        let exactDid = exact.did.didString()
+        actors.removeAll { $0.did.didString() == exactDid }
+        let basic = AppBskyActorDefs.ProfileViewBasic(
+          did: exact.did,
+          handle: exact.handle,
+          displayName: exact.displayName,
+          avatar: exact.avatar,
+          associated: exact.associated,
+          viewer: exact.viewer,
+          labels: exact.labels,
+          createdAt: exact.createdAt
+        )
+        actors.insert(basic, at: 0)
+      }
+
+      if actors.isEmpty {
+        if let typeaheadError {
+          searchError = typeaheadError.localizedDescription
+          return
+        }
+        if let typeaheadCode, !(200..<300).contains(typeaheadCode) {
+          searchError = "Search failed"
+          return
+        }
       }
 
       searchResults = actors
@@ -384,7 +456,7 @@ struct ContactSearchList: View {
       if !showMLSStatus {
         let targetDids = actors.filter { $0.viewer == nil }.map(\.did)
         let relationships = (try? await fetchFollowedBy(client: client, targets: targetDids)) ?? [:]
-        guard isCurrentSearch(query: query, generation: generation) else { return }
+        guard isCurrentSearch(query: query, generation: generation, accountDID: accountDID) else { return }
 
         for actor in actors {
           let didString = actor.did.description
@@ -416,11 +488,16 @@ struct ContactSearchList: View {
         selectedProfiles[participant.id] = participant
       }
 
+      // Progressive rendering: unblock UI immediately so results render instantly!
+      if searchGeneration == generation && appState.userDID == accountDID {
+        isSearching = false
+      }
+
       if showMLSStatus {
         await checkMLSOptInBatch(dids: actors.map { $0.did.description })
       }
     } catch {
-      guard isCurrentSearch(query: query, generation: generation) else { return }
+      guard isCurrentSearch(query: query, generation: generation, accountDID: accountDID) else { return }
       searchError = error.localizedDescription
     }
   }
@@ -447,6 +524,7 @@ struct ContactSearchList: View {
 
   @MainActor
   private func loadFollowing() async {
+    let accountDID = appState.userDID
     guard let client = appState.atProtoClient else { return }
 
     isLoadingFollows = true
@@ -454,12 +532,14 @@ struct ContactSearchList: View {
 
     do {
       let currentUserDid = try await client.getDid()
+      guard !Task.isCancelled, appState.userDID == accountDID else { return }
       let params = AppBskyGraphGetFollows.Parameters(
         actor: try ATIdentifier(string: currentUserDid),
         limit: 50
       )
       let (code, response) = try await client.app.bsky.graph.getFollows(input: params)
       guard code >= 200 && code < 300, let response else { return }
+      guard !Task.isCancelled, appState.userDID == accountDID else { return }
       followingProfiles = response.follows
 
       if showMLSStatus {
@@ -477,6 +557,7 @@ struct ContactSearchList: View {
   private func checkMLSOptInBatch(dids: [String]) async {
     let didObjects = dids.compactMap { try? DID(didString: $0) }
     guard !didObjects.isEmpty else { return }
+    let accountDID = appState.userDID
     let requestID = UUID()
     for did in didObjects {
       let key = did.didString()
@@ -485,12 +566,14 @@ struct ContactSearchList: View {
     }
 
     var resolved: [String: MLSAPIClient.MLSChatAvailability] = [:]
-    if let apiClient = await appState.getMLSAPIClient(), !Task.isCancelled {
+    if let apiClient = await appState.getMLSAPIClient(), !Task.isCancelled, appState.userDID == accountDID {
       let statuses = await apiClient.getChatAvailability(dids: didObjects)
-      if !Task.isCancelled {
+      if !Task.isCancelled, appState.userDID == accountDID {
         for status in statuses { resolved[status.did.didString()] = status.availability }
       }
     }
+
+    guard !Task.isCancelled, appState.userDID == accountDID else { return }
 
     for did in didObjects {
       let key = did.didString()

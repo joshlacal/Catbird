@@ -26,6 +26,47 @@ private final class MLSListChangeObserver: StateInvalidationSubscriber {
   }
 }
 
+// MARK: - MLS Conversation Prompt
+
+/// Single confirmation/status prompt for MLS conversation destructive actions.
+///
+/// Deliberately one value driving one `.alert` layer. These conversation lists
+/// live in the eagerly-built `MainContentView` tab tree, where every extra
+/// modifier layer enlarges the composed view value on the main thread stack.
+/// Separate alerts per action overflowed the 1 MB device stack at launch.
+struct MLSConversationPrompt: Identifiable {
+  enum Kind {
+    case confirmDeleteForMe(MLSConversationModel, targetDID: String)
+    case confirmLeave(MLSConversationModel)
+    case status
+  }
+
+  let id = UUID()
+  let kind: Kind
+  let title: String
+  let message: String
+
+  static func deleteForMe(_ conversation: MLSConversationModel, targetDID: String) -> Self {
+    .init(
+      kind: .confirmDeleteForMe(conversation, targetDID: targetDID),
+      title: "Delete Conversation for Me?",
+      message: "This will remove the conversation and its message history from this device only. You will not leave the conversation, and other participants will not be affected. This cannot be undone."
+    )
+  }
+
+  static func leave(_ conversation: MLSConversationModel) -> Self {
+    .init(
+      kind: .confirmLeave(conversation),
+      title: "Leave Conversation?",
+      message: "Are you sure you want to leave this conversation? You will no longer be able to send or receive messages."
+    )
+  }
+
+  static func status(title: String, message: String) -> Self {
+    .init(kind: .status, title: title, message: message)
+  }
+}
+
 // MARK: - Chat Tab View
 
 struct ChatTabView: View {
@@ -54,6 +95,7 @@ struct ChatTabView: View {
   // Eager-fetch coalescing: prevents redundant batches when mount + scene-active fire close together
   @State private var lastEagerRefreshAt: Date?
   fileprivate let logger = Logger(subsystem: "blue.catbird", category: "ChatUI")
+  @State private var mlsConversationPrompt: MLSConversationPrompt?
 
   /// Maximum convos to fetch in a single eager-refresh batch.
   /// Bounds battery + network cost; remaining convos catch up via per-convo WS on open
@@ -148,6 +190,53 @@ struct ChatTabView: View {
         selectedConvoId = nil
       }
     }
+    .onReceive(NotificationCenter.default.publisher(for: Notification.Name("MLSConversationDeleted"))) { note in
+      guard let convoID = note.object as? String else { return }
+      if let noteDID = note.userInfo?["userDID"] as? String {
+        guard noteDID == appState.userDID else { return }
+      }
+      var updatedState = coordinator.mlsState
+      updatedState.conversations.removeAll { $0.conversationID == convoID }
+      updatedState.participants.removeValue(forKey: convoID)
+      updatedState.unreadCounts.removeValue(forKey: convoID)
+      updatedState.lastMessages.removeValue(forKey: convoID)
+      updatedState.memberChanges.removeValue(forKey: convoID)
+      coordinator.mlsState = updatedState
+      if convoID == selectedConvoId {
+        selectedConvoId = nil
+      }
+    }
+    // One alert layer, not three: this body sits inside the eagerly-built
+    // MainContentView tab tree, where each extra modifier layer grows the
+    // composed view value. Three stacked alerts here exhausted the 1 MB
+    // device main-thread stack at launch (EXC_BAD_ACCESS on the stack guard).
+    .alert(
+      mlsConversationPrompt?.title ?? "",
+      isPresented: .init(
+        get: { mlsConversationPrompt != nil },
+        set: { if !$0 { mlsConversationPrompt = nil } }
+      ),
+      presenting: mlsConversationPrompt
+    ) { prompt in
+      switch prompt.kind {
+      case .confirmDeleteForMe(let convo, let targetDID):
+        Button("Cancel", role: .cancel) { mlsConversationPrompt = nil }
+        Button("Delete for Me", role: .destructive) {
+          mlsConversationPrompt = nil
+          deleteMLSConversationForMe(convo, targetDID: targetDID)
+        }
+      case .confirmLeave(let convo):
+        Button("Cancel", role: .cancel) { mlsConversationPrompt = nil }
+        Button("Leave", role: .destructive) {
+          mlsConversationPrompt = nil
+          leaveMLSConversation(convo)
+        }
+      case .status:
+        Button("OK", role: .cancel) { mlsConversationPrompt = nil }
+      }
+    } message: { prompt in
+      Text(prompt.message)
+    }
     .alert(isPresented: $isShowingErrorAlert, content: createErrorAlert)
     .sheet(isPresented: $showingNewMessageSheet) {
       NewConversationView()
@@ -209,7 +298,10 @@ struct ChatTabView: View {
     }
     .refreshable {
       async let bsky: Void = appState.chatManager.loadConversations(refresh: true)
-      async let mls: Void = loadMLSConversations()
+      async let mls: Void = {
+        await appState.loadMLSConversations()
+        await loadMLSConversations()
+      }()
       _ = await (bsky, mls)
     }
     .overlay {
@@ -269,9 +361,14 @@ struct ChatTabView: View {
       .tag(item.id)
       .swipeActions(edge: .trailing, allowsFullSwipe: false) {
         Button(role: .destructive) {
-          leaveMLSConversation(convo)
+          mlsConversationPrompt = .deleteForMe(convo, targetDID: appState.userDID)
         } label: {
-          Label("Leave", systemImage: "trash")
+          Label("Delete for Me", systemImage: "trash")
+        }
+        Button(role: .destructive) {
+          mlsConversationPrompt = .leave(convo)
+        } label: {
+          Label("Leave", systemImage: "rectangle.portrait.and.arrow.right")
         }
         Button {
           toggleMLSMute(convo)
@@ -940,21 +1037,80 @@ struct ChatTabView: View {
     mlsPollingTask = nil
   }
 
+  private func deleteMLSConversationForMe(_ conversation: MLSConversationModel, targetDID: String) {
+    let convoID = conversation.conversationID
+    guard appState.userDID == targetDID else {
+      logger.warning("Account switched before deleteMLSConversationForMe confirmed; dropping mutation")
+      return
+    }
+    Task {
+      guard let manager = await appState.getMLSConversationManager(timeout: 10.0) else {
+        await MainActor.run {
+          guard appState.userDID == targetDID else { return }
+          mlsConversationPrompt = .status(title: "Could Not Delete", message: "Secure chat is not available. Please try again in a moment.")
+        }
+        return
+      }
+
+      // Revalidate before manager mutation
+      guard await MainActor.run(body: { appState.userDID == targetDID }) else {
+        logger.warning("Account switched during manager resolution; dropping mutation")
+        return
+      }
+
+      do {
+        try await manager.deleteConversationForMe(convoId: convoID, expectedUserDID: targetDID)
+        await MainActor.run {
+          guard appState.userDID == targetDID else { return }
+          var updatedState = coordinator.mlsState
+          updatedState.conversations.removeAll { $0.conversationID == convoID }
+          updatedState.participants.removeValue(forKey: convoID)
+          updatedState.unreadCounts.removeValue(forKey: convoID)
+          updatedState.lastMessages.removeValue(forKey: convoID)
+          updatedState.memberChanges.removeValue(forKey: convoID)
+          coordinator.mlsState = updatedState
+          if selectedConvoId == convoID { selectedConvoId = nil }
+
+          NotificationCenter.default.post(
+            name: Notification.Name("MLSConversationDeleted"),
+            object: convoID,
+            userInfo: ["userDID": targetDID]
+          )
+        }
+        if await MainActor.run(body: { appState.userDID == targetDID }) {
+          await appState.updateMLSUnreadCount()
+        }
+      } catch {
+        logger.error("Failed to delete MLS conversation for me: \(error.localizedDescription)")
+        await MainActor.run {
+          guard appState.userDID == targetDID else { return }
+          mlsConversationPrompt = .status(title: "Could Not Delete", message: error.localizedDescription)
+        }
+      }
+    }
+  }
+
   private func leaveMLSConversation(_ conversation: MLSConversationModel) {
     let convoID = conversation.conversationID
+    let expectedUserDID = appState.userDID
     Task {
       guard let manager = await appState.getMLSConversationManager(timeout: 10.0) else { return }
       do {
         try await manager.leaveConversation(convoId: convoID)
-        var updatedState = coordinator.mlsState
-        updatedState.conversations.removeAll { $0.conversationID == convoID }
-        updatedState.participants.removeValue(forKey: convoID)
-        updatedState.unreadCounts.removeValue(forKey: convoID)
-        updatedState.lastMessages.removeValue(forKey: convoID)
-        updatedState.memberChanges.removeValue(forKey: convoID)
-        coordinator.mlsState = updatedState
-        if selectedConvoId == convoID { selectedConvoId = nil }
-        await appState.updateMLSUnreadCount()
+        await MainActor.run {
+          guard appState.userDID == expectedUserDID else { return }
+          var updatedState = coordinator.mlsState
+          updatedState.conversations.removeAll { $0.conversationID == convoID }
+          updatedState.participants.removeValue(forKey: convoID)
+          updatedState.unreadCounts.removeValue(forKey: convoID)
+          updatedState.lastMessages.removeValue(forKey: convoID)
+          updatedState.memberChanges.removeValue(forKey: convoID)
+          coordinator.mlsState = updatedState
+          if selectedConvoId == convoID { selectedConvoId = nil }
+        }
+        if await MainActor.run(body: { appState.userDID == expectedUserDID }) {
+          await appState.updateMLSUnreadCount()
+        }
       } catch {
         logger.error("Failed to leave MLS conversation: \(error.localizedDescription)")
       }

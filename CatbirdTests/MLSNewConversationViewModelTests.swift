@@ -267,6 +267,15 @@ final class MLSNewConversationViewModelTests: XCTestCase {
         XCTAssertTrue(viewModel.searchResults.isEmpty)
     }
     
+    func testSearchQuerySupersededDoesNotOverwriteNewerQuery() async {
+        // Rapid query updates should only resolve to the latest generation
+        viewModel.memberSearchQuery = "did:plc:first"
+        viewModel.memberSearchQuery = "did:plc:second"
+        try? await Task.sleep(nanoseconds: 400_000_000)
+        
+        XCTAssertEqual(viewModel.searchResults, ["did:plc:second"])
+    }
+    
     // MARK: - Reset Tests
     
     func testReset() async {

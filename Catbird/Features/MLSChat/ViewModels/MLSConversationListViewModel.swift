@@ -209,6 +209,25 @@ final class MLSConversationListViewModel {
         logger.debug("Removed conversation \(canonicalID) from local list")
     }
 
+    /// Delete a conversation for me using the conversation manager and remove from local list
+    @MainActor
+    func deleteConversationForMe(conversationId: String) async throws {
+        guard let canonicalID = try? MLSConversationIdentityBoundary.resolve(
+            conversationId,
+            in: conversations.map(MLSConversationIdentityBoundary.record(for:))
+        ) else {
+            logger.warning("Refusing to delete unresolved conversation route \(conversationId, privacy: .private)")
+            return
+        }
+
+        if let manager = conversationManager {
+            try await manager.deleteConversationForMe(convoId: canonicalID)
+        }
+
+        deleteConversationLocally(conversationId: canonicalID)
+        logger.debug("Deleted conversation \(canonicalID) for me")
+    }
+
     /// Update conversation after changes
     @MainActor
     func updateConversation(_ conversation: BlueCatbirdChatDefs.ConversationState) {
@@ -313,6 +332,9 @@ final class MLSConversationListViewModel {
         case .conversationJoined(let convo):
             // Add joined conversation to the list
             addConversation(convo)
+
+        case .conversationDeleted(let id), .conversationLeft(let id):
+            deleteConversationLocally(conversationId: id)
 
         default:
             // Ignore other events
