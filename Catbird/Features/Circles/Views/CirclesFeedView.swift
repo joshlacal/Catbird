@@ -10,10 +10,12 @@ import SwiftUI
 /// View displaying the unified feed of all Circles the user belongs to.
 struct CirclesFeedView: View {
   @Environment(AppState.self) private var appState
+  @Environment(AppStateManager.self) private var appStateManager
   @Binding var path: NavigationPath
   @State private var model: CircleFeedModel?
   @State private var errorMessage: String?
   @State private var showingCreateCircleSheet = false
+  @State private var authGeneration: Int = 0
   @Environment(\.webAuthenticationSession) private var webAuthenticationSession
   private var authCoordinator: CircleAppViewAuthCoordinator { .shared }
 
@@ -23,14 +25,10 @@ struct CirclesFeedView: View {
 
   var body: some View {
     Group {
-      if let model {
+      if let model, model.accountDID == appState.userDID && !model.isInvalidated {
         switch model.accessState {
         case .active:
-          if model.items.isEmpty && !model.isLoading {
-            emptyStateView
-          } else {
-            feedListView(model: model)
-          }
+          feedListView(model: model)
         case .expired:
           accessExpiredView(model: model)
         case .removed:
@@ -62,20 +60,31 @@ struct CirclesFeedView: View {
     .sheet(isPresented: $showingCreateCircleSheet) {
       CreateCircleView()
     }
-    .task {
+    .task(id: appState.userDID) {
+      let currentDID = appState.userDID
+      guard !currentDID.isEmpty else { return }
+
+      if model?.accountDID != currentDID || model?.isInvalidated == true {
+        model = nil
+        errorMessage = nil
+      }
+
       guard model == nil else { return }
 
       let newModel = CircleFeedModel(
         service: appState.circleService,
-        accountDID: appState.userDID,
+        accountDID: currentDID,
         activeDIDProvider: { AppStateManager.shared.lifecycle.userDID }
       )
       model = newModel
       do {
         try await newModel.load()
       } catch {
-        errorMessage = error.localizedDescription
+        if newModel.accountDID == appState.userDID && !newModel.isInvalidated {
+          errorMessage = error.localizedDescription
+        }
       }
+      guard newModel.accountDID == appState.userDID && !newModel.isInvalidated else { return }
       guard newModel.accessState == .needsAuthorization else { return }
       await authorizeCircles(model: newModel)
     }
@@ -89,9 +98,15 @@ struct CirclesFeedView: View {
       LazyVStack(spacing: 0) {
         if let error = model.error {
           errorBanner(error: error, model: model)
+        } else if let errorMessage {
+          errorBanner(message: errorMessage, model: model)
         }
 
-        ForEach(Array(model.items.enumerated()), id: \.element.post.post.uri) { index, item in
+        if model.items.isEmpty && !model.isLoading {
+          emptyStateView(model: model)
+            .padding(.top, 40)
+        } else {
+          ForEach(Array(model.items.enumerated()), id: \.element.post.post.uri) { index, item in
           PostView.circleRow(
             item: item,
             path: $path,
@@ -106,23 +121,26 @@ struct CirclesFeedView: View {
             }
           }
 
-          Divider()
-        }
+            Divider()
+          }
 
-        if model.isLoading && !model.items.isEmpty {
-          ProgressView()
-            .padding()
+          if model.isLoading && !model.items.isEmpty {
+            ProgressView()
+              .padding()
+          }
         }
       }
     }
     .refreshable {
+      errorMessage = nil
       try? await model.load()
     }
   }
 
   // MARK: - State Views
 
-  private var emptyStateView: some View {
+  @ViewBuilder
+  private func emptyStateView(model: CircleFeedModel) -> some View {
     ContentUnavailableView {
       Label("No Posts in Circles", systemImage: "person.2.circle")
     } description: {
@@ -130,7 +148,8 @@ struct CirclesFeedView: View {
     } actions: {
       Button("Refresh") {
         Task {
-          try? await model?.load()
+          errorMessage = nil
+          try? await model.load()
         }
       }
       .buttonStyle(.bordered)
@@ -164,13 +183,122 @@ struct CirclesFeedView: View {
 
   @MainActor
   private func authorizeCircles(model: CircleFeedModel) async {
-    guard authCoordinator.needsAuthorization,
-          let did = try? DID(didString: appState.userDID)
-    else { return }
+    let currentDID = appState.userDID
+    guard !currentDID.isEmpty,
+          currentDID == model.accountDID,
+          !model.isInvalidated,
+          let did = try? DID(didString: currentDID) else { return }
 
-    await authCoordinator.authorize(did: did, using: webAuthenticationSession)
+    authGeneration += 1
+    let generation = authGeneration
+
+    // 1. Gateway progressive scope upgrade: ensure Circle Spaces permission on gateway session.
+    // If already granted, ensureGatewayPermission returns immediately without prompting.
+    do {
+      try await appStateManager.authentication.ensureGatewayPermission(.circleSpaces) { authURL in
+        if #available(iOS 17.4, macOS 14.4, *) {
+          return try await webAuthenticationSession.authenticate(
+            using: authURL,
+            callback: .https(host: "catbird.blue", path: "/oauth/permission-callback"),
+            preferredBrowserSession: .shared,
+            additionalHeaderFields: [:]
+          )
+        } else {
+          return try await webAuthenticationSession.authenticate(
+            using: authURL,
+            callbackURLScheme: "catbird",
+            preferredBrowserSession: .shared
+          )
+        }
+      }
+    } catch is CancellationError {
+      // User dismissed the consent sheet; leave retryable and do not mark as failure
+      return
+    } catch let error as GatewayPermissionError where error == .cancelled {
+      // User dismissed the consent sheet; leave retryable and do not mark as failure
+      return
+    } catch let error as GatewayPermissionError where error == .stateChanged {
+      // Account switched during flow; do not set error on stale account
+      return
+    } catch {
+      guard generation == authGeneration,
+            appState.userDID == currentDID,
+            AppStateManager.shared.lifecycle.userDID == currentDID,
+            !model.isInvalidated,
+            model.accountDID == currentDID else {
+        return
+      }
+      errorMessage = error.localizedDescription
+      return
+    }
+
+    // Account / generation fence check after gateway upgrade
+    guard generation == authGeneration,
+          appState.userDID == currentDID,
+          AppStateManager.shared.lifecycle.userDID == currentDID,
+          !model.isInvalidated,
+          model.accountDID == currentDID else {
+      return
+    }
+
+    // If gateway upgrade granted access, reload the model first to see if access is now active.
+    // If model reload succeeds, do NOT unnecessarily prompt AppView again.
+    do {
+      try await model.load()
+    } catch {
+      if generation == authGeneration,
+         appState.userDID == currentDID,
+         !model.isInvalidated,
+         model.accountDID == currentDID {
+        errorMessage = error.localizedDescription
+      }
+    }
+
+    // Account / generation fence check after model reload
+    guard generation == authGeneration,
+          appState.userDID == currentDID,
+          AppStateManager.shared.lifecycle.userDID == currentDID,
+          !model.isInvalidated,
+          model.accountDID == currentDID else {
+      return
+    }
+
+    // If reload succeeded and accessState is active, we are done!
+    guard model.accessState == .needsAuthorization else {
+      if model.accessState == .active {
+        errorMessage = nil
+      }
+      return
+    }
+
+    // 2. AppView authorization: if AppView still needs user consent, authorize it.
+    if authCoordinator.needsAuthorization(for: currentDID) {
+      await authCoordinator.authorize(did: did, using: webAuthenticationSession)
+    }
+
+    // Account / generation fence check after AppView authorization
+    guard generation == authGeneration,
+          appState.userDID == currentDID,
+          AppStateManager.shared.lifecycle.userDID == currentDID,
+          !model.isInvalidated,
+          model.accountDID == currentDID else {
+      return
+    }
+
     if authCoordinator.state == .authorized {
-      try? await model.load()
+      do {
+        try await model.load()
+        if model.accessState == .active {
+          errorMessage = nil
+        }
+      } catch {
+        if generation == authGeneration,
+           appState.userDID == currentDID,
+           !model.isInvalidated,
+           model.accountDID == currentDID {
+          errorMessage = error.localizedDescription
+        }
+      }
     }
   }
 
@@ -182,7 +310,9 @@ struct CirclesFeedView: View {
     ContentUnavailableView {
       Label("Authorize Circles", systemImage: "lock.shield")
     } description: {
-      if case .failed(let message) = authCoordinator.state {
+      if let errorMessage {
+        Text(errorMessage)
+      } else if case .failed(let message) = authCoordinator.state {
         Text(message)
       } else {
         Text(
@@ -192,6 +322,7 @@ struct CirclesFeedView: View {
     } actions: {
       Button("Authorize") {
         Task {
+          errorMessage = nil
           await authorizeCircles(model: model)
         }
       }
@@ -211,15 +342,21 @@ struct CirclesFeedView: View {
 
   @ViewBuilder
   private func errorBanner(error: CircleError, model: CircleFeedModel) -> some View {
+    errorBanner(message: error.localizedDescription, model: model)
+  }
+
+  @ViewBuilder
+  private func errorBanner(message: String, model: CircleFeedModel) -> some View {
     HStack {
       Image(systemName: "exclamationmark.circle.fill")
         .foregroundStyle(.orange)
-      Text(error.localizedDescription)
+      Text(message)
         .font(.caption)
         .lineLimit(2)
       Spacer()
       Button("Retry") {
         Task {
+          errorMessage = nil
           try? await model.load()
         }
       }

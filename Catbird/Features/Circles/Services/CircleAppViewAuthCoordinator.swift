@@ -27,6 +27,9 @@ final class CircleAppViewAuthCoordinator {
   }
 
   private(set) var state: State = .idle
+  private(set) var authorizingDID: String?
+  private(set) var authorizedDID: String?
+  private var generation: Int = 0
 
   private let baseURL: URL
   private let callbackScheme: String
@@ -47,9 +50,18 @@ final class CircleAppViewAuthCoordinator {
       forName: .circleAccountInvalidated,
       object: nil,
       queue: .main
-    ) { [weak self] _ in
+    ) { [weak self] notification in
       MainActor.assumeIsolated {
-        self?.state = .idle
+        guard let self else { return }
+        let targetAccountDID = (notification.userInfo?["accountDID"] as? String)
+          ?? (notification.userInfo?["did"] as? String)
+          ?? ""
+        if targetAccountDID.isEmpty || targetAccountDID == self.authorizedDID || targetAccountDID == self.authorizingDID {
+          self.generation += 1
+          self.authorizingDID = nil
+          self.authorizedDID = nil
+          self.state = .idle
+        }
       }
     }
   }
@@ -58,6 +70,17 @@ final class CircleAppViewAuthCoordinator {
     if let invalidationObserver {
       NotificationCenter.default.removeObserver(invalidationObserver)
     }
+  }
+
+  /// True when a Circle read failed for want of an AppView grant for the given DID.
+  func needsAuthorization(for did: String) -> Bool {
+    if state == .authorized, authorizedDID == did {
+      return false
+    }
+    if state == .authorizing, authorizingDID == did {
+      return false
+    }
+    return true
   }
 
   /// True when a Circle read failed for want of an AppView grant.
@@ -75,15 +98,21 @@ final class CircleAppViewAuthCoordinator {
   /// second consent screen behaves identically to the first.
   func authorize(did: DID, using session: WebAuthenticationSession) async {
     guard state != .authorizing else { return }
+    let targetDID = did.didString()
+    generation += 1
+    let localGeneration = generation
+    authorizingDID = targetDID
     state = .authorizing
 
     var components = URLComponents(
       url: baseURL.appendingPathComponent("oauth/start"),
       resolvingAgainstBaseURL: false
     )
-    components?.queryItems = [URLQueryItem(name: "did", value: did.didString())]
+    components?.queryItems = [URLQueryItem(name: "did", value: targetDID)]
     guard let startURL = components?.url else {
+      guard localGeneration == self.generation, authorizingDID == targetDID else { return }
       state = .failed("Could not build the Circle authorization URL.")
+      authorizingDID = nil
       return
     }
 
@@ -93,12 +122,19 @@ final class CircleAppViewAuthCoordinator {
         callbackURLScheme: callbackScheme,
         preferredBrowserSession: .ephemeral
       )
-      complete(callback: callback)
+      guard localGeneration == self.generation, authorizingDID == targetDID else {
+        return
+      }
+      complete(callback: callback, expectedDID: targetDID)
     } catch let error as ASWebAuthenticationSessionError where error.code == .canceledLogin {
       // User dismissed the sheet. Not a failure; leave it retryable.
+      guard localGeneration == self.generation, authorizingDID == targetDID else { return }
       state = .idle
+      authorizingDID = nil
     } catch {
+      guard localGeneration == self.generation, authorizingDID == targetDID else { return }
       state = .failed(error.localizedDescription)
+      authorizingDID = nil
     }
   }
 
@@ -109,7 +145,7 @@ final class CircleAppViewAuthCoordinator {
   /// Returns `false` for a URL this coordinator does not own so the caller can
   /// keep routing it.
   @discardableResult
-  func complete(callback url: URL) -> Bool {
+  func complete(callback url: URL, expectedDID: String? = nil) -> Bool {
     guard url.scheme == callbackScheme,
           url.host == "oauth",
           url.lastPathComponent == "circle-appview"
@@ -118,8 +154,16 @@ final class CircleAppViewAuthCoordinator {
     let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
     if let failure = query.first(where: { $0.name == "error" })?.value {
       state = .failed(failure)
+      authorizingDID = nil
     } else {
+      let targetDID = expectedDID ?? authorizingDID
+      if let callbackDID = query.first(where: { $0.name == "did" })?.value,
+         let targetDID, !targetDID.isEmpty, callbackDID != targetDID {
+        return false
+      }
       state = .authorized
+      authorizedDID = targetDID
+      authorizingDID = nil
     }
     return true
   }

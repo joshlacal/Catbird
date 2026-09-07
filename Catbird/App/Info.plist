@@ -24,8 +24,6 @@
 			</array>
 		</dict>
 	</array>
-	<key>NSContactsUsageDescription</key>
-	<string>Catbird uses your contacts to help you find and connect with friends on Bluesky.</string>
 	<key>LegalPrivacyPolicyURL</key>
 	<string>https://catbird.blue/privacy</string>
 	<key>LegalTermsOfServiceURL</key>

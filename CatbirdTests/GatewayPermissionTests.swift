@@ -739,6 +739,127 @@ struct GatewayPermissionTests {
     #expect(stored["did:plc:carol789"] == "carol.bsky.social")
     #expect(stored.count == 3)
   }
+
+  // MARK: - Circle Spaces & Scope Error Classification
+
+  @Test("Circle Spaces scope already granted skips browser presentation")
+  @MainActor
+  func testCircleSpacesAlreadyGrantedSkipsBrowser() async throws {
+    let authManager = try await makeTestAuthManager()
+
+    authManager.fetchGrantedScopesHook = { _ in
+      return Set([GatewayPermission.circleSpaces.rawValue, "atproto"])
+    }
+
+    var presentCallCount = 0
+    authManager.startGatewayScopeUpgradeHook = { _, _, _ in
+      Issue.record("startGatewayScopeUpgrade should not be called when permission is already granted")
+      return URL(string: "https://nest.catbird.blue/auth/upgrade")!
+    }
+
+    try await authManager.ensureGatewayPermission(.circleSpaces) { _ in
+      presentCallCount += 1
+      return URL(string: "https://catbird.blue/oauth/permission-callback")!
+    }
+
+    #expect(presentCallCount == 0, "Browser presentation should be skipped when Circle Spaces grant is already present")
+    #expect(authManager.state == .authenticated(userDID: "did:plc:test1234"))
+  }
+
+  @Test("Circle Spaces scope upgrade flow requests correct scope and completes")
+  @MainActor
+  func testCircleSpacesScopeUpgradeFlow() async throws {
+    let authManager = try await makeTestAuthManager()
+
+    authManager.fetchGrantedScopesHook = { _ in
+      return Set(["atproto"])
+    }
+
+    var startCalled = false
+    authManager.startGatewayScopeUpgradeHook = { requesting, did, callbackURL in
+      #expect(requesting == Set([GatewayPermission.circleSpaces.rawValue]))
+      #expect(did == "did:plc:test1234")
+      #expect(callbackURL == GatewayPermission.permissionCallbackURL)
+      startCalled = true
+      return URL(string: "https://nest.catbird.blue/auth/upgrade?session=circle123")!
+    }
+
+    var presentCalled = false
+    var completeCalled = false
+    authManager.completeGatewayScopeUpgradeHook = { callbackURL, did in
+      #expect(callbackURL == URL(string: "https://catbird.blue/oauth/permission-callback?code=one-time")!)
+      #expect(did == "did:plc:test1234")
+      completeCalled = true
+      return Set([GatewayPermission.circleSpaces.rawValue, "atproto"])
+    }
+
+    try await authManager.ensureGatewayPermission(.circleSpaces) { authURL in
+      #expect(authURL == URL(string: "https://nest.catbird.blue/auth/upgrade?session=circle123")!)
+      presentCalled = true
+      return URL(string: "https://catbird.blue/oauth/permission-callback?code=one-time")!
+    }
+
+    #expect(startCalled)
+    #expect(presentCalled)
+    #expect(completeCalled)
+    #expect(authManager.state == .authenticated(userDID: "did:plc:test1234"))
+  }
+
+  @Test("Gateway upgrade start failure throws upgradeFailed with actionable description without pretending success")
+  @MainActor
+  func testGatewayUpgradeStartErrorClassifiedAsUpgradeFailed() async throws {
+    let authManager = try await makeTestAuthManager()
+
+    authManager.fetchGrantedScopesHook = { _ in
+      return Set(["atproto"])
+    }
+
+    struct CustomGatewayError: LocalizedError {
+      var errorDescription: String? { "Invalid gateway URL configuration." }
+    }
+
+    authManager.startGatewayScopeUpgradeHook = { _, _, _ in
+      throw CustomGatewayError()
+    }
+
+    await #expect(throws: GatewayPermissionError.upgradeFailed("Invalid gateway URL configuration.")) {
+      try await authManager.ensureGatewayPermission(.circleSpaces) { _ in
+        return URL(string: "https://catbird.blue/oauth/permission-callback")!
+      }
+    }
+
+    #expect(authManager.state == .authenticated(userDID: "did:plc:test1234"))
+  }
+
+  @Test("Gateway upgrade complete failure throws upgradeFailed without pretending success")
+  @MainActor
+  func testGatewayUpgradeCompleteErrorClassifiedAsUpgradeFailed() async throws {
+    let authManager = try await makeTestAuthManager()
+
+    authManager.fetchGrantedScopesHook = { _ in
+      return Set(["atproto"])
+    }
+
+    authManager.startGatewayScopeUpgradeHook = { _, _, _ in
+      return URL(string: "https://nest.catbird.blue/auth/upgrade?session=123")!
+    }
+
+    struct CustomCompleteError: LocalizedError {
+      var errorDescription: String? { "Session token exchange failed on server" }
+    }
+
+    authManager.completeGatewayScopeUpgradeHook = { _, _ in
+      throw CustomCompleteError()
+    }
+
+    await #expect(throws: GatewayPermissionError.upgradeFailed("Session token exchange failed on server")) {
+      try await authManager.ensureGatewayPermission(.circleSpaces) { _ in
+        return URL(string: "https://catbird.blue/oauth/permission-callback?code=one-time")!
+      }
+    }
+
+    #expect(authManager.state == .authenticated(userDID: "did:plc:test1234"))
+  }
 }
 
 // MARK: - Test Helpers

@@ -1548,14 +1548,49 @@ private extension CatbirdApp {
       transitionToken: sceneTransitionToken,
       expectedPhase: newPhase
     )
-    var suspensionManager: MLSConversationManager?
-    var contextFreeSuspensionOwner: MLSContextFreeLifecycleSuspensionOwner?
+    let suspensionManager = newPhase != .active
+      ? appStateManager.lifecycle.appState?.mlsConversationManager : nil
+    let contextFreeSuspensionOwner: MLSContextFreeLifecycleSuspensionOwner?
+    if newPhase != .active, suspensionManager == nil {
+      // Establish the exact owner before the expiration handler captures it.
+      // This only closes admission; potentially blocking Rust preparation follows
+      // acquisition of the background assertion below.
+      appStateManager.beginContextFreeMLSSuspension(
+        reason: "scenePhase → \(String(describing: newPhase))"
+      )
+      contextFreeSuspensionOwner = appStateManager.contextFreeMLSSuspensionOwner
+    } else {
+      contextFreeSuspensionOwner = nil
+    }
     var rustPathAvailable = false
     MLSSuspensionFlightRecorder.shared.record(
       .scenePhaseChange,
       details: "\(String(describing: oldPhase)) → \(String(describing: newPhase))",
       process: "app"
     )
+
+    #if os(iOS)
+    // Acquire execution time before synchronous Rust preparation: it can wait
+    // for in-flight database operations while they still hold file locks.
+    // Keep this assertion through the asynchronous close and state-save work.
+    var taskId: UIBackgroundTaskIdentifier = .invalid
+    if newPhase == .inactive || newPhase == .background {
+      taskId = UIApplication.shared.beginBackgroundTask(withName: "ScenePhaseTransition") {
+        // Expiration: iOS is reclaiming time. Force-close everything NOW.
+        logger.warning("ScenePhaseTransition expired — force-closing all contexts")
+        forceCloseSceneSuspensionSynchronously(
+          claim: suspensionCloseClaim,
+          manager: suspensionManager,
+          contextFreeSuspensionOwner: contextFreeSuspensionOwner,
+          reason: "ScenePhaseTransition expired"
+        )
+        if taskId != .invalid {
+          UIApplication.shared.endBackgroundTask(taskId)
+          taskId = .invalid
+        }
+      }
+    }
+    #endif
 
     #if os(iOS)
       if newPhase == .inactive || newPhase == .background {
@@ -1590,45 +1625,14 @@ private extension CatbirdApp {
       // Block new MLS FFI work immediately while we transition to background.
       // Every entry path uses the coupled MLSClient lifecycle boundary, which
       // owns both client and Core admission gates.
-      if let manager = appStateManager.lifecycle.appState?.mlsConversationManager {
-        suspensionManager = manager
+      if let manager = suspensionManager {
         rustPathAvailable = manager.suspendMLSOperations()
-      } else {
-        // Backgrounding can precede the first chat. Bind this no-context transition
-        // to the process-stable AppStateManager owner so only its exact generation
-        // can reopen admission when the matching foreground transition arrives.
-        appStateManager.beginContextFreeMLSSuspension(
-          reason: "scenePhase → \(String(describing: newPhase))"
-        )
-        contextFreeSuspensionOwner = appStateManager.contextFreeMLSSuspensionOwner
       }
     }
 
     #if os(iOS)
     let suspensionOwner = suspensionManager
     let contextFreeOwner = contextFreeSuspensionOwner
-    // CRITICAL FIX: Synchronously acquire background task assertion
-    // This bridges the gap between the synchronous onChange callback and the async Task execution.
-    // Without this, aggressive OS suspension (especially in Release builds) can freeze the app
-    // before the Task starts or while it's waiting for the MainActor, potentially causing
-    // 0xdead10cc crashes if file locks are held or acquired during the transition.
-    var taskId: UIBackgroundTaskIdentifier = .invalid
-    if newPhase == .inactive || newPhase == .background {
-      taskId = UIApplication.shared.beginBackgroundTask(withName: "ScenePhaseTransition") {
-        // Expiration: iOS is reclaiming time. Force-close everything NOW.
-        logger.warning("ScenePhaseTransition expired — force-closing all contexts")
-        forceCloseSceneSuspensionSynchronously(
-          claim: suspensionCloseClaim,
-          manager: suspensionOwner,
-          contextFreeSuspensionOwner: contextFreeOwner,
-          reason: "ScenePhaseTransition expired"
-        )
-        if taskId != .invalid {
-          UIApplication.shared.endBackgroundTask(taskId)
-          taskId = .invalid
-        }
-      }
-    }
     #endif
 
     if newPhase == .inactive || newPhase == .background, !rustPathAvailable {

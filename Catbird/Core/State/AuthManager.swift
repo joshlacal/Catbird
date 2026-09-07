@@ -2026,7 +2026,16 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
         logger.info("Gateway permission upgrade start cancelled for \(permission.rawValue)")
         throw GatewayPermissionError.cancelled
       }
-      throw error
+      if let authError = error as? AuthError, authError == .cancelled {
+        logger.info("Gateway permission upgrade AuthError.cancelled for \(permission.rawValue)")
+        throw GatewayPermissionError.cancelled
+      }
+      if let gwError = error as? GatewayPermissionError {
+        throw gwError
+      }
+      let message = error.localizedDescription
+      logger.error("Gateway permission upgrade start failed for \(permission.rawValue): \(message)")
+      throw GatewayPermissionError.upgradeFailed(message)
     }
 
     // Validate continuity snapshot before presentation
@@ -2078,7 +2087,19 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
         logger.info("Gateway permission upgrade complete cancelled for \(permission.rawValue)")
         throw GatewayPermissionError.cancelled
       }
-      throw error
+      if let authError = error as? AuthError, authError == .cancelled {
+        logger.info("Gateway permission upgrade complete AuthError.cancelled for \(permission.rawValue)")
+        throw GatewayPermissionError.cancelled
+      }
+      if let gwError = error as? GatewayPermissionError {
+        throw gwError
+      }
+      let message = error.localizedDescription
+      logger.error("Gateway permission upgrade completion failed for \(permission.rawValue): \(message)")
+      if message.localizedCaseInsensitiveContains("callback") {
+        throw GatewayPermissionError.invalidCallbackURL
+      }
+      throw GatewayPermissionError.upgradeFailed(message)
     }
 
     // Validate continuity snapshot after completion

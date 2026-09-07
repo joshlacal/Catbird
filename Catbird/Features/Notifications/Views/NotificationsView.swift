@@ -312,7 +312,6 @@ struct NotificationsView: View {
               navigationPath.wrappedValue.append(destination)
             }, path: navigationPath
           )
-          .id(group.id)
           .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
           .listRowSeparator(.visible)
           .alignmentGuide(.listRowSeparatorLeading) { _ in
