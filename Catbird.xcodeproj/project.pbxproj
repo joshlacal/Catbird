@@ -646,9 +646,9 @@
 				21FFA2392EBB8450009825BD /* XCRemoteSwiftPackageReference "SQLCipher.swift" */,
 				21094CF22EBD09010084BFBD /* XCRemoteSwiftPackageReference "GRDB.swift" */,
 				219DA5B72EED838E00F717FA /* XCRemoteSwiftPackageReference "EmojiKit" */,
-				21886697300B5FE800215DE7 /* XCRemoteSwiftPackageReference "Petrel" */,
-				2188669A300B600600215DE7 /* XCRemoteSwiftPackageReference "PetrelCatbird" */,
-				2188669D300B606F00215DE7 /* XCRemoteSwiftPackageReference "CatbirdMLSCore" */,
+				21A0C1AA300D0001000000A1 /* XCLocalSwiftPackageReference "../Petrel" */,
+				21A0C1AA300D0001000000A2 /* XCLocalSwiftPackageReference "../PetrelCatbird" */,
+				21A0C1AA300D0001000000A3 /* XCLocalSwiftPackageReference "../CatbirdMLSCore" */,
 				218866A0300B61AC00215DE7 /* XCRemoteSwiftPackageReference "CatbirdBrand" */,
 				218866A3300B678A00215DE7 /* XCRemoteSwiftPackageReference "BluemojiKit" */,
 			);
@@ -1641,6 +1641,21 @@
 		};
 /* End XCConfigurationList section */
 
+/* Begin XCLocalSwiftPackageReference section */
+		21A0C1AA300D0001000000A3 /* XCLocalSwiftPackageReference "../CatbirdMLSCore" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../CatbirdMLSCore;
+		};
+		21A0C1AA300D0001000000A1 /* XCLocalSwiftPackageReference "../Petrel" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../Petrel;
+		};
+		21A0C1AA300D0001000000A2 /* XCLocalSwiftPackageReference "../PetrelCatbird" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../PetrelCatbird;
+		};
+/* End XCLocalSwiftPackageReference section */
+
 /* Begin XCRemoteSwiftPackageReference section */
 		21094CF22EBD09010084BFBD /* XCRemoteSwiftPackageReference "GRDB.swift" */ = {
 			isa = XCRemoteSwiftPackageReference;
@@ -1672,30 +1687,6 @@
 			requirement = {
 				kind = upToNextMajorVersion;
 				minimumVersion = 1.7.5;
-			};
-		};
-		21886697300B5FE800215DE7 /* XCRemoteSwiftPackageReference "Petrel" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/joshlacal/Petrel";
-			requirement = {
-				kind = revision;
-				revision = dd2ad04bafa1176d45e18be13267349f2d5ec33a;
-			};
-		};
-		2188669A300B600600215DE7 /* XCRemoteSwiftPackageReference "PetrelCatbird" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/joshlacal/PetrelCatbird";
-			requirement = {
-				kind = revision;
-				revision = e750323f1094a140f8dafceab792f4eebefb6347;
-			};
-		};
-		2188669D300B606F00215DE7 /* XCRemoteSwiftPackageReference "CatbirdMLSCore" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/joshlacal/CatbirdMLSCore";
-			requirement = {
-				kind = revision;
-				revision = c30dec11e883831dc3193b5e9cc1c3fdf75a74d2;
 			};
 		};
 		218866A0300B61AC00215DE7 /* XCRemoteSwiftPackageReference "CatbirdBrand" */ = {
@@ -1781,17 +1772,14 @@
 		};
 		21886698300B5FE800215DE7 /* Petrel */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 21886697300B5FE800215DE7 /* XCRemoteSwiftPackageReference "Petrel" */;
 			productName = Petrel;
 		};
 		2188669B300B600600215DE7 /* PetrelCatbird */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 2188669A300B600600215DE7 /* XCRemoteSwiftPackageReference "PetrelCatbird" */;
 			productName = PetrelCatbird;
 		};
 		2188669E300B606F00215DE7 /* CatbirdMLSCore */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 2188669D300B606F00215DE7 /* XCRemoteSwiftPackageReference "CatbirdMLSCore" */;
 			productName = CatbirdMLSCore;
 		};
 		218866A1300B61AC00215DE7 /* CatbirdBrand */ = {
@@ -1816,12 +1804,10 @@
 		};
 		21A0C0DE300C0DE100000002 /* CatbirdMLSCore */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 2188669D300B606F00215DE7 /* XCRemoteSwiftPackageReference "CatbirdMLSCore" */;
 			productName = CatbirdMLSCore;
 		};
 		21A0C0DE300C0DE100000004 /* PetrelCatbird */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 2188669A300B600600215DE7 /* XCRemoteSwiftPackageReference "PetrelCatbird" */;
 			productName = PetrelCatbird;
 		};
 		21E108292D70BE6F0030A71C /* OrderedCollections */ = {
