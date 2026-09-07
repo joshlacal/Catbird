@@ -643,6 +643,7 @@ final class AppState {
         let conversationManager = mlsConversationManagerStorage
         let wsManager = mlsWebSocketManagerStorage
 
+        MLSDeviceUUIDCache.shared.invalidate(userDid: userDID)
         // Clear references immediately to prevent new operations
         clearMLSGlobalWebSocketSubscriptionTracking()
         mlsConversationManagerStorage = nil
@@ -869,6 +870,7 @@ final class AppState {
     @MainActor
     func refreshAfterAccountSwitch() async {
         logger.info("Refreshing data after account switch")
+        MLSDeviceUUIDCache.shared.invalidate()
         isTransitioningAccounts = true
 
         Task { [weak self] in
@@ -1428,7 +1430,7 @@ final class AppState {
                 let globalGen = MLSCoordinationStore.shared.currentGeneration
                 if existing.currentCoordinationGeneration == globalGen {
                     // Reuse existing manager (no declaration rollout mode to set)
-                    logger.debug("MLS: ♻️ Reusing existing conversation manager for user: \(userDid)")
+                    logger.trace("[MLS] manager_reused user=\(userDid.prefix(16))")
                     mlsServiceState.status = .ready
                     return existing
                 } else {
@@ -1732,6 +1734,7 @@ final class AppState {
         if let manager = mlsConversationManagerStorage {
             logger.info("MLS: Shutting down conversation manager...")
             await manager.prepareForStorageReset()
+            MLSDeviceUUIDCache.shared.invalidate(userDid: self.userDID)
             mlsConversationManagerStorage = nil
             logger.info("MLS: Conversation manager shutdown complete")
         }
