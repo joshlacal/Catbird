@@ -96,7 +96,10 @@ actor GatewayCircleTransport: CircleTransport {
       input: ComAtprotoSimplespaceCreateSpace.Input(
         type: try NSID(nsidString: CircleConfiguration.spaceType),
         skey: try RecordKey(keyString: skey),
-        policy: ComAtprotoSimplespaceCreateSpace.InputPolicyUnion(
+        readPolicy: ComAtprotoSimplespaceCreateSpace.InputReadPolicyUnion(
+          ComAtprotoSimplespaceDefs.MemberListPolicy()
+        ),
+        writePolicy: ComAtprotoSimplespaceCreateSpace.InputWritePolicyUnion(
           ComAtprotoSimplespaceDefs.MemberListPolicy()
         ),
         appAccess: ComAtprotoSimplespaceCreateSpace.InputAppAccessUnion(
@@ -155,8 +158,13 @@ actor GatewayCircleTransport: CircleTransport {
   }
 
   func addMember(space: SpaceRef, did: DID) async throws {
-    _ = try await client.com.atproto.simplespace.addMember(
-      input: ComAtprotoSimplespaceAddMember.Input(space: space, did: did)
+    _ = try await client.com.atproto.simplespace.putMember(
+      input: ComAtprotoSimplespacePutMember.Input(
+        space: space,
+        did: did,
+        read: true,
+        write: true
+      )
     )
   }
 
