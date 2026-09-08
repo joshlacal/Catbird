@@ -941,9 +941,21 @@ import SwiftUI
                         }
                     }
                 }
+                .onChange(of: appState.userDID) { oldDID, newDID in
+                    if oldDID != newDID {
+                        logger.info("🔄 [DETAIL] Account changed from \(oldDID ?? "nil") to \(newDID ?? "nil") — rebinding")
+                        handleAccountOrGenerationChanged()
+                    }
+                }
                 .onChange(of: scenePhase) { _, newPhase in
                     if newPhase == .active && isViewActive {
                         logger.info("App became active - ensuring SSE is running")
+                        let globalGen = MLSCoordinationStore.shared.currentGeneration
+                        if let existing = viewModel, existing.conversationManager.currentCoordinationGeneration != globalGen {
+                            logger.info("🔄 [DETAIL] Generation changed while backgrounded — rebinding")
+                            handleAccountOrGenerationChanged()
+                            return
+                        }
                         if !hasStartedSubscription {
                             startMessagePolling()
                             hasStartedSubscription = true
@@ -1138,6 +1150,21 @@ import SwiftUI
                 return
             }
             isViewActive = true
+            let globalGen = MLSCoordinationStore.shared.currentGeneration
+            if let existing = viewModel {
+                if existing.conversationManager.userDid != appState.userDID
+                    || existing.conversationManager.isShuttingDown
+                    || existing.conversationManager.currentCoordinationGeneration != globalGen
+                {
+                    logger.info("🔄 [DETAIL] Existing viewModel is stale (user/gen changed) — resetting for rebind")
+                    if let observer = stateObserver {
+                        existing.conversationManager.removeObserver(observer)
+                        stateObserver = nil
+                    }
+                    viewModel = nil
+                    unifiedDataSource = nil
+                }
+            }
             if viewModel == nil {
                 guard let dependencies = await resolveSetupDependencies()
                 else {
@@ -3824,7 +3851,15 @@ import SwiftUI
                 handler.onReconnected = { @MainActor in
                     await self.refreshMembersAfterMembershipChange()
                 }
-                await wsManager.subscribe(to: conversationId, handler: handler)
+                await wsManager.subscribe(
+                    to: conversationId,
+                    handler: handler,
+                    handlerProvider: { [weak appState] in
+                        guard let appState else { return nil }
+                        guard let freshManager = await appState.getMLSConversationManager() else { return nil }
+                        return await freshManager.makeCanonicalWebSocketHandler()
+                    }
+                )
                 logger.info("📡 WS: subscribe() returned for convoId: \(conversationId)")
             }
         }
@@ -3839,6 +3874,20 @@ import SwiftUI
             }
             hasStartedSubscription = false
             // Don't nil out webSocketManager - it's shared and owned by AppState
+        }
+
+        private func handleAccountOrGenerationChanged() {
+            logger.info("🔄 [DETAIL] Rebinding conversation detail view for account/generation change")
+            stopMessagePolling()
+            if let observer = stateObserver, let manager = viewModel?.conversationManager {
+                manager.removeObserver(observer)
+            }
+            stateObserver = nil
+            viewModel = nil
+            unifiedDataSource = nil
+            Task { @MainActor in
+                await setupView()
+            }
         }
         /// Handle membership changed events from SSE stream
         @MainActor

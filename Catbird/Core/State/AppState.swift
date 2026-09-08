@@ -1415,16 +1415,18 @@ final class AppState {
         // Skip NEW manager creation for inactive cached accounts.
         // This prevents cross-account SQLCipher churn and repeated init timeout loops after switches.
         if let activeUserDID = AppStateManager.shared.lifecycle.userDID,
-           activeUserDID != userDid,
-           mlsConversationManagerStorage == nil {
-            logger.debug("MLS: ⏭️ Skipping manager creation for inactive account: \(userDid)")
+           activeUserDID != userDid {
+            logger.warning("MLS: 🚫 Refusing manager for inactive account \(userDid), active is \(activeUserDID)")
+            if mlsConversationManagerStorage != nil {
+                mlsConversationManagerStorage = nil
+            }
             return nil
         }
 
         // Check if existing manager is for the same user
         if let existing = mlsConversationManagerStorage {
             // Verify the manager is for the current user
-            if existing.userDid == userDid {
+            if existing.userDid == userDid && !existing.isShuttingDown {
                 // CRITICAL FIX: Verify generation matches global coordination store
                 // If generation has bumped (e.g. from a background switch or re-auth), this manager is stale
                 let globalGen = MLSCoordinationStore.shared.currentGeneration
@@ -1442,7 +1444,7 @@ final class AppState {
                 }
             } else {
                 logger.warning(
-                    "MLS: Existing conversation manager is for different user (\(existing.userDid ?? "nil")), creating new one"
+                    "MLS: Existing conversation manager is shutting down or for different user (\(existing.userDid ?? "nil")), creating new one"
                 )
                 mlsConversationManagerStorage = nil
             }
@@ -2618,7 +2620,9 @@ final class AppState {
 
         logger.info("MLS: \(forceReconnect ? "Refreshing" : "Starting") global WebSocket subscription (\(reason))")
         guard let handler = await makeMLSGlobalWebSocketHandler() else { return }
-        await wsManager.subscribe(to: nil, handler: handler)
+        await wsManager.subscribe(to: nil, handler: handler, handlerProvider: { [weak self] in
+            await self?.makeMLSGlobalWebSocketHandler()
+        })
         mlsGlobalWebSocketSubscriptionStarted = true
         if forceReconnect {
             mlsGlobalWebSocketLastRefreshAt = Date()
