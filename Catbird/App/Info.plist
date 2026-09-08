@@ -41,6 +41,8 @@
 			</dict>
 		</dict>
 	</dict>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Catbird saves images to your photo library when you choose Save Image.</string>
 	<key>NSUserActivityTypes</key>
 	<array>
 		<string>FeedIntentIntent</string>

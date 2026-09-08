@@ -300,7 +300,7 @@ struct ContactSearchList: View {
         isSelected: selectedDIDs.contains(participant.id),
         isMLSAvailable: isAvailable,
         showsEncryptionBadge: showMLSStatus,
-        unavailableLabel: showMLSStatus ? "Not available" : "Chat restricted"
+        unavailableLabel: showMLSStatus ? "Not registered" : "Chat restricted"
       ) {
         if isAvailable { toggleParticipant(participant) }
       }
@@ -347,6 +347,7 @@ struct ContactSearchList: View {
     searchTask?.cancel()
     searchError = nil
     if !newValue.isEmpty && newValue.count >= 2 {
+      isSearching = true
       searchTask = Task {
         do {
           try await Task.sleep(for: searchDebounceInterval)
@@ -498,7 +499,9 @@ struct ContactSearchList: View {
       }
     } catch {
       guard isCurrentSearch(query: query, generation: generation, accountDID: accountDID) else { return }
-      searchError = error.localizedDescription
+      if searchResults.isEmpty && mlsSearchResults.isEmpty {
+        searchError = error.localizedDescription
+      }
     }
   }
 
@@ -565,6 +568,17 @@ struct ContactSearchList: View {
       checkingAvailability.insert(key)
     }
 
+    defer {
+      for did in didObjects {
+        let key = did.didString()
+        if availabilityRequests[key] == requestID {
+          checkingAvailability.remove(key)
+          if Task.isCancelled || appState.userDID != accountDID {
+            availabilityRequests.removeValue(forKey: key)
+          }
+        }
+      }
+    }
     var resolved: [String: MLSAPIClient.MLSChatAvailability] = [:]
     if let apiClient = await appState.getMLSAPIClient(), !Task.isCancelled, appState.userDID == accountDID {
       let statuses = await apiClient.getChatAvailability(dids: didObjects)
@@ -580,7 +594,6 @@ struct ContactSearchList: View {
       // A superseded search/retry must not overwrite a newer result for this person.
       guard availabilityRequests[key] == requestID else { continue }
       participantAvailability[key] = resolved[key] ?? .unknown
-      checkingAvailability.remove(key)
       availabilityRequests.removeValue(forKey: key)
     }
   }

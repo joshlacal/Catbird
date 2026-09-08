@@ -967,6 +967,7 @@ struct EnhancedImageViewer: View {
 
                   .frame(width: 40, height: 40)
               }
+              .accessibilityLabel("Share image")
               .padding(.trailing, 8)
 
               Button {
@@ -977,6 +978,7 @@ struct EnhancedImageViewer: View {
                   .appFont(AppTextRole.title2)
                   .frame(width: 40, height: 40)
               }
+              .accessibilityLabel("Close image viewer")
               .padding(.trailing, 8)
 
             }

@@ -807,6 +807,17 @@ struct MLSNewConversationView: View {
             checkingAvailability.insert(key)
         }
 
+        defer {
+            for did in didObjects {
+                let key = did.didString()
+                if availabilityRequests[key] == requestID {
+                    checkingAvailability.remove(key)
+                    if Task.isCancelled || appState.userDID != accountDID {
+                        availabilityRequests.removeValue(forKey: key)
+                    }
+                }
+            }
+        }
         var resolved: [String: MLSAPIClient.MLSChatAvailability] = [:]
         if let apiClient = await appState.getMLSAPIClient(), !Task.isCancelled, appState.userDID == accountDID {
             let statuses = await apiClient.getChatAvailability(dids: didObjects)
@@ -821,7 +832,7 @@ struct MLSNewConversationView: View {
             let key = did.didString()
             guard availabilityRequests[key] == requestID else { continue }
             participantAvailability[key] = resolved[key] ?? .unknown
-            checkingAvailability.remove(key)
+
             availabilityRequests.removeValue(forKey: key)
         }
     }

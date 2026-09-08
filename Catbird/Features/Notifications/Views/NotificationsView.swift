@@ -10,7 +10,6 @@ struct NotificationsView: View {
   @State private var viewModel: NotificationsViewModel
   @Binding var selectedTab: Int
   @Binding var lastTappedTab: Int?
-  @State private var currentUser: AppBskyActorDefs.ProfileViewBasic?
   @State private var scrollPosition: ScrollPosition = ScrollPosition(idType: String.self)
   @SceneStorage("notifications-scroll-position") private var savedScrollPositionId: String?
   @State private var selectedFilter: NotificationsViewModel.NotificationFilter = .all

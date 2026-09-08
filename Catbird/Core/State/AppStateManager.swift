@@ -3,6 +3,7 @@ import Foundation
 import OSLog
 import Petrel
 import SwiftData
+import Synchronization
 import SwiftUI
 
 // MARK: - ModelContainer State
@@ -76,11 +77,21 @@ final class AppStateManager {
   @ObservationIgnored
   private(set) var contextFreeMLSSuspensionOwner = MLSContextFreeLifecycleSuspensionOwner()
 
+  /// Thread-safe active user DID box for nonisolated provider access
+  private static let activeUserDIDBox = Mutex<String?>(nil)
   /// The authentication manager (owned by AppStateManager)
   private let authManager = AuthenticationManager()
 
   /// Current application lifecycle state
-  private(set) var lifecycle: AppLifecycle = .launching
+  private(set) var lifecycle: AppLifecycle = .launching {
+    didSet {
+      guard lifecycle != oldValue else { return }
+      let newDID = lifecycle.userDID
+      Self.activeUserDIDBox.withLock { $0 = newDID }
+      MLSCoordinationStore.shared.setActiveUserDID(newDID)
+      MLSNotificationCoordinator.updateActiveUserDID(newDID)
+    }
+  }
 
   #if DEBUG
   func setLifecycleForTesting(_ newLifecycle: AppLifecycle) {
@@ -191,6 +202,9 @@ final class AppStateManager {
     }
     
     Task { await MLSClient.shared.setStorageMaintenanceCoordinator(self) }
+    MLSCoordinationStore.shared.setActiveUserProvider {
+      AppStateManager.activeUserDIDBox.withLock { $0 }
+    }
   }
 
   /// Starts a new context-free suspension with a distinct opaque Core owner.
@@ -587,6 +601,10 @@ final class AppStateManager {
       logger.info("Account is restricted (\(String(describing: newLifecycle))) - skipping normal authenticated initialization")
       return
     }
+    // Ensure active account is published to coordination store before async AppState init
+    Self.activeUserDIDBox.withLock { $0 = userDID }
+    MLSCoordinationStore.shared.setActiveUserDID(userDID)
+    MLSNotificationCoordinator.setMainAppActive(true, activeUserDID: userDID)
     if !isCachedAccount {
       // Initialize the new AppState in the background to unblock UI swap
       logger.info("🔄 Initializing new AppState asynchronously")
@@ -687,7 +705,9 @@ final class AppStateManager {
     await authManager.logout(isManual: isManual)
 
     // Transition to unauthenticated
-    lifecycle = .unauthenticated
+    Self.activeUserDIDBox.withLock { $0 = nil }
+    MLSCoordinationStore.shared.setActiveUserDID(nil)
+    MLSNotificationCoordinator.setMainAppActive(false, activeUserDID: nil)
 
 
     // Update widget account list after logout
@@ -832,14 +852,14 @@ final class AppStateManager {
     MLSNotificationCoordinator.beginAccountSwitch(from: previousUserDID, to: userDID)
     MLSCoordinationStore.shared.updatePhase(.switching)
     MLSCoordinationStore.shared.incrementGeneration(for: userDID)
-    if let previousUserDID = previousUserDID {
-      MLSCoordinationStore.shared.incrementGeneration(for: previousUserDID)
-    }
     
     // Ensure we clear the switch state even if we fail
     defer {
       MLSNotificationCoordinator.endAccountSwitch()
-      MLSCoordinationStore.shared.updatePhase(.active)
+      if let currentActive = self.lifecycle.userDID {
+        Self.activeUserDIDBox.withLock { $0 = currentActive }
+        MLSCoordinationStore.shared.setActiveUserDID(currentActive)
+      }
     }
 
     if let oldUserDID = previousUserDID, oldUserDID != userDID {

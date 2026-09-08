@@ -2462,6 +2462,9 @@ final class AppState {
 
         logger.info("MLS: Initializing for current account")
 
+        // Ensure active account is published before crypto context init
+        MLSCoordinationStore.shared.setActiveUserDID(userDID)
+
         // Initialize the MLS crypto context
         try await manager.initialize()
 

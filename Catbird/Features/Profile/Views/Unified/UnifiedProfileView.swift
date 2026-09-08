@@ -843,6 +843,10 @@ struct UnifiedProfileView: View {
   @ViewBuilder
   private var currentUserMenu: some View {
     Menu {
+      profileShareLink
+
+      Divider()
+
       Button {
         Task {
           await appState.liveStatusManager.fetchCurrentStatus()
@@ -882,6 +886,10 @@ struct UnifiedProfileView: View {
   private var otherUserMenu: some View {
     Menu {
       if let profile = viewModel.profile {
+        profileShareLink
+
+        Divider()
+
         // Labeler-specific options
         if viewModel.isLabeler {
           Button {
@@ -899,12 +907,6 @@ struct UnifiedProfileView: View {
           } label: {
             Label(viewModel.isSubscribedToLabeler ? "Unsubscribe from labeler" : "Subscribe to labeler",
                   systemImage: viewModel.isSubscribedToLabeler ? "checkmark.circle.fill" : "checkmark.circle")
-          }
-          
-          Button {
-            shareLabeler(profile)
-          } label: {
-            Label("Share labeler", systemImage: "square.and.arrow.up")
           }
           
           Divider()
@@ -972,28 +974,14 @@ struct UnifiedProfileView: View {
   
   // MARK: - Helper Methods
   
-  private func shareLabeler(_ profile: AppBskyActorDefs.ProfileViewDetailed) {
-    guard let labelerDetails = viewModel.labelerDetails else { return }
-    
-    let shareText = "Check out this labeler: @\(profile.handle.description)"
-    let shareURL = URL(string: "https://bsky.app/profile/\(profile.handle.description)")
-    
-    #if os(iOS)
-    let activityVC = UIActivityViewController(
-      activityItems: [shareText, shareURL].compactMap { $0 },
-      applicationActivities: nil
-    )
-    
-    if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-       let rootViewController = windowScene.windows.first?.rootViewController {
-      rootViewController.present(activityVC, animated: true)
+  @ViewBuilder
+  private var profileShareLink: some View {
+    if let profile = viewModel.profile,
+       let url = URL(string: "https://bsky.app/profile/\(profile.handle.description)") {
+      ShareLink(item: url) {
+        Label("Share Profile", systemImage: "square.and.arrow.up")
+      }
     }
-    #elseif os(macOS)
-    let picker = NSSharingServicePicker(items: [shareText, shareURL].compactMap { $0 })
-    if let view = NSApplication.shared.keyWindow?.contentView {
-      picker.show(relativeTo: .zero, of: view, preferredEdge: .minY)
-    }
-    #endif
   }
 }
 
