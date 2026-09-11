@@ -58,7 +58,6 @@ struct ActionButtonsView: View {
   // View model for handling actions
   @State private var viewModel: ActionButtonViewModel
   @State private var showingPostComposer: Bool = false
-  @State private var showingRepostOptions: Bool = false
   // Per-post matched transition namespace for reply → composer zoom
   @Namespace private var replyTransition
 
@@ -86,14 +85,14 @@ struct ActionButtonsView: View {
   ) {
     self.post = post
     self.postViewModel = postViewModel
+    self._path = path
+    self.isBig = isBig
     self._viewModel = State(
       wrappedValue: ActionButtonViewModel(
         postId: post.uri.uriString(),
         postViewModel: postViewModel,
         appState: postViewModel.appState
       ))
-    self._path = path
-    self.isBig = isBig
 
     // Initialize consolidated state
     self._interactionState = State(initialValue: PostInteractionState(post: post))
@@ -261,7 +260,9 @@ struct ActionButtonsView: View {
           appState: postViewModel.appState
         )
       }
-      interactionState.update(from: newPost)
+      // Re-seed through the shadow so a stale payload cannot overwrite an
+      // optimistic decision; the shadow is the single source of truth.
+      Task { await refreshState() }
     }
       #if os(iOS)
       // Link the composer sheet to this reply button's transition namespace
@@ -272,53 +273,6 @@ struct ActionButtonsView: View {
   }
 
   private var repostMenu: some View {
-    Group {
-      #if os(iOS)
-      if #available(iOS 27.0, *) {
-        repostDialogButton
-      } else {
-        repostMenuControl
-      }
-      #else
-      repostMenuControl
-      #endif
-    }
-  }
-
-  // iOS 27 (through beta 3) ships a compositor bug where `Menu` labels can leave
-  // stale SF Symbol layers rendered after a tab switch — the repost
-  // arrow.2.squarepath glyph gets stuck floating over another tab's content (see
-  // docs/feedback/repost-ghost-overlay/FEEDBACK.md; confirmed in production on
-  // beta 3). Plain `Button`s with the same label don't exhibit the ghosting, so
-  // route the repost action through a confirmation dialog instead of a Menu on
-  // iOS 27+. TEMPORARY workaround until Apple fixes the compositor bug.
-  private var repostDialogButton: some View {
-    Button {
-      showingRepostOptions = true
-    } label: {
-      repostLabel
-    }
-    .buttonStyle(.plain)
-    .confirmationDialog(
-      "Repost",
-      isPresented: $showingRepostOptions,
-      titleVisibility: .hidden
-    ) {
-      if viewModel.capabilities.canRepost {
-        Button(repostActionTitle) {
-          handleRepostToggle()
-        }
-      }
-      if viewModel.capabilities.canQuote && !(post.viewer?.embeddingDisabled ?? false) {
-        Button("Quote Post") {
-          handleQuotePost()
-        }
-      }
-      Button("Cancel", role: .cancel) {}
-    }
-  }
-
-  private var repostMenuControl: some View {
     Menu {
       if viewModel.capabilities.canRepost {
         Button {

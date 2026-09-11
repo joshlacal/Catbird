@@ -15,6 +15,7 @@ final class PreferencesManager {
 
   // Add cache for server preferences to maintain consistency
   private var cachedServerPreferences: Preferences?
+  private var feedLibraryWriteRevision: UInt64 = 0
 
   // Current state
   enum PreferencesState: Equatable {
@@ -245,6 +246,7 @@ final class PreferencesManager {
 
       // Fetch from server
       logger.info("Fetching preferences from server")
+      let feedRevisionAtRequest = feedLibraryWriteRevision
       let params = AppBskyActorGetPreferences.Parameters()
       let serverResponse = try await client.app.bsky.actor.getPreferences(input: params)
 
@@ -368,8 +370,15 @@ final class PreferencesManager {
       // --- Update Local Preferences using updateFeeds logic ---
       let currentPrefs = try await getPreferences()  // Get or create local instance
 
+      // Keep unsynchronized URI intents when a refresh returns older server membership.
+      FeedLibraryPendingStore().reconcile(
+        accountDID: accountDID, pinned: &serverPinnedFeeds, saved: &serverSavedFeeds)
       // Update feeds using the robust updateFeeds method
-      currentPrefs.updateFeeds(pinned: serverPinnedFeeds, saved: serverSavedFeeds)
+      if feedRevisionAtRequest == feedLibraryWriteRevision {
+        currentPrefs.updateFeeds(pinned: serverPinnedFeeds, saved: serverSavedFeeds)
+      }
+      // A discovery write started or finished during this fetch: retain its newer
+      // local feed lists, while still refreshing the unrelated preferences below.
 
       // Update other preferences directly
       currentPrefs.contentLabelPrefs = serverContentLabelPrefs
@@ -538,14 +547,27 @@ final class PreferencesManager {
   /// Saves preferences to both SwiftData and Bluesky API
   @MainActor
   func saveAndSyncPreferences(_ preferences: Preferences) async throws {
-    // First save locally
-    try await savePreferences(preferences)
+    feedLibraryWriteRevision &+= 1
+    defer { feedLibraryWriteRevision &+= 1 }
+    let pendingStore = FeedLibraryPendingStore()
+    let replacements = pendingStore.supersedePending(accountDID: accountDID,
+      pinned: preferences.pinnedFeeds, saved: preferences.savedFeeds)
+    // First save locally. A failed local write must not replace an older retry intent.
+    do { try await savePreferences(preferences) }
+    catch {
+      for change in replacements {
+        pendingStore.complete(change.replacement, accountDID: accountDID, restoring: change.previous)
+      }
+      throw error
+    }
 
     // Update cache so getPreferences returns the latest pinnedFeeds order
     cachedServerPreferences = preferences
 
-    // Then sync with server
+    // Acknowledgment applies only to the retry revisions included in this write.
+    let pendingAtSync = pendingStore.entries(accountDID: accountDID)
     try await syncToServer(preferences)
+    for entry in pendingAtSync { pendingStore.complete(entry, accountDID: accountDID) }
 
     // Refresh cache again post-sync
     cachedServerPreferences = preferences
@@ -554,6 +576,85 @@ final class PreferencesManager {
 
     // Apply accept-labelers header based on latest preferences
     await applyAcceptLabelersHeader(from: preferences)
+  }
+
+  /// Discovery keeps a durable local change when network synchronization fails.
+  /// A thrown error means local persistence failed; pendingSync means local success only.
+  @MainActor
+  func saveFeedLibraryPreferences(_ preferences: Preferences) async throws -> FeedLibraryPersistence {
+    feedLibraryWriteRevision &+= 1
+    defer { feedLibraryWriteRevision &+= 1 }
+    var pinned = preferences.pinnedFeeds
+    var saved = preferences.savedFeeds
+    FeedLibraryPendingStore().reconcile(accountDID: accountDID, pinned: &pinned, saved: &saved)
+    preferences.pinnedFeeds = pinned
+    preferences.savedFeeds = saved
+    try await savePreferences(preferences)
+    cachedServerPreferences = preferences
+    do {
+      try await syncFeedLibraryToServer(preferences)
+      return .synced
+    } catch {
+      return .pendingSync(error.localizedDescription)
+    }
+  }
+
+  /// Merge URI intents into the freshest server list, retaining unknown preferences
+  /// and existing feed IDs/types/order. This endpoint has no compare-and-swap token.
+  @MainActor
+  private func syncFeedLibraryToServer(_ preferences: Preferences) async throws {
+    guard let client else { throw PreferencesManagerError.clientNotInitialized }
+    let revision = feedLibraryWriteRevision
+    let store = FeedLibraryPendingStore()
+    let pending = store.entries(accountDID: accountDID)
+    let response = try await client.app.bsky.actor.getPreferences(input: .init())
+    guard (200..<300).contains(response.responseCode), let server = response.data else {
+      throw PreferencesManagerError.invalidData
+    }
+    var items = server.preferences.items
+    var feeds: [AppBskyActorDefs.SavedFeed] = []
+    var hasV2 = false
+    for item in items {
+      switch item {
+      case .savedFeedsPrefV2(let value): feeds = value.items; hasV2 = true
+      default: break
+      }
+    }
+    if !hasV2 {
+      for item in items {
+        if case .savedFeedsPref(let value) = item {
+          let pinned = value.pinned.map { $0.uriString() }
+          let saved = value.saved.map { $0.uriString() }
+          var identifiers: [String: String] = [:]
+          for uri in pinned + saved + ["following"] { identifiers[uri] = await TIDGenerator.next() }
+          feeds = FeedLibraryServerMerge.migrateV1(pinned: pinned, saved: saved,
+            timelineIndex: value.timelineIndex, newIDs: identifiers)
+        }
+      }
+    }
+    var newIDs: [String: String] = [SystemFeedTypes.following: await TIDGenerator.next()]
+    for entry in pending { newIDs[entry.uri] = await TIDGenerator.next() }
+    feeds = FeedLibraryServerMerge.apply(pending, to: feeds, newIDs: newIDs)
+    // An intervening local writer supersedes this captured operation.
+    guard revision == feedLibraryWriteRevision else { throw PreferencesManagerError.invalidData }
+    items.removeAll {
+      switch $0 { case .savedFeedsPref, .savedFeedsPrefV2: true; default: false }
+    }
+    items.append(.savedFeedsPrefV2(.init(items: feeds)))
+    items.append(.savedFeedsPref(.init(
+      pinned: feeds.filter { $0.pinned }.compactMap { try? ATProtocolURI(uriString: $0.value) },
+      saved: feeds.compactMap { try? ATProtocolURI(uriString: $0.value) },
+      timelineIndex: feeds.filter { $0.pinned }.firstIndex { $0.type == "timeline" })))
+    let code = try await client.app.bsky.actor.putPreferences(input: .init(preferences: .init(items: items)))
+    guard (200..<300).contains(code), revision == feedLibraryWriteRevision else {
+      throw PreferencesManagerError.invalidData
+    }
+    preferences.pinnedFeeds = feeds.filter { $0.pinned }.map { $0.value }
+    preferences.savedFeeds = feeds.filter { !$0.pinned }.map { $0.value }
+    try await savePreferences(preferences)
+    // Other pending URIs were included too, but only their exact captured revisions
+    // may be acknowledged. A later edit remains pending.
+    for entry in pending { store.complete(entry, accountDID: accountDID) }
   }
 
   /// Syncs current preferences to the Bluesky API
@@ -1274,6 +1375,7 @@ final class PreferencesManager {
       throw PreferencesManagerError.clientNotInitialized
     }
 
+    let feedRevisionAtRequest = feedLibraryWriteRevision
     let params = AppBskyActorGetPreferences.Parameters()
     let serverPrefs = try await client.app.bsky.actor.getPreferences(input: params)
 
@@ -1302,7 +1404,11 @@ final class PreferencesManager {
         // If we have server feeds but local feeds are empty or different, update local
         if (!pinnedFeeds.isEmpty || !savedFeeds.isEmpty)
           && (localPrefs.pinnedFeeds.count <= 1 || localPrefs.savedFeeds.isEmpty) {
-          localPrefs.updateFeeds(pinned: pinnedFeeds, saved: savedFeeds)
+          FeedLibraryPendingStore().reconcile(accountDID: accountDID,
+            pinned: &pinnedFeeds, saved: &savedFeeds)
+          if feedRevisionAtRequest == feedLibraryWriteRevision {
+            localPrefs.updateFeeds(pinned: pinnedFeeds, saved: savedFeeds)
+          }
           needsSync = true
           logger.info("Updating local feeds with server data")
         }

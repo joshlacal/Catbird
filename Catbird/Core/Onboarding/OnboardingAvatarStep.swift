@@ -154,12 +154,12 @@ public struct OnboardingAvatarStep: View {
     @ViewBuilder
     private var avatarPreview: some View {
         if avatarMode == .photo, let selectedPhoto {
-            Image(uiImage: selectedPhoto)
+            Image(platformImage: selectedPhoto)
                 .resizable()
                 .scaledToFill()
                 .frame(width: 140, height: 140)
                 .clipShape(Circle())
-                .overlay(Circle().stroke(Color.primary.opacity(0.1), lineWidth: 2))
+                .overlay { Circle().stroke(Color.primary.opacity(0.1), lineWidth: 2) }
         } else {
             let activeColor = availableColors.first(where: { $0.hex == selectedColorHex })?.color ?? .blue
             Circle()
@@ -169,7 +169,7 @@ public struct OnboardingAvatarStep: View {
                         .font(.system(size: 60, weight: .semibold))
                         .foregroundColor(.white)
                 )
-                .overlay(Circle().stroke(Color.white.opacity(0.3), lineWidth: 3))
+                .overlay { Circle().stroke(Color.white.opacity(0.3), lineWidth: 3) }
         }
     }
     
@@ -257,7 +257,7 @@ public struct OnboardingAvatarStep: View {
                 .font(.headline)
                 .frame(maxWidth: .infinity)
                 .frame(height: 50)
-                .background(Color.secondary.opacity(0.15))
+                .background { Color.secondary.opacity(0.15) }
                 .foregroundColor(.primary)
                 .clipShape(RoundedRectangle(cornerRadius: 14))
             }
@@ -342,6 +342,7 @@ public struct OnboardingAvatarStep: View {
         
         let renderer = ImageRenderer(content: stickerView)
         renderer.scale = 1.0
+        #if os(iOS)
         if let uiImage = renderer.uiImage {
             return uiImage.pngData()
         }
@@ -364,5 +365,13 @@ public struct OnboardingAvatarStep: View {
             }
         }
         return image.pngData()
+        #elseif os(macOS)
+        if let nsImage = renderer.nsImage,
+           let tiffData = nsImage.tiffRepresentation,
+           let bitmap = NSBitmapImageRep(data: tiffData) {
+            return bitmap.representation(using: .png, properties: [:])
+        }
+        return nil
+        #endif
     }
 }

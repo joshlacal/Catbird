@@ -7,11 +7,27 @@ import Testing
 /// Recording transport double that proves Circle failures stay Circle-scoped
 /// and never touch public endpoints.
 actor RecordingCircleTransport: CircleTransport {
-  private let error: CircleError?
+  private let error: (any Error)?
   private let customCapabilities: CircleCapability?
   private(set) var publicEndpointCallCount = 0
+  private var pauseCapabilities = false
+  private var capabilityContinuation: CheckedContinuation<Void, Never>?
+  private var startedContinuation: CheckedContinuation<Void, Never>?
+  private var capabilityStarted = false
 
-  init(error: CircleError? = nil, capabilities: CircleCapability? = nil) {
+  func suspendCapabilities() { pauseCapabilities = true }
+
+  func waitForCapabilities() async {
+    if capabilityStarted { return }
+    await withCheckedContinuation { startedContinuation = $0 }
+  }
+
+  func resumeCapabilities() {
+    capabilityContinuation?.resume()
+    capabilityContinuation = nil
+  }
+
+  init(error: (any Error)? = nil, capabilities: CircleCapability? = nil) {
     self.error = error
     self.customCapabilities = capabilities
   }
@@ -21,6 +37,12 @@ actor RecordingCircleTransport: CircleTransport {
   }
 
   func capabilities() async throws -> CircleCapability {
+    capabilityStarted = true
+    startedContinuation?.resume()
+    startedContinuation = nil
+    if pauseCapabilities {
+      await withCheckedContinuation { capabilityContinuation = $0 }
+    }
     try throwIfConfigured()
     if let customCapabilities { return customCapabilities }
     return CircleCapability(enabled: true, protocolRevision: "test", supportsImages: true)
@@ -142,70 +164,139 @@ struct CircleServiceTests {
     #expect(await transport.publicEndpointCallCount == 0)
   }
 
-  @Test("AppState probes capabilities and enables server capability flag")
-  @MainActor
-  func appStateProbesCapabilitiesAndFlipsFlag() async throws {
-    CircleFeatureFlags.serverCapability(enabled: false)
-    #expect(!CircleFeatureFlags.isEnabled)
+  @Test("Capability results belong to the active account", arguments: [true, false])
+  func activeAccountCapability(enabled: Bool) async {
+    let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
+    let appState = AppState(userDID: "did:plc:alice", client: client)
+    #expect(appState.circleCapability == .unknown)
+    #expect(!appState.circlesEnabled)
+    let previousLifecycle = AppStateManager.shared.lifecycle
+    AppStateManager.shared.setLifecycleForTesting(.authenticated(appState))
+    defer { AppStateManager.shared.setLifecycleForTesting(previousLifecycle) }
+    appState.circleService = CircleService(transport: RecordingCircleTransport(
+      capabilities: CircleCapability(enabled: enabled, protocolRevision: "test", supportsImages: true)
+    ))
+    await appState.probeCircleCapabilities()
+    #expect(appState.circleCapability == (enabled ? .supported : .unsupported))
+    #expect(appState.circlesEnabled == enabled)
+  }
 
+  @Test("Unsupported is distinct from network and authorization failures")
+  func probeClassifiesErrorsWithoutRetainingSupportedState() async {
+    let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
+    let appState = AppState(userDID: "did:plc:alice", client: client)
+    let previousLifecycle = AppStateManager.shared.lifecycle
+    AppStateManager.shared.setLifecycleForTesting(.authenticated(appState))
+    defer { AppStateManager.shared.setLifecycleForTesting(previousLifecycle) }
+    let cases: [(any Error, CircleCapabilityState)] = [
+      (CircleError.unsupportedPDS, .unsupported),
+      (CircleError.authRequired, .unknown),
+      (CircleError.notAuthorized, .unknown),
+      (CircleError.upstreamUnavailable, .unknown),
+      (CircleError.invalidResponse, .unknown),
+      (URLError(.timedOut), .unknown),
+      (URLError(.notConnectedToInternet), .unknown),
+      (ATProtoXRPCError(error: "ExpiredToken", message: "Expired", statusCode: 401), .unknown)
+    ]
+    for (error, expected) in cases {
+      appState.circleCapability = .supported
+      appState.circleService = CircleService(transport: RecordingCircleTransport(error: error))
+      await appState.probeCircleCapabilities()
+      #expect(appState.circleCapability == expected)
+      #expect(!appState.circlesEnabled)
+    }
+  }
+
+  @Test("An in-flight probe cannot update a replacement session, even for the same DID",
+        arguments: ["did:plc:alice", "did:plc:bob"])
+  func staleInFlightProbeIsDiscarded(replacementDID: String) async {
+    let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
+    let stale = AppState(userDID: "did:plc:alice", client: client)
+    let replacement = AppState(userDID: replacementDID, client: client)
+    let previousLifecycle = AppStateManager.shared.lifecycle
+    AppStateManager.shared.setLifecycleForTesting(.authenticated(stale))
+    defer { AppStateManager.shared.setLifecycleForTesting(previousLifecycle) }
+    let transport = RecordingCircleTransport()
+    await transport.suspendCapabilities()
+    stale.circleService = CircleService(transport: transport)
+    let probe = Task { await stale.probeCircleCapabilities() }
+    await transport.waitForCapabilities()
+    AppStateManager.shared.setLifecycleForTesting(.authenticated(replacement))
+    await transport.resumeCapabilities()
+    await probe.value
+    #expect(stale.circleCapability == .unknown)
+    #expect(replacement.circleCapability == .unknown)
+    #expect(!replacement.circlesEnabled)
+  }
+
+  @Test("Replacing a client invalidates support and rejects the old client's in-flight probe")
+  func replacingClientInvalidatesCapabilityAndPendingProbe() async {
+    let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
+    let appState = AppState(userDID: "did:plc:alice", client: client)
+    let previousLifecycle = AppStateManager.shared.lifecycle
+    AppStateManager.shared.setLifecycleForTesting(.authenticated(appState))
+    defer { AppStateManager.shared.setLifecycleForTesting(previousLifecycle) }
+
+    appState.circleCapability = .supported
+    let replacement = await ATProtoClient(baseURL: URL(string: "https://replacement.example")!)
+    appState.updateClient(replacement)
+    #expect(appState.circleCapability == .unknown)
+    #expect(!appState.circlesEnabled)
+
+    let transport = RecordingCircleTransport()
+    await transport.suspendCapabilities()
+    appState.circleService = CircleService(transport: transport)
+    let probe = Task { await appState.probeCircleCapabilities() }
+    await transport.waitForCapabilities()
+    appState.updateClient(client)
+    #expect(appState.circleCapability == .unknown)
+    await transport.resumeCapabilities()
+    await probe.value
+    #expect(appState.circleCapability == .unknown)
+    #expect(!appState.circlesEnabled)
+  }
+
+  @Test("Cancelled probe cannot enable Circles")
+  func cancelledProbeIsDiscarded() async {
     let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
     let appState = AppState(userDID: "did:plc:alice", client: client)
     let previousLifecycle = AppStateManager.shared.lifecycle
     AppStateManager.shared.setLifecycleForTesting(.authenticated(appState))
     defer { AppStateManager.shared.setLifecycleForTesting(previousLifecycle) }
     let transport = RecordingCircleTransport()
+    await transport.suspendCapabilities()
     appState.circleService = CircleService(transport: transport)
-
-    await appState.probeCircleCapabilities()
-    #expect(CircleFeatureFlags.isEnabled)
+    let probe = Task { await appState.probeCircleCapabilities() }
+    await transport.waitForCapabilities()
+    probe.cancel()
+    await transport.resumeCapabilities()
+    await probe.value
+    #expect(appState.circleCapability == .unknown)
+    #expect(!appState.circlesEnabled)
   }
 
-  @Test("AppState probe failure preserves the last known AppView capability")
-  @MainActor
-  func appStateProbeFailurePreservesCapability() async throws {
-    CircleFeatureFlags.serverCapability(enabled: true)
-    #expect(CircleFeatureFlags.isEnabled)
-
-    let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
-    let appState = AppState(userDID: "did:plc:alice", client: client)
-    let previousLifecycle = AppStateManager.shared.lifecycle
-    AppStateManager.shared.setLifecycleForTesting(.authenticated(appState))
-    defer { AppStateManager.shared.setLifecycleForTesting(previousLifecycle) }
-    let transport = RecordingCircleTransport(error: CircleError.unsupportedPDS)
-    appState.circleService = CircleService(transport: transport)
-
-    await appState.probeCircleCapabilities()
-    #expect(CircleFeatureFlags.isEnabled)
+  @Test("Only documented Spaces unsupported status and code pairs are definitive")
+  func unsupportedErrorClassification() {
+    let cases: [(Int, String, Bool)] = [
+      (501, "MethodNotImplemented", true),
+      (404, "permissioned_endpoint_unavailable", true),
+      (404, "MethodNotImplemented", false),
+      (501, "permissioned_endpoint_unavailable", false),
+      (404, "NotFound", false),
+      (500, "InternalServerError", false),
+      (401, "AuthRequired", false),
+      (403, "Forbidden", false),
+      (429, "RateLimitExceeded", false),
+      (501, "NotImplemented", false)
+    ]
+    for (status, code, expected) in cases {
+      let error = ATProtoXRPCError(error: code, message: "test", statusCode: status)
+      #expect(GatewayCircleTransport.isUnsupportedSpacesError(error) == expected)
+    }
+    #expect(!GatewayCircleTransport.isUnsupportedSpacesError(URLError(.timedOut)))
+    #expect(!GatewayCircleTransport.isUnsupportedSpacesError(CircleError.upstreamUnavailable))
   }
 
-  @Test("AppState probe stale result from inactive account is discarded")
-  @MainActor
-  func appStateProbeStaleResultFromInactiveAccountIsDiscarded() async throws {
-    CircleFeatureFlags.serverCapability(enabled: false)
-
-    let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
-    let staleAppState = AppState(userDID: "did:plc:stale_account", client: client)
-    let transport = RecordingCircleTransport()
-    staleAppState.circleService = CircleService(transport: transport)
-
-    // If active account in lifecycle is different, the result must be discarded
-    let activeAppState = AppState(userDID: "did:plc:active_account", client: client)
-    let previousLifecycle = AppStateManager.shared.lifecycle
-    AppStateManager.shared.setLifecycleForTesting(.authenticated(activeAppState))
-    defer { AppStateManager.shared.setLifecycleForTesting(previousLifecycle) }
-    await staleAppState.probeCircleCapabilities()
-    #expect(!CircleFeatureFlags.isEnabled)
-  }
-
-  @Test("An explicit disabled AppView capability disables Circle-backed surfaces")
-  @MainActor
-  func explicitDisabledCapabilityDisablesCircles() async throws {
-    CircleFeatureFlags.serverCapability(enabled: true)
-    #expect(CircleFeatureFlags.isEnabled)
-
-    CircleFeatureFlags.serverCapability(enabled: false)
-    #expect(!CircleFeatureFlags.isEnabled)
-  }
 }
 
 /// Shared test fixtures for Circle tests.

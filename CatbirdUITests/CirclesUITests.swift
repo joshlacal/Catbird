@@ -92,18 +92,27 @@ final class CirclesUITests: XCTestCase {
     return el
   }
 
-  /// 1. Unsupported PDS: Circles disabled with explanation.
-  func testUnsupportedCapabilityShowsExplanation() throws {
+  /// Unsupported accounts should not advertise an unavailable preview feature.
+  func testUnsupportedCapabilityHidesCircles() throws {
     launchWithUnsupportedCircles()
-
     openDrawer()
+    XCTAssertFalse(app.buttons["Circles"].exists)
+    XCTAssertFalse(app.buttons["Circles, unsupported"].exists)
+    XCTAssertFalse(app.staticTexts["Circles requires a PDS that supports ATProto Spaces"].exists)
+    let screenshot = XCTAttachment(screenshot: app.screenshot())
+    screenshot.name = "Unsupported account hides Circles"
+    screenshot.lifetime = .keepAlways
+    add(screenshot)
+  }
 
-    let explanation = app.staticTexts["Circles requires a PDS that supports ATProto Spaces"]
-    XCTAssertTrue(explanation.waitForExistence(timeout: 5), "Expected unsupported capability explanation text")
-
-    let unsupportedEntry = app.buttons["Circles, unsupported"]
-    XCTAssertTrue(unsupportedEntry.waitForExistence(timeout: 5), "Expected disabled Circles entry")
-    XCTAssertFalse(unsupportedEntry.isEnabled, "Unsupported Circles entry must be disabled")
+  func testSupportedCapabilityShowsCircles() throws {
+    launchWithCircles()
+    openCirclesFeed()
+    XCTAssertTrue(app.navigationBars["Circles"].waitForExistence(timeout: 5))
+    let screenshot = XCTAttachment(screenshot: app.screenshot())
+    screenshot.name = "Supported account shows Circles"
+    screenshot.lifetime = .keepAlways
+    add(screenshot)
   }
 
   /// 2. Approved end-to-end scenario: Create Circle, post, verify badge, remove member, verify removal disclosure

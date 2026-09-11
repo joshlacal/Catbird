@@ -103,6 +103,14 @@ extension ReplyWrapper {
     return feedPost.reply?.parent.uri.uriString()
   }
 
+  /// Replies the API reports under this post but did not return.
+  var moreReplies: Int {
+    guard case .appBskyUnspeccedDefsThreadItemPost(let threadItemPost) = threadItem.value else {
+      return 0
+    }
+    return threadItemPost.moreReplies
+  }
+
   /// URI accessor that works for all thread item types
   var uri: ATProtocolURI {
     return threadItem.uri

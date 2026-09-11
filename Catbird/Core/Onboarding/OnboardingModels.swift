@@ -45,7 +45,7 @@ struct OnboardingContent {
     id: "feedDiscovery",
     type: .feedDiscovery,
     title: "Discover Custom Feeds",
-    description: "Bluesky's custom feeds let you see exactly what you want. Tap the + button to explore feeds curated by the community.",
+    description: "Bluesky's custom feeds let you see exactly what you want. Tap Add Feed to explore feeds curated by the community.",
     imageName: "plus.circle.fill",
     primaryButtonTitle: "Got it",
     secondaryButtonTitle: nil,

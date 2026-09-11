@@ -411,7 +411,7 @@ struct PostComposerViewUIKit: View {
           // Show a single editor instance.
           // In thread mode, the active editor is rendered inside threadEntriesSection.
           if !vm.isThreadMode {
-            if CircleFeatureFlags.isEnabled {
+            if appState.circlesEnabled || vm.destination != .public {
               CircleAudiencePicker(
                 selectedDestination: Binding(
                   get: { vm.destination },

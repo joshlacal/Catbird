@@ -292,8 +292,8 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
           onReactionTapped: { emoji in
             onReactionTapped?(emoji)
           },
-          onReactionLongPress: { _ in
-            onReactionLongPress?()
+          onReactionLongPress: onReactionLongPress.map { action in
+            { _ in action() }
           }
         )
       }

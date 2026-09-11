@@ -80,50 +80,34 @@ struct MLSConversationRowView: View {
           if let timestamp = conversation.lastMessageAt {
             Text(formatTimestamp(timestamp))
               .designCaption()
+              .lineLimit(1)
+              .fixedSize(horizontal: true, vertical: false)
               .foregroundColor(hasUnread ? .accentColor : .secondary)
               .fontWeight(hasUnread ? .medium : .regular)
           }
         }
 
-        HStack {
-          if let change = recentMemberChange {
-            HStack(spacing: 4) {
-              Image(systemName: change.icon)
-                .font(.system(size: 12))
-                .foregroundColor(change.color)
-
-              Text(change.text)
-                .designFootnote()
-                .foregroundColor(change.color)
-            }
-            .lineLimit(1)
-          } else if let lastMessage {
+        Group {
+          if let lastMessage {
             Text(lastMessageSenderName.isEmpty ? lastMessage.text : "\(lastMessageSenderName): \(lastMessage.text)")
-              .designFootnote()
               .foregroundColor(.secondary)
-              .lineLimit(1)
+          } else if let change = recentMemberChange {
+            Label(change.text, systemImage: change.icon)
+              .foregroundColor(change.color)
           } else {
-            Text(conversation.joinMethod == .externalCommit ? "This device joined" : "Encrypted chat")
-              .designFootnote()
-              .foregroundColor(.secondary)
-              .italic()
-              .lineLimit(1)
-          }
-
-          Spacer()
-
-          HStack(spacing: 2) {
-            Image(systemName: "person.2.fill")
-              .font(.system(size: 10))
-              .foregroundColor(.secondary)
-            Text("\(participants.count)")
-              .designFootnote()
+            Text(conversation.joinMethod == .externalCommit ? "This device joined" : "No messages yet")
               .foregroundColor(.secondary)
           }
         }
+        .designFootnote()
+        .lineLimit(2)
+        .multilineTextAlignment(.leading)
+        .frame(maxWidth: .infinity, alignment: .leading)
       }
     }
     .spacingSM(.vertical)
+    .alignmentGuide(.listRowSeparatorLeading) { _ in 0 }
+    .alignmentGuide(.listRowSeparatorTrailing) { dimensions in dimensions.width }
     .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
   }
 
@@ -150,7 +134,7 @@ struct MLSConversationRowView: View {
     } else if calendar.isDateInYesterday(date) {
       return "Yesterday"
     } else if calendar.dateComponents([.day], from: date, to: Date()).day! < 7 {
-      return date.formatted(.dateTime.weekday(.abbreviated))
+      return date.formatted(.dateTime.weekday(.wide))
     } else {
       return date.formatted(date: .numeric, time: .omitted)
     }

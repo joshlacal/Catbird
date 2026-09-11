@@ -49,18 +49,36 @@ enum MLSForegroundResumeCoordinator {
   private static var sceneTransitionGeneration: UInt64 = 0
   private static var currentScenePhase: ScenePhase?
   private static var rustRuntimeClosedForCurrentSuspension = false
+  private static var foregroundStoragePermit: MLSGRDBManager.ForegroundResumePermit?
 
   static func recordSceneTransition(to phase: ScenePhase) -> UInt64 {
+    // Revoke before publishing a new scene generation. A storage probe may be
+    // awaiting Keychain or SQLite on another executor while this transition runs.
+    foregroundStoragePermit?.revoke()
+    foregroundStoragePermit = nil
     sceneTransitionGeneration &+= 1
     currentScenePhase = phase
     if phase == .active {
       rustRuntimeClosedForCurrentSuspension = false
+      foregroundStoragePermit = MLSGRDBManager.ForegroundResumePermit()
     }
     return sceneTransitionGeneration
   }
 
   static func isCurrentActiveTransition(_ generation: UInt64) -> Bool {
     isCurrentTransition(generation, expectedPhase: .active)
+  }
+
+  static func storagePreparationPermit(
+    for generation: UInt64
+  ) -> MLSGRDBManager.ForegroundResumePermit? {
+    guard isCurrentActiveTransition(generation),
+          let permit = foregroundStoragePermit,
+          permit.isValid
+    else {
+      return nil
+    }
+    return permit
   }
 
   static func isCurrentTransition(_ generation: UInt64, expectedPhase: ScenePhase) -> Bool {
@@ -157,6 +175,7 @@ final class MLSSceneSuspensionCloseClaim {
   let transitionToken: UInt64
   let expectedPhase: ScenePhase
   private var claimed = false
+  private(set) var expirationRequested = false
 
   init(transitionToken: UInt64, expectedPhase: ScenePhase) {
     self.transitionToken = transitionToken
@@ -167,46 +186,30 @@ final class MLSSceneSuspensionCloseClaim {
     claimIfCurrent()
   }
 
+  var isCurrent: Bool {
+    expectedPhase != .active
+      && MLSForegroundResumeCoordinator.isCurrentTransition(
+        transitionToken,
+        expectedPhase: expectedPhase
+      )
+  }
+
+  func requestExpirationIfCurrent() -> Bool {
+    guard isCurrent else { return false }
+    expirationRequested = true
+    return true
+  }
+
   func claimNormalCloseIfCurrent() -> Bool {
     claimIfCurrent()
   }
 
   private func claimIfCurrent() -> Bool {
-    guard !claimed,
-          expectedPhase != .active,
-          MLSForegroundResumeCoordinator.isCurrentTransition(
-            transitionToken,
-            expectedPhase: expectedPhase
-          )
-    else {
+    guard !claimed, isCurrent else {
       return false
     }
     claimed = true
     return true
-  }
-}
-
-enum MLSSuspensionCloseOutcome: Equatable {
-  case rustPathUnavailable
-  case preparationFailed
-  case staleTransition
-  case closed
-}
-
-@MainActor
-enum MLSSuspensionCloseCoordinator {
-  static func run(
-    rustPathAvailable: Bool,
-    transitionStillCurrent: () -> Bool,
-    prepareRustRuntime: () async -> Bool,
-    closePreparedRuntime: () -> Void
-  ) async -> MLSSuspensionCloseOutcome {
-    guard rustPathAvailable else { return .rustPathUnavailable }
-    guard transitionStillCurrent() else { return .staleTransition }
-    guard await prepareRustRuntime() else { return .preparationFailed }
-    guard transitionStillCurrent() else { return .staleTransition }
-    closePreparedRuntime()
-    return .closed
   }
 }
 
@@ -238,9 +241,31 @@ enum CatbirdSwiftDataStore {
   }
 }
 #if os(iOS)
-/// Force the exact scene suspension's rustFull runtime closed immediately during
-/// background-task expiration. Claim validation, close, and lifecycle marking all
-/// execute in one MainActor turn so a newer foreground generation cannot interleave.
+/// Background launches may never create or transition a SwiftUI scene. Establish
+/// MLS admission before authentication's asynchronous startup can open storage.
+@MainActor
+private func prepareInitialMLSAdmission(applicationState: UIApplication.State, source: String) {
+  MLSInitialLifecycleCoordinator.shared.prepareForLaunch(
+    applicationIsActive: applicationState == .active
+  ) {
+    AppStateManager.shared.beginContextFreeMLSSuspension(reason: "Nonactive launch: \(source)")
+  }
+  let stateDescription: String
+  switch applicationState {
+  case .active: stateDescription = "active"
+  case .inactive: stateDescription = "inactive"
+  case .background: stateDescription = "background"
+  @unknown default: stateDescription = "unknown"
+  }
+  let clientSuspended = MLSClient.isSuspensionInProgress
+  let coreSuspended = MLSCoreContext.isSuspensionInProgress
+  let admissionBlocked = clientSuspended || coreSuspended
+  logger.notice("[InitialMLSLifecycle] source=\(source, privacy: .public) applicationState=\(stateDescription, privacy: .public) admissionBlocked=\(admissionBlocked) clientSuspended=\(clientSuspended) coreSuspended=\(coreSuspended)")
+}
+
+/// Close storage for the exact scene suspension during background-task expiration.
+/// Claim validation, close, and lifecycle marking all execute in one MainActor turn
+/// so a newer foreground generation cannot interleave.
 private func forceCloseSceneSuspensionSynchronously(
   claim: MLSSceneSuspensionCloseClaim,
   manager: MLSConversationManager?,
@@ -248,24 +273,38 @@ private func forceCloseSceneSuspensionSynchronously(
   reason: String
 ) {
   let closeIfClaimed: @MainActor () -> Void = {
-    guard claim.claimExpirationIfCurrent() else { return }
-    if let manager {
-      MLSClient.interruptAllContexts()
-      MLSCoreContext.interruptAllContexts()
-      MLSClient.emergencyCloseAllContexts(reason: reason)
-      manager.markRustRuntimeClosedForSuspend(reason: reason)
-    } else {
-      guard
-        let contextFreeSuspensionOwner,
-        contextFreeSuspensionOwner.emergencyCloseAllContextsIfOwned(reason: reason)
-      else {
-        return
+    guard claim.requestExpirationIfCurrent() else { return }
+    let swiftStorageClosed = MLSSuspensionCloseCoordinator.runExpiration(
+      transitionStillCurrent: { claim.isCurrent },
+      claimRustRuntimeClose: { claim.claimExpirationIfCurrent() },
+      closeRustRuntime: {
+        if let manager {
+          MLSClient.interruptAllContexts()
+          MLSCoreContext.interruptAllContexts()
+          MLSClient.emergencyCloseAllContexts(reason: reason)
+          manager.markRustRuntimeClosedForSuspend(reason: reason)
+        } else {
+          guard
+            let contextFreeSuspensionOwner,
+            contextFreeSuspensionOwner.emergencyCloseAllContextsIfOwned(reason: reason)
+          else {
+            return
+          }
+        }
+        MLSForegroundResumeCoordinator.markRustRuntimeClosedForSuspension(
+          claim.transitionToken,
+          expectedPhase: claim.expectedPhase
+        )
+      },
+      closeSwiftStorage: {
+        MLSGRDBManager.closeAllDatabasesForSuspension().isComplete
       }
-    }
-    MLSForegroundResumeCoordinator.markRustRuntimeClosedForSuspension(
-      claim.transitionToken,
-      expectedPhase: claim.expectedPhase
     )
+    if swiftStorageClosed {
+      logger.info("Swift storage closed during suspension expiration: \(reason, privacy: .public)")
+    } else {
+      logger.error("Swift storage remains open at suspension expiration; retaining admission leases and lifecycle gates: \(reason, privacy: .public)")
+    }
   }
 
   if Thread.isMainThread {
@@ -295,6 +334,10 @@ struct CatbirdApp: App {
       _ application: UIApplication,
       didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
+      prepareInitialMLSAdmission(
+        applicationState: application.applicationState,
+        source: "didFinishLaunching"
+      )
         // Initialize Sentry through SentryService for proper configuration
         SentryService.start()
 
@@ -336,9 +379,6 @@ struct CatbirdApp: App {
         logger.info("🔄 Requested widget refresh at app launch")
       }
       
-      // Tell UIKit that state restoration setup is complete
-      application.completeStateRestoration()
-
       // Schedule BGTasks now that registration happened at the beginning
       if #available(iOS 13.0, *) {
         BGTaskSchedulerManager.schedule()
@@ -348,36 +388,6 @@ struct CatbirdApp: App {
       }
       
       return true
-    }
-
-    func application(
-      _ application: UIApplication, 
-      shouldSaveApplicationState coder: NSCoder
-    ) -> Bool {
-      // Enable state saving - always save unless in testing mode
-      let isTesting = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
-      logger.debug("State restoration: shouldSaveApplicationState = \(!isTesting)")
-      return !isTesting
-    }
-
-    func application(
-      _ application: UIApplication, 
-      shouldRestoreApplicationState coder: NSCoder
-    ) -> Bool {
-      // Enable state restoration - always restore unless in testing mode
-      let isTesting = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
-      logger.debug("State restoration: shouldRestoreApplicationState = \(!isTesting)")
-      return !isTesting
-    }
-
-    func application(
-      _ application: UIApplication,
-      viewControllerWithRestorationIdentifierPath identifierComponents: [String],
-      coder: NSCoder
-    ) -> UIViewController? {
-      // Let view controllers handle their own restoration
-      logger.debug("State restoration: viewControllerWithRestorationIdentifierPath = \(identifierComponents)")
-      return nil
     }
 
     func application(
@@ -630,6 +640,12 @@ struct CatbirdApp: App {
 
   // MARK: - Initialization
   init() {
+    #if os(iOS)
+    prepareInitialMLSAdmission(
+      applicationState: UIApplication.shared.applicationState,
+      source: "CatbirdApp.init"
+    )
+    #endif
     logger.info("🚀 CatbirdApp initializing")
 
     // Register blue.catbird.* / place.stream.* lexicon types with Petrel's decoder registry
@@ -1253,10 +1269,6 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
             }
             .environment(appStateManager)
             .modelContainer(container)
-            // Monitor scene phase for feed state persistence
-            .onChange(of: scenePhase) { oldPhase, newPhase in
-              handleScenePhaseChange(from: oldPhase, to: newPhase)
-            }
             .modifier(BiometricAuthModifier(performCheck: performInitialBiometricCheck))
             .task(priority: .high) {
               await initializeApplicationIfNeeded()
@@ -1273,9 +1285,6 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
           }
           .environment(appStateManager)
           .modelContainer(container)
-          .onChange(of: scenePhase) { oldPhase, newPhase in
-            handleScenePhaseChange(from: oldPhase, to: newPhase)
-          }
           .modifier(BiometricAuthModifier(performCheck: performInitialBiometricCheck))
           .task(priority: .high) {
             await initializeApplicationIfNeeded()
@@ -1289,8 +1298,11 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
           })
         }
       }
+      .onChange(of: scenePhase, initial: true) { oldPhase, newPhase in
+        handleScenePhaseChange(from: oldPhase, to: newPhase)
+      }
       .catalystPlainButtons()
-      #if DEBUG
+      #if DEBUG && os(iOS)
       .overlay {
         if ProcessInfo.processInfo.arguments.contains("--bluemoji-visual-test") {
           BluemojiVisualTestView()
@@ -1354,8 +1366,8 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
               CircleAppViewAuthCoordinator.shared.complete(callback: url)
             }
           } else if (url.scheme == "blue.catbird" || url.scheme == "catbird") && (url.host == "e2e" || url.host == "test") {
-            // Handle E2E testing commands (only in E2E mode, iOS only)
-            #if os(iOS)
+            // Handle E2E testing commands (only in E2E mode)
+            #if os(iOS) || (DEBUG && os(macOS))
             logger.error("[E2E-URL] Received E2E URL: \(url.absoluteString), isE2EMode: \(appStateManager.isE2EMode)")
             if appStateManager.isE2EMode {
               Task { @MainActor in
@@ -1401,11 +1413,13 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
             }
           }
         }
-      #if os(macOS)
-      .windowStyle(.automatic)
-      .defaultSize(width: 1200, height: 800)
-      #endif
     }
+    #if os(macOS)
+    .windowStyle(.automatic)
+    .windowToolbarStyle(.unified)
+    .defaultSize(width: 1200, height: 800)
+    .windowResizability(.contentMinSize)
+    #endif
 
     #if os(macOS)
     macOSWindowScenes
@@ -1543,17 +1557,40 @@ private extension CatbirdApp {
     }
   }
 
+#if os(iOS)
+  /// Checks whether there are connected window scenes in the foreground (`.foregroundActive` or `.foregroundInactive`).
+  /// In multi-window environments (iPadOS / macOS Catalyst), process-wide database connections
+  /// and background suspension must only be initiated when all scenes are backgrounded (TN3187).
+  private var hasOtherActiveScenes: Bool {
+    UIApplication.shared.connectedScenes.contains { scene in
+      scene.activationState == .foregroundActive || scene.activationState == .foregroundInactive
+    }
+  }
+#endif
+
   @MainActor
   func handleScenePhaseChange(from oldPhase: ScenePhase, to newPhase: ScenePhase) {
+    MLSInitialLifecycleCoordinator.shared.recordSceneObservation()
     let sceneTransitionToken = MLSForegroundResumeCoordinator.recordSceneTransition(to: newPhase)
     let suspensionCloseClaim = MLSSceneSuspensionCloseClaim(
       transitionToken: sceneTransitionToken,
       expectedPhase: newPhase
     )
-    let suspensionManager = newPhase != .active
+
+    #if os(iOS)
+    let otherScenesActive = hasOtherActiveScenes
+    #else
+    let otherScenesActive = false
+    #endif
+
+    if otherScenesActive && (newPhase == .inactive || newPhase == .background) {
+      logger.info("Scene transitioned to \(String(describing: newPhase)), but other connected scenes remain active in foreground. Preserving process-wide database and MLS connections.")
+    }
+
+    let suspensionManager = (newPhase != .active && !otherScenesActive)
       ? appStateManager.lifecycle.appState?.mlsConversationManager : nil
     let contextFreeSuspensionOwner: MLSContextFreeLifecycleSuspensionOwner?
-    if newPhase != .active, suspensionManager == nil {
+    if newPhase != .active, !otherScenesActive, suspensionManager == nil {
       // Establish the exact owner before the expiration handler captures it.
       // This only closes admission; potentially blocking Rust preparation follows
       // acquisition of the background assertion below.
@@ -1576,7 +1613,7 @@ private extension CatbirdApp {
     // for in-flight database operations while they still hold file locks.
     // Keep this assertion through the asynchronous close and state-save work.
     var taskId: UIBackgroundTaskIdentifier = .invalid
-    if newPhase == .inactive || newPhase == .background {
+    if (newPhase == .inactive || newPhase == .background) && !otherScenesActive {
       taskId = UIApplication.shared.beginBackgroundTask(withName: "ScenePhaseTransition") {
         // Expiration: iOS is reclaiming time. Force-close everything NOW.
         logger.warning("ScenePhaseTransition expired — force-closing all contexts")
@@ -1595,7 +1632,7 @@ private extension CatbirdApp {
     #endif
 
     #if os(iOS)
-      if newPhase == .inactive || newPhase == .background {
+      if (newPhase == .inactive || newPhase == .background) && !otherScenesActive {
         MLSGRDBManager.setPeriodicCheckpointingSuspended(
           true,
           reason: "scenePhase \(String(describing: oldPhase)) → \(String(describing: newPhase))"
@@ -1620,7 +1657,7 @@ private extension CatbirdApp {
     // rejecting database operations, so they stop cleanly rather than crashing.
     // Using MainActor.assumeIsolated because onChange runs on main thread.
     // ═══════════════════════════════════════════════════════════════════════════
-    if newPhase == .inactive || newPhase == .background {
+    if (newPhase == .inactive || newPhase == .background) && !otherScenesActive {
       // Cancel any in-flight initialization task immediately before suspending
       appStateManager.lifecycle.appState?.cancelMLSInitialization()
 
@@ -1637,7 +1674,7 @@ private extension CatbirdApp {
     let contextFreeOwner = contextFreeSuspensionOwner
     #endif
 
-    if newPhase == .inactive || newPhase == .background, !rustPathAvailable {
+    if (newPhase == .inactive || newPhase == .background) && !otherScenesActive, !rustPathAvailable {
       #if os(iOS)
       // A missing rustFull runtime has no normal close path. Keep every gate closed
       // and interrupt any straggler; only background-task expiration may force-close.
@@ -1650,8 +1687,10 @@ private extension CatbirdApp {
     }
 
     // Suspend/resume GRDB early to avoid holding SQLite/SQLCipher locks across suspension (0xdead10cc).
+    // In multi-window environments, protect process-wide database connections if another scene is still active.
+    let shouldSuspendGRDB = (newPhase != .active) && !otherScenesActive
     GRDBSuspensionCoordinator.setLifecycleSuspended(
-      newPhase != .active,
+      shouldSuspendGRDB,
       reason: "scenePhase \(String(describing: oldPhase)) → \(String(describing: newPhase))"
     )
 
@@ -1678,15 +1717,10 @@ private extension CatbirdApp {
 
 #if os(iOS)
       // ═══════════════════════════════════════════════════════════════════════════
-      // 0xdead10cc FIX: Close Rust FFI connections on background.
-      // Rust FFI holds WAL locks with no suspension mechanism — must close explicitly.
-      // GRDB manages its own suspension via observesSuspensionNotifications.
-      // iOS exempts SQLite WAL file handles from 0xdead10cc (plaintext header).
-      //
-      // CRITICAL ORDERING: Signal NSE that app is active IMMEDIATELY on foreground,
-      // but delay the "inactive" signal until AFTER Rust FFI contexts are closed
-      // and GRDB has time to suspend. This prevents the NSE from writing to the
-      // shared database while GRDB's pool is mid-suspension.
+      // Close Rust contexts and Swift GRDB handles before ending execution time.
+      // GRDB suspension alone retains Catbird's separate admission file leases.
+      // Signal the NSE immediately on foreground, and signal inactivity only
+      // after both storage layers have actually finished closing.
       // ═══════════════════════════════════════════════════════════════════════════
       if newPhase == .active {
         // Tell NSE immediately: "I'm active, don't decrypt"
@@ -1697,110 +1731,108 @@ private extension CatbirdApp {
         }
       }
 
-      if newPhase == .inactive || newPhase == .background {
-        // WAL health snapshot BEFORE suspension — baseline for corruption detection
-        MLSGRDBManager.probeWALHealth(for: "all", label: "APP_SUSPENDING")
+      if (newPhase == .inactive || newPhase == .background) {
+        if otherScenesActive {
+          logger.info("Other window scenes are still active; skipping process-wide MLS and storage close")
+        } else {
+          // WAL health snapshot BEFORE suspension — baseline for corruption detection
+          MLSGRDBManager.probeWALHealth(for: "all", label: "APP_SUSPENDING")
 
-        // RAII background task protects the close operations
-        let bgTask = CatbirdBackgroundTask(name: "MLSSuspensionClose") {
-          // Last resort: iOS is killing our background time
-          forceCloseSceneSuspensionSynchronously(
-            claim: suspensionCloseClaim,
-            manager: suspensionOwner,
-            contextFreeSuspensionOwner: contextFreeOwner,
-            reason: "MLSSuspensionClose expired"
+          // RAII background task protects the close operations
+          let bgTask = CatbirdBackgroundTask(name: "MLSSuspensionClose") {
+            // Last resort: iOS is killing our background time
+            forceCloseSceneSuspensionSynchronously(
+              claim: suspensionCloseClaim,
+              manager: suspensionOwner,
+              contextFreeSuspensionOwner: contextFreeOwner,
+              reason: "MLSSuspensionClose expired"
+            )
+          }
+
+          defer { bgTask.end() }
+
+          let closeOutcome = await MLSSuspensionCloseCoordinator.run(
+            rustPathAvailable: rustPathAvailable || suspensionOwner == nil,
+            transitionStillCurrent: { suspensionCloseClaim.isCurrent },
+            prepareRustRuntime: { true },
+            closePreparedRuntime: {
+              guard suspensionCloseClaim.claimNormalCloseIfCurrent() else { return }
+              let reason = "scenePhase active→\(String(describing: newPhase))"
+              if let manager = suspensionOwner {
+                MLSClient.emergencyCloseAllContexts(reason: reason)
+                manager.markRustRuntimeClosedForSuspend(reason: reason)
+              } else {
+                // Closing through the captured owner preserves the context-free
+                // suspension boundary if manager initialization races this scene.
+                guard contextFreeOwner?.emergencyCloseAllContextsIfOwned(reason: reason) == true else {
+                  return
+                }
+              }
+              MLSForegroundResumeCoordinator.markRustRuntimeClosedForSuspension(
+                sceneTransitionToken,
+                expectedPhase: newPhase
+              )
+            },
+            closeSwiftStorage: {
+              MLSGRDBManager.closeAllDatabasesForSuspension().isComplete
+            },
+            waitForSwiftStorageRetry: {
+              // Let an already-admitted open or another closer finish publishing
+              // its handle/lease result without spinning or flooding close logs.
+              // This backoff only schedules another observed close result.
+              do {
+                try await Task.sleep(nanoseconds: 25_000_000)
+              } catch {
+                return false
+              }
+              return suspensionCloseClaim.isCurrent
+                && !suspensionCloseClaim.expirationRequested
+                && taskId != .invalid
+                && UIApplication.shared.backgroundTimeRemaining > 0
+                && !Task.isCancelled
+            }
           )
-        }
 
-        guard let manager = suspensionOwner else {
-          if suspensionCloseClaim.claimNormalCloseIfCurrent() {
-            MLSClient.emergencyCloseAllContexts(
-              reason: "scenePhase active→\(String(describing: newPhase)) context-free"
-            )
+          switch closeOutcome {
+          case .closed, .rustPathUnavailable:
+            break
+          case .staleTransition:
+            logger.debug("Skipping stale suspension lifecycle task after storage close wait")
+            return
+          case .preparationFailed:
+            logger.error("Rust suspension preparation failed; Swift storage drained and lifecycle gates retained")
+            return
+          case .storageCloseIncomplete:
+            logger.error("Swift suspension close incomplete; retaining admission leases and lifecycle gates")
+            return
           }
-          bgTask.end()
-          logger.warning("Closed context-free MLS contexts without the suspension-owning manager")
-          return
-        }
 
-        let closeOutcome = await MLSSuspensionCloseCoordinator.run(
-          rustPathAvailable: rustPathAvailable,
-          transitionStillCurrent: {
-            MLSForegroundResumeCoordinator.isCurrentTransition(
-              sceneTransitionToken,
-              expectedPhase: newPhase
-            )
-          },
-          prepareRustRuntime: {
-            true
-          },
-          closePreparedRuntime: {
-            guard suspensionCloseClaim.claimNormalCloseIfCurrent() else { return }
-            MLSClient.emergencyCloseAllContexts(
-              reason: "scenePhase active→\(String(describing: newPhase))"
-            )
-            manager.markRustRuntimeClosedForSuspend(
-              reason: "scenePhase active→\(String(describing: newPhase)) prepared close"
-            )
-            MLSForegroundResumeCoordinator.markRustRuntimeClosedForSuspension(
-              sceneTransitionToken,
-              expectedPhase: newPhase
-            )
-          }
-        )
-
-        switch closeOutcome {
-        case .closed:
-          break
-        case .staleTransition:
-          bgTask.end()
-          logger.debug("Skipping stale suspension lifecycle task after Rust preparation")
-          return
-        case .preparationFailed:
-          bgTask.end()
-          logger.error("Rust suspension preparation failed; keeping lifecycle gates closed")
-          return
-        case .rustPathUnavailable:
+          // A missing Rust path can be reused only if the preceding suspended
+          // phase or expiration closed it. Swift storage was still drained above.
           guard MLSForegroundResumeCoordinator.hasClosedRustRuntimeForSuspension(
             sceneTransitionToken,
             expectedPhase: newPhase
           ) else {
-            bgTask.end()
-            logger.warning("Rust suspension path unavailable; keeping lifecycle gates closed")
+            logger.warning("Rust suspension close unconfirmed; Swift storage drained and lifecycle gates retained")
             return
           }
-          logger.debug("Reusing Rust close completed by the preceding suspended phase")
+
+          // Both close results are confirmed in this MainActor turn. The NSE may
+          // now open the shared storage without the app retaining admission leases.
+          if let appState = appStateManager.lifecycle.appState {
+            MLSNotificationCoordinator.setMainAppActive(false, activeUserDID: appState.userDID)
+          } else {
+            MLSNotificationCoordinator.setMainAppActive(false, activeUserDID: nil)
+          }
+
+          logger.info("Rust runtime and Swift storage closed; NSE allowed for suspension")
         }
-
-        // Step 2: Give GRDB time to complete its auto-suspension (checkpoint + release readers).
-        // observesSuspensionNotifications fires on didEnterBackground which may be
-        // slightly after scenePhase changes. 200ms is enough for the checkpoint to complete.
-        try? await Task.sleep(nanoseconds: 200_000_000)
-
-        guard MLSForegroundResumeCoordinator.isCurrentTransition(
-          sceneTransitionToken,
-          expectedPhase: newPhase
-        ) else {
-          bgTask.end()
-          logger.debug("Skipping stale suspension lifecycle task after close delay")
-          return
-        }
-
-        // Step 3: NOW signal NSE that it's safe to decrypt.
-        // At this point, Rust FFI is closed and GRDB is fully suspended.
-        if let appState = appStateManager.lifecycle.appState {
-          MLSNotificationCoordinator.setMainAppActive(false, activeUserDID: appState.userDID)
-        } else {
-          MLSNotificationCoordinator.setMainAppActive(false, activeUserDID: nil)
-        }
-
-        bgTask.end()
-        logger.info("✅ [0xdead10cc-FIX] Rust FFI closed + NSE green-lit for suspension")
       }
 
       // Reload MLS state from disk when returning to foreground.
       // The NSE may have advanced the MLS ratchet while the app was in background.
-      if oldPhase == .background || oldPhase == .inactive, newPhase == .active {
+      if newPhase == .active,
+         oldPhase != .active || MLSClient.isSuspensionInProgress || MLSCoreContext.isSuspensionInProgress {
         // WAL health snapshot ON RESUME — detect corruption from NSE activity while suspended
         MLSGRDBManager.probeWALHealth(for: "all", label: "APP_RESUMING")
         await resumeMLSAfterReturningToForeground(transitionToken: sceneTransitionToken)
@@ -1810,12 +1842,14 @@ private extension CatbirdApp {
       if newPhase == .background {
         saveApplicationState()
 #if os(iOS)
-        if #available(iOS 13.0, *) {
-          ChatBackgroundRefreshManager.schedule()
-          BackgroundCacheRefreshManager.schedule()
-          MLSBackgroundRefreshManager.scheduleInitialRefresh()
+        if !otherScenesActive {
+          if #available(iOS 13.0, *) {
+            ChatBackgroundRefreshManager.schedule()
+            BackgroundCacheRefreshManager.schedule()
+            MLSBackgroundRefreshManager.scheduleInitialRefresh()
+          }
+          logger.info("Background work scheduled after Rust and Swift storage close")
         }
-        logger.info("✅ Background scheduled - GRDB auto-suspended, Rust FFI closed")
 #endif
       }
     }
@@ -1849,6 +1883,19 @@ private extension CatbirdApp {
         logger.warning("⏭️ [RESUME] Discarded stale context-free foreground transition")
       case .resumed:
         logger.info("✅ [RESUME] Released exact context-free MLS lifecycle suspension")
+        // Startup may already have deferred its one-shot MLS initialization while
+        // the cold-launch owner held admission closed. Retry only after releasing
+        // that owner, and only for this still-active scene's enabled account.
+        if MLSForegroundResumeCoordinator.isCurrentActiveTransition(transitionToken),
+           let foregroundAppState = appStateManager.lifecycle.appState,
+           ExperimentalSettings.shared.isMLSChatEnabled(for: foregroundAppState.userDID)
+             || ProcessInfo.processInfo.arguments.contains("--e2e-mode") {
+          do {
+            try await foregroundAppState.initializeMLS()
+          } catch {
+            logger.error("MLS initialization after context-free foreground resume failed: \(error.localizedDescription, privacy: .public)")
+          }
+        }
       }
       return
     }
@@ -1860,8 +1907,14 @@ private extension CatbirdApp {
       },
       prepareStorage: {
         guard let appState else { return }
+        guard let permit = MLSForegroundResumeCoordinator.storagePreparationPermit(
+          for: transitionToken
+        ) else {
+          throw CancellationError()
+        }
         let preparation = try await MLSGRDBManager.shared.prepareForForegroundResume(
-          for: appState.userDID
+          for: appState.userDID,
+          permit: permit
         )
         switch preparation {
         case .ready:

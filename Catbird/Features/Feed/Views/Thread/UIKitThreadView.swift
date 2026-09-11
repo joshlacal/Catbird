@@ -259,6 +259,21 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     reloadThread()
   }
   
+  override func viewDidLayoutSubviews() {
+    super.viewDidLayoutSubviews()
+
+    // Content extends beneath the glass; reserve its occluded area for scrolling
+    // without counting the system's automatic bottom safe-area inset twice.
+    let coveredHeight = composePromptContainer.isHidden
+      ? 0 : max(0, collectionView.frame.maxY - composePromptContainer.frame.minY)
+    let systemBottomInset = collectionView.adjustedContentInset.bottom - collectionView.contentInset.bottom
+    let bottomInset = max(0, coveredHeight - systemBottomInset)
+    if abs(collectionView.contentInset.bottom - bottomInset) > 0.5 {
+      collectionView.contentInset.bottom = bottomInset
+      collectionView.verticalScrollIndicatorInsets.bottom = bottomInset
+    }
+  }
+
   override func viewWillAppear(_ animated: Bool) {
     super.viewWillAppear(animated)
     
@@ -469,10 +484,10 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       collectionView.topAnchor.constraint(equalTo: view.topAnchor),
       collectionView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
       collectionView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-      collectionView.bottomAnchor.constraint(equalTo: composePromptContainer.topAnchor),
+      collectionView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
 
-      composePromptContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-      composePromptContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+      composePromptContainer.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
+      composePromptContainer.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor),
       composePromptContainer.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor),
 
       loadingView.topAnchor.constraint(equalTo: view.topAnchor),
@@ -540,7 +555,8 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     case .loadMoreParents:
       layoutSection.interGroupSpacing = 0
     case .parentPosts:
-      layoutSection.interGroupSpacing = 3
+      // Ancestors sit flush so their connector reads as one continuous line.
+      layoutSection.interGroupSpacing = 0
       layoutSection.contentInsets = NSDirectionalEdgeInsets(
         top: 0, leading: 0, bottom: 0, trailing: 0)
     case .mainPost:
@@ -642,7 +658,8 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
           parentPost: parentPost,
           appState: self.appState,
           path: self.path,
-          visibilityContext: self.visibilityContext
+          visibilityContext: self.visibilityContext,
+          showsConnectorAbove: indexPath.item > 0
         )
         return cell
 
@@ -656,7 +673,8 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
           path: self.path,
           opThreadPostIndex: self.mainPostIndex,
           opThreadPostCount: self.mainPostCount,
-          visibilityContext: self.visibilityContext
+          visibilityContext: self.visibilityContext,
+          showsConnectorAbove: !self.parentPosts.isEmpty
         )
         return cell
       case .blockedAnchor:
@@ -1101,7 +1119,11 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   static func makeComposePromptHostingController(
     rootView: AnyView
   ) -> UIHostingController<AnyView> {
-    let hostingController = UIHostingController(rootView: rootView)
+    let hostingController = UIHostingController(
+      rootView: AnyView(rootView.fixedSize(horizontal: false, vertical: true))
+    )
+    hostingController.view.setContentHuggingPriority(.required, for: .vertical)
+    hostingController.view.setContentCompressionResistancePriority(.required, for: .vertical)
     hostingController.sizingOptions = .intrinsicContentSize
     return hostingController
   }
@@ -1120,7 +1142,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       .applyAppStateEnvironment(appState)
 
     if let existingHC = composePromptHostingController {
-      existingHC.rootView = AnyView(promptView)
+      existingHC.rootView = AnyView(promptView.fixedSize(horizontal: false, vertical: true))
       composePromptContainer.isHidden = false
       return
     }
@@ -1630,6 +1652,9 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     // parentPosts is already sorted by depth with oldest (most negative) first
     let parentItems = parentPosts.map { Item.parentPost($0) }
     snapshot.appendItems(parentItems, toSection: .parentPosts)
+    // The previously oldest parent now has an ancestor above it; refresh the
+    // connector state of every parent row.
+    snapshot.reconfigureItems(parentItems)
     
     // Add main post
     if let mainPost = mainPost {
@@ -1762,7 +1787,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
         // Clamp to valid bounds
         let minOffset = -safeAreaTop
         let maxEstimatedContentHeight = CGFloat(currentPostIds.count + newParentsCount) * estimatedItemHeight
-        let maxOffset = max(minOffset, maxEstimatedContentHeight - collectionView.bounds.height + safeAreaTop)
+        let maxOffset = max(minOffset, maxEstimatedContentHeight - collectionView.bounds.height + collectionView.adjustedContentInset.bottom)
         
         targetOffset = CGPoint(
           x: 0,

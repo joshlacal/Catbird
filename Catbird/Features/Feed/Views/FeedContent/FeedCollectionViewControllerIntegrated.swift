@@ -97,6 +97,14 @@ import os
     private var shouldReloadDataOnce = false
     /// O(1) post lookup used during cell configuration
     private var postsByID: [String: CachedFeedViewPost] = [:]
+    private var trendingContent = TrendingFeedContent()
+
+    func setTrendingContent(_ content: TrendingFeedContent) {
+      guard content != trendingContent else { return }
+      trendingContent = content
+      guard dataSource != nil else { return }
+      Task { @MainActor [weak self] in await self?.performUpdate() }
+    }
     
     // MARK: - Initialization
 
@@ -568,9 +576,8 @@ import os
         cell.selectedBackgroundView = nil
 
         cell.contentConfiguration = UIHostingConfiguration {
-          TrendingFeedInterstitialView()
+          TrendingFeedInterstitialView(content: self.trendingContent)
             .applyAppStateEnvironment(appState)
-            .padding(.vertical, 4)
         }
         .margins(.all, 0)
       }
@@ -716,7 +723,7 @@ import os
         }
 
         var items: [Item] = []
-        let shouldShowTrending = (stateManager.appState.appSettings.showTrendingTopics || stateManager.appState.appSettings.showTrendingVideos)
+        let shouldShowTrending = !trendingContent.isEmpty
         let isEligibleFeed = stateManager.currentFeedType == .timeline || feedID.contains("discover") || feedID == "timeline"
         let insertIndex = 6
 
@@ -738,9 +745,10 @@ import os
           shouldReloadDataOnce = false
           await dataSource.applySnapshotUsingReloadData(snapshot)
         } else if #available(iOS 15.0, *) {
-          if currentItemIdentifiers == snapshot.itemIdentifiers {
-            snapshot.reconfigureItems(items)
-          }
+          // Existing rows may gain thread context in the same update that inserts
+          // other posts. Reconfigure survivors even when the identifier list changes.
+          let existingItems = Set(currentItemIdentifiers)
+          snapshot.reconfigureItems(items.filter { existingItems.contains($0) })
           await dataSource.apply(snapshot, animatingDifferences: false)
         } else {
           // Fallback for iOS 14 (though minimum is iOS 16)

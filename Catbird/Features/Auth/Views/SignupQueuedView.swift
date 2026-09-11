@@ -29,17 +29,17 @@ public struct SignupQueuedView: View {
         onActivated: (() -> Void)? = nil,
         onSignOut: (() -> Void)? = nil
     ) {
-        self._placeInQueue = State(initialValue: initialPlaceInQueue.map { max(1, $0) })
-        self._estimatedTimeMs = State(initialValue: initialEstimatedTimeMs)
         self.onActivated = onActivated
         self.onSignOut = onSignOut
+        self._placeInQueue = State(initialValue: initialPlaceInQueue.map { max(1, $0) })
+        self._estimatedTimeMs = State(initialValue: initialEstimatedTimeMs)
     }
     
     public var body: some View {
         NavigationStack {
             ZStack {
                 // Background
-                Color(uiColor: .systemGroupedBackground)
+                Color(platformColor: PlatformColor.platformSystemGroupedBackground)
                     .ignoresSafeArea()
                 
                 VStack(spacing: 28) {
@@ -193,7 +193,7 @@ public struct SignupQueuedView: View {
             .padding(.bottom, 16)
             .padding(.top, placeInQueue == nil ? 16 : 0)
         }
-        .background(Color(uiColor: .secondarySystemGroupedBackground))
+        .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
         .clipShape(RoundedRectangle(cornerRadius: 16))
     }
     

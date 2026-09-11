@@ -6,7 +6,32 @@
 //
 
 import SwiftUI
-// **Note:** this is causing ambiguity with SwiftUI
+#if os(macOS)
+public struct PlatformTextInputAutocapitalization: Sendable {
+    public static let never = PlatformTextInputAutocapitalization()
+    public static let words = PlatformTextInputAutocapitalization()
+    public static let sentences = PlatformTextInputAutocapitalization()
+    public static let characters = PlatformTextInputAutocapitalization()
+}
+
+public struct PlatformNavigationBarTitleDisplayMode: Sendable {
+    public static let automatic = PlatformNavigationBarTitleDisplayMode()
+    public static let inline = PlatformNavigationBarTitleDisplayMode()
+    public static let large = PlatformNavigationBarTitleDisplayMode()
+}
+
+public extension View {
+    @inlinable
+    func textInputAutocapitalization(_ capitalization: PlatformTextInputAutocapitalization?) -> some View {
+        self
+    }
+
+    @inlinable
+    func navigationBarTitleDisplayMode(_ displayMode: PlatformNavigationBarTitleDisplayMode) -> some View {
+        self
+    }
+}
+#endif
 
 
 

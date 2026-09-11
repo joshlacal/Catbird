@@ -56,11 +56,13 @@ struct MLSChatRequestsView: View {
   // Block sheet state
   @State private var requestToBlock: MLSConversationModel?
   @State private var showingBlockSheet = false
+  @State private var path = NavigationPath()
+  @State private var profileTab = 0
 
   private let logger = Logger(subsystem: "blue.catbird", category: "MLSChatRequests")
 
   var body: some View {
-    NavigationStack {
+    NavigationStack(path: $path) {
       Group {
         if isLoading && requests.isEmpty {
           ProgressView("Loading requests…")
@@ -97,6 +99,13 @@ struct MLSChatRequestsView: View {
                   guard !groupConversationIDs.contains(request.conversationID) else { return }
                   requestToBlock = request
                   showingBlockSheet = true
+                },
+                onReview: {
+                  appState.navigationManager.targetMLSConversationId = request.conversationID
+                  dismiss()
+                },
+                onOpenProfile: { did in
+                  path.append(NavigationDestination.profile(did))
                 }
               )
               .listRowSeparator(.visible)
@@ -108,6 +117,10 @@ struct MLSChatRequestsView: View {
       }
       .navigationTitle("Chat Requests")
       .toolbarTitleDisplayMode(.inline)
+      .navigationDestination(for: NavigationDestination.self) { destination in
+        NavigationHandler.viewForDestination(
+          destination, path: $path, appState: appState, selectedTab: $profileTab)
+      }
       .toolbar {
         ToolbarItem(placement: .cancellationAction) {
             Button {
@@ -284,28 +297,35 @@ private struct MLSChatRequestRow: View {
   let onAccept: () -> Void
   let onDecline: () -> Void
   let onBlock: () -> Void
-
+  let onReview: () -> Void
+  let onOpenProfile: (String) -> Void
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
       HStack(alignment: .top, spacing: 12) {
-        if isGroup {
-          Image(systemName: "person.2.fill")
-            .frame(width: 44, height: 44)
-            .background(.quaternary, in: Circle())
-        } else {
-          AsyncProfileImage(url: senderProfile?.avatarURL, size: 44)
+        profileButton {
+          if isGroup {
+            Image(systemName: "person.2.fill")
+              .frame(width: 44, height: 44)
+              .background(.quaternary, in: Circle())
+          } else {
+            AsyncProfileImage(url: senderProfile?.avatarURL, size: 44)
+          }
         }
 
         VStack(alignment: .leading, spacing: 4) {
-          Text(displayName)
-            .designCallout()
-            .foregroundColor(.primary)
-            .lineLimit(1)
+          profileButton {
+            VStack(alignment: .leading, spacing: 4) {
+              Text(displayName)
+                .designCallout()
+                .foregroundColor(.primary)
+                .lineLimit(1)
 
-          Text(handleText)
-            .designFootnote()
-            .foregroundColor(.secondary)
-            .lineLimit(1)
+              Text(handleText)
+                .designFootnote()
+                .foregroundColor(.secondary)
+                .lineLimit(1)
+            }
+          }
 
           if !isGroup, let title = request.title, !title.isEmpty {
             Text(title)
@@ -329,6 +349,10 @@ private struct MLSChatRequestRow: View {
       }
 
       HStack(spacing: 12) {
+        Button("Review", action: onReview)
+          .buttonStyle(.bordered)
+          .disabled(isProcessing)
+
         Button(role: .destructive, action: onDecline) {
           if isProcessing {
             ProgressView()
@@ -364,6 +388,18 @@ private struct MLSChatRequestRow: View {
       }
     }
     .padding(.vertical, 8)
+  }
+
+  /// Groups have no single profile; unresolved senders have no DID to open.
+  @ViewBuilder
+  private func profileButton<Label: View>(@ViewBuilder _ label: () -> Label) -> some View {
+    if isGroup || senderDID.isEmpty {
+      label()
+    } else {
+      Button { onOpenProfile(senderDID) } label: { label() }
+        .buttonStyle(.plain)
+        .accessibilityHint("Opens profile")
+    }
   }
 
   private var displayName: String {

@@ -21,6 +21,7 @@ struct FeedCollectionViewIntegrated: UIViewControllerRepresentable {
     @Binding var navigationPath: NavigationPath
     var onScrollOffsetChanged: ((CGFloat) -> Void)?
     var headerView: AnyView?
+    var trendingContent: TrendingFeedContent
     
     final class Coordinator {
         var lastHeaderPresent: Bool = false
@@ -55,6 +56,7 @@ struct FeedCollectionViewIntegrated: UIViewControllerRepresentable {
             controller.setHeaderView(headerView)
             context.coordinator.lastHeaderPresent = present
         }
+        controller.setTrendingContent(trendingContent)
         
         // Theme updates are handled by the UIKitStateObserver<ThemeManager> in the controller
         // No need to force theme updates here - they happen automatically when theme properties change
@@ -108,15 +110,37 @@ struct FeedCollectionViewWrapper: View {
     @Binding var navigationPath: NavigationPath
     var onScrollOffsetChanged: ((CGFloat) -> Void)?
     var headerView: AnyView? = nil
+    @State private var trendingContent = TrendingFeedContent()
+    @State private var loadedTrendingRequestID: String?
+
+    private var trendingRequestID: String {
+        let appState = stateManager.appState
+        return "\(appState.userDID ?? "")|\(stateManager.currentFeedType.identifier)|\(appState.appSettings.showTrendingTopics)|\(appState.appSettings.showTrendingVideos)"
+    }
     
     var body: some View {
         FeedCollectionViewIntegrated(
             stateManager: stateManager,
             navigationPath: $navigationPath,
             onScrollOffsetChanged: onScrollOffsetChanged,
-            headerView: headerView
+            headerView: headerView,
+            trendingContent: loadedTrendingRequestID == trendingRequestID ? trendingContent : TrendingFeedContent()
         )
         .catalystPlainButtons()
+        .task(id: trendingRequestID) {
+            let requestID = trendingRequestID
+            // `.task` restarts on every reappear (e.g. back from a pushed post); keep the
+            // already-loaded trending content instead of refetching a reshuffled set.
+            guard loadedTrendingRequestID != requestID else { return }
+            let feed = stateManager.currentFeedType
+            guard feed == .timeline || feed.identifier.contains("discover") || feed.identifier == "timeline" else {
+                return
+            }
+            let content = await TrendingFeedContent.load(appState: stateManager.appState)
+            guard !Task.isCancelled else { return }
+            trendingContent = content
+            loadedTrendingRequestID = requestID
+        }
     }
 }
 #else
