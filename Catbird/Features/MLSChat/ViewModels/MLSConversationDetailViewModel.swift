@@ -86,7 +86,9 @@ final class MLSConversationDetailViewModel {
 
     // MARK: - Dependencies
 
-    private let database: MLSDatabase
+    // The manager replaces its pool after suspension; an open detail view keeps
+    // its drafts and model while resolving each operation against current storage.
+    private var database: MLSDatabase { conversationManager.database }
     let apiClient: MLSAPIClient // Internal for admin dashboard access
     let conversationManager: MLSConversationManager // Internal for admin features access
     private let logger = Logger(subsystem: "blue.catbird", category: "MLSConversationDetailViewModel")
@@ -117,12 +119,10 @@ final class MLSConversationDetailViewModel {
 
     init(
         conversationId: String,
-        database: MLSDatabase,
         apiClient: MLSAPIClient,
         conversationManager: MLSConversationManager
     ) {
         self.conversationId = conversationId
-        self.database = database
         self.apiClient = apiClient
         self.conversationManager = conversationManager
         logger.debug("MLSConversationDetailViewModel initialized for conversation: \(conversationId)")

@@ -34,6 +34,7 @@ enum MLSForegroundResumeOutcome: Equatable {
   case managerUnavailable
   case preparationFailed
   case failedStillSuspended
+  case runtimeRecoveryFailed
   case staleTransition
   case resumed
 }
@@ -115,6 +116,7 @@ enum MLSForegroundResumeCoordinator {
   enum MLSResumeResult: Equatable {
     case resumed
     case failedStillSuspended
+    case runtimeRecoveryFailed
   }
 
   static func run(
@@ -139,6 +141,8 @@ enum MLSForegroundResumeCoordinator {
     switch await resumeManager() {
     case .failedStillSuspended:
       return .failedStillSuspended
+    case .runtimeRecoveryFailed:
+      return .runtimeRecoveryFailed
     case .resumed:
       guard resumeStillCurrent() else {
         reassertSuspensionAfterStaleResume()
@@ -1929,8 +1933,12 @@ private extension CatbirdApp {
         appState.mlsServiceState.clearDatabaseFailure()
       },
       resumeManager: {
-        await manager.resumeMLSOperations()
-        return MLSClient.isSuspensionInProgress ? .failedStillSuspended : .resumed
+        let resumed = await manager.resumeMLSOperations()
+        guard resumed else {
+          return MLSClient.isSuspensionInProgress || MLSCoreContext.isSuspensionInProgress
+            ? .failedStillSuspended : .runtimeRecoveryFailed
+        }
+        return .resumed
       },
       reassertSuspensionAfterStaleResume: {
         guard !MLSForegroundResumeCoordinator.isApplicationActive else {
@@ -1944,6 +1952,12 @@ private extension CatbirdApp {
         MLSCoreContext.interruptAllContexts()
       },
       reloadProjection: {
+        // Suspension closes the pool retained by AppState. Core has adopted the
+        // replacement before completing resume; publish that same pool before
+        // any projection read, without waiting for the legacy refresh callback.
+        if let database = manager.database as? DatabasePool {
+          appState?.updateMLSDatabase(database)
+        }
         await appState?.reloadMLSProjectionFromDisk()
       },
       performBackup: {
@@ -1960,6 +1974,8 @@ private extension CatbirdApp {
       logger.error("❌ [RESUME] Foreground MLS preparation failed; keeping MLS lifecycle gates closed")
     case .failedStillSuspended:
       logger.error("❌ [RESUME] MLS manager resume failed; lifecycle gates remain closed")
+    case .runtimeRecoveryFailed:
+      logger.error("❌ [RESUME] MLS runtime recovery failed; foreground transaction did not complete")
     case .staleTransition:
       logger.warning("⏭️ [RESUME] Discarded stale foreground transition")
     case .resumed:

@@ -13,6 +13,7 @@ import SwiftUI
 @available(macOS 13.0, *)
 struct MacOSMLSConversationView: View {
   @Environment(AppState.self) private var appState
+  @Environment(\.scenePhase) private var scenePhase
   let conversationId: String
 
   @State private var dataSource: MLSConversationDataSource?
@@ -39,6 +40,19 @@ struct MacOSMLSConversationView: View {
             showingEmojiPicker = true
           }
         )
+        .task(id: "\(appState.nseStateReloadTrigger):\(scenePhase)") {
+          guard !Task.isCancelled,
+                scenePhase == .active,
+                !MLSClient.isSuspensionInProgress,
+                !MLSCoreContext.isSuspensionInProgress,
+                let manager = viewModel?.conversationManager,
+                manager.userDid == appState.userDID,
+                appState.mlsConversationManager === manager,
+                !manager.isShuttingDown,
+                manager.currentCoordinationGeneration == MLSCoordinationStore.shared.currentGeneration
+          else { return }
+          await dataSource.loadMessages()
+        }
       } else {
         ProgressView("Loading encrypted conversation...")
           .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -117,7 +131,6 @@ struct MacOSMLSConversationView: View {
 
     let newViewModel = MLSConversationDetailViewModel(
       conversationId: conversationId,
-      database: manager.database,
       apiClient: manager.apiClient,
       conversationManager: manager
     )

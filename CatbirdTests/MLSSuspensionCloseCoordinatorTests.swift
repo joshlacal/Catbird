@@ -1,5 +1,9 @@
 import Testing
 @testable import Catbird
+#if os(iOS)
+import Foundation
+import GRDB
+#endif
 
 @MainActor
 @Suite("MLS suspension storage close", .serialized)
@@ -151,6 +155,119 @@ struct MLSSuspensionCloseCoordinatorTests {
   }
 
   #if os(iOS)
+  @Test("Successful resume adopts the replacement pool before projection reads")
+  func foregroundResumeHandsOffReplacementPoolBeforeProjectionRead() async throws {
+    let databaseURL = FileManager.default.temporaryDirectory
+      .appendingPathComponent("mls-foreground-pool-\(UUID().uuidString).sqlite")
+    let closedPool = try DatabasePool(path: databaseURL.path)
+    try await closedPool.write { db in
+      try db.execute(sql: "CREATE TABLE resume_probe(value INTEGER NOT NULL)")
+      try db.execute(sql: "INSERT INTO resume_probe VALUES (42)")
+    }
+    try closedPool.close()
+    #expect(throws: DatabaseError.self) {
+      try closedPool.read { try Int.fetchOne($0, sql: "SELECT value FROM resume_probe") }
+    }
+    let replacementPool = try DatabasePool(path: databaseURL.path)
+    defer { try? replacementPool.close() }
+    var managerPool = closedPool
+    var projectionPool = closedPool
+    var projectionValue: Int?
+    var events: [String] = []
+    let generation = MLSForegroundResumeCoordinator.recordSceneTransition(to: .active)
+    defer { _ = MLSForegroundResumeCoordinator.recordSceneTransition(to: .inactive) }
+
+    let outcome = await MLSForegroundResumeCoordinator.run(
+      managerAvailable: true,
+      resumeStillCurrent: { MLSForegroundResumeCoordinator.isCurrentActiveTransition(generation) },
+      prepareStorage: { events.append("prepared") },
+      resumeManager: {
+        await Task.yield()
+        managerPool = replacementPool
+        events.append("manager resumed")
+        return .resumed
+      },
+      reassertSuspensionAfterStaleResume: { Issue.record("Current resume was treated as stale") },
+      reloadProjection: {
+        projectionPool = managerPool
+        events.append("pool handed off")
+        do {
+          projectionValue = try await projectionPool.read {
+            try Int.fetchOne($0, sql: "SELECT value FROM resume_probe")
+          }
+          events.append("projection read")
+        } catch {
+          Issue.record("Projection used closed storage: \(error)")
+        }
+      },
+      performBackup: { events.append("backup") }
+    )
+
+    #expect(outcome == .resumed)
+    #expect(projectionPool === replacementPool)
+    #expect(projectionValue == 42)
+    #expect(events == ["prepared", "manager resumed", "pool handed off", "projection read", "backup"])
+  }
+
+  @Test("A failed Core resume cannot hand off storage or reload the projection")
+  func failedForegroundResumeSkipsPoolHandoff() async {
+    let generation = MLSForegroundResumeCoordinator.recordSceneTransition(to: .active)
+    defer { _ = MLSForegroundResumeCoordinator.recordSceneTransition(to: .inactive) }
+    var projectionReloaded = false
+    let outcome = await MLSForegroundResumeCoordinator.run(
+      managerAvailable: true,
+      resumeStillCurrent: { MLSForegroundResumeCoordinator.isCurrentActiveTransition(generation) },
+      prepareStorage: {},
+      resumeManager: { await Task.yield(); return .failedStillSuspended },
+      reassertSuspensionAfterStaleResume: { Issue.record("Failed resume was treated as stale") },
+      reloadProjection: { projectionReloaded = true },
+      performBackup: { Issue.record("Failed resume performed backup") }
+    )
+    #expect(outcome == .failedStillSuspended)
+    #expect(!projectionReloaded)
+  }
+
+  @Test("Becoming inactive during Core resume prevents the projection pool handoff")
+  func staleForegroundResumeSkipsPoolHandoff() async {
+    let generation = MLSForegroundResumeCoordinator.recordSceneTransition(to: .active)
+    var staleResumeHandled = false
+    var projectionReloaded = false
+    let outcome = await MLSForegroundResumeCoordinator.run(
+      managerAvailable: true,
+      resumeStillCurrent: { MLSForegroundResumeCoordinator.isCurrentActiveTransition(generation) },
+      prepareStorage: {},
+      resumeManager: {
+        await Task.yield()
+        _ = MLSForegroundResumeCoordinator.recordSceneTransition(to: .inactive)
+        return .resumed
+      },
+      reassertSuspensionAfterStaleResume: { staleResumeHandled = true },
+      reloadProjection: { projectionReloaded = true },
+      performBackup: { Issue.record("Stale resume performed backup") }
+    )
+    #expect(outcome == .staleTransition)
+    #expect(staleResumeHandled)
+    #expect(!projectionReloaded)
+  }
+
+  @Test("Open lifecycle gates do not make a failed runtime recovery successful")
+  func failedRuntimeRecoverySkipsProjectionHandoff() async {
+    let generation = MLSForegroundResumeCoordinator.recordSceneTransition(to: .active)
+    defer { _ = MLSForegroundResumeCoordinator.recordSceneTransition(to: .inactive) }
+    var projectionReloaded = false
+    let outcome = await MLSForegroundResumeCoordinator.run(
+      managerAvailable: true,
+      resumeStillCurrent: { MLSForegroundResumeCoordinator.isCurrentActiveTransition(generation) },
+      prepareStorage: {},
+      resumeManager: { .runtimeRecoveryFailed },
+      reassertSuspensionAfterStaleResume: { Issue.record("Failed recovery was treated as stale") },
+      reloadProjection: { projectionReloaded = true },
+      performBackup: { Issue.record("Failed recovery performed backup") }
+    )
+    #expect(outcome == .runtimeRecoveryFailed)
+    #expect(!projectionReloaded)
+  }
+
   @Test("Entering inactive immediately revokes the foreground storage permit")
   func inactiveRevokesForegroundStoragePermit() throws {
     let activeGeneration = MLSForegroundResumeCoordinator.recordSceneTransition(to: .active)

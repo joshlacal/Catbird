@@ -19,8 +19,9 @@ struct MLSMemberHistoryView: View {
 
     let conversationID: String
     let currentUserDID: String
-    let database: MLSDatabase
+    let conversationManager: MLSConversationManager
 
+    @Environment(AppState.self) private var appState
     @Environment(\.dismiss) private var dismiss
     @State private var events: [MLSMembershipEventModel] = []
     @State private var members: [MLSMemberModel] = []
@@ -106,7 +107,7 @@ struct MLSMemberHistoryView: View {
                 }
             }
         }
-        .task {
+        .task(id: appState.nseStateReloadTrigger) {
             await loadData()
         }
     }
@@ -174,6 +175,17 @@ struct MLSMemberHistoryView: View {
     // MARK: - Data Loading
 
     private func loadData() async {
+        guard !Task.isCancelled,
+              appState.userDID == currentUserDID,
+              conversationManager.userDid == currentUserDID,
+              appState.mlsConversationManager === conversationManager,
+              !conversationManager.isShuttingDown,
+              !MLSClient.isSuspensionInProgress,
+              !MLSCoreContext.isSuspensionInProgress
+        else { return }
+        let generation = MLSCoordinationStore.shared.currentGeneration
+        guard conversationManager.currentCoordinationGeneration == generation else { return }
+        let database = conversationManager.database
         isLoading = true
         defer { isLoading = false }
 
@@ -195,6 +207,16 @@ struct MLSMemberHistoryView: View {
 
             let (fetchedEvents, fetchedMembers) = try await (eventsTask, membersTask)
 
+            guard !Task.isCancelled,
+                  appState.userDID == currentUserDID,
+                  conversationManager.userDid == currentUserDID,
+                  appState.mlsConversationManager === conversationManager,
+                  !conversationManager.isShuttingDown,
+                  !MLSClient.isSuspensionInProgress,
+                  !MLSCoreContext.isSuspensionInProgress,
+                  MLSCoordinationStore.shared.currentGeneration == generation,
+                  (conversationManager.database as AnyObject) === (database as AnyObject)
+            else { return }
             events = fetchedEvents
             members = fetchedMembers
 
