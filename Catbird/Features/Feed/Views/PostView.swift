@@ -48,6 +48,7 @@ enum PostAvatarScale: Equatable, Sendable {
 
 /// A view that displays a single post with its content, avatar, and actions
 struct PostView: View, Equatable, Identifiable {
+  @Environment(\.threadAvatarID) private var threadAvatarID
     static func == (lhs: PostView, rhs: PostView) -> Bool {
         lhs.post.uri == rhs.post.uri && lhs.post.cid == rhs.post.cid
     }
@@ -163,7 +164,8 @@ var id: String {
         isParentPost: isParentPost,
         isAvatarLoaded: $postState.isAvatarLoaded,
         path: $path,
-        avatarScale: avatarScale
+        avatarScale: avatarScale,
+        threadAvatarID: threadAvatarID == post.uri.uriString() ? threadAvatarID : nil
       )
 
       // Content column - show error view or normal post content
@@ -1307,6 +1309,25 @@ private struct ThreadSummarySheet: View {
   }
 }
 
+// Detail thread rows opt into measured avatar geometry; feed rows stay unchanged.
+struct ThreadAvatarAnchorKey: PreferenceKey {
+  static let defaultValue: [String: Anchor<CGRect>] = [:]
+  static func reduce(value: inout [String: Anchor<CGRect>], nextValue: () -> [String: Anchor<CGRect>]) {
+    value.merge(nextValue(), uniquingKeysWith: { _, new in new })
+  }
+}
+
+private struct ThreadAvatarIDKey: EnvironmentKey {
+  static let defaultValue: String? = nil
+}
+
+extension EnvironmentValues {
+  var threadAvatarID: String? {
+    get { self[ThreadAvatarIDKey.self] }
+    set { self[ThreadAvatarIDKey.self] = newValue }
+  }
+}
+
 // MARK: - Extracted AuthorAvatarColumn View
 struct AuthorAvatarColumn: View {
   let author: AppBskyActorDefs.ProfileViewBasic
@@ -1314,6 +1335,7 @@ struct AuthorAvatarColumn: View {
   @Binding var isAvatarLoaded: Bool
   @Binding var path: NavigationPath
   var avatarScale: PostAvatarScale = .regular
+  var threadAvatarID: String? = nil
 
   // Using multiples of 3 for spacing
   private static let baseUnit: CGFloat = 3
@@ -1359,6 +1381,10 @@ struct AuthorAvatarColumn: View {
       } else {
         noAvatarView
       }
+    }
+    .anchorPreference(key: ThreadAvatarAnchorKey.self, value: .bounds) { anchor in
+      guard let threadAvatarID else { return [:] }
+      return [threadAvatarID: anchor]
     }
     .frame(maxHeight: .infinity, alignment: .top)
     .frame(width: avatarContainerWidth)

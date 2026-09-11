@@ -5,13 +5,11 @@ public struct TrendingFeedInterstitialView: View {
     @Environment(AppState.self) private var appState
     @Environment(\.colorScheme) private var colorScheme
 
-    @State private var trends: [AppBskyUnspeccedDefs.TrendView] = []
-    @State private var videos: [AppBskyFeedDefs.FeedViewPost] = []
-    @State private var isLoadingTrends = false
-    @State private var isLoadingVideos = false
-    @State private var hasLoaded = false
+    let content: TrendingFeedContent
 
-    public init() {}
+    init(content: TrendingFeedContent) {
+        self.content = content
+    }
 
     private var showTopics: Bool {
         appState.appSettings.showTrendingTopics
@@ -22,21 +20,11 @@ public struct TrendingFeedInterstitialView: View {
     }
 
     private var hasContent: Bool {
-        (showTopics && !trends.isEmpty) || (showVideos && !videos.isEmpty)
+        (showTopics && !content.trends.isEmpty) || (showVideos && !content.videos.isEmpty)
     }
 
     public var body: some View {
-        if !showTopics && !showVideos {
-            EmptyView()
-        } else if hasLoaded && !hasContent {
-            EmptyView()
-        } else if !hasContent {
-            Color.clear
-                .frame(height: 0)
-                .task {
-                    await loadDataIfNeeded()
-                }
-        } else {
+        if hasContent {
             VStack(alignment: .leading, spacing: 14) {
                 // Header with title and options menu
                 HStack {
@@ -75,15 +63,15 @@ public struct TrendingFeedInterstitialView: View {
                 .padding(.horizontal)
 
                 // Topics section
-                if showTopics && !trends.isEmpty {
+                if showTopics && !content.trends.isEmpty {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 8) {
-                            ForEach(trends.prefix(6), id: \.topic) { trend in
+                            ForEach(content.trends.prefix(6), id: \.topic) { trend in
                                 Button {
-                                    openTopic(trend.topic)
+                                    openTopic(trend)
                                 } label: {
                                     HStack(spacing: 6) {
-                                        Text("#\(trend.topic)")
+                                        Text(trend.displayName)
                                             .font(.subheadline.bold())
                                             .foregroundColor(.primary)
 
@@ -106,9 +94,9 @@ public struct TrendingFeedInterstitialView: View {
                 }
 
                 // Videos section (reusing WS-A G03 TrendingVideosSection)
-                if showVideos && !videos.isEmpty {
+                if showVideos && !content.videos.isEmpty {
                     TrendingVideosSection(
-                        videos: videos,
+                        videos: content.videos,
                         onSelectPost: { post in
                             openPost(post)
                         },
@@ -119,31 +107,19 @@ public struct TrendingFeedInterstitialView: View {
                 }
             }
             .padding(.vertical, 12)
-            .background(Color.dynamicGroupedBackground(appState.themeManager, currentScheme: colorScheme))
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .stroke(Color.primary.opacity(0.06), lineWidth: 1)
-            )
-            .padding(.horizontal)
-            .task {
-                await loadDataIfNeeded()
-            }
-            .onChange(of: showTopics) { _, newValue in
-                if newValue && trends.isEmpty {
-                    Task { await loadTrends() }
-                }
-            }
-            .onChange(of: showVideos) { _, newValue in
-                if newValue && videos.isEmpty {
-                    Task { await loadVideos() }
-                }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))
+            .overlay(alignment: .bottom) {
+                Rectangle()
+                    .fill(Color.separator)
+                    .frame(height: 0.5)
             }
         }
     }
 
-    private func openTopic(_ topic: String) {
-        appState.navigationManager.navigate(to: .topic(topic))
+    private func openTopic(_ trend: AppBskyUnspeccedDefs.TrendView) {
+        guard let url = URL(string: trend.link, relativeTo: URL(string: "https://bsky.app")) else { return }
+        _ = appState.urlHandler.handle(url.absoluteURL)
     }
 
     private func openVideoFeed() {
@@ -154,37 +130,46 @@ public struct TrendingFeedInterstitialView: View {
         appState.navigationManager.navigate(to: .post(post.uri))
     }
 
-    private func loadDataIfNeeded() async {
-        guard !hasLoaded else { return }
-        hasLoaded = true
-        async let trendsTask: () = loadTrends()
-        async let videosTask: () = loadVideos()
-        _ = await (trendsTask, videosTask)
+
+    private func formatCount(_ count: Int) -> String {
+        if count >= 1000 {
+            return String(format: "%.1fk", Double(count) / 1000.0)
+        }
+        return "\(count)"
+    }
+}
+
+struct TrendingFeedContent: Equatable {
+    var trends: [AppBskyUnspeccedDefs.TrendView] = []
+    var videos: [AppBskyFeedDefs.FeedViewPost] = []
+
+    var isEmpty: Bool { trends.isEmpty && videos.isEmpty }
+
+    @MainActor
+    static func load(appState: AppState) async -> Self {
+        async let trends = loadTrends(appState: appState)
+        async let videos = loadVideos(appState: appState)
+        return await Self(trends: trends, videos: videos)
     }
 
-    private func loadTrends() async {
-        guard showTopics, let client = appState.atProtoClient else {
-            trends = []
-            return
+    @MainActor
+    private static func loadTrends(appState: AppState) async -> [AppBskyUnspeccedDefs.TrendView] {
+        guard appState.appSettings.showTrendingTopics, let client = appState.atProtoClient else {
+            return []
         }
-        isLoadingTrends = true
         do {
             let (_, output) = try await client.app.bsky.unspecced.getTrends(input: .init(limit: 10))
-            if let trendsList = output?.trends {
-                self.trends = trendsList
-            }
+            return output?.trends ?? []
         } catch {
-            self.trends = []
+            return []
         }
-        isLoadingTrends = false
     }
 
-    private func loadVideos() async {
-        guard showVideos, let client = appState.atProtoClient else {
-            videos = []
-            return
+    @MainActor
+    private static func loadVideos(appState: AppState) async -> [AppBskyFeedDefs.FeedViewPost] {
+        guard appState.appSettings.showTrendingVideos, let client = appState.atProtoClient else {
+            return []
         }
-        isLoadingVideos = true
         do {
             let input = AppBskyFeedGetFeed.Parameters(
                 feed: try ATProtocolURI(uriString: TrendingVideosSection.thevidsURI),
@@ -192,19 +177,9 @@ public struct TrendingFeedInterstitialView: View {
                 cursor: nil
             )
             let (_, response) = try await client.app.bsky.feed.getFeed(input: input)
-            if let feedResponse = response {
-                self.videos = feedResponse.feed
-            }
+            return response?.feed ?? []
         } catch {
-            self.videos = []
+            return []
         }
-        isLoadingVideos = false
-    }
-
-    private func formatCount(_ count: Int) -> String {
-        if count >= 1000 {
-            return String(format: "%.1fk", Double(count) / 1000.0)
-        }
-        return "\(count)"
     }
 }

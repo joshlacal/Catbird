@@ -235,7 +235,8 @@ struct TrendingTopicsSection: View {
                         Text(description)
                             .appFont(AppTextRole.footnote)
                             .foregroundColor(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
-                            .accessibilityLabel("Topic description")
+                            .lineLimit(nil)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 

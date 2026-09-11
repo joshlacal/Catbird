@@ -19,10 +19,12 @@ struct UnifiedEmbedView: View {
     case .blueskyRecord(let record):
       RecordEmbedContainer(
         uriString: record.uri,
+        accountDID: appState.userDID,
         title: "Shared Post",
         subtitle: nil,
         navigationPath: $navigationPath
       )
+      .id("\(ObjectIdentifier(appState)):\(String(describing: appState.atProtoClient.map(ObjectIdentifier.init))):\(record.uri)")
 
     case .link(let link):
       linkEmbed(link)
@@ -33,10 +35,12 @@ struct UnifiedEmbedView: View {
     case .post(let post):
       RecordEmbedContainer(
         uriString: post.uri,
+        accountDID: appState.userDID,
         title: post.authorHandle.map { "@\($0)" } ?? "Shared Post",
         subtitle: post.text,
         navigationPath: $navigationPath
       )
+      .id("\(ObjectIdentifier(appState)):\(String(describing: appState.atProtoClient.map(ObjectIdentifier.init))):\(post.uri)")
 
     case .tile(let tile):
       TileCardView(tile: tile)
@@ -502,6 +506,7 @@ private struct UnifiedGIFView: View {
 
 private struct RecordEmbedContainer: View {
   let uriString: String
+  let accountDID: String
   let title: String
   let subtitle: String?
   @Binding var navigationPath: NavigationPath
@@ -515,9 +520,22 @@ private struct RecordEmbedContainer: View {
 
   private let logger = Logger(subsystem: "blue.catbird", category: "UnifiedEmbed.Record")
 
+  private var isActiveAccount: Bool {
+    let lifecycle = AppStateManager.shared.lifecycle
+    return lifecycle.appState === appState && lifecycle.userDID == accountDID
+      && !appState.isTransitioningAccounts
+  }
+
+  private var cacheKey: String {
+    "\(accountDID):\(String(describing: appState.atProtoClient.map(ObjectIdentifier.init))):\(uriString)"
+  }
+
   var body: some View {
     Group {
-      if let record {
+      // Render warm data on the first sizing pass, before the task starts.
+      if !isActiveAccount {
+        EmptyView()
+      } else if let record = record ?? RecordEmbedCache.cache[cacheKey] {
         RecordEmbedView(record: record, labels: nil, path: $navigationPath)
           .environment(\.postID, uriString)
           .foregroundStyle(.primary)
@@ -634,9 +652,10 @@ private struct RecordEmbedContainer: View {
 
   @MainActor
   private func loadRecord(force: Bool) async {
-    guard !isLoading else { return }
+    let requestState = appState
+    guard !isLoading, !Task.isCancelled, isActiveAccount else { return }
 
-    if !force, let cached = RecordEmbedCache.cache[uriString] {
+    if !force, let cached = RecordEmbedCache.cache[cacheKey] {
       record = cached
       return
     }
@@ -651,13 +670,20 @@ private struct RecordEmbedContainer: View {
       return
     }
 
+    guard isActiveAccount, appState === requestState,
+      requestState.atProtoClient === client else { return }
     isLoading = true
     loadError = nil
+    defer { isLoading = false }
 
     do {
       let (responseCode, response) = try await client.app.bsky.feed.getPosts(
         input: .init(uris: [uri])
       )
+
+      try Task.checkCancellation()
+      guard isActiveAccount, appState === requestState,
+        requestState.atProtoClient === client else { return }
 
       guard responseCode == 200, let post = response?.posts.first else {
         isLoading = false
@@ -685,11 +711,17 @@ private struct RecordEmbedContainer: View {
       )
 
       let union = AppBskyEmbedRecord.ViewRecordUnion.appBskyEmbedRecordViewRecord(viewRecord)
-      RecordEmbedCache.cache[uriString] = union
+      // Bound session memory; all entries are segregated by requesting account.
+      if RecordEmbedCache.cache.count >= 256 { RecordEmbedCache.cache.removeAll(keepingCapacity: true) }
+      RecordEmbedCache.cache[cacheKey] = union
       record = union
 
       logger.debug("Loaded record embed: \(uriString)")
+    } catch is CancellationError {
+      // A reused cell or account switch is not a failed post.
     } catch {
+      guard isActiveAccount, appState === requestState,
+        requestState.atProtoClient === client else { return }
       loadError = error.localizedDescription
       logger.error("Failed to load record embed: \(error.localizedDescription)")
     }

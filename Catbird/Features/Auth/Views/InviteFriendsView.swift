@@ -97,7 +97,7 @@ public enum InviteURLHelper {
         return handleOrDID
     }
     
-    public static func generateQRCode(from string: String, size: CGFloat = 200) -> UIImage? {
+    public static func generateQRCode(from string: String, size: CGFloat = 200) -> PlatformImage? {
         guard let data = string.data(using: .utf8) else { return nil }
         guard let filter = CIFilter(name: "CIQRCodeGenerator") else { return nil }
         filter.setValue(data, forKey: "inputMessage")
@@ -113,7 +113,11 @@ public enum InviteURLHelper {
         guard let cgImage = context.createCGImage(transformedImage, from: transformedImage.extent) else {
             return nil
         }
+        #if os(iOS)
         return UIImage(cgImage: cgImage)
+        #elseif os(macOS)
+        return NSImage(cgImage: cgImage, size: CGSize(width: size, height: size))
+        #endif
     }
 }
 
@@ -209,7 +213,7 @@ public struct InviteFriendsView: View {
                             }
                             .frame(maxWidth: .infinity)
                             .frame(height: 50)
-                            .background(Color(uiColor: .secondarySystemGroupedBackground))
+                            .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
                             .foregroundColor(copiedToClipboard ? .green : .primary)
                             .clipShape(RoundedRectangle(cornerRadius: 14))
                         }
@@ -232,7 +236,7 @@ public struct InviteFriendsView: View {
                     .padding(.bottom, 24)
                 }
             }
-            .background(Color(uiColor: .systemGroupedBackground))
+            .background(Color(platformColor: PlatformColor.platformSystemGroupedBackground))
             .navigationTitle("Invite Friends")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
@@ -306,7 +310,7 @@ public struct InviteFriendsView: View {
             
             // Generated QR Code
             if let qrImage = InviteURLHelper.generateQRCode(from: inviteURL.absoluteString, size: 220) {
-                Image(uiImage: qrImage)
+                Image(platformImage: qrImage)
                     .interpolation(.none)
                     .resizable()
                     .scaledToFit()
@@ -391,8 +395,8 @@ public struct InviteFriendsView: View {
                             .padding(.vertical, 8)
                             .background(
                                 selectedTheme == theme
-                                    ? Color(uiColor: .tertiarySystemGroupedBackground)
-                                    : Color(uiColor: .secondarySystemGroupedBackground)
+                                    ? Color(platformColor: PlatformColor.platformTertiarySystemGroupedBackground)
+                                    : Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground)
                             )
                             .clipShape(Capsule())
                             .overlay(

@@ -127,21 +127,27 @@ struct NavigationHandler {
         #endif
         .id("activitySubscriptions")
     case .circlePost(let uri, let circle):
-      ThreadView(postURI: uri, path: path, visibilityContext: .circle(circle))
-        .ignoresSafeArea()
-        #if os(iOS)
-        .toolbarTitleDisplayMode(.inline)
-        #endif
-        .navigationTitle(circle.name)
-        .id(uri.uriString())
+      if appState.circlesEnabled {
+        ThreadView(postURI: uri, path: path, visibilityContext: .circle(circle))
+          .ignoresSafeArea()
+          #if os(iOS)
+          .toolbarTitleDisplayMode(.inline)
+          #endif
+          .navigationTitle(circle.name)
+          .id(uri.uriString())
+      }
 
     case .circlesFeed:
-      CirclesFeedView(path: path)
-        .id("circlesFeed")
+      if appState.circlesEnabled {
+        CirclesFeedView(path: path)
+          .id("circlesFeed")
+      }
 
     case .circleDetail(let circle):
-      CircleDetailView(circle: circle, path: path)
-        .id(circle.uri.description)
+      if appState.circlesEnabled {
+        CircleDetailView(circle: circle, path: path)
+          .id(circle.uri.description)
+      }
 
     case .notificationActivity(let uris):
       NotificationsActivityListView(postURIs: uris, path: path)

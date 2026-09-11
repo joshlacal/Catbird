@@ -26,7 +26,13 @@ public struct PlatformScreenInfo {
         #if os(iOS)
         return UIScreen.main.bounds ?? CGRect(x: 0, y: 0, width: 390, height: 844)
         #elseif os(macOS)
-        return NSScreen.main?.frame ?? CGRect(x: 0, y: 0, width: 1200, height: 800)
+        if let window = NSApplication.shared.keyWindow ?? NSApplication.shared.windows.first(where: { $0.isVisible }) {
+            let contentBounds = window.contentView?.bounds ?? window.frame
+            if contentBounds.width > 0 && contentBounds.height > 0 {
+                return contentBounds
+            }
+        }
+        return CGRect(x: 0, y: 0, width: 1200, height: 800)
         #endif
     }
     

@@ -100,6 +100,7 @@ struct ParentPostView: View {
 }
 
 struct ReplyView: View {
+  @Environment(\.layoutDirection) private var layoutDirection
   let replyWrapper: ReplyWrapper
   let opAuthorID: String
   let nestedReplies: [ReplyWrapper]  // Nested replies for this post
@@ -114,7 +115,7 @@ struct ReplyView: View {
   }
 
   private var visibleNestedReplies: [ReplyWrapper] {
-    Array(nestedReplies.prefix(max(0, maxDepth - 1)))
+    nestedReplies.filter { $0.depth <= maxDepth }
   }
 
   private var nestedLayout: ThreadReplyLayout {
@@ -124,10 +125,12 @@ struct ReplyView: View {
         ThreadReplyLayoutInput(
           id: $0.id,
           parentID: $0.parentURI,
-          hasUnloadedReplies: $0.hasReplies
+          hasUnloadedReplies: $0.hasReplies,
+          depth: $0.depth
         )
       },
-      visibleLimit: maxDepth - 1
+      maximumDepth: maxDepth,
+      rootHasUnloadedReplies: replyWrapper.hasReplies
     )
   }
 
@@ -157,7 +160,7 @@ struct ReplyView: View {
         PostView(
           post: threadItemPost.post,
           grandparentAuthor: nil,
-          isParentPost: nestedLayout.connectsRootToFirst,
+          isParentPost: !isThreadedRepliesMode && nestedLayout.connectsRootToFirst,
           isSelectable: false,
           path: $path,
           appState: appState,
@@ -170,6 +173,7 @@ struct ReplyView: View {
           opThreadPostIndex: threadItemPost.opThreadPostIndex,
           opThreadPostCount: threadItemPost.opThreadPostCount
         )
+        .environment(\.threadAvatarID, isThreadedRepliesMode ? replyWrapper.id : nil)
         .onTapGesture {
           path.append(NavigationDestination.post(threadItemPost.post.uri))
         }
@@ -204,7 +208,52 @@ struct ReplyView: View {
       }
 
       // Nested subtree, shared across all root arms above.
+      if nestedLayout.rootHasAdditionalReplies {
+        continuationButton(for: replyWrapper.uri)
+      }
       nestedRepliesSection
+    }
+    .overlayPreferenceValue(ThreadAvatarAnchorKey.self) { anchors in
+      if isThreadedRepliesMode {
+        GeometryReader { geometry in
+          Path { path in
+            let layout = nestedLayout
+            let ids = [replyWrapper.id] + layout.items.map(\.id)
+            let connections = [layout.connectsRootToFirst] + layout.items.map(\.connectsToNext)
+            for index in 0..<max(0, ids.count - 1) where connections[index] {
+              if let source = anchors[ids[index]], let destination = anchors[ids[index + 1]] {
+                let parent = geometry[source]
+                let child = geometry[destination]
+                // Work in leading-to-trailing coordinates, then mirror for RTL.
+                let direction: CGFloat = layoutDirection == .rightToLeft ? -1 : 1
+                let childLeading = direction > 0 ? child.minX : -child.maxX
+                let end = CGPoint(x: childLeading - 3, y: child.midY)
+                let gutter = min(parent.midX * direction, end.x - 8)
+                let start = CGPoint(x: parent.midX * direction, y: parent.maxY + 3)
+                func point(_ value: CGPoint) -> CGPoint {
+                  CGPoint(x: value.x * direction, y: value.y)
+                }
+                path.move(to: point(start))
+                path.addQuadCurve(
+                  to: point(CGPoint(x: gutter, y: start.y + 8)),
+                  control: point(CGPoint(x: gutter, y: start.y))
+                )
+                path.addLine(to: point(CGPoint(x: gutter, y: end.y - 8)))
+                path.addQuadCurve(
+                  to: point(CGPoint(x: gutter + 8, y: end.y)),
+                  control: point(CGPoint(x: gutter, y: end.y))
+                )
+                path.addLine(to: point(end))
+              }
+            }
+          }
+          .stroke(Color.systemGray4, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+          // Anchors are already in physical coordinates; do not mirror the Path again.
+          .environment(\.layoutDirection, .leftToRight)
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+      }
     }
   }
 
@@ -235,7 +284,7 @@ struct ReplyView: View {
       PostView(
         post: nestedPost.post,
         grandparentAuthor: parentAuthor(for: nestedWrapper),
-        isParentPost: item.connectsToNext,
+        isParentPost: !isThreadedRepliesMode && item.connectsToNext,
         isSelectable: false,
         path: $path,
         appState: appState,
@@ -251,6 +300,7 @@ struct ReplyView: View {
         opThreadPostIndex: nestedPost.opThreadPostIndex,
         opThreadPostCount: nestedPost.opThreadPostCount
       )
+      .environment(\.threadAvatarID, isThreadedRepliesMode ? nestedWrapper.id : nil)
       .contentShape(Rectangle())
       .onTapGesture { path.append(NavigationDestination.post(nestedPost.post.uri)) }
       .padding(.vertical, 3)
@@ -263,23 +313,6 @@ struct ReplyView: View {
       )
       .frame(maxWidth: 550, alignment: .leading)
 
-      if item.hasAdditionalReplies {
-        Button {
-          // Jump into the last rendered post; the server will expand from here
-          path.append(NavigationDestination.post(nestedPost.post.uri))
-        } label: {
-          HStack {
-            Text("Continue thread").appFont(AppTextRole.subheadline)
-            Image(systemName: "chevron.right").appFont(AppTextRole.subheadline)
-          }
-          .foregroundColor(.accentColor)
-          .padding(.vertical, 8)
-          .padding(.horizontal, 12)
-          .frame(maxWidth: .infinity, alignment: .leading)
-          .contentShape(Rectangle())
-        }
-      }
-
     case .appBskyUnspeccedDefsThreadItemNotFound:
       PostNotFoundView(
         uri: nestedWrapper.threadItem.uri,
@@ -287,18 +320,6 @@ struct ReplyView: View {
         path: $path
       )
       .applyAppStateEnvironment(appState)
-
-      // Offer a way to jump into the missing leg of the chain
-      Button {
-        path.append(NavigationDestination.post(nestedWrapper.uri))
-      } label: {
-        HStack {
-          Text("Continue thread").appFont(AppTextRole.subheadline)
-          Image(systemName: "chevron.right").appFont(AppTextRole.subheadline)
-        }
-        .foregroundColor(.accentColor)
-        .padding(.vertical, 6)
-      }
 
     case .appBskyUnspeccedDefsThreadItemBlocked(let blocked):
       BlockedContentCard(
@@ -319,6 +340,26 @@ struct ReplyView: View {
       Text("Unexpected reply type: \(unexpected.textRepresentation)")
         .foregroundColor(.orange)
     }
+    if item.hasAdditionalReplies {
+      continuationButton(for: nestedWrapper.uri)
+    }
+  }
+
+  private func continuationButton(for uri: ATProtocolURI) -> some View {
+    Button {
+      path.append(NavigationDestination.post(uri))
+    } label: {
+      HStack {
+        Text("Continue thread").appFont(AppTextRole.subheadline)
+        Image(systemName: "chevron.right").appFont(AppTextRole.subheadline)
+      }
+      .foregroundColor(.accentColor)
+      .padding(.vertical, 8)
+      .padding(.horizontal, 12)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .contentShape(Rectangle())
+    }
+    .accessibilityHint("Opens this post to show more replies")
   }
 }
 #endif

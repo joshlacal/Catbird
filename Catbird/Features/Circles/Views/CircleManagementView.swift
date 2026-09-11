@@ -9,6 +9,8 @@ struct CircleManagementView: View {
 
   @Environment(AppState.self) private var appState
   @Environment(\.dismiss) private var dismiss
+  @Environment(AppStateManager.self) private var appStateManager
+  @Environment(\.webAuthenticationSession) private var webAuthenticationSession
 
   @State private var viewModel: CircleManagementViewModel?
   @State private var membersToAdd: [AppBskyActorDefs.ProfileViewBasic] = []
@@ -18,6 +20,7 @@ struct CircleManagementView: View {
   @State private var memberToRemove: DID?
   @State private var showingDeleteConfirmation = false
   @State private var showingRemoveConfirmation = false
+  @State private var isAuthorizingActivation = false
 
   var body: some View {
     NavigationStack {
@@ -256,14 +259,38 @@ struct CircleManagementView: View {
     case .activationFailed(let message):
       Section {
         VStack(alignment: .leading, spacing: 8) {
-          Label("AppView sync pending: \(message)", systemImage: "exclamationmark.triangle.fill")
+          Label("AppView activation failed: \(message)", systemImage: "exclamationmark.triangle.fill")
             .foregroundStyle(.orange)
             .font(.subheadline)
-          Button("Retry Sync") {
-            Task { try? await vm.retryActivation() }
+          Button("Retry Activation") {
+            guard !isAuthorizingActivation else { return }
+            isAuthorizingActivation = true
+            Task {
+              defer { isAuthorizingActivation = false }
+              do {
+                let currentDID = appState.userDID
+                guard currentDID == vm.userDID,
+                      appStateManager.lifecycle.userDID == currentDID,
+                      let did = try? DID(didString: currentDID) else {
+                  throw GatewayPermissionError.stateChanged
+                }
+                try await CircleAppViewAuthCoordinator.shared.ensureAuthorization(
+                  did: did, using: webAuthenticationSession
+                )
+                guard appStateManager.lifecycle.userDID == currentDID else {
+                  throw GatewayPermissionError.stateChanged
+                }
+                try await vm.retryActivation()
+              } catch is CancellationError {
+                // Keep the existing Space available for another authorization attempt.
+              } catch {
+                vm.state = .activationFailed(message: error.localizedDescription)
+              }
+            }
           }
           .buttonStyle(.bordered)
-          .accessibilityLabel("Retry AppView sync")
+          .disabled(isAuthorizingActivation)
+          .accessibilityLabel("Retry Circle activation")
         }
       }
     case .complete, .idle:

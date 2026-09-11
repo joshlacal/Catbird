@@ -56,7 +56,7 @@ public struct FindContactsFlowView: View {
     public var body: some View {
         NavigationStack {
             ZStack {
-                Color(uiColor: .systemGroupedBackground)
+                Color(platformColor: PlatformColor.platformSystemGroupedBackground)
                     .ignoresSafeArea()
                 
                 contentForCurrentStep
@@ -68,7 +68,7 @@ public struct FindContactsFlowView: View {
             #endif
             .toolbar {
                 if isOnboarding {
-                    ToolbarItem(placement: .topBarTrailing) {
+                    ToolbarItem(placement: .primaryAction) {
                         Button("Skip") {
                             handleSkip()
                         }
@@ -180,7 +180,7 @@ public struct FindContactsFlowView: View {
                 }
             }
             .padding(18)
-            .background(Color(uiColor: .secondarySystemGroupedBackground))
+            .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
             .clipShape(RoundedRectangle(cornerRadius: 16))
             .padding(.horizontal, 20)
             
@@ -270,7 +270,7 @@ public struct FindContactsFlowView: View {
                     .textContentType(.telephoneNumber)
                     #endif
                     .padding(14)
-                    .background(Color(uiColor: .secondarySystemGroupedBackground))
+                    .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
                     .clipShape(RoundedRectangle(cornerRadius: 12))
             }
             .padding(.horizontal, 24)
@@ -338,7 +338,7 @@ public struct FindContactsFlowView: View {
                     .textContentType(.oneTimeCode)
                     #endif
                     .padding(14)
-                    .background(Color(uiColor: .secondarySystemGroupedBackground))
+                    .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
                     .clipShape(RoundedRectangle(cornerRadius: 12))
             }
             .padding(.horizontal, 48)
@@ -602,7 +602,7 @@ public struct FindContactsFlowView: View {
             }
         }
         .padding(12)
-        .background(Color(uiColor: .secondarySystemGroupedBackground))
+        .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
         .clipShape(RoundedRectangle(cornerRadius: 14))
     }
     
@@ -646,7 +646,7 @@ public struct FindContactsFlowView: View {
             }
         }
         .padding(10)
-        .background(Color(uiColor: .secondarySystemGroupedBackground))
+        .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
         .clipShape(RoundedRectangle(cornerRadius: 12))
     }
     

@@ -78,7 +78,7 @@ final class AppStateManager {
   private(set) var contextFreeMLSSuspensionOwner = MLSContextFreeLifecycleSuspensionOwner()
 
   /// Thread-safe active user DID box for nonisolated provider access
-  private static let activeUserDIDBox = Mutex<String?>(nil)
+  nonisolated private static let activeUserDIDBox = Mutex<String?>(nil)
   /// The authentication manager (owned by AppStateManager)
   private let authManager = AuthenticationManager()
 
@@ -241,8 +241,6 @@ final class AppStateManager {
       authManager.cacheProfileData(for: bobDID, handle: "bob.test", displayName: "Bob", avatarURL: nil)
       authManager.updateAccountOrder([fixtureDID, bobDID])
 
-      let isUnsupported = ProcessInfo.processInfo.arguments.contains("--circles-unsupported-pds")
-      CircleFeatureFlags.serverCapability(enabled: !isUnsupported)
 
       let store = E2ECircleStore()
       setAppStateFactoryForTesting { [weak self] did, cli in

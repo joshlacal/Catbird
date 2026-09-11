@@ -12,13 +12,9 @@ import Petrel
 import os
 
 /// A feed post row that works with FeedPostViewModel for persistent state management
-struct FeedPostRow: View, Equatable, Identifiable {
+struct FeedPostRow: View, Identifiable {
     var id: String {
         viewModel.post.id
-    }
-    
-    static func == (lhs: FeedPostRow, rhs: FeedPostRow) -> Bool {
-        lhs.viewModel.post.id == rhs.viewModel.post.id
     }
     
     // MARK: - Properties
@@ -89,7 +85,6 @@ struct FeedPostRow: View, Equatable, Identifiable {
                     cachedPost: viewModel.post,
                     path: $navigationPath
                 )
-                .equatable()
                 .contentShape(Rectangle())
                 .onTapGesture {
                     viewModel.navigateToPost(navigationPath: $navigationPath)

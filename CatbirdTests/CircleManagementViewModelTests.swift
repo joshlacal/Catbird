@@ -2,6 +2,9 @@ import Foundation
 import Petrel
 import PetrelCatbird
 import Testing
+#if os(iOS)
+import UIKit
+#endif
 @testable import Catbird
 
 /// Recording transport specifically for Circle management and operation testing.
@@ -472,6 +475,102 @@ struct CircleManagementViewModelTests {
     #expect(model.circle.name == "Activated")
   }
 
+  @Test func createCircleAfterActivationFailureRetriesExistingSpaceWithoutRecreating() async throws {
+    let transport = ManagementRecordingCircleTransport()
+    await transport.setActivationError(.authRequired)
+    let service = CircleService(transport: transport)
+    let model = CircleManagementViewModel(service: service, userDID: ownerDID.didString())
+
+    // Initial creation: Space is created on PDS, but activateCircle fails with authRequired
+    let summary = try await model.createCircle(name: "Retry Contract Circle", memberDIDs: [bobDID])
+    #expect(await transport.createdCircles.count == 1)
+    #expect(await transport.activateCircleCalls.count == 1)
+    #expect(model.hasCreatedSpace == true)
+    #expect(model.canRetryActivation == true)
+    #expect(model.state == .activationFailed(message: CircleError.authRequired.localizedDescription))
+    #expect(summary.name == "Retry Contract Circle")
+
+    // Subsequent call to createCircle must NEVER recreate Space; it reuses existing Space and retries activation
+    await transport.setActivationError(nil)
+    let retried = try await model.createCircle(name: "Retry Contract Circle", memberDIDs: [bobDID])
+    #expect(await transport.createdCircles.count == 1)
+    #expect(await transport.activateCircleCalls.count == 2)
+    #expect(model.state == .complete)
+    #expect(retried.name == "Activated")
+  }
+
+  #if os(iOS)
+  @Test func appViewConsentWaitsForPreviousBrowserDismissal() async throws {
+    let scene = try #require(
+      UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
+    )
+    let window = UIWindow(windowScene: scene)
+    let root = UIViewController()
+    window.rootViewController = root
+    window.isHidden = false
+    defer {
+      window.isHidden = true
+      window.rootViewController = nil
+    }
+
+    let firstBrowser = UIViewController()
+    firstBrowser.modalPresentationStyle = .fullScreen
+    await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+      root.present(firstBrowser, animated: false) { continuation.resume() }
+    }
+    root.dismiss(animated: true)
+    try #require(firstBrowser.isBeingDismissed)
+
+    await CircleAppViewAuthCoordinator.waitForPresentationTransition(in: root)
+    try #require(root.presentedViewController == nil)
+    let secondBrowser = UIViewController()
+    await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+      root.present(secondBrowser, animated: false) { continuation.resume() }
+    }
+    #expect(secondBrowser.presentingViewController === root)
+    #expect(secondBrowser.view.window === window)
+  }
+  #endif
+
+  @Test func createCircleRejectsConcurrentDoubleSubmission() async throws {
+    let transport = ManagementRecordingCircleTransport()
+    let service = CircleService(transport: transport)
+    let model = CircleManagementViewModel(service: service, userDID: ownerDID.didString())
+
+    model.state = .submitting
+    let summary = try await model.createCircle(name: "Double Submit Circle", memberDIDs: [bobDID])
+    #expect(await transport.createdCircles.isEmpty)
+    #expect(await transport.activateCircleCalls.isEmpty)
+    #expect(summary.uri.uriString() == CircleManagementViewModel.placeholderURIString)
+  }
+
+  @Test func activateCircleAuthFailureInvalidatesCachedAppViewAuthorization() async throws {
+    let transport = ManagementRecordingCircleTransport()
+    await transport.setActivationError(.authRequired)
+    let service = CircleService(transport: transport)
+    let model = CircleManagementViewModel(service: service, userDID: ownerDID.didString())
+
+    // Seed coordinator into an authorized state for ownerDID
+    let callbackURL = URL(string: "blue.catbird://oauth/circle-appview?did=\(ownerDID.didString())")!
+    CircleAppViewAuthCoordinator.shared.complete(callback: callbackURL, expectedDID: ownerDID.didString())
+    #expect(CircleAppViewAuthCoordinator.shared.needsAuthorization(for: ownerDID.didString()) == false)
+
+    // Creating Circle where activation encounters an auth error must invalidate cached belief
+    _ = try await model.createCircle(name: "Stale Auth Test", memberDIDs: [bobDID])
+    #expect(model.state == .activationFailed(message: CircleError.authRequired.localizedDescription))
+    #expect(CircleAppViewAuthCoordinator.shared.needsAuthorization(for: ownerDID.didString()) == true)
+
+    // Recover authorization and retry activation on existing Space
+    CircleAppViewAuthCoordinator.shared.complete(callback: callbackURL, expectedDID: ownerDID.didString())
+    #expect(CircleAppViewAuthCoordinator.shared.needsAuthorization(for: ownerDID.didString()) == false)
+    await transport.setActivationError(nil)
+
+    try await model.retryActivation()
+    #expect(model.state == .complete)
+    #expect(await transport.createdCircles.count == 1)
+    #expect(await transport.activateCircleCalls.count == 2)
+  }
+
   @Test func ownerMemberRosterIsLoadedAuthoritativelyAndNonOwnerNeverReceivesRoster() async throws {
     let transport = ManagementRecordingCircleTransport()
     await transport.setMockMembers([ownerDID, bobDID])
@@ -511,9 +610,6 @@ struct CircleManagementViewModelTests {
   }
 
   @Test func runtimeCircleCapabilityProbingAndAccountSwitchRaceSafety() async throws {
-    CircleFeatureFlags.serverCapability(enabled: false)
-    #expect(!CircleFeatureFlags.isEnabled)
-
     let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
     let appState = AppState(userDID: ownerDID.didString(), client: client)
     let previousLifecycle = AppStateManager.shared.lifecycle
@@ -525,11 +621,13 @@ struct CircleManagementViewModelTests {
 
     // Probe capability for active account
     await appState.probeCircleCapabilities()
-    #expect(CircleFeatureFlags.isEnabled)
+    #expect(appState.circlesEnabled)
 
-    // An explicit AppView disabled response still disables Circle-backed surfaces.
-    CircleFeatureFlags.serverCapability(enabled: false)
-    #expect(!CircleFeatureFlags.isEnabled)
+    // A newly active account starts unknown and cannot inherit this account's support.
+    let replacement = AppState(userDID: memberDID.didString(), client: client)
+    AppStateManager.shared.setLifecycleForTesting(.authenticated(replacement))
+    #expect(replacement.circleCapability == .unknown)
+    #expect(!replacement.circlesEnabled)
   }
 
   @Test func deleteCircleCompleteOutcomePermitsDismissalAndMarksComplete() async throws {

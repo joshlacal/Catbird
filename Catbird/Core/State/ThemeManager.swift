@@ -279,7 +279,11 @@ enum AccentColorOption: String, CaseIterable, Identifiable {
             
             // Configure with system defaults - no custom colors
             standardAppearance.configureWithDefaultBackground()
-            scrollEdgeAppearance.configureWithDefaultBackground()  // Proper for large titles
+            if #available(iOS 26.0, *) {
+                scrollEdgeAppearance.configureWithTransparentBackground()
+            } else {
+                scrollEdgeAppearance.configureWithDefaultBackground()  // Proper for large titles
+            }
             compactAppearance.configureWithOpaqueBackground()
             
             // Apply custom typography to all appearances

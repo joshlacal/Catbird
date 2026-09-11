@@ -49,6 +49,9 @@ struct ResponsiveContentView<Content: View>: View {
     }
     
     // Default responsive behavior
+    #if os(macOS)
+    return 700
+    #else
     if horizontalSizeClass == .regular {
       // iPad or large iPhone in landscape
       return 600
@@ -56,6 +59,7 @@ struct ResponsiveContentView<Content: View>: View {
       // iPhone in portrait or compact width
       return .infinity
     }
+    #endif
   }
 }
 
@@ -134,7 +138,11 @@ extension View {
   
   /// Applies responsive frame constraints for main content areas
   func mainContentFrame() -> some View {
+    #if os(macOS)
+    self.responsiveContentWidth(maxWidth: 700)
+    #else
     self.responsiveContentWidth(maxWidth: DeviceInfo.shouldConstrainContentWidth ? 600 : nil)
+    #endif
   }
 }
 
@@ -185,22 +193,22 @@ extension View {
     Text("Regular Content")
       .frame(maxWidth: .infinity)
       .padding()
-      .background(Color.blue.opacity(0.2))
+      .background { Color.blue.opacity(0.2) }
     
     Text("Responsive Content")
       .responsiveContentWidth()
       .padding()
-      .background(Color.green.opacity(0.2))
+      .background { Color.green.opacity(0.2) }
     
     Text("Custom Max Width")
       .responsiveContentWidth(maxWidth: 400)
       .padding()
-      .background(Color.orange.opacity(0.2))
+      .background { Color.orange.opacity(0.2) }
     
     Text("App Content")
       .responsiveAppContent()
       .padding()
-      .background(Color.purple.opacity(0.2))
+      .background { Color.purple.opacity(0.2) }
   }
   .padding()
 }

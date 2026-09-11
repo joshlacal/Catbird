@@ -187,6 +187,7 @@ final class CircleNotificationsModel {
       let storedPage = CircleNotificationPage(notifications: self.notifications, cursor: self.cursor)
       await cache.store(storedPage, accountDID: accountDID)
     } catch {
+      guard !Task.isCancelled else { return }
       guard !self.isInvalidated,
             requestGeneration == self.currentGeneration,
             let activeDID = resolveActiveDID(override: activeAccountCheck),

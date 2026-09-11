@@ -146,7 +146,6 @@
 				Shared/WidgetDataReader.swift,
 				Shared/WidgetDesignSystem.swift,
 				WidgetAvatarView.swift,
-				WidgetPerformanceOptimizations.swift,
 				WidgetPostCard.swift,
 				WidgetThemeProvider.swift,
 				WidgetTypography.swift,
@@ -169,7 +168,6 @@
 				Shared/WidgetDataReader.swift,
 				Shared/WidgetDesignSystem.swift,
 				WidgetAvatarView.swift,
-				WidgetPerformanceOptimizations.swift,
 				WidgetPostCard.swift,
 				WidgetThemeProvider.swift,
 				WidgetTypography.swift,
@@ -205,7 +203,6 @@
 				MLSAPIClientTests.swift,
 				MLSConversationDetailViewModelTests.swift,
 				MLSConversationInitializationTests.swift,
-				MLSConversationListViewModelTests.swift,
 				MLSConversationManagerTests.swift,
 				MLSCryptoTests.swift,
 				MLSKeyCleanupTests.swift,
@@ -1072,11 +1069,9 @@
 				INFOPLIST_KEY_NSContactsUsageDescription = "Catbird uses your contacts to help you find and connect with friends on Bluesky.";
 				INFOPLIST_KEY_NSFaceIDUsageDescription = "Catbird needs permission to lock with Face ID.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Catbird needs microphone access to record audio for voice notes and video posts.";
+				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Catbird saves images to your photo library when you choose Save Image.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				"INFOPLIST_KEY_UILaunchScreen_Generation[sdk=iphoneos*]" = YES;
-				"INFOPLIST_KEY_UILaunchScreen_Generation[sdk=iphonesimulator*]" = YES;
 				INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen;
 				"INFOPLIST_KEY_UILaunchStoryboardName[sdk=iphoneos*]" = LaunchScreen;
 				"INFOPLIST_KEY_UILaunchStoryboardName[sdk=iphonesimulator*]" = LaunchScreen;
@@ -1161,11 +1156,9 @@
 				INFOPLIST_KEY_NSContactsUsageDescription = "Catbird uses your contacts to help you find and connect with friends on Bluesky.";
 				INFOPLIST_KEY_NSFaceIDUsageDescription = "Catbird needs permission to lock with Face ID.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Catbird needs microphone access to record audio for voice notes and video posts.";
+				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Catbird saves images to your photo library when you choose Save Image.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				"INFOPLIST_KEY_UILaunchScreen_Generation[sdk=iphoneos*]" = YES;
-				"INFOPLIST_KEY_UILaunchScreen_Generation[sdk=iphonesimulator*]" = YES;
 				INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen;
 				"INFOPLIST_KEY_UILaunchStoryboardName[sdk=iphoneos*]" = LaunchScreen;
 				"INFOPLIST_KEY_UILaunchStoryboardName[sdk=iphonesimulator*]" = LaunchScreen;
@@ -1242,6 +1235,7 @@
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = 44U2ZPNQPK;
+				ENABLE_HARDWARE_CHECKED_POINTER_ARITHMETIC_SLICE = YES;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
@@ -1311,6 +1305,7 @@
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = 44U2ZPNQPK;
+				ENABLE_HARDWARE_CHECKED_POINTER_ARITHMETIC_SLICE = YES;
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;

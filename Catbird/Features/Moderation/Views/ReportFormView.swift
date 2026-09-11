@@ -176,7 +176,6 @@ struct ReportFormView: View {
         videoTimestamp: Double? = nil,
         onComplete: ((Bool) -> Void)? = nil
     ) {
-        self._reportingService = State(initialValue: reportingService)
         self.subject = subject
         self.contentDescription = contentDescription
         if let videoTimestamp = videoTimestamp {
@@ -190,6 +189,7 @@ struct ReportFormView: View {
             self.videoTimestamp = nil
         }
         self.onComplete = onComplete
+        self._reportingService = State(initialValue: reportingService)
     }
     
     var body: some View {
@@ -363,7 +363,11 @@ struct ReportFormView: View {
                 
                 Button {
                     if let url = URL(string: "https://blueskyweb.zendesk.com/hc/en-us/requests/new?ticket_form_id=24729188849421") {
+                        #if os(iOS)
                         UIApplication.shared.open(url)
+                        #elseif os(macOS)
+                        NSWorkspace.shared.open(url)
+                        #endif
                     }
                 } label: {
                     VStack(alignment: .leading, spacing: 4) {

@@ -45,7 +45,7 @@ struct ThreadReplyLayoutTests {
         .init(id: "gee", parentID: "natalie", hasUnloadedReplies: false),
         .init(id: "josh", parentID: "natalie", hasUnloadedReplies: false)
       ],
-      visibleLimit: 2
+      maximumDepth: 3
     )
 
     #expect(layout.connectsRootToFirst)
@@ -59,9 +59,9 @@ struct ThreadReplyLayoutTests {
       rootID: "root",
       nestedItems: [
         .init(id: "child", parentID: "root", hasUnloadedReplies: false),
-        .init(id: "grandchild", parentID: "child", hasUnloadedReplies: false)
+        .init(id: "grandchild", parentID: "child", hasUnloadedReplies: false, depth: 3)
       ],
-      visibleLimit: 2
+      maximumDepth: 3
     )
 
     #expect(layout.connectsRootToFirst)
@@ -74,14 +74,59 @@ struct ThreadReplyLayoutTests {
       rootID: "root",
       nestedItems: [
         .init(id: "visible", parentID: "root", hasUnloadedReplies: false),
-        .init(id: "omitted", parentID: "visible", hasUnloadedReplies: false)
+        .init(id: "omitted", parentID: "visible", hasUnloadedReplies: false, depth: 3)
       ],
-      visibleLimit: 1
+      maximumDepth: 2
     )
 
     let visible = try #require(layout.items.first)
     #expect(!visible.connectsToNext)
     #expect(visible.hasAdditionalReplies)
+  }
+
+  @Test("Depth limits preserve siblings after a collapsed deep branch")
+  func depthLimitPreservesSiblingBranches() {
+    let layout = ThreadReplyLayoutBuilder.build(
+      rootID: "root",
+      nestedItems: [
+        .init(id: "a", parentID: "root", hasUnloadedReplies: false, depth: 2),
+        .init(id: "b", parentID: "a", hasUnloadedReplies: false, depth: 3),
+        .init(id: "deep", parentID: "b", hasUnloadedReplies: false, depth: 4),
+        .init(id: "siblingOfB", parentID: "a", hasUnloadedReplies: false, depth: 3),
+        .init(id: "siblingOfA", parentID: "root", hasUnloadedReplies: false, depth: 2)
+      ],
+      maximumDepth: 3
+    )
+    #expect(layout.items.map(\.id) == ["a", "b", "siblingOfB", "siblingOfA"])
+    #expect(layout.items.map(\.connectsToNext) == [true, false, false, false])
+    #expect(layout.items.map(\.hasAdditionalReplies) == [false, true, false, false])
+  }
+
+  @Test("Tombstones retain their depth-derived parent and continuation")
+  func tombstoneContinuation() {
+    let layout = ThreadReplyLayoutBuilder.build(
+      rootID: "root",
+      nestedItems: [
+        .init(id: "blocked", parentID: nil, hasUnloadedReplies: false, depth: 2),
+        .init(id: "missing", parentID: nil, hasUnloadedReplies: false, depth: 3)
+      ],
+      maximumDepth: 2,
+      rootHasUnloadedReplies: true
+    )
+    #expect(layout.connectsRootToFirst)
+    #expect(layout.rootHasAdditionalReplies)
+    #expect(layout.items.first?.hasAdditionalReplies == true)
+  }
+
+  @Test("Collapsing every child retains a root continuation")
+  func rootContinuation() {
+    let layout = ThreadReplyLayoutBuilder.build(
+      rootID: "root",
+      nestedItems: [.init(id: "child", parentID: "root", hasUnloadedReplies: false)],
+      maximumDepth: 1
+    )
+    #expect(layout.items.isEmpty)
+    #expect(layout.rootHasAdditionalReplies)
   }
 
   @MainActor

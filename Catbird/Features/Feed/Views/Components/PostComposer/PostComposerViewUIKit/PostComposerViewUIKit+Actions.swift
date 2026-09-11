@@ -27,7 +27,7 @@ extension PostComposerViewUIKit {
   
   func submitAction(vm: PostComposerViewModel) {
     let validation = vm.submitValidationState
-    guard validation.canSubmit else {
+    guard canSubmit(vm: vm) else {
       pcActionsLogger.warning("PostComposerActions: Submit blocked - \(validation.message ?? "unknown validation failure")")
       return 
     }
@@ -60,6 +60,7 @@ extension PostComposerViewUIKit {
   }
   
   func canSubmit(vm: PostComposerViewModel) -> Bool {
+    guard vm.destination == .public || appState.circlesEnabled else { return false }
     return vm.submitValidationState.canSubmit
   }
   

@@ -9,16 +9,9 @@ import CatbirdMLSCore
 struct ChatToolbarMenu: View {
   @Environment(AppState.self) private var appState
   @State private var showingSettings = false
-  @State private var showingBatchMessage = false
   
   var body: some View {
     Menu {
-      Button {
-        showingBatchMessage = true
-      } label: {
-        Label("Send to Multiple", systemImage: "envelope.badge")
-      }
-      
       Button {
         Task {
           await appState.chatManager.markAllConversationsAsRead()
@@ -39,9 +32,6 @@ struct ChatToolbarMenu: View {
     }
     .sheet(isPresented: $showingSettings) {
       ChatSettingsView()
-    }
-    .sheet(isPresented: $showingBatchMessage) {
-      BatchMessageView()
     }
   }
 }

@@ -147,9 +147,9 @@ struct ThreadBlockedItemsTests {
     let layout = ThreadReplyLayoutBuilder.build(
       rootID: rootID,
       nestedItems: nested.map {
-        ThreadReplyLayoutInput(id: $0.id, parentID: $0.parentURI, hasUnloadedReplies: $0.hasReplies)
+        ThreadReplyLayoutInput(id: $0.id, parentID: $0.parentURI, hasUnloadedReplies: $0.hasReplies, depth: $0.depth)
       },
-      visibleLimit: ThreadReplyPresentationMetrics.maximumDepth(isEnabled: true) - 1
+      maximumDepth: ThreadReplyPresentationMetrics.maximumDepth(isEnabled: true)
     )
 
     #expect(!layout.items.isEmpty)

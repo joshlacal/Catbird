@@ -1242,7 +1242,7 @@ struct StrongBlurOverlayModifier: ViewModifier {
     return Rectangle()
       .fill(Color.clear)
       .background(blurredBackground)
-      .overlay(Color.black.opacity(0.3))
+      .overlay { Color.black.opacity(0.3) }
       .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
       .overlay(
         VStack {

@@ -176,9 +176,12 @@ final class MainPostCell: UICollectionViewCell {
 
       configuredIdentity = postIdentity
 
-      // Configure with SwiftUI content
+      // Supply state at the UIKit hosting boundary for all main-post descendants.
       contentConfiguration = UIHostingConfiguration {
-          content.transaction { txn in txn.animation = nil }.fixedSize(horizontal: false, vertical: true)
+        content
+          .applyAppStateEnvironment(appState)
+          .transaction { txn in txn.animation = nil }
+          .fixedSize(horizontal: false, vertical: true)
       }
       .margins(.all, .zero)
     }

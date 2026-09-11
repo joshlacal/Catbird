@@ -95,7 +95,17 @@ final class FeedPostViewModel {
         }
 
         // Skip update if data hasn't changed (prevents observation loops on macOS SwiftUI List)
-        guard newPost.serializedPost != post.serializedPost else { return }
+        guard newPost.serializedPost != post.serializedPost
+            || newPost.serializedSliceItems != post.serializedSliceItems
+            || newPost.threadDisplayMode != post.threadDisplayMode
+            || newPost.threadPostCount != post.threadPostCount
+            || newPost.threadHiddenCount != post.threadHiddenCount
+            || newPost.isPartOfThread != post.isPartOfThread
+            || newPost.isIncompleteThread != post.isIncompleteThread
+            || newPost.smartFilterCollapseRuleID != post.smartFilterCollapseRuleID
+            || newPost.isSmartFilterPending != post.isSmartFilterPending
+            || newPost.intentHiddenRuleText != post.intentHiddenRuleText
+        else { return }
 
         // Clear cached FeedViewPost since we're getting new data
         _cachedFeedViewPost = nil

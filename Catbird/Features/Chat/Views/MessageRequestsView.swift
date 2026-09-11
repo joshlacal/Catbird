@@ -646,9 +646,9 @@ struct MessageRequestProviderContainer<Bluesky: View, Catbird: View>: View {
 
   init(initialProvider: MessageRequestProvider,
        @ViewBuilder bluesky: () -> Bluesky, @ViewBuilder catbird: () -> Catbird) {
-    _provider = State(initialValue: initialProvider)
     self.bluesky = bluesky()
     self.catbird = catbird()
+    _provider = State(initialValue: initialProvider)
   }
 
   var body: some View {

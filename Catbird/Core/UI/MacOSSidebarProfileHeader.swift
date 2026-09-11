@@ -45,14 +45,14 @@ struct MacOSSidebarProfileHeader: View {
         .padding(.horizontal, horizontalInset)
         .padding(.bottom, 12)
       }
-      .background(Color(.windowBackgroundColor))
+      .background(.ultraThinMaterial)
       .overlay(alignment: .topLeading) { avatarView }
       .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
       .overlay(
         RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
           .stroke(
-            Color.accentColor.opacity(isSelected ? 0.6 : 0),
-            lineWidth: 1.5
+            isSelected ? Color.accentColor : Color.primary.opacity(0.08),
+            lineWidth: isSelected ? 1.5 : 1
           )
       )
     }
@@ -100,7 +100,7 @@ struct MacOSSidebarProfileHeader: View {
     AsyncProfileImage(url: profile?.finalAvatarURL(), size: avatarSize)
       .frame(width: avatarSize, height: avatarSize)
       .overlay(
-        Circle().stroke(Color(.windowBackgroundColor), lineWidth: 2)
+        Circle().stroke(Color.primary.opacity(0.12), lineWidth: 2)
       )
       .padding(.leading, horizontalInset)
       .padding(.top, bannerHeight - avatarSize / 2)

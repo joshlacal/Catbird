@@ -36,20 +36,17 @@ struct MacOSUnifiedSidebar: View {
       .padding(.bottom, 6)
 
       List(selection: $selection) {
-        // MARK: - Functional Items
+        // MARK: - Primary Navigation
         Section {
+          Label("Timeline", systemImage: "house")
+            .tag(SidebarItem.feed(.timeline))
+
           Label("Search", systemImage: "magnifyingglass")
             .tag(SidebarItem.search)
 
           notificationsRow
 
           chatRow
-        }
-
-        // MARK: - Timeline (always first, not draggable)
-        Section {
-          Label("Timeline", systemImage: "house")
-            .tag(SidebarItem.feed(.timeline))
         }
 
         // MARK: - Pinned Feeds

@@ -221,67 +221,21 @@ actor FeedTuner {
       }
     }
     
-    // Check hideRepliesByUnfollowed - hide replies TO posts from users you don't follow
-    // Key: Must follow someone in the ORIGINAL THREAD (parent or root), EXCLUDING the reply author
-    // This prevents seeing followed bots/users spamming replies to unfollowed users
+    // Match raw-entry filtering: a followed author's self-thread is followed
+    // context too. Do not count the reply author alone as original context.
     if settings.hideRepliesByUnfollowed && slice.isReply {
-      // Get the reply post (last item in slice)
       guard let replyItem = slice.items.last else { return nil }
-      
-      let replyAuthor = replyItem.post.author.handle
-      let replyAuthorDid = replyItem.post.author.did.didString()
-      
-      // Exception 1: Don't hide the user's own replies
-      if let currentUserDid = settings.currentUserDid,
-         replyAuthorDid == currentUserDid {
-        logger.debug("Showing reply: user's own reply by @\(replyAuthor)")
-        return slice
+      let isOwnReply = replyItem.post.author.did.didString() == settings.currentUserDid
+      let followsContext = slice.items.dropLast().contains { item in
+        item.post.author.viewer?.following != nil
+          || item.post.author.did.didString() == settings.currentUserDid
       }
-      
-      // Check if we follow ANYONE in the ORIGINAL THREAD (parent or root)
-      // CRITICAL: We exclude the reply author from this check
-      // This ensures we only see replies to conversations we're actually interested in
-      var followsSomeoneInThread = false
-      var followedAuthors: [String] = []
-      
-      // Check all items in the slice EXCEPT the last one (which is the reply itself)
-      // These represent the parent/root posts in the thread
-      for item in slice.items.dropLast() {
-        let itemAuthor = item.post.author.handle
-        let itemDid = item.post.author.did.didString()
-        let isFollowed = item.post.author.viewer?.following != nil
-        
-        logger.debug("  Thread item: @\(itemAuthor) (DID: \(itemDid), followed: \(isFollowed))")
-        
-        // CRITICAL: Skip if this thread item is the same person as the reply author
-        // This prevents showing bot self-replies or followed users replying to their own threads
-        if itemDid == replyAuthorDid {
-          logger.debug("  Skipping thread item - same as reply author")
-          continue
-        }
-        
-        if isFollowed {
-          followsSomeoneInThread = true
-          followedAuthors.append(itemAuthor.description)
-        }
-        // Also check if it's the current user's post
-        if let currentUserDid = settings.currentUserDid, itemDid == currentUserDid {
-          followsSomeoneInThread = true
-          followedAuthors.append("\(itemAuthor) (you)")
-        }
+      if !isOwnReply && !followsContext {
+        logger.debug("Filtered slice: reply to unfollowed thread")
+        return nil
       }
-      
-      if followsSomeoneInThread {
-        logger.debug("✅ Showing reply by @\(replyAuthor): follows \(followedAuthors.joined(separator: ", ")) in thread")
-        return slice
-      }
-      
-      // Hide if we don't follow anyone in the thread (other than the reply author)
-      let threadAuthors = slice.items.dropLast().map { $0.post.author.handle.description }.joined(separator: ", ")
-      logger.debug("🚫 Filtered slice: reply by @\(replyAuthor) to thread with no OTHER followed users [@\(threadAuthors)]")
-      return nil
     }
-    
+
     // Check hideRepliesByLikeCount - hide replies with insufficient likes
     if let minLikeCount = settings.hideRepliesByLikeCount, slice.isReply {
       // Get the reply post (last item in slice)
@@ -409,21 +363,24 @@ actor FeedTuner {
   private func createThreadSlice(from posts: [AppBskyFeedDefs.FeedViewPost], rootUri: String) -> FeedSlice? {
     guard !posts.isEmpty else { return nil }
     
-    // Sort posts by creation time for proper thread ordering
-    let sortedPosts = posts.sorted { post1, post2 in
-      guard case .knownType(let record1) = post1.post.record,
-            let feedPost1 = record1 as? AppBskyFeedPost,
-            case .knownType(let record2) = post2.post.record,
-            let feedPost2 = record2 as? AppBskyFeedPost else {
-        return false
-      }
-      return feedPost1.createdAt < feedPost2.createdAt
+    // Feed order identifies the entry that brought this thread into the feed.
+    // Creation timestamps can tie (batch-written threads) or be client-skewed;
+    // sorting them can select the root and discard the triggering reply.
+    // Exclude ancestors represented by another returned entry, then retain the
+    // server's ordering among separate reply branches. Context remains bounded
+    // to the selected entry's embedded root/parent/reply in createSlice.
+    var ancestorURIs: Set<String> = []
+    for entry in posts {
+      guard case .knownType(let value) = entry.post.record,
+            let record = value as? AppBskyFeedPost,
+            let reply = record.reply else { continue }
+      ancestorURIs.insert(reply.root.uri.uriString())
+      ancestorURIs.insert(reply.parent.uri.uriString())
     }
-    
-    // Select the primary post for this thread:
-    // Use the most recent post in the group (the actual post that appeared in the feed)
-    let primaryPost = sortedPosts.last! // Most recent post (the reply)
-    
+    let primaryPost = posts.first {
+      !ancestorURIs.contains($0.post.uri.uriString())
+    } ?? posts[0]
+
     // Create slice from the primary post
     return createSlice(from: primaryPost)
   }

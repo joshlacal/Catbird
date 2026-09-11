@@ -253,6 +253,7 @@ final class AppState {
 
     /// Preferences manager for handling user preferences
     @ObservationIgnored let preferencesManager = PreferencesManager()
+    @MainActor @ObservationIgnored lazy var feedLibraryActions = FeedLibraryActions(appState: self)
 
     /// Feed feedback manager for custom feed interactions
     @ObservationIgnored let feedFeedbackManager = FeedFeedbackManager()
@@ -652,6 +653,8 @@ final class AppState {
         _circleNotificationsModel = nil
         _circleNotificationService = nil
         _circleService = nil
+        circleCapabilityProbeID = nil
+        circleCapability = .unknown
         // Perform async cleanup in background task
         Task {
             // Stop all WebSocket subscriptions FIRST and WAIT for completion
@@ -838,9 +841,6 @@ final class AppState {
 
                 await AppStateManager.shared.authentication.refreshAvailableAccounts()
 
-                // Probe Circle capabilities from the server for this account
-                await self.probeCircleCapabilities()
-
                 // Synchronize server preferences with app settings
                 do {
                     try await preferencesManager.fetchPreferences(forceRefresh: true)
@@ -872,6 +872,14 @@ final class AppState {
         logger.info("Refreshing data after account switch")
         MLSDeviceUUIDCache.shared.invalidate()
         isTransitioningAccounts = true
+        _circleNotificationsModel = nil
+        _circleNotificationService = nil
+        _circleService = nil
+        circleCapabilityProbeID = nil
+        circleCapability = .unknown
+        #if DEBUG
+        if let transport = e2eCircleTransport { installE2ECircleFixture(transport: transport) }
+        #endif
 
         Task { [weak self] in
             await self?.probeCircleCapabilities()
@@ -954,7 +962,6 @@ final class AppState {
 
         await preferencesTask
         await profileTask
-        await probeCircleCapabilities()
     }
 
     @MainActor
@@ -991,9 +998,6 @@ final class AppState {
         mlsConversationManagerInitTask = nil
         await mlsEpochRetentionCleanupCoordinator.stop()
         clearMLSGlobalWebSocketSubscriptionTracking()
-        _circleNotificationsModel = nil
-        _circleNotificationService = nil
-        _circleService = nil
 
         // CRITICAL FIX: Signal NSE to yield BEFORE stopping event streams
         // This prevents new NSE decryption attempts during shutdown, avoiding race conditions
@@ -1204,6 +1208,12 @@ final class AppState {
         client
     }
 
+    /// Availability belongs to this account and its authenticated client, never the process.
+    var circleCapability: CircleCapabilityState = .unknown
+    var circlesEnabled: Bool { circleCapability == .supported }
+    @ObservationIgnored private var circleCapabilityProbeID: UUID?
+    @ObservationIgnored private var circleCapabilityPDSURL: URL?
+
     @ObservationIgnored private var _circleService: CircleService?
 
     /// Circle service using the current authenticated client
@@ -1261,6 +1271,7 @@ final class AppState {
 
     @MainActor
     func installE2ECircleFixture(transport: E2ECircleTransport) {
+        self.circleCapability = ProcessInfo.processInfo.arguments.contains("--circles-unsupported-pds") ? .unsupported : .supported
         self.e2eCircleTransport = transport
         let service = CircleService(transport: transport)
         self.circleService = service
@@ -1272,35 +1283,45 @@ final class AppState {
     }
 #endif
 
-    /// Probes Circle capabilities from the server once for this active account,
-    /// updating `CircleFeatureFlags.serverCapability` while race-checking against account switches.
+    /// Require both the active PDS Spaces API and the shared Circle service.
+    /// Unknown errors hide entry points without classifying the PDS as unsupported.
     @MainActor
     func probeCircleCapabilities() async {
-        let targetDID = userDID
-        // Route every generated `blue.catbird.circle.*` read to the standalone
-        // Circle AppView. Petrel longest-prefix matches this map, so this one
-        // entry covers the whole namespace without per-call header plumbing.
-        // `com.atproto.simplespace.*` and `com.atproto.space.*` are deliberately
-        // left unmapped so Space administration and permissioned writes stay on
-        // the user's own PDS. Registered before the first probe, and re-run on
-        // account switch, because the client is rebuilt per account.
+        guard AppStateManager.shared.lifecycle.appState === self else { return }
+        let probeID = UUID()
+        circleCapabilityProbeID = probeID
+        let probeClient = client
+        let account = await probeClient.getActiveAccountInfo()
+        guard AppStateManager.shared.lifecycle.appState === self, client === probeClient,
+              circleCapabilityProbeID == probeID else { return }
+        if let accountDID = account.did, accountDID != userDID {
+            circleCapability = .unknown
+            return
+        }
+        if circleCapabilityPDSURL != account.pdsURL {
+            circleCapability = .unknown
+        }
         await client.setServiceDID(
             CircleConfiguration.serviceDID, for: CircleConfiguration.serviceNSIDPrefix
         )
+        let result: CircleCapabilityState
         do {
             let caps = try await circleService.capabilities()
-            guard AppStateManager.shared.lifecycle.userDID == targetDID else {
-                logger.info("Circle capability probe discarded for inactive account: \(targetDID)")
-                return
-            }
-            CircleFeatureFlags.serverCapability(enabled: caps.enabled)
-            logger.info("Circle capability probe succeeded for \(targetDID): enabled=\(caps.enabled)")
+            result = caps.enabled ? .supported : .unsupported
         } catch {
-            guard AppStateManager.shared.lifecycle.userDID == targetDID else {
-                return
-            }
-            logger.debug("Circle capability probe failed for \(targetDID): \(error.localizedDescription)")
+            result = (error as? CircleError) == .unsupportedPDS ? .unsupported : .unknown
+            logger.debug("Circle capability probe did not establish support: \(error.localizedDescription)")
         }
+        let currentAccount = await probeClient.getActiveAccountInfo()
+        guard !Task.isCancelled, client === probeClient,
+              circleCapabilityProbeID == probeID,
+              AppStateManager.shared.lifecycle.appState === self else { return }
+        guard account.did == currentAccount.did, account.pdsURL == currentAccount.pdsURL else {
+            circleCapability = .unknown
+            return
+        }
+        circleCapabilityPDSURL = currentAccount.pdsURL
+        circleCapability = result
     }
 
     #if canImport(FoundationModels)
@@ -2381,6 +2402,7 @@ final class AppState {
             ) { [weak self] _ in
                 Task { [weak self] in
                     await self?.notificationManager.checkUnreadNotifications()
+                    await self?.probeCircleCapabilities()
                 }
             }
         #elseif os(macOS)
@@ -2391,6 +2413,7 @@ final class AppState {
             ) { [weak self] _ in
                 Task { [weak self] in
                     await self?.notificationManager.checkUnreadNotifications()
+                    await self?.probeCircleCapabilities()
                 }
             }
         #endif
@@ -3025,7 +3048,15 @@ final class AppState {
     @MainActor
     func updateClient(_ newClient: ATProtoClient) {
         logger.info("Updating AppState client reference for user: \(self.userDID)")
+        circleCapabilityProbeID = nil
+        circleCapability = .unknown
+        _circleService = nil
+        _circleNotificationService = nil
+        _circleNotificationsModel = nil
         client = newClient
+        #if DEBUG
+        if let transport = e2eCircleTransport { installE2ECircleFixture(transport: transport) }
+        #endif
 
         // Update all managers that hold client references
         postManager.updateClient(newClient)

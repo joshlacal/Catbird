@@ -16,7 +16,6 @@ struct ResultsView: View {
   @Binding var path: NavigationPath
   @Binding var selectedContentType: ContentType
   @Environment(AppState.self) private var appState
-  @State private var subscriptionStatus: [String: Bool] = [:]
   private let baseUnit: CGFloat = 3
 
   init(
@@ -57,6 +56,7 @@ struct ResultsView: View {
       }
     }
     .listStyle(.plain)
+    .task(id: appState.userDID) { await appState.feedLibraryActions.refresh() }
     .refreshable {
       if let client = appState.atProtoClient {
         await viewModel.refreshSearch(client: client)
@@ -211,14 +211,8 @@ struct ResultsView: View {
         VStack(spacing: 0) {
           FeedDiscoveryHeaderView(
             feed: feed,
-            isSubscribed: subscriptionStatus[feed.uri.uriString()] ?? false,
-            onSubscriptionToggle: {
-              await toggleFeedSubscription(feed)
-              await updateSubscriptionStatus(for: feed.uri)
-            },
             onTap: { path.append(NavigationDestination.feed(feed.uri)) }
           )
-          .task { await updateSubscriptionStatus(for: feed.uri) }
           .mainContentFrame()
           .padding(.horizontal, baseUnit * 1.5)
           .padding(.top, baseUnit * 3)
@@ -398,45 +392,6 @@ struct ResultsView: View {
   }
 
   // MARK: - Helper Methods
-
-  private func isSubscribedToFeed(_ feedURI: ATProtocolURI) async -> Bool {
-    let feedURIString = feedURI.uriString()
-    do {
-      let preferences = try await appState.preferencesManager.getPreferences()
-      let pinnedFeeds = preferences.pinnedFeeds
-      let savedFeeds = preferences.savedFeeds
-      return pinnedFeeds.contains(feedURIString) || savedFeeds.contains(feedURIString)
-    } catch {
-      return false
-    }
-  }
-
-  private func toggleFeedSubscription(_ feed: AppBskyFeedDefs.GeneratorView) async {
-    let feedURIString = feed.uri.uriString()
-    do {
-      let preferences = try await appState.preferencesManager.getPreferences()
-      if await isSubscribedToFeed(feed.uri) {
-        await MainActor.run {
-          preferences.removeFeed(feedURIString)
-        }
-        try await appState.preferencesManager.saveAndSyncPreferences(preferences)
-      } else {
-        await MainActor.run {
-          preferences.addFeed(feedURIString, pinned: false)
-        }
-        try await appState.preferencesManager.saveAndSyncPreferences(preferences)
-      }
-    } catch {
-      // Handle error silently
-    }
-  }
-
-  private func updateSubscriptionStatus(for feedURI: ATProtocolURI) async {
-    let status = await isSubscribedToFeed(feedURI)
-    await MainActor.run {
-      subscriptionStatus[feedURI.uriString()] = status
-    }
-  }
 
   private func retrySearch() async {
     guard let client = appState.atProtoClient else { return }

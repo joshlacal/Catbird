@@ -15,14 +15,15 @@ struct NotificationsView: View {
   @State private var selectedFilter: NotificationsViewModel.NotificationFilter = .all
   @State private var lastLoadMoreTriggerTime: TimeInterval = .zero
   @State private var showingSettings = false
+  @State private var circleRefresh = NotificationSupplementRefresh()
   private let loadMoreTriggerDedupInterval: TimeInterval = 0.35
 
   private let logger = Logger(subsystem: "blue.catbird", category: "NotificationsView")
 
   init(appState: AppState, selectedTab: Binding<Int>, lastTappedTab: Binding<Int?>) {
-    _viewModel = State(wrappedValue: NotificationsViewModel(client: appState.atProtoClient))
     self._selectedTab = selectedTab
     self._lastTappedTab = lastTappedTab
+    _viewModel = State(wrappedValue: NotificationsViewModel(client: appState.atProtoClient))
   }
 
   var body: some View {
@@ -32,17 +33,8 @@ struct NotificationsView: View {
     .onChange(of: lastTappedTab) { _, newValue in
       if newValue == 2, selectedTab == 2 {
         Task {
-          async let publicRefresh: Void = viewModel.refreshNotifications()
-          async let circleRefresh: Void = {
-            if CircleFeatureFlags.isEnabled {
-              do {
-                try await appState.circleNotificationsModel.refresh()
-              } catch {
-                // Handled in model.error; isolated from public notifications state
-              }
-            }
-          }()
-          _ = await (publicRefresh, circleRefresh)
+          startCircleRefresh()
+          await viewModel.refreshNotifications()
         }
         lastTappedTab = nil
       }
@@ -50,20 +42,9 @@ struct NotificationsView: View {
     .onChange(of: selectedTab) { oldValue, newValue in
       if newValue == 2 && oldValue != 2 {
         Task {
-          async let publicRefresh: Void = {
-            await viewModel.refreshNotifications()
-            try? await viewModel.markNotificationsAsSeen()
-          }()
-          async let circleRefresh: Void = {
-            if CircleFeatureFlags.isEnabled {
-              do {
-                try await appState.circleNotificationsModel.refresh()
-              } catch {
-                // Handled in model.error; isolated from public notifications state
-              }
-            }
-          }()
-          _ = await (publicRefresh, circleRefresh)
+          startCircleRefresh()
+          await viewModel.refreshNotifications()
+          try? await viewModel.markNotificationsAsSeen()
         }
       }
     }
@@ -72,31 +53,26 @@ struct NotificationsView: View {
         await viewModel.setFilter(newFilter)
       }
     }.task {
-      async let publicLoad: Void = {
-        #if DEBUG
-        if appState.e2eCircleTransport == nil,
-          viewModel.groupedNotifications.isEmpty
-        {
-          await viewModel.loadNotifications()
-        }
-        #else
-        if viewModel.groupedNotifications.isEmpty {
-          await viewModel.loadNotifications()
-        }
-        #endif
-      }()
-      async let circleLoad: Void = {
-        guard CircleFeatureFlags.isEnabled else { return }
-        do {
-          try await appState.circleNotificationsModel.refresh()
-        } catch {
-          // Handled in model.error; isolated from public notifications state
-        }
-      }()
-      _ = await (publicLoad, circleLoad)
+      #if DEBUG
+      if appState.e2eCircleTransport == nil, viewModel.groupedNotifications.isEmpty {
+        await viewModel.loadNotifications()
+      }
+      #else
+      if viewModel.groupedNotifications.isEmpty {
+        await viewModel.loadNotifications()
+      }
+      #endif
       // Force widget update when notifications view appears
       appState.notificationManager.updateWidgetUnreadCount(appState.notificationManager.unreadCount)
     }
+    .task(id: appState.circlesEnabled) {
+      if appState.circlesEnabled {
+        startCircleRefresh()
+      } else {
+        circleRefresh.cancel()
+      }
+    }
+    .onDisappear { circleRefresh.cancel() }
     // Check scene phase changes
     #if os(iOS)
     .onChange(of: UIApplication.shared.applicationState) { newState in
@@ -107,6 +83,19 @@ struct NotificationsView: View {
       }
     }
     #endif
+  }
+
+  @MainActor
+  private func startCircleRefresh() {
+    guard appState.circlesEnabled else { return }
+    let model = appState.circleNotificationsModel
+    circleRefresh.start {
+      do {
+        try await model.refresh()
+      } catch {
+        // Circle errors stay in the Circle model and never block public activity.
+      }
+    }
   }
 
   private var notificationsLeadingPlacement: ToolbarItemPlacement {
@@ -199,7 +188,7 @@ struct NotificationsView: View {
 
   @ViewBuilder
   private var notificationContent: some View {
-    if !CircleFeatureFlags.isEnabled {
+    if !appState.circlesEnabled {
       if let error = viewModel.error {
         ErrorStateView(
           error: error,
@@ -222,7 +211,7 @@ struct NotificationsView: View {
     VStack {
       ProgressView()
         .scaleEffect(1.5)
-      Text("Loading notifications...")
+      Text("Loading notifications")
         .foregroundColor(.secondary)
         .padding(.top)
     }
@@ -267,11 +256,16 @@ struct NotificationsView: View {
 
     ScrollViewReader { _ in
       List {
-        if CircleFeatureFlags.isEnabled {
+        if appState.circlesEnabled {
           CircleNotificationsSection(appState: appState, navigationPath: navigationPath)
+            #if os(macOS)
+            .frame(maxWidth: 700)
+            .frame(maxWidth: .infinity, alignment: .center)
+            #endif
+            .listSectionSeparator(.hidden, edges: .top)
         }
 
-        if let error = viewModel.error, CircleFeatureFlags.isEnabled {
+        if let error = viewModel.error, appState.circlesEnabled {
           ErrorStateView(
             error: error,
             context: "Failed to load public notifications",
@@ -279,16 +273,16 @@ struct NotificationsView: View {
           )
           .listRowSeparator(.hidden)
           .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
-        } else if viewModel.isLoading && viewModel.groupedNotifications.isEmpty && CircleFeatureFlags.isEnabled {
+        } else if viewModel.isLoading && viewModel.groupedNotifications.isEmpty && appState.circlesEnabled {
           HStack {
             Spacer()
-            ProgressView("Loading public notifications...")
+            ProgressView("Loading notifications")
             Spacer()
           }
           .padding(.vertical, DesignTokens.Spacing.xl)
           .listRowSeparator(.hidden)
           .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
-        } else if viewModel.groupedNotifications.isEmpty && CircleFeatureFlags.isEnabled {
+        } else if viewModel.groupedNotifications.isEmpty && appState.circlesEnabled {
           VStack(spacing: DesignTokens.Spacing.md) {
             Image(systemName: "bell.slash")
               .appFont(size: 32)
@@ -311,8 +305,13 @@ struct NotificationsView: View {
               navigationPath.wrappedValue.append(destination)
             }, path: navigationPath
           )
+          #if os(macOS)
+          .frame(maxWidth: 700)
+          .frame(maxWidth: .infinity, alignment: .center)
+          #endif
           .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
           .listRowSeparator(.visible)
+          .listRowSeparator(index == 0 ? .hidden : .visible, edges: .top)
           .alignmentGuide(.listRowSeparatorLeading) { _ in
             0
           }
@@ -330,6 +329,10 @@ struct NotificationsView: View {
               .padding()
             Spacer()
           }
+          #if os(macOS)
+          .frame(maxWidth: 700)
+          .frame(maxWidth: .infinity, alignment: .center)
+          #endif
           .id("loadingIndicator")
           .listRowSeparator(.hidden)
         }
@@ -347,18 +350,9 @@ struct NotificationsView: View {
       //      }
     }
     .refreshable {
+      startCircleRefresh()
+      await viewModel.refreshNotifications()
       try? await viewModel.markNotificationsAsSeen()
-      async let publicRefresh: Void = viewModel.refreshNotifications()
-      async let circleRefresh: Void = {
-        if CircleFeatureFlags.isEnabled {
-          do {
-            try await appState.circleNotificationsModel.refresh()
-          } catch {
-            // Handled in model.error; isolated from public notifications state
-          }
-        }
-      }()
-      _ = await (publicRefresh, circleRefresh)
     }
   }
 
