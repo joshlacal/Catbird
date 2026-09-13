@@ -1211,6 +1211,7 @@ final class AppState {
     var circleCapability: CircleCapabilityState = .unknown
     var circlesEnabled: Bool { circleCapability == .supported }
     @ObservationIgnored private var circleCapabilityProbeID: UUID?
+    @ObservationIgnored private var circleCapabilityPDSURL: URL?
 
     @ObservationIgnored private var _circleService: CircleService?
 
@@ -1292,6 +1293,9 @@ final class AppState {
         let account = await probeClient.getActiveAccountInfo()
         guard AppStateManager.shared.lifecycle.appState === self, client === probeClient,
               circleCapabilityProbeID == probeID else { return }
+        if circleCapabilityPDSURL != account.pdsURL {
+            circleCapability = .unknown
+        }
         await client.setServiceDID(
             CircleConfiguration.serviceDID, for: CircleConfiguration.serviceNSIDPrefix
         )
@@ -1305,9 +1309,13 @@ final class AppState {
         }
         let currentAccount = await probeClient.getActiveAccountInfo()
         guard !Task.isCancelled, client === probeClient,
-              account.did == currentAccount.did, account.pdsURL == currentAccount.pdsURL,
               circleCapabilityProbeID == probeID,
               AppStateManager.shared.lifecycle.appState === self else { return }
+        guard account.did == currentAccount.did, account.pdsURL == currentAccount.pdsURL else {
+            circleCapability = .unknown
+            return
+        }
+        circleCapabilityPDSURL = currentAccount.pdsURL
         circleCapability = result
     }
 

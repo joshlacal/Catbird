@@ -1,6 +1,6 @@
 # Account-specific Circles availability
 
-Circles entry points require the active account's PDS to answer an authenticated, read-only `com.atproto.space.listSpaces?limit=1` query with HTTP 200 and a decoded response, and the shared Circle AppView to advertise `enabled`. An empty Spaces list is valid. The probe creates no space, repository, membership, or post.
+Circles entry points require the active account's PDS to answer an authenticated, read-only `com.atproto.space.listSpaces?type=blue.catbird.circle&limit=1` query with HTTP 200 and a decoded response, and the shared Circle AppView to advertise `enabled`. An empty Spaces list is valid. The probe creates no space, repository, membership, or post.
 
 ## Detection decision
 
@@ -19,3 +19,7 @@ Feed discovery, composer choices, Circle navigation routes, and the notification
 ## Validation boundaries
 
 Tests cover enabled/disabled capability responses, explicit unsupported vs unknown failures, cancellation, and a delayed result after a different-account or same-DID session replacement. Error classification tests require the exact status/code pairs. These fixtures do not establish connectivity to a real supported PDS or successful Circles writes. A full runtime check requires supported and unsupported signed-in accounts: verify feed, composer, notifications, navigation, foreground retry, and repeated account switches. Build/test results are recorded in the task handoff.
+
+## First-time consent limitation
+
+Swan requires the requested Space type to be covered by the token's grant. Filtering to `blue.catbird.circle` is required: an unfiltered listing requests wildcard access and rejects Catbird's type-limited permission. Nest initial login scopes do not include Circle Spaces permission; existing `ensureGatewayPermission(.circleSpaces)` entry points live inside Circles. A fresh supported account remains unknown until consent is granted through the deliberate Enable Circles action in Account settings. HTTP 401 cannot safely prove support because Swan deliberately uses the same response for invalid authentication, missing scope, and inactive accounts. The user authorized this separate settings consent action; initial login permissions remain unchanged. A successful upgrade is followed by the same filtered PDS/AppView probe. Cancellation stays retryable and results are bound to the originating account session. No eligibility banner is shown: the protocol has no reliable pre-consent discovery signal, and an unknown authentication failure must not be advertised as available support.

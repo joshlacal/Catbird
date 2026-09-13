@@ -22,7 +22,9 @@ actor GatewayCircleTransport: CircleTransport {
     // listSpaces is an authenticated, read-only PDS query; an empty list is valid.
     do {
       let (status, output) = try await client.com.atproto.space.listSpaces(
-        input: ComAtprotoSpaceListSpaces.Parameters(limit: 1)
+        input: ComAtprotoSpaceListSpaces.Parameters(
+          type: try NSID(nsidString: CircleConfiguration.spaceType), limit: 1
+        )
       )
       guard status == 200, output != nil else { throw CircleError.invalidResponse }
     } catch {
