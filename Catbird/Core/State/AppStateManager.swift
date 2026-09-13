@@ -78,7 +78,7 @@ final class AppStateManager {
   private(set) var contextFreeMLSSuspensionOwner = MLSContextFreeLifecycleSuspensionOwner()
 
   /// Thread-safe active user DID box for nonisolated provider access
-  private static let activeUserDIDBox = Mutex<String?>(nil)
+  nonisolated private static let activeUserDIDBox = Mutex<String?>(nil)
   /// The authentication manager (owned by AppStateManager)
   private let authManager = AuthenticationManager()
 

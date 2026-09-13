@@ -253,6 +253,7 @@ final class AppState {
 
     /// Preferences manager for handling user preferences
     @ObservationIgnored let preferencesManager = PreferencesManager()
+    @MainActor @ObservationIgnored lazy var feedLibraryActions = FeedLibraryActions(appState: self)
 
     /// Feed feedback manager for custom feed interactions
     @ObservationIgnored let feedFeedbackManager = FeedFeedbackManager()
@@ -1293,6 +1294,10 @@ final class AppState {
         let account = await probeClient.getActiveAccountInfo()
         guard AppStateManager.shared.lifecycle.appState === self, client === probeClient,
               circleCapabilityProbeID == probeID else { return }
+        if let accountDID = account.did, accountDID != userDID {
+            circleCapability = .unknown
+            return
+        }
         if circleCapabilityPDSURL != account.pdsURL {
             circleCapability = .unknown
         }

@@ -111,7 +111,7 @@ struct ChatTabView: View {
     ExperimentalSettings.shared.isMLSChatEnabled(for: appState.userDID)
   }
 
-  /// Retained for external compatibility (ContentView, MLSConversationListView reference it).
+  /// Retained for backwards compatibility.
   /// No longer drives view switching — the unified list shows both types together.
   enum ChatMode: String, CaseIterable {
     case bluesky = "Bluesky DMs"
@@ -505,8 +505,7 @@ struct ChatTabView: View {
 
     // DEEP-LINK FIX: a share/notification can set the target BEFORE this view
     // mounts, so the .onChange(of: targetConversationId) below never fires
-    // (onChange only observes transitions). Same pattern as
-    // MLSConversationListView's NOTIFICATION FIX.
+    // (onChange only observes transitions).
     if let pending = appState.navigationManager.targetConversationId {
       if pending != selectedConvoId {
         selectedConvoId = pending
@@ -544,7 +543,7 @@ struct ChatTabView: View {
 
       // B8: kick off the full MLS init so the global WebSocket subscription
       // starts. Without this, `appState.initializeMLS()` only runs from
-      // Settings or `MLSConversationListView`, so the global WS — which is
+      // Settings or direct convo entry, so the global WS — which is
       // the ONLY transport that delivers `groupResetEvent` for convos the
       // user hasn't manually opened — never connects on a normal Chat-tab
       // launch. Effect: server-side auto-resets (Phase 2 sweep, quorum)

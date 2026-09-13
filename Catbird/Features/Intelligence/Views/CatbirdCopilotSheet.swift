@@ -46,9 +46,13 @@ struct CatbirdCopilotSheet: View {
             } else {
                 displayText = turn.text
             }
+            let renderedText = turn.role == .assistant
+                ? CopilotReferencePresentation.render(displayText, sources: turn.sources ?? [])
+                : ChatTextRenderer.attributedString(for: displayText)
             return CopilotMessageAdapter(
                 id: turn.id.uuidString,
-                text: displayText,
+                text: String(renderedText.characters),
+                attributedText: renderedText,
                 senderID: turn.role == .user ? conversationAccountDID : "catbird.copilot",
                 senderDisplayName: turn.role == .user ? nil : "Catbird",
                 sentAt: turn.createdAt,
@@ -91,7 +95,7 @@ struct CatbirdCopilotSheet: View {
                                         .accessibilityLabel(
                                             (turn.role == .assistant && turn.id == streamingAssistantTurnID && turn.text.isEmpty)
                                                 ? "Catbird is responding"
-                                                : (turn.role == .assistant ? "Catbird: \(turn.text)" : "You: \(turn.text)")
+                                                : (turn.role == .assistant ? "Catbird: \(adapter.text)" : "You: \(adapter.text)")
                                         )
                                         if turn.role == .assistant {
                                             if let sources = turn.sources, !sources.isEmpty {
@@ -168,11 +172,14 @@ struct CatbirdCopilotSheet: View {
                         Task { await send(promptText: text) }
                     },
                     placeholder: "Ask Catbird…",
-                    isDisabled: isResponding || hasUnresolvedProposal
+                    isDisabled: isResponding || hasUnresolvedProposal,
+                    showsInputBackground: false
                 )
             }
             .navigationTitle("Ask Catbird")
+            #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
+            #endif
             .navigationDestination(for: NavigationDestination.self) { destination in
                 NavigationHandler.viewForDestination(
                     destination,
@@ -211,8 +218,12 @@ struct CatbirdCopilotSheet: View {
             .alert("Use Private Cloud Compute?", isPresented: $showingCloudConsent) {
                 Button("Cancel", role: .cancel) {}
                 Button("Use Private Cloud Compute") {
-                    UserDefaults.standard.set(true, forKey: cloudConsentKey)
-                    route = .privateCloudCompute
+                    guard let reason = CopilotCloudAvailability.unavailableReason else {
+                        UserDefaults.standard.set(true, forKey: cloudConsentKey)
+                        route = .privateCloudCompute
+                        return
+                    }
+                    errorMessage = reason
                 }
             } message: {
                 Text("The request and its Catbird context will be sent to Apple's Private Cloud Compute. This choice is remembered for this account.")
@@ -257,7 +268,7 @@ struct CatbirdCopilotSheet: View {
     }
 
     private var contextLabel: String {
-        context.promptDescription.components(separatedBy: "\n").first ?? "Current context"
+        CopilotReferencePresentation.contextLabel(context)
     }
 
     private var routeLabel: String {
@@ -267,6 +278,11 @@ struct CatbirdCopilotSheet: View {
     private var cloudConsentKey: String { "copilot.pccConsent.\(appState.userDID)" }
 
     private func requestCloudRoute() {
+        if let reason = CopilotCloudAvailability.unavailableReason {
+            route = .onDevice
+            errorMessage = reason
+            return
+        }
         if UserDefaults.standard.bool(forKey: cloudConsentKey) {
             route = .privateCloudCompute
         } else {
@@ -352,7 +368,7 @@ struct CatbirdCopilotSheet: View {
                         HStack(spacing: 4) {
                             Image(systemName: "arrow.up.right.square")
                                 .font(.caption2)
-                            Text(source.label)
+                            Text(CopilotReferencePresentation.label(for: source))
                                 .font(.caption2)
                                 .lineLimit(1)
                         }
@@ -362,7 +378,7 @@ struct CatbirdCopilotSheet: View {
                         .foregroundStyle(.primary)
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("Source: \(source.label)")
+                    .accessibilityLabel("Source: \(CopilotReferencePresentation.label(for: source))")
                     .accessibilityHint(source.uri != nil ? "Opens source details" : "")
                 }
             }
@@ -660,7 +676,7 @@ struct CatbirdCopilotSheet: View {
     @MainActor
     private func routeSource(_ source: CopilotSource) {
         guard let uriString = source.uri?.trimmingCharacters(in: .whitespacesAndNewlines), !uriString.isEmpty else {
-            errorMessage = "Source '\(source.label)' does not have a valid link."
+            errorMessage = "This source does not have a valid link."
             return
         }
 
@@ -671,7 +687,7 @@ struct CatbirdCopilotSheet: View {
 
         if uriString.hasPrefix("at://") {
             guard let atURI = try? ATProtocolURI(uriString: uriString) else {
-                errorMessage = "Unsupported or invalid AT protocol URI: \(uriString)"
+                errorMessage = "This source link is invalid."
                 return
             }
             switch atURI.collection {
@@ -682,7 +698,7 @@ struct CatbirdCopilotSheet: View {
             case "app.bsky.graph.list":
                 navigationPath.append(NavigationDestination.list(atURI))
             default:
-                errorMessage = "Unsupported source collection: \(atURI.collection ?? "unknown")"
+                errorMessage = "This type of source cannot be opened yet."
             }
             return
         }
@@ -691,12 +707,12 @@ struct CatbirdCopilotSheet: View {
             if let url = URL(string: uriString) {
                 _ = appState.urlHandler.handle(url)
             } else {
-                errorMessage = "Invalid URL: \(uriString)"
+                errorMessage = "This source link is invalid."
             }
             return
         }
 
-        errorMessage = "Unsupported source link: \(uriString)"
+        errorMessage = "This source link cannot be opened."
     }
 
     private func startNewChat() {
@@ -832,6 +848,7 @@ struct CatbirdCopilotSheet: View {
 private struct CopilotMessageAdapter: UnifiedChatMessage, Identifiable, Hashable, Sendable {
     let id: String
     let text: String
+    let attributedText: AttributedString
     let senderID: String
     let senderDisplayName: String?
     let senderAvatarURL: URL? = nil
@@ -840,4 +857,102 @@ private struct CopilotMessageAdapter: UnifiedChatMessage, Identifiable, Hashable
     let reactions: [UnifiedReaction] = []
     let embed: UnifiedEmbed? = nil
     let sendState: MessageSendState
+}
+
+/// Presentation only: stored and streamed model text retains its original identity and offsets.
+enum CopilotReferencePresentation {
+    /// Older conversations can contain machine identifiers as source labels.
+    /// Keep the URI for navigation, but never use it as the visible fallback.
+    static func label(for source: CopilotSource) -> String {
+        let label = source.label.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !label.isEmpty && !label.localizedCaseInsensitiveContains("at://")
+            && !label.localizedCaseInsensitiveContains("did:") {
+            return label
+        }
+        let uri = source.uri?.trimmingCharacters(in: .whitespacesAndNewlines) ?? label
+        if uri.hasPrefix("did:") { return "Profile" }
+        if let atURI = try? ATProtocolURI(uriString: uri) {
+            switch atURI.collection {
+            case "app.bsky.feed.post": return "Post"
+            case "app.bsky.feed.generator": return "Feed"
+            case "app.bsky.graph.list": return "List"
+            case "app.bsky.actor.profile": return "Profile"
+            default: break
+            }
+        }
+        return "Source"
+    }
+
+    static func contextLabel(_ context: CopilotContext) -> String {
+        let description: String
+        switch context {
+        case .topic(let name, _, _): description = "Topic: \(name)"
+        case .post(_, _, _, let text):
+            let excerpt = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            description = excerpt.isEmpty ? "Post" : "Post: \(excerpt.prefix(100))"
+        case .thread: description = "Thread"
+        case .profile(_, let handle, let displayName):
+            let name = displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let readableName = name.flatMap { $0.isEmpty ? nil : $0 } ?? "@" + handle
+            description = "Profile: \(readableName)"
+        case .feed(_, let name): description = "Feed: \(name)"
+        case .search(let query): description = "Search: \(query)"
+        case .smartFilter(_, let name): description = "Smart filter: \(name)"
+        }
+        return String(render(description, sources: []).characters)
+            .components(separatedBy: .newlines).joined(separator: " ")
+    }
+
+    static func render(_ text: String, sources: [CopilotSource]) -> AttributedString {
+        // Match a complete Markdown reference before bare identifiers so neither
+        // its brackets nor a duplicate destination leak into the visible text.
+        let identifier = #"(?:at://[^\s\[\]()<>\"`]+|did:[a-z]+:[^\s\[\]()<>\"`]+)"#
+        guard let pattern = try? NSRegularExpression(
+            pattern: #"\[([^\]\n]*)\]\(("# + identifier + #")\)|\[("# + identifier
+                + #")\]\((https?://[^\s()<>]+)\)|("# + identifier + ")"
+        ) else {
+            return ChatTextRenderer.attributedString(for: text)
+        }
+        var result = AttributedString()
+        var cursor = text.startIndex
+        for match in pattern.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
+            guard let range = Range(match.range, in: text) else { continue }
+            let markdownURI = Range(match.range(at: 2), in: text)
+            let webLabel = Range(match.range(at: 3), in: text)
+            let webDestination = Range(match.range(at: 4), in: text).map { String(text[$0]) }
+            let identifierRange = markdownURI ?? webLabel ?? range
+            let raw = (markdownURI ?? webLabel).map { String(text[$0]) }
+                ?? String(text[identifierRange]).trimmingCharacters(in: CharacterSet(charactersIn: ".,;:!?"))
+            guard !raw.isEmpty else { continue }
+            let referenceEnd = markdownURI != nil || webLabel != nil ? range.upperBound
+                : text.index(range.lowerBound, offsetBy: raw.count)
+            result.append(ChatTextRenderer.attributedString(for: String(text[cursor..<range.lowerBound])))
+            let markdownLabel = Range(match.range(at: 1), in: text).map { String(text[$0]) } ?? ""
+            let source = sources.first { $0.uri == raw } ?? CopilotSource(label: markdownLabel, uri: raw)
+            var reference = AttributedString(label(for: source))
+            if let webDestination {
+                reference.link = URL(string: webDestination)
+            } else if raw.hasPrefix("at://") {
+                let components = raw.dropFirst(5).split(separator: "/", omittingEmptySubsequences: false)
+                if components.count == 3 {
+                    let route: String?
+                    switch components[1] {
+                    case "app.bsky.feed.post": route = "post"
+                    case "app.bsky.feed.generator": route = "feed"
+                    case "app.bsky.graph.list": route = "lists"
+                    default: route = nil
+                    }
+                    if let route {
+                        reference.link = URL(string: "https://bsky.app/profile/\(components[0])/\(route)/\(components[2])")
+                    }
+                }
+            } else if raw.hasPrefix("did:") {
+                reference.link = URL(string: "https://bsky.app/profile/" + raw)
+            }
+            result.append(reference)
+            cursor = referenceEnd
+        }
+        result.append(ChatTextRenderer.attributedString(for: String(text[cursor...])))
+        return result
+    }
 }

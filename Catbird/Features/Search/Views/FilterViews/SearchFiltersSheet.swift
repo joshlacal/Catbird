@@ -32,7 +32,9 @@ public struct SearchFiltersSheet: View {
               set: { draft.author = $0.isEmpty ? nil : $0 }
             ))
             .autocorrectionDisabled()
+            #if os(iOS)
             .textInputAutocapitalization(.never)
+            #endif
 
             if let error = draft.authorValidationError {
               Text(error)

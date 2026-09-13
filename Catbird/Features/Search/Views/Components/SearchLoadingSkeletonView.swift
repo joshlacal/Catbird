@@ -173,6 +173,8 @@ enum SearchSkeletonItemType {
 /// Shimmer effect modifier
 struct ShimmerModifier: ViewModifier {
     @State private var isAnimating = false
+
+    init() {}
     
     func body(content: Content) -> some View {
         content

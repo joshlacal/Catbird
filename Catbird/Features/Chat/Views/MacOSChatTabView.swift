@@ -375,7 +375,7 @@ struct MacOSChatContentView: View {
       coordinator.mlsState = newState
 
       if let selectedConvoId,
-         !acceptedConversations.contains(where: { $0.conversationID == selectedConvoId }) {
+         !canonicalIDs.contains(selectedConvoId) {
         self.selectedConvoId = nil
       }
 

@@ -3,6 +3,8 @@ import Petrel
 import SwiftData
 import SwiftUI
 import Testing
+import UIKit
+import Vision
 
 @testable import Catbird
 
@@ -10,6 +12,244 @@ import Testing
 /// distinguish organic and repost variants, and must remain scoped to its feed.
 @Suite("CachedFeedViewPost identity")
 struct CachedFeedViewPostIdentityTests {
+  @Test("A reused feed view model accepts enriched thread context with the same payload")
+  @MainActor
+  func viewModelAcceptsThreadEnrichment() throws {
+    let reply = try makeFeedViewPost(rkey: "thread-reply")
+    let root = try makeFeedViewPost(rkey: "thread-root")
+    let original = try #require(CachedFeedViewPost(from: reply, feedType: "timeline"))
+    let enriched = try #require(CachedFeedViewPost(from: reply, feedType: "timeline"))
+    // Preserve exactly the same API payload: only cached thread context changes.
+    enriched.serializedPost = original.serializedPost
+    let items = try [root, reply].map { entry -> FeedSliceItem in
+      guard case .knownType(let value) = entry.post.record,
+            let record = value as? AppBskyFeedPost else {
+        throw NSError(domain: "FeedThreadFixture", code: 1)
+      }
+      return FeedSliceItem(post: entry.post, record: record)
+    }
+    enriched.serializedSliceItems = try JSONEncoder().encode(items)
+    enriched.threadDisplayMode = "expanded"
+    enriched.threadPostCount = 2
+    enriched.isPartOfThread = true
+
+    let viewModel = FeedPostViewModel(post: original)
+    viewModel.showingFullText = true
+    viewModel.updatePost(enriched)
+
+    #expect(viewModel.post === enriched)
+    #expect(viewModel.post.sliceItems?.map(\.id) == items.map(\.id))
+    #expect(viewModel.post.threadDisplayMode == "expanded")
+    #expect(viewModel.showingFullText)
+  }
+
+  @Test("Two-post self thread retains root and feed reply")
+  func twoPostSelfThread() async throws {
+    let posts = try makeThread(count: 2)
+    let slices = await FeedTuner().tune([posts[1]])
+    #expect(slices.count == 1)
+    #expect(slices.first?.items.map(\.id) == posts.map { $0.post.uri.uriString() })
+    #expect(slices.first?.isIncompleteThread == false)
+  }
+
+  @Test("Three-post self thread retains all connected context")
+  func threePostSelfThread() async throws {
+    let posts = try makeThread(count: 3)
+    let slices = await FeedTuner().tune([posts[2]])
+    #expect(slices.count == 1)
+    #expect(slices.first?.items.map(\.id) == posts.map { $0.post.uri.uriString() })
+    #expect(slices.first?.isIncompleteThread == false)
+  }
+
+  @Test("Reply bump deduplicates the root without losing the triggering reply")
+  func replyBumpRetainsReply() async throws {
+    let posts = try makeThread(count: 2)
+    for input in [posts, Array(posts.reversed())] {
+      let slices = await FeedTuner().tune(input)
+      #expect(slices.count == 1)
+      #expect(slices.first?.items.map(\.id) == posts.map { $0.post.uri.uriString() })
+      #expect(slices.first?.feedPostUri == posts[1].post.uri.uriString())
+    }
+  }
+
+  @Test("Equal timestamps and a later-dated root cannot replace the feed reply")
+  func replyRelationshipsOutrankTimestamps() async throws {
+    let posts = try makeThread(count: 3)
+    for rootDate in ["2025-06-04T00:00:00.000Z", "2025-06-05T00:00:00.000Z"] {
+      let adjusted = try posts.enumerated().map { index, entry in
+        try replacingMainPostJSON(entry) { post in
+          var record = try #require(post["record"] as? [String: Any])
+          record["createdAt"] = index == 0 ? rootDate : "2025-06-04T00:00:00.000Z"
+          post["record"] = record
+        }
+      }
+      let slices = await FeedTuner().tune(Array(adjusted.reversed()))
+      #expect(slices.count == 1)
+      #expect(slices.first?.feedPostUri == posts[2].post.uri.uriString())
+      #expect(slices.first?.items.map(\.id) == posts.map { $0.post.uri.uriString() })
+    }
+  }
+
+  @Test("Sibling replies preserve server order despite a later sibling timestamp")
+  func siblingReplySelectionPreservesFeedOrder() async throws {
+    let posts = try makeThread(count: 2)
+    let firstReply = posts[1]
+    let laterSibling = try replacingMainPostJSON(firstReply) { post in
+      post["uri"] = "at://did:plc:author/app.bsky.feed.post/later-sibling"
+      var record = try #require(post["record"] as? [String: Any])
+      record["createdAt"] = "2025-06-05T00:00:00.000Z"
+      record["text"] = "A later sibling reply"
+      post["record"] = record
+    }
+    let slices = await FeedTuner().tune([firstReply, laterSibling, posts[0]])
+    #expect(slices.count == 1)
+    #expect(slices.first?.feedPostUri == firstReply.post.uri.uriString())
+    #expect(slices.first?.items.map(\.id) == [posts[0], firstReply].map { $0.post.uri.uriString() })
+
+    let reversed = await FeedTuner().tune([laterSibling, firstReply, posts[0]])
+    #expect(reversed.count == 1)
+    #expect(reversed.first?.feedPostUri == laterSibling.post.uri.uriString())
+  }
+
+  @Test("Standalone feed post stays a single row")
+  func standaloneStaysStandalone() async throws {
+    let post = try makeFeedViewPost(rkey: "standalone")
+    let slices = await FeedTuner().tune([post])
+    #expect(slices.count == 1)
+    #expect(slices.first?.items.map(\.id) == [post.post.uri.uriString()])
+    #expect(slices.first?.shouldShowAsThread == false)
+  }
+
+  @Test("Long thread uses bounded root-parent-reply context and marks its gap")
+  func longThreadStaysBounded() async throws {
+    let posts = try makeThread(count: 5)
+    let slices = await FeedTuner().tune([posts[4]])
+    #expect(slices.count == 1)
+    #expect(slices.first?.items.map(\.id) == [posts[0], posts[3], posts[4]].map { $0.post.uri.uriString() })
+    #expect(slices.first?.isIncompleteThread == true)
+  }
+
+  @Test("Followed self-thread survives unfollowed-reply filtering with its context")
+  func followedSelfThreadKeepsContext() async throws {
+    let posts = try makeThread(count: 3, followed: true)
+    let settings = FeedTunerSettings(
+      hideReplies: false, hideRepliesByUnfollowed: true, hideRepliesByLikeCount: nil,
+      hideReposts: false, hideQuotePosts: false,
+      hideNonPreferredLanguages: false, preferredLanguages: [],
+      mutedUsers: [], blockedUsers: [], hideLinks: false,
+      onlyTextPosts: false, onlyMediaPosts: false,
+      contentLabelPreferences: [], hideAdultContent: false, hiddenPosts: [],
+      currentUserDid: "did:plc:reader"
+    )
+    let filtered = await ContentFilterService().filterFeedViewPosts([posts[2]], settings: settings)
+    #expect(filtered.count == 1)
+    let slices = await FeedTuner().tune([posts[2]], filterSettings: settings)
+    #expect(slices.count == 1)
+    #expect(slices.first?.items.map(\.id) == posts.map { $0.post.uri.uriString() })
+  }
+
+  @Test("An unfollowed author's self-thread remains excluded")
+  func unfollowedSelfThreadIsExcluded() async throws {
+    let posts = try makeThread(count: 2)
+    let settings = contextFilterSettings()
+    let filtered = await ContentFilterService().filterFeedViewPosts([posts[1]], settings: settings)
+    let slices = await FeedTuner().tune([posts[1]], filterSettings: settings)
+    #expect(filtered.isEmpty)
+    #expect(slices.isEmpty)
+  }
+
+  @Test("Following only the reply author does not qualify unfollowed context")
+  func followedReplyToUnfollowedContextIsExcluded() async throws {
+    let posts = try makeThread(count: 2)
+    let reply = try replacingMainPostJSON(posts[1]) { post in
+      var author = try #require(post["author"] as? [String: Any])
+      author["did"] = "did:plc:followed-replier"
+      author["viewer"] = ["following": "at://did:plc:reader/app.bsky.graph.follow/replier"]
+      post["author"] = author
+      post["uri"] = "at://did:plc:followed-replier/app.bsky.feed.post/reply"
+    }
+    let settings = contextFilterSettings()
+    let filtered = await ContentFilterService().filterFeedViewPosts([reply], settings: settings)
+    let slices = await FeedTuner().tune([reply], filterSettings: settings)
+    #expect(filtered.isEmpty)
+    #expect(slices.isEmpty)
+  }
+
+  @Test("Followed thread context does not bypass adult-content filtering")
+  func followedContextStillChecksAdultLabels() async throws {
+    let posts = try makeThread(count: 2, followed: true)
+    let reply = try replacingMainPostJSON(posts[1]) { post in
+      post["labels"] = [[
+        "src": "did:plc:labeler", "uri": posts[1].post.uri.uriString(),
+        "val": "porn", "cts": "2025-06-04T00:00:00.000Z"
+      ]]
+    }
+    let allowed = await ContentFilterService().filterFeedViewPosts([reply], settings: contextFilterSettings())
+    #expect(allowed.count == 1)
+    let settings = contextFilterSettings(hideAdultContent: true)
+    let filtered = await ContentFilterService().filterFeedViewPosts([reply], settings: settings)
+    let slices = await FeedTuner().tune([reply], filterSettings: settings)
+    #expect(filtered.isEmpty)
+    #expect(slices.isEmpty)
+  }
+
+  private func contextFilterSettings(hideAdultContent: Bool = false) -> FeedTunerSettings {
+    FeedTunerSettings(
+      hideReplies: false, hideRepliesByUnfollowed: true, hideRepliesByLikeCount: nil,
+      hideReposts: false, hideQuotePosts: false,
+      hideNonPreferredLanguages: false, preferredLanguages: [],
+      mutedUsers: [], blockedUsers: [], hideLinks: false,
+      onlyTextPosts: false, onlyMediaPosts: false,
+      contentLabelPreferences: [], hideAdultContent: hideAdultContent, hiddenPosts: [],
+      currentUserDid: "did:plc:reader"
+    )
+  }
+
+  private func replacingMainPostJSON(
+    _ entry: AppBskyFeedDefs.FeedViewPost,
+    mutate: (inout [String: Any]) throws -> Void
+  ) throws -> AppBskyFeedDefs.FeedViewPost {
+    var envelope = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(entry)) as? [String: Any])
+    var post = try #require(envelope["post"] as? [String: Any])
+    try mutate(&post)
+    envelope["post"] = post
+    return try JSONDecoder().decode(AppBskyFeedDefs.FeedViewPost.self, from: JSONSerialization.data(withJSONObject: envelope))
+  }
+
+  /// Encode ordinary fixture posts and attach protocol reply context, including
+  /// the record's strong references used to distinguish connected and gapped threads.
+  private func makeThread(count: Int, followed: Bool = false, texts: [String]? = nil) throws -> [AppBskyFeedDefs.FeedViewPost] {
+    var posts: [AppBskyFeedDefs.FeedViewPost] = []
+    for index in 0..<count {
+      let base = try makeFeedViewPost(rkey: "thread-\(index)")
+      var envelope = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(base)) as? [String: Any])
+      var post = try #require(envelope["post"] as? [String: Any])
+      var record = try #require(post["record"] as? [String: Any])
+      record["createdAt"] = "2025-06-04T00:00:0\(index).000Z"
+      if let texts { record["text"] = texts[index] }
+      if followed {
+        var author = try #require(post["author"] as? [String: Any])
+        author["viewer"] = ["following": "at://did:plc:reader/app.bsky.graph.follow/author"]
+        post["author"] = author
+      }
+      if let parent = posts.last, let root = posts.first {
+        var rootJSON = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(root.post)) as? [String: Any])
+        var parentJSON = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(parent.post)) as? [String: Any])
+        record["reply"] = [
+          "root": ["uri": root.post.uri.uriString(), "cid": try #require(rootJSON["cid"] as? String)],
+          "parent": ["uri": parent.post.uri.uriString(), "cid": try #require(parentJSON["cid"] as? String)]
+        ]
+        rootJSON["$type"] = "app.bsky.feed.defs#postView"
+        parentJSON["$type"] = "app.bsky.feed.defs#postView"
+        envelope["reply"] = ["root": rootJSON, "parent": parentJSON]
+      }
+      post["record"] = record
+      envelope["post"] = post
+      posts.append(try JSONDecoder().decode(AppBskyFeedDefs.FeedViewPost.self, from: JSONSerialization.data(withJSONObject: envelope)))
+    }
+    return posts
+  }
+
   @Test("Repost gets a distinct id from the organic post")
   func repostIdDiffersFromOrganic() throws {
     let organic = try makeFeedViewPost(rkey: "abc123")
@@ -258,6 +498,108 @@ struct CachedFeedViewPostIdentityTests {
     #expect(enhanced.id == rawPost.id)
     #expect(enhanced.feedViewPost == rawPost)
     #expect(renderer.uiImage != nil)
+  }
+
+  @Test("Short cached threads render readable root and reply pixels")
+  @MainActor
+  func shortCachedThreadsRenderAtIncreasingHeights() async throws {
+    let sentinels = ["THREAD ROOT ALPHA", "THREAD REPLY BRAVO", "THREAD REPLY CHARLIE"]
+    let posts = try makeThread(count: 3, texts: sentinels)
+    let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
+    let appState = AppState(userDID: "did:plc:testuser", client: client)
+    let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+    var heights: [CGFloat] = []
+
+    for count in 1...3 {
+      let slices = await FeedTuner().tune([posts[count - 1]])
+      let slice = try #require(slices.first)
+      #expect(slice.items.count == count)
+      let cached = try #require(CachedFeedViewPost(from: slice, feedType: "timeline"))
+      let content = EnhancedFeedPost(cachedPost: cached, path: .constant(NavigationPath()))
+        .applyAppStateEnvironment(appState)
+        .environment(\.fontManager, appState.fontManager)
+        .environment(\.horizontalSizeClass, .compact)
+        .environment(\.dynamicTypeSize, .medium)
+        .environment(\.colorScheme, .light)
+        .frame(width: 402)
+        .fixedSize(horizontal: false, vertical: true)
+      let host = UIHostingController(rootView: content)
+      let window = UIWindow(windowScene: scene)
+      let previousKeyWindow = scene.windows.first(where: \.isKeyWindow)
+      window.frame = CGRect(x: 0, y: 0, width: 402, height: 1200)
+      window.rootViewController = host
+      window.backgroundColor = .white
+      host.overrideUserInterfaceStyle = .light
+      window.isHidden = false
+      defer {
+        let becameKey = window.isKeyWindow
+        window.isHidden = true
+        window.rootViewController = nil
+        if becameKey { previousKeyWindow?.makeKey() }
+      }
+
+      // A visible UIKit hierarchy supports content ImageRenderer cannot capture.
+      // Yield for layout, then require the actual captured pixels to contain text.
+      let deadline = ContinuousClock.now + .seconds(2)
+      var lastPNG = Data()
+      var transcript = ""
+      var captureError = ""
+      var drewHierarchy = false
+      var readable = false
+      var height: CGFloat = 0
+      repeat {
+        try await Task.sleep(for: .milliseconds(50))
+        let size = host.sizeThatFits(in: CGSize(width: 402, height: 1200))
+        height = ceil(size.height)
+        guard height.isFinite, height > 0, height <= 1200 else {
+          captureError = "Invalid fitted height: \(height)"
+          break
+        }
+        window.frame.size = CGSize(width: 402, height: height)
+        host.view.frame = window.bounds
+        window.layoutIfNeeded()
+        host.view.layoutIfNeeded()
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 2
+        let image = UIGraphicsImageRenderer(bounds: host.view.bounds, format: format).image { _ in
+          drewHierarchy = host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
+        }
+        lastPNG = image.pngData() ?? Data()
+        do {
+          let cgImage = try #require(image.cgImage)
+          let request = VNRecognizeTextRequest()
+          request.recognitionLevel = .accurate
+          request.recognitionLanguages = ["en-US"]
+          request.usesLanguageCorrection = false
+          try VNImageRequestHandler(cgImage: cgImage, options: [:]).perform([request])
+          transcript = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+            .joined(separator: "\n")
+          let normalized = transcript.uppercased().split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+          readable = drewHierarchy
+            && sentinels.prefix(count).allSatisfy { normalized.contains($0) }
+            && sentinels.dropFirst(count).allSatisfy { !normalized.contains($0) }
+          captureError = ""
+        } catch {
+          captureError = String(describing: error)
+        }
+      } while !readable && ContinuousClock.now < deadline
+
+      // Preserve the last failed capture too; dimensions alone cannot pass this test.
+      if !lastPNG.isEmpty {
+        Attachment.record(Array(lastPNG), named: "feed-thread-\(count)-posts-uikit.png")
+      }
+      let receipt = "height=\(height), drawHierarchy=\(drewHierarchy), readable=\(readable)\n"
+        + "error=\(captureError)\nOCR:\n\(transcript)"
+      Attachment.record(Array(receipt.utf8), named: "feed-thread-\(count)-posts-ocr.txt")
+      #expect(!lastPNG.isEmpty, "UIKit capture must produce a PNG")
+      #expect(drewHierarchy, "UIKit must complete hierarchy capture")
+      #expect(readable, "Expected only the first \(count) body sentinels in captured pixels; see OCR attachment")
+      heights.append(height)
+    }
+
+    #expect(heights[0] > 0)
+    #expect(heights[1] > heights[0])
+    #expect(heights[2] > heights[1])
   }
 
   @Test("EnhancedFeedPost does not snapshot cached payload in initializer")

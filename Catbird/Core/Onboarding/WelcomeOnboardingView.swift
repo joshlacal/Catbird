@@ -9,6 +9,7 @@ public struct WelcomeOnboardingView: View {
     @Environment(\.dismiss) private var dismiss
     
     @State private var currentStep: Int = 0
+    @State private var isShowingFeedDiscovery = false
     @State private var selectedInterests: Set<String> = []
     @State private var isSavingInterests: Bool = false
     @State private var interestsErrorMessage: String?
@@ -223,7 +224,7 @@ public struct WelcomeOnboardingView: View {
                         .font(.largeTitle)
                         .fontWeight(.bold)
                     
-                    Text("Welcome to Bluesky on Catbird. Your personalized feed is ready to explore.")
+                    Text("Welcome to Bluesky on Catbird. Choose community feeds or start exploring now.")
                         .font(.body)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
@@ -238,6 +239,16 @@ public struct WelcomeOnboardingView: View {
                 Spacer(minLength: 32)
                 
                 VStack(spacing: 12) {
+                    Button {
+                        isShowingFeedDiscovery = true
+                    } label: {
+                        Label("Choose feeds", systemImage: "plus.circle")
+                            .font(.headline)
+                            .frame(maxWidth: .infinity, minHeight: 52)
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityHint("Optional. Discover and save community feeds")
+
                     Button(action: finishOnboarding) {
                         Text("Start Exploring")
                             .font(.headline)
@@ -251,6 +262,12 @@ public struct WelcomeOnboardingView: View {
                 .padding(.horizontal, 24)
                 .padding(.bottom, 32)
             }
+        }
+        .sheet(isPresented: $isShowingFeedDiscovery) {
+            AddFeedSheet(onOpen: { feed in
+                finishOnboarding()
+                appState.navigationManager.navigate(to: .feed(feed.uri))
+            })
         }
         .task {
             await finalizeStarterPackIfNeeded()

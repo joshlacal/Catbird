@@ -16,6 +16,7 @@ struct MacOSMainView: View {
 
   var body: some View {
     mainSplitView
+      .frame(minWidth: 900, minHeight: 600)
       .onKeyPress(.escape) { handleEscape() }
       .background { keyboardShortcutButtons }
       .modifier(MacOSDeepLinkHandlers(selectedItem: $selectedItem, appState: appState))
@@ -24,13 +25,14 @@ struct MacOSMainView: View {
   private var mainSplitView: some View {
     NavigationSplitView {
       MacOSUnifiedSidebar(selection: $selectedItem)
-        .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 320)
+        .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 320)
     } detail: {
       MacOSDetailRouter(
         selection: selectedItem,
         navigationPaths: $navigationPaths
       )
     }
+    .navigationSplitViewStyle(.balanced)
     .navigationTitle(windowTitle)
     .toolbar {
       composeToolbarItem

@@ -28,7 +28,9 @@ struct StarterPackDetailsStep: View {
                     TextField("e.g., iOS Developers, Artists, Friends", text: $draft.name)
                         .focused($isNameFocused)
                         .autocorrectionDisabled()
+                        #if os(iOS)
                         .textInputAutocapitalization(.words)
+                        #endif
                         .onChange(of: draft.name) { _, newValue in
                             if newValue.count > StarterPackDraft.maxNameLength {
                                 draft.name = String(newValue.prefix(StarterPackDraft.maxNameLength))

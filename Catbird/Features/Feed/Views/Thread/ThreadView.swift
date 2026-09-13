@@ -36,7 +36,7 @@ struct ThreadView: View {
             #endif
         }
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItem(placement: .primaryAction) {
                 Menu {
                     Section("Sort replies") {
                         Button {
@@ -155,6 +155,7 @@ private struct SwiftUIThreadView: View {
     @State private var isLoading = true
     @State private var hasInitialized = false
     @State private var isLoadingMoreParents = false
+    @State private var hasMoreParents = false
     @State private var contentOpacity: Double = 0
     @State private var scrollPosition = ScrollPosition(idType: String.self)
     @State private var hasScrolledToMainPost = false

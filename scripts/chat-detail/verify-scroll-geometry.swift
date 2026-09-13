@@ -1,0 +1,53 @@
+import Foundation
+
+@main
+struct VerifyChatScrollGeometry {
+  static func main() async {
+    var contentHeight: CGFloat = 2400
+    var offset: CGFloat = 600
+    var anchorY: CGFloat = 580
+    let relativeY = anchorY - offset
+    // Realistic asynchronous ordering: below, above, visible, above/error shrink.
+    for (item, old, new) in [(18, 80.0, 420.0), (2, 80.0, 360.0),
+                             (7, 80.0, 290.0), (1, 300.0, 64.0)] {
+      try? await Task.sleep(for: .milliseconds(25))
+      let delta = new - old
+      let adjustment = ChatScrollGeometry.resizeAdjustment(
+        oldHeight: old, newHeight: new, resizedItem: item, anchorItem: 7,
+        contentHeight: contentHeight, offsetY: offset, viewportHeight: 700,
+        topInset: 40, bottomInset: 100, isInteracting: false
+      )
+      offset += adjustment
+      if item < 7 { anchorY += delta }
+      contentHeight += delta
+      precondition(abs(anchorY - offset - relativeY) < 0.001)
+    }
+    for interacting in [false, true] {
+      let adjustment = ChatScrollGeometry.resizeAdjustment(
+        oldHeight: 80, newHeight: 400, resizedItem: 20, anchorItem: 17,
+        contentHeight: 2400, offsetY: 1800, viewportHeight: 700,
+        topInset: 40, bottomInset: 100, isInteracting: interacting
+      )
+      precondition(adjustment == (interacting ? 0 : 320))
+    }
+    // Close but not at bottom: a reader 90pt above latest must stay put.
+    precondition(ChatScrollGeometry.resizeAdjustment(
+      oldHeight: 80, newHeight: 400, resizedItem: 20, anchorItem: 17,
+      contentHeight: 2400, offsetY: 1710, viewportHeight: 700,
+      topInset: 40, bottomInset: 100, isInteracting: false
+    ) == 0)
+    // Short transcript: only compensate once it exceeds the usable viewport.
+    precondition(ChatScrollGeometry.resizeAdjustment(
+      oldHeight: 80, newHeight: 400, resizedItem: 0, anchorItem: 0,
+      contentHeight: 400, offsetY: -40, viewportHeight: 700,
+      topInset: 40, bottomInset: 100, isInteracting: false
+    ) == 160)
+    // Warm unchanged measurement causes no displacement at any scroll position.
+    precondition(ChatScrollGeometry.resizeAdjustment(
+      oldHeight: 400, newHeight: 400, resizedItem: 0, anchorItem: 7,
+      contentHeight: 2400, offsetY: 600, viewportHeight: 700,
+      topInset: 40, bottomInset: 100, isInteracting: false
+    ) == 0)
+    print("PASS: delayed out-of-order growth/shrink, viewport anchoring, idle bottom follow, active touch, near-bottom reader, short transcript, warm sizing")
+  }
+}

@@ -110,7 +110,9 @@ public struct VideoFeedView: View {
           .frame(width: proxy.size.height, height: proxy.size.width)
           .rotationEffect(.degrees(90), anchor: .topLeading)
           .offset(x: proxy.size.width)
+          #if os(iOS)
           .tabViewStyle(.page(indexDisplayMode: .never))
+          #endif
         }
         .ignoresSafeArea()
       }
@@ -158,8 +160,12 @@ public struct VideoFeedView: View {
         Spacer()
       }
     }
+    #if os(iOS)
     .navigationBarBackButtonHidden(true)
     .toolbar(.hidden, for: .navigationBar)
+    #else
+    .toolbar(.hidden, for: .windowToolbar)
+    #endif
     .task {
       if items.isEmpty {
         await loadInitialFeed()

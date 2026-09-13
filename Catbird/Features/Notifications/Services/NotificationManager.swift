@@ -3443,10 +3443,10 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     let uriString = userInfo["uri"] as? String
     let typeString = userInfo["type"] as? String
 
-    // Handle MLS message notifications (from NSE)
-    if let type = typeString, type == "mls_message" || type == "mls_message_decrypted" {
+    // Handle MLS message notifications (from NSE) and direct message requests (F65)
+    if Self.isNavigableMLSNotification(fromUserInfo: userInfo) {
       let recipientDid = resolveRecipientDID(from: userInfo)
-      let convoId = userInfo["convo_id"] as? String
+      let convoId = Self.mlsConversationID(fromUserInfo: userInfo)
 
       Task {
         // Switch to correct account if needed
@@ -3469,7 +3469,6 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
       }
       return
     }
-
     // Handle chat notifications that identify the conversation by ID instead of URI:
     // NSE `chat_message` pushes carry `convoId`, local polling notifications carry
     // `conversationID`. Payloads with `uri`/`did` keys keep the generic path below.
@@ -3512,6 +3511,31 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
     completionHandler()
   }
+  /// Validate whether an incoming push payload represents a navigable MLS notification
+  /// (ordinary message, decrypted message, or direct message request per F65).
+  nonisolated static func isNavigableMLSNotification(fromUserInfo userInfo: [AnyHashable: Any]) -> Bool {
+    guard let type = userInfo["type"] as? String else { return false }
+    if type == "mls_message" || type == "mls_message_decrypted" {
+      return (userInfo["convo_id"] as? String) != nil
+    }
+    if type == "mls_message_request" {
+      guard userInfo["protocol_version"] as? String == "2",
+            let hash = userInfo["recipient_account"] as? String,
+            hash.count == 64, hash.allSatisfy({ "0123456789abcdef".contains($0) }),
+            let convoId = userInfo["convo_id"] as? String,
+            !convoId.isEmpty
+      else { return false }
+      return true
+    }
+    return false
+  }
+
+  /// Extract the MLS conversation ID from a validated MLS notification payload.
+  nonisolated static func mlsConversationID(fromUserInfo userInfo: [AnyHashable: Any]) -> String? {
+    guard isNavigableMLSNotification(fromUserInfo: userInfo) else { return nil }
+    return userInfo["convo_id"] as? String
+  }
+
 
   /// Extract the conversation ID from a chat notification payload, or nil when the
   /// payload is not chat-shaped or already satisfies the generic `uri`/`did` routing

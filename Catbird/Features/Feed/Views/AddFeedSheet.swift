@@ -1,589 +1,185 @@
-//
-//  AddFeedSheet.swift
-//  Catbird
-//
-//  Created by Josh LaCalamito on 4/2/25.
-//
-
-import NukeUI
-import OSLog
 import Petrel
 import SwiftUI
 
 struct AddFeedSheet: View {
-    @Environment(AppState.self) private var appState
-    @Environment(\.modelContext) private var modelContext
-    @Environment(\.dismiss) private var dismiss
-    @State private var searchText = ""
-    @State private var isSearching = false
-    @State private var popularFeeds: [AppBskyFeedDefs.GeneratorView] = []
-    @State private var searchResults: [AppBskyFeedDefs.GeneratorView] = []
-    @State private var isLoading = true
-    @State private var loadingError: String?
-    @State private var selectedFeedForPinning: AppBskyFeedDefs.GeneratorView?
-    @State private var showPinToggleSheet = false
-    @State private var pinSelected = true
-    @State private var viewModel: FeedsStartPageViewModel?
-    @State private var subscriptionStatus: [String: Bool] = [:]
-//    @State private var showSwipeableCards = false
-    // Preview state for feed discovery cards
-    @State private var isShowingPreview = false
-    @State private var previewURI: ATProtocolURI? = nil
-    @State private var previewPath = NavigationPath()
-    
-    private let logger = Logger(subsystem: "blue.catbird", category: "AddFeedSheet")
-    
-    var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                // Search bar
-                HStack {
-                    Image(systemName: "magnifyingglass")
-                        .foregroundColor(.secondary)
-                    
-                    TextField("Search feeds...", text: $searchText)
-                        .foregroundColor(.primary)
-                        #if os(iOS)
-                        .autocapitalization(.none)
-                        #endif
-                        .autocorrectionDisabled(true)
-                        .onSubmit {
-                            searchForFeeds()
-                        }
-                    
-                    if !searchText.isEmpty {
-                        Button(action: {
-                            searchText = ""
-                            isSearching = false
-                        }) {
-                            Image(systemName: "xmark.circle.fill")
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                }
-                .padding(10)
-                .background(Color.secondarySystemBackground)
-                .clipShape(RoundedRectangle(cornerRadius: 10))
-                .padding(.horizontal)
-                .padding(.top, 10)
-                .padding(.bottom, 8)
-                
-                // Content
-                ScrollView {
-                    if isLoading {
-                        ProgressView("Loading feeds...")
-                            .padding(.top, 40)
-                    } else if let error = loadingError {
-                        VStack {
-                            Image(systemName: "exclamationmark.triangle")
-                                .appFont(AppTextRole.largeTitle)
-                                .foregroundColor(.red)
-                                .padding()
-                            
-                            Text(error)
-                                .foregroundColor(.red)
-                                .multilineTextAlignment(.center)
-                                .padding()
-                            
-                            Button("Try Again") {
-                                if isSearching {
-                                    searchForFeeds()
-                                } else {
-                                    loadPopularFeeds()
-                                }
-                            }
-                            .buttonStyle(.bordered)
-                            .tint(.accentColor)
-                            .padding()
-                        }
-                        .padding(.top, 40)
-                    } else {
-                        if isSearching {
-                            // Search results
-                            if searchResults.isEmpty {
-                                VStack {
-                                    Image(systemName: "magnifyingglass")
-                                        .appFont(AppTextRole.largeTitle)
-                                        .foregroundColor(.secondary)
-                                        .padding()
-                                    
-                                    Text("No feeds found matching '\(searchText)'")
-                                        .foregroundColor(.secondary)
-                                        .multilineTextAlignment(.center)
-                                }
-                                .padding(.top, 40)
-                            } else {
-                                VStack(alignment: .leading) {
-                                    Text("Search Results")
-                                        .appFont(AppTextRole.headline)
-                                        .padding(.horizontal)
-                                        .padding(.top)
-                                    
-                                    feedsGrid(feeds: searchResults)
-                                }
-                            }
-                        } else {
-                            // Popular feeds
-                            if popularFeeds.isEmpty {
-                                VStack {
-                                    Image(systemName: "star")
-                                        .appFont(AppTextRole.largeTitle)
-                                        .foregroundColor(.secondary)
-                                        .padding()
-                                    
-                                    Text("No popular feeds available")
-                                        .foregroundColor(.secondary)
-                                }
-                                .padding(.top, 40)
-                            } else {
-                                VStack(alignment: .leading) {
-                                    HStack {
-                                        Text("Popular Feeds")
-                                            .appFont(AppTextRole.headline)
-                                        
-                                        Spacer()
-                                        
-//                                        Button(action: {
-//                                            showSwipeableCards = true
-//                                        }) {
-//                                            HStack(spacing: 4) {
-//                                                Image(systemName: "rectangle.stack")
-//                                                Text("Card View")
-//                                            }
-//                                            .appFont(AppTextRole.caption)
-//                                            .foregroundColor(.accentColor)
-//                                            .padding(.horizontal, 8)
-//                                            .padding(.vertical, 4)
-//                                            .background(Color.accentColor.opacity(0.1))
-//                                            .cornerRadius(6)
-//                                        }
-                                    }
-                                    .padding(.horizontal)
-                                    .padding(.top)
-                                    
-                                    feedsGrid(feeds: popularFeeds)
-                                }
-                            }
-                        }
-                    }
-                }
-                .refreshable {
-                    if isSearching {
-                        searchForFeeds()
-                    } else {
-                        loadPopularFeeds()
-                    }
-                }
-            }
-            .navigationTitle("Discover Feeds")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    if #available(macOS 26.0, *) {
-                        Button("Done") {
-                            dismiss()
-                        }
-                        .adaptiveGlassEffect(
-                            style: .regular,
-                            in: Capsule(),
-                            interactive: true
-                        )
-                    } else {
-                        Button("Done") {
-                            dismiss()
-                        }
-                    }
-                }
-                
-//                ToolbarItem(placement: .primaryAction) {
-//                    Button(action: {
-//                        showSwipeableCards = true
-//                    }) {
-//                        Image(systemName: "rectangle.stack")
-//                            .font(.title3)
-//                    }
-//                    .accessibilityLabel("Card view")
-//                    .accessibilityHint("Switch to swipeable card interface")
-//                }
-            }
-            .onAppear {
-                initViewModel()
-                loadPopularFeeds()
-            }
-            .onChange(of: searchText) { _, newValue in
-                if newValue.isEmpty && isSearching {
-                    isSearching = false
-                }
-            }
-            .sheet(item: $selectedFeedForPinning) { feed in
-                pinConfirmationSheet(feed: feed)
-            }
-//            .fullScreenCover(isPresented: $showSwipeableCards) {
-//                FeedDiscoveryCardsView()
-//            }
+  @Environment(AppState.self) private var appState
+  @Environment(\.dismiss) private var dismiss
+  @State private var model: FeedDiscoveryViewModel?
+  @State private var path = NavigationPath()
+  @State private var selectedTab = 0
+
+  private let initialQuery: String
+  private let onOpen: ((AppBskyFeedDefs.GeneratorView) -> Void)?
+
+  init(initialQuery: String = "", onOpen: ((AppBskyFeedDefs.GeneratorView) -> Void)? = nil) {
+    self.initialQuery = initialQuery
+    self.onOpen = onOpen
+  }
+
+  var body: some View {
+    NavigationStack(path: $path) {
+      Group {
+        if let model {
+          discovery(model)
+        } else {
+          ContentUnavailableView("Feeds unavailable", systemImage: "network",
+                                 description: Text("Sign in to discover feeds."))
         }
-        .sheet(isPresented: $isShowingPreview, onDismiss: {
-            previewURI = nil
-            previewPath = NavigationPath()
-        }) {
-            if let uri = previewURI {
-                NavigationStack(path: $previewPath) {
-                    FeedScreen(path: $previewPath, uri: uri)
-                        .applyAppStateEnvironment(appState)
-                        .navigationTitle("Preview")
-                    #if os(iOS)
-                        .toolbarTitleDisplayMode(.inline)
-                    #endif
-                        .toolbar {
-                            ToolbarItem(placement: .cancellationAction) {
-                                Button("Done") { isShowingPreview = false }
-                            }
-                        }
-                        .presentationDetents([.large])
-                        .presentationDragIndicator(.visible)
-                }
-            }
+      }
+      .navigationTitle("Discover Feeds")
+      .toolbar {
+        ToolbarItem(placement: .cancellationAction) {
+          Button("Close") { dismiss() }
         }
+      }
+      .navigationDestination(for: FeedPreviewRoute.self) { route in
+        FeedScreen(path: $path, uri: route.feed.uri, initialGenerator: route.feed)
+          .navigationTitle(route.feed.displayName)
+          .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+              Button("Open feed") { open(route.feed) }
+            }
+          }
+      }
+      .navigationDestination(for: NavigationDestination.self) { destination in
+        NavigationHandler.viewForDestination(destination, path: $path,
+                                             appState: appState, selectedTab: $selectedTab)
+      }
     }
-    
-    private func initViewModel() {
-        if viewModel == nil {
-            viewModel = FeedsStartPageViewModel(appState: appState, modelContext: modelContext)
-        }
+    .task(id: DiscoverySessionIdentity(accountDID: appState.userDID,
+                                       client: appState.atProtoClient.map { ObjectIdentifier($0) })) {
+      let accountDID = appState.userDID
+      guard let client = appState.atProtoClient else {
+        model?.cancel()
+        model = nil
+        path = NavigationPath()
+        return
+      }
+      if let model {
+        if model.accountDID != accountDID { path = NavigationPath() }
+        model.updateAccount(client: client, accountDID: accountDID)
+      } else {
+        let session = FeedDiscoveryViewModel(client: client, accountDID: accountDID,
+                                             initialQuery: initialQuery)
+        model = session
+        session.load()
+      }
+      await appState.feedLibraryActions.refresh()
     }
-    
-    // Grid of feeds
-    private func feedsGrid(feeds: [AppBskyFeedDefs.GeneratorView]) -> some View {
-        LazyVStack(spacing: 20) {
-            ForEach(feeds, id: \.uri) { feed in
-                FeedDiscoveryHeaderView(
-                    feed: feed,
-                    isSubscribed: subscriptionStatus[feed.uri.uriString()] ?? false,
-                    onSubscriptionToggle: {
-                        await toggleFeedSubscription(feed)
-                        await updateSubscriptionStatus(for: feed.uri)
-                    },
-                    onTap: {
-                        previewURI = feed.uri
-                        isShowingPreview = true
-                    }
-                )
-                .task { await updateSubscriptionStatus(for: feed.uri) }
-                .padding(.horizontal)
-            }
+  }
+
+  private func discovery(_ model: FeedDiscoveryViewModel) -> some View {
+    @Bindable var model = model
+    return ScrollView {
+      LazyVStack(alignment: .leading, spacing: 16) {
+        if let error = appState.feedLibraryActions.refreshError {
+          errorView("Saved feeds could not be loaded: \(error)") {
+            Task { await appState.feedLibraryActions.refresh() }
+          }
         }
-        .padding(.vertical)
-    }
-    
-    // Individual feed card
-    private func feedCard(feed: AppBskyFeedDefs.GeneratorView) -> some View {
-        VStack {
-            // Avatar image
-            Group {
-                if let avatarUrl = feed.avatar?.uriString() {
-                    LazyImage(url: URL(string: avatarUrl)) { state in
-                        if let image = state.image {
-                            image
-                                .resizable()
-                                .aspectRatio(contentMode: .fill)
-                        } else {
-                            feedPlaceholder(for: feed.displayName)
-                        }
-                    }
-                } else {
-                    feedPlaceholder(for: feed.displayName)
-                }
+        if model.isInitialLoading {
+          ProgressView("Loading feeds…")
+            .frame(maxWidth: .infinity)
+        } else if let error = model.initialError {
+          errorView(error) { model.retry() }
+        } else if model.items.isEmpty {
+          ContentUnavailableView {
+            Label {
+              if model.resultQuery.isEmpty { Text("No popular feeds") } else { Text("No matching feeds") }
+            } icon: { Image(systemName: "magnifyingglass") }
+          } description: {
+            if model.resultQuery.isEmpty { Text("Try searching for a feed.") }
+            else { Text("No feeds found for “\(model.resultQuery)”.") }
+          } actions: {
+            if !model.query.isEmpty {
+              Button("Show Popular") { model.query = "" }
             }
-            .frame(width: 60, height: 60)
-            .clipShape(RoundedRectangle(cornerRadius: 12))
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(Color.gray.opacity(0.2), lineWidth: 0.5)
+          }
+        }
+
+        if !model.items.isEmpty {
+          Group {
+            if model.resultQuery.isEmpty { Text("Popular") }
+            else { Text("Results for “\(model.resultQuery)”") }
+          }
+          .appFont(AppTextRole.headline)
+          if model.isRefreshing {
+            ProgressView("Updating feeds…")
+          }
+          if let error = model.refreshError {
+            errorView(error) { model.retry() }
+          }
+          ForEach(model.items) { feed in
+            FeedDiscoveryHeaderView(
+              feed: feed,
+              onTap: { path.append(FeedPreviewRoute(feed: feed)) },
+              onLikedByTap: { path.append(NavigationDestination.postLikes(feed.uri.uriString())) },
+              onOpenFeed: { open(feed) }
             )
-            .shadow(color: Color.black.opacity(0.1), radius: 2, x: 0, y: 1)
-            
-            // Feed name
-            Text(feed.displayName)
-                .appFont(AppTextRole.subheadline)
-                .fontWeight(.medium)
-                .lineLimit(1)
-                .padding(.top, 4)
-            
-            // Creator handle
-            Text("@\(feed.creator.handle)")
-                .appFont(AppTextRole.caption)
-                .foregroundColor(.secondary)
-                .lineLimit(1)
-            
-            // Like count if available
-            if let likeCount = feed.likeCount {
-                HStack(spacing: 2) {
-                    Image(systemName: "heart")
-                        .appFont(AppTextRole.caption2)
-                    Text("\(likeCount)")
-                        .appFont(AppTextRole.caption2)
-                }
-                .foregroundColor(.secondary)
-                .padding(.top, 2)
-            }
+          }
+          if let error = model.pagingError {
+            errorView(error) { model.loadMore() }
+          } else if model.isLoadingMore {
+            ProgressView("Loading more feeds…")
+              .frame(maxWidth: .infinity)
+          } else if model.cursor != nil {
+            Button("Load more") { model.loadMore() }
+              .buttonStyle(.bordered)
+              .frame(maxWidth: .infinity)
+              .disabled(model.isRefreshing || model.normalizedQuery != model.resultQuery)
+          }
         }
-        .padding()
-        .frame(maxWidth: .infinity)
-        .background(Color.secondarySystemBackground)
-        .cornerRadius(16)
+      }
+      .padding()
     }
-    
-    // Confirmation sheet for pinning
-    private func pinConfirmationSheet(feed: AppBskyFeedDefs.GeneratorView) -> some View {
-        NavigationStack {
-            VStack(spacing: 16) {
-                // Avatar
-                Group {
-                    if let avatarUrl = feed.avatar?.uriString() {
-                        LazyImage(url: URL(string: avatarUrl)) { state in
-                            if let image = state.image {
-                                image
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fill)
-                            } else {
-                                feedPlaceholder(for: feed.displayName)
-                            }
-                        }
-                    } else {
-                        feedPlaceholder(for: feed.displayName)
-                    }
-                }
-                .frame(width: 80, height: 80)
-                .clipShape(RoundedRectangle(cornerRadius: 16))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(Color.gray.opacity(0.2), lineWidth: 0.5)
-                )
-                .shadow(color: Color.black.opacity(0.1), radius: 2, x: 0, y: 1)
-                
-                // Feed name
-                Text(feed.displayName)
-                    .appFont(AppTextRole.title2)
-                    .fontWeight(.bold)
-                
-                // Creator
-                Text("by @\(feed.creator.handle)")
-                    .appFont(AppTextRole.subheadline)
-                    .foregroundColor(.secondary)
-                
-                // Description
-                if let description = feed.description, !description.isEmpty {
-                    Text(description)
-                                        .appFont(AppTextRole.body)
-                        .foregroundColor(.primary)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal)
-                        .padding(.top, 8)
-                }
-                
-                Divider()
-                    .padding(.vertical)
-                
-                // Pin toggle
-                Toggle("Pin this feed", isOn: $pinSelected)
-                    .padding(.horizontal)
-                
-                Text("Pinned feeds appear at the top of your feeds list")
-                    .appFont(AppTextRole.caption)
-                    .foregroundColor(.secondary)
-                    .padding(.horizontal)
-                
-                Spacer()
-                
-                // Buttons
-                HStack(spacing: 16) {
-                    Button("Cancel", systemImage: "xmark") {
-                        selectedFeedForPinning = nil
-                    }
-                    .buttonStyle(.bordered)
-                    .tint(.secondary)
-                    
-                    Button("Add Feed") {
-                        addFeed(feed)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.accentColor)
-                }
-                .padding()
-            }
-            .padding()
-            .navigationTitle("Add Feed")
-    #if os(iOS)
-    .toolbarTitleDisplayMode(.inline)
-    #endif
-        }
+    .searchable(text: $model.query, prompt: "Search feeds")
+    .onSubmit(of: .search) { model.submit() }
+    .toolbar {
+      ToolbarItem(placement: .primaryAction) {
+        Button("Refresh", systemImage: "arrow.clockwise") { model.refresh() }
+          .disabled(model.isInitialLoading || model.isRefreshing)
+      }
     }
-    
-    // Placeholder for feeds without avatars
-    private func feedPlaceholder(for title: String) -> some View {
-        ZStack {
-            // iOS-like gradient background
-            LinearGradient(
-                gradient: Gradient(colors: [Color.accentColor.opacity(0.7), Color.accentColor.opacity(0.5)]),
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            
-            // First letter of feed name
-            Text(title.prefix(1).uppercased())
-                .appFont(AppTextRole.from(.headline))
-                .foregroundColor(.white)
-        }
+  }
+
+  private func errorView(_ message: String, retry: @escaping () -> Void) -> some View {
+    VStack(alignment: .leading, spacing: 8) {
+      Label(message, systemImage: "exclamationmark.triangle")
+        .foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
+      Button("Try Again", action: retry)
+        .buttonStyle(.bordered)
     }
-    
-    // Load popular feeds
-    private func loadPopularFeeds() {
-        isLoading = true
-        loadingError = nil
-        
-        Task {
-            do {
-                guard let client = appState.atProtoClient else {
-                    throw NSError(domain: "Feed", code: 0, userInfo: [NSLocalizedDescriptionKey: "Client not available"])
-                }
-                
-                let params = AppBskyUnspeccedGetPopularFeedGenerators.Parameters(limit: 20)
-                let (responseCode, response) = try await client.app.bsky.unspecced.getPopularFeedGenerators(input: params)
-                
-                await MainActor.run {
-                    if responseCode == 200, let feeds = response?.feeds {
-                        popularFeeds = feeds
-                    } else {
-                        loadingError = "Failed to load popular feeds. Response code: \(responseCode)"
-                    }
-                    isLoading = false
-                }
-            } catch {
-                await MainActor.run {
-                    loadingError = "Error loading feeds: \(error.localizedDescription)"
-                    isLoading = false
-                }
-            }
-        }
-    }
-    
-    // Search for feeds
-    private func searchForFeeds() {
-        guard !searchText.isEmpty else { return }
-        
-        isSearching = true
-        isLoading = true
-        loadingError = nil
-        searchResults = []
-        
-        Task {
-            do {
-                guard let client = appState.atProtoClient else {
-                    throw NSError(domain: "Feed", code: 0, userInfo: [NSLocalizedDescriptionKey: "Client not available"])
-                }
-                
-                let params = AppBskyUnspeccedGetPopularFeedGenerators.Parameters(limit: 20, query: searchText)
-                let (responseCode, response) = try await client.app.bsky.unspecced.getPopularFeedGenerators(input: params)
-                
-                await MainActor.run {
-                    if responseCode == 200, let feeds = response?.feeds {
-                        searchResults = feeds
-                    } else {
-                        loadingError = "Failed to search feeds. Response code: \(responseCode)"
-                    }
-                    isLoading = false
-                }
-            } catch {
-                await MainActor.run {
-                    loadingError = "Error searching for feeds: \(error.localizedDescription)"
-                    isLoading = false
-                }
-            }
-        }
-    }
-    
-    // Check if user is subscribed to a feed
-    private func isSubscribedToFeed(_ feedURI: ATProtocolURI) async -> Bool {
-        let feedURIString = feedURI.uriString()
-        
-        do {
-            let preferences = try await appState.preferencesManager.getPreferences()
-            let pinnedFeeds = preferences.pinnedFeeds
-            let savedFeeds = preferences.savedFeeds
-            return pinnedFeeds.contains(feedURIString) || savedFeeds.contains(feedURIString)
-        } catch {
-            return false
-        }
-    }
-    
-    // Toggle feed subscription
-    private func toggleFeedSubscription(_ feed: AppBskyFeedDefs.GeneratorView) async {
-        let feedURIString = feed.uri.uriString()
-        
-        do {
-            let preferences = try await appState.preferencesManager.getPreferences()
-            
-            if await isSubscribedToFeed(feed.uri) {
-                // Remove from feeds
-                await MainActor.run {
-                    preferences.removeFeed(feedURIString)
-                }
-                try await appState.preferencesManager.saveAndSyncPreferences(preferences)
-            } else {
-                // Add to saved feeds
-                await MainActor.run {
-                    preferences.addFeed(feedURIString, pinned: false)
-                }
-                try await appState.preferencesManager.saveAndSyncPreferences(preferences)
-            }
-            
-            // Notify state invalidation bus that feeds have changed
-            await appState.stateInvalidationBus.notify(.feedListChanged)
-        } catch {
-            logger.error("Failed to toggle feed subscription: \(error.localizedDescription)")
-        }
-    }
-    
-    // Update subscription status for a specific feed
-    private func updateSubscriptionStatus(for feedURI: ATProtocolURI) async {
-        let status = await isSubscribedToFeed(feedURI)
-        await MainActor.run {
-            subscriptionStatus[feedURI.uriString()] = status
-        }
-    }
-    
-    // Add a feed
-    private func addFeed(_ feed: AppBskyFeedDefs.GeneratorView) {
-        Task {
-            do {
-                guard let viewModel = viewModel else {
-                    throw NSError(domain: "Feed", code: 0, userInfo: [NSLocalizedDescriptionKey: "ViewModel not available"])
-                }
-                
-                let feedURI = feed.uri.uriString()
-                await viewModel.addFeed(feedURI, pinned: pinSelected)
-                
-                // Close the sheets
-                await MainActor.run {
-                    selectedFeedForPinning = nil
-                    dismiss()
-                }
-            } catch {
-                logger.error("Failed to add feed: \(error.localizedDescription)")
-                // You could show an error message here
-            }
-        }
-    }
+    .accessibilityElement(children: .contain)
+  }
+
+  private func open(_ feed: AppBskyFeedDefs.GeneratorView) {
+    if let onOpen { onOpen(feed) }
+    else { appState.navigationManager.navigate(to: .feed(feed.uri)) }
+    dismiss()
+  }
+}
+
+private struct DiscoverySessionIdentity: Hashable {
+  let accountDID: String
+  let client: ObjectIdentifier?
+}
+
+private struct FeedPreviewRoute: Hashable {
+  let feed: AppBskyFeedDefs.GeneratorView
+
+  static func == (lhs: Self, rhs: Self) -> Bool {
+    lhs.feed.uri.uriString() == rhs.feed.uri.uriString()
+  }
+
+  func hash(into hasher: inout Hasher) { hasher.combine(feed.uri.uriString()) }
 }
 
 extension AppBskyFeedDefs.GeneratorView: Identifiable {
-    public var id: String {
-        return uri.uriString()
-    }
+  public var id: String { uri.uriString() }
 }
 
 #Preview("AddFeedSheet") {
-  NavigationStack {
-    AddFeedSheet()
-  }
-  .previewWithAuthenticatedState()
+  AddFeedSheet()
+    .previewWithAuthenticatedState()
 }

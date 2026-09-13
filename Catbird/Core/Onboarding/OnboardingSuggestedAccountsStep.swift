@@ -113,7 +113,11 @@ public struct OnboardingSuggestedAccountsStep: View {
                         }
                     }
                 }
+                #if os(iOS)
                 .listStyle(.insetGrouped)
+                #else
+                .listStyle(.inset)
+                #endif
             }
             
             // Bottom Actions
