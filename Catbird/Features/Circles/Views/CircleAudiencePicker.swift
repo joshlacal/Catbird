@@ -18,7 +18,8 @@ struct CircleAudiencePicker: View {
   /// so there is no client-side access filter. Per-Circle runtime state
   /// (expired / removed) is tracked by `CircleFeedModel`, not by filtering here.
   private var activeCircles: [CircleSummary] {
-    !circles.isEmpty ? circles : loadedCircles
+    guard appState.circlesEnabled else { return [] }
+    return !circles.isEmpty ? circles : loadedCircles
   }
 
   var body: some View {
@@ -67,12 +68,20 @@ struct CircleAudiencePicker: View {
       .accessibilityIdentifier("composer.audiencePicker")
       .accessibilityLabel(accessibilityLabelText)
       .accessibilityHint(accessibilityHintText)
+      if !appState.circlesEnabled, selectedDestination != .public {
+        Text("Circles unavailable. Your post is still private.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
       Spacer()
     }
-    .task {
-      if circles.isEmpty && loadedCircles.isEmpty {
+    .task(id: "\(appState.userDID):\(appState.circlesEnabled)") {
+      loadedCircles = []
+      if appState.circlesEnabled && circles.isEmpty {
         do {
           let page = try await appState.circleService.listCircles()
+          guard !Task.isCancelled, appState.circlesEnabled,
+                AppStateManager.shared.lifecycle.appState === appState else { return }
           self.loadedCircles = page.circles
         } catch {
           // Failure to list circles leaves empty list, public stays selected

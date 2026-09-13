@@ -241,8 +241,6 @@ final class AppStateManager {
       authManager.cacheProfileData(for: bobDID, handle: "bob.test", displayName: "Bob", avatarURL: nil)
       authManager.updateAccountOrder([fixtureDID, bobDID])
 
-      let isUnsupported = ProcessInfo.processInfo.arguments.contains("--circles-unsupported-pds")
-      CircleFeatureFlags.serverCapability(enabled: !isUnsupported)
 
       let store = E2ECircleStore()
       setAppStateFactoryForTesting { [weak self] did, cli in

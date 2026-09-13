@@ -251,7 +251,11 @@ actor E2ECircleStore {
   }
 
   func capabilities(userDID: DID) -> CircleCapability {
-    CircleCapability(enabled: true, protocolRevision: "2026-08-26", supportsImages: true)
+    CircleCapability(
+      enabled: !ProcessInfo.processInfo.arguments.contains("--circles-unsupported-pds"),
+      protocolRevision: "2026-08-26",
+      supportsImages: true
+    )
   }
 
   func listCircles(userDID: DID, cursor: String?) -> CircleListPage {

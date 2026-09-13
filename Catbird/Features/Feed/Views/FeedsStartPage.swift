@@ -518,7 +518,7 @@ struct FeedsStartPage: View {
 
   @ViewBuilder
   private var circlesFeedEntry: some View {
-    if CircleFeatureFlags.isEnabled {
+    if appState.circlesEnabled {
       Button {
         guard !isEditingFeeds else { return }
         #if os(iOS)

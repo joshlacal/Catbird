@@ -60,6 +60,7 @@ extension PostComposerViewUIKit {
   }
   
   func canSubmit(vm: PostComposerViewModel) -> Bool {
+    guard vm.destination == .public || appState.circlesEnabled else { return false }
     return vm.submitValidationState.canSubmit
   }
   

@@ -208,7 +208,7 @@ struct PostComposerView: View {
                     #else
                     .background(Color.accentColor, in: Capsule())
                     #endif
-                    .disabled(viewModel.isPostButtonDisabled || isSubmitting)
+                    .disabled(viewModel.isPostButtonDisabled || isSubmitting || (viewModel.destination != .public && !appState.circlesEnabled))
                     .opacity(isSubmitting ? 0.5 : 1)
                     .overlay(
                         Group {
@@ -352,7 +352,7 @@ struct PostComposerView: View {
 
     @ViewBuilder
     private var destinationPickerSection: some View {
-        if CircleFeatureFlags.isEnabled {
+        if appState.circlesEnabled || viewModel.destination != .public {
             CircleAudiencePicker(
                 selectedDestination: Binding(
                     get: { viewModel.destination },

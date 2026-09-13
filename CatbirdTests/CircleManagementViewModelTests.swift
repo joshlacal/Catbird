@@ -511,9 +511,6 @@ struct CircleManagementViewModelTests {
   }
 
   @Test func runtimeCircleCapabilityProbingAndAccountSwitchRaceSafety() async throws {
-    CircleFeatureFlags.serverCapability(enabled: false)
-    #expect(!CircleFeatureFlags.isEnabled)
-
     let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
     let appState = AppState(userDID: ownerDID.didString(), client: client)
     let previousLifecycle = AppStateManager.shared.lifecycle
@@ -525,11 +522,13 @@ struct CircleManagementViewModelTests {
 
     // Probe capability for active account
     await appState.probeCircleCapabilities()
-    #expect(CircleFeatureFlags.isEnabled)
+    #expect(appState.circlesEnabled)
 
-    // An explicit AppView disabled response still disables Circle-backed surfaces.
-    CircleFeatureFlags.serverCapability(enabled: false)
-    #expect(!CircleFeatureFlags.isEnabled)
+    // A newly active account starts unknown and cannot inherit this account's support.
+    let replacement = AppState(userDID: memberDID.didString(), client: client)
+    AppStateManager.shared.setLifecycleForTesting(.authenticated(replacement))
+    #expect(replacement.circleCapability == .unknown)
+    #expect(!replacement.circlesEnabled)
   }
 
   @Test func deleteCircleCompleteOutcomePermitsDismissalAndMarksComplete() async throws {

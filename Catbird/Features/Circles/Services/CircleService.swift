@@ -18,6 +18,17 @@ actor GatewayCircleTransport: CircleTransport {
   let publicEndpointCallCount: Int = 0
 
   func capabilities() async throws -> CircleCapability {
+    // The AppView's global switch says nothing about this account's PDS.
+    // listSpaces is an authenticated, read-only PDS query; an empty list is valid.
+    do {
+      let (status, output) = try await client.com.atproto.space.listSpaces(
+        input: ComAtprotoSpaceListSpaces.Parameters(limit: 1)
+      )
+      guard status == 200, output != nil else { throw CircleError.invalidResponse }
+    } catch {
+      if Self.isUnsupportedSpacesError(error) { throw CircleError.unsupportedPDS }
+      throw error
+    }
     let endpoint = CircleConfiguration.appViewBaseURL
       .appendingPathComponent("xrpc/blue.catbird.circle.getCapabilities")
     let data: Data
@@ -41,6 +52,12 @@ actor GatewayCircleTransport: CircleTransport {
       protocolRevision: output.protocolRevision,
       supportsImages: output.supportsImages
     )
+  }
+
+  static func isUnsupportedSpacesError(_ error: Error) -> Bool {
+    guard let error = error as? ATProtoXRPCError else { return false }
+    return (error.statusCode == 501 && error.error == "MethodNotImplemented")
+      || (error.statusCode == 404 && error.error == "permissioned_endpoint_unavailable")
   }
 
   func listCircles(cursor: String?) async throws -> CircleListPage {
