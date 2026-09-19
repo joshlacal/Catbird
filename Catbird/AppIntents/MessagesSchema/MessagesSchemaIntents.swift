@@ -57,11 +57,12 @@ struct CatbirdDraftMessageSchemaIntent {
       : ""
 
     guard let destination else {
+      let manager = try await MessagesSchemaRuntime.conversationManager()
+      guard let account = manager.userDid else { throw IntentError.notSignedIn }
+      try await ChatDraftHandoff.shared.storeDurably(
+        PendingChatDraft(conversationID: nil, text: draftText), accountDID: account, database: manager.database)
       await MainActor.run {
-        ChatDraftHandoff.shared.store(
-          PendingChatDraft(conversationID: nil, text: draftText))
-        AppStateManager.shared.lifecycle.appState?.navigationManager
-          .navigate(to: .chatTab, in: 4)
+        AppStateManager.shared.lifecycle.appState?.navigationManager.navigate(to: .chatTab, in: 4)
       }
       return .result(
         dialog: IntentDialog(
@@ -72,17 +73,22 @@ struct CatbirdDraftMessageSchemaIntent {
     let manager = try await MessagesSchemaRuntime.conversationManager()
     let directory = try await MessagesSchemaRuntime.directory(manager: manager)
     let recipients = try MessagesSchemaRuntime.recipients(for: destination, directory: directory)
-    let convoId = try await MessagesSchemaRuntime.findOrCreateConversation(
-      recipients: recipients,
-      manager: manager,
-      directory: directory
-    )
-
-    await MainActor.run {
-      ChatDraftHandoff.shared.store(
-        PendingChatDraft(conversationID: convoId, text: draftText))
-      AppStateManager.shared.lifecycle.appState?.navigationManager
-        .navigate(to: .mlsConversation(convoId), in: 4)
+    let target = try await MessagesSchemaRuntime.resolveDestination(
+      recipients: recipients, manager: manager, directory: directory)
+    switch target {
+    case .existing(let convoId):
+      try await ChatDraftHandoff.shared.storeDurably(
+        PendingChatDraft(conversationID: convoId, text: draftText),
+        accountDID: directory.currentUserDID, database: manager.database)
+      await MainActor.run {
+        AppStateManager.shared.lifecycle.appState?.navigationManager.navigate(to: .mlsConversation(convoId), in: 4)
+      }
+    case .recipientDraft(var draft):
+      guard !draft.submitted else {
+        throw IntentError.invalidParameter("A saved request is still resolving. Open Catbird to retry or cancel it.")
+      }
+      draft.text = draftText
+      try await MLSDirectComposeDraftStore.requestPresentation(draft, database: manager.database)
     }
 
     return .result(
@@ -121,7 +127,7 @@ struct CatbirdSendMessageSchemaIntent {
   var scheduledDate: Date?
 
   func perform() async throws -> some IntentResult & ReturnsValue<[CatbirdMessagesMessageEntity]> & ProvidesDialog {
-    guard attachments.isEmpty else {
+    guard attachments.isEmpty, audioMessage == nil, locations.isEmpty, scheduledDate == nil else {
       throw IntentError.invalidParameter("Catbird Messages App Schema currently supports text only.")
     }
 
@@ -130,13 +136,39 @@ struct CatbirdSendMessageSchemaIntent {
     let directory = try await MessagesSchemaRuntime.directory(manager: manager)
 
     let recipients = try MessagesSchemaRuntime.recipients(for: destination, directory: directory)
-    let finalConvoId = try await MessagesSchemaRuntime.findOrCreateConversation(
-      recipients: recipients,
-      manager: manager,
-      directory: directory
-    )
-
-    let result = try await manager.sendMessage(convoId: finalConvoId, plaintext: text)
+    let target = try await MessagesSchemaRuntime.resolveDestination(
+      recipients: recipients, manager: manager, directory: directory)
+    let finalConvoId: String
+    let sentMessageID: String
+    let sentAt: Date
+    switch target {
+    case .existing(let conversationID):
+      guard try await MLSDirectRequestAccess.allowsOrdinaryEffects(manager: manager, conversationID: conversationID) else {
+        throw IntentError.invalidParameter("This request must be accepted and ready before sending another message.")
+      }
+      let result = try await manager.sendMessage(convoId: conversationID, plaintext: text)
+      finalConvoId = conversationID
+      sentMessageID = result.messageId
+      sentAt = result.receivedAt.date
+    case .recipientDraft(var draft):
+      guard !draft.submitted || draft.text == text else {
+        throw IntentError.invalidParameter("A different saved request is still resolving. Open Catbird to retry or cancel it.")
+      }
+      draft.text = text
+      draft.submitted = true
+      try await MLSDirectComposeDraftStore.validateText(text)
+      try await MLSDirectComposeDraftStore.save(draft, database: manager.database)
+      let outcome = try await manager.startDirectRequest(input: DirectRequestInput(
+        draftId: draft.id.uuidString.lowercased(), recipientDid: draft.recipientDID, text: text, invitation: nil))
+      guard case .requestSent(let conversationID, let messageID, _) = outcome else {
+        try await MLSDirectComposeDraftStore.requestPresentation(draft, database: manager.database)
+        throw IntentError.serviceUnavailable("Your request is saved. Open Catbird to check its outcome or retry the same request.")
+      }
+      finalConvoId = conversationID
+      sentMessageID = messageID
+      sentAt = Date()
+      try await MLSDirectComposeDraftStore.archive(draft, database: manager.database)
+    }
 
     // Sender must be the user's human name (never a raw DID) with isMe set —
     // Siri surfaces this entity in follow-up conversation.
@@ -168,17 +200,17 @@ struct CatbirdSendMessageSchemaIntent {
       conversationName: convoTitle,
       isRead: true,
       attributes: recipientEntities.count > 1 ? [.group] : [],
-      dateLastActive: result.receivedAt.date
+      dateLastActive: sentAt
     )
 
     let entity = CatbirdMessagesMessageEntity(
-      id: result.messageId,
+      id: sentMessageID,
       messageType: .text,
       author: sender,
       isRead: true,
       attributes: [],
       conversation: convoEntity,
-      date: result.receivedAt.date,
+      date: sentAt,
       subject: nil,
       body: AttributedString(text),
       attachments: [],
@@ -214,6 +246,9 @@ struct CatbirdEditSentMessageSchemaIntent {
       message.conversation.id,
       manager: manager
     )
+    guard try await MLSDirectRequestAccess.allowsOrdinaryEffects(manager: manager, conversationID: canonicalID) else {
+      throw IntentError.invalidParameter("This request must be accepted and ready before editing messages.")
+    }
     _ = try await manager.editMessage(
       convoId: canonicalID,
       messageId: message.id,

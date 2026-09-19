@@ -11,6 +11,7 @@ struct NewConversationView: View {
 
   // MARK: - State
 
+  @State private var directDraft: MLSDirectComposeDraft?
   @State private var mode: ConversationMode = .bluesky
   @State private var step: Step = .selectContacts
   @State private var selectedDIDs: Set<String> = []
@@ -70,6 +71,12 @@ struct NewConversationView: View {
 
         if isCreating {
           creationOverlay
+        }
+      }
+      .sheet(item: $directDraft) { draft in
+        MLSDirectComposeView(draft: draft) { conversationID in
+          appState.navigationManager.targetMLSConversationId = conversationID
+          dismiss()
         }
       }
       .navigationTitle(navigationTitle)
@@ -451,11 +458,15 @@ struct NewConversationView: View {
       return
     }
 
-    withAnimation(.spring(response: 0.25)) {
-      step = .creating
+    do {
+      guard let database = appState.mlsDatabase, appState.userDID == accountDID,
+            let recipient = selectedDIDs.first else { return }
+      directDraft = try await MLSDirectComposeDraftStore.open(
+        accountDID: accountDID, recipientDID: recipient, database: database)
+    } catch {
+      errorMessage = "Could not save this draft. Please try again."
+      showingError = true
     }
-    guard !Task.isCancelled, AppStateManager.shared.lifecycle.userDID == accountDID else { return }
-    await createMLSGroup()
   }
 
   // MARK: - MLS Group Creation

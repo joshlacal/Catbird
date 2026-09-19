@@ -28,6 +28,9 @@ struct MLSEmbedView: View {
         .padding()
         .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
 
+    case .groupInvitation(let reference):
+      MLSGroupInvitationCard(reference: reference)
+
     case .unknown:
       Text("This message contains an attachment your app version cannot display.")
         .font(.caption)

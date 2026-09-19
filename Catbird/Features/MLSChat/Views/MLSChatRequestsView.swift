@@ -43,6 +43,9 @@ struct MLSChatRequestsView: View {
 
   let onAcceptedConversation: (@Sendable (String) async -> Void)?
 
+  @State private var savedInvitationNotes: [MLSDirectComposeDraft] = []
+  @State private var noteDraft: MLSDirectComposeDraft?
+  @State private var encryptedRequests: [DirectRequestView] = []
   @State private var requests: [MLSConversationModel] = []
   @State private var senderProfiles: [String: MLSProfileEnricher.ProfileData] = [:]
   @State private var groupConversationIDs: Set<String> = []
@@ -62,10 +65,10 @@ struct MLSChatRequestsView: View {
   var body: some View {
     NavigationStack {
       Group {
-        if isLoading && requests.isEmpty {
+        if isLoading && requests.isEmpty && encryptedRequests.isEmpty && savedInvitationNotes.isEmpty {
           ProgressView("Loading requests…")
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else if requests.isEmpty {
+        } else if requests.isEmpty && encryptedRequests.isEmpty && savedInvitationNotes.isEmpty {
           ContentUnavailableView {
             Label("No Chat Requests", systemImage: "tray")
           } description: {
@@ -74,6 +77,39 @@ struct MLSChatRequestsView: View {
           .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
           List {
+            if !savedInvitationNotes.isEmpty {
+              Section("Saved invitation notes") {
+                ForEach(savedInvitationNotes) { draft in
+                  Button { noteDraft = draft } label: {
+                    VStack(alignment: .leading, spacing: 4) {
+                      Label(draft.noteAttempted == true ? "Check note delivery" : "Unsent invitation note", systemImage: "square.and.pencil")
+                      Text(verbatim: draft.text.isEmpty ? "Write a separate encrypted note" : draft.text).lineLimit(2)
+                    }
+                  }
+                }
+              }
+            }
+            ForEach(encryptedRequests, id: \.conversationId) { request in
+              NavigationLink {
+                MLSRequestConversationGate(conversationID: request.conversationId) {
+                  #if os(iOS)
+                  MLSOrdinaryConversationDetailView(conversationId: request.conversationId)
+                  #elseif os(macOS)
+                  MacOSMLSOrdinaryConversationView(conversationId: request.conversationId)
+                  #endif
+                }
+              } label: {
+                VStack(alignment: .leading, spacing: 6) {
+                  Label("Encrypted message request", systemImage: "lock.fill")
+                  if request.capabilities.canPreview, case .ready(let text, _) = request.preview {
+                    Text(verbatim: text).lineLimit(3).accessibilityIdentifier("request-preview-row")
+                  } else {
+                    Text("Encrypted introduction").foregroundStyle(.secondary)
+                  }
+                }
+              }
+              .accessibilityIdentifier("mls.request.\(request.conversationId)")
+            }
             ForEach(requests, id: \.conversationID) { request in
               let members = membersByConvo[request.conversationID] ?? []
               let senderDID = members.first(where: { $0 != appState.userDID }) ?? ""
@@ -131,6 +167,9 @@ struct MLSChatRequestsView: View {
       }
       .task(id: appState.userDID) {
         loadGeneration = UUID()
+        encryptedRequests = []
+        savedInvitationNotes = []
+        noteDraft = nil
         requests = []
         membersByConvo = [:]
         groupConversationIDs = []
@@ -144,6 +183,12 @@ struct MLSChatRequestsView: View {
         Button("OK", role: .cancel) {}
       } message: {
         Text(errorMessage ?? "An unknown error occurred.")
+      }
+      .sheet(item: $noteDraft, onDismiss: { Task { await loadRequests() } }) { draft in
+        MLSDirectComposeView(draft: draft) { conversationID in
+          appState.navigationManager.targetMLSConversationId = conversationID
+          dismiss()
+        }
       }
       .sheet(isPresented: $showingBlockSheet) {
         if let request = requestToBlock {
@@ -179,9 +224,30 @@ struct MLSChatRequestsView: View {
       }
       guard let manager = candidate else { throw MLSAPIError.serverUnavailable }
       guard isCurrent(manager, userDID: userDID, generation: generation) else { throw CancellationError() }
-      let loaded = try await manager.fetchPendingRequestConversations()
-        .filter { $0.currentUserDID == userDID }
+      let notes = try await MLSDirectComposeDraftStore.savedInvitationNotes(accountDID: userDID, database: manager.database)
+      guard isCurrent(manager, userDID: userDID, generation: generation) else { throw CancellationError() }
+      savedInvitationNotes = notes
+      let verifiedRequests = try await manager.listDirectRequestViews()
+      var incoming = verifiedRequests.filter { $0.consent == .incomingPending }
+      let requestIDs = Set(verifiedRequests.map(\.conversationId))
+      let candidates = try await manager.fetchPendingRequestConversations()
+        .filter { $0.currentUserDID == userDID && !requestIDs.contains($0.conversationID) }
         .sorted { $0.createdAt > $1.createdAt }
+      var loaded: [MLSConversationModel] = []
+      for candidate in candidates {
+        guard isCurrent(manager, userDID: userDID, generation: generation) else { throw CancellationError() }
+        switch try await manager.classifyDirectRequestConversation(conversationId: candidate.conversationID) {
+        case .legacyV1:
+          loaded.append(candidate)
+        case .verifiedRequest, .requestAwaitingProjection, .unknown:
+          let verified = try await manager.refreshRequestPreview(conversationId: candidate.conversationID)
+          if verified.consent == .incomingPending { incoming.append(verified) }
+        }
+      }
+      for request in incoming {
+        guard isCurrent(manager, userDID: userDID, generation: generation) else { throw CancellationError() }
+        try await MLSRequestNotificationPreviewCache.project(request, accountDID: userDID, database: manager.database)
+      }
       var members: [String: [String]] = [:]
       for request in loaded {
         guard isCurrent(manager, userDID: userDID, generation: generation) else { throw CancellationError() }
@@ -191,6 +257,7 @@ struct MLSChatRequestsView: View {
       let profiles = await appState.mlsProfileEnricher.ensureProfiles(
         for: senders, using: appState.client, currentUserDID: userDID)
       guard isCurrent(manager, userDID: userDID, generation: generation) else { throw CancellationError() }
+      encryptedRequests = incoming
       requests = loaded
       groupConversationIDs = Set(loaded.filter {
         manager.conversations[$0.conversationID]?.conversationKind == .value_group

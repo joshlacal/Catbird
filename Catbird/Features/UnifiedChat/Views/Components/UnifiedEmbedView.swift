@@ -51,6 +51,9 @@ struct UnifiedEmbedView: View {
     case .audio(let audioData):
       audioEmbed(audioData)
 
+    case .groupInvitation(let reference):
+      MLSGroupInvitationCard(reference: reference)
+
     case .groupInvite(let invite):
       groupInviteEmbed(invite)
     }

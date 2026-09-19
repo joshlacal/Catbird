@@ -135,6 +135,59 @@ class NotificationService: UNNotificationServiceExtension {
     // Check push type
     let pushType = userInfo["type"] as? String
 
+    // Request pushes are metadata-only. Never enter legacy ciphertext/decrypt
+    // or profile/media enrichment paths for an encrypted introduction.
+    if pushType == "mls_message_request" {
+      bestAttemptContent.title = "Message Request"
+      bestAttemptContent.body = "New encrypted message request"
+      guard userInfo["protocol_version"] as? String == "2",
+            let hash = userInfo["recipient_account"] as? String,
+            hash.count == 64, hash.allSatisfy({ "0123456789abcdef".contains($0) }),
+            let recipient = resolveRecipientDID(fromHash: hash),
+            let conversation = userInfo["convo_id"] as? String,
+            let message = userInfo["message_id"] as? String,
+            let requestID = userInfo["request_id"] as? String,
+            UUID(uuidString: conversation) != nil, UUID(uuidString: message) != nil,
+            UUID(uuidString: requestID) != nil else {
+        contentHandler(bestAttemptContent)
+        return
+      }
+      let defaults = UserDefaults(suiteName: Self.appGroupSuite)
+      let preference = "mlsChatNotificationsEnabled_\(recipient)"
+      if defaults?.object(forKey: preference) != nil && defaults?.bool(forKey: preference) == false {
+        bestAttemptContent.title = ""
+        bestAttemptContent.body = ""
+        bestAttemptContent.sound = nil
+        contentHandler(bestAttemptContent)
+        return
+      }
+      startObservingAppStop()
+      let generation = (try? MLSCoordinationStore.shared.getState().coordinationGeneration) ?? 0
+      let task = Task<Void, Error> { @MainActor in
+        self.activeRecipientDID = recipient
+        defer {
+          self.activeProcessingTask = nil
+          self.activeRecipientDID = nil
+          self.bestEffortNSECleanup(recipientDid: recipient)
+        }
+        if !MLSAppActivityState.isShuttingDown(for: recipient), !MLSStoragePaths.isResetActive(for: recipient),
+           let text = try? await self.databaseManager.nseRead(for: recipient, { db in
+             try String.fetchOne(db, sql: """
+               SELECT text FROM app_direct_request_notification_preview
+               WHERE account_did = ? AND conversation_id = ? AND message_id = ? AND expires_at >= ?
+               """, arguments: [recipient, conversation, message, Date().timeIntervalSince1970])
+           }), text.utf8.count <= 16_384,
+           !Task.isCancelled, !MLSStoragePaths.isResetActive(for: recipient),
+           ((try? MLSCoordinationStore.shared.getState().coordinationGeneration) ?? 0) == generation {
+          bestAttemptContent.body = text
+        }
+        guard !Task.isCancelled else { return }
+        contentHandler(bestAttemptContent)
+      }
+      activeProcessingTask = task
+      return
+    }
+
     // Handle Bluesky chat_message push (plain text — no decryption needed)
     if pushType == "chat_message" {
       logger.info("💬 [NSE] chat_message detected, enriching notification")

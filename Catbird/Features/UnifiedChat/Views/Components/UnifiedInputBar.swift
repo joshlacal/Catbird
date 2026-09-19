@@ -161,7 +161,7 @@ struct UnifiedInputBar: View {
       return "Image"
     case .audio:
       return "Voice Message"
-    case .groupInvite:
+    case .groupInvite, .groupInvitation:
       return "Group Invite"
     }
   }
@@ -182,6 +182,8 @@ struct UnifiedInputBar: View {
       return "\(imageData.width)x\(imageData.height)"
     case .audio(let data):
       return "\(data.durationMs / 1000)s"
+    case .groupInvitation:
+      return "Separate group invitation"
     case .groupInvite(let invite):
       switch invite {
       case .preview(let name, _, _, _):

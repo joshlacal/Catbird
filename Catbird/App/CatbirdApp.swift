@@ -27,6 +27,15 @@ import Darwin // For sysctl constants
 import FoundationModels
 #endif
 
+// Presentation fixtures deliberately bypass account bootstrap and networking.
+private var isEncryptedRequestUIFixture: Bool {
+  #if DEBUG
+  ProcessInfo.processInfo.arguments.contains("--encrypted-request-ui-fixture")
+  #else
+  false
+  #endif
+}
+
 // App-wide logger
 let logger = Logger(subsystem: "blue.catbird", category: "AppLifecycle")
 
@@ -334,6 +343,7 @@ struct CatbirdApp: App {
       _ application: UIApplication,
       didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
+      if isEncryptedRequestUIFixture { return true }
       prepareInitialMLSAdmission(
         applicationState: application.applicationState,
         source: "didFinishLaunching"
@@ -640,6 +650,7 @@ struct CatbirdApp: App {
 
   // MARK: - Initialization
   init() {
+    if isEncryptedRequestUIFixture { return }
     #if os(iOS)
     prepareInitialMLSAdmission(
       applicationState: UIApplication.shared.applicationState,
@@ -1251,11 +1262,9 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
   }
   #endif
 
-  // MARK: - Body
-  var body: some Scene {
-    WindowGroup {
-      Group {
-        switch appStateManager.modelContainerState {
+  @ViewBuilder
+  private var applicationContent: some View {
+    switch appStateManager.modelContainerState {
         case .loading:
           LoadingView()
             .task {
@@ -1296,7 +1305,22 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
               await initializeModelContainer()
             }
           })
+    }
+  }
+
+  // MARK: - Body
+  var body: some Scene {
+    WindowGroup {
+      Group {
+        #if DEBUG
+        if isEncryptedRequestUIFixture {
+          MLSEncryptedRequestUIFixture()
+        } else {
+          applicationContent
         }
+        #else
+        applicationContent
+        #endif
       }
       .onChange(of: scenePhase, initial: true) { oldPhase, newPhase in
         handleScenePhaseChange(from: oldPhase, to: newPhase)
@@ -1310,6 +1334,7 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
       }
       #endif
       .onOpenURL { url in
+          guard !isEncryptedRequestUIFixture else { return }
           logger.info(
             "Received URL for scheme=\(url.scheme ?? "none", privacy: .public) host=\(url.host ?? "none", privacy: .public) path=\(url.path, privacy: .public)"
           )
@@ -1457,6 +1482,7 @@ private extension CatbirdApp {
       case .authenticated(let appState):
         if shouldShowContentForAuthenticatedState {
           ContentView()
+            .modifier(MLSDirectDraftPresentation())
             .id(appState.userDID)
             .applyAppStateEnvironment(appState)
         } else {
@@ -1570,6 +1596,7 @@ private extension CatbirdApp {
 
   @MainActor
   func handleScenePhaseChange(from oldPhase: ScenePhase, to newPhase: ScenePhase) {
+    guard !isEncryptedRequestUIFixture else { return }
     MLSInitialLifecycleCoordinator.shared.recordSceneObservation()
     let sceneTransitionToken = MLSForegroundResumeCoordinator.recordSceneTransition(to: newPhase)
     let suspensionCloseClaim = MLSSceneSuspensionCloseClaim(
@@ -2485,6 +2512,12 @@ private extension CatbirdApp {
     case "register-device":
       await handleRegisterDevice(params: params, manager: manager, logger: e2eLogger)
       
+    case "request-send":
+      await handleDirectRequest(params: params, manager: manager, inspect: false)
+
+    case "request-inspect":
+      await handleDirectRequest(params: params, manager: manager, inspect: true)
+
     case "create-conversation":
       await handleCreateConversation(params: params, manager: manager, logger: e2eLogger)
 
@@ -2773,46 +2806,61 @@ private extension CatbirdApp {
       return
     }
     
-    let groupName = params["name"] ?? "E2E Test Conversation"
-    
-    e2eLogger.info("[E2E] Creating conversation with: \(targetDID)")
-
     do {
-      // Get or create conversation via MLS conversation manager
-      guard let conversationManager = await appState.getMLSConversationManager() else {
-        throw NSError(domain: "E2E", code: 1, userInfo: [NSLocalizedDescriptionKey: "MLS not initialized"])
-      }
-
-      // ⭐ E2E FIX: Pre-replenish key packages before creating group.
-      // On fresh install the background replenishment task may not have finished yet,
-      // causing createGroup to fail or timeout waiting for bundles.
-      e2eLogger.info("[E2E] Ensuring key packages are replenished before group creation...")
-      do {
-        try await conversationManager.smartRefreshKeyPackages()
-        e2eLogger.info("[E2E] Key package replenishment complete")
-      } catch {
-        e2eLogger.warning("[E2E] Key package pre-replenishment failed: \(error.localizedDescription) - createGroup will retry inline")
-      }
-
-      // Create group with the target member (using DID type)
-      let targetMember = try DID(didString: targetDID)
-      let conversation = try await conversationManager.createGroup(
-        initialMembers: [targetMember],
-        name: groupName
-      )
-      
-      guard MLSConversationIdentityBoundary.isCanonicalStableID(conversation.conversationId) else {
-        throw MLSConversationIdentityBoundary.Error.invalidStableID(conversation.conversationId)
-      }
-      e2eLogger.info("[E2E] Conversation created: \(conversation.conversationId)")
+      guard let database = appState.mlsDatabase else { throw MLSAPIError.serverUnavailable }
+      let draft = try await MLSDirectComposeDraftStore.open(accountDID: appState.userDID,
+        recipientDID: targetDID, database: database)
       await writeE2EResult(command: "create-conversation", success: true, data: [
-        "conversationId": conversation.conversationId,
-        "epoch": "\(conversation.epoch)"
+        "draftId": draft.id.uuidString.lowercased(), "recipientDid": draft.recipientDID, "status": "localDraft"
       ])
-      
     } catch {
-      e2eLogger.error("[E2E] Failed to create conversation: \(error.localizedDescription)")
-      await writeE2EResult(command: "create-conversation", success: false, error: error.localizedDescription)
+      await writeE2EResult(command: "create-conversation", success: false, error: "Could not save local draft")
+    }
+  }
+
+  private func handleDirectRequest(params: [String: String], manager: AppStateManager, inspect: Bool) async {
+    let command = inspect ? "request-inspect" : "request-send"
+    do {
+      guard let appState = manager.lifecycle.appState,
+            let conversations = await appState.getMLSConversationManager() else { throw MLSAPIError.serverUnavailable }
+      let account = appState.userDID
+      if inspect {
+        guard let id = params["conversationId"], MLSConversationIdentityBoundary.isCanonicalStableID(id) else {
+          throw MLSDirectComposeDraftStore.Failure.accountChanged
+        }
+        let view = try await conversations.refreshRequestPreview(conversationId: id)
+        guard appState.userDID == account else { throw CancellationError() }
+        let preview: String
+        if case .ready(let text, _) = view.preview { preview = text } else { preview = "" }
+        await writeE2EResult(command: command, success: true, data: ["conversationId": id,
+          "consent": String(describing: view.consent), "crypto": String(describing: view.crypto),
+          "preview": preview, "canSend": String(view.capabilities.canSend)])
+      } else {
+        guard let recipient = params["recipientDID"] ?? params["targetDID"], let text = params["text"] else {
+          throw MLSDirectComposeDraftStore.Failure.invalidText
+        }
+        var draft = try await MLSDirectComposeDraftStore.open(accountDID: account, recipientDID: recipient, database: conversations.database)
+        guard !draft.submitted || draft.text == text else { throw MLSDirectComposeDraftStore.Failure.immutableSubmittedDraft }
+        try MLSDirectComposeDraftStore.validateText(text)
+        draft.text = text
+        draft.submitted = true
+        try await MLSDirectComposeDraftStore.save(draft, database: conversations.database)
+        let outcome = try await conversations.startDirectRequest(input: DirectRequestInput(
+          draftId: draft.id.uuidString.lowercased(), recipientDid: recipient, text: text, invitation: nil))
+        guard appState.userDID == account else { throw CancellationError() }
+        var data = ["draftId": draft.id.uuidString.lowercased()]
+        switch outcome {
+        case .requestSent(let conversationID, let messageID, let requestID):
+          data.merge(["status": "requestSent", "conversationId": conversationID, "messageId": messageID, "requestId": requestID]) { _, new in new }
+        case .outcomeUnknown(let requestID): data.merge(["status": "outcomeUnknown", "requestId": requestID]) { _, new in new }
+        case .existingDirect(let conversationID, let requiresAcceptance): data.merge(["status": "existingDirect", "conversationId": conversationID, "requiresAcceptance": String(requiresAcceptance)]) { _, new in new }
+        case .retryable(let code): data.merge(["status": "retryable", "code": code]) { _, new in new }
+        case .terminalNotPublished(let requestID, let code): data.merge(["status": "terminalNotPublished", "requestId": requestID, "code": code]) { _, new in new }
+        }
+        await writeE2EResult(command: command, success: true, data: data)
+      }
+    } catch {
+      await writeE2EResult(command: command, success: false, error: "Request operation failed; any saved attempt is retained")
     }
   }
 
@@ -2941,22 +2989,26 @@ private extension CatbirdApp {
       }) {
         convoId = existing.conversationId
       } else {
-        do {
-          let targetMember = try DID(didString: targetDID)
-          let newConvo = try await conversationManager.createGroup(
-            initialMembers: [targetMember],
-            name: "E2E Blob DM"
-          )
-          convoId = newConvo.conversationId
-        } catch {
-          e2eLogger.error("[E2E-BLOB] Failed to create conversation for \(targetDID): \(error.localizedDescription)")
-          await writeE2EResult(command: "send-blob", success: false, error: "Failed to resolve conversation: \(error.localizedDescription)")
-          return
-        }
+        await writeE2EResult(command: "send-blob", success: false,
+          error: "Send a text introduction and wait for acceptance before attaching media")
+        return
       }
     } else {
       e2eLogger.error("[E2E-BLOB] Missing conversationId or targetDID")
       await writeE2EResult(command: "send-blob", success: false, error: "Missing conversationId or targetDID")
+      return
+    }
+
+    do {
+      let allowed = try await MLSDirectRequestAccess.allowsOrdinaryEffects(manager: conversationManager, conversationID: convoId)
+      let pending = try await conversationManager.fetchPendingRequestConversations()
+      guard !pending.contains(where: { $0.conversationID == convoId }),
+            allowed else {
+        await writeE2EResult(command: "send-blob", success: false, error: "Message request is not accepted and ready")
+        return
+      }
+    } catch {
+      await writeE2EResult(command: "send-blob", success: false, error: "Could not verify permission to send attachments")
       return
     }
 
@@ -3134,6 +3186,8 @@ private extension CatbirdApp {
                 decryptedTexts.append("\(prefix)[gif:\(gif.tenorURL)]")
               case .post(let post):
                 decryptedTexts.append("\(prefix)[post:\(post.uri)]")
+              case .groupInvitation(let reference):
+                decryptedTexts.append("\(prefix)[groupInvitation:\(reference.conversationId)]")
               case .unknown(let type):
                 decryptedTexts.append("\(prefix)[unknown:\(type)]")
               }
@@ -4243,7 +4297,7 @@ extension CatbirdApp.AppDelegate {
     // Handle MLS notifications
     if let type = userInfo["type"] as? String {
       switch type {
-      case "mls_message", "mls_message_decrypted":
+      case "mls_message", "mls_message_decrypted", "mls_message_request":
         // Handle MLS chat message notification tap
         // Navigate to the conversation and switch account if needed
         logger.info("🔐 MLS message notification tapped - navigating to conversation")

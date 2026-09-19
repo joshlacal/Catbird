@@ -122,6 +122,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
   private(set) var leavePresentation: MLSConversationLeavePresentation = .none
   private(set) var isPendingRequest: Bool = false
   private(set) var hasResolvedConsent: Bool = false
+  private(set) var directRequestCapabilities: RequestCapabilities?
   private var recoveryResolutionID = UUID()
 
   var composerPlaceholder: String {
@@ -131,7 +132,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
   /// Whether outgoing sends should be blocked right now (visible state, not a
   /// swallowed error — the composer disables and a banner explains why).
   var isSendBlockedByRecovery: Bool {
-    isPendingRequest || conversationRecoveryState.blocksSending
+    !hasResolvedConsent || isPendingRequest || directRequestCapabilities?.canSend == false || conversationRecoveryState.blocksSending
   }
 
   private(set) var isLoading: Bool = false
@@ -357,6 +358,16 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
 
   /// Test seam: simulates a confirmed row arriving via the GRDB observation
   /// path (what buildAdapters produces), including handover pruning.
+  #if DEBUG
+  /// Isolated action tests supply an explicit consent projection. This seam
+  /// cannot modify a data source connected to an account or real transport.
+  func setActionConsentForTesting(resolved: Bool, pending: Bool) {
+    precondition(appState == nil && actionPerformer != nil)
+    hasResolvedConsent = resolved
+    isPendingRequest = pending
+  }
+  #endif
+
   func ingestConfirmedMessageForTesting(_ adapter: MLSMessageAdapter) {
     confirmedMessages.append(adapter)
     sortMessagesInDisplayOrder(&confirmedMessages)
@@ -478,8 +489,19 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
       try MLSCoordinationAwareTask.validateGeneration(expectedGeneration)
       guard recoveryResolutionID == resolutionID, appState.userDID == currentUserDID else { return }
       durableModel = projection.0
-      isPendingRequest = projection.1
+      guard let manager = await appState.getMLSConversationManager(), manager.currentUserDID == currentUserDID else {
+        throw MLSConversationPipelineAccess.Failure.managerUnavailable
+      }
+      let classification = try await manager.classifyDirectRequestConversation(conversationId: convoID)
+      let verifiedRequest = try await manager.listDirectRequestViews().first { $0.conversationId == convoID }
+      guard classification == .legacyV1 || verifiedRequest != nil else {
+        throw MLSConversationPipelineAccess.Failure.managerUnavailable
+      }
+      guard recoveryResolutionID == resolutionID, appState.userDID == currentUserDID else { return }
+      directRequestCapabilities = verifiedRequest?.capabilities
+      isPendingRequest = verifiedRequest.map { $0.consent == .incomingPending || $0.consent == .outgoingPending } ?? projection.1
       hasResolvedConsent = projection.0 != nil
+      if verifiedRequest?.consent == .closed { conversationRecoveryState = .closed; return }
     } catch {
       guard recoveryResolutionID == resolutionID, appState.userDID == currentUserDID else { return }
       hasResolvedConsent = false
@@ -1458,6 +1480,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
   }
 
   private func sendTypingIndicator(isTyping: Bool) async {
+    guard hasResolvedConsent, !isPendingRequest, directRequestCapabilities?.canEmitReceipts != false else { return }
     guard let appState = appState,
       let manager = await appState.getMLSConversationManager()
     else {
@@ -1465,6 +1488,8 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
     }
 
     do {
+      guard appState.userDID == currentUserDID, manager.currentUserDID == currentUserDID,
+            hasResolvedConsent, !isPendingRequest, directRequestCapabilities?.canEmitReceipts != false else { return }
       try await manager.sendTypingIndicator(convoId: conversationId, isTyping: isTyping)
     } catch {
       logger.debug("Typing indicator send failed: \(error.localizedDescription)")
@@ -1472,6 +1497,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
   }
 
   func sendMessage(text: String) async {
+    guard hasResolvedConsent, !isPendingRequest, directRequestCapabilities?.canSend != false else { return }
     guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || attachedEmbed != nil
     else { return }
 
@@ -1585,6 +1611,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
     }
   }
   func toggleReaction(messageID: String, emoji: String) {
+    guard hasResolvedConsent, !isPendingRequest, directRequestCapabilities?.canSend != false else { return }
     let messageID = resolveRealMessageID(messageID)
     Task {
       guard let appState = appState,
@@ -1666,6 +1693,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
   }
 
   func addReaction(messageID: String, emoji: String) {
+    guard hasResolvedConsent, !isPendingRequest, directRequestCapabilities?.canSend != false else { return }
     // For MLS, addReaction always adds (doesn't toggle)
     let messageID = resolveRealMessageID(messageID)
     Task {
@@ -1898,6 +1926,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
 
   @discardableResult
   func editMessage(messageID: String, newText: String) async -> Bool {
+    guard hasResolvedConsent, !isPendingRequest, directRequestCapabilities?.canSend != false else { return false }
     let trimmedText = newText.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmedText.isEmpty, let target = message(for: messageID), target.canEdit else {
       return false
@@ -1931,6 +1960,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
   }
 
   func unsendMessage(messageID: String) async {
+    guard hasResolvedConsent, !isPendingRequest, directRequestCapabilities?.canSend != false else { return }
     guard let target = message(for: messageID), target.canUnsend else { return }
     let resolvedMessageID = target.id
 

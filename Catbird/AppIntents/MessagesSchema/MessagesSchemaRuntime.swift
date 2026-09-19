@@ -139,39 +139,29 @@ enum MessagesSchemaRuntime {
     return nil
   }
 
-  /// Finds the existing conversation whose member set matches `recipients`,
-  /// creating a group if none exists (MLS requires the group to exist before
-  /// composing into it). Supports 1:1 and multi-recipient destinations.
-  static func findOrCreateConversation(
+  enum ComposeDestination {
+    case existing(String)
+    case recipientDraft(MLSDirectComposeDraft)
+  }
+
+  /// Read-only resolution plus a local draft. No destination lookup creates MLS state.
+  static func resolveDestination(
     recipients: [(did: String, displayName: String)],
     manager: MLSConversationManager,
     directory: ChatDirectory
-  ) async throws -> String {
-    guard !recipients.isEmpty else {
-      throw IntentError.invalidParameter("No recipients specified.")
-    }
-
-    if let existing = conversationID(
-      matching: recipients.map(\.did),
+  ) async throws -> ComposeDestination {
+    guard !recipients.isEmpty else { throw IntentError.invalidParameter("No recipients specified.") }
+    if let existing = conversationID(matching: recipients.map(\.did),
       in: directory.membersByConvoID.mapValues { $0.map(\.did) },
-      conversationOrder: directory.conversations.map(\.conversationID),
-      selfDID: directory.currentUserDID
-    ) {
-      guard isCanonicalStableID(existing) else {
-        throw MLSConversationIdentityBoundary.Error.invalidStableID(existing)
-      }
-      return existing
+      conversationOrder: directory.conversations.map(\.conversationID), selfDID: directory.currentUserDID) {
+      guard isCanonicalStableID(existing) else { throw MLSConversationIdentityBoundary.Error.invalidStableID(existing) }
+      return .existing(existing)
     }
-
-    let peerDIDs = try recipients.map { try DID(didString: $0.did) }
-    let name = recipients
-      .map { $0.displayName.isEmpty ? $0.did : $0.displayName }
-      .joined(separator: ", ")
-    let newConvo = try await manager.createGroup(initialMembers: peerDIDs, name: name)
-    guard isCanonicalStableID(newConvo.conversationId) else {
-      throw MLSConversationIdentityBoundary.Error.invalidStableID(newConvo.conversationId)
+    guard recipients.count == 1 else {
+      throw IntentError.invalidParameter("Create a group in Catbird before sending to multiple recipients.")
     }
-    return newConvo.conversationId
+    return .recipientDraft(try await MLSDirectComposeDraftStore.open(
+      accountDID: directory.currentUserDID, recipientDID: recipients[0].did, database: manager.database))
   }
 
   private static func isCanonicalStableID(_ value: String) -> Bool {

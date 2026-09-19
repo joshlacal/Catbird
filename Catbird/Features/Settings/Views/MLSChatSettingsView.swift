@@ -68,6 +68,8 @@ struct MLSChatSettingsView: View {
 
       // MARK: - Request Expiration
 
+      MLSRequestDeliverySettingsSection()
+
       Section("Message Requests") {
         Picker("Auto-Expire After", selection: $autoExpireDays) {
           Text("1 Day").tag(1)
@@ -83,7 +85,7 @@ struct MLSChatSettingsView: View {
         }
 
         Text(
-          "Pending message requests from users you don't follow will automatically expire after this period."
+          "This expiry applies to legacy invitations. Encrypted introductions remain pending until you accept or close them."
         )
         .appFont(AppTextRole.caption)
         .foregroundStyle(.secondary)

@@ -2,7 +2,7 @@ import SwiftUI
 
 #if os(iOS)
 
-    extension MLSConversationDetailView {
+    extension MLSOrdinaryConversationDetailView {
         struct InfoRow: View {
             let label: String
             let value: String

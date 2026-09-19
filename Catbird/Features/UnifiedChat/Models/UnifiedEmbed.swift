@@ -1,4 +1,5 @@
 import Foundation
+import CatbirdMLSCore
 
 // MARK: - UnifiedEmbed
 
@@ -12,6 +13,7 @@ enum UnifiedEmbed: Hashable, Sendable {
   case image(ImageEmbedData)
   case audio(AudioEmbedData)
   case groupInvite(GroupInviteEmbedData)
+  case groupInvitation(MLSGroupInvitationReference)
 }
 
 // MARK: - GroupInviteEmbedData

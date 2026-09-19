@@ -1669,6 +1669,13 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
       return
     }
 
+    if userInfo["type"] as? String == "mls_message_request" {
+      // Request payloads are metadata-only. Let the ordinary authoritative
+      // refresh discover/import the request; never decode push ciphertext here.
+      completionHandler([.banner, .sound])
+      return
+    }
+
     // Check if this is an MLS message that needs decryption
     if let type = userInfo["type"] as? String, type == "mls_message" {
       notificationLogger.info("🔐 [FG] MLS message detected - attempting foreground decryption")
@@ -3443,8 +3450,28 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     let uriString = userInfo["uri"] as? String
     let typeString = userInfo["type"] as? String
 
+    if typeString == "mls_message_request" {
+      guard userInfo["protocol_version"] as? String == "2",
+            let hash = userInfo["recipient_account"] as? String,
+            hash.count == 64, hash.allSatisfy({ "0123456789abcdef".contains($0) }),
+            let recipient = resolveRecipientDID(from: ["recipient_account": hash]),
+            let conversation = userInfo["convo_id"] as? String,
+            MLSConversationIdentityBoundary.isCanonicalStableID(conversation) else {
+        completionHandler()
+        return
+      }
+      Task { @MainActor in
+        await self.ensureActiveAccount(for: recipient)
+        guard case .authenticated(let state) = AppStateManager.shared.lifecycle,
+              state.userDID == recipient else { completionHandler(); return }
+        state.navigationManager.targetMLSConversationId = conversation
+        completionHandler()
+      }
+      return
+    }
+
     // Handle MLS message notifications (from NSE)
-    if let type = typeString, type == "mls_message" || type == "mls_message_decrypted" {
+    if let type = typeString, type == "mls_message" || type == "mls_message_decrypted" || type == "mls_message_request" {
       let recipientDid = resolveRecipientDID(from: userInfo)
       let convoId = userInfo["convo_id"] as? String
 
@@ -3768,7 +3795,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     }
 
     // Handle MLS chat notifications
-    if type == "mls_message" || type == "mls_message_decrypted" {
+    if type == "mls_message" || type == "mls_message_decrypted" || type == "mls_message_request" {
       await handleMLSNotificationNavigation(uriString)
       return
     }

@@ -6,12 +6,21 @@ import Petrel
 import PetrelCatbird
 import SwiftUI
 
+struct MacOSMLSConversationView: View {
+  let conversationId: String
+  var body: some View {
+    MLSRequestConversationGate(conversationID: conversationId) {
+      MacOSMLSOrdinaryConversationView(conversationId: conversationId)
+    }
+  }
+}
+
 // MARK: - macOS MLS Conversation Detail
 
 /// Displays an end-to-end encrypted MLS conversation on macOS using the shared
 /// ChatListView for message rendering. Includes group info inspector and E2E badge.
 @available(macOS 13.0, *)
-struct MacOSMLSConversationView: View {
+struct MacOSMLSOrdinaryConversationView: View {
   @Environment(AppState.self) private var appState
   let conversationId: String
 
@@ -85,6 +94,9 @@ struct MacOSMLSConversationView: View {
     .task {
       await initializeConversation()
     }
+    .onReceive(NotificationCenter.default.publisher(for: ChatDraftHandoff.didStoreDraft)) { _ in
+      Task { await consumePendingDraft() }
+    }
     .onAppear {
       appState.chatHeartbeatManager.viewAppeared()
     }
@@ -130,10 +142,21 @@ struct MacOSMLSConversationView: View {
     )
 
     await loadConversationMetadata(manager: manager)
+    await consumePendingDraft()
 
     Task.detached(priority: .userInitiated) { [newViewModel] in
       await newViewModel.loadConversation()
     }
+  }
+
+  @MainActor
+  private func consumePendingDraft() async {
+    let account = appState.userDID
+    guard let database = appState.mlsDatabase, let dataSource else { return }
+    guard let text = try? await ChatDraftHandoff.shared.consumeDurably(
+      for: conversationId, accountDID: account, database: database),
+      appState.userDID == account else { return }
+    dataSource.draftText = text
   }
 
   @MainActor

@@ -2,7 +2,7 @@ import SwiftUI
 
 #if os(iOS)
 
-    extension MLSConversationDetailView {
+    extension MLSOrdinaryConversationDetailView {
         /// Action bar shown at the bottom of a conversation detail view when the conversation
         /// is a pending inbound chat request that needs acceptance.
         struct ChatRequestActionBar: View {

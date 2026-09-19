@@ -501,6 +501,8 @@ struct MLSMessageAdapter: UnifiedChatMessage {
           transcript: audioEmbed.transcript
         )
       )
+    case .groupInvitation(let reference):
+      return .groupInvitation(reference)
     case .unknown:
       return nil
     }

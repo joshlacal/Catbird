@@ -175,6 +175,7 @@ struct MLSPendingSendTests {
       appState: nil,
       actionPerformer: actions
     )
+    dataSource.setActionConsentForTesting(resolved: true, pending: false)
     dataSource.ingestConfirmedMessageForTesting(
       MLSMessageAdapter(
         id: "msg-real",
@@ -204,6 +205,7 @@ struct MLSPendingSendTests {
       appState: nil,
       actionPerformer: actions
     )
+    dataSource.setActionConsentForTesting(resolved: true, pending: false)
     let message = MLSMessageAdapter(
       id: "msg-real",
       text: "before",
@@ -238,6 +240,7 @@ struct MLSPendingSendTests {
       appState: nil,
       actionPerformer: actions
     )
+    dataSource.setActionConsentForTesting(resolved: true, pending: false)
     let message = MLSMessageAdapter(
       id: "msg-real",
       text: "before",
@@ -292,6 +295,7 @@ struct MLSPendingSendTests {
       appState: nil,
       actionPerformer: actions
     )
+    dataSource.setActionConsentForTesting(resolved: true, pending: false)
     dataSource.ingestConfirmedMessageForTesting(
       MLSMessageAdapter(
         id: "remote",
@@ -323,6 +327,7 @@ struct MLSPendingSendTests {
       appState: nil,
       actionPerformer: actions
     )
+    dataSource.setActionConsentForTesting(resolved: true, pending: false)
     dataSource.ingestConfirmedMessageForTesting(
       MLSMessageAdapter(
         id: "msg-real",

@@ -8,7 +8,7 @@ import SwiftUI
 
 #if os(iOS)
 
-    struct MLSConversationDetailView: View {
+    struct MLSOrdinaryConversationDetailView: View {
         @Environment(AppState.self) var appState
         @Environment(\.colorScheme) private var colorScheme
         @Environment(\.dismiss) var dismiss
@@ -512,8 +512,14 @@ import SwiftUI
 
         @MainActor
         private func consumePendingChatDraft() {
-            guard let draft = ChatDraftHandoff.shared.consume(for: conversationId) else { return }
-            pendingDraftText = draft.isEmpty ? nil : draft
+            let account = appState.userDID
+            guard let database = appState.mlsDatabase else { return }
+            Task {
+                guard let draft = try? await ChatDraftHandoff.shared.consumeDurably(
+                    for: conversationId, accountDID: account, database: database),
+                    appState.userDID == account else { return }
+                pendingDraftText = draft.isEmpty ? nil : draft
+            }
         }
 
         /// Loading placeholder shown while profiles are loading to avoid DID flicker

@@ -196,6 +196,10 @@ import SwiftUI
         Label("Voice", systemImage: "waveform")
           .designCaption()
           .foregroundColor(.accentColor)
+      case .groupInvitation:
+        Label("Group invitation", systemImage: "person.2.fill")
+          .font(.caption)
+          .foregroundStyle(.secondary)
       case .unknown:
         Label("Attachment", systemImage: "paperclip")
           .designCaption()
@@ -478,6 +482,9 @@ import SwiftUI
               .foregroundColor(.secondary)
           }
         }
+
+      case .groupInvitation(let reference):
+        MLSGroupInvitationCard(reference: reference)
 
       case .unknown:
         HStack(spacing: DesignTokens.Spacing.sm) {

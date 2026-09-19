@@ -28,7 +28,7 @@ import Foundation
 
 #if false // Disabled - legacy ExyteChat extension
 
-extension MLSConversationDetailView {
+extension MLSOrdinaryConversationDetailView {
   // Legacy system message handling code removed
   // See MLSConversationDataSource for current implementation
 }

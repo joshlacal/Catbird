@@ -12,6 +12,7 @@ struct MLSNewConversationView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
     
+    @State private var directDraft: MLSDirectComposeDraft?
     @State private var conversationName = ""
     @State private var searchText = ""
     @State private var selectedParticipants: Set<String> = []
@@ -85,6 +86,12 @@ struct MLSNewConversationView: View {
                 
                 if isCreatingConversation {
                     creationOverlay
+                }
+            }
+            .sheet(item: $directDraft) { draft in
+                MLSDirectComposeView(draft: draft) { conversationID in
+                    onNavigateToConversation?(conversationID)
+                    dismiss()
                 }
             }
             .navigationTitle(currentStep.title)
@@ -896,13 +903,16 @@ struct MLSNewConversationView: View {
             return
         }
 
-        // Don't set a conversation title for 1:1 — it will be resolved
-        // dynamically as the other participant's display name for each user
-        withAnimation(.spring(response: 0.25)) {
-            currentStep = .creating
+        do {
+            guard let database = appState.mlsDatabase,
+                  appState.userDID == accountDID,
+                  let recipient = selectedParticipants.first else { return }
+            directDraft = try await MLSDirectComposeDraftStore.open(
+                accountDID: accountDID, recipientDID: recipient, database: database)
+        } catch {
+            errorMessage = "Could not save this draft. Please try again."
+            showingError = true
         }
-        guard !Task.isCancelled, AppStateManager.shared.lifecycle.userDID == accountDID else { return }
-        await createMLSConversation()
     }
     @MainActor
     private func createMLSConversation() async {

@@ -1,403 +1,165 @@
-//
-//  MLSNewConversationViewModelTests.swift
-//  CatbirdTests
-//
-//  Created by Josh LaCalamito on 10/21/24.
-//
-
-import XCTest
-import Combine
-import Petrel
-import PetrelCatbird
+import CatbirdMLSCore
+import Foundation
+import GRDB
+import Testing
 @testable import Catbird
 
+@Suite("Direct recipient drafts")
 @MainActor
-final class MLSNewConversationViewModelTests: XCTestCase {
-    private let testConversationID = "550e8400-e29b-41d4-a716-446655440000"
+struct MLSNewConversationViewModelTests {
+  @Test("selection creates only local state and reuses the same account-scoped ID")
+  func selectionDoesNotCreateRemoteConversation() async throws {
+    let database = try DatabaseQueue()
+    let first = try await MLSDirectComposeDraftStore.open(accountDID: "did:plc:alice", recipientDID: "did:plc:bob", database: database)
+    let second = try await MLSDirectComposeDraftStore.open(accountDID: "did:plc:alice", recipientDID: "did:plc:bob", database: database)
+    let otherAccount = try await MLSDirectComposeDraftStore.open(accountDID: "did:plc:carol", recipientDID: "did:plc:bob", database: database)
+    #expect(first.id == second.id)
+    #expect(first.id != otherAccount.id)
+    #expect(first.conversationID == nil)
+    #expect(!first.submitted)
+    let tables = try await database.read { db in try String.fetchAll(db, sql: "SELECT name FROM sqlite_master WHERE type='table'") }
+    #expect(tables == ["app_direct_compose_drafts"])
+  }
 
-    var viewModel: MLSNewConversationViewModel!
-    var mockConversationManager: MockMLSConversationManager!
-    var cancellables: Set<AnyCancellable>!
-    
-    override func setUp() async throws {
-        try await super.setUp()
-        mockConversationManager = MockMLSConversationManager()
-        viewModel = MLSNewConversationViewModel(conversationManager: mockConversationManager)
-        cancellables = Set<AnyCancellable>()
-    }
-    
-    override func tearDown() async throws {
-        cancellables.forEach { $0.cancel() }
-        cancellables = nil
-        viewModel = nil
-        mockConversationManager = nil
-        try await super.tearDown()
-    }
-    
-    // MARK: - Initialization Tests
-    
-    func testInitialization() {
-        XCTAssertTrue(viewModel.selectedMembers.isEmpty)
-        XCTAssertEqual(viewModel.conversationName, "")
-        XCTAssertEqual(viewModel.conversationDescription, "")
-        XCTAssertEqual(viewModel.selectedCipherSuite, "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519")
-        XCTAssertFalse(viewModel.isCreating)
-        XCTAssertNil(viewModel.error)
-        XCTAssertFalse(viewModel.isValid)
-    }
-    
-    // MARK: - Validation Tests
-    
-    func testValidationWithNameAndMembers() {
-        // When
-        viewModel.conversationName = "Test Group"
-        viewModel.addMember("did:plc:member1")
-        
-        // Then
-        XCTAssertTrue(viewModel.isValid)
-    }
-    
-    func testValidationWithoutName() {
-        // When
-        viewModel.addMember("did:plc:member1")
-        
-        // Then
-        XCTAssertFalse(viewModel.isValid)
-    }
-    
-    func testValidationWithoutMembers() {
-        // When
-        viewModel.conversationName = "Test Group"
-        
-        // Then
-        XCTAssertFalse(viewModel.isValid)
-    }
-    
-    func testValidationWithWhitespaceName() {
-        // When
-        viewModel.conversationName = "   "
-        viewModel.addMember("did:plc:member1")
-        
-        // Then
-        XCTAssertFalse(viewModel.isValid)
-    }
-    
-    func testValidateMethod() {
-        // Given - Empty form
-        var errors = viewModel.validate()
-        XCTAssertEqual(errors.count, 2)
-        XCTAssertTrue(errors.contains("Conversation name is required"))
-        XCTAssertTrue(errors.contains("At least one member is required"))
-        
-        // When - Add name
-        viewModel.conversationName = "Test"
-        errors = viewModel.validate()
-        XCTAssertEqual(errors.count, 1)
-        
-        // When - Add valid member
-        viewModel.addMember("did:plc:member1")
-        errors = viewModel.validate()
-        XCTAssertEqual(errors.count, 0)
-        
-        // When - Add invalid member
-        viewModel.addMember("invalid-did")
-        errors = viewModel.validate()
-        XCTAssertEqual(errors.count, 1)
-        XCTAssertTrue(errors.contains("Invalid DID format: invalid-did"))
-    }
-    
-    // MARK: - Member Management Tests
-    
-    func testAddMember() async {
-        // When
-        await viewModel.addMember("did:plc:member1")
-        
-        // Then
-        XCTAssertEqual(viewModel.selectedMembers.count, 1)
-        XCTAssertTrue(viewModel.selectedMembers.contains("did:plc:member1"))
-    }
-    
-    func testAddDuplicateMember() async {
-        // Given
-        await viewModel.addMember("did:plc:member1")
-        
-        // When
-        await viewModel.addMember("did:plc:member1")
-        
-        // Then
-        XCTAssertEqual(viewModel.selectedMembers.count, 1)
-    }
-    
-    func testRemoveMember() async {
-        // Given
-        await viewModel.addMember("did:plc:member1")
-        await viewModel.addMember("did:plc:member2")
-        
-        // When
-        await viewModel.removeMember("did:plc:member1")
-        
-        // Then
-        XCTAssertEqual(viewModel.selectedMembers.count, 1)
-        XCTAssertFalse(viewModel.selectedMembers.contains("did:plc:member1"))
-        XCTAssertTrue(viewModel.selectedMembers.contains("did:plc:member2"))
-    }
-    
-    func testToggleMember() async {
-        // When - Add member
-        await viewModel.toggleMember("did:plc:member1")
-        XCTAssertTrue(viewModel.selectedMembers.contains("did:plc:member1"))
-        
-        // When - Remove member
-        await viewModel.toggleMember("did:plc:member1")
-        XCTAssertFalse(viewModel.selectedMembers.contains("did:plc:member1"))
-    }
-    
-    // MARK: - Create Conversation Tests
-    
-    func testCreateConversationSuccess() async {
-        // Given
-        viewModel.conversationName = "Test Group"
-        viewModel.conversationDescription = "Test description"
-        await viewModel.addMember("did:plc:member1")
-        await viewModel.addMember("did:plc:member2")
-        
-        let mockConvo = createMockConversation()
-        mockConversationManager.mockCreatedConversation = mockConvo
-        
-        let expectation = XCTestExpectation(description: "Conversation created")
-        viewModel.conversationCreatedPublisher.sink { conversation in
-            XCTAssertEqual(conversation.id, testConversationID)
-            expectation.fulfill()
-        }.store(in: &cancellables)
-        
-        // When
-        await viewModel.createConversation()
-        
-        // Then
-        await fulfillment(of: [expectation], timeout: 1.0)
-        XCTAssertEqual(mockConversationManager.createGroupCallCount, 1)
-        XCTAssertFalse(viewModel.isCreating)
-        XCTAssertNil(viewModel.error)
-        
-        // Form should be reset
-        XCTAssertEqual(viewModel.conversationName, "")
-        XCTAssertEqual(viewModel.conversationDescription, "")
-        XCTAssertTrue(viewModel.selectedMembers.isEmpty)
-    }
-    
-    func testCreateConversationFailure() async {
-        // Given
-        viewModel.conversationName = "Test Group"
-        await viewModel.addMember("did:plc:member1")
-        mockConversationManager.shouldFail = true
-        
-        let expectation = XCTestExpectation(description: "Error received")
-        viewModel.errorPublisher.sink { error in
-            XCTAssertNotNil(error)
-            expectation.fulfill()
-        }.store(in: &cancellables)
-        
-        // When
-        await viewModel.createConversation()
-        
-        // Then
-        await fulfillment(of: [expectation], timeout: 1.0)
-        XCTAssertNotNil(viewModel.error)
-        XCTAssertFalse(viewModel.isCreating)
-        
-        // Form should not be reset on failure
-        XCTAssertEqual(viewModel.conversationName, "Test Group")
-    }
-    
-    func testCreateConversationWithInvalidForm() async {
-        // Given - Invalid form (no name)
-        await viewModel.addMember("did:plc:member1")
-        
-        // When
-        await viewModel.createConversation()
-        
-        // Then
-        XCTAssertEqual(mockConversationManager.createGroupCallCount, 0)
-    }
-    
-    func testCreateConversationWhileCreating() async {
-        // Given
-        viewModel.conversationName = "Test Group"
-        await viewModel.addMember("did:plc:member1")
-        mockConversationManager.delayResponse = true
-        
-        // When
-        async let firstCreate: () = viewModel.createConversation()
-        async let secondCreate: () = viewModel.createConversation()
-        
-        await firstCreate
-        await secondCreate
-        
-        // Then
-        XCTAssertEqual(mockConversationManager.createGroupCallCount, 1)
-    }
-    
-    // MARK: - Search Tests
-    
-    func testSearchWithValidDID() async {
-        // When
-        viewModel.memberSearchQuery = "did:plc:test123"
-        try? await Task.sleep(nanoseconds: 400_000_000) // Wait for search
-        
-        // Then
-        XCTAssertEqual(viewModel.searchResults.count, 1)
-        XCTAssertEqual(viewModel.searchResults.first, "did:plc:test123")
-    }
-    
-    func testSearchWithInvalidDID() async {
-        // When
-        viewModel.memberSearchQuery = "invalid"
-        try? await Task.sleep(nanoseconds: 400_000_000)
-        
-        // Then
-        XCTAssertTrue(viewModel.searchResults.isEmpty)
-    }
-    
-    func testSearchWithEmptyQuery() async {
-        // When
-        viewModel.memberSearchQuery = ""
-        try? await Task.sleep(nanoseconds: 100_000_000)
-        
-        // Then
-        XCTAssertTrue(viewModel.searchResults.isEmpty)
-    }
-    
-    func testSearchQuerySupersededDoesNotOverwriteNewerQuery() async {
-        // Rapid query updates should only resolve to the latest generation
-        viewModel.memberSearchQuery = "did:plc:first"
-        viewModel.memberSearchQuery = "did:plc:second"
-        try? await Task.sleep(nanoseconds: 400_000_000)
-        
-        XCTAssertEqual(viewModel.searchResults, ["did:plc:second"])
-    }
-    
-    // MARK: - Reset Tests
-    
-    func testReset() async {
-        // Given
-        viewModel.conversationName = "Test"
-        viewModel.conversationDescription = "Description"
-        await viewModel.addMember("did:plc:member1")
-        viewModel.memberSearchQuery = "search"
-        
-        // When
-        await viewModel.reset()
-        
-        // Then
-        XCTAssertEqual(viewModel.conversationName, "")
-        XCTAssertEqual(viewModel.conversationDescription, "")
-        XCTAssertTrue(viewModel.selectedMembers.isEmpty)
-        XCTAssertEqual(viewModel.memberSearchQuery, "")
-        XCTAssertTrue(viewModel.searchResults.isEmpty)
-        XCTAssertNil(viewModel.error)
-    }
-    
-    // MARK: - Cipher Suite Tests
-    
-    func testAvailableCipherSuites() {
-        XCTAssertFalse(viewModel.availableCipherSuites.isEmpty)
-        XCTAssertTrue(viewModel.availableCipherSuites.contains("MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519"))
-    }
-    
-    func testChangeCipherSuite() {
-        // When
-        viewModel.selectedCipherSuite = "MLS_256_DHKEMX448_AES256GCM_SHA512_Ed448"
-        
-        // Then
-        XCTAssertEqual(viewModel.selectedCipherSuite, "MLS_256_DHKEMX448_AES256GCM_SHA512_Ed448")
-    }
-    
-    // MARK: - Helper Methods
-    
-    private func createMockConversation() -> BlueCatbirdChatDefs.ConversationState {
-        let creator = try! DID(didString: "did:plc:creator")
-        let member1 = try! DID(didString: "did:plc:member1")
-        let member2 = try! DID(didString: "did:plc:member2")
-        
-        return BlueCatbirdChatDefs.ConversationState(
-            conversationKind: .value_group,
-            coordinates: BlueCatbirdChatDefs.ConversationCoordinates(
-                conversationId: testConversationID,
-                generation: 1,
-                stateVersion: 1,
-                groupId: Bytes(data: Data(hexEncoded: "abcdef0123456789") ?? Data()),
-                epoch: 1,
-                groupContextHash: Bytes(data: Data()),
-                confirmationTag: Bytes(data: Data()),
-                lifecycle: .value_active
-            ),
-            cipherSuite: .value_MLS_u5f_256_u5f_XWING_u5f_CHACHA20POLY1305_u5f_SHA256_u5f_Ed25519,
-            participants: [
-                BlueCatbirdChatDefs.ParticipantView(userDid: member1, role: .value_member, status: .value_active, invitationProvenance: nil, leafCount: 1),
-                BlueCatbirdChatDefs.ParticipantView(userDid: member2, role: .value_member, status: .value_active, invitationProvenance: nil, leafCount: 1)
-            ],
-            leaves: [],
-            metadataSnapshot: BlueCatbirdChatDefs.MetadataSnapshot(
-                coordinate: BlueCatbirdChatDefs.MetadataCryptoContext(
-                    conversationId: Bytes(data: Data(testConversationID.utf8)),
-                    generation: 1,
-                    groupId: Bytes(data: Data(hexEncoded: "abcdef0123456789") ?? Data()),
-                    epoch: 1,
-                    groupContextHash: Bytes(data: Data()),
-                    confirmationTag: Bytes(data: Data())
-                ),
-                originTransitionId: testConversationID,
-                metadataVersion: 1,
-                nonce: Bytes(data: Data()),
-                ciphertext: Bytes(data: Data()),
-                ciphertextSha256: Bytes(data: Data()),
-                ciphertextSize: 0,
-                avatarBinding: nil,
-                authorProof: BlueCatbirdChatDefs.MetadataAuthorProof(
-                    authorDid: creator,
-                    authorDeviceId: "device-0",
-                    authorKeyId: "key-0",
-                    signaturePublicKey: Bytes(data: Data()),
-                    authGenerationAtOrigin: 1,
-                    originTransitionId: testConversationID,
-                    originSeq: 1,
-                    roleAtOrigin: "admin",
-                    deviceStatusAtOrigin: "active"
-                )
-            ),
-            snapshotSeq: 1
-        )
-    }
-}
+  @Test("draft and handoff survive reopening without sharing another account's text")
+  func durableReopenAndIsolation() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let path = directory.appendingPathComponent("drafts.sqlite").path
+    var database: DatabaseQueue? = try DatabaseQueue(path: path)
+    var draft = try await MLSDirectComposeDraftStore.open(accountDID: "did:plc:alice", recipientDID: "did:plc:bob", database: try #require(database))
+    draft.text = "Hello, Bob"
+    try await MLSDirectComposeDraftStore.requestPresentation(draft, database: try #require(database))
+    try database?.close()
+    database = nil
+    let reopened = try DatabaseQueue(path: path)
+    let restored = try await MLSDirectComposeDraftStore.pendingPresentation(accountDID: "did:plc:alice", database: reopened)
+    let other = try await MLSDirectComposeDraftStore.pendingPresentation(accountDID: "did:plc:carol", database: reopened)
+    #expect(restored == draft)
+    #expect(other == nil)
+    try await MLSDirectComposeDraftStore.clearPresentation(accountDID: "did:plc:alice", database: reopened)
+    let saved = try await MLSDirectComposeDraftStore.open(accountDID: "did:plc:alice", recipientDID: "did:plc:bob", database: reopened)
+    #expect(saved.text == "Hello, Bob")
+  }
 
-// MARK: - Mock Conversation Manager
-
-class MockMLSConversationManager: MLSConversationManager {
-    var mockCreatedConversation: BlueCatbirdChatDefs.ConversationState?
-    var shouldFail = false
-    var delayResponse = false
-    var createGroupCallCount = 0
-    
-    override func createGroup(
-        initialMembers: [DID]? = nil,
-        name: String,
-        description: String? = nil,
-        avatarUrl: String? = nil
-    ) async throws -> BlueCatbirdChatDefs.ConversationState {
-        createGroupCallCount += 1
-        
-        if delayResponse {
-            try? await Task.sleep(nanoseconds: 1_000_000_000)
-        }
-        
-        if shouldFail {
-            throw NSError(domain: "TestError", code: 500, userInfo: [NSLocalizedDescriptionKey: "Mock error"])
-        }
-        
-        guard let convo = mockCreatedConversation else {
-            throw NSError(domain: "TestError", code: 500, userInfo: [NSLocalizedDescriptionKey: "No mock conversation"])
-        }
-        
-        return convo
+  @Test("ambiguous submitted intent cannot be rewritten or assigned another ID")
+  func immutableSubmittedInput() async throws {
+    let database = try DatabaseQueue()
+    var draft = try await MLSDirectComposeDraftStore.open(accountDID: "did:plc:alice", recipientDID: "did:plc:bob", database: database)
+    draft.text = "Exact saved introduction"
+    draft.submitted = true
+    try await MLSDirectComposeDraftStore.save(draft, database: database)
+    let retry = try await MLSDirectComposeDraftStore.open(accountDID: draft.accountDID, recipientDID: draft.recipientDID, database: database)
+    #expect(retry == draft)
+    draft.text = "Different introduction"
+    await #expect(throws: MLSDirectComposeDraftStore.Failure.self) {
+      try await MLSDirectComposeDraftStore.save(draft, database: database)
     }
+    let unchanged = try await MLSDirectComposeDraftStore.open(accountDID: draft.accountDID, recipientDID: draft.recipientDID, database: database)
+    #expect(unchanged.text == "Exact saved introduction")
+  }
+
+  @Test("archiving a cancelled draft creates a fresh identity without deleting retained text")
+  func cancellationPreservesOriginalDraft() async throws {
+    let database = try DatabaseQueue()
+    var first = try await MLSDirectComposeDraftStore.open(accountDID: "did:plc:alice", recipientDID: "did:plc:bob", database: database)
+    first.text = "Saved before cancellation"
+    first.submitted = true
+    try await MLSDirectComposeDraftStore.save(first, database: database)
+    try await MLSDirectComposeDraftStore.archive(first, database: database)
+    let next = try await MLSDirectComposeDraftStore.open(accountDID: first.accountDID, recipientDID: first.recipientDID, database: database)
+    #expect(next.id != first.id)
+    #expect(!next.submitted)
+    let retained = try await database.read { db in
+      try Data.fetchOne(db, sql: "SELECT payload FROM app_direct_compose_drafts WHERE id = ? AND archived = 1", arguments: [first.id.uuidString])
+    }
+    #expect(try JSONDecoder().decode(MLSDirectComposeDraft.self, from: #require(retained)) == first)
+  }
+
+  @Test("invitation notes retain exact reference and uncertain attempt across reopen")
+  func invitationNoteCustody() async throws {
+    let database = try DatabaseQueue()
+    let owner = "did:plc:aaaaaaaaaaaaaaaaaaaaaaaa"
+    let reference = try MLSGroupInvitationReference(authorityDid: "did:web:chat.catbird.blue",
+      conversationId: "00000000-0000-4000-8000-000000000011",
+      invitationTransitionId: "00000000-0000-4000-8000-000000000012",
+      invitedByDid: owner, invitedByDeviceId: "00000000-0000-4000-8000-000000000013",
+      recipientDid: "did:plc:bbbbbbbbbbbbbbbbbbbbbbbb")
+    var note = try await MLSDirectComposeDraftStore.invitationDraft(accountDID: owner, reference: reference, database: database)
+    note.text = "A separate note"
+    note.submitted = true
+    note.noteAttempted = true
+    try await MLSDirectComposeDraftStore.save(note, database: database)
+    let restored = try await MLSDirectComposeDraftStore.invitationDraft(accountDID: owner, reference: reference, database: database)
+    #expect(restored == note)
+    #expect(restored.noteAttempted == true)
+    let ordinary = try await MLSDirectComposeDraftStore.open(accountDID: owner, recipientDID: reference.recipientDid, database: database)
+    #expect(ordinary.invitation == nil)
+    #expect(ordinary.id != note.id)
+    note.noteAttempted = false
+    await #expect(throws: MLSDirectComposeDraftStore.Failure.self) { try await MLSDirectComposeDraftStore.save(note, database: database) }
+    let saved = try await MLSDirectComposeDraftStore.savedInvitationNotes(accountDID: owner, database: database)
+    #expect(saved == [restored])
+    let other = try await MLSDirectComposeDraftStore.savedInvitationNotes(accountDID: reference.recipientDid, database: database)
+    #expect(other.isEmpty)
+  }
+
+  @Test("unresolved and pending consent never dispatch message actions")
+  func consentBlocksOrdinaryEffects() async {
+    var edits = 0
+    var unsends = 0
+    let actions = MLSMessageActionPerformer(edit: { _, _, _ in edits += 1 }, unsend: { _, _ in unsends += 1 })
+    let source = MLSConversationDataSource(conversationId: "conversation", currentUserDID: "did:plc:alice", appState: nil, actionPerformer: actions)
+    source.ingestConfirmedMessageForTesting(MLSMessageAdapter(id: "message", text: "Saved", senderDID: "did:plc:alice", currentUserDID: "did:plc:alice", sentAt: Date()))
+    #expect(source.isSendBlockedByRecovery)
+    #expect(await source.editMessage(messageID: "message", newText: "Changed") == false)
+    await source.unsendMessage(messageID: "message")
+    source.setActionConsentForTesting(resolved: true, pending: true)
+    #expect(source.isSendBlockedByRecovery)
+    #expect(await source.editMessage(messageID: "message", newText: "Changed") == false)
+    await source.unsendMessage(messageID: "message")
+    #expect(edits == 0 && unsends == 0)
+    #expect(source.messages.count == 1)
+  }
+
+  @Test("notification cache is account scoped, expires, and never restores an older pending preview")
+  func notificationPreviewBoundaries() async throws {
+    let database = try DatabaseQueue()
+    func view(_ consent: RequestConsent, version: UInt64) -> DirectRequestView {
+      DirectRequestView(introduction: nil, conversationId: "conversation", firstMessageId: "first-message",
+        consent: consent, crypto: .ready, preview: .ready(text: "Private introduction", invitation: nil),
+        capabilities: RequestCapabilities(canPreview: true, canAccept: consent == .incomingPending,
+          canClose: consent != .closed, canSend: false, canEmitReceipts: false, canAdminister: false),
+        stateVersion: version, generation: 1)
+    }
+    let account = "did:plc:alice"
+    try await MLSRequestNotificationPreviewCache.project(view(.incomingPending, version: 1), accountDID: account, database: database)
+    let cached = try await database.read { db in
+      try String.fetchOne(db, sql: "SELECT text FROM app_direct_request_notification_preview WHERE account_did = ? AND conversation_id = ? AND message_id = ? AND expires_at >= ?", arguments: [account, "conversation", "first-message", Date().timeIntervalSince1970])
+    }
+    #expect(cached == "Private introduction")
+    let anotherAccount = try await database.read { db in
+      try String.fetchOne(db, sql: "SELECT text FROM app_direct_request_notification_preview WHERE account_did = ?", arguments: ["did:plc:bob"])
+    }
+    #expect(anotherAccount == nil)
+    try await database.write { db in
+      try db.execute(sql: "UPDATE app_direct_request_notification_preview SET expires_at = ?", arguments: [Date().addingTimeInterval(-1).timeIntervalSince1970])
+    }
+    let expired = try await database.read { db in
+      try String.fetchOne(db, sql: "SELECT text FROM app_direct_request_notification_preview WHERE expires_at >= ?", arguments: [Date().timeIntervalSince1970])
+    }
+    #expect(expired == nil)
+    try await MLSRequestNotificationPreviewCache.project(view(.closed, version: 2), accountDID: account, database: database)
+    try await MLSRequestNotificationPreviewCache.project(view(.incomingPending, version: 1), accountDID: account, database: database)
+    let closed = try await database.read { db in try String.fetchOne(db, sql: "SELECT text FROM app_direct_request_notification_preview") }
+    #expect(closed == nil)
+  }
+
+  @Test("text bounds count UTF8 bytes and reject empty input before submission")
+  func exactTextBound() throws {
+    try MLSDirectComposeDraftStore.validateText(String(repeating: "a", count: 16_384))
+    #expect(throws: MLSDirectComposeDraftStore.Failure.self) { try MLSDirectComposeDraftStore.validateText(String(repeating: "a", count: 16_385)) }
+    #expect(throws: MLSDirectComposeDraftStore.Failure.self) { try MLSDirectComposeDraftStore.validateText(" \n ") }
+    #expect(throws: MLSDirectComposeDraftStore.Failure.self) { try MLSDirectComposeDraftStore.validateText(String(repeating: "🙂", count: 4097)) }
+  }
 }

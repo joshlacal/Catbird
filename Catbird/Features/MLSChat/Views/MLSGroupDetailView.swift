@@ -47,6 +47,7 @@ struct MLSGroupDetailView: View {
   @State private var showingRemoveConfirmation = false
   @State private var memberToRemove: MLSMemberModel?
   @State private var isPerformingMemberAction = false
+  @State private var invitationNote: MLSDirectComposeDraft?
 
   private let logger = Logger(subsystem: "blue.catbird", category: "MLSGroupDetailView")
   private let storage = MLSStorage.shared
@@ -151,6 +152,12 @@ struct MLSGroupDetailView: View {
       } message: {
         if let member = memberToRemove {
           Text("Remove \(displayName(for: member)) from this group? They won't be able to read new messages.")
+        }
+      }
+      .sheet(item: $invitationNote) { draft in
+        MLSDirectComposeView(draft: draft) { conversationID in
+          appState.navigationManager.targetMLSConversationId = conversationID
+          dismiss()
         }
       }
       .sheet(isPresented: $showMemberHistory) {
@@ -339,6 +346,14 @@ struct MLSGroupDetailView: View {
       } else {
         ForEach(members.filter(\.isActive)) { member in
           memberRow(member)
+            .contextMenu {
+              if member.did != currentUserDID {
+                Button("Write invitation note", systemImage: "square.and.pencil") {
+                  Task { await prepareInvitationNote(recipient: member.did) }
+                }
+                .disabled(isPerformingMemberAction)
+              }
+            }
             .swipeActions(edge: .trailing, allowsFullSwipe: false) {
               if isCurrentUserAdmin
                 && member.did.lowercased() != currentUserDID.lowercased()
@@ -637,6 +652,28 @@ struct MLSGroupDetailView: View {
     } catch {
       logger.error("Failed to process avatar: \(error.localizedDescription)")
       errorMessage = "Failed to update group photo."
+    }
+  }
+
+  @MainActor
+  private func prepareInvitationNote(recipient: String) async {
+    guard !isPerformingMemberAction, appState.userDID == currentUserDID,
+          conversationManager.currentUserDID == currentUserDID else { return }
+    isPerformingMemberAction = true
+    defer { isPerformingMemberAction = false }
+    do {
+      guard let reference = try await conversationManager.getGroupInvitationReference(conversationId: conversationId, recipientDid: recipient),
+            appState.userDID == currentUserDID else {
+        errorMessage = "There is no current invitation from you to this member. No note was sent."
+        return
+      }
+      let draft = try await MLSDirectComposeDraftStore.invitationDraft(accountDID: currentUserDID,
+        reference: MLSGroupInvitationReference(verified: reference), database: conversationManager.database)
+      guard appState.userDID == currentUserDID else { return }
+      invitationNote = draft
+    } catch {
+      guard appState.userDID == currentUserDID else { return }
+      errorMessage = "The separate note could not be prepared. The group invitation is unchanged."
     }
   }
 
