@@ -155,6 +155,30 @@ struct MLSNewConversationViewModelTests {
     #expect(closed == nil)
   }
 
+  @Test("confirmed group note work survives reopen without losing a per-recipient attempt")
+  func initialGroupNoteCustody() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let path = directory.appendingPathComponent("initial-notes.sqlite").path
+    var database: DatabaseQueue? = try DatabaseQueue(path: path)
+    var batch = MLSGroupInvitationNotes(accountDID: "did:plc:alice", conversationID: "confirmed-group",
+      recipients: ["did:plc:bob", "did:plc:carol"], text: "Join us if you like")
+    try await MLSGroupInvitationNotesStore.save(batch, database: try #require(database))
+    let attemptID = UUID()
+    batch.drafts["did:plc:bob"] = attemptID
+    try await MLSGroupInvitationNotesStore.save(batch, database: try #require(database))
+    try database?.close()
+    database = nil
+    let reopened = try DatabaseQueue(path: path)
+    let restored = try await MLSGroupInvitationNotesStore.list(accountDID: batch.accountDID, database: reopened)
+    #expect(restored == [batch])
+    let other = try await MLSGroupInvitationNotesStore.list(accountDID: "did:plc:carol", database: reopened)
+    #expect(other.isEmpty)
+    batch.drafts["did:plc:bob"] = UUID()
+    await #expect(throws: MLSDirectComposeDraftStore.Failure.self) { try await MLSGroupInvitationNotesStore.save(batch, database: reopened) }
+    #expect(try await MLSGroupInvitationNotesStore.list(accountDID: "did:plc:alice", database: reopened).first?.drafts["did:plc:bob"] == attemptID)
+  }
+
   @Test("text bounds count UTF8 bytes and reject empty input before submission")
   func exactTextBound() throws {
     try MLSDirectComposeDraftStore.validateText(String(repeating: "a", count: 16_384))

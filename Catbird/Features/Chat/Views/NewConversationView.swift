@@ -11,6 +11,8 @@ struct NewConversationView: View {
 
   // MARK: - State
 
+  @State private var introductionText = ""
+  @State private var invitationNotes: MLSGroupInvitationNotes?
   @State private var directDraft: MLSDirectComposeDraft?
   @State private var mode: ConversationMode = .bluesky
   @State private var step: Step = .selectContacts
@@ -64,9 +66,13 @@ struct NewConversationView: View {
   var body: some View {
     NavigationStack {
       ZStack {
-        VStack(spacing: 0) {
-          segmentedPicker
-          mainContent
+        if let invitationNotes {
+          MLSGroupInvitationNotesView(batch: invitationNotes) { dismiss() }
+        } else {
+          VStack(spacing: 0) {
+            segmentedPicker
+            mainContent
+          }
         }
 
         if isCreating {
@@ -79,11 +85,13 @@ struct NewConversationView: View {
           dismiss()
         }
       }
-      .navigationTitle(navigationTitle)
+      .navigationTitle(invitationNotes == nil ? navigationTitle : "Invitation Notes")
       .toolbarTitleDisplayMode(.inline)
       .toolbar {
         ToolbarItem(placement: .cancellationAction) {
-          if step == .configureGroup {
+          if invitationNotes != nil {
+            EmptyView()
+          } else if step == .configureGroup {
             Button("Back") {
               withAnimation(.spring(response: 0.25)) {
                 step = .selectContacts
@@ -97,7 +105,7 @@ struct NewConversationView: View {
           }
         }
         ToolbarItem(placement: .confirmationAction) {
-          confirmationButton
+          if invitationNotes == nil { confirmationButton }
         }
       }
       .alert("Error", isPresented: $showingError) {
@@ -117,6 +125,10 @@ struct NewConversationView: View {
         groupName = ""
       }
       .onChange(of: appState.userDID) { _, _ in
+        dismiss()
+        invitationNotes = nil
+        introductionText = ""
+        directDraft = nil
         creationTask?.cancel()
         step = .selectContacts
         selectedDIDs.removeAll()
@@ -203,6 +215,7 @@ struct NewConversationView: View {
         groupName: $groupName,
         participants: orderedSelectedParticipants,
         kind: .mls,
+        introduction: $introductionText,
         onEditSelection: {
           withAnimation(.spring(response: 0.25)) {
             step = .selectContacts
@@ -476,6 +489,7 @@ struct NewConversationView: View {
     let accountDID = appState.userDID
     let membersSnapshot = Array(selectedDIDs)
     let nameSnapshot = groupName
+    let noteSnapshot = introductionText
     guard !membersSnapshot.isEmpty,
           let database = appState.mlsDatabase,
           let conversationManager = await appState.getMLSConversationManager() else {
@@ -505,12 +519,21 @@ struct NewConversationView: View {
       viewModel.selectedMembers = membersSnapshot
 
       creationProgress = "Setting up secure group..."
-      guard await viewModel.createConversation(onProgress: { creationProgress = $0 }) != nil else {
+      guard let created = await viewModel.createConversation(onProgress: { creationProgress = $0 }) else {
         guard !Task.isCancelled, AppStateManager.shared.lifecycle.userDID == accountDID else { return }
         if let error = viewModel.error { throw error }
         return
       }
       guard !Task.isCancelled, AppStateManager.shared.lifecycle.userDID == accountDID else { return }
+
+      if !noteSnapshot.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        let notes = MLSGroupInvitationNotes(accountDID: accountDID,
+          conversationID: created.conversationId, recipients: membersSnapshot.sorted(), text: noteSnapshot)
+        invitationNotes = notes
+        do { try await MLSGroupInvitationNotesStore.save(notes, database: database) }
+        catch { logger.warning("Group created; optional notes require local save retry") }
+        return
+      }
 
       creationProgress = "Finalizing..."
       await appState.reloadMLSConversations()

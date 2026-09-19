@@ -43,6 +43,7 @@ struct MLSChatRequestsView: View {
 
   let onAcceptedConversation: (@Sendable (String) async -> Void)?
 
+  @State private var initialInvitationNotes: [MLSGroupInvitationNotes] = []
   @State private var savedInvitationNotes: [MLSDirectComposeDraft] = []
   @State private var noteDraft: MLSDirectComposeDraft?
   @State private var encryptedRequests: [DirectRequestView] = []
@@ -65,10 +66,10 @@ struct MLSChatRequestsView: View {
   var body: some View {
     NavigationStack {
       Group {
-        if isLoading && requests.isEmpty && encryptedRequests.isEmpty && savedInvitationNotes.isEmpty {
+        if isLoading && requests.isEmpty && encryptedRequests.isEmpty && savedInvitationNotes.isEmpty && initialInvitationNotes.isEmpty {
           ProgressView("Loading requests…")
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else if requests.isEmpty && encryptedRequests.isEmpty && savedInvitationNotes.isEmpty {
+        } else if requests.isEmpty && encryptedRequests.isEmpty && savedInvitationNotes.isEmpty && initialInvitationNotes.isEmpty {
           ContentUnavailableView {
             Label("No Chat Requests", systemImage: "tray")
           } description: {
@@ -77,6 +78,20 @@ struct MLSChatRequestsView: View {
           .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
           List {
+            if !initialInvitationNotes.isEmpty {
+              Section("Group invitation notes") {
+                ForEach(initialInvitationNotes) { batch in
+                  NavigationLink {
+                    MLSGroupInvitationNotesView(batch: batch) { dismiss() }
+                  } label: {
+                    VStack(alignment: .leading) {
+                      Text("Review notes for \(batch.recipients.count) invitees")
+                      Text(verbatim: batch.text).lineLimit(2).foregroundStyle(.secondary)
+                    }
+                  }
+                }
+              }
+            }
             if !savedInvitationNotes.isEmpty {
               Section("Saved invitation notes") {
                 ForEach(savedInvitationNotes) { draft in
@@ -169,6 +184,7 @@ struct MLSChatRequestsView: View {
         loadGeneration = UUID()
         encryptedRequests = []
         savedInvitationNotes = []
+        initialInvitationNotes = []
         noteDraft = nil
         requests = []
         membersByConvo = [:]
@@ -227,6 +243,9 @@ struct MLSChatRequestsView: View {
       let notes = try await MLSDirectComposeDraftStore.savedInvitationNotes(accountDID: userDID, database: manager.database)
       guard isCurrent(manager, userDID: userDID, generation: generation) else { throw CancellationError() }
       savedInvitationNotes = notes
+      let initialNotes = try await MLSGroupInvitationNotesStore.list(accountDID: userDID, database: manager.database)
+      guard isCurrent(manager, userDID: userDID, generation: generation) else { throw CancellationError() }
+      initialInvitationNotes = initialNotes
       let verifiedRequests = try await manager.listDirectRequestViews()
       var incoming = verifiedRequests.filter { $0.consent == .incomingPending }
       let requestIDs = Set(verifiedRequests.map(\.conversationId))

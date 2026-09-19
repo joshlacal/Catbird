@@ -269,6 +269,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         return
       }
       saveMLSChatNotificationPreference()
+      Task { await self.updateSignedRequestPushRegistration() }
     }
   }
 
@@ -479,6 +480,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     if newClient != nil, let deviceToken = deviceToken {
       notificationLogger.info("🚀 Triggering device registration from updateClient")
       await registerDeviceToken(deviceToken)
+      await updateSignedRequestPushRegistration()
     } else if newClient == nil {
       notificationLogger.info("🧹 Client cleared - cleaning up notifications")
       // Client was cleared (user logged out), clean up notifications
@@ -728,7 +730,8 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
       let previousToken = lastRegisteredDeviceToken,
       previousToken == deviceToken {
       notificationLogger.info(
-        "🔁 Device token already registered; skipping duplicate registration request")
+        "🔁 Device token already registered with notification service")
+      await updateSignedRequestPushRegistration()
       return
     }
 
@@ -886,7 +889,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         let didSource = previousClient ?? client
         if let did = try await didSource?.getDid() {
           await unregisterDeviceToken(deviceToken, did: did, using: didSource)
-          await unregisterMLSDeviceToken(deviceToken)
+          await unregisterMLSDeviceToken(deviceToken, expectedAccount: did)
         }
       } catch {
         notificationLogger.error(
@@ -1485,6 +1488,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
   /// Register device token with MLS server
   private func registerMLSDeviceToken(_ token: Data) async {
+    await updateSignedRequestPushRegistration()
     #if os(iOS)
       guard let appState = appState else { return }
       guard let client = client else { return }
@@ -1540,7 +1544,8 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   }
 
   /// Unregister device token with MLS server
-  private func unregisterMLSDeviceToken(_ token: Data) async {
+  private func unregisterMLSDeviceToken(_ token: Data, expectedAccount: String? = nil) async {
+    await updateSignedRequestPushRegistration(enabled: false, expectedAccount: expectedAccount)
     #if os(iOS)
       guard let appState = appState else { return }
       guard let conversationManager = await appState.getMLSConversationManager() else { return }
@@ -1548,6 +1553,41 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
       if let mlsClient = await appState.getMLSAPIClient() {
         _ = try? await mlsClient.unregisterDeviceToken(deviceId: deviceInfo.deviceId)
       }
+    #endif
+  }
+
+  /// Request push authority is independent of legacy token registration.
+  /// Core retains exact signed bytes and validates the active device binding.
+  @MainActor
+  private func updateSignedRequestPushRegistration(enabled override: Bool? = nil, expectedAccount: String? = nil) async {
+    #if os(iOS)
+    guard let appState, let client, let token = deviceToken else { return }
+    let account = appState.userDID
+    guard expectedAccount == nil || expectedAccount == account else { return }
+    let desired = override ?? (notificationsEnabled && isMasterPushEnabled() && mlsChatNotificationsEnabled)
+    do {
+      guard try await client.getDid() == account,
+            let manager = await appState.getMLSConversationManager(), manager.currentUserDID == account,
+            appState.userDID == account, appState.mlsConversationManager === manager else { return }
+      if desired {
+        let receipt = try await manager.registerSignedPushToken(hexString(from: token), provider: .apns, appID: pushAppID)
+        guard receipt.enabled, appState.userDID == account, appState.mlsConversationManager === manager else { return }
+        // A changed token or preference is a new generation, never inferred from
+        // the old acknowledgement. Core's journal serializes the exact binding.
+        if deviceToken != token || !notificationsEnabled || !isMasterPushEnabled() || !mlsChatNotificationsEnabled {
+          await updateSignedRequestPushRegistration()
+          return
+        }
+        notificationLogger.info("Signed encrypted-request push registration confirmed")
+      } else {
+        _ = try await manager.disableSignedPushRegistration(provider: .apns, appID: pushAppID)
+        guard appState.userDID == account, appState.mlsConversationManager === manager else { return }
+        notificationLogger.info("Signed encrypted-request push registration disabled")
+      }
+    } catch {
+      guard appState.userDID == account else { return }
+      notificationLogger.warning("Signed request push registration remains unconfirmed; exact retry is retained")
+    }
     #endif
   }
 
@@ -1575,6 +1615,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     // Check notification status when app becomes active
     Task {
       await checkNotificationStatus()
+      await updateSignedRequestPushRegistration()
 
       // Also check for unread notifications
       await checkUnreadNotifications()
