@@ -253,16 +253,21 @@ struct DebugGatewayTransportTests {
 
         let result = try await transport.runSmokeTest()
         #expect(result.sessionRestored == true)
-        #expect(result.restoredDID.starts(with: "did:web:"))
+        #expect(result.restoredDID == transport.activeAccount?.did)
+        #expect(result.restoredDID.starts(with: "did:web:\(config.label)-"))
+        #expect(result.deviceSeeded == true)
         #expect(result.inventorySessionId.count == 43)
-        #expect(result.snapshotEventCursor.count == 43)
+        #expect(result.snapshotEventCursor == result.inventorySessionId)
+        #expect(result.inventoryScopeVersions == ["1", "2"])
         #expect(result.conversationsCount == 0)
         #expect(result.pendingWelcomesCount == 0)
         #expect(result.leafRecoveryInboxCount == 0)
         #expect(result.ticket.count == 43)
         #expect(result.ticketEndpoint == "wss://chat.catbird.blue/xrpc/blue.catbird.chat.subscribeEvents")
-        #expect(result.webSocketHandshakeSuccess == true)
-        #expect(result.ticketReplayRejected == true)
+        #expect(result.ticketScopeVersions == result.inventoryScopeVersions)
+        #expect(result.webSocketRequestHadOrigin == false)
+        #expect(result.webSocketHandshakeStatus == 101)
+        #expect(result.ticketReplayStatus == 400)
         #endif
     }
 }

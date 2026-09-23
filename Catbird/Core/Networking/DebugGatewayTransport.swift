@@ -119,16 +119,23 @@ public final class DebugGatewayTransport: @unchecked Sendable {
         public let sessionRestored: Bool
         public let restoredDID: String
         public let restoredHandle: String
+        public let deviceSeeded: Bool
         public let inventorySessionId: String
         public let snapshotEventCursor: String
+        public let inventoryScopeVersions: [String]
         public let conversationsCount: Int
         public let pendingWelcomesCount: Int
         public let leafRecoveryInboxCount: Int
         public let ticket: String
         public let ticketEndpoint: String
-        public let webSocketHandshakeSuccess: Bool
-        public let ticketReplayRejected: Bool
+        public let ticketScopeVersions: [String]
+        public let webSocketHandshakeStatus: Int
+        public let webSocketRequestHadOrigin: Bool
+        public let ticketReplayStatus: Int
     }
+
+    /// The inventory scope every smoke request presents; the ticket must be minted under the same scope.
+    static let smokeProtocolVersions = ["1", "2"]
 
     private let lock = NSLock()
     public private(set) var activeConfig: LaunchConfig?
@@ -574,14 +581,13 @@ public final class DebugGatewayTransport: @unchecked Sendable {
 
     // MARK: - URLSession Creation
 
+    /// Sessions come from Petrel's fixture transport: its CONNECT tunnel maps only manifest hosts to loopback
+    /// and its delegate trusts only the fixture CA and refuses redirects, so this layer adds no second policy.
     public func makeSession() throws -> URLSession {
-        guard let transport = underlyingTransport, let manifest = activeManifest else {
+        guard let transport = underlyingTransport else {
             throw DebugGatewayTransportError.missingConfiguration
         }
-        let config = URLSessionConfiguration.ephemeral
-        try transport.configure(config)
-        let delegate = DebugGatewayURLSessionDelegate(transport: self, caCertificate: manifest.caCertificate, allowedHosts: manifest.allowedHosts)
-        return URLSession(configuration: config, delegate: delegate, delegateQueue: nil)
+        return try transport.makeSession()
     }
 
     // MARK: - Session Restoration
@@ -640,79 +646,22 @@ public final class DebugGatewayTransport: @unchecked Sendable {
         // Step 1: Session restore
         let (restoredDID, restoredHandle) = try await restoreSession()
 
-        // Step 2: Three empty inventories
-        // 2a: getConversations
-        guard var convComponents = URLComponents(url: manifest.origin.appendingPathComponent("xrpc/blue.catbird.chat.getConversations"), resolvingAgainstBaseURL: false) else {
-            throw DebugGatewayTransportError.inventoryFailed("Invalid getConversations URL")
-        }
-        convComponents.queryItems = [
-            URLQueryItem(name: "actorDeviceId", value: account.deviceId),
-            URLQueryItem(name: "supportedProtocolVersions", value: "1"),
-            URLQueryItem(name: "supportedProtocolVersions", value: "2")
-        ]
-        guard let convURL = convComponents.url else {
-            throw DebugGatewayTransportError.inventoryFailed("Failed to construct getConversations URL")
-        }
-        var convReq = URLRequest(url: convURL)
-        convReq.setValue("Bearer \(sessionToken)", forHTTPHeaderField: "Authorization")
-        let (convData, convResp) = try await session.data(for: convReq)
-        guard let convHTTP = convResp as? HTTPURLResponse, convHTTP.statusCode == 200 else {
-            throw DebugGatewayTransportError.inventoryFailed("getConversations failed: \((convResp as? HTTPURLResponse)?.statusCode ?? -1)")
-        }
-        guard let convJSON = try JSONSerialization.jsonObject(with: convData) as? [String: Any],
-              let emittedSessionId = convJSON["inventorySessionId"] as? String,
-              let emittedCursor = convJSON["snapshotEventCursor"] as? String
-        else {
-            throw DebugGatewayTransportError.inventoryFailed("getConversations missing capability tokens")
-        }
-        guard emittedSessionId.count == 43, emittedCursor.count == 43, emittedSessionId == emittedCursor else {
-            throw DebugGatewayTransportError.inventoryFailed("getConversations capability token shape mismatch")
-        }
-        let convsCount = (convJSON["items"] as? [Any])?.count ?? (convJSON["conversations"] as? [Any])?.count ?? 0
+        // Step 2: Preseed the reserved native device with this profile's own signing key (public half only).
+        try await preseedReservedDevice(session: session, manifest: manifest, account: account, sessionToken: sessionToken)
 
-        // 2b: getPendingWelcomes
-        guard var welcComponents = URLComponents(url: manifest.origin.appendingPathComponent("xrpc/blue.catbird.chat.getPendingWelcomes"), resolvingAgainstBaseURL: false) else {
-            throw DebugGatewayTransportError.inventoryFailed("Invalid getPendingWelcomes URL")
+        // Step 3: Three empty inventories under one session capability. A device event (such as the
+        // preseed above) can re-materialize a fresh session between domains; the server then reports
+        // InventorySessionMismatch on the first read of that session and the whole snapshot restarts.
+        var snapshot: InventorySnapshot?
+        for _ in 1...6 {
+            snapshot = try await readInventorySnapshot(session: session, manifest: manifest, account: account, sessionToken: sessionToken)
+            if snapshot != nil { break }
         }
-        welcComponents.queryItems = [
-            URLQueryItem(name: "actorDeviceId", value: account.deviceId),
-            URLQueryItem(name: "inventorySessionId", value: emittedSessionId),
-            URLQueryItem(name: "supportedProtocolVersions", value: "1"),
-            URLQueryItem(name: "supportedProtocolVersions", value: "2")
-        ]
-        var welcReq = URLRequest(url: welcComponents.url!)
-        welcReq.setValue("Bearer \(sessionToken)", forHTTPHeaderField: "Authorization")
-        let (welcData, welcResp) = try await session.data(for: welcReq)
-        guard let welcHTTP = welcResp as? HTTPURLResponse, welcHTTP.statusCode == 200,
-              let welcJSON = try JSONSerialization.jsonObject(with: welcData) as? [String: Any],
-              (welcJSON["inventorySessionId"] as? String) == emittedSessionId
-        else {
-            throw DebugGatewayTransportError.inventoryFailed("getPendingWelcomes failed or session mismatch")
+        guard let snapshot else {
+            throw DebugGatewayTransportError.inventoryFailed("Inventory session never stabilized across six attempts")
         }
-        let welcCount = (welcJSON["items"] as? [Any])?.count ?? (welcJSON["welcomes"] as? [Any])?.count ?? 0
 
-        // 2c: getLeafRecoveryInbox
-        guard var recComponents = URLComponents(url: manifest.origin.appendingPathComponent("xrpc/blue.catbird.chat.getLeafRecoveryInbox"), resolvingAgainstBaseURL: false) else {
-            throw DebugGatewayTransportError.inventoryFailed("Invalid getLeafRecoveryInbox URL")
-        }
-        recComponents.queryItems = [
-            URLQueryItem(name: "actorDeviceId", value: account.deviceId),
-            URLQueryItem(name: "inventorySessionId", value: emittedSessionId),
-            URLQueryItem(name: "supportedProtocolVersions", value: "1"),
-            URLQueryItem(name: "supportedProtocolVersions", value: "2")
-        ]
-        var recReq = URLRequest(url: recComponents.url!)
-        recReq.setValue("Bearer \(sessionToken)", forHTTPHeaderField: "Authorization")
-        let (recData, recResp) = try await session.data(for: recReq)
-        guard let recHTTP = recResp as? HTTPURLResponse, recHTTP.statusCode == 200,
-              let recJSON = try JSONSerialization.jsonObject(with: recData) as? [String: Any],
-              (recJSON["inventorySessionId"] as? String) == emittedSessionId
-        else {
-            throw DebugGatewayTransportError.inventoryFailed("getLeafRecoveryInbox failed or session mismatch")
-        }
-        let recCount = (recJSON["items"] as? [Any])?.count ?? (recJSON["recoveryRequests"] as? [Any])?.count ?? 0
-
-        // Step 3: Subscription ticket
+        // Step 4: Subscription ticket minted under the same scope
         let ticketURL = manifest.origin.appendingPathComponent("xrpc/blue.catbird.chat.getSubscriptionTicket")
         var ticketReq = URLRequest(url: ticketURL)
         ticketReq.httpMethod = "POST"
@@ -720,90 +669,179 @@ public final class DebugGatewayTransport: @unchecked Sendable {
         ticketReq.setValue("application/json", forHTTPHeaderField: "Content-Type")
         let ticketPayload: [String: Any] = [
             "actorDeviceId": account.deviceId,
-            "inventorySessionId": emittedSessionId,
-            "eventCursor": emittedCursor
+            "inventorySessionId": snapshot.sessionId,
+            "eventCursor": snapshot.cursor,
+            "supportedProtocolVersions": Self.smokeProtocolVersions
         ]
         ticketReq.httpBody = try JSONSerialization.data(withJSONObject: ticketPayload)
         let (ticketData, ticketResp) = try await session.data(for: ticketReq)
-        guard let ticketHTTP = ticketResp as? HTTPURLResponse, ticketHTTP.statusCode == 200,
+        let ticketStatus = (ticketResp as? HTTPURLResponse)?.statusCode ?? -1
+        guard ticketStatus == 200,
               let ticketJSON = try JSONSerialization.jsonObject(with: ticketData) as? [String: Any],
-              let ticket = ticketJSON["ticket"] as? String, ticket.count == 43,
-              let endpoint = ticketJSON["endpoint"] as? String
+              let ticket = ticketJSON["ticket"] as? String,
+              let endpoint = ticketJSON["endpoint"] as? String,
+              let ticketScope = (ticketJSON["inventoryScope"] as? [String: Any])?["supportedProtocolVersions"] as? [String]
         else {
-            throw DebugGatewayTransportError.ticketFailed("getSubscriptionTicket failed: \((ticketResp as? HTTPURLResponse)?.statusCode ?? -1)")
+            throw DebugGatewayTransportError.ticketFailed("getSubscriptionTicket returned \(ticketStatus): \(Self.bodyPreview(ticketData))")
         }
 
-        // Step 4: Native WebSocket connection (no Origin header!)
+        // Step 5: Native WebSocket upgrade without an Origin header
         guard var wsComponents = URLComponents(string: endpoint) else {
             throw DebugGatewayTransportError.webSocketFailed("Invalid WebSocket endpoint URL: \(endpoint)")
         }
         wsComponents.queryItems = [
             URLQueryItem(name: "ticket", value: ticket),
-            URLQueryItem(name: "cursor", value: emittedCursor)
+            URLQueryItem(name: "cursor", value: snapshot.cursor)
         ]
         guard let wsURL = wsComponents.url else {
             throw DebugGatewayTransportError.webSocketFailed("Failed to construct WebSocket subscription URL")
         }
-
-        // Connect WebSocket with native no-Origin handshake
-        var wsReq = URLRequest(url: wsURL)
-        // Ensure NO Origin header is present for native connection
-        wsReq.setValue(nil, forHTTPHeaderField: "Origin")
-
-        let wsTask = session.webSocketTask(with: wsReq)
-        wsTask.resume()
-
-        let handshakeSuccess: Bool = try await withCheckedThrowingContinuation { continuation in
-            wsTask.sendPing { error in
-                if let error {
-                    continuation.resume(throwing: DebugGatewayTransportError.webSocketFailed("WebSocket ping failed: \(error.localizedDescription)"))
-                } else {
-                    continuation.resume(returning: true)
-                }
-            }
+        let wsReq = URLRequest(url: wsURL)
+        let handshake = await Self.upgrade(session: session, request: wsReq)
+        guard handshake.status == 101, handshake.error == nil else {
+            throw DebugGatewayTransportError.webSocketFailed(
+                "Ticket upgrade returned \(handshake.status): \(handshake.error.map(String.init(describing:)) ?? "no error")"
+            )
         }
-        wsTask.cancel(with: .normalClosure, reason: nil)
 
-        // Step 5: Verify ticket replay rejection (second connection with identical ticket must fail with 400)
-        let replayTask = session.webSocketTask(with: wsReq)
-        replayTask.resume()
-        var replayRejected = false
-        do {
-            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                replayTask.sendPing { error in
-                    if error != nil {
-                        continuation.resume(returning: ())
-                    } else {
-                        continuation.resume(throwing: DebugGatewayTransportError.ticketFailed("Ticket replay was accepted but should have been rejected"))
-                    }
-                }
-            }
-            replayRejected = true
-        } catch {
-            replayRejected = true
-        }
-        replayTask.cancel(with: .normalClosure, reason: nil)
+        // Step 6: Replaying the consumed one-use ticket must be refused by the service.
+        let replay = await Self.upgrade(session: session, request: wsReq)
 
         return SmokeTestResult(
             sessionRestored: true,
             restoredDID: restoredDID,
             restoredHandle: restoredHandle,
-            inventorySessionId: emittedSessionId,
-            snapshotEventCursor: emittedCursor,
-            conversationsCount: convsCount,
-            pendingWelcomesCount: welcCount,
-            leafRecoveryInboxCount: recCount,
+            deviceSeeded: true,
+            inventorySessionId: snapshot.sessionId,
+            snapshotEventCursor: snapshot.cursor,
+            inventoryScopeVersions: snapshot.scopeVersions,
+            conversationsCount: snapshot.counts[0],
+            pendingWelcomesCount: snapshot.counts[1],
+            leafRecoveryInboxCount: snapshot.counts[2],
             ticket: ticket,
             ticketEndpoint: endpoint,
-            webSocketHandshakeSuccess: handshakeSuccess,
-            ticketReplayRejected: replayRejected
+            ticketScopeVersions: ticketScope,
+            webSocketHandshakeStatus: handshake.status,
+            webSocketRequestHadOrigin: wsReq.value(forHTTPHeaderField: "Origin") != nil,
+            ticketReplayStatus: replay.status
         )
+    }
+
+    // MARK: - Smoke Test Steps
+
+    private struct InventorySnapshot {
+        let sessionId: String
+        let cursor: String
+        let scopeVersions: [String]
+        let counts: [Int]
+    }
+
+    /// Documented native preseed: `POST /fixture/enroll` with the raw 32-byte Ed25519 public key. The private key
+    /// stays in this profile's isolated keychain namespace and is reused, because the gateway rejects a
+    /// different key for an already-seeded identity.
+    private func preseedReservedDevice(session: URLSession, manifest: ManifestInfo, account: AccountInfo, sessionToken: String) async throws {
+        guard let config = activeConfig else { throw DebugGatewayTransportError.missingConfiguration }
+        let keyAccount = "fixture_signing_key.\(account.deviceId)"
+        let signingKey: Curve25519.Signing.PrivateKey
+        if let stored = try loadIsolatedKeychainEntry(service: config.keychainNamespace, account: keyAccount) {
+            signingKey = try Curve25519.Signing.PrivateKey(rawRepresentation: stored)
+        } else {
+            signingKey = Curve25519.Signing.PrivateKey()
+            try saveIsolatedKeychainEntry(service: config.keychainNamespace, account: keyAccount, data: signingKey.rawRepresentation)
+        }
+
+        var request = URLRequest(url: manifest.origin.appendingPathComponent("fixture/enroll"))
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(sessionToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: [
+            "device_id": account.deviceId,
+            "signature_public_key": signingKey.publicKey.rawRepresentation.base64EncodedString()
+        ])
+        let (data, response) = try await session.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+        guard status == 200,
+              let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              json["seeded"] as? Bool == true,
+              json["deviceId"] as? String == account.deviceId,
+              json["did"] as? String == account.did
+        else {
+            throw DebugGatewayTransportError.inventoryFailed("fixture/enroll returned \(status): \(Self.bodyPreview(data))")
+        }
+    }
+
+    /// Reads all three inventory domains under one session. Returns nil when the session was re-materialized
+    /// between domains so the caller restarts the snapshot; any other failure throws.
+    private func readInventorySnapshot(session: URLSession, manifest: ManifestInfo, account: AccountInfo, sessionToken: String) async throws -> InventorySnapshot? {
+        var sessionId: String?
+        var cursor: String?
+        var scopeVersions: [String] = []
+        var counts: [Int] = []
+        for nsid in ["getConversations", "getPendingWelcomes", "getLeafRecoveryInbox"] {
+            var components = URLComponents(url: manifest.origin.appendingPathComponent("xrpc/blue.catbird.chat.\(nsid)"), resolvingAgainstBaseURL: false)
+            var items = [URLQueryItem(name: "actorDeviceId", value: account.deviceId), URLQueryItem(name: "limit", value: "50")]
+            if let sessionId { items.append(URLQueryItem(name: "inventorySessionId", value: sessionId)) }
+            items += Self.smokeProtocolVersions.map { URLQueryItem(name: "supportedProtocolVersions", value: $0) }
+            components?.queryItems = items
+            guard let url = components?.url else {
+                throw DebugGatewayTransportError.inventoryFailed("Failed to construct \(nsid) URL")
+            }
+            var request = URLRequest(url: url)
+            request.setValue("Bearer \(sessionToken)", forHTTPHeaderField: "Authorization")
+            let (data, response) = try await session.data(for: request)
+            let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            if status == 400, sessionId != nil, json?["error"] as? String == "InventorySessionMismatch" {
+                return nil
+            }
+            guard status == 200, let json,
+                  let emittedSession = json["inventorySessionId"] as? String,
+                  let emittedCursor = json["snapshotEventCursor"] as? String,
+                  let items = json["items"] as? [Any],
+                  json["hasMore"] as? Bool == false,
+                  let versions = (json["inventoryScope"] as? [String: Any])?["supportedProtocolVersions"] as? [String]
+            else {
+                throw DebugGatewayTransportError.inventoryFailed("\(nsid) returned \(status): \(Self.bodyPreview(data))")
+            }
+            if let sessionId, let cursor {
+                guard emittedSession == sessionId, emittedCursor == cursor, versions == scopeVersions else {
+                    throw DebugGatewayTransportError.inventoryFailed("\(nsid) changed session, cursor, or scope within one snapshot")
+                }
+            } else {
+                sessionId = emittedSession
+                cursor = emittedCursor
+                scopeVersions = versions
+            }
+            counts.append(items.count)
+        }
+        guard let sessionId, let cursor else { return nil }
+        return InventorySnapshot(sessionId: sessionId, cursor: cursor, scopeVersions: scopeVersions, counts: counts)
+    }
+
+    /// Opens a WebSocket and reports the upgrade response status. A successful ping proves the upgraded
+    /// connection is live; the task is closed immediately afterwards.
+    private static func upgrade(session: URLSession, request: URLRequest) async -> (status: Int, error: Error?) {
+        let task = session.webSocketTask(with: request)
+        task.resume()
+        let error: Error? = await withCheckedContinuation { continuation in
+            task.sendPing { continuation.resume(returning: $0) }
+        }
+        let status = (task.response as? HTTPURLResponse)?.statusCode ?? -1
+        task.cancel(with: .normalClosure, reason: nil)
+        return (status, error)
+    }
+
+    private static func bodyPreview(_ data: Data) -> String {
+        String(decoding: data.prefix(256), as: UTF8.self)
     }
 
     // MARK: - Isolated Keychain Storage Helper
 
     private func saveIsolatedKeychainEntry(service: String, account: String, value: String) throws {
-        guard let data = value.data(using: .utf8) else { return }
+        try saveIsolatedKeychainEntry(service: service, account: account, data: Data(value.utf8))
+    }
+
+    private func saveIsolatedKeychainEntry(service: String, account: String, data: Data) throws {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -817,92 +855,22 @@ public final class DebugGatewayTransport: @unchecked Sendable {
             throw DebugGatewayTransportError.invalidConfiguration("SecItemAdd failed with status \(status)")
         }
     }
-}
 
-// MARK: - Custom URLSession Delegate
-
-public final class DebugGatewayURLSessionDelegate: NSObject, URLSessionTaskDelegate, URLSessionDelegate, @unchecked Sendable {
-    private unowned let transport: DebugGatewayTransport
-    private let caCertificate: SecCertificate
-    private let allowedHosts: Set<String>
-
-    public init(transport: DebugGatewayTransport, caCertificate: SecCertificate, allowedHosts: Set<String>) {
-        self.transport = transport
-        self.caCertificate = caCertificate
-        self.allowedHosts = allowedHosts
-        super.init()
-    }
-
-    public func urlSession(
-        _ session: URLSession,
-        task: URLSessionTask,
-        didReceive challenge: URLAuthenticationChallenge,
-        completionHandler: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
-    ) {
-        guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
-              let serverTrust = challenge.protectionSpace.serverTrust
-        else {
-            completionHandler(.cancelAuthenticationChallenge, nil)
-            return
+    private func loadIsolatedKeychainEntry(service: String, account: String) throws -> Data? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        if status == errSecItemNotFound { return nil }
+        guard status == errSecSuccess, let data = item as? Data else {
+            throw DebugGatewayTransportError.invalidConfiguration("SecItemCopyMatching failed with status \(status)")
         }
-
-        let host = challenge.protectionSpace.host.lowercased()
-        guard transport.isAllowedHost(host) else {
-            completionHandler(.cancelAuthenticationChallenge, nil)
-            return
-        }
-
-        // Verify task original request URL matches challenge host
-        if let originalURL = task.originalRequest?.url, let origHost = originalURL.host?.lowercased() {
-            guard origHost == host else {
-                completionHandler(.cancelAuthenticationChallenge, nil)
-                return
-            }
-        }
-
-        let policy = SecPolicyCreateSSL(true, host as CFString)
-        guard SecTrustSetPolicies(serverTrust, policy) == errSecSuccess,
-              SecTrustSetAnchorCertificates(serverTrust, [caCertificate] as CFArray) == errSecSuccess,
-              SecTrustSetAnchorCertificatesOnly(serverTrust, true) == errSecSuccess
-        else {
-            completionHandler(.cancelAuthenticationChallenge, nil)
-            return
-        }
-
-        var error: CFError?
-        if SecTrustEvaluateWithError(serverTrust, &error) {
-            completionHandler(.useCredential, URLCredential(trust: serverTrust))
-        } else {
-            completionHandler(.cancelAuthenticationChallenge, nil)
-        }
-    }
-
-    public func urlSession(
-        _ session: URLSession,
-        task: URLSessionTask,
-        willPerformHTTPRedirection response: HTTPURLResponse,
-        newRequest request: URLRequest,
-        completionHandler: @escaping @Sendable (URLRequest?) -> Void
-    ) {
-        // HTTP redirects fail closed in debug fixture transport
-        completionHandler(nil)
-    }
-
-    public func urlSession(
-        _ session: URLSession,
-        task: URLSessionTask,
-        didFinishCollecting metrics: URLSessionTaskMetrics
-    ) {
-        // Enforce that connections only go to loopback
-        for transactionMetric in metrics.transactionMetrics {
-            if let remoteAddress = transactionMetric.remoteAddress {
-                let clean = remoteAddress.trimmingCharacters(in: CharacterSet(charactersIn: "[]")).components(separatedBy: ":").first ?? remoteAddress
-                if clean != "127.0.0.1" && clean != "::1" {
-                    task.cancel()
-                    return
-                }
-            }
-        }
+        return data
     }
 }
 
