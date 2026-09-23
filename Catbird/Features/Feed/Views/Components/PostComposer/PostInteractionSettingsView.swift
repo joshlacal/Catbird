@@ -236,9 +236,7 @@ public struct PostInteractionSettingsView: View {
         }
       }
       .navigationTitle("Interaction settings")
-      #if os(iOS)
-      .navigationBarTitleDisplayMode(.inline)
-      #endif
+      .platformInlineNavigationTitle()
       .toolbar {
         if isPostPublishMode {
           ToolbarItem(placement: .cancellationAction) {

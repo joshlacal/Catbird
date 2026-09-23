@@ -25,6 +25,7 @@ struct MLSGroupDetailView: View {
   /// Called after successfully deleting the conversation locally for this user.
   var onDeleted: (() -> Void)? = nil
 
+  @Environment(AppState.self) private var appState
   @Environment(\.dismiss) private var dismiss
   @Environment(\.toastManager) private var toastManager
 

@@ -2,7 +2,7 @@ import AVFoundation
 import OSLog
 import Petrel
 import SwiftUI
-#if canImport(VisionKit) && os(iOS)
+#if os(iOS) && canImport(VisionKit)
 import VisionKit
 #endif
 
@@ -72,7 +72,7 @@ public struct InviteScannerView: View {
     
     private var activeScannerView: some View {
         ZStack {
-            #if canImport(VisionKit) && os(iOS)
+            #if os(iOS) && canImport(VisionKit)
             if #available(iOS 16.0, *), DataScannerViewController.isSupported && DataScannerViewController.isAvailable {
                 DataScannerRepresentable { recognizedString in
                     handleScannedString(recognizedString)
@@ -233,7 +233,7 @@ public struct InviteScannerView: View {
                         .disableAutocorrection(true)
                         #endif
                         .padding(14)
-                        .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
+                        .background(Color(platformColor: .platformSecondarySystemGroupedBackground))
                         .clipShape(RoundedRectangle(cornerRadius: 12))
                 }
                 .padding(.horizontal, 20)
@@ -280,7 +280,7 @@ public struct InviteScannerView: View {
         let status = AVCaptureDevice.authorizationStatus(for: .video)
         self.cameraPermission = status
         
-        #if canImport(VisionKit) && os(iOS)
+        #if os(iOS) && canImport(VisionKit)
         if #available(iOS 16.0, *) {
             self.isScannerAvailable = DataScannerViewController.isSupported && DataScannerViewController.isAvailable
         } else {
@@ -328,7 +328,7 @@ public struct InviteScannerView: View {
 
 // MARK: - VisionKit Representable
 
-#if canImport(VisionKit) && os(iOS)
+#if os(iOS) && canImport(VisionKit)
 @available(iOS 16.0, *)
 struct DataScannerRepresentable: UIViewControllerRepresentable {
     var onScanned: (String) -> Void

@@ -82,39 +82,8 @@ public struct VideoFeedView: View {
             .foregroundStyle(.white.opacity(0.8))
         }
       } else {
-        // Vertical paging feed
-        GeometryReader { proxy in
-          TabView(selection: $activeIndex) {
-            ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-              VideoFeedItemView(
-                item: item,
-                index: index,
-                isActive: index == activeIndex,
-                isRevealed: revealedItemIDs.contains(item.id),
-                playerPool: playerPool,
-                onReveal: {
-                  revealItem(at: index)
-                },
-                onProfileTap: { did in
-                  path.append(NavigationDestination.profile(did))
-                },
-                onPostTap: { uri in
-                  path.append(NavigationDestination.post(uri))
-                }
-              )
-              .frame(width: proxy.size.width, height: proxy.size.height)
-              .rotationEffect(.degrees(-90))
-              .tag(index)
-            }
-          }
-          .frame(width: proxy.size.height, height: proxy.size.width)
-          .rotationEffect(.degrees(90), anchor: .topLeading)
-          .offset(x: proxy.size.width)
-          #if os(iOS)
-          .tabViewStyle(.page(indexDisplayMode: .never))
-          #endif
-        }
-        .ignoresSafeArea()
+        videoPager
+          .ignoresSafeArea()
       }
 
       // Top floating navigation overlay
@@ -160,12 +129,8 @@ public struct VideoFeedView: View {
         Spacer()
       }
     }
-    #if os(iOS)
     .navigationBarBackButtonHidden(true)
-    .toolbar(.hidden, for: .navigationBar)
-    #else
-    .toolbar(.hidden, for: .windowToolbar)
-    #endif
+    .modifier(VideoFeedNavigationModifier())
     .task {
       if items.isEmpty {
         await loadInitialFeed()
@@ -184,6 +149,55 @@ public struct VideoFeedView: View {
     .onDisappear {
       playerPool.cleanup()
     }
+  }
+
+  private var videoPager: some View {
+    GeometryReader { proxy in
+      #if os(iOS)
+      TabView(selection: $activeIndex) {
+        ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+          videoCard(item, at: index)
+            .frame(width: proxy.size.width, height: proxy.size.height)
+            .rotationEffect(.degrees(-90))
+            .tag(index)
+        }
+      }
+      .frame(width: proxy.size.height, height: proxy.size.width)
+      .rotationEffect(.degrees(90), anchor: .topLeading)
+      .offset(x: proxy.size.width)
+      .tabViewStyle(.page(indexDisplayMode: .never))
+      #elseif os(macOS)
+      ScrollView(.vertical) {
+        LazyVStack(spacing: 0) {
+          ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+            videoCard(item, at: index)
+              .frame(width: proxy.size.width, height: proxy.size.height)
+              .id(index)
+          }
+        }
+        .scrollTargetLayout()
+      }
+      .scrollTargetBehavior(.paging)
+      .scrollIndicators(.hidden)
+      .scrollPosition(id: Binding<Int?>(
+        get: { activeIndex },
+        set: { if let index = $0 { activeIndex = index } }
+      ))
+      #endif
+    }
+  }
+
+  private func videoCard(_ item: VideoFeedItem, at index: Int) -> some View {
+    VideoFeedItemView(
+      item: item,
+      index: index,
+      isActive: index == activeIndex,
+      isRevealed: revealedItemIDs.contains(item.id),
+      playerPool: playerPool,
+      onReveal: { revealItem(at: index) },
+      onProfileTap: { did in path.append(NavigationDestination.profile(did)) },
+      onPostTap: { uri in path.append(NavigationDestination.post(uri)) }
+    )
   }
 
   private func loadInitialFeed() async {
@@ -561,5 +575,15 @@ private struct VideoFeedItemView: View {
         }
       }
     }
+  }
+}
+
+private struct VideoFeedNavigationModifier: ViewModifier {
+  func body(content: Content) -> some View {
+    #if os(iOS)
+    content.toolbar(.hidden, for: .navigationBar)
+    #else
+    content
+    #endif
   }
 }

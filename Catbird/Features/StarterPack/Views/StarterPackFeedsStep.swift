@@ -31,9 +31,7 @@ struct StarterPackFeedsStep: View {
                 
                 TextField("Search feeds to add...", text: $searchQuery)
                     .autocorrectionDisabled()
-                    #if os(iOS)
-                    .textInputAutocapitalization(.never)
-                    #endif
+                    .platformTextInputCapitalization(.never)
                     .onChange(of: searchQuery) { _, newValue in
                         performSearch(query: newValue)
                     }
@@ -117,11 +115,7 @@ struct StarterPackFeedsStep: View {
                 }
             }
         }
-        #if os(iOS)
-        .listStyle(.insetGrouped)
-        #else
-        .listStyle(.inset)
-        #endif
+        .platformInsetGroupedListStyle()
     }
     
     // MARK: - Selected and Popular Feeds
@@ -186,11 +180,7 @@ struct StarterPackFeedsStep: View {
                 }
             }
         }
-        #if os(iOS)
-        .listStyle(.insetGrouped)
-        #else
-        .listStyle(.inset)
-        #endif
+        .platformInsetGroupedListStyle()
     }
     
     private func feedSelectionRow(feed: AppBskyFeedDefs.GeneratorView) -> some View {

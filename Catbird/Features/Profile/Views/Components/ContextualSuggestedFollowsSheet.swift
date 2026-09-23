@@ -86,11 +86,7 @@ public struct ContextualSuggestedFollowsSheet: View {
                 }
             }
         }
-        #if os(iOS)
-        .listStyle(.insetGrouped)
-        #else
-        .listStyle(.inset)
-        #endif
+        .platformInsetGroupedListStyle()
     }
     
     private func suggestionRow(profile: AppBskyActorDefs.ProfileView) -> some View {

@@ -32,9 +32,7 @@ public struct SearchFiltersSheet: View {
               set: { draft.author = $0.isEmpty ? nil : $0 }
             ))
             .autocorrectionDisabled()
-            #if os(iOS)
-            .textInputAutocapitalization(.never)
-            #endif
+            .platformTextInputCapitalization(.never)
 
             if let error = draft.authorValidationError {
               Text(error)
@@ -49,7 +47,7 @@ public struct SearchFiltersSheet: View {
               set: { draft.mentions = $0.isEmpty ? nil : $0 }
             ))
             .autocorrectionDisabled()
-            .textInputAutocapitalization(.never)
+            .platformTextInputCapitalization(.never)
 
             if let error = draft.mentionsValidationError {
               Text(error)
@@ -64,7 +62,7 @@ public struct SearchFiltersSheet: View {
               set: { draft.excludeAuthor = $0.isEmpty ? nil : $0 }
             ))
             .autocorrectionDisabled()
-            .textInputAutocapitalization(.never)
+            .platformTextInputCapitalization(.never)
 
             if let error = draft.excludeAuthorValidationError {
               Text(error)
@@ -79,7 +77,7 @@ public struct SearchFiltersSheet: View {
               set: { draft.excludeMentions = $0.isEmpty ? nil : $0 }
             ))
             .autocorrectionDisabled()
-            .textInputAutocapitalization(.never)
+            .platformTextInputCapitalization(.never)
 
             if let error = draft.excludeMentionsValidationError {
               Text(error)
@@ -97,7 +95,7 @@ public struct SearchFiltersSheet: View {
               set: { draft.domain = $0.isEmpty ? nil : $0 }
             ))
             .autocorrectionDisabled()
-            .textInputAutocapitalization(.never)
+            .platformTextInputCapitalization(.never)
 
             if let error = draft.domainValidationError {
               Text(error)
@@ -112,7 +110,7 @@ public struct SearchFiltersSheet: View {
               set: { draft.url = $0.isEmpty ? nil : $0 }
             ))
             .autocorrectionDisabled()
-            .textInputAutocapitalization(.never)
+            .platformTextInputCapitalization(.never)
 
             if let error = draft.urlValidationError {
               Text(error)
@@ -127,7 +125,7 @@ public struct SearchFiltersSheet: View {
               set: { draft.excludeDomain = $0.isEmpty ? nil : $0 }
             ))
             .autocorrectionDisabled()
-            .textInputAutocapitalization(.never)
+            .platformTextInputCapitalization(.never)
 
             if let error = draft.excludeDomainValidationError {
               Text(error)
@@ -142,7 +140,7 @@ public struct SearchFiltersSheet: View {
               set: { draft.excludeURL = $0.isEmpty ? nil : $0 }
             ))
             .autocorrectionDisabled()
-            .textInputAutocapitalization(.never)
+            .platformTextInputCapitalization(.never)
 
             if let error = draft.excludeURLValidationError {
               Text(error)
@@ -159,14 +157,14 @@ public struct SearchFiltersSheet: View {
             set: { draft.hashtag = $0.isEmpty ? nil : $0 }
           ))
           .autocorrectionDisabled()
-          .textInputAutocapitalization(.never)
+          .platformTextInputCapitalization(.never)
 
           TextField("Exclude Hashtag", text: Binding(
             get: { draft.excludeHashtag ?? "" },
             set: { draft.excludeHashtag = $0.isEmpty ? nil : $0 }
           ))
           .autocorrectionDisabled()
-          .textInputAutocapitalization(.never)
+          .platformTextInputCapitalization(.never)
         }
 
         // MARK: - Date Range

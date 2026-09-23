@@ -83,7 +83,7 @@ struct MLSGroupInvitationNotesView: View {
       error = nil
     } catch {
       guard appState.userDID == batch.accountDID else { return }
-      error = "The group was created, but its optional notes could not be saved. Retry saving here; do not create the group again."
+      self.error = "The group was created, but its optional notes could not be saved. Retry saving here; do not create the group again."
     }
   }
 

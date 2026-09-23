@@ -51,7 +51,7 @@ struct LiveEventBanner: View {
         }
         .padding(.horizontal, 16)
         .frame(height: style == .wide ? 60 : 44)
-        .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
+        .background(Color(platformColor: .platformSecondarySystemGroupedBackground))
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .padding(.horizontal)
     }

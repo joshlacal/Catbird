@@ -39,7 +39,7 @@ public struct SignupQueuedView: View {
         NavigationStack {
             ZStack {
                 // Background
-                Color(platformColor: PlatformColor.platformSystemGroupedBackground)
+                Color(platformColor: .platformSystemGroupedBackground)
                     .ignoresSafeArea()
                 
                 VStack(spacing: 28) {
@@ -193,7 +193,7 @@ public struct SignupQueuedView: View {
             .padding(.bottom, 16)
             .padding(.top, placeInQueue == nil ? 16 : 0)
         }
-        .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
+        .background(Color(platformColor: .platformSecondarySystemGroupedBackground))
         .clipShape(RoundedRectangle(cornerRadius: 16))
     }
     

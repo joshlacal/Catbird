@@ -41,11 +41,23 @@ final class MLSEncryptedRequestUITests: XCTestCase {
     app.launch()
     XCTAssertTrue(app.buttons["Accept"].waitForExistence(timeout: 15))
     XCTAssertTrue(app.buttons["View group invitation"].exists)
+    let pending = XCTAttachment(screenshot: app.screenshot())
+    pending.name = "invitation-pending-presentation"
+    pending.lifetime = .keepAlways
+    add(pending)
     app.buttons["Accept"].tap()
     XCTAssertTrue(app.textViews["Message composer"].waitForExistence(timeout: 5))
     XCTAssertFalse(app.staticTexts["fixture-group-pending"].exists)
+    let accepted = XCTAttachment(screenshot: app.screenshot())
+    accepted.name = "invitation-accepted-presentation"
+    accepted.lifetime = .keepAlways
+    add(accepted)
     app.buttons["View group invitation"].tap()
     XCTAssertTrue(app.staticTexts["fixture-group-pending"].waitForExistence(timeout: 5))
+    let group = XCTAttachment(screenshot: app.screenshot())
+    group.name = "invitation-group-pending-presentation"
+    group.lifetime = .keepAlways
+    add(group)
   }
 
 }

@@ -113,11 +113,7 @@ public struct OnboardingSuggestedAccountsStep: View {
                         }
                     }
                 }
-                #if os(iOS)
-                .listStyle(.insetGrouped)
-                #else
-                .listStyle(.inset)
-                #endif
+                .modifier(SuggestedAccountsListStyle())
             }
             
             // Bottom Actions
@@ -333,5 +329,15 @@ public struct OnboardingSuggestedAccountsStep: View {
                 toggleFollow(for: actor)
             }
         }
+    }
+}
+
+private struct SuggestedAccountsListStyle: ViewModifier {
+    func body(content: Content) -> some View {
+        #if os(iOS)
+        content.listStyle(.insetGrouped)
+        #else
+        content.listStyle(.inset)
+        #endif
     }
 }

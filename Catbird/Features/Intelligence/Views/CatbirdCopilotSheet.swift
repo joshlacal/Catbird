@@ -177,9 +177,7 @@ struct CatbirdCopilotSheet: View {
                 )
             }
             .navigationTitle("Ask Catbird")
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
+            .platformInlineNavigationTitle()
             .navigationDestination(for: NavigationDestination.self) { destination in
                 NavigationHandler.viewForDestination(
                     destination,

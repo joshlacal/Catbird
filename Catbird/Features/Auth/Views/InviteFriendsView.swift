@@ -113,11 +113,7 @@ public enum InviteURLHelper {
         guard let cgImage = context.createCGImage(transformedImage, from: transformedImage.extent) else {
             return nil
         }
-        #if os(iOS)
-        return UIImage(cgImage: cgImage)
-        #elseif os(macOS)
-        return NSImage(cgImage: cgImage, size: CGSize(width: size, height: size))
-        #endif
+        return PlatformImage.image(from: cgImage)
     }
 }
 
@@ -213,7 +209,7 @@ public struct InviteFriendsView: View {
                             }
                             .frame(maxWidth: .infinity)
                             .frame(height: 50)
-                            .background(Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground))
+                            .background(Color(platformColor: .platformSecondarySystemGroupedBackground))
                             .foregroundColor(copiedToClipboard ? .green : .primary)
                             .clipShape(RoundedRectangle(cornerRadius: 14))
                         }
@@ -236,7 +232,7 @@ public struct InviteFriendsView: View {
                     .padding(.bottom, 24)
                 }
             }
-            .background(Color(platformColor: PlatformColor.platformSystemGroupedBackground))
+            .background(Color(platformColor: .platformSystemGroupedBackground))
             .navigationTitle("Invite Friends")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
@@ -395,8 +391,8 @@ public struct InviteFriendsView: View {
                             .padding(.vertical, 8)
                             .background(
                                 selectedTheme == theme
-                                    ? Color(platformColor: PlatformColor.platformTertiarySystemGroupedBackground)
-                                    : Color(platformColor: PlatformColor.platformSecondarySystemGroupedBackground)
+                                    ? Color(platformColor: .platformTertiarySystemGroupedBackground)
+                                    : Color(platformColor: .platformSecondarySystemGroupedBackground)
                             )
                             .clipShape(Capsule())
                             .overlay(

@@ -328,7 +328,6 @@ public struct OnboardingAvatarStep: View {
     
     @MainActor
     private func renderStickerImage() -> Data? {
-        let size = CGSize(width: 512, height: 512)
         let activeColor = availableColors.first(where: { $0.hex == selectedColorHex })?.color ?? .blue
         
         let stickerView = Circle()
@@ -343,6 +342,7 @@ public struct OnboardingAvatarStep: View {
         let renderer = ImageRenderer(content: stickerView)
         renderer.scale = 1.0
         #if os(iOS)
+        let size = CGSize(width: 512, height: 512)
         if let uiImage = renderer.uiImage {
             return uiImage.pngData()
         }
@@ -366,12 +366,7 @@ public struct OnboardingAvatarStep: View {
         }
         return image.pngData()
         #elseif os(macOS)
-        if let nsImage = renderer.nsImage,
-           let tiffData = nsImage.tiffRepresentation,
-           let bitmap = NSBitmapImageRep(data: tiffData) {
-            return bitmap.representation(using: .png, properties: [:])
-        }
-        return nil
+        return renderer.nsImage?.pngImageData()
         #endif
     }
 }

@@ -106,7 +106,7 @@ struct BlockedConversationFooter: View {
     }
     .padding(.horizontal, 16)
     .padding(.vertical, 12)
-    .background(Color(platformColor: PlatformColor.platformSecondarySystemBackground))
+    .background(Color(platformColor: .platformSecondarySystemBackground))
     .alert("User Blocked by List", isPresented: $showingListBlockDialog) {
       if case .listBlock(_, _, _, let list) = blockState {
         Button("View List") {
