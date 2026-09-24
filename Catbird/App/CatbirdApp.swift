@@ -2485,7 +2485,12 @@ private extension CatbirdApp {
     let manager = AppStateManager.shared
     
     // Proactively refresh token before any command to ensure fresh auth (especially for 60s token PDSs)
-    if let appState = manager.lifecycle.appState, command != "dump-state" {
+    #if DEBUG
+    let skipProactiveRefresh = CatbirdGatewayConfiguration.current.isRuntimeFixture
+    #else
+    let skipProactiveRefresh = false
+    #endif
+    if !skipProactiveRefresh, let appState = manager.lifecycle.appState, command != "dump-state" {
       do {
         e2eLogger.info("[E2E] Proactively refreshing token before command...")
         let refreshed = try await appState.client.refreshToken()
@@ -2520,6 +2525,9 @@ private extension CatbirdApp {
 
     case "request-inspect":
       await handleDirectRequest(params: params, manager: manager, inspect: true)
+
+    case "request-delivery-enable":
+      await handleRequestDeliveryEnable(params: params, manager: manager, logger: e2eLogger)
 
     case "create-conversation":
       await handleCreateConversation(params: params, manager: manager, logger: e2eLogger)
@@ -2863,7 +2871,21 @@ private extension CatbirdApp {
         await writeE2EResult(command: command, success: true, data: data)
       }
     } catch {
-      await writeE2EResult(command: command, success: false, error: "Request operation failed; any saved attempt is retained")
+      await writeE2EResult(command: command, success: false, error: "Request operation failed: \(error)")
+    }
+  }
+
+  private func handleRequestDeliveryEnable(params: [String: String], manager: AppStateManager, logger e2eLogger: Logger) async {
+    guard let appState = manager.lifecycle.appState,
+          let conversations = await appState.getMLSConversationManager() else {
+      await writeE2EResult(command: "request-delivery-enable", success: false, error: "MLS not initialized")
+      return
+    }
+    do {
+      try await conversations.setDirectRequestDeliveryEnabled(true)
+      await writeE2EResult(command: "request-delivery-enable", success: true, data: ["enabled": "true"])
+    } catch {
+      await writeE2EResult(command: "request-delivery-enable", success: false, error: error.localizedDescription)
     }
   }
 
