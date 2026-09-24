@@ -7,6 +7,7 @@
 //
 
 #if DEBUG && canImport(Network) && canImport(Security)
+import CatbirdMLSCore
 import CryptoKit
 import Foundation
 import Network
@@ -208,6 +209,7 @@ public final class DebugGatewayTransport: @unchecked Sendable {
             self.activeManifest = manifestInfo
             self.activeAccount = account
             self.underlyingTransport = transport
+            MLSStoragePaths.setBaseDirectoryOverride(URL(fileURLWithPath: config.profilePath))
             self.isActivated = true
         }
     }
