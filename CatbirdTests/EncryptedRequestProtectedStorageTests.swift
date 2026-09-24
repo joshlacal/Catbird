@@ -1,6 +1,7 @@
 @testable import CatbirdMLSCore
 import Foundation
 import GRDB
+import Petrel
 import Testing
 @testable import Catbird
 
@@ -10,10 +11,12 @@ import Testing
 /// Uses the real SQLCipher encryption path (MLSGRDBManager + MLSKeychainFakeStorage)
 /// to prove:
 ///   1. Database pool uses SQLCipher with a Keychain-derived key (PRAGMA cipher_version non-nil).
-///   2. Raw file data does not contain plaintext draft text.
+///   2. Raw file data on disk contains zero plaintext draft strings after checkpointing.
 ///   3. Opening the file without the correct key fails.
-///   4. Account A's drafts are invisible to account B (separate key, separate DB file).
-///   5. pendingPresentation scoped to account DID returns nil for the wrong account.
+///   4. Account switch: opening an inactive user's pool is rejected by MLSGRDBManager:1893 guard;
+///      Bob's database cannot read or resume Alice's pending presentation.
+///   5. Tenant keys are distinct: MLSSQLCipherEncryption generates different AES-256 keys per DID.
+///   6. Draft survives reopen and stays encrypted on disk.
 @Suite("C30: Protected storage and account isolation", .serialized)
 @MainActor
 struct EncryptedRequestProtectedStorageTests {
@@ -114,15 +117,16 @@ struct EncryptedRequestProtectedStorageTests {
     }
   }
 
-  // MARK: - C30-3: Account switch isolation — B cannot read A's request
+  // MARK: - C30-3: Account switch isolation — B cannot read or resume A's request; inactive A blocked
 
-  @Test("Account B cannot read or resume account A's pending request")
+  @Test("Account switch prevents B from reading or resuming A's draft; getDatabasePool blocks inactive A")
   func accountSwitchCannotReadOtherAccountRequest() async throws {
     try await Self.withEnvironment { manager in
       let didA = "did:plc:c30-alice-\(UUID().uuidString.lowercased())"
       let didB = "did:plc:c30-bob-\(UUID().uuidString.lowercased())"
 
-      // Account A: open pool, write draft, request presentation.
+      // Account A is active: open pool, write draft, request presentation.
+      await manager.setActiveUser(didA)
       let poolA = try await manager.getDatabasePool(for: didA)
       var draftA = try await MLSDirectComposeDraftStore.open(
         accountDID: didA, recipientDID: "did:plc:target", database: poolA)
@@ -134,26 +138,85 @@ struct EncryptedRequestProtectedStorageTests {
         accountDID: didA, database: poolA)
       #expect(pendingA != nil, "Account A must see her own pending presentation")
       #expect(pendingA?.text == "Alice's secret introduction")
+      // Resume entry point while A is signed in: the view model reopens A's saved draft.
+      let client = await ATProtoClient(baseURL: URL(string: "https://example.com")!)
+      let apiClient = await MLSAPIClient(client: client)
+      let managerA = MLSConversationManager(
+        apiClient: apiClient, database: poolA, userDid: didA, atProtoClient: client)
+      let viewModelA = MLSNewConversationViewModel(database: poolA, conversationManager: managerA)
+      viewModelA.selectedMembers = ["did:plc:target"]
+      AppStateManager.shared.setLifecycleForTesting(.authenticated(AppState(userDID: didA, client: client)))
+      defer { AppStateManager.shared.setLifecycleForTesting(.unauthenticated) }
+      let resumedByA = try await viewModelA.createRecipientDraft()
+      #expect(resumedByA.id == draftA.id, "Control: A resumes her own saved draft")
 
-      // Account switch: close and drain A's database, switch active user to B!
+      // Account switch: close and drain A's database, switch active user to B.
       await manager.closeDatabaseAndDrain(for: didA)
       await manager.setActiveUser(didB)
+      AppStateManager.shared.setLifecycleForTesting(.authenticated(AppState(userDID: didB, client: client)))
 
-      // Account B: open pool for B (separate encrypted database).
+      // 1. Actually attempt to open A's pool while B is active:
+      // MLSGRDBManager.swift:1893 guard MUST reject it with MLSSQLCipherError.storageUnavailable!
+      await #expect(throws: MLSSQLCipherError.self) {
+        _ = try await manager.getDatabasePool(for: didA)
+      }
+
+      // 2. Open B's pool. B's database contains NO presentation for A.
       let poolB = try await manager.getDatabasePool(for: didB)
-
-      // B's pool is a completely separate encrypted database.
-      // Attempting to read A's presentation from B's database returns nil.
-      let pendingB = try await MLSDirectComposeDraftStore.pendingPresentation(
+      let pendingForAInB = try await MLSDirectComposeDraftStore.pendingPresentation(
         accountDID: didA, database: poolB)
-      #expect(pendingB == nil,
+      #expect(pendingForAInB == nil,
         "Account B's database must not contain account A's pending presentation")
 
-      // B's own drafts are separate.
-      let draftB = try await MLSDirectComposeDraftStore.open(
-        accountDID: didB, recipientDID: "did:plc:target", database: poolB)
-      #expect(draftB.id != draftA.id,
-        "Drafts in different encrypted databases must have independent identities")
+      // 3. B attempts to resume A's request through A's still-referenced view model: refused.
+      await #expect(throws: MLSDirectComposeDraftStore.Failure.accountChanged) {
+        _ = try await viewModelA.createRecipientDraft()
+      }
+    }
+  }
+
+  // MARK: - C30-3b (F38 reachability): a foreign-owner row in B's store is unreachable from B
+
+  @Test("A draft owned by A planted in B's encrypted store cannot be surfaced or resumed by B's session")
+  func foreignOwnerRowInOtherTenantStoreIsUnreachable() async throws {
+    try await Self.withEnvironment { manager in
+      let didA = "did:plc:c30-owner-a-\(UUID().uuidString.lowercased())"
+      let didB = "did:plc:c30-tenant-b-\(UUID().uuidString.lowercased())"
+      let recipient = "did:plc:shared-recipient"
+      let handoffConversation = "550e8400-e29b-41d4-a716-446655440000"
+      await manager.setActiveUser(didB)
+      let poolB = try await manager.getDatabasePool(for: didB)
+
+      // Direct store misuse (no production caller does this): write A-owned rows into B's DB.
+      var planted = MLSDirectComposeDraft(accountDID: didA, recipientDID: recipient)
+      planted.text = "A's secret introduction planted in B"
+      try await MLSDirectComposeDraftStore.requestPresentation(planted, database: poolB)
+      try await ChatDraftHandoff.shared.storeDurably(
+        PendingChatDraft(conversationID: nil, text: planted.text), accountDID: didA, database: poolB)
+      let plantedRows = try await poolB.read { db in
+        try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM app_direct_compose_drafts WHERE account_did = ?", arguments: [didA])
+      }
+      #expect(plantedRows == 1, "The planted row physically exists in B's SQLCipher store")
+
+      // B's session drives every read/resume entry point with its own identity.
+      let client = await ATProtoClient(baseURL: URL(string: "https://example.com")!)
+      AppStateManager.shared.setLifecycleForTesting(.authenticated(AppState(userDID: didB, client: client)))
+      defer { AppStateManager.shared.setLifecycleForTesting(.unauthenticated) }
+      let managerB = MLSConversationManager(
+        apiClient: await MLSAPIClient(client: client), database: poolB, userDid: didB, atProtoClient: client)
+      let viewModelB = MLSNewConversationViewModel(database: poolB, conversationManager: managerB)
+      viewModelB.selectedMembers = [recipient]
+      let composeB = try await viewModelB.createRecipientDraft()
+      #expect(composeB.id != planted.id && composeB.accountDID == didB && composeB.text.isEmpty,
+        "Contact select for the same recipient opens B's own empty draft, never A's")
+      #expect(try await MLSDirectComposeDraftStore.pendingPresentation(accountDID: didB, database: poolB) == nil,
+        "B's presentation restore never offers A's draft")
+      #expect(try await MLSDirectComposeDraftStore.savedInvitationNotes(accountDID: didB, database: poolB).isEmpty)
+      #expect(try await MLSGroupInvitationNotesStore.draftStatus(id: planted.id, accountDID: didB, database: poolB) == nil,
+        "Looking A's draft up by id under B's identity finds nothing")
+      #expect(try await ChatDraftHandoff.shared.consumeDurably(
+        for: handoffConversation, accountDID: didB, database: poolB) == nil,
+        "B's conversation handoff never receives A's text")
     }
   }
 
@@ -166,8 +229,10 @@ struct EncryptedRequestProtectedStorageTests {
       let didB = "did:plc:c30-keyb-\(UUID().uuidString.lowercased())"
 
       // Open pool for A.
+      await manager.setActiveUser(didA)
       _ = try await manager.getDatabasePool(for: didA)
       let urlA = try MLSStorageCoordinator.shared.databaseURL(for: .swiftGRDB, userDID: didA)
+      let keyA = try await MLSSQLCipherEncryption.shared.getKey(for: didA)
 
       // Close A before opening B to respect single active user pool limit.
       await manager.closeDatabaseAndDrain(for: didA)
@@ -176,10 +241,17 @@ struct EncryptedRequestProtectedStorageTests {
       // Open pool for B.
       _ = try await manager.getDatabasePool(for: didB)
       let urlB = try MLSStorageCoordinator.shared.databaseURL(for: .swiftGRDB, userDID: didB)
+      let keyB = try await MLSSQLCipherEncryption.shared.getKey(for: didB)
 
+      // 1. Compare database file paths.
       #expect(urlA != urlB, "Different accounts must use different database files")
 
-      // Verify both database files exist and are non-empty.
+      // 2. Compare actual encryption keys generated in Keychain/fake-storage!
+      #expect(keyA != nil, "Account A must have a generated SQLCipher key")
+      #expect(keyB != nil, "Account B must have a generated SQLCipher key")
+      #expect(keyA != keyB, "Different accounts must have distinct SQLCipher encryption keys")
+
+      // 3. Verify both database files exist and are non-empty.
       let fileA = try Data(contentsOf: urlA)
       let fileB = try Data(contentsOf: urlB)
       #expect(fileA.count > 0, "A's database file must exist and be non-empty")
