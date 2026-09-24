@@ -651,6 +651,9 @@ struct CatbirdApp: App {
   // MARK: - Initialization
   init() {
     if isEncryptedRequestUIFixture { return }
+    // Resolve routing first: in DEBUG this installs an explicitly configured runtime fixture
+    // transport before any client exists (and refuses to launch on an invalid config).
+    _ = CatbirdGatewayConfiguration.current
     #if os(iOS)
     prepareInitialMLSAdmission(
       applicationState: UIApplication.shared.applicationState,

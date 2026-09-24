@@ -955,6 +955,23 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
       await client?.updateServiceDIDs(bskyAppViewDID: customAppViewDID, bskyChatDID: customChatDID)
     }
 
+    #if DEBUG && canImport(Network) && canImport(Security)
+    // The local runtime gateway has no OAuth login: adopt the configured synthetic account's
+    // session, or refuse. Never fall through to a real login in fixture mode.
+    if CatbirdGatewayConfiguration.current.isRuntimeFixture {
+      guard let client, let session = DebugGatewayTransport.shared.activeAccount?.session else {
+        updateState(.error(message: "Runtime fixture session unavailable"))
+        return
+      }
+      do {
+        try await client.adoptFixtureGatewaySession(session)
+      } catch {
+        updateState(.error(message: "Runtime fixture session adoption failed: \(error)"))
+        return
+      }
+    }
+    #endif
+
     logger.debug(.checkingAuthState)
     await checkAuthenticationState()
   }
