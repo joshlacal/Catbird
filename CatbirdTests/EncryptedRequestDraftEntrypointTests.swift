@@ -287,6 +287,33 @@ struct EncryptedRequestDraftEntrypointTests {
     }
   }
 
+  @Test("A terminally unpublished request keeps its text in a fresh editable draft")
+  func terminalNotPublishedReopensEditableDraft() async throws {
+    try await Self.withEncryptedDatabase { _, pool, did in
+      var submitted = try await MLSDirectComposeDraftStore.open(
+        accountDID: did, recipientDID: "did:plc:dave", database: pool)
+      submitted.text = "Hello before Dave enabled requests"
+      submitted.submitted = true
+      try await MLSDirectComposeDraftStore.save(submitted, database: pool)
+
+      // The dead draft id stays immutable, as before.
+      var rewrite = submitted
+      rewrite.text = "Edited"
+      await #expect(throws: MLSDirectComposeDraftStore.Failure.self) {
+        try await MLSDirectComposeDraftStore.save(rewrite, database: pool)
+      }
+
+      _ = try await MLSDirectComposeDraftStore.reopenAfterTerminal(submitted, database: pool)
+      var reopened = try await MLSDirectComposeDraftStore.open(
+        accountDID: did, recipientDID: "did:plc:dave", database: pool)
+      #expect(reopened.id != submitted.id, "A terminal draft id can never publish; a new one is required")
+      #expect(!reopened.submitted)
+      #expect(reopened.text == "Hello before Dave enabled requests")
+      reopened.text = "Hello again, Dave"
+      try await MLSDirectComposeDraftStore.save(reopened, database: pool)
+    }
+  }
+
   // MARK: - C29-4: Attachment-first rejection
 
   @Test("Attachment rejection produces zero remote network calls")

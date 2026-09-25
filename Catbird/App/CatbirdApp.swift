@@ -2875,7 +2875,10 @@ private extension CatbirdApp {
         case .outcomeUnknown(let requestID): data.merge(["status": "outcomeUnknown", "requestId": requestID]) { _, new in new }
         case .existingDirect(let conversationID, let requiresAcceptance): data.merge(["status": "existingDirect", "conversationId": conversationID, "requiresAcceptance": String(requiresAcceptance)]) { _, new in new }
         case .retryable(let code): data.merge(["status": "retryable", "code": code]) { _, new in new }
-        case .terminalNotPublished(let requestID, let code): data.merge(["status": "terminalNotPublished", "requestId": requestID, "code": code]) { _, new in new }
+        case .terminalNotPublished(let requestID, let code):
+          // Same as MLSDirectComposeView: the text moves to a fresh editable draft.
+          _ = try await MLSDirectComposeDraftStore.reopenAfterTerminal(draft, database: conversations.database)
+          data.merge(["status": "terminalNotPublished", "requestId": requestID, "code": code]) { _, new in new }
         }
         await writeE2EResult(command: command, success: true, data: data)
       }

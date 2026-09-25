@@ -89,6 +89,20 @@ enum MLSDirectComposeDraftStore {
     }
   }
 
+  /// A terminal non-publication (e.g. `RecipientKeysUnavailable`) ends that
+  /// draft id in the Rust journal, so retrying it can never publish. Archive
+  /// it and carry the text into a fresh, editable draft for the same target.
+  static func reopenAfterTerminal(_ draft: MLSDirectComposeDraft, database: MLSDatabase) async throws -> MLSDirectComposeDraft {
+    let fresh = MLSDirectComposeDraft(accountDID: draft.accountDID, recipientDID: draft.recipientDID,
+      text: draft.text, invitation: draft.invitation)
+    try await database.write { db in
+      try createTable(db)
+      try db.execute(sql: "UPDATE app_direct_compose_drafts SET archived = 1 WHERE id = ? AND account_did = ?", arguments: [draft.id.uuidString, draft.accountDID])
+      try persist(fresh, in: db)
+    }
+    return fresh
+  }
+
   static func validateText(_ text: String) throws {
     guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
           text.utf8.count <= 16_384 else { throw Failure.invalidText }

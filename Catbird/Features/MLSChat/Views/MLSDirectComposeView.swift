@@ -147,9 +147,15 @@ struct MLSDirectComposeView: View {
         status = "Checking whether your request was sent. Retry uses the same saved request."
       case .retryable:
         status = "The request could not finish yet. Your text is saved; try again."
-      case .terminalNotPublished:
-        status = "The request was not sent. Your draft is saved."
-        if cancel { try await MLSDirectComposeDraftStore.archive(draft, database: manager.database); dismiss() }
+      case .terminalNotPublished(_, let code):
+        if cancel {
+          try await MLSDirectComposeDraftStore.archive(draft, database: manager.database)
+          dismiss()
+        } else {
+          // Retrying a terminal draft can never publish; keep the text editable.
+          draft = try await MLSDirectComposeDraftStore.reopenAfterTerminal(draft, database: manager.database)
+          status = "The request was not sent (\(code)). Your text is kept; you can edit it and send again."
+        }
       }
     } catch {
       guard appState.userDID == draft.accountDID else { return }
