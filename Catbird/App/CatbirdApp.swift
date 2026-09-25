@@ -2499,7 +2499,7 @@ private extension CatbirdApp {
     #else
     let skipProactiveRefresh = false
     #endif
-    if !skipProactiveRefresh, let appState = manager.lifecycle.appState, command != "dump-state" {
+    if !skipProactiveRefresh, let appState = manager.lifecycle.appState, command != "dump-state", command != "request-notification-permission" {
       do {
         e2eLogger.info("[E2E] Proactively refreshing token before command...")
         let refreshed = try await appState.client.refreshToken()
@@ -2600,6 +2600,14 @@ private extension CatbirdApp {
 
     case "send-blob", "send_blob":
       await handleSendBlob(params: params, manager: manager, logger: e2eLogger)
+    case "request-notification-permission":
+      do {
+        let granted = try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])
+        await writeE2EResult(command: "request-notification-permission", success: true, data: ["granted": String(granted)])
+      } catch {
+        await writeE2EResult(command: "request-notification-permission", success: false, error: error.localizedDescription)
+      }
+
 
     default:
       e2eLogger.warning("[E2E] Unknown command: \(command)")
@@ -3235,8 +3243,8 @@ private extension CatbirdApp {
             decryptedTexts.append("[reaction:\(reaction.action.rawValue):\(reaction.emoji) on \(reaction.messageId.prefix(8))]")
           }
         } catch {
-          // Skip messages we can't decrypt (from before we joined, etc)
-          e2eLogger.debug("[E2E] Could not decrypt message: \(error.localizedDescription)")
+          e2eLogger.error("[E2E] Could not decrypt message: \(error)")
+          decryptedTexts.append("[DECRYPT_FAILED: \(error)]")
         }
       }
       
