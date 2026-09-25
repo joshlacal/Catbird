@@ -185,6 +185,7 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				NotificationService.swift,
+				ProfileCacheDatabase.swift,
 			);
 			target = 212E94102D60132A00D3E1DD /* CatbirdTests */;
 		};
