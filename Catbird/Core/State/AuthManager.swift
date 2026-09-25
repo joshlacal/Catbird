@@ -2950,6 +2950,15 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
 
   /// Check if biometric authentication is available and configure it
   func configureBiometricAuthentication() async {
+    #if DEBUG && os(macOS)
+    if CatbirdGatewayConfiguration.current.isRuntimeFixture {
+      await MainActor.run {
+        self.biometricType = .none
+        self.biometricAuthEnabled = false
+      }
+      return
+    }
+    #endif
     // Do work off the main actor
     let context = LAContext()
     var error: NSError?

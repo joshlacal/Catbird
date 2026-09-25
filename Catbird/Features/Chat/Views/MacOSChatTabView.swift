@@ -48,7 +48,12 @@ struct MacOSChatContentView: View {
 
   /// Per-account MLS chat enabled state
   private var mlsChatEnabledForCurrentAccount: Bool {
-    ExperimentalSettings.shared.isMLSChatEnabled(for: appState.userDID)
+    #if DEBUG
+    if CatbirdGatewayConfiguration.current.isRuntimeFixture {
+      return true
+    }
+    #endif
+    return ExperimentalSettings.shared.isMLSChatEnabled(for: appState.userDID)
   }
 
   var body: some View {

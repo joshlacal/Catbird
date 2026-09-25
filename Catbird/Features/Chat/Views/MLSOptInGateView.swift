@@ -10,7 +10,12 @@ struct MLSOptInGateView: View {
   private let logger = Logger(subsystem: "blue.catbird", category: "MLSOptInGate")
 
   private var isEnabled: Bool {
-    ExperimentalSettings.shared.isMLSChatEnabled(for: appState.userDID)
+    #if DEBUG
+    if CatbirdGatewayConfiguration.current.isRuntimeFixture {
+      return true
+    }
+    #endif
+    return ExperimentalSettings.shared.isMLSChatEnabled(for: appState.userDID)
   }
 
   var body: some View {

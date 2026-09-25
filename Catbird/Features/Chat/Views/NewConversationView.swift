@@ -42,7 +42,12 @@ struct NewConversationView: View {
   }
 
   private var mlsEnabled: Bool {
-    ExperimentalSettings.shared.isMLSChatEnabled(for: appState.userDID)
+    #if DEBUG
+    if CatbirdGatewayConfiguration.current.isRuntimeFixture {
+      return true
+    }
+    #endif
+    return ExperimentalSettings.shared.isMLSChatEnabled(for: appState.userDID)
   }
 
   private var navigationTitle: String {

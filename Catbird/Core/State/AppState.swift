@@ -812,6 +812,7 @@ final class AppState {
 
         let shouldStartMLS = ExperimentalSettings.shared.isMLSChatEnabled(for: userDID)
             || ProcessInfo.processInfo.arguments.contains("--e2e-mode")
+            || CatbirdGatewayConfiguration.current.isRuntimeFixture
         if shouldStartMLS {
             Task(priority: .utility) { [weak self] in
                 guard let self else { return }
