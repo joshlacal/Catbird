@@ -1062,6 +1062,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				HEADER_SEARCH_PATHS = "$(inherited)";
 				INFOPLIST_FILE = Catbird/App/Info.plist;
+				"INFOPLIST_FILE[sdk=macosx*]" = "Catbird/App/Info-Debug.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = Catbird;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.social-networking";
