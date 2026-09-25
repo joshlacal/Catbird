@@ -3472,10 +3472,11 @@ private extension CatbirdApp {
       )
 
       let mlsContext = try await CatbirdMLSCore.MLSCoreContext.shared.getContext(for: userDid)
-      let plaintexts = messages.compactMap { msg in
-        msg.decryptedPayload(context: mlsContext)?.text ?? msg.plaintext
+      let matching = messages.compactMap { msg -> (text: String, state: String)? in
+        guard let text = msg.decryptedPayload(context: mlsContext)?.text ?? msg.plaintext,
+              text.hasPrefix(contentPrefix) else { return nil }
+        return (text, msg.processingState)
       }
-      let matching = plaintexts.filter { $0.hasPrefix(contentPrefix) }
 
       e2eLogger.info("[E2E] Found \(matching.count) messages matching prefix '\(contentPrefix)' in \(canonicalConversationID)")
       await writeE2EResult(command: "check-message", success: true, data: [
@@ -3483,7 +3484,8 @@ private extension CatbirdApp {
         "contentPrefix": contentPrefix,
         "matchCount": "\(matching.count)",
         "totalMessages": "\(messages.count)",
-        "matches": matching.joined(separator: "|")
+        "matches": matching.map(\.text).joined(separator: "|"),
+        "processingStates": matching.map(\.state).joined(separator: "|")
       ])
     } catch {
       e2eLogger.error("[E2E] Failed to check messages: \(error.localizedDescription)")
