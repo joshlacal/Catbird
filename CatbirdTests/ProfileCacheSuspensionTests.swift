@@ -12,7 +12,7 @@ struct ProfileCacheSuspensionTests {
     defer { try? FileManager.default.removeItem(at: directory) }
     GRDBSuspensionCoordinator.setLifecycleSuspended(false, reason: "test setup")
     defer { GRDBSuspensionCoordinator.setLifecycleSuspended(false, reason: "test cleanup") }
-    let cache = ProfileCacheDatabase(databaseURL: directory.appendingPathComponent("profiles.db"))
+    let cache = Catbird.ProfileCacheDatabase(databaseURL: directory.appendingPathComponent("profiles.db"))
     await cache.write(did: "did:plc:test", handle: "before.test", displayName: nil, avatarURL: nil)
     let pool = try await cache.getPool()
 
@@ -40,7 +40,7 @@ struct ProfileCacheSuspensionTests {
     GRDBSuspensionCoordinator.setLifecycleSuspended(true, reason: "test background")
     defer { GRDBSuspensionCoordinator.setLifecycleSuspended(false, reason: "test cleanup") }
     let url = directory.appendingPathComponent("profiles.db")
-    let cache = ProfileCacheDatabase(databaseURL: url)
+    let cache = Catbird.ProfileCacheDatabase(databaseURL: url)
 
     await cache.write(did: "did:plc:test", handle: "blocked.test", displayName: nil, avatarURL: nil)
     #expect(!FileManager.default.fileExists(atPath: url.path))
@@ -69,7 +69,7 @@ struct ProfileCacheSuspensionTests {
     defer { try? FileManager.default.removeItem(at: directory) }
     GRDBSuspensionCoordinator.setLifecycleSuspended(false, reason: "test setup")
     defer { GRDBSuspensionCoordinator.setLifecycleSuspended(false, reason: "test cleanup") }
-    let cache = ProfileCacheDatabase(databaseURL: directory.appendingPathComponent("profiles.db"))
+    let cache = Catbird.ProfileCacheDatabase(databaseURL: directory.appendingPathComponent("profiles.db"))
     _ = try await cache.getPool()
     let handlingSuspend = Mutex(false)
     let center = NotificationCenter.default

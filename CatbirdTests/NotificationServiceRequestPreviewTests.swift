@@ -6,10 +6,6 @@ import Testing
 import UserNotifications
 @testable import Catbird
 
-/// Test-module alias so the extension's `NotificationService.swift` (compiled into this bundle
-/// unchanged) resolves the profile cache it references. The request branch never reads it.
-typealias ProfileCacheDatabase = Catbird.ProfileCacheDatabase
-
 /// C32 clause 8, Apple: the shipped `NotificationService` class receives the exact Nest request
 /// payload and decides the visible text from the App Group database that the app itself wrote
 /// through `MLSGRDBManager` + `MLSRequestNotificationPreviewCache.project`. OS launch of the
@@ -28,18 +24,24 @@ struct NotificationServiceRequestPreviewTests {
     let message: String
     let request: String
     let introduction: String
+    let manager: MLSGRDBManager
   }
 
-  /// Seeds through the app's real persistence path, then releases the app-side pool so the
-  /// extension opens the database the way a separate process would.
+  /// Seeds through the app's real persistence path (the App Group SQLCipher store opened by
+  /// `MLSGRDBManager`, written by `MLSRequestNotificationPreviewCache.project`), then drains the
+  /// app-side pool so the extension's own manager opens the database as a separate process would.
   func seed(_ consents: [(RequestConsent, UInt64)], preview: Bool = true) async throws -> Fixture {
+    // A separate NSE process never inherits the host app's lifecycle suspension flags.
+    MLSClient.clearSuspensionFlag(reason: "NSE preview test seed")
+    MLSCoreContext.clearSuspensionFlag()
     let fixture = Fixture(
       did: "did:plc:nse-\(UUID().uuidString.lowercased())",
       conversation: UUID().uuidString.lowercased(),
       message: UUID().uuidString.lowercased(),
       request: UUID().uuidString.lowercased(),
-      introduction: "Private introduction \(UUID().uuidString)")
-    let pool = try await MLSGRDBManager.shared.getDatabasePool(for: fixture.did)
+      introduction: "Private introduction \(UUID().uuidString)",
+      manager: MLSGRDBManager())
+    let pool = try await fixture.manager.getDatabasePool(for: fixture.did)
     for (consent, version) in consents {
       let view = DirectRequestView(
         introduction: nil, conversationId: fixture.conversation, firstMessageId: fixture.message,
@@ -51,13 +53,13 @@ struct NotificationServiceRequestPreviewTests {
         stateVersion: version, generation: 1)
       try await MLSRequestNotificationPreviewCache.project(view, accountDID: fixture.did, database: pool)
     }
-    _ = await MLSGRDBManager.shared.closeDatabaseAndDrain(for: fixture.did, timeout: 5)
+    _ = await fixture.manager.closeDatabaseAndDrain(for: fixture.did, timeout: 5)
     return fixture
   }
 
   func cleanup(_ fixture: Fixture) async {
     UserDefaults(suiteName: "group.blue.catbird.shared")?.removeObject(forKey: "mlsChatNotificationsEnabled_\(fixture.did)")
-    try? await MLSGRDBManager.shared.deleteDatabase(for: fixture.did)
+    try? await fixture.manager.deleteDatabase(for: fixture.did)
   }
 
   static func accountHash(_ did: String) -> String {
@@ -69,6 +71,7 @@ struct NotificationServiceRequestPreviewTests {
     let content = UNMutableNotificationContent()
     content.title = Self.nestTitle
     content.body = Self.nestBody
+    content.sound = .default  // what APNs maps aps.sound "default" to
     content.userInfo = [
       "aps": ["alert": ["title": Self.nestTitle, "body": Self.nestBody], "sound": "default", "mutable-content": 1],
       "type": "mls_message_request",
@@ -83,6 +86,7 @@ struct NotificationServiceRequestPreviewTests {
   }
 
   func deliver(_ request: UNNotificationRequest) async -> UNNotificationContent {
+    MLSCoreContext.clearSuspensionFlag()
     let extensionInstance = NotificationService()
     return await withCheckedContinuation { continuation in
       extensionInstance.didReceive(request) { continuation.resume(returning: $0) }
