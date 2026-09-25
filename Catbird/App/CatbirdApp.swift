@@ -1608,10 +1608,19 @@ private extension CatbirdApp {
     )
 
     #if os(iOS)
-    let otherScenesActive = hasOtherActiveScenes
+    let hasOtherScenes = hasOtherActiveScenes
     #else
-    let otherScenesActive = false
+    let hasOtherScenes = false
     #endif
+    #if os(macOS)
+    let isMacOS = true
+    #else
+    let isMacOS = false
+    #endif
+    let otherScenesActive = Self.sceneDeactivationPreservesMLS(
+      isMacOS: isMacOS,
+      otherScenesActive: hasOtherScenes
+    )
 
     if otherScenesActive && (newPhase == .inactive || newPhase == .background) {
       logger.info("Scene transitioned to \(String(describing: newPhase)), but other connected scenes remain active in foreground. Preserving process-wide database and MLS connections.")
@@ -4537,3 +4546,15 @@ extension CatbirdApp.AppDelegate {
   }
 }
 #endif 
+
+extension CatbirdApp {
+  /// Whether a scene leaving `.active` keeps the process-wide database and MLS connections open.
+  /// iOS (unchanged): only while another scene of this process is still foreground-active;
+  /// otherwise the 0xdead10cc suspension closes them before RunningBoard suspends the process.
+  /// macOS (F50): always. The process is never suspended there, but SwiftUI reports `.inactive`
+  /// whenever another app takes focus; closing MLS then dropped delivery and aborted in-flight
+  /// work every time the user switched apps.
+  nonisolated static func sceneDeactivationPreservesMLS(isMacOS: Bool, otherScenesActive: Bool) -> Bool {
+    isMacOS || otherScenesActive
+  }
+}
