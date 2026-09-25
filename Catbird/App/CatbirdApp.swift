@@ -1313,7 +1313,11 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
 
   // MARK: - Body
   var body: some Scene {
-    WindowGroup {
+    // Explicit id: SwiftUI otherwise derives the macOS state-restoration identifier from the
+    // content's reflected type name, which embeds ASLR-dependent addresses for private types
+    // ("(unknown context at $…)"). Saved state then never matches the next launch, AppKit
+    // restores nothing, and the relaunched app has no window.
+    WindowGroup(id: "main") {
       Group {
         #if DEBUG
         if isEncryptedRequestUIFixture {
