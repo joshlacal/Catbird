@@ -62,6 +62,9 @@ struct MLSDirectRequestDetailView: View {
   @State private var error: String?
   @State private var blockSender: String?
   @State private var showBlock = false
+  /// Bumped by every user action so an automatic refresh that started before
+  /// it can never overwrite the action's newer result.
+  @State private var actionGeneration = 0
 
   var body: some View {
     MLSRequestPresentation(
@@ -86,10 +89,30 @@ struct MLSDirectRequestDetailView: View {
     }
     .task(id: request.conversationId) {
       while !Task.isCancelled {
-        await act(.refresh)
+        await poll()
         do { try await Task.sleep(for: .seconds(5)) } catch { return }
       }
     }
+  }
+
+  /// Automatic refresh. It never holds the action gate (a tap or a confirmed
+  /// block during it must not be dropped) and never touches `error` (a failed
+  /// action must stay visible); failures here are retried on the next tick.
+  @MainActor private func poll() async {
+    guard !busy else { return }
+    let account = appState.userDID
+    let generation = actionGeneration
+    guard let manager = await appState.getMLSConversationManager(), manager.currentUserDID == account,
+          let updated = try? await manager.refreshRequestPreview(conversationId: request.conversationId)
+    else { return }
+    func current() -> Bool {
+      !Task.isCancelled && !busy && generation == actionGeneration
+        && appState.userDID == account && appState.mlsConversationManager === manager
+    }
+    guard current(),
+          (try? await MLSRequestNotificationPreviewCache.project(updated, accountDID: account, database: manager.database)) != nil,
+          current() else { return }
+    onChange(updated)
   }
 
   private enum Action { case accept, decline, block, confirmBlock, refresh }
@@ -98,6 +121,7 @@ struct MLSDirectRequestDetailView: View {
     guard !busy else { return }
     let account = appState.userDID
     busy = true
+    actionGeneration += 1
     defer { busy = false }
     do {
       guard let manager = await appState.getMLSConversationManager(), manager.currentUserDID == account,
