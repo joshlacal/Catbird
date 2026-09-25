@@ -1035,7 +1035,7 @@
 				CLANG_ENABLE_MODULES = YES;
 				CLANG_MODULE_CACHE_PATH = "$(DERIVED_DATA_DIR)/ModuleCache";
 				CODE_SIGN_ENTITLEMENTS = Catbird/Catbird.entitlements;
-				"CODE_SIGN_ENTITLEMENTS[sdk=macosx*]" = "Catbird/Catbird/Catbird-Debug.entitlements";
+				"CODE_SIGN_ENTITLEMENTS[sdk=macosx*]" = "Catbird/Catbird-Debug.entitlements";
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 2;
