@@ -181,6 +181,13 @@
 			);
 			target = 212D4B3E2ED1FE730036E016 /* NotificationServiceExtension */;
 		};
+		21A1B3C42F80000000C3B2A1 /* Exceptions for "NotificationServiceExtension" folder in "CatbirdTests" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				NotificationService.swift,
+			);
+			target = 212E94102D60132A00D3E1DD /* CatbirdTests */;
+		};
 		212D4B4F2ED205D00036E016 /* Exceptions for "Catbird" folder in "NotificationServiceExtension" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
@@ -270,6 +277,7 @@
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
 				212D4B4A2ED1FE740036E016 /* Exceptions for "NotificationServiceExtension" folder in "NotificationServiceExtension" target */,
+				21A1B3C42F80000000C3B2A1 /* Exceptions for "NotificationServiceExtension" folder in "CatbirdTests" target */,
 			);
 			path = NotificationServiceExtension;
 			sourceTree = "<group>";
