@@ -2611,6 +2611,11 @@ private extension CatbirdApp {
       } catch {
         await writeE2EResult(command: "request-notification-permission", success: false, error: error.localizedDescription)
       }
+    case "cancel-draft":
+      await handleCancelDraft(params: params, manager: manager, logger: e2eLogger)
+
+    case "decline-conversation":
+      await handleDeclineConversation(params: params, manager: manager, logger: e2eLogger)
 
 
     default:
@@ -2849,6 +2854,50 @@ private extension CatbirdApp {
       await writeE2EResult(command: "create-conversation", success: false, error: "Could not save local draft")
     }
   }
+  private func handleCancelDraft(params: [String: String], manager: AppStateManager, logger e2eLogger: Logger) async {
+    guard let targetDID = params["targetDID"] else {
+      await writeE2EResult(command: "cancel-draft", success: false, error: "Missing targetDID")
+      return
+    }
+    guard let appState = manager.lifecycle.appState, let database = appState.mlsDatabase else {
+      await writeE2EResult(command: "cancel-draft", success: false, error: "Not authenticated or MLS database unavailable")
+      return
+    }
+    do {
+      let draft = try await MLSDirectComposeDraftStore.open(accountDID: appState.userDID, recipientDID: targetDID, database: database)
+      try await MLSDirectComposeDraftStore.archive(draft, database: database)
+      await writeE2EResult(command: "cancel-draft", success: true, data: [
+        "draftId": draft.id.uuidString.lowercased(), "status": "draftCancelled"
+      ])
+    } catch {
+      await writeE2EResult(command: "cancel-draft", success: false, error: error.localizedDescription)
+    }
+  }
+
+  private func handleDeclineConversation(
+    params: [String: String],
+    manager: AppStateManager,
+    logger e2eLogger: Logger
+  ) async {
+    guard let conversationId = params["conversationId"],
+          MLSConversationIdentityBoundary.isCanonicalStableID(conversationId) else {
+      await writeE2EResult(command: "decline-conversation", success: false, error: "Missing or invalid conversationId")
+      return
+    }
+    guard let appState = manager.lifecycle.appState,
+          let conversationManager = await appState.getMLSConversationManager() else {
+      await writeE2EResult(command: "decline-conversation", success: false, error: "MLS not initialized")
+      return
+    }
+    do {
+      try await conversationManager.declineConversationRequest(convoId: conversationId)
+      await writeE2EResult(command: "decline-conversation", success: true, data: ["conversationId": conversationId, "status": "declined"])
+    } catch {
+      e2eLogger.error("[E2E] decline-conversation failed: \(error.localizedDescription)")
+      await writeE2EResult(command: "decline-conversation", success: false, error: error.localizedDescription)
+    }
+  }
+
 
   private func handleDirectRequest(params: [String: String], manager: AppStateManager, inspect: Bool) async {
     let command = inspect ? "request-inspect" : "request-send"
