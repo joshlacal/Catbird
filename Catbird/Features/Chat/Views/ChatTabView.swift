@@ -393,15 +393,19 @@ struct ChatTabView: View {
           ConversationView(convoId: convoId)
             .id(convoId)
         case .mls:
-          MLSConversationDetailView(conversationId: convoId)
-            .id("\(convoId):\(appState.userDID)")
+          MLSRequestConversationGate(conversationID: convoId) {
+            MLSConversationDetailView(conversationId: convoId)
+          }
+          .id("\(convoId):\(appState.userDID)")
         }
       } else if let convoId = selectedConvoId {
         // Conversation selected but not yet in coordinator (e.g. deep-link before data loads)
         // — route by id shape so MLS deep links don't open the Bluesky detail view
         if UnifiedConversation.idLooksLikeMLSConversation(convoId) {
-          MLSConversationDetailView(conversationId: convoId)
-            .id("\(convoId):\(appState.userDID)")
+          MLSRequestConversationGate(conversationID: convoId) {
+            MLSConversationDetailView(conversationId: convoId)
+          }
+          .id("\(convoId):\(appState.userDID)")
         } else {
           ConversationView(convoId: convoId)
             .id(convoId)

@@ -171,8 +171,10 @@ struct NavigationHandler {
         .id(convoId)
 
     case .mlsConversation(let convoId):
-      MLSConversationDetailView(conversationId: convoId)
-        .id(convoId)
+      MLSRequestConversationGate(conversationID: convoId) {
+        MLSConversationDetailView(conversationId: convoId)
+      }
+      .id(convoId)
 
     case .chatTab:
       ChatTabView(
