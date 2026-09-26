@@ -198,7 +198,6 @@ struct MacOSGroupInfoInspector: View {
   var body: some View {
     inspectorContent
       .listStyle(.sidebar)
-      .navigationTitle("Group Info")
   }
 
   @ViewBuilder

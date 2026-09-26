@@ -3982,23 +3982,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     }
 
     await MainActor.run {
-      // Switch the chat mode to MLS so the correct view is shown
-      currentAppState.chatMode = "Catbird Groups"
-
-      // CRITICAL FIX: Set targetMLSConversationId BEFORE switching tabs
-      // This ensures the conversation list view can pick up the target even while still loading
-      currentAppState.navigationManager.targetMLSConversationId = canonicalConvoID
-
-      // Switch to chat tab using the tab selection callback (this actually changes the tab)
-      if let tabSelection = currentAppState.navigationManager.tabSelection {
-        tabSelection(4)  // Switch to chat tab
-      }
-      currentAppState.navigationManager.updateCurrentTab(4)
-
-      // Navigate to the specific MLS conversation
-      let destination = NavigationDestination.mlsConversation(canonicalConvoID)
-      currentAppState.navigationManager.navigate(to: destination, in: 4)
-
+      currentAppState.navigateToMLSConversation(canonicalConvoID)
       notificationLogger.info("Successfully navigated to MLS conversation \(canonicalConvoID.prefix(16))...")
     }
   }

@@ -1179,9 +1179,19 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
   }
 
   func loadMessages() async {
-    guard let appState = appState,
-      let database = appState.mlsDatabase
-    else {
+    guard let appState = appState else { return }
+    let database: DatabasePool?
+    if let db = appState.mlsDatabase {
+      database = db
+    } else if let pool = appState.mlsConversationManager?.database as? DatabasePool {
+      database = pool
+    } else if let pool = (await appState.getMLSConversationManager())?.database as? DatabasePool {
+      database = pool
+    } else {
+      database = nil
+    }
+
+    guard let database else {
       logger.error("Cannot load messages: database not available")
       return
     }

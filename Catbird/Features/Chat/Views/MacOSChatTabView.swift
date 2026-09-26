@@ -439,10 +439,13 @@ struct MacOSChatContentView: View {
 
   @MainActor
   private func canonicalMLSRoute(for requestedID: String) async -> String? {
+    if MLSConversationIdentityBoundary.isCanonicalStableID(requestedID) {
+      return requestedID
+    }
     let userDID = appState.userDID
     guard let snapshot = try? await MLSStorage.shared
       .fetchConversationsWithMembersUsingSmartRouting(currentUserDID: userDID) else {
-      return nil
+      return requestedID
     }
     let records = snapshot.conversations.map {
       MLSConversationIdentityBoundary.Record(
@@ -450,7 +453,7 @@ struct MacOSChatContentView: View {
         groupID: $0.groupID.hexEncodedString()
       )
     }
-    return try? MLSConversationIdentityBoundary.resolve(requestedID, in: records)
+    return (try? MLSConversationIdentityBoundary.resolve(requestedID, in: records)) ?? requestedID
   }
 
   // MARK: - MLS Polling

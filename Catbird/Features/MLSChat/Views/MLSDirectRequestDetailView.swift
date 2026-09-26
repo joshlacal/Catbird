@@ -1,6 +1,7 @@
 import CatbirdMLSCore
 import SwiftUI
 
+
 /// Classify using Rust's verified, account-scoped projection before starting
 /// ordinary history, media, reactions, or send-readiness work.
 struct MLSRequestConversationGate<Ordinary: View>: View {
@@ -47,9 +48,9 @@ struct MLSRequestConversationGate<Ordinary: View>: View {
       }
 
       do {
-        guard MLSConversationIdentityBoundary.isCanonicalStableID(conversationID),
-              let manager = await appState.getMLSConversationManager(),
-              manager.currentUserDID == account else { throw CancellationError() }
+        guard MLSConversationIdentityBoundary.isCanonicalStableID(conversationID) else { throw CancellationError() }
+        guard let manager = await appState.getMLSConversationManager() else { throw CancellationError() }
+        guard manager.currentUserDID == account else { throw CancellationError() }
         let classification = try await manager.classifyDirectRequestConversation(conversationId: conversationID)
         let verified: DirectRequestView?
         switch classification {

@@ -2916,12 +2916,7 @@ private extension CatbirdApp {
       return
     }
     await MainActor.run {
-      appState.chatMode = "Catbird Groups"
-      appState.navigationManager.targetMLSConversationId = conversationId
-      if let tabSelection = appState.navigationManager.tabSelection {
-        tabSelection(4)
-      }
-      appState.navigationManager.updateCurrentTab(4)
+      appState.navigateToMLSConversation(conversationId)
     }
     e2eLogger.info("[E2E] open-conversation navigated to \(conversationId.prefix(16))...")
     await writeE2EResult(command: "open-conversation", success: true, data: ["conversationId": conversationId])
@@ -4581,12 +4576,7 @@ extension CatbirdApp.AppDelegate {
     
     logger.info("📍 Navigating to MLS conversation: \(canonicalID.prefix(16))...")
     
-    // Switch to the chat tab (index 4) 
-    appState.navigationManager.updateCurrentTab(4)
-    
-    // Navigate to the specific MLS conversation
-    let destination = NavigationDestination.mlsConversation(canonicalID)
-    appState.navigationManager.navigate(to: destination, in: 4)
+    appState.navigateToMLSConversation(canonicalID)
     
     logger.info("✅ Navigation to MLS conversation initiated")
   }

@@ -493,6 +493,19 @@ final class AppState {
         }
     }
 
+
+    @MainActor
+    func navigateToMLSConversation(_ conversationID: String) {
+        let chatTab = AppNavigationManager.chatTabIndex
+        chatMode = "Catbird Groups"
+        navigationManager.targetMLSConversationId = conversationID
+        navigationManager.tabSelection?(chatTab)
+        navigationManager.updateCurrentTab(chatTab)
+        #if os(iOS)
+        navigationManager.navigate(to: .mlsConversation(conversationID), in: chatTab)
+        #endif
+    }
+
     @MainActor
     init(
         userDID: String,
@@ -1415,9 +1428,6 @@ final class AppState {
             return nil
         }
 
-        // CRITICAL FIX: Verify Shutdown Coordinator is idle before creating NEW manager
-        // This prevents "locking wars" between the old closing manager and new opening one
-        // for the same or different users on the same SQLCipher file (if path collision)
         if await MLSShutdownCoordinator.shared.isShuttingDown {
             logger.warning("MLS: 🚫 Creation blocked - Shutdown Coordinator is busy. Waiting...")
             try? await Task.sleep(nanoseconds: 200_000_000) // Brief wait
@@ -1425,6 +1435,8 @@ final class AppState {
                 return nil // Fail fast if still busy, will retry via natural UI retry or polling
             }
         }
+
+
 
         if AppStateManager.shared.isUserUnderStorageMaintenance(userDid) {
             logger.warning(
@@ -1477,6 +1489,8 @@ final class AppState {
                 mlsConversationManagerInitTask = nil
             }
         }
+
+
 
         // Check if initialization is already in progress - add timeout to prevent indefinite hang
         if let existingTask = mlsConversationManagerInitTask {
