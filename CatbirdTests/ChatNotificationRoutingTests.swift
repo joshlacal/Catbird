@@ -148,4 +148,37 @@ struct ChatNotificationRoutingTests {
     ]
     #expect(!NotificationManager.isNavigableMLSNotification(fromUserInfo: emptyConvo))
   }
+
+  @Test("mls_message_request rejects non-canonical convo_id")
+  func mlsMessageRequestRejectsNonCanonicalConvoID() {
+    for invalidConvo in ["non-canonical-id", "not-a-uuid", "../../traversal", "12345"] {
+      let payload: [AnyHashable: Any] = [
+        "type": "mls_message_request",
+        "protocol_version": "2",
+        "recipient_account": String(repeating: "a", count: 64),
+        "convo_id": invalidConvo,
+      ]
+      #expect(!NotificationManager.isNavigableMLSNotification(fromUserInfo: payload))
+      #expect(NotificationManager.mlsConversationID(fromUserInfo: payload) == nil)
+    }
+  }
+
+  @Test("mls_message and mls_message_decrypted reject non-canonical convo_id")
+  func mlsMessageRejectsNonCanonicalConvoID() {
+    for type in ["mls_message", "mls_message_decrypted"] {
+      let invalid: [AnyHashable: Any] = [
+        "type": type,
+        "convo_id": "not-canonical",
+      ]
+      #expect(!NotificationManager.isNavigableMLSNotification(fromUserInfo: invalid))
+      #expect(NotificationManager.mlsConversationID(fromUserInfo: invalid) == nil)
+
+      let valid: [AnyHashable: Any] = [
+        "type": type,
+        "convo_id": "00000000-0000-0000-0000-000000000001",
+      ]
+      #expect(NotificationManager.isNavigableMLSNotification(fromUserInfo: valid))
+      #expect(NotificationManager.mlsConversationID(fromUserInfo: valid) == "00000000-0000-0000-0000-000000000001")
+    }
+  }
 }

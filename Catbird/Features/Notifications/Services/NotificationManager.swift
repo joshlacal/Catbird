@@ -3493,23 +3493,36 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
     // Handle MLS message notifications (from NSE) and direct message requests (F65)
     if Self.isNavigableMLSNotification(fromUserInfo: userInfo) {
-      let recipientDid = resolveRecipientDID(from: userInfo)
-      let convoId = Self.mlsConversationID(fromUserInfo: userInfo)
+      guard let recipientDid = resolveRecipientDID(from: userInfo) else {
+        notificationLogger.warning("MLS notification rejected: recipient account could not be resolved from payload")
+        completionHandler()
+        return
+      }
+      guard let convoId = Self.mlsConversationID(fromUserInfo: userInfo) else {
+        completionHandler()
+        return
+      }
 
       Task {
         // Switch to correct account if needed
-        if let did = recipientDid {
-          await ensureActiveAccount(for: did)
+        await ensureActiveAccount(for: recipientDid)
+
+        // Fail-closed guard: ensure active account matches the notification recipient
+        guard case .authenticated(let state) = AppStateManager.shared.lifecycle,
+              state.userDID == recipientDid else {
+          notificationLogger.warning("MLS notification rejected: active account does not match notification recipient")
+          await MainActor.run {
+            completionHandler()
+          }
+          return
         }
 
         // Navigate to MLS conversation
-        if let convoId = convoId {
-          notificationLogger.info(
-            "MLS notification tapped - navigating to conversation: \(convoId.prefix(16))...")
-          #if os(iOS)
-          await handleMLSNotificationNavigation(convoId)
-          #endif
-        }
+        notificationLogger.info(
+          "MLS notification tapped - navigating to conversation: \(convoId.prefix(16))...")
+        #if os(iOS)
+        await handleMLSNotificationNavigation(convoId)
+        #endif
 
         await MainActor.run {
           completionHandler()
@@ -3566,14 +3579,17 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   nonisolated static func isNavigableMLSNotification(fromUserInfo userInfo: [AnyHashable: Any]) -> Bool {
     guard let type = userInfo["type"] as? String else { return false }
     if type == "mls_message" || type == "mls_message_decrypted" {
-      return (userInfo["convo_id"] as? String) != nil
+      guard let convoId = userInfo["convo_id"] as? String,
+            MLSConversationIdentityBoundary.isCanonicalStableID(convoId)
+      else { return false }
+      return true
     }
     if type == "mls_message_request" {
       guard userInfo["protocol_version"] as? String == "2",
             let hash = userInfo["recipient_account"] as? String,
             hash.count == 64, hash.allSatisfy({ "0123456789abcdef".contains($0) }),
             let convoId = userInfo["convo_id"] as? String,
-            !convoId.isEmpty
+            MLSConversationIdentityBoundary.isCanonicalStableID(convoId)
       else { return false }
       return true
     }
