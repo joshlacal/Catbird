@@ -84,7 +84,6 @@ struct MLSRequestConversationGate<Ordinary: View>: View {
 
 struct MLSDirectRequestDetailView: View {
   @Environment(AppState.self) private var appState
-  @Environment(\.dismiss) private var dismiss
   let request: DirectRequestView
   var onAccepted: ((String) -> Void)? = nil
   let onChange: (DirectRequestView) -> Void
@@ -160,13 +159,12 @@ struct MLSDirectRequestDetailView: View {
       case .accept:
         guard request.consent == .incomingPending && request.capabilities.canAccept else { return }
         try await manager.acceptConversationRequest(convoId: request.conversationId)
-        appState.stateInvalidationBus.notify(.mlsConversationListChanged)
         if let onAccepted {
           await MainActor.run {
             onAccepted(request.conversationId)
-            dismiss()
           }
         }
+      case .decline:
         guard request.capabilities.canClose else { return }
         try await manager.declineConversationRequest(convoId: request.conversationId)
       case .block:

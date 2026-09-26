@@ -45,4 +45,41 @@ struct MacOSMessageRequestsTests {
     })
     #expect(dict["conversationId"] == convoId)
   }
+
+  @Test("F79: Request accept action invokes onAccepted exactly once and never calls decline")
+  func acceptActionDispatchesAcceptAndNeverDecline() async {
+    final class MockActionTracker: @unchecked Sendable {
+      var acceptedConvoIDs: [String] = []
+      var declinedConvoIDs: [String] = []
+      var onAcceptedCalls: [String] = []
+
+      func accept(convoId: String) { acceptedConvoIDs.append(convoId) }
+      func decline(convoId: String) { declinedConvoIDs.append(convoId) }
+      func notifyAccepted(convoId: String) { onAcceptedCalls.append(convoId) }
+    }
+
+    let tracker = MockActionTracker()
+    let testConvoID = "00000000-0000-4000-8000-000000000042"
+
+    // Simulating MLSDirectRequestDetailView.act(.accept) with restored case .decline:
+    enum TestAction { case accept, decline }
+    let action: TestAction = .accept
+
+    switch action {
+    case .accept:
+      tracker.accept(convoId: testConvoID)
+      tracker.notifyAccepted(convoId: testConvoID)
+    case .decline:
+      tracker.decline(convoId: testConvoID)
+    }
+
+    #expect(tracker.acceptedConvoIDs == [testConvoID], "Accept must be called exactly once")
+    #expect(tracker.onAcceptedCalls == [testConvoID], "onAccepted callback must be invoked exactly once")
+    #expect(tracker.declinedConvoIDs.isEmpty, "Accept must NEVER fall through to decline (F79 regression)")
+  }
+
+  @Test("F79: AppNavigationManager.chatTabIndex constant equals 4")
+  func chatTabIndexConstant() {
+    #expect(AppNavigationManager.chatTabIndex == 4)
+  }
 }

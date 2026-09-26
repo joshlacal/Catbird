@@ -110,7 +110,6 @@ struct MLSChatRequestsView: View {
                   if let onAcceptedConversation {
                     Task { await onAcceptedConversation(convoID) }
                   }
-                  dismiss()
                 }) {
                   #if os(iOS)
                   MLSOrdinaryConversationDetailView(conversationId: request.conversationId)

@@ -687,7 +687,7 @@ struct UnifiedMessageRequestsView: View {
                 manager.currentUserDID == userDID, !manager.isShuttingDown else { return }
           appState.navigationManager.targetMLSConversationId = conversationID
           #if os(macOS)
-          appState.navigationManager.updateCurrentTab(4)
+          appState.navigationManager.updateCurrentTab(AppNavigationManager.chatTabIndex)
           #endif
           appState.stateInvalidationBus.notify(.mlsConversationListChanged)
           dismiss()
