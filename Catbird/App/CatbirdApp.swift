@@ -1398,8 +1398,8 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
               CircleAppViewAuthCoordinator.shared.complete(callback: url)
             }
           } else if (url.scheme == "blue.catbird" || url.scheme == "catbird") && (url.host == "e2e" || url.host == "test") {
-            // Handle E2E testing commands (only in E2E mode, iOS only)
-            #if os(iOS)
+            // Handle E2E testing commands (only in E2E mode)
+            #if os(iOS) || (DEBUG && os(macOS))
             logger.error("[E2E-URL] Received E2E URL: \(url.absoluteString), isE2EMode: \(appStateManager.isE2EMode)")
             if appStateManager.isE2EMode {
               Task { @MainActor in
@@ -2466,7 +2466,7 @@ private extension CatbirdApp {
   }
 #endif
 
-#if os(iOS)
+#if os(iOS) || (DEBUG && os(macOS))
   // MARK: - E2E Testing URL Handlers
 
   /// Handle E2E testing URL commands
