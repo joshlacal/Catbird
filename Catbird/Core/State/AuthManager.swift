@@ -1449,7 +1449,7 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
     }
     
     var result: CFTypeRef?
-    let status = SecItemCopyMatching(query as CFDictionary, &result)
+    let status = KeychainSecItem.copyMatching(query as CFDictionary, &result)
     
     if status == errSecSuccess, let items = result as? [[String: Any]] {
       for item in items {
@@ -1463,7 +1463,7 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
           if let group = accessGroup {
             deleteQuery[kSecAttrAccessGroup as String] = group
           }
-          let deleteStatus = SecItemDelete(deleteQuery as CFDictionary)
+          let deleteStatus = KeychainSecItem.delete(deleteQuery as CFDictionary)
           if deleteStatus == errSecSuccess {
             logger.info(.e2eKeychainDeletedItem)
           }

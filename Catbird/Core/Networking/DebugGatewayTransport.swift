@@ -220,78 +220,22 @@ public final class DebugGatewayTransport: @unchecked Sendable {
         arguments: [String] = ProcessInfo.processInfo.arguments,
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> String? {
-        // 1. Check environment variables
-        if let env = environment["CATBIRD_RUNTIME_FIXTURE_CONFIG"], !env.isEmpty {
-            return env
-        }
-        if let env = environment["CATMOS_RUNTIME_FIXTURE_CONFIG"], !env.isEmpty {
-            return env
-        }
-
-        // 2. Check launch arguments:
-        //    --catbird-runtime-fixture-config /path/to/config
-        //    --catbird-runtime-fixture-config=/path/to/config
-        //    -CatbirdRuntimeFixtureConfig /path/to/config
-        for (index, arg) in arguments.enumerated() {
-            if arg == "--catbird-runtime-fixture-config" || arg == "-CatbirdRuntimeFixtureConfig" {
-                if index + 1 < arguments.count {
-                    return arguments[index + 1]
-                }
-            } else if arg.hasPrefix("--catbird-runtime-fixture-config=") {
-                return String(arg.dropFirst("--catbird-runtime-fixture-config=".count))
-            }
-        }
-        return nil
+        FixtureLaunch.resolveConfigPath(arguments: arguments, environment: environment)
     }
 
     // MARK: - Private File Reader
 
     public static func readPrivateFile(at path: String) throws -> Data {
-        guard !path.isEmpty else {
-            throw DebugGatewayTransportError.unreadableFile("Path is empty")
+        do {
+            return try FixtureLaunch.readPrivateFile(at: path)
+        } catch let error as FixtureLaunch.FileError {
+            switch error {
+            case let .unreadable(message): throw DebugGatewayTransportError.unreadableFile(message)
+            case let .tooLarge(message): throw DebugGatewayTransportError.fileTooLarge(message)
+            case let .insecurePermissions(message): throw DebugGatewayTransportError.insecureFilePermissions(message)
+            case let .invalidConfiguration(message): throw DebugGatewayTransportError.invalidConfiguration(message)
+            }
         }
-        var statBuf = stat()
-        // Use lstat to verify regular file and reject symlinks
-        guard lstat(path, &statBuf) == 0 else {
-            throw DebugGatewayTransportError.unreadableFile("File not found or stat failed: \(path)")
-        }
-        let fileType = statBuf.st_mode & S_IFMT
-        guard fileType == S_IFREG else {
-            throw DebugGatewayTransportError.unreadableFile("File is not a regular file or is a symlink: \(path)")
-        }
-        guard statBuf.st_size <= 65536 else {
-            throw DebugGatewayTransportError.fileTooLarge("File size \(statBuf.st_size) exceeds 65536 bytes: \(path)")
-        }
-        let permissions = statBuf.st_mode & 0o777
-        guard (permissions & 0o077) == 0 else {
-            throw DebugGatewayTransportError.insecureFilePermissions("Insecure file permissions \(String(permissions, radix: 8)) for: \(path)")
-        }
-
-        guard let file = fopen(path, "rb") else {
-            throw DebugGatewayTransportError.unreadableFile("Cannot open file: \(path)")
-        }
-        defer { fclose(file) }
-
-        var fstatBuf = stat()
-        guard fstat(fileno(file), &fstatBuf) == 0,
-              fstatBuf.st_dev == statBuf.st_dev,
-              fstatBuf.st_ino == statBuf.st_ino,
-              (fstatBuf.st_mode & 0o077) == 0
-        else {
-            throw DebugGatewayTransportError.insecureFilePermissions("File descriptor metadata verification failed: \(path)")
-        }
-
-        let count = Int(statBuf.st_size)
-        if count == 0 {
-            return Data()
-        }
-        let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: count)
-        defer { buffer.deallocate() }
-        let bytesRead = fread(buffer, 1, count, file)
-        guard bytesRead == count else {
-            throw DebugGatewayTransportError.unreadableFile("Partial read: expected \(count), got \(bytesRead)")
-        }
-        return Data(bytes: buffer, count: bytesRead)
     }
 
     // MARK: - Launch Config Loading
@@ -849,12 +793,12 @@ public final class DebugGatewayTransport: @unchecked Sendable {
             kSecAttrService as String: service,
             kSecAttrAccount as String: account
         ]
-        SecItemDelete(query as CFDictionary)
+        _ = KeychainSecItem.delete(query as CFDictionary)
         var attributes = query
         attributes[kSecValueData as String] = data
-        let status = SecItemAdd(attributes as CFDictionary, nil)
+        let status = KeychainSecItem.add(attributes as CFDictionary, nil)
         guard status == errSecSuccess else {
-            throw DebugGatewayTransportError.invalidConfiguration("SecItemAdd failed with status \(status)")
+            throw DebugGatewayTransportError.invalidConfiguration("keychain add failed with status \(status)")
         }
     }
 
@@ -867,10 +811,10 @@ public final class DebugGatewayTransport: @unchecked Sendable {
             kSecMatchLimit as String: kSecMatchLimitOne
         ]
         var item: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        let status = KeychainSecItem.copyMatching(query as CFDictionary, &item)
         if status == errSecItemNotFound { return nil }
         guard status == errSecSuccess, let data = item as? Data else {
-            throw DebugGatewayTransportError.invalidConfiguration("SecItemCopyMatching failed with status \(status)")
+            throw DebugGatewayTransportError.invalidConfiguration("keychain read failed with status \(status)")
         }
         return data
     }
