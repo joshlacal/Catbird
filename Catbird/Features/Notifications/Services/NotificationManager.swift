@@ -1808,31 +1808,62 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   /// For NON-ACTIVE users (account switch scenario), the sync loop is not
   /// running, so we must decrypt here using ephemeral database access.
   /// ═══════════════════════════════════════════════════════════════════════════
-  private func resolveMLSConversationRoute(
+  internal func resolveMLSConversationRoute(
     _ requestedID: String,
-    recipientDID: String
+    recipientDID: String,
+    maxWaitTime: TimeInterval = 10.0
   ) async -> (conversationID: String, groupID: Data)? {
-    do {
-      let models = try await CatbirdMLSCore.MLSGRDBManager.shared.read(for: recipientDID) { db in
-        try CatbirdMLSCore.MLSConversationModel
-          .filter(CatbirdMLSCore.MLSConversationModel.Columns.currentUserDID == recipientDID)
-          .fetchAll(db)
+    let checkInterval: TimeInterval = 0.2
+    var elapsed: TimeInterval = 0
+
+    while elapsed < maxWaitTime {
+      if CatbirdMLSCore.MLSClient.isSuspensionInProgress || CatbirdMLSCore.MLSCoreContext.isSuspensionInProgress {
+        notificationLogger.info("⏳ [MLS Route] Deferring route resolution while MLS suspension gate is active...")
+        do { try await Task.sleep(nanoseconds: UInt64(checkInterval * 1_000_000_000)) } catch {}
+        elapsed += checkInterval
+        continue
       }
-      let records = models.map {
-        MLSConversationIdentityBoundary.Record(
-          conversationID: $0.conversationID,
-          groupID: $0.groupID.hexEncodedString()
-        )
-      }
-      guard let canonicalID = try? MLSConversationIdentityBoundary.resolve(requestedID, in: records),
-            let model = models.first(where: { $0.conversationID == canonicalID }) else {
+
+      do {
+        let models = try await CatbirdMLSCore.MLSGRDBManager.shared.read(for: recipientDID) { db in
+          try CatbirdMLSCore.MLSConversationModel
+            .filter(CatbirdMLSCore.MLSConversationModel.Columns.currentUserDID == recipientDID)
+            .fetchAll(db)
+        }
+        let records = models.map {
+          MLSConversationIdentityBoundary.Record(
+            conversationID: $0.conversationID,
+            groupID: $0.groupID.hexEncodedString()
+          )
+        }
+        guard let canonicalID = try? MLSConversationIdentityBoundary.resolve(requestedID, in: records),
+              let model = models.first(where: { $0.conversationID == canonicalID }) else {
+          return nil
+        }
+        return (canonicalID, model.groupID)
+      } catch let error as MLSSQLCipherError {
+        if case .storageUnavailable(let reason) = error, reason.contains("suspension") {
+          notificationLogger.info("⏳ [MLS Route] Deferring route resolution while storage is suspended (\(reason))...")
+          do { try await Task.sleep(nanoseconds: UInt64(checkInterval * 1_000_000_000)) } catch {}
+          elapsed += checkInterval
+          continue
+        }
+        notificationLogger.warning("Refusing unresolved MLS notification route: \(error.localizedDescription)")
+        return nil
+      } catch {
+        let desc = error.localizedDescription
+        if desc.contains("suspension") || desc.contains("Database open blocked") {
+          notificationLogger.info("⏳ [MLS Route] Deferring route resolution while storage is suspended: \(desc)...")
+          do { try await Task.sleep(nanoseconds: UInt64(checkInterval * 1_000_000_000)) } catch {}
+          elapsed += checkInterval
+          continue
+        }
+        notificationLogger.warning("Refusing unresolved MLS notification route: \(error.localizedDescription)")
         return nil
       }
-      return (canonicalID, model.groupID)
-    } catch {
-      notificationLogger.warning("Refusing unresolved MLS notification route: \(error.localizedDescription)")
-      return nil
     }
+    notificationLogger.warning("Refusing unresolved MLS notification route: timed out after \(maxWaitTime)s waiting for storage resumption")
+    return nil
   }
 
   private func decryptAndPresentMLSNotification(
