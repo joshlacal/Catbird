@@ -49,12 +49,12 @@ struct MacOSChatDetailRouter: View {
         }
       }
     } else if let convoId = selectedConvoId {
-      // A selected MLS route must come from the canonicalized coordinator
-      // snapshot. Never infer a chat type from an arbitrary ID shape.
-      let title = MLSConversationIdentityBoundary.isCanonicalStableID(convoId)
-        ? "Conversation is loading"
-        : "Conversation unavailable"
-      ContentUnavailableView(title, systemImage: "lock.slash")
+      if MLSConversationIdentityBoundary.isCanonicalStableID(convoId) {
+        MacOSMLSConversationView(conversationId: convoId)
+          .id(convoId)
+      } else {
+        ContentUnavailableView("Conversation unavailable", systemImage: "lock.slash")
+      }
     } else {
       EmptyConversationView()
     }
