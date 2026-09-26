@@ -445,7 +445,7 @@ struct MacOSChatContentView: View {
     let userDID = appState.userDID
     guard let snapshot = try? await MLSStorage.shared
       .fetchConversationsWithMembersUsingSmartRouting(currentUserDID: userDID) else {
-      return requestedID
+      return nil
     }
     let records = snapshot.conversations.map {
       MLSConversationIdentityBoundary.Record(
@@ -453,7 +453,7 @@ struct MacOSChatContentView: View {
         groupID: $0.groupID.hexEncodedString()
       )
     }
-    return (try? MLSConversationIdentityBoundary.resolve(requestedID, in: records)) ?? requestedID
+    return try? MLSConversationIdentityBoundary.resolve(requestedID, in: records)
   }
 
   // MARK: - MLS Polling
