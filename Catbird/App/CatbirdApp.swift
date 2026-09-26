@@ -2617,6 +2617,9 @@ private extension CatbirdApp {
     case "decline-conversation":
       await handleDeclineConversation(params: params, manager: manager, logger: e2eLogger)
 
+    case "open-conversation", "open-request":
+      await handleOpenConversation(params: params, manager: manager, logger: e2eLogger)
+
 
     default:
       e2eLogger.warning("[E2E] Unknown command: \(command)")
@@ -2897,6 +2900,33 @@ private extension CatbirdApp {
       await writeE2EResult(command: "decline-conversation", success: false, error: error.localizedDescription)
     }
   }
+
+  private func handleOpenConversation(
+    params: [String: String],
+    manager: AppStateManager,
+    logger e2eLogger: Logger
+  ) async {
+    guard let conversationId = params["conversationId"],
+          MLSConversationIdentityBoundary.isCanonicalStableID(conversationId) else {
+      await writeE2EResult(command: "open-conversation", success: false, error: "Missing or invalid conversationId")
+      return
+    }
+    guard let appState = manager.lifecycle.appState else {
+      await writeE2EResult(command: "open-conversation", success: false, error: "Not authenticated")
+      return
+    }
+    await MainActor.run {
+      appState.chatMode = "Catbird Groups"
+      appState.navigationManager.targetMLSConversationId = conversationId
+      if let tabSelection = appState.navigationManager.tabSelection {
+        tabSelection(4)
+      }
+      appState.navigationManager.updateCurrentTab(4)
+    }
+    e2eLogger.info("[E2E] open-conversation navigated to \(conversationId.prefix(16))...")
+    await writeE2EResult(command: "open-conversation", success: true, data: ["conversationId": conversationId])
+  }
+
 
 
   private func handleDirectRequest(params: [String: String], manager: AppStateManager, inspect: Bool) async {
