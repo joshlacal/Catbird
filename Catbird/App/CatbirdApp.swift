@@ -4547,13 +4547,19 @@ extension CatbirdApp.AppDelegate {
       return
     }
 
-    // Wait for MLS service to be ready (up to 5 seconds)
-    let maxWaitTime: TimeInterval = 5.0
+    // Wait for MLS service to be ready and suspension to clear (up to 10 seconds)
+    let maxWaitTime: TimeInterval = 10.0
     let checkInterval: TimeInterval = 0.2
     var elapsed: TimeInterval = 0
     var shouldWait = true
     
     while shouldWait && elapsed < maxWaitTime {
+      if CatbirdMLSCore.MLSClient.isSuspensionInProgress || CatbirdMLSCore.MLSCoreContext.isSuspensionInProgress {
+        logger.info("⏳ [AppDelegate] Deferring navigation while MLS suspension gate is active...")
+        try? await Task.sleep(nanoseconds: UInt64(checkInterval * 1_000_000_000))
+        elapsed += checkInterval
+        continue
+      }
       let status = appState.mlsServiceState.status
       switch status {
       case .ready:
@@ -4585,26 +4591,68 @@ extension CatbirdApp.AppDelegate {
     logger.info("✅ Navigation to MLS conversation initiated")
   }
 
-  private func resolveMLSConversationRoute(
+  internal func resolveMLSConversationRoute(
     _ requestedID: String,
-    manager: MLSConversationManager
+    manager: MLSConversationManager,
+    maxWaitTime: TimeInterval = 10.0
   ) async -> String? {
     guard let userDID = manager.userDid else { return nil }
-    do {
-      let snapshot = try await manager.storage.fetchConversationsWithMembers(
-        currentUserDID: userDID,
-        database: manager.database
-      )
-      let records = snapshot.conversations.map {
-        MLSConversationIdentityBoundary.Record(
-          conversationID: $0.conversationID,
-          groupID: $0.groupID.hexEncodedString()
-        )
+    return await resolveMLSConversationRoute(requestedID, recipientDID: userDID, maxWaitTime: maxWaitTime)
+  }
+
+  internal func resolveMLSConversationRoute(
+    _ requestedID: String,
+    recipientDID: String,
+    maxWaitTime: TimeInterval = 10.0
+  ) async -> String? {
+    let userDID = recipientDID
+    let checkInterval: TimeInterval = 0.2
+    var elapsed: TimeInterval = 0
+
+    while elapsed < maxWaitTime {
+      if CatbirdMLSCore.MLSClient.isSuspensionInProgress || CatbirdMLSCore.MLSCoreContext.isSuspensionInProgress {
+        logger.info("⏳ [MLS Route] Deferring route resolution while MLS suspension gate is active...")
+        do { try await Task.sleep(nanoseconds: UInt64(checkInterval * 1_000_000_000)) } catch {}
+        elapsed += checkInterval
+        continue
       }
-      return try MLSConversationIdentityBoundary.resolve(requestedID, in: records)
-    } catch {
-      return nil
+
+      do {
+        let models = try await CatbirdMLSCore.MLSGRDBManager.shared.read(for: userDID) { db in
+          try CatbirdMLSCore.MLSConversationModel
+            .filter(CatbirdMLSCore.MLSConversationModel.Columns.currentUserDID == userDID)
+            .fetchAll(db)
+        }
+        let records = models.map {
+          MLSConversationIdentityBoundary.Record(
+            conversationID: $0.conversationID,
+            groupID: $0.groupID.hexEncodedString()
+          )
+        }
+        return try MLSConversationIdentityBoundary.resolve(requestedID, in: records)
+      } catch let error as MLSSQLCipherError {
+        if case .storageUnavailable(let reason) = error, reason.contains("suspension") {
+          logger.info("⏳ [MLS Route] Deferring route resolution while storage is suspended (\(reason))...")
+          do { try await Task.sleep(nanoseconds: UInt64(checkInterval * 1_000_000_000)) } catch {}
+          elapsed += checkInterval
+          continue
+        }
+        logger.warning("Refusing unresolved MLS route: \(error.localizedDescription)")
+        return nil
+      } catch {
+        let desc = error.localizedDescription
+        if desc.contains("suspension") || desc.contains("Database open blocked") || desc.contains("still in progress") || desc.contains("temporarily unavailable") {
+          logger.info("⏳ [MLS Route] Deferring route resolution while storage is suspended: \(desc)...")
+          do { try await Task.sleep(nanoseconds: UInt64(checkInterval * 1_000_000_000)) } catch {}
+          elapsed += checkInterval
+          continue
+        }
+        logger.warning("Refusing unresolved MLS route: \(error.localizedDescription)")
+        return nil
+      }
     }
+    logger.warning("Refusing unresolved MLS route: timed out after \(maxWaitTime)s waiting for storage resumption")
+    return nil
   }
 
   func userNotificationCenter(

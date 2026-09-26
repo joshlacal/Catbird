@@ -103,14 +103,14 @@ struct ChatNotificationRoutingTests {
       "type": "mls_message_request",
       "protocol_version": "2",
       "recipient_account": String(repeating: "a", count: 64),
-      "convo_id": "00000000-0000-0000-0000-000000000001",
-      "message_id": "00000000-0000-0000-0000-000000000002",
-      "request_id": "00000000-0000-0000-0000-000000000003",
-      "event_id": "00000000-0000-0000-0000-000000000004",
+      "convo_id": "00000000-0000-4000-8000-000000000001",
+      "message_id": "00000000-0000-4000-8000-000000000002",
+      "request_id": "00000000-0000-4000-8000-000000000003",
+      "event_id": "00000000-0000-4000-8000-000000000004",
     ]
 
     #expect(NotificationManager.isNavigableMLSNotification(fromUserInfo: valid))
-    #expect(NotificationManager.mlsConversationID(fromUserInfo: valid) == "00000000-0000-0000-0000-000000000001")
+    #expect(NotificationManager.mlsConversationID(fromUserInfo: valid) == "00000000-0000-4000-8000-000000000001")
     #expect(NotificationManager.chatConversationID(fromUserInfo: valid) == nil)
   }
 
@@ -176,10 +176,10 @@ struct ChatNotificationRoutingTests {
 
       let valid: [AnyHashable: Any] = [
         "type": type,
-        "convo_id": "00000000-0000-0000-0000-000000000001",
+        "convo_id": "00000000-0000-4000-8000-000000000001",
       ]
       #expect(NotificationManager.isNavigableMLSNotification(fromUserInfo: valid))
-      #expect(NotificationManager.mlsConversationID(fromUserInfo: valid) == "00000000-0000-0000-0000-000000000001")
+      #expect(NotificationManager.mlsConversationID(fromUserInfo: valid) == "00000000-0000-4000-8000-000000000001")
     }
   }
 
@@ -233,5 +233,57 @@ struct ChatNotificationRoutingTests {
 
     // Cleanup
     try? await manager.deleteDatabase(for: did)
+  }
+
+  // MARK: - F74: AppDelegate Deferred Route Resolution During Suspension
+
+  @Test("AppDelegate.resolveMLSConversationRoute defers resolution while storage is suspended until suspension clears")
+  func appDelegateResolveMLSConversationRouteDefersWhileSuspended() async throws {
+    let did = "did:plc:test-f74-\(UUID().uuidString.lowercased())"
+    let convoId = UUID().uuidString.lowercased()
+    let groupID = Data(repeating: 0x43, count: 32)
+
+    // Seed conversation in GRDB
+    let grdbManager = CatbirdMLSCore.MLSGRDBManager()
+    let pool = try await grdbManager.getDatabasePool(for: did)
+    try await pool.write { db in
+      let model = CatbirdMLSCore.MLSConversationModel(
+        conversationID: convoId,
+        currentUserDID: did,
+        groupID: groupID
+      )
+      try model.insert(db)
+    }
+
+    let delegate = await MainActor.run { CatbirdApp.AppDelegate() }
+
+    // 1. Pre-condition: when NOT suspended, resolveMLSConversationRoute succeeds immediately
+    let initial = await delegate.resolveMLSConversationRoute(convoId, recipientDID: did, maxWaitTime: 1.0)
+    #expect(initial == convoId)
+
+    // 2. F74: Assert global suspension flag to simulate app suspended state
+    CatbirdMLSCore.MLSClient.markSuspensionInProgress(reason: "F74 test")
+    #expect(CatbirdMLSCore.MLSClient.isSuspensionInProgress)
+    #expect(CatbirdMLSCore.MLSCoreContext.isSuspensionInProgress)
+
+    // Launch deferred resolution in a concurrent Task with maxWaitTime 3.0s
+    let resolveTask = Task {
+      await delegate.resolveMLSConversationRoute(convoId, recipientDID: did, maxWaitTime: 3.0)
+    }
+
+    // Wait 0.3s while suspension is active: task must still be running (not returned nil prematurely)
+    try await Task.sleep(nanoseconds: 300_000_000)
+
+    // Clear suspension to simulate app foreground resumption
+    CatbirdMLSCore.MLSClient.clearSuspensionFlag(reason: "F74 test resume")
+    #expect(!CatbirdMLSCore.MLSClient.isSuspensionInProgress)
+    #expect(!CatbirdMLSCore.MLSCoreContext.isSuspensionInProgress)
+
+    // The deferred route resolution must now succeed and return the conversation!
+    let deferred = await resolveTask.value
+    #expect(deferred == convoId)
+
+    // Cleanup
+    try? await grdbManager.deleteDatabase(for: did)
   }
 }

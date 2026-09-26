@@ -34,23 +34,50 @@ struct MLSRequestConversationGate<Ordinary: View>: View {
 
   @MainActor private func refresh() async {
     let account = appState.userDID
-    do {
-      guard MLSConversationIdentityBoundary.isCanonicalStableID(conversationID),
-            let manager = await appState.getMLSConversationManager(),
-            manager.currentUserDID == account else { throw CancellationError() }
-      let classification = try await manager.classifyDirectRequestConversation(conversationId: conversationID)
-      let verified: DirectRequestView?
-      switch classification {
-      case .legacyV1:
-        verified = nil
-      case .verifiedRequest, .requestAwaitingProjection, .unknown:
-        verified = try await manager.refreshRequestPreview(conversationId: conversationID)
+    let maxWaitTime: TimeInterval = 10.0
+    let checkInterval: TimeInterval = 0.2
+    var elapsed: TimeInterval = 0
+
+    while !Task.isCancelled && elapsed < maxWaitTime {
+      if CatbirdMLSCore.MLSClient.isSuspensionInProgress || CatbirdMLSCore.MLSCoreContext.isSuspensionInProgress {
+        do { try await Task.sleep(nanoseconds: UInt64(checkInterval * 1_000_000_000)) } catch { return }
+        elapsed += checkInterval
+        continue
       }
-      guard !Task.isCancelled, appState.userDID == account, appState.mlsConversationManager === manager else { return }
-      request = verified
-      resolved = true
-      error = false
-    } catch is CancellationError { } catch { self.error = true }
+
+      do {
+        guard MLSConversationIdentityBoundary.isCanonicalStableID(conversationID),
+              let manager = await appState.getMLSConversationManager(),
+              manager.currentUserDID == account else { throw CancellationError() }
+        let classification = try await manager.classifyDirectRequestConversation(conversationId: conversationID)
+        let verified: DirectRequestView?
+        switch classification {
+        case .legacyV1:
+          verified = nil
+        case .verifiedRequest, .requestAwaitingProjection, .unknown:
+          verified = try await manager.refreshRequestPreview(conversationId: conversationID)
+        }
+        guard !Task.isCancelled, appState.userDID == account, appState.mlsConversationManager === manager else { return }
+        request = verified
+        resolved = true
+        error = false
+        return
+      } catch is CancellationError {
+        return
+      } catch let err {
+        let desc = err.localizedDescription
+        if desc.contains("suspension") || desc.contains("Database open blocked") || desc.contains("still in progress") || desc.contains("temporarily unavailable") || desc.contains("Connection is closed") || desc.contains("out of memory") {
+          do { try await Task.sleep(nanoseconds: UInt64(checkInterval * 1_000_000_000)) } catch { return }
+          elapsed += checkInterval
+          continue
+        }
+        self.error = true
+        return
+      }
+    }
+    if !Task.isCancelled && !resolved {
+      self.error = true
+    }
   }
 }
 
