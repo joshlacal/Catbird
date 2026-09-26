@@ -124,7 +124,7 @@ import SwiftUI
           ForEach(quickReactions, id: \.self) { emoji in
             Button {
               let isReacted = reactions.contains {
-                $0.reaction == emoji && $0.senderDID == currentUserDID
+                $0.reaction == emoji && MLSCredentialBinding.isSameAccount($0.senderDID, as: currentUserDID)
               }
               if isReacted {
                 onRemoveReaction(message.id, emoji)
@@ -133,7 +133,7 @@ import SwiftUI
               }
             } label: {
               let isReacted = reactions.contains {
-                $0.reaction == emoji && $0.senderDID == currentUserDID
+                $0.reaction == emoji && MLSCredentialBinding.isSameAccount($0.senderDID, as: currentUserDID)
               }
               Text("\(emoji) \(isReacted ? "Remove" : "React")")
             }

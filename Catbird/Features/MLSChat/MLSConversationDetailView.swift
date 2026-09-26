@@ -781,7 +781,9 @@ import SwiftUI
                     // Optimistic local update
                     await MainActor.run {
                         if var reactions = messageReactionsMap[messageId] {
-                            reactions.removeAll { $0.reaction == emoji && $0.senderDID == appState.userDID }
+                            reactions.removeAll {
+                                $0.reaction == emoji && MLSCredentialBinding.isSameAccount($0.senderDID, as: appState.userDID)
+                            }
                             if reactions.isEmpty {
                                 messageReactionsMap.removeValue(forKey: messageId)
                             } else {
@@ -4271,35 +4273,15 @@ import SwiftUI
             }
         }
 
+        /// Own messages include those sent from this account's sibling devices, whose sender
+        /// identity is `did#deviceId`; compare DID roots like the core's `is_own`.
         private func isMessageFromCurrentUser(senderDID: String) -> Bool {
-            logger.debug("🔍 MLS_OWNERSHIP: Checking message ownership")
-            logger.debug("🔍 MLS_OWNERSHIP: Sender DID raw = '\(senderDID)'")
-
             // Use auth state DID as source of truth (currentUserDID may not be set yet)
-            let currentUserDID = appState.userDID ?? AppStateManager.shared.authentication.state.userDID
-            logger.debug("🔍 MLS_OWNERSHIP: Current DID raw = '\(currentUserDID ?? "NIL")'")
-
-            guard let currentUserDID = currentUserDID else {
-                logger.warning("🔍 MLS_OWNERSHIP: ❌ currentUserDID is nil, returning false")
+            guard let currentUserDID = appState.userDID ?? AppStateManager.shared.authentication.state.userDID else {
+                logger.warning("MLS_OWNERSHIP: current user DID unavailable; treating sender as another user")
                 return false
             }
-
-            // Normalize DIDs for comparison (trim whitespace, case-insensitive)
-            let normalizedSender = senderDID.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
-                .lowercased()
-            let normalizedCurrent = currentUserDID.trimmingCharacters(
-                in: CharacterSet.whitespacesAndNewlines
-            ).lowercased()
-
-            logger.debug("🔍 MLS_OWNERSHIP: Sender DID normalized = '\(normalizedSender)'")
-            logger.debug("🔍 MLS_OWNERSHIP: Current DID normalized = '\(normalizedCurrent)'")
-
-            let isMatch = normalizedSender == normalizedCurrent
-            logger.info(
-                "🔍 MLS_OWNERSHIP: \(isMatch ? "✅ MATCH" : "❌ NO MATCH") - isCurrentUser = \(isMatch)"
-            )
-
-            return isMatch
+            return MLSCredentialBinding.isSameAccount(senderDID, as: currentUserDID)
         }
 
         private func chatIdentity(

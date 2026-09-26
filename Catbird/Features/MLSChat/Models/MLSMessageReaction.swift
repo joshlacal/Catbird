@@ -53,7 +53,7 @@ extension Array where Element == MLSMessageReaction {
                 reaction: emoji,
                 count: reactions.count,
                 reactors: reactions.map { $0.senderDID },
-                isReactedByCurrentUser: reactions.contains { $0.senderDID == currentUserDID }
+                isReactedByCurrentUser: reactions.contains { MLSCredentialBinding.isSameAccount($0.senderDID, as: currentUserDID) }
             )
         }
         .sorted { $0.count > $1.count }

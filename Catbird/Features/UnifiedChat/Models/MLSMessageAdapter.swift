@@ -401,7 +401,7 @@ struct MLSMessageAdapter: UnifiedChatMessage {
   }
 
   var isFromCurrentUser: Bool {
-    metadata.senderDID == currentUserDID
+    MLSCredentialBinding.isSameAccount(metadata.senderDID, as: currentUserDID)
   }
 
   var reactions: [UnifiedReaction] {
@@ -410,7 +410,7 @@ struct MLSMessageAdapter: UnifiedChatMessage {
         messageID: metadata.id,
         emoji: reaction.reaction,
         senderDID: reaction.senderDID,
-        isFromCurrentUser: reaction.senderDID == currentUserDID,
+        isFromCurrentUser: MLSCredentialBinding.isSameAccount(reaction.senderDID, as: currentUserDID),
         reactedAt: reaction.reactedAt
       )
     }

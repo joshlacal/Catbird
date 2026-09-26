@@ -1623,7 +1623,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
       do {
         let currentReactions = localReactions[messageID] ?? []
         let hasReaction = currentReactions.contains {
-          $0.reaction == emoji && $0.senderDID == currentUserDID
+          $0.reaction == emoji && MLSCredentialBinding.isSameAccount($0.senderDID, as: currentUserDID)
         }
 
         if hasReaction {
@@ -1633,7 +1633,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
             reaction: emoji
           )
           let updated = currentReactions.filter {
-            !($0.reaction == emoji && $0.senderDID == currentUserDID)
+            !($0.reaction == emoji && MLSCredentialBinding.isSameAccount($0.senderDID, as: currentUserDID))
           }
           if updated.isEmpty {
             localReactions.removeValue(forKey: messageID)
@@ -1708,7 +1708,7 @@ final class MLSConversationDataSource: UnifiedChatDataSource {
 
         // Only add if not already reacted with this emoji
         let hasReaction = currentReactions.contains {
-          $0.reaction == emoji && $0.senderDID == currentUserDID
+          $0.reaction == emoji && MLSCredentialBinding.isSameAccount($0.senderDID, as: currentUserDID)
         }
 
         guard !hasReaction else {
