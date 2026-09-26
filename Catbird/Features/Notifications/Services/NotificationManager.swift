@@ -3503,7 +3503,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         return
       }
 
-      Task {
+      Task { @MainActor in
         // Switch to correct account if needed
         await ensureActiveAccount(for: recipientDid)
 
@@ -3511,9 +3511,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         guard case .authenticated(let state) = AppStateManager.shared.lifecycle,
               state.userDID == recipientDid else {
           notificationLogger.warning("MLS notification rejected: active account does not match notification recipient")
-          await MainActor.run {
-            completionHandler()
-          }
+          completionHandler()
           return
         }
 
@@ -3524,9 +3522,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         await handleMLSNotificationNavigation(convoId)
         #endif
 
-        await MainActor.run {
-          completionHandler()
-        }
+        completionHandler()
       }
       return
     }
