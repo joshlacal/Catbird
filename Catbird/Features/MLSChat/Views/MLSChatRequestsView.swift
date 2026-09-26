@@ -106,7 +106,12 @@ struct MLSChatRequestsView: View {
             }
             ForEach(encryptedRequests, id: \.conversationId) { request in
               NavigationLink {
-                MLSRequestConversationGate(conversationID: request.conversationId) {
+                MLSRequestConversationGate(conversationID: request.conversationId, onAccepted: { convoID in
+                  if let onAcceptedConversation {
+                    Task { await onAcceptedConversation(convoID) }
+                  }
+                  dismiss()
+                }) {
                   #if os(iOS)
                   MLSOrdinaryConversationDetailView(conversationId: request.conversationId)
                   #elseif os(macOS)

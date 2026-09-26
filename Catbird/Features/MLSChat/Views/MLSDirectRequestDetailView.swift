@@ -6,6 +6,7 @@ import SwiftUI
 struct MLSRequestConversationGate<Ordinary: View>: View {
   @Environment(AppState.self) private var appState
   let conversationID: String
+  var onAccepted: ((String) -> Void)? = nil
   @ViewBuilder let ordinary: () -> Ordinary
   @State private var request: DirectRequestView?
   @State private var resolved = false
@@ -14,7 +15,7 @@ struct MLSRequestConversationGate<Ordinary: View>: View {
   var body: some View {
     Group {
       if let request, request.consent != .accepted || !request.capabilities.canSend {
-        MLSDirectRequestDetailView(request: request) { self.request = $0 }
+        MLSDirectRequestDetailView(request: request, onAccepted: onAccepted) { self.request = $0 }
       } else if resolved {
         ordinary()
       } else if error {
@@ -83,7 +84,9 @@ struct MLSRequestConversationGate<Ordinary: View>: View {
 
 struct MLSDirectRequestDetailView: View {
   @Environment(AppState.self) private var appState
+  @Environment(\.dismiss) private var dismiss
   let request: DirectRequestView
+  var onAccepted: ((String) -> Void)? = nil
   let onChange: (DirectRequestView) -> Void
   @State private var busy = false
   @State private var error: String?
@@ -157,7 +160,13 @@ struct MLSDirectRequestDetailView: View {
       case .accept:
         guard request.consent == .incomingPending && request.capabilities.canAccept else { return }
         try await manager.acceptConversationRequest(convoId: request.conversationId)
-      case .decline:
+        appState.stateInvalidationBus.notify(.mlsConversationListChanged)
+        if let onAccepted {
+          await MainActor.run {
+            onAccepted(request.conversationId)
+            dismiss()
+          }
+        }
         guard request.capabilities.canClose else { return }
         try await manager.declineConversationRequest(convoId: request.conversationId)
       case .block:
