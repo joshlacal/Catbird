@@ -1,7 +1,8 @@
 @testable import Catbird
+import CatbirdMLSCore
 import Foundation
+import GRDB
 import Testing
-
 /// Tap-routing payload parsing for chat notifications (`NotificationManager.chatConversationID`).
 /// Covers the two real chat payload shapes (NSE `chat_message` push and local polling
 /// notification) plus the guard preserving the generic `uri`/`did` routing path.
@@ -180,5 +181,57 @@ struct ChatNotificationRoutingTests {
       #expect(NotificationManager.isNavigableMLSNotification(fromUserInfo: valid))
       #expect(NotificationManager.mlsConversationID(fromUserInfo: valid) == "00000000-0000-0000-0000-000000000001")
     }
+  }
+
+  // MARK: - F69: Deferred Route Resolution During Suspension
+
+  @Test("resolveMLSConversationRoute defers resolution while storage is suspended until suspension clears")
+  func resolveMLSConversationRouteDefersWhileSuspended() async throws {
+    let did = "did:plc:test-f69-\(UUID().uuidString.lowercased())"
+    let convoId = UUID().uuidString.lowercased()
+    let groupID = Data(repeating: 0x42, count: 32)
+
+    // Seed conversation in GRDB
+    let manager = CatbirdMLSCore.MLSGRDBManager()
+    let pool = try await manager.getDatabasePool(for: did)
+    try await pool.write { db in
+      let model = CatbirdMLSCore.MLSConversationModel(
+        conversationID: convoId,
+        currentUserDID: did,
+        groupID: groupID
+      )
+      try model.insert(db)
+    }
+
+    let notifManager = NotificationManager()
+
+    // 1. Pre-condition: when NOT suspended, resolveMLSConversationRoute succeeds immediately
+    let initial = await notifManager.resolveMLSConversationRoute(convoId, recipientDID: did, maxWaitTime: 1.0)
+    #expect(initial?.conversationID == convoId)
+    #expect(initial?.groupID == groupID)
+
+    // 2. F69: Assert global suspension flag to simulate app suspended state
+    CatbirdMLSCore.MLSClient.markSuspensionInProgress(reason: "F69 test")
+    #expect(CatbirdMLSCore.MLSClient.isSuspensionInProgress)
+
+    // Launch deferred resolution in a concurrent Task with maxWaitTime 3.0s
+    let resolveTask = Task {
+      await notifManager.resolveMLSConversationRoute(convoId, recipientDID: did, maxWaitTime: 3.0)
+    }
+
+    // Wait 0.3s while suspension is active: task must still be running (not returned nil prematurely)
+    try await Task.sleep(nanoseconds: 300_000_000)
+
+    // Clear suspension to simulate app foreground resumption
+    CatbirdMLSCore.MLSClient.clearSuspensionFlag(reason: "F69 test resume")
+    #expect(!CatbirdMLSCore.MLSClient.isSuspensionInProgress)
+
+    // The deferred route resolution must now succeed and return the conversation!
+    let deferred = await resolveTask.value
+    #expect(deferred?.conversationID == convoId)
+    #expect(deferred?.groupID == groupID)
+
+    // Cleanup
+    try? await manager.deleteDatabase(for: did)
   }
 }
