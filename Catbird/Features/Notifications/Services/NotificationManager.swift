@@ -3937,15 +3937,6 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
       return
     }
 
-    guard let resolved = await resolveMLSConversationRoute(
-      convoId,
-      recipientDID: currentAppState.userDID
-    ) else {
-      notificationLogger.warning("Refusing MLS notification navigation for unresolved route")
-      return
-    }
-    let canonicalConvoID = resolved.conversationID
-
     // Wait for MLS service to be ready (up to 10 seconds) after potential account switch
     // Increased timeout because account switching involves database setup
     let maxWaitTime: TimeInterval = 10.0
@@ -3980,6 +3971,34 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         "MLS service did not become ready within \(maxWaitTime)s, proceeding with navigation anyway"
       )
     }
+
+    var resolved = await resolveMLSConversationRoute(convoId, recipientDID: currentAppState.userDID)
+    if resolved == nil,
+      let manager = await currentAppState.getMLSConversationManager(timeout: 10)
+    {
+      let deadline = ContinuousClock().now.advanced(by: .seconds(10))
+      while true {
+        do {
+          try await manager.syncWithServerFresh()
+          break
+        } catch MLSConversationError.operationFailed(let reason)
+          where reason == "Rust orchestrator runtime unavailable for syncWithServer"
+            && ContinuousClock().now < deadline
+        {
+          // Foreground resume can release the suspension gate before its Rust runtime is restored.
+          do { try await Task.sleep(for: .milliseconds(200)) } catch { return }
+        } catch {
+          notificationLogger.warning("MLS notification sync before route resolution failed: \(error.localizedDescription)")
+          break
+        }
+      }
+      resolved = await resolveMLSConversationRoute(convoId, recipientDID: currentAppState.userDID)
+    }
+    guard let resolved else {
+      notificationLogger.warning("Refusing MLS notification navigation for unresolved route")
+      return
+    }
+    let canonicalConvoID = resolved.conversationID
 
     await MainActor.run {
       currentAppState.navigateToMLSConversation(canonicalConvoID)
