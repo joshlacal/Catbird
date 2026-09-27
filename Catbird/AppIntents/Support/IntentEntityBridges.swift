@@ -28,7 +28,7 @@ enum IntentEntityBridges {
   }
 }
 
-#if !compiler(>=7.0)
+#if !compiler(>=6.4)
 import AppIntents
 
 @available(anyAppleOS 27.0, *)

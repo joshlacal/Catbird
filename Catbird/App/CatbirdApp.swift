@@ -4238,9 +4238,16 @@ private extension CatbirdApp {
   private func writeE2EResult(command: String, success: Bool, error: String? = nil, data: [String: String]? = nil) async {
     let e2eLogger = Logger(subsystem: "blue.catbird.e2e", category: "Results")
     
-    // Write to app container where harness can read via simctl
-    // Using "group.blue.catbird.shared" - the actual app group identifier
-    guard let containerURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.blue.catbird.shared") else {
+    // Debug runtime fixtures write results beside their isolated MLS profile, never into the user's App Group.
+    #if DEBUG && os(macOS)
+    let fixtureContainer = DebugGatewayTransport.shared.activeConfig.map {
+      URL(fileURLWithPath: $0.profilePath, isDirectory: true)
+    }
+    #else
+    let fixtureContainer: URL? = nil
+    #endif
+    guard let containerURL = fixtureContainer
+      ?? FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.blue.catbird.shared") else {
       e2eLogger.error("[E2E] Cannot access app group container")
       return
     }

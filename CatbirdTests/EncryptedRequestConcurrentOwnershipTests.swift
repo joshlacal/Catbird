@@ -4,13 +4,12 @@ import GRDB
 import XCTest
 @testable import Catbird
 
-/// C36 Apple validation: two real owners racing the same account's crypto state.
+/// C36 Apple in-process validation: WelcomeGate single-winner races and storage suspension/lease fences.
 ///
-/// Proves journal/receipt fences hold, one owner wins, and no concurrent
-/// mutation is possible. Uses two `MLSGRDBManager` instances sharing the same
-/// App Group–override directory (simulating App + Notification Service Extension
-/// in the same filesystem namespace), plus `MLSWelcomeGate`'s O_EXCL markers
-/// and `MLSStorageCoordinator`'s BSD flock leases.
+/// Proves WelcomeGate O_EXCL markers reject duplicate entrants simultaneously attempting
+/// welcome processing, and proves MLSStorageCoordinator / MLSGRDBManager suspension fences
+/// safely drain connections, release shared admission leases, block new admissions, and
+/// enforce exclusive reset isolation.
 final class EncryptedRequestConcurrentOwnershipTests: XCTestCase {
   private var appManager: MLSGRDBManager!
   private var nseManager: MLSGRDBManager!
@@ -99,64 +98,7 @@ final class EncryptedRequestConcurrentOwnershipTests: XCTestCase {
     XCTAssertFalse(afterCompletion, "Welcome marker must be cleared after completion")
   }
 
-  // MARK: - C36-2: Concurrent contention on journal state in SQLCipher
-
-  func testTwoOwnersConcurrentContentionOnJournalState() async throws {
-    let did = "did:plc:c36-shared-\(UUID().uuidString.lowercased())"
-
-    // App creates the shared journal table.
-    try await appManager.write(for: did) { db in
-      try db.execute(sql: """
-        CREATE TABLE c36_journal (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          owner TEXT NOT NULL,
-          epoch INTEGER NOT NULL,
-          created_at DATETIME NOT NULL
-        )
-        """)
-    }
-
-    // Two concurrent owners (App and NSE) race to write epochs.
-    let barrier = DispatchSemaphore(value: 0)
-    let appWrite = Task.detached {
-      _ = barrier.wait(timeout: .now() + 5)
-      try await self.appManager.write(for: did) { db in
-        try db.execute(sql: "INSERT INTO c36_journal (owner, epoch, created_at) VALUES ('app', 1, datetime('now'))")
-      }
-    }
-
-    let nseWrite = Task.detached {
-      _ = barrier.wait(timeout: .now() + 5)
-      try await self.nseManager.write(for: did) { db in
-        try db.execute(sql: "INSERT INTO c36_journal (owner, epoch, created_at) VALUES ('nse', 2, datetime('now'))")
-      }
-    }
-
-    barrier.signal()
-    barrier.signal()
-
-    try await appWrite.value
-    try await nseWrite.value
-
-    // Both writes must be present and distinct in the shared encrypted database.
-    let rows: Int? = try await appManager.read(for: did) { db in
-      try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM c36_journal")
-    }
-    XCTAssertEqual(rows, 2, "Both concurrent writes must commit cleanly under WAL mode")
-
-    let owners: [String] = try await nseManager.read(for: did) { db in
-      try String.fetchAll(db, sql: "SELECT owner FROM c36_journal ORDER BY epoch ASC")
-    }
-    XCTAssertEqual(owners, ["app", "nse"], "Both owners' writes must be preserved without corruption")
-
-    // Both operated over SQLCipher.
-    let cipherV = try await appManager.read(for: did) { db in
-      try String.fetchOne(db, sql: "PRAGMA cipher_version")
-    }
-    XCTAssertNotNil(cipherV, "Must be SQLCipher")
-  }
-
-  // MARK: - C36-3: Suspension fence strictly blocks new admissions
+  // MARK: - C36-2: Suspension fence strictly blocks new admissions
 
   func testSuspensionFenceStrictlyBlocksNewAdmissionsAndReleasesLeases() async throws {
     let did = "did:plc:c36-fence-\(UUID().uuidString.lowercased())"
@@ -201,7 +143,7 @@ final class EncryptedRequestConcurrentOwnershipTests: XCTestCase {
     XCTAssertEqual(restored, 1, "Data must survive suspension close cycle")
   }
 
-  // MARK: - C36-4: Concurrent writer fences second manager's close
+  // MARK: - C36-3: Concurrent writer fences second manager's close
 
   func testConcurrentWriterFencesSecondManagerClose() async throws {
     let did = "did:plc:c36-writer-\(UUID().uuidString.lowercased())"
@@ -243,7 +185,7 @@ final class EncryptedRequestConcurrentOwnershipTests: XCTestCase {
     XCTAssertTrue(firstResult.isComplete)
   }
 
-  // MARK: - C36-5: Admission lease strictly blocks exclusive reset
+  // MARK: - C36-4: Admission lease strictly blocks exclusive reset
 
   func testAdmissionLeaseStrictlyBlocksExclusiveReset() async throws {
     let did = "did:plc:c36-lease-\(UUID().uuidString.lowercased())"

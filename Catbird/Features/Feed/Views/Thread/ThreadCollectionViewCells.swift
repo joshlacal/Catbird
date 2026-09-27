@@ -44,7 +44,7 @@ final class ParentPostCell: UICollectionViewCell {
     // UIHostingConfiguration content aren't collected by the system.
     // Only annotate if the id is a real at-uri; synthetic ids (e.g. from
     // .unexpected thread items) can't be resolved and would cause ATProtocolError.
-#if compiler(>=7.0)
+#if compiler(>=6.4)
     if #available(iOS 26.0, *),
       let entityURI = AppEntityAnnotationIdentifiers.postURI(parentPost.id) {
       appEntityIdentifier = EntityIdentifier(for: PostEntity.self, identifier: entityURI)
@@ -82,7 +82,7 @@ final class ParentPostCell: UICollectionViewCell {
 
   override func prepareForReuse() {
     super.prepareForReuse()
-#if compiler(>=7.0)
+#if compiler(>=6.4)
     if #available(anyAppleOS 26.0, *) {
       appEntityIdentifier = nil
     }
@@ -133,7 +133,7 @@ final class MainPostCell: UICollectionViewCell {
   ) {
     let postIdentity = post.uri.uriString()
 
-#if compiler(>=7.0)
+#if compiler(>=6.4)
     if #available(anyAppleOS 26.0, *),
       let entityURI = AppEntityAnnotationIdentifiers.postURI(postIdentity) {
       appEntityIdentifier = EntityIdentifier(for: PostEntity.self, identifier: entityURI)
@@ -189,7 +189,7 @@ final class MainPostCell: UICollectionViewCell {
 
   override func prepareForReuse() {
     super.prepareForReuse()
-#if compiler(>=7.0)
+#if compiler(>=6.4)
     if #available(anyAppleOS 26.0, *) {
       appEntityIdentifier = nil
     }
@@ -304,7 +304,7 @@ final class ReplyCell: UICollectionViewCell {
     path: Binding<NavigationPath>,
     visibilityContext: PostVisibilityContext = .public
   ) {
-#if compiler(>=7.0)
+#if compiler(>=6.4)
     if #available(anyAppleOS 26.0, *),
       let entityURI = AppEntityAnnotationIdentifiers.postURI(replyWrapper.id) {
       appEntityIdentifier = EntityIdentifier(for: PostEntity.self, identifier: entityURI)
@@ -347,7 +347,7 @@ final class ReplyCell: UICollectionViewCell {
 
   override func prepareForReuse() {
     super.prepareForReuse()
-#if compiler(>=7.0)
+#if compiler(>=6.4)
     if #available(anyAppleOS 26.0, *) {
       appEntityIdentifier = nil
     }
