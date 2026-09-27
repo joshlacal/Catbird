@@ -392,7 +392,9 @@ struct FeedsStartPage: View {
   private var defaultFeedReorderTarget: some View {
     if let defaultFeed {
       ForEach([defaultFeed], id: \.self) { _ in
-        bigDefaultFeedButton
+        // iOS 27 SwiftUI traps on drag lift ("Unexpected identifier type") when a
+        // reorderable item's root is conditional content; ZStack pins a single root.
+        ZStack { bigDefaultFeedButton }
       }
       .feedReorderable(collectionID: "default")
     } else {
@@ -657,13 +659,13 @@ struct FeedsStartPage: View {
       spacing: gridSpacing
     ) {
       ForEach(displayFeeds(feeds, category: category), id: \.self) { feed in
-        if SystemFeedTypes.isTimelineFeed(feed) {
-          // Special handling for Timeline feed
-          timelineFeedLink(feedURI: feed, category: category)
-
-        } else if let uri = try? ATProtocolURI(uriString: feed) {
-          feedLink(for: uri, feedURI: feed, category: category)
-
+        // Single non-conditional root per reorderable item; see defaultFeedReorderTarget.
+        ZStack {
+          if SystemFeedTypes.isTimelineFeed(feed) {
+            timelineFeedLink(feedURI: feed, category: category)
+          } else if let uri = try? ATProtocolURI(uriString: feed) {
+            feedLink(for: uri, feedURI: feed, category: category)
+          }
         }
       }
       .feedReorderable(collectionID: category)
@@ -678,33 +680,36 @@ struct FeedsStartPage: View {
   private func listSection(for feeds: [String], category: String) -> some View {
     VStack(spacing: 4) {
       ForEach(displayFeeds(feeds, category: category), id: \.self) { feed in
-        if SystemFeedTypes.isTimelineFeed(feed) {
-          listRow(
-            feedURI: feed,
-            category: category,
-            title: "Timeline",
-            iconView: AnyView(timelineListIcon())
-          )
-        } else if let uri = try? ATProtocolURI(uriString: feed) {
-          let title: String = {
-            if uri.uriString().contains("/app.bsky.graph.list/") {
-              return viewModel.listDetails[uri]?.name ?? viewModel.extractTitle(from: uri)
-            }
-            return viewModel.feedGenerators[uri]?.displayName ?? viewModel.extractTitle(from: uri)
-          }()
-          let subtitle: String? = {
-            if uri.uriString().contains("/app.bsky.graph.list/") {
-              return viewModel.listDetails[uri]?.description
-            }
-            return viewModel.feedGenerators[uri]?.description
-          }()
-          listRow(
-            feedURI: feed,
-            category: category,
-            title: title,
-            subtitle: subtitle,
-            iconView: AnyView(feedListIcon(for: uri))
-          )
+        // Single non-conditional root per reorderable item; see defaultFeedReorderTarget.
+        ZStack {
+          if SystemFeedTypes.isTimelineFeed(feed) {
+            listRow(
+              feedURI: feed,
+              category: category,
+              title: "Timeline",
+              iconView: AnyView(timelineListIcon())
+            )
+          } else if let uri = try? ATProtocolURI(uriString: feed) {
+            let title: String = {
+              if uri.uriString().contains("/app.bsky.graph.list/") {
+                return viewModel.listDetails[uri]?.name ?? viewModel.extractTitle(from: uri)
+              }
+              return viewModel.feedGenerators[uri]?.displayName ?? viewModel.extractTitle(from: uri)
+            }()
+            let subtitle: String? = {
+              if uri.uriString().contains("/app.bsky.graph.list/") {
+                return viewModel.listDetails[uri]?.description
+              }
+              return viewModel.feedGenerators[uri]?.description
+            }()
+            listRow(
+              feedURI: feed,
+              category: category,
+              title: title,
+              subtitle: subtitle,
+              iconView: AnyView(feedListIcon(for: uri))
+            )
+          }
         }
       }
       .feedReorderable(collectionID: category)
