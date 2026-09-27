@@ -1842,7 +1842,8 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         }
         return (canonicalID, model.groupID)
       } catch let error as MLSSQLCipherError {
-        if case .storageUnavailable(let reason) = error, reason.contains("suspension") {
+        if case .storageUnavailable(let reason) = error,
+           reason.contains("suspension") || reason.contains("Database open blocked") || reason.contains("resume") || reason.contains("temporarily unavailable") {
           notificationLogger.info("⏳ [MLS Route] Deferring route resolution while storage is suspended (\(reason))...")
           do { try await Task.sleep(nanoseconds: UInt64(checkInterval * 1_000_000_000)) } catch {}
           elapsed += checkInterval
@@ -1852,7 +1853,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         return nil
       } catch {
         let desc = error.localizedDescription
-        if desc.contains("suspension") || desc.contains("Database open blocked") {
+        if desc.contains("suspension") || desc.contains("Database open blocked") || desc.contains("resume") || desc.contains("temporarily unavailable") {
           notificationLogger.info("⏳ [MLS Route] Deferring route resolution while storage is suspended: \(desc)...")
           do { try await Task.sleep(nanoseconds: UInt64(checkInterval * 1_000_000_000)) } catch {}
           elapsed += checkInterval
@@ -3982,10 +3983,15 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
           try await manager.syncWithServerFresh()
           break
         } catch MLSConversationError.operationFailed(let reason)
-          where reason == "Rust orchestrator runtime unavailable for syncWithServer"
+          where (reason == "Rust orchestrator runtime unavailable for syncWithServer"
+                 || reason.contains("suspension") || reason.contains("resume"))
             && ContinuousClock().now < deadline
         {
           // Foreground resume can release the suspension gate before its Rust runtime is restored.
+          do { try await Task.sleep(for: .milliseconds(200)) } catch { return }
+        } catch let error as MLSSQLCipherError
+          where ContinuousClock().now < deadline {
+          // Storage might still be completing foreground preparation.
           do { try await Task.sleep(for: .milliseconds(200)) } catch { return }
         } catch {
           notificationLogger.warning("MLS notification sync before route resolution failed: \(error.localizedDescription)")
