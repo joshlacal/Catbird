@@ -1138,18 +1138,10 @@ struct FeedsStartPage: View {
     }
   }
 
-  private var feedSearchPlacement: SearchFieldPlacement {
-    #if os(iOS)
-    .toolbarPrincipal
-    #else
-    .automatic
-    #endif
-  }
-
   // MARK: - Body
   var body: some View {
     mainContent
-    .searchable(text: $searchText, isPresented: $isSearchBarVisible, placement: feedSearchPlacement, prompt: "Search your feeds")
+    .modifier(FeedSearchPlacementModifier(text: $searchText, isPresented: $isSearchBarVisible))
     .task(id: searchText) {
       await updateFilteredFeeds()
     }
@@ -1389,23 +1381,6 @@ struct FeedsStartPage: View {
         Spacer()
 
         HStack(spacing: 12) {
-            // Search feeds button
-            Button {
-                withAnimation(.easeInOut(duration: 0.3)) {
-                    isSearchBarVisible.toggle()
-                }
-            } label: {
-                hitTarget44(
-                  Image(systemName: isSearchBarVisible ? "xmark" : "magnifyingglass")
-                    .appFont(size: 16)
-                    .foregroundStyle(Color.accentColor)
-                )
-                .modifier(LaunchpadGlassCircle(isEnabled: inSideDrawer))
-            }
-            .tint(.accentColor.opacity(0.8))
-            .accessibilityLabel(isSearchBarVisible ? "Hide Search" : "Search Feeds")
-            .accessibilityAddTraits(.isButton)
-
             // Layout-mode toggle (grid <-> list). Persisted via @AppStorage.
             Button {
                 #if os(iOS)
@@ -1895,6 +1870,36 @@ private extension View {
       currentFeedName: .constant("Following"),
       isDrawerOpen: .constant(false)
     )
+  }
+}
+
+/// Places feed search in the drawer's bottom toolbar on iOS 26+, collapsed to a
+/// glass magnifier beside the other toolbar items until tapped. Earlier iOS keeps
+/// an always-visible field under the navigation bar.
+private struct FeedSearchPlacementModifier: ViewModifier {
+  @Binding var text: String
+  @Binding var isPresented: Bool
+
+  private let prompt: LocalizedStringKey = "Search your feeds"
+
+  func body(content: Content) -> some View {
+    #if os(iOS)
+    if #available(iOS 26.0, *) {
+      content
+        .searchable(text: $text, isPresented: $isPresented, placement: .toolbar, prompt: prompt)
+        .searchToolbarBehavior(.minimize)
+    } else {
+      content
+        .searchable(
+          text: $text,
+          isPresented: $isPresented,
+          placement: .navigationBarDrawer(displayMode: .always),
+          prompt: prompt
+        )
+    }
+    #else
+    content.searchable(text: $text, isPresented: $isPresented, placement: .automatic, prompt: prompt)
+    #endif
   }
 }
 
