@@ -195,7 +195,12 @@ var id: String {
       await setupPost()
     }
     .onChange(of: post) { _, newPost in
-      postState.currentPost = newPost
+      // Route through the shadow instead of assigning the raw payload: a page
+      // fetched before the AppView indexed a like/repost would otherwise revert
+      // the optimistic state when the feed re-supplies the cell on reappear.
+      Task { @MainActor in
+        postState.currentPost = await appState.postShadowManager.mergeShadow(post: newPost)
+      }
       if viewModel.postId != newPost.uri.uriString() || viewModel.postCid != newPost.cid {
         viewModel = PostViewModel(post: newPost, appState: appState, visibilityContext: visibilityContext)
       }
