@@ -21,9 +21,12 @@ struct ThreadReplyLayoutTests {
     #expect(ThreadReplyPresentationMetrics.avatarScale(forDepth: 8, isEnabled: false) == .regular)
 
     #expect(ThreadReplyPresentationMetrics.leadingIndent(forDepth: 1, isEnabled: true) == 0)
-    #expect(ThreadReplyPresentationMetrics.leadingIndent(forDepth: 2, isEnabled: true) == 12)
-    #expect(ThreadReplyPresentationMetrics.leadingIndent(forDepth: 3, isEnabled: true) == 24)
-    #expect(ThreadReplyPresentationMetrics.leadingIndent(forDepth: 8, isEnabled: true) == 24)
+    // Indentation visibly increases per level up to the depth ceiling.
+    #expect(ThreadReplyPresentationMetrics.leadingIndent(forDepth: 2, isEnabled: true) == 18)
+    #expect(ThreadReplyPresentationMetrics.leadingIndent(forDepth: 3, isEnabled: true) == 36)
+    #expect(ThreadReplyPresentationMetrics.leadingIndent(forDepth: 4, isEnabled: true) == 54)
+    #expect(ThreadReplyPresentationMetrics.leadingIndent(forDepth: 5, isEnabled: true) == 72)
+    #expect(ThreadReplyPresentationMetrics.leadingIndent(forDepth: 8, isEnabled: true) == 72)
     #expect(ThreadReplyPresentationMetrics.leadingIndent(forDepth: 8, isEnabled: false) == 0)
   }
 
@@ -223,5 +226,37 @@ struct ThreadReplyLayoutTests {
     // Verify prepareForReuse clears configuration
     cell.prepareForReuse()
     #expect(cell.contentConfiguration == nil)
+  }
+  @Test("Flat mode follows one continuation chain and collapses other branches into the root count")
+  func flatModeFollowsContinuationChain() {
+    let layout = ThreadReplyLayoutBuilder.build(
+      rootID: "root",
+      nestedItems: [
+        .init(id: "a", parentID: "root", hasUnloadedReplies: false, depth: 2),
+        .init(id: "b", parentID: "a", hasUnloadedReplies: false, depth: 3),
+        .init(id: "deep", parentID: "b", hasUnloadedReplies: false, depth: 4),
+        .init(id: "siblingOfB", parentID: "a", hasUnloadedReplies: false, depth: 3),
+        .init(id: "siblingOfA", parentID: "root", hasUnloadedReplies: false, depth: 2)
+      ],
+      maximumDepth: 3,
+      selection: .chain
+    )
+
+    // Flat mode shows root -> a -> b (max depth 3 = root + 2 items)
+    #expect(layout.items.map(\.id) == ["a", "b"])
+    #expect(layout.connectsRootToFirst)
+    #expect(layout.items.map(\.connectsToNext) == [true, false])
+    // Sibling branches plus the depth-4 item collapse into the root count (5 total - 2 shown = 3)
+    #expect(layout.rootHasAdditionalReplies)
+    #expect(layout.rootAdditionalReplyCount == 3)
+  }
+
+  @Test("Shared geometry aligns the connector with the avatar centre")
+  func sharedGeometryAlignment() {
+    let scale = PostAvatarScale.regular
+    let centerX = ThreadReplyGeometry.avatarCenterX(for: scale)
+    // Container is avatarSize + 6, avatar is centered -> center is containerWidth / 2.
+    #expect(centerX == scale.containerWidth / 2)
+    #expect(centerX == 27)
   }
 }

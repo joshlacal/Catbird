@@ -30,7 +30,7 @@ struct StarterPackProfilesStep: View {
                 
                 TextField("Search people to add...", text: $searchQuery)
                     .autocorrectionDisabled()
-                    .platformTextInputCapitalization(.never)
+        .platformInsetGroupedListStyle()
                     .onChange(of: searchQuery) { _, newValue in
                         performSearch(query: newValue)
                     }

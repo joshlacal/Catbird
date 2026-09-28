@@ -1332,6 +1332,9 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
       .onChange(of: scenePhase, initial: true) { oldPhase, newPhase in
         handleScenePhaseChange(from: oldPhase, to: newPhase)
       }
+      .onChange(of: scenePhase, initial: true) { oldPhase, newPhase in
+        handleScenePhaseChange(from: oldPhase, to: newPhase)
+      }
       .catalystPlainButtons()
       #if DEBUG && os(iOS)
       .overlay {
@@ -1610,7 +1613,6 @@ private extension CatbirdApp {
       transitionToken: sceneTransitionToken,
       expectedPhase: newPhase
     )
-
     #if os(iOS)
     let hasOtherScenes = hasOtherActiveScenes
     #else

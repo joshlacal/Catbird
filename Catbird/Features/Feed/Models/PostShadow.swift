@@ -63,9 +63,22 @@ struct PostShadow: Equatable, Sendable {
     /// Undecided state updates from server while remaining undecided.
     /// Decided state: if server caught up to local decision, retires decision;
     /// if server still disagrees, preserves local decision.
-    mutating func hydrateFromServer(likeUri serverLikeUri: ATProtocolURI?, repostUri serverRepostUri: ATProtocolURI?) {
+    ///
+    /// - Parameter authoritative: Whether the payload is known-fresh (a network
+    ///   fetch). Authoritative payloads may clear an undecided interaction
+    ///   (e.g. an unlike performed on another device). Non-authoritative callers
+    ///   are views re-seeding from whatever `PostView` they were handed — often a
+    ///   cached feed page fetched before the AppView indexed the interaction — so
+    ///   a payload that merely *lacks* a URI must not erase one we already hold.
+    mutating func hydrateFromServer(
+        likeUri serverLikeUri: ATProtocolURI?,
+        repostUri serverRepostUri: ATProtocolURI?,
+        authoritative: Bool = false
+    ) {
         if !likeDecided {
-            self.likeUri = serverLikeUri
+            if authoritative || serverLikeUri != nil || self.likeUri == nil {
+                self.likeUri = serverLikeUri
+            }
         } else if (self.likeUri != nil) == (serverLikeUri != nil) {
             // Server has caught up to our decision
             self.likeDecided = false
@@ -73,7 +86,9 @@ struct PostShadow: Equatable, Sendable {
         }
 
         if !repostDecided {
-            self.repostUri = serverRepostUri
+            if authoritative || serverRepostUri != nil || self.repostUri == nil {
+                self.repostUri = serverRepostUri
+            }
         } else if (self.repostUri != nil) == (serverRepostUri != nil) {
             // Server has caught up to our decision
             self.repostDecided = false
@@ -282,8 +297,18 @@ actor PostShadowManager {
                 likeCount = post.likeCount ?? 0
             }
         } else {
-            finalLikeUri = post.viewer?.like
-            likeCount = post.likeCount ?? 0
+            // Undecided: the shadow still holds the most recently hydrated server
+            // URI, which may be newer than the payload handed in. Prefer it so a
+            // stale page (e.g. a feed page fetched before the AppView indexed the
+            // like, re-rendered after returning from the thread view) cannot revert
+            // interaction state a fresher fetch already reconciled.
+            finalLikeUri = shadow.likeUri ?? post.viewer?.like
+            if finalLikeUri != nil && post.viewer?.like == nil {
+                // Shadow knows about a like this page never saw - the page predates it.
+                likeCount = (post.likeCount ?? 0) + 1
+            } else {
+                likeCount = post.likeCount ?? 0
+            }
         }
 
         let finalRepostUri: ATProtocolURI?
@@ -301,8 +326,14 @@ actor PostShadowManager {
                 repostCount = post.repostCount ?? 0
             }
         } else {
-            finalRepostUri = post.viewer?.repost
-            repostCount = post.repostCount ?? 0
+            // Same rationale as the like branch: prefer the newer URI the shadow
+            // already holds over a payload that predates it.
+            finalRepostUri = shadow.repostUri ?? post.viewer?.repost
+            if finalRepostUri != nil && post.viewer?.repost == nil {
+                repostCount = (post.repostCount ?? 0) + 1
+            } else {
+                repostCount = post.repostCount ?? 0
+            }
         }
         
         let quoteCount = post.quoteCount ?? 0

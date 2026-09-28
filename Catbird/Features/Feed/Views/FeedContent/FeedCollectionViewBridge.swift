@@ -129,6 +129,9 @@ struct FeedCollectionViewWrapper: View {
         .catalystPlainButtons()
         .task(id: trendingRequestID) {
             let requestID = trendingRequestID
+            // `.task` restarts on every reappear (e.g. back from a pushed post); keep the
+            // already-loaded trending content instead of refetching a reshuffled set.
+            guard loadedTrendingRequestID != requestID else { return }
             let feed = stateManager.currentFeedType
             guard feed == .timeline || feed.identifier.contains("discover") || feed.identifier == "timeline" else {
                 return

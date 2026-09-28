@@ -2515,10 +2515,10 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
       // Cross-process coordination uses MLSNotificationCoordinator.
 
       for message in result.messages {
-        // ciphertext is already Data
-        let ciphertextData = message.ciphertext
-
-        // Padding is stripped by catbird-mls process_message internally.
+        guard let ciphertextData = message.ciphertext, let messageEpoch = message.epoch else {
+          notificationLogger.warning("⚠️ [FG] Skipping message \(message.id) with unsupported/malformed body variant")
+          continue
+        }
         let actualCiphertext = ciphertextData
 
         do {
@@ -2543,7 +2543,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
               // so we also match by ciphertext to avoid double-decrypt (SecretReuseError).
               let isTargetByOrder =
                 (targetEpoch != nil && targetSeq != nil)
-                ? (message.epoch == targetEpoch && message.seq == targetSeq)
+                ? (messageEpoch == targetEpoch && message.seq == targetSeq)
                 : false
               let isTargetByCiphertext = (actualCiphertext == targetCiphertext)
               let isTarget =
@@ -2589,7 +2589,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
               }
 
               // Cache ALL decrypted messages to prevent SecretReuseError
-              let serverEpoch = Int64(message.epoch)
+              let serverEpoch = Int64(messageEpoch)
               let serverSeq = Int64(message.seq)
 
               do {
@@ -3557,7 +3557,6 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
       }
       return
     }
-
     // Handle chat notifications that identify the conversation by ID instead of URI:
     // NSE `chat_message` pushes carry `convoId`, local polling notifications carry
     // `conversationID`. Payloads with `uri`/`did` keys keep the generic path below.
@@ -3600,7 +3599,6 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
     completionHandler()
   }
-
   /// Validate whether an incoming push payload represents a navigable MLS notification
   /// (ordinary message, decrypted message, or direct message request per F65).
   nonisolated static func isNavigableMLSNotification(fromUserInfo userInfo: [AnyHashable: Any]) -> Bool {

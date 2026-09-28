@@ -2325,12 +2325,16 @@ import SwiftUI
                 // 🔍 DEBUG: Log what server sent (sender extracted during decryption)
                 for (index, msgView) in messageViews.enumerated() {
                     logger.info("📨 SERVER MESSAGE [\(index)]: id=\(msgView.id)")
-                    logger.info("  - epoch: \(msgView.epoch)")
-                    logger.info("  - seq: \(msgView.seq)")
-                    logger.info("  - ciphertext.count: \(msgView.ciphertext.count)")
-                    logger.info(
-                        "  - ciphertext (first 32 bytes): \(msgView.ciphertext.prefix(32).map { String(format: "%02x", $0) }.joined(separator: " "))"
-                    )
+                    if let body = msgView.parsedBody {
+                        logger.info("  - epoch: \(body.prior.epoch)")
+                        logger.info("  - seq: \(msgView.seq)")
+                        logger.info("  - ciphertext.count: \(body.applicationMessage.bytes.data.count)")
+                        logger.info(
+                            "  - ciphertext (first 32 bytes): \(body.applicationMessage.bytes.data.prefix(32).map { String(format: "%02x", $0) }.joined(separator: " "))"
+                        )
+                    } else {
+                        logger.warning("  - [FAIL-CLOSED] Unknown/malformed application body variant for id=\(msgView.id) seq=\(msgView.seq)")
+                    }
                     logger.info("  - sentAt: \(msgView.createdAt.date)")
                 }
 

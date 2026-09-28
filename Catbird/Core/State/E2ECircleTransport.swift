@@ -2,6 +2,9 @@
 import Foundation
 import Petrel
 import PetrelCatbird
+#if canImport(UIKit)
+import UIKit
+#endif
 
 struct E2EConstants {
   static let aliceDIDString = "did:plc:alicee2efixture"

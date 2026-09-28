@@ -91,7 +91,7 @@ struct MLSMessageAdapter: UnifiedChatMessage {
   private let currentSendState: MessageSendState
   let originalMessage: DecryptedMLSMessage
 
-  init(
+  init?(
     messageView: BlueCatbirdChatDefs.ApplicationEntry,
     payload: MLSMessagePayload,
     senderDID: String,
@@ -100,6 +100,14 @@ struct MLSMessageAdapter: UnifiedChatMessage {
     reactions: [MLSMessageReaction] = [],
     sendState: MessageSendState = .sent
   ) {
+    guard let epoch = messageView.epoch,
+          let decryptedMessage = DecryptedMLSMessage(
+            messageView: messageView,
+            payload: payload,
+            senderDID: senderDID
+          ) else {
+      return nil
+    }
     let metadata = MessageMetadata(
       id: messageView.id,
       convoID: messageView.convoId,
@@ -108,7 +116,7 @@ struct MLSMessageAdapter: UnifiedChatMessage {
       senderDID: senderDID,
       sentAt: messageView.createdAt.date,
       embed: payload.embed,
-      epoch: messageView.epoch,
+      epoch: epoch,
       sequence: messageView.seq,
       processingError: nil,
       processingAttempts: nil,
@@ -118,11 +126,7 @@ struct MLSMessageAdapter: UnifiedChatMessage {
       isTombstone: false,
       deletedAt: nil
     )
-    self.originalMessage = DecryptedMLSMessage(
-      messageView: messageView,
-      payload: payload,
-      senderDID: senderDID
-    )
+    self.originalMessage = decryptedMessage
     self.metadata = metadata
     self.diffableID = metadata.id
     self.currentUserDID = currentUserDID

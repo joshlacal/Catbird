@@ -31,7 +31,7 @@ struct StarterPackFeedsStep: View {
                 
                 TextField("Search feeds to add...", text: $searchQuery)
                     .autocorrectionDisabled()
-                    .platformTextInputCapitalization(.never)
+        .platformInsetGroupedListStyle()
                     .onChange(of: searchQuery) { _, newValue in
                         performSearch(query: newValue)
                     }

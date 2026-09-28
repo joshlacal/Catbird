@@ -8,14 +8,19 @@ struct MessageRequestsView: View {
   @Environment(AppState.self) private var appState
   @Environment(\.dismiss) private var dismiss
   @State private var selectedFilter: RequestFilter = .all
-  @State private var showingBulkActions = false
-  
+  @State private var path = NavigationPath()
+  /// `UnifiedProfileView` writes to this when the user taps "search this user's
+  /// posts" from inside the sheet. The sheet pushes profiles onto its own stack,
+  /// so the write is inert — a local binding (same approach as `AddFeedSheet`)
+  /// keeps the app's tab selection untouched.
+  @State private var profileTab = 0
+
   private let logger = Logger(subsystem: "blue.catbird", category: "MessageRequestsView")
-  
+
   enum RequestFilter: String, CaseIterable {
     case all = "All"
     case unread = "Unread"
-    
+
     var systemImage: String {
       switch self {
       case .all: return "tray"
@@ -23,7 +28,7 @@ struct MessageRequestsView: View {
       }
     }
   }
-  
+
   private var filteredRequests: [ChatBskyConvoDefs.ConvoView] {
     let requests = appState.chatManager.messageRequests
     switch selectedFilter {
@@ -33,28 +38,37 @@ struct MessageRequestsView: View {
       return requests.filter { $0.unreadCount > 0 }
     }
   }
-  
+
   var body: some View {
-    NavigationStack {
+    NavigationStack(path: $path) {
       VStack(spacing: 0) {
-        // Filter picker
+        MessageRequestsExplainerHeader()
+
+        Divider()
+
         if !appState.chatManager.messageRequests.isEmpty {
           FilterPickerView(selectedFilter: $selectedFilter)
             .padding(.horizontal)
             .padding(.top, 8)
+            .padding(.bottom, 4)
         }
-        
-        // Main content
+
         if filteredRequests.isEmpty {
-          EmptyRequestsView(filter: selectedFilter)
+          EmptyRequestsView(
+            filter: selectedFilter,
+            hasAnyRequests: !appState.chatManager.messageRequests.isEmpty
+          )
         } else {
           RequestsListView(
             requests: filteredRequests,
             onAccept: { request in
-              acceptRequest(request)
+              await acceptRequest(request)
             },
             onDecline: { request in
-              declineRequest(request)
+              await declineRequest(request)
+            },
+            onOpenProfile: { did in
+              path.append(NavigationDestination.profile(did))
             }
           )
         }
@@ -63,6 +77,14 @@ struct MessageRequestsView: View {
 #if os(iOS)
       .toolbarTitleDisplayMode(.inline)
 #endif
+      .navigationDestination(for: NavigationDestination.self) { destination in
+        NavigationHandler.viewForDestination(
+          destination,
+          path: $path,
+          appState: appState,
+          selectedTab: $profileTab
+        )
+      }
       .toolbar {
         // Provide an explicit close affordance for Mac (and also handy on iOS)
         ToolbarItem(placement: .cancellationAction) {
@@ -87,33 +109,29 @@ struct MessageRequestsView: View {
       }
     }
   }
-  
+
   private func loadRequests() async {
     await appState.chatManager.loadMessageRequests(refresh: true)
   }
-  
-  private func acceptRequest(_ request: ChatBskyConvoDefs.ConvoView) {
-    Task {
-      let success = await appState.chatManager.acceptMessageRequest(convoId: request.id)
-      if success {
-        logger.debug("Successfully accepted message request: \(request.id)")
-      } else {
-        logger.error("Failed to accept message request: \(request.id)")
-      }
+
+  private func acceptRequest(_ request: ChatBskyConvoDefs.ConvoView) async {
+    let success = await appState.chatManager.acceptMessageRequest(convoId: request.id)
+    if success {
+      logger.debug("Successfully accepted message request: \(request.id)")
+    } else {
+      logger.error("Failed to accept message request: \(request.id)")
     }
   }
-  
-  private func declineRequest(_ request: ChatBskyConvoDefs.ConvoView) {
-    Task {
-      let success = await appState.chatManager.declineMessageRequest(convoId: request.id)
-      if success {
-        logger.debug("Successfully declined message request: \(request.id)")
-      } else {
-        logger.error("Failed to decline message request: \(request.id)")
-      }
+
+  private func declineRequest(_ request: ChatBskyConvoDefs.ConvoView) async {
+    let success = await appState.chatManager.declineMessageRequest(convoId: request.id)
+    if success {
+      logger.debug("Successfully declined message request: \(request.id)")
+    } else {
+      logger.error("Failed to decline message request: \(request.id)")
     }
   }
-  
+
   private func acceptAllRequests() {
     Task {
       for request in filteredRequests {
@@ -121,7 +139,7 @@ struct MessageRequestsView: View {
       }
     }
   }
-  
+
   private func declineAllRequests() {
     Task {
       for request in filteredRequests {
@@ -131,10 +149,36 @@ struct MessageRequestsView: View {
   }
 }
 
+/// Explains who ends up here and what accepting a request does.
+struct MessageRequestsExplainerHeader: View {
+  var body: some View {
+    HStack(alignment: .top, spacing: DesignTokens.Spacing.base) {
+      Image(systemName: "hand.raised.fill")
+        .font(.system(size: 22))
+        .foregroundStyle(.tint)
+        .accessibilityHidden(true)
+
+      VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+        Text("People you don't follow can still message you — those conversations wait here instead of your inbox.")
+          .appFont(AppTextRole.footnote)
+          .fixedSize(horizontal: false, vertical: true)
+
+        Text("Accepting moves the conversation to your inbox so you can reply. Declining removes it.")
+          .appFont(AppTextRole.footnote)
+          .foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .padding(.horizontal, DesignTokens.Spacing.base)
+    .padding(.vertical, DesignTokens.Spacing.md)
+  }
+}
+
 /// Filter picker for requests
 struct FilterPickerView: View {
   @Binding var selectedFilter: MessageRequestsView.RequestFilter
-  
+
   var body: some View {
     Picker("Filter", selection: $selectedFilter) {
       ForEach(MessageRequestsView.RequestFilter.allCases, id: \.self) { filter in
@@ -149,16 +193,18 @@ struct FilterPickerView: View {
 /// Main list of message requests
 struct RequestsListView: View {
   let requests: [ChatBskyConvoDefs.ConvoView]
-  let onAccept: (ChatBskyConvoDefs.ConvoView) -> Void
-  let onDecline: (ChatBskyConvoDefs.ConvoView) -> Void
-  
+  let onAccept: (ChatBskyConvoDefs.ConvoView) async -> Void
+  let onDecline: (ChatBskyConvoDefs.ConvoView) async -> Void
+  let onOpenProfile: (String) -> Void
+
   var body: some View {
     List {
       ForEach(requests) { request in
         MessageRequestRow(
           request: request,
-          onAccept: { onAccept(request) },
-          onDecline: { onDecline(request) }
+          onAccept: { await onAccept(request) },
+          onDecline: { await onDecline(request) },
+          onOpenProfile: { did in onOpenProfile(did) }
         )
         .listRowSeparator(.visible)
       }
@@ -171,141 +217,327 @@ struct RequestsListView: View {
 struct MessageRequestRow: View {
   @Environment(AppState.self) private var appState
   let request: ChatBskyConvoDefs.ConvoView
-  let onAccept: () -> Void
-  let onDecline: () -> Void
-  
+  let onAccept: () async -> Void
+  let onDecline: () async -> Void
+  let onOpenProfile: (String) -> Void
+
   @State private var isProcessing = false
-  @State private var showingPreview = false
-  
+  @State private var activeSheet: RequestRowSheet?
+  @State private var showingBlockConfirmation = false
+
+  /// The row's secondary presentations. A single `sheet(item:)` layer instead of
+  /// two stacked `.sheet` modifiers keeps the row cheap to compose.
+  enum RequestRowSheet: String, Identifiable {
+    case preview
+    case report
+    var id: Self { self }
+  }
+
   private var otherMembers: [ChatBskyActorDefs.ProfileViewBasic] {
     request.members.filter { $0.did.didString() != appState.userDID }
   }
-  
+
   private var primaryMember: ChatBskyActorDefs.ProfileViewBasic? {
     otherMembers.first
   }
-  
+
+  /// Only real, non-deleted accounts get a tappable profile.
+  private var profileDID: String? {
+    guard let member = primaryMember, !member.isDeletedBlueskyChatAccount else { return nil }
+    return member.did.didString()
+  }
+
+  private var displayName: String {
+    primaryMember?.chatDisplayName ?? request.displayTitle(currentUserDID: appState.userDID)
+  }
+
   var body: some View {
-    VStack(alignment: .leading, spacing: 12) {
-      // Header with profile info
-      HStack {
-        // Profile picture
-        ChatProfileAvatarView(profile: primaryMember, size: 48)
-        
-        VStack(alignment: .leading, spacing: 4) {
-          // Name and handle
-          HStack {
-            Text(primaryMember?.displayName ?? "Unknown User")
-              .appFont(AppTextRole.headline)
-              .fontWeight(.semibold)
-            
+    VStack(alignment: .leading, spacing: DesignTokens.Spacing.base) {
+      HStack(alignment: .top, spacing: DesignTokens.Spacing.base) {
+        avatarButton
+
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+          HStack(spacing: DesignTokens.Spacing.xs) {
+            nameLabel
+
             if request.unreadCount > 0 {
               Circle()
-                .fill(Color.blue)
+                .fill(Color.accentColor)
                 .frame(width: 8, height: 8)
+                .accessibilityHidden(true)
+            }
+
+            Spacer(minLength: 0)
+
+            if let date = lastMessageDate {
+              Text(formatDate(date))
+                .appFont(AppTextRole.caption)
+                .foregroundStyle(.tertiary)
+                .fixedSize(horizontal: true, vertical: false)
+                .accessibilityLabel("Last activity \(formatDate(date))")
             }
           }
-          
-          Text("@\(primaryMember?.handle.description ?? "unknown")")
-            .appFont(AppTextRole.subheadline)
-            .foregroundColor(.secondary)
-          
-          // Additional members for group chats
+
+          if let handle = primaryMember?.handle.description, !handle.isEmpty {
+            Text("@\(handle)")
+              .appFont(AppTextRole.footnote)
+              .foregroundStyle(.secondary)
+              .lineLimit(1)
+          }
+
           if otherMembers.count > 1 {
             Text("and \(otherMembers.count - 1) other\(otherMembers.count > 2 ? "s" : "")")
               .appFont(AppTextRole.caption)
-              .foregroundColor(.secondary)
-          }
-        }
-        
-        Spacer()
-        
-        // Timestamp
-        VStack(alignment: .trailing, spacing: 4) {
-          Text("Rev: \(request.rev)")
-            .appFont(AppTextRole.caption)
-            .foregroundColor(.secondary)
-          
-          if request.unreadCount > 0 {
-            Text("\(request.unreadCount)")
-              .appFont(AppTextRole.caption2)
-              .fontWeight(.bold)
-              .foregroundColor(.white)
-              .padding(.horizontal, 6)
-              .padding(.vertical, 2)
-              .background(Color.blue)
-              .clipShape(Capsule())
+              .foregroundStyle(.secondary)
           }
         }
       }
-      
-      // Preview message if available
-      if let lastMessage = request.lastMessage {
-        MessagePreviewView(lastMessage: lastMessage)
-          .padding(.leading, 56) // Align with text above
-      }
-      
-      // Action buttons
-      HStack(spacing: 8) {
-        Button {
-          isProcessing = true
-          onDecline()
-          isProcessing = false
-        } label: {
-          HStack(spacing: 4) {
-            Image(systemName: "xmark")
-              .imageScale(.small)
-            Text("Decline")
-              .lineLimit(1)
-              .minimumScaleFactor(0.8)
-          }
-          .frame(maxWidth: .infinity, minHeight: 36)
-        }
-        .buttonStyle(.bordered)
-        .disabled(isProcessing)
-        
-        Button {
-          showingPreview = true
-        } label: {
-          HStack(spacing: 4) {
-            Image(systemName: "eye")
-              .imageScale(.small)
-            Text("Preview")
-              .lineLimit(1)
-              .minimumScaleFactor(0.8)
-          }
-          .frame(maxWidth: .infinity, minHeight: 36)
-        }
-        .buttonStyle(.bordered)
-        .disabled(isProcessing)
-        
-        Button {
-          isProcessing = true
-          onAccept()
-          isProcessing = false
-        } label: {
-          HStack(spacing: 4) {
-            if isProcessing {
-              ProgressView()
-                .scaleEffect(0.8)
-            } else {
-              Image(systemName: "checkmark")
-                .imageScale(.small)
-            }
-            Text("Accept")
-              .lineLimit(1)
-              .minimumScaleFactor(0.8)
-          }
-          .frame(maxWidth: .infinity, minHeight: 36)
-        }
-        .buttonStyle(.borderedProminent)
-        .disabled(isProcessing)
-      }
-      .padding(.leading, 56) // Align with text above
+
+      RequestMessagePreview(lastMessage: request.lastMessage)
+        .padding(.leading, DesignTokens.Size.avatarLG + DesignTokens.Spacing.base)
+
+      actionButtons
+        .padding(.leading, DesignTokens.Size.avatarLG + DesignTokens.Spacing.base)
     }
-    .padding(.vertical, 8)
-    .sheet(isPresented: $showingPreview) {
-      MessageRequestPreviewView(request: request)
+    .padding(.vertical, DesignTokens.Spacing.sm)
+    .accessibilityElement(children: .contain)
+    .alert("Block \(displayName)?", isPresented: $showingBlockConfirmation) {
+      Button("Cancel", role: .cancel) { }
+      Button("Block", role: .destructive) { blockAndDecline() }
+    } message: {
+      Text("They won't be able to message you, and this request will be removed.")
+    }
+    .sheet(item: $activeSheet) { sheet in
+      switch sheet {
+      case .preview:
+        MessageRequestPreviewView(request: request)
+      case .report:
+        ReportConversationView(conversation: request, onConversationLeft: {
+          Task { await onDecline() }
+        })
+      }
+    }
+  }
+
+  // MARK: - Subviews
+
+  @ViewBuilder
+  private var avatarButton: some View {
+    if let did = profileDID {
+      Button {
+        onOpenProfile(did)
+      } label: {
+        avatar
+      }
+      .buttonStyle(.plain)
+      .accessibilityLabel("View \(displayName)'s profile")
+      .accessibilityHint("Opens profile")
+    } else {
+      avatar
+    }
+  }
+
+  @ViewBuilder
+  private var avatar: some View {
+    if request.isGroupConversation {
+      MLSGroupAvatarView(
+        participants: otherMembers.map { member in
+          MLSParticipantViewModel(
+            id: member.did.didString(),
+            handle: member.handle.description,
+            displayName: member.displayName,
+            avatarURL: member.finalAvatarURL()
+          )
+        },
+        size: DesignTokens.Size.avatarLG
+      )
+    } else {
+      ChatProfileAvatarView(profile: primaryMember, size: DesignTokens.Size.avatarLG)
+    }
+  }
+
+  @ViewBuilder
+  private var nameLabel: some View {
+    if let did = profileDID {
+      Button {
+        onOpenProfile(did)
+      } label: {
+        HStack(spacing: DesignTokens.Spacing.xs) {
+          nameText
+          if let member = primaryMember,
+             let badgeKind = VerificationBadge.kind(for: member.verification, did: member.did) {
+            VerificationBadgeView(kind: badgeKind)
+              .font(.caption)
+          }
+        }
+      }
+      .buttonStyle(.plain)
+      .accessibilityLabel("View \(displayName)'s profile")
+    } else {
+      nameText
+    }
+  }
+
+  private var nameText: some View {
+    Text(displayName)
+      .appFont(AppTextRole.headline)
+      .fontWeight(request.unreadCount > 0 ? .semibold : .regular)
+      .foregroundStyle(.primary)
+      .lineLimit(1)
+      .accessibilityAddTraits(.isHeader)
+  }
+
+  private var actionButtons: some View {
+    HStack(spacing: DesignTokens.Spacing.sm) {
+      Button(role: .destructive) {
+        run { await onDecline() }
+      } label: {
+        Text("Decline")
+          .frame(minHeight: DesignTokens.Size.buttonSM)
+      }
+      .buttonStyle(.bordered)
+      .disabled(isProcessing)
+
+      Button {
+        run { await onAccept() }
+      } label: {
+        HStack(spacing: DesignTokens.Spacing.xs) {
+          if isProcessing {
+            ProgressView()
+              .scaleEffect(0.8)
+          }
+          Text("Accept")
+        }
+        .frame(minHeight: DesignTokens.Size.buttonSM)
+      }
+      .buttonStyle(.borderedProminent)
+      .disabled(isProcessing)
+
+      Spacer(minLength: 0)
+
+      Menu {
+        if request.lastMessage != nil {
+          Button {
+            activeSheet = .preview
+          } label: {
+            Label("Preview Message", systemImage: "text.bubble")
+          }
+        }
+
+        if profileDID != nil {
+          Button {
+            activeSheet = .report
+          } label: {
+            Label("Report Conversation", systemImage: "exclamationmark.bubble")
+          }
+
+          Button(role: .destructive) {
+            showingBlockConfirmation = true
+          } label: {
+            Label("Block \(displayName)", systemImage: "person.crop.circle.badge.xmark")
+          }
+        }
+      } label: {
+        Image(systemName: "ellipsis.circle")
+          .imageScale(.large)
+      }
+      .disabled(isProcessing)
+      .accessibilityLabel("More actions for this request")
+    }
+  }
+
+  // MARK: - Actions
+
+  private func run(_ operation: @escaping () async -> Void) {
+    guard !isProcessing else { return }
+    isProcessing = true
+    Task { @MainActor in
+      await operation()
+      isProcessing = false
+    }
+  }
+
+  private func blockAndDecline() {
+    guard let did = profileDID else { return }
+    run {
+      do {
+        try await appState.block(did: did)
+      } catch {
+        // Blocking is best-effort here: the request is still removable on its own.
+      }
+      await onDecline()
+    }
+  }
+
+  // MARK: - Date helpers
+
+  private var lastMessageDate: Date? {
+    guard let message = request.lastMessage else { return nil }
+    switch message {
+    case .chatBskyConvoDefsMessageView(let messageView):
+      return messageView.sentAt.date
+    case .chatBskyConvoDefsSystemMessageView(let systemMessage):
+      return systemMessage.sentAt.date
+    case .chatBskyConvoDefsDeletedMessageView, .unexpected:
+      return nil
+    }
+  }
+
+  private func formatDate(_ date: Date) -> String {
+    let calendar = Calendar.current
+    if calendar.isDateInToday(date) {
+      return date.formatted(date: .omitted, time: .shortened)
+    } else if calendar.isDateInYesterday(date) {
+      return "Yesterday"
+    } else if let daysAgo = calendar.dateComponents([.day], from: date, to: Date()).day, daysAgo < 7 {
+      let formatter = DateFormatter()
+      formatter.dateFormat = "EEEE"
+      return formatter.string(from: date)
+    } else {
+      return date.formatted(date: .numeric, time: .omitted)
+    }
+  }
+}
+
+/// One-line preview of a request's message, used inside the row.
+struct RequestMessagePreview: View {
+  let lastMessage: ChatBskyConvoDefs.ConvoViewLastMessageUnion?
+
+  var body: some View {
+    Group {
+      switch lastMessage {
+      case .chatBskyConvoDefsMessageView(let messageView):
+        Text(messageView.text)
+          .appFont(AppTextRole.callout)
+          .foregroundStyle(.secondary)
+          .lineLimit(3)
+          .multilineTextAlignment(.leading)
+          .frame(maxWidth: .infinity, alignment: .leading)
+
+      case .chatBskyConvoDefsDeletedMessageView:
+        Text("Message was deleted")
+          .appFont(AppTextRole.callout)
+          .foregroundStyle(.secondary)
+          .italic()
+
+      case .chatBskyConvoDefsSystemMessageView:
+        Text("System message")
+          .appFont(AppTextRole.callout)
+          .foregroundStyle(.secondary)
+          .italic()
+
+      case .unexpected:
+        Text("Unsupported message type")
+          .appFont(AppTextRole.callout)
+          .foregroundStyle(.secondary)
+          .italic()
+
+      case nil:
+        Text("No messages yet")
+          .appFont(AppTextRole.callout)
+          .foregroundStyle(.secondary)
+          .italic()
+      }
     }
   }
 }
@@ -313,7 +545,7 @@ struct MessageRequestRow: View {
 /// Preview of the last message in a request
 struct MessagePreviewView: View {
   let lastMessage: ChatBskyConvoDefs.ConvoViewLastMessageUnion
-  
+
   var body: some View {
     Group {
       switch lastMessage {
@@ -322,7 +554,7 @@ struct MessagePreviewView: View {
           Text("Message:")
             .appFont(AppTextRole.caption)
             .foregroundColor(.secondary)
-          
+
           Text(messageView.text)
                             .appFont(AppTextRole.body)
             .lineLimit(nil)
@@ -331,7 +563,7 @@ struct MessagePreviewView: View {
             .background(Color.gray.opacity(0.1))
             .clipShape(RoundedRectangle(cornerRadius: 8))
         }
-        
+
       case .chatBskyConvoDefsDeletedMessageView:
         HStack {
           Image(systemName: "trash")
@@ -341,7 +573,7 @@ struct MessagePreviewView: View {
             .foregroundColor(.secondary)
             .italic()
         }
-        
+
       case .chatBskyConvoDefsSystemMessageView:
         HStack {
           Image(systemName: "info.circle")
@@ -365,16 +597,21 @@ struct MessagePreviewView: View {
 /// Empty state for when there are no requests
 struct EmptyRequestsView: View {
   let filter: MessageRequestsView.RequestFilter
-  
+  var hasAnyRequests: Bool = false
+
   var body: some View {
     ContentUnavailableView {
-      Label("No Message Requests", systemImage: "tray")
+      Label(hasAnyRequests ? "No \(filter.rawValue) Requests" : "No Message Requests", systemImage: "tray")
     } description: {
-      switch filter {
-      case .all:
-        Text("You don't have any pending message requests.")
-      case .unread:
-        Text("You don't have any unread message requests.")
+      if !hasAnyRequests {
+        Text("When someone you don't follow messages you, their request will show up here. Nothing to review for now.")
+      } else {
+        switch filter {
+        case .all:
+          Text("You don't have any pending message requests.")
+        case .unread:
+          Text("You're all caught up — no unread requests.")
+        }
       }
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)

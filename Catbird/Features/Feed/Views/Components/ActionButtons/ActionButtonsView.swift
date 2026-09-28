@@ -260,7 +260,9 @@ struct ActionButtonsView: View {
           appState: postViewModel.appState
         )
       }
-      interactionState.update(from: newPost)
+      // Re-seed through the shadow so a stale payload cannot overwrite an
+      // optimistic decision; the shadow is the single source of truth.
+      Task { await refreshState() }
     }
       #if os(iOS)
       // Link the composer sheet to this reply button's transition namespace

@@ -150,13 +150,21 @@ public enum SearchHTTPResponseClassification: Equatable, Sendable {
 
   // MARK: - Discovery Lifecycle (G03, G04, G06)
 
+  /// `onAppear` re-fires when popping back from a pushed detail view; load discovery once and
+  /// leave re-fetching to explicit pull-to-refresh (`refreshDiscoveryContent`). The view model is
+  /// rebuilt per account via `.id(userDID)`, so account switches still load fresh content.
+  private var hasLoadedDiscoveryContent = false
+
   public func initialize(client: ATProtoClient) {
+    guard !hasLoadedDiscoveryContent else { return }
+    hasLoadedDiscoveryContent = true
     Task {
       await refreshDiscoveryContent(client: client)
     }
   }
 
   public func refreshDiscoveryContent(client: ATProtoClient) async {
+    hasLoadedDiscoveryContent = true
     async let trendsTask: Void = fetchTrendingTopics(client: client)
     async let suggestedTask: Void = fetchSuggestedUsers(category: selectedSuggestedCategory, client: client)
     async let videosTask: Void = fetchTrendingVideos(client: client)

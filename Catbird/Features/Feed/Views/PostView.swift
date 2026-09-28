@@ -69,6 +69,8 @@ struct PostView: View, Equatable, Identifiable {
   let isReplyHiddenByThreadgate: Bool
   let opThreadPostIndex: Int?
   let opThreadPostCount: Int?
+  /// Draws the thread connector above the avatar (continuing from a post above).
+  let hasThreadLineAbove: Bool
   @Binding var path: NavigationPath
   @Environment(\.feedPostID) private var feedPostID
   // MARK: - State
@@ -126,7 +128,8 @@ var id: String {
     rootAuthorDID: String? = nil,
     isReplyHiddenByThreadgate: Bool = false,
     opThreadPostIndex: Int? = nil,
-    opThreadPostCount: Int? = nil
+    opThreadPostCount: Int? = nil,
+    hasThreadLineAbove: Bool = false
   ) {
     self.post = post
     self.grandparentAuthor = grandparentAuthor
@@ -142,6 +145,7 @@ var id: String {
     self.isReplyHiddenByThreadgate = isReplyHiddenByThreadgate
     self.opThreadPostIndex = opThreadPostIndex
     self.opThreadPostCount = opThreadPostCount
+    self.hasThreadLineAbove = hasThreadLineAbove
     _postState = State(initialValue: PostState(post: post))  // Initialize consolidated state
     _viewModel = State(initialValue: PostViewModel(post: post, appState: appState, visibilityContext: visibilityContext))
     _contextMenuViewModel = State(
@@ -165,7 +169,8 @@ var id: String {
         isAvatarLoaded: $postState.isAvatarLoaded,
         path: $path,
         avatarScale: avatarScale,
-        threadAvatarID: threadAvatarID == post.uri.uriString() ? threadAvatarID : nil
+        threadAvatarID: threadAvatarID == post.uri.uriString() ? threadAvatarID : nil,
+        hasThreadLineAbove: hasThreadLineAbove
       )
 
       // Content column - show error view or normal post content
@@ -195,7 +200,12 @@ var id: String {
       await setupPost()
     }
     .onChange(of: post) { _, newPost in
-      postState.currentPost = newPost
+      // Route through the shadow instead of assigning the raw payload: a page
+      // fetched before the AppView indexed a like/repost would otherwise revert
+      // the optimistic state when the feed re-supplies the cell on reappear.
+      Task { @MainActor in
+        postState.currentPost = await appState.postShadowManager.mergeShadow(post: newPost)
+      }
       if viewModel.postId != newPost.uri.uriString() || viewModel.postCid != newPost.cid {
         viewModel = PostViewModel(post: newPost, appState: appState, visibilityContext: visibilityContext)
       }
@@ -1336,6 +1346,7 @@ struct AuthorAvatarColumn: View {
   @Binding var path: NavigationPath
   var avatarScale: PostAvatarScale = .regular
   var threadAvatarID: String? = nil
+  var hasThreadLineAbove: Bool = false
 
   // Using multiples of 3 for spacing
   private static let baseUnit: CGFloat = 3
@@ -1390,7 +1401,19 @@ struct AuthorAvatarColumn: View {
     .frame(width: avatarContainerWidth)
     .padding(.horizontal, Self.baseUnit)
     .padding(.top, Self.baseUnit)
-    .background(parentPostIndicator)
+    .overlay(alignment: .topLeading) {
+      ThreadAvatarConnector(
+        showsAbove: hasThreadLineAbove,
+        showsBelow: isParentPost,
+        avatarSize: avatarSize,
+        topInset: Self.baseUnit
+      )
+      .padding(
+        .leading,
+        Self.baseUnit + ThreadReplyGeometry.avatarCenterX(for: avatarScale)
+          - ThreadReplyGeometry.lineWidth / 2
+      )
+    }
     // Do not add a ProfileEntity context inside a PostEntity-annotated post.
     // iOS 27 can flatten nested entity contexts during view annotation
     // collection and hydrate the author's DID as the surrounding PostEntity.
@@ -1428,17 +1451,34 @@ struct AuthorAvatarColumn: View {
     }
   }
 
-  // Line connecting parent and child posts
-  @ViewBuilder
-  private var parentPostIndicator: some View {
-    if isParentPost {
-      Rectangle()
-        .fill(Color.systemGray4)
-        .frame(width: 2)
-        .frame(maxHeight: .infinity)
-        .padding(.bottom, avatarSize + Self.baseUnit * 2)
-        .offset(y: avatarSize + Self.baseUnit * 3)
+}
+
+/// Vertical thread connector for an avatar column: a segment above the avatar
+/// (continuing from the previous post) and one below it (continuing to the
+/// next post). Geometry comes from `ThreadReplyGeometry` so it lines up with
+/// the connector overlay drawn for nested replies.
+struct ThreadAvatarConnector: View {
+  let showsAbove: Bool
+  let showsBelow: Bool
+  let avatarSize: CGFloat
+  let topInset: CGFloat
+
+  var body: some View {
+    if showsAbove || showsBelow {
+      VStack(spacing: 0) {
+        segment(showsAbove).frame(height: topInset)
+        Color.clear.frame(height: avatarSize)
+        segment(showsBelow).frame(maxHeight: .infinity)
+      }
+      .frame(width: ThreadReplyGeometry.lineWidth)
+      .frame(maxHeight: .infinity, alignment: .top)
+      .allowsHitTesting(false)
+      .accessibilityHidden(true)
     }
+  }
+
+  private func segment(_ visible: Bool) -> some View {
+    Rectangle().fill(visible ? ThreadReplyGeometry.connectorColor : Color.clear)
   }
 }
 

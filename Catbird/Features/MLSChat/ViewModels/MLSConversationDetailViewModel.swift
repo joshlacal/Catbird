@@ -56,8 +56,10 @@ final class MLSConversationDetailViewModel {
         if $0.timestamp != $1.timestamp {
           return $0.timestamp < $1.timestamp
         }
-        if $0.epoch != $1.epoch {
-          return $0.epoch < $1.epoch
+        if let lhsEpoch = $0.epoch, let rhsEpoch = $1.epoch, lhsEpoch != rhsEpoch {
+          return lhsEpoch < rhsEpoch
+        } else if ($0.epoch == nil) != ($1.epoch == nil) {
+          return $0.epoch != nil
         }
         return $0.id < $1.id
       }

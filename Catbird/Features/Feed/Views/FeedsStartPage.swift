@@ -389,18 +389,6 @@ struct FeedsStartPage: View {
   }
 
   @ViewBuilder
-  private var defaultFeedReorderTarget: some View {
-    if let defaultFeed {
-      ForEach([defaultFeed], id: \.self) { _ in
-        bigDefaultFeedButton
-      }
-      .feedReorderable(collectionID: "default")
-    } else {
-      bigDefaultFeedButton
-    }
-  }
-
-  @ViewBuilder
   private var bigDefaultFeedButton: some View {
     Button {
       guard !isEditingFeeds else { return }
@@ -472,25 +460,22 @@ struct FeedsStartPage: View {
     }
     .buttonStyle(PlainButtonStyle())
     .padding(.vertical, 8)
-    .feedLegacyDragAndDrop { content in
-      content
-      .onDrop(
-        of: [UTType.plainText.identifier],
-        delegate: DefaultFeedDropDelegate(
-          viewModel: viewModel,
-          draggedItem: $draggedFeedItem,
-          isDragging: $isDragging,
-          draggedItemCategory: $draggedItemCategory,
-          dropTargetItem: $dropTargetItem,
-          selectedFeed: $selectedFeed,
-          currentFeedName: $currentFeedName,
-          isDefaultFeedDropTarget: $isDefaultFeedDropTarget,
-          defaultFeed: $defaultFeed,
-          defaultFeedName: $defaultFeedName,
-          resetDragState: resetDragState
-        )
+    .onDrop(
+      of: [UTType.plainText.identifier],
+      delegate: DefaultFeedDropDelegate(
+        viewModel: viewModel,
+        draggedItem: $draggedFeedItem,
+        isDragging: $isDragging,
+        draggedItemCategory: $draggedItemCategory,
+        dropTargetItem: $dropTargetItem,
+        selectedFeed: $selectedFeed,
+        currentFeedName: $currentFeedName,
+        isDefaultFeedDropTarget: $isDefaultFeedDropTarget,
+        defaultFeed: $defaultFeed,
+        defaultFeedName: $defaultFeedName,
+        resetDragState: resetDragState
       )
-    }
+    )
     .accessibility(label: Text("Open \(defaultFeedName) feed"))
     .accessibility(hint: Text("Double tap to open this feed and close the menu"))
     .accessibilityAddTraits(.isButton)
@@ -666,7 +651,6 @@ struct FeedsStartPage: View {
 
         }
       }
-      .feedReorderable(collectionID: category)
     }
     .animation(.spring(duration: 0.4), value: feeds)
     .padding(.bottom, 8)
@@ -707,7 +691,6 @@ struct FeedsStartPage: View {
           )
         }
       }
-      .feedReorderable(collectionID: category)
     }
     .animation(.spring(duration: 0.4), value: feeds)
     .padding(.bottom, 8)
@@ -841,30 +824,27 @@ struct FeedsStartPage: View {
       .contentShape(Rectangle())
     }
     .buttonStyle(PlainButtonStyle())
-    .feedLegacyDragAndDrop { content in
-      content
-      .onDrag {
-        draggedFeedItem = feedURI
-        isDragging = true
-        draggedItemCategory = category
-        return NSItemProvider(object: feedURI as NSString)
-      }
-      .onDrop(
-        of: [UTType.plainText.identifier],
-        delegate: FeedDropDelegate(
-          item: feedURI,
-          items: category == "pinned" ? viewModel.cachedPinnedFeeds : viewModel.cachedSavedFeeds,
-          category: category,
-          viewModel: viewModel,
-          draggedItem: $draggedFeedItem,
-          isDragging: $isDragging,
-          draggedItemCategory: $draggedItemCategory,
-          dropTargetItem: $dropTargetItem,
-          resetDragState: resetDragState,
-          appSettings: appState.appSettings
-        )
-      )
+    .onDrag {
+      draggedFeedItem = feedURI
+      isDragging = true
+      draggedItemCategory = category
+      return NSItemProvider(object: feedURI as NSString)
     }
+    .onDrop(
+      of: [UTType.plainText.identifier],
+      delegate: FeedDropDelegate(
+        item: feedURI,
+        items: category == "pinned" ? viewModel.cachedPinnedFeeds : viewModel.cachedSavedFeeds,
+        category: category,
+        viewModel: viewModel,
+        draggedItem: $draggedFeedItem,
+        isDragging: $isDragging,
+        draggedItemCategory: $draggedItemCategory,
+        dropTargetItem: $dropTargetItem,
+        resetDragState: resetDragState,
+        appSettings: appState.appSettings
+      )
+    )
     .opacity(draggedFeedItem == feedURI && isDragging ? 0.4 : 1.0)
     .accessibility(label: Text(title))
     .accessibility(hint: Text(isEditingFeeds ? "Editing — tap minus to remove" : "Double tap to open this feed"))
@@ -970,30 +950,27 @@ struct FeedsStartPage: View {
       iconTopInset: 6,
       action: { Task { await viewModel.removeFeed(feedURI) } }
     ))
-    .feedLegacyDragAndDrop { content in
-      content
-      .onDrag {
-        draggedFeedItem = feedURI
-        isDragging = true
-        draggedItemCategory = category
-        return NSItemProvider(object: feedURI as NSString)
-      }
-      .onDrop(
-        of: [UTType.plainText.identifier],
-        delegate: FeedDropDelegate(
-          item: feedURI,
-          items: category == "pinned" ? viewModel.cachedPinnedFeeds : viewModel.cachedSavedFeeds,
-          category: category,
-          viewModel: viewModel,
-          draggedItem: $draggedFeedItem,
-          isDragging: $isDragging,
-          draggedItemCategory: $draggedItemCategory,
-          dropTargetItem: $dropTargetItem,
-          resetDragState: resetDragState,
-          appSettings: appState.appSettings
-        )
-      )
+    .onDrag {
+      draggedFeedItem = feedURI
+      isDragging = true
+      draggedItemCategory = category
+      return NSItemProvider(object: feedURI as NSString)
     }
+    .onDrop(
+      of: [UTType.plainText.identifier],
+      delegate: FeedDropDelegate(
+        item: feedURI,
+        items: category == "pinned" ? viewModel.cachedPinnedFeeds : viewModel.cachedSavedFeeds,
+        category: category,
+        viewModel: viewModel,
+        draggedItem: $draggedFeedItem,
+        isDragging: $isDragging,
+        draggedItemCategory: $draggedItemCategory,
+        dropTargetItem: $dropTargetItem,
+        resetDragState: resetDragState,
+        appSettings: appState.appSettings
+      )
+    )
     .accessibility(
       label: Text(viewModel.feedGenerators[uri]?.displayName ?? viewModel.extractTitle(from: uri))
     )
@@ -1064,30 +1041,27 @@ struct FeedsStartPage: View {
       .contentShape(.dragPreview, RoundedRectangle(cornerRadius: 12))
     }
     .buttonStyle(PlainButtonStyle())
-    .feedLegacyDragAndDrop { content in
-      content
-      .onDrag {
-        draggedFeedItem = feedURI
-        isDragging = true
-        draggedItemCategory = category
-        return NSItemProvider(object: feedURI as NSString)
-      }
-      .onDrop(
-        of: [UTType.plainText.identifier],
-        delegate: FeedDropDelegate(
-          item: feedURI,
-          items: category == "pinned" ? viewModel.cachedPinnedFeeds : viewModel.cachedSavedFeeds,
-          category: category,
-          viewModel: viewModel,
-          draggedItem: $draggedFeedItem,
-          isDragging: $isDragging,
-          draggedItemCategory: $draggedItemCategory,
-          dropTargetItem: $dropTargetItem,
-          resetDragState: resetDragState,
-          appSettings: appState.appSettings
-        )
-      )
+    .onDrag {
+      draggedFeedItem = feedURI
+      isDragging = true
+      draggedItemCategory = category
+      return NSItemProvider(object: feedURI as NSString)
     }
+    .onDrop(
+      of: [UTType.plainText.identifier],
+      delegate: FeedDropDelegate(
+        item: feedURI,
+        items: category == "pinned" ? viewModel.cachedPinnedFeeds : viewModel.cachedSavedFeeds,
+        category: category,
+        viewModel: viewModel,
+        draggedItem: $draggedFeedItem,
+        isDragging: $isDragging,
+        draggedItemCategory: $draggedItemCategory,
+        dropTargetItem: $dropTargetItem,
+        resetDragState: resetDragState,
+        appSettings: appState.appSettings
+      )
+    )
     .opacity(draggedFeedItem == feedURI && isDragging ? 0.4 : 1.0)
     .scaleEffect(draggedFeedItem == feedURI && isDragging ? 0.95 : 1.0)
     .accessibility(label: Text("Timeline"))
@@ -1135,7 +1109,7 @@ struct FeedsStartPage: View {
 
   private var feedSearchPlacement: SearchFieldPlacement {
     #if os(iOS)
-    .toolbarPrincipal
+    .navigationBarDrawer(displayMode: .always)
     #else
     .automatic
     #endif
@@ -1498,7 +1472,7 @@ struct FeedsStartPage: View {
               }
 
               // Big default feed button as first feed in hierarchy
-              defaultFeedReorderTarget
+              bigDefaultFeedButton
               circlesFeedEntry
 
               // Pinned feeds section - continue the hierarchy
@@ -1516,21 +1490,6 @@ struct FeedsStartPage: View {
               // Extra space at bottom
               Spacer(minLength: DesignTokens.Spacing.section * 4)  // 96
           }
-          .modifier(FeedNativeReorderContainer { sources, category, before in
-            Task {
-              await viewModel.applyFeedReorder(sources: sources, category: category, before: before)
-              if category == "default", let feed = sources.first,
-                 viewModel.cachedPinnedFeeds.first == feed {
-                if SystemFeedTypes.isTimelineFeed(feed) {
-                  selectedFeed = .timeline
-                  currentFeedName = "Timeline"
-                } else if let uri = try? ATProtocolURI(uriString: feed) {
-                  selectedFeed = feed.contains("/app.bsky.graph.list/") ? .list(uri) : .feed(uri)
-                  currentFeedName = viewModel.feedGenerators[uri]?.displayName ?? viewModel.extractTitle(from: uri)
-                }
-              }
-            }
-          })
           .animation(.easeInOut(duration: 0.3), value: isEditingFeeds)
           .animation(.easeInOut(duration: 0.25), value: layoutMode)
       }
@@ -1890,60 +1849,5 @@ private extension View {
       currentFeedName: .constant("Following"),
       isDrawerOpen: .constant(false)
     )
-  }
-}
-
-// Keep the legacy drag delegates on SDKs and systems predating native reordering.
-private extension View {
-  @ViewBuilder
-  func feedLegacyDragAndDrop<Legacy: View>(@ViewBuilder legacy: (Self) -> Legacy) -> some View {
-    #if compiler(>=6.4)
-    if #available(iOS 27.0, macOS 27.0, *) {
-      self
-    } else {
-      legacy(self)
-    }
-    #else
-    legacy(self)
-    #endif
-  }
-}
-
-private extension DynamicViewContent {
-  @ViewBuilder
-  func feedReorderable(collectionID: String) -> some View {
-    #if compiler(>=6.4)
-    if #available(iOS 27.0, macOS 27.0, *) {
-      self.reorderable(collectionID: collectionID)
-    } else {
-      self
-    }
-    #else
-    self
-    #endif
-  }
-}
-
-private struct FeedNativeReorderContainer: ViewModifier {
-  let move: ([String], String, String?) -> Void
-
-  @ViewBuilder
-  func body(content: Content) -> some View {
-    #if compiler(>=6.4)
-    if #available(iOS 27.0, macOS 27.0, *) {
-      content.reorderContainer(for: String.self, itemID: \.self, in: String.self) { difference in
-        let before: String?
-        switch difference.destination.position {
-        case .before(let uri): before = uri
-        case .end: before = nil
-        }
-        move(difference.sources, difference.destination.collectionID, before)
-      }
-    } else {
-      content
-    }
-    #else
-    content
-    #endif
   }
 }

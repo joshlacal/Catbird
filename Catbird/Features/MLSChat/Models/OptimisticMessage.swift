@@ -73,12 +73,11 @@ enum DisplayMessage: Identifiable {
     }
   }
 
-  var epoch: Int {
+  var epoch: Int? {
     switch self {
     case .optimistic:
       // Optimistic messages haven't been assigned an epoch yet
-      // Use Int.max to sort them after all confirmed messages
-      return Int.max
+      return nil
     case .confirmed(let msg):
       return msg.epoch
     case .system:

@@ -113,7 +113,11 @@ public enum InviteURLHelper {
         guard let cgImage = context.createCGImage(transformedImage, from: transformedImage.extent) else {
             return nil
         }
-        return PlatformImage.image(from: cgImage)
+        #if os(iOS)
+        return UIImage(cgImage: cgImage)
+        #elseif os(macOS)
+        return NSImage(cgImage: cgImage, size: CGSize(width: size, height: size))
+        #endif
     }
 }
 

@@ -45,6 +45,8 @@ struct ParentPostView: View {
   @Binding var path: NavigationPath
   var appState: AppState
   var visibilityContext: PostVisibilityContext = .public
+  /// The ancestor above this one is visible, so the connector continues upward.
+  var showsConnectorAbove = false
   var body: some View {
     switch parentPost.threadItem.value {
     case .appBskyUnspeccedDefsThreadItemPost(let threadItemPost):
@@ -63,7 +65,8 @@ struct ParentPostView: View {
         rootAuthorDID: parentRootURI?.authority,
         isReplyHiddenByThreadgate: threadItemPost.hiddenByThreadgate,
         opThreadPostIndex: threadItemPost.opThreadPostIndex,
-        opThreadPostCount: threadItemPost.opThreadPostCount
+        opThreadPostCount: threadItemPost.opThreadPostCount,
+        hasThreadLineAbove: showsConnectorAbove
       )
       .onTapGesture {
         path.append(NavigationDestination.post(threadItemPost.post.uri))
@@ -100,7 +103,6 @@ struct ParentPostView: View {
 }
 
 struct ReplyView: View {
-  @Environment(\.layoutDirection) private var layoutDirection
   let replyWrapper: ReplyWrapper
   let opAuthorID: String
   let nestedReplies: [ReplyWrapper]  // Nested replies for this post
@@ -114,10 +116,7 @@ struct ReplyView: View {
     ThreadReplyPresentationMetrics.maximumDepth(isEnabled: isThreadedRepliesMode)
   }
 
-  private var visibleNestedReplies: [ReplyWrapper] {
-    nestedReplies.filter { $0.depth <= maxDepth }
-  }
-
+  /// Flat mode follows one continuation chain; nested mode shows the tree.
   private var nestedLayout: ThreadReplyLayout {
     ThreadReplyLayoutBuilder.build(
       rootID: replyWrapper.id,
@@ -126,11 +125,14 @@ struct ReplyView: View {
           id: $0.id,
           parentID: $0.parentURI,
           hasUnloadedReplies: $0.hasReplies,
+          unloadedReplyCount: $0.moreReplies,
           depth: $0.depth
         )
       },
       maximumDepth: maxDepth,
-      rootHasUnloadedReplies: replyWrapper.hasReplies
+      rootHasUnloadedReplies: replyWrapper.hasReplies,
+      rootUnloadedReplyCount: replyWrapper.moreReplies,
+      selection: isThreadedRepliesMode ? .tree : .chain
     )
   }
 
@@ -147,20 +149,20 @@ struct ReplyView: View {
   }
 
   var body: some View {
-    // Every root arm — post or tombstone — renders `nestedRepliesSection` so
-    // the depth-2+ subtree stays visible even when the chain root is blocked /
-    // not-found / no-auth. Dropping the subtree with the root would defeat the
-    // whole "keep replies under a blocked post reachable" goal.
+    let layout = nestedLayout
+    // Every root arm — post or tombstone — renders the nested rows so the
+    // subtree stays visible even when the chain root is blocked / not-found /
+    // no-auth. Dropping the subtree with the root would defeat the whole
+    // "keep replies under a blocked post reachable" goal.
     VStack(alignment: .leading, spacing: 0) {
       switch replyWrapper.threadItem.value {
       case .appBskyUnspeccedDefsThreadItemPost(let threadItemPost):
         let replyRootURI = threadRootURI(for: threadItemPost.post)
 
-        // Root post connects to the first nested reply when the layout says so.
         PostView(
           post: threadItemPost.post,
           grandparentAuthor: nil,
-          isParentPost: !isThreadedRepliesMode && nestedLayout.connectsRootToFirst,
+          isParentPost: false,
           isSelectable: false,
           path: $path,
           appState: appState,
@@ -173,11 +175,11 @@ struct ReplyView: View {
           opThreadPostIndex: threadItemPost.opThreadPostIndex,
           opThreadPostCount: threadItemPost.opThreadPostCount
         )
-        .environment(\.threadAvatarID, isThreadedRepliesMode ? replyWrapper.id : nil)
+        .environment(\.threadAvatarID, replyWrapper.id)
         .onTapGesture {
           path.append(NavigationDestination.post(threadItemPost.post.uri))
         }
-        .padding(.vertical, 3)
+        .padding(.vertical, ThreadReplyGeometry.connectorGap)
         .frame(maxWidth: 550, alignment: .leading)
       case .appBskyUnspeccedDefsThreadItemNotFound:
         PostNotFoundView(
@@ -207,76 +209,55 @@ struct ReplyView: View {
           .foregroundColor(.orange)
       }
 
-      // Nested subtree, shared across all root arms above.
-      if nestedLayout.rootHasAdditionalReplies {
-        continuationButton(for: replyWrapper.uri)
-      }
-      nestedRepliesSection
-    }
-    .overlayPreferenceValue(ThreadAvatarAnchorKey.self) { anchors in
-      if isThreadedRepliesMode {
-        GeometryReader { geometry in
-          Path { path in
-            let layout = nestedLayout
-            let ids = [replyWrapper.id] + layout.items.map(\.id)
-            let connections = [layout.connectsRootToFirst] + layout.items.map(\.connectsToNext)
-            for index in 0..<max(0, ids.count - 1) where connections[index] {
-              if let source = anchors[ids[index]], let destination = anchors[ids[index + 1]] {
-                let parent = geometry[source]
-                let child = geometry[destination]
-                // Work in leading-to-trailing coordinates, then mirror for RTL.
-                let direction: CGFloat = layoutDirection == .rightToLeft ? -1 : 1
-                let childLeading = direction > 0 ? child.minX : -child.maxX
-                let end = CGPoint(x: childLeading - 3, y: child.midY)
-                let gutter = min(parent.midX * direction, end.x - 8)
-                let start = CGPoint(x: parent.midX * direction, y: parent.maxY + 3)
-                func point(_ value: CGPoint) -> CGPoint {
-                  CGPoint(x: value.x * direction, y: value.y)
-                }
-                path.move(to: point(start))
-                path.addQuadCurve(
-                  to: point(CGPoint(x: gutter, y: start.y + 8)),
-                  control: point(CGPoint(x: gutter, y: start.y))
-                )
-                path.addLine(to: point(CGPoint(x: gutter, y: end.y - 8)))
-                path.addQuadCurve(
-                  to: point(CGPoint(x: gutter + 8, y: end.y)),
-                  control: point(CGPoint(x: gutter, y: end.y))
-                )
-                path.addLine(to: point(end))
-              }
-            }
-          }
-          .stroke(Color.systemGray4, style: StrokeStyle(lineWidth: 2, lineCap: .round))
-          // Anchors are already in physical coordinates; do not mirror the Path again.
-          .environment(\.layoutDirection, .leftToRight)
-        }
-        .allowsHitTesting(false)
-        .accessibilityHidden(true)
-      }
-    }
-  }
-
-  /// Renders the depth-2+ nested replies for this chain using their actual
-  /// parent relationships. Invoked from every root arm so a blocked / not-found
-  /// / no-auth root keeps its subtree. `parentAuthor(for:)` returns nil for a
-  /// tombstone root (its `post` is nil), so nested rows degrade to no
-  /// grandparent label rather than crashing or mislabeling.
-  @ViewBuilder
-  private var nestedRepliesSection: some View {
-    let layout = nestedLayout
-    let visibleReplies = visibleNestedReplies
-    if !layout.items.isEmpty {
       ForEach(layout.items) { item in
-        if let nestedWrapper = visibleReplies.first(where: { $0.id == item.id }) {
+        if let nestedWrapper = nestedReplies.first(where: { $0.id == item.id }) {
           nestedReplyRow(item: item, nestedWrapper: nestedWrapper)
         }
       }
+
+      // Branches the block does not show collapse into one row at its end.
+      if layout.rootHasAdditionalReplies {
+        continuationButton(
+          for: replyWrapper.uri,
+          count: layout.rootAdditionalReplyCount,
+          depth: 1
+        )
+      }
+    }
+    // Connectors are drawn from the avatars' measured bounds so they start at
+    // one avatar's bottom and end at the next avatar in the same chain.
+    .overlayPreferenceValue(ThreadAvatarAnchorKey.self) { anchors in
+      GeometryReader { geometry in
+        Path { path in
+          let ids = [replyWrapper.id] + layout.items.map(\.id)
+          let connections = [layout.connectsRootToFirst] + layout.items.map(\.connectsToNext)
+          for index in 0..<max(0, ids.count - 1) where connections[index] {
+            guard let source = anchors[ids[index]], let destination = anchors[ids[index + 1]] else {
+              continue
+            }
+            ThreadReplyGeometry.appendConnector(
+              to: &path,
+              parentAvatar: geometry[source],
+              childAvatar: geometry[destination]
+            )
+          }
+        }
+        .stroke(
+          ThreadReplyGeometry.connectorColor,
+          style: StrokeStyle(lineWidth: ThreadReplyGeometry.lineWidth, lineCap: .round)
+        )
+      }
+      .allowsHitTesting(false)
+      .accessibilityHidden(true)
     }
   }
 
   @ViewBuilder
   private func nestedReplyRow(item: ThreadReplyLayoutItem, nestedWrapper: ReplyWrapper) -> some View {
+    let indent = ThreadReplyPresentationMetrics.leadingIndent(
+      forDepth: item.depth,
+      isEnabled: isThreadedRepliesMode
+    )
     switch nestedWrapper.threadItem.value {
     case .appBskyUnspeccedDefsThreadItemPost(let nestedPost):
       let nestedRootURI = threadRootURI(for: nestedPost.post)
@@ -284,13 +265,13 @@ struct ReplyView: View {
       PostView(
         post: nestedPost.post,
         grandparentAuthor: parentAuthor(for: nestedWrapper),
-        isParentPost: !isThreadedRepliesMode && item.connectsToNext,
+        isParentPost: false,
         isSelectable: false,
         path: $path,
         appState: appState,
         hasVisibleThreadContext: true,
         avatarScale: ThreadReplyPresentationMetrics.avatarScale(
-          forDepth: nestedWrapper.depth,
+          forDepth: item.depth,
           isEnabled: isThreadedRepliesMode
         ),
         visibilityContext: visibilityContext,
@@ -300,17 +281,11 @@ struct ReplyView: View {
         opThreadPostIndex: nestedPost.opThreadPostIndex,
         opThreadPostCount: nestedPost.opThreadPostCount
       )
-      .environment(\.threadAvatarID, isThreadedRepliesMode ? nestedWrapper.id : nil)
+      .environment(\.threadAvatarID, nestedWrapper.id)
       .contentShape(Rectangle())
       .onTapGesture { path.append(NavigationDestination.post(nestedPost.post.uri)) }
-      .padding(.vertical, 3)
-      .padding(
-        .leading,
-        ThreadReplyPresentationMetrics.leadingIndent(
-          forDepth: nestedWrapper.depth,
-          isEnabled: isThreadedRepliesMode
-        )
-      )
+      .padding(.vertical, ThreadReplyGeometry.connectorGap)
+      .padding(.leading, indent)
       .frame(maxWidth: 550, alignment: .leading)
 
     case .appBskyUnspeccedDefsThreadItemNotFound:
@@ -320,6 +295,7 @@ struct ReplyView: View {
         path: $path
       )
       .applyAppStateEnvironment(appState)
+      .padding(.leading, indent)
 
     case .appBskyUnspeccedDefsThreadItemBlocked(let blocked):
       BlockedContentCard(
@@ -330,27 +306,32 @@ struct ReplyView: View {
         path: $path
       )
       .applyAppStateEnvironment(appState)
+      .padding(.leading, indent)
 
     case .appBskyUnspeccedDefsThreadItemNoUnauthenticated:
       Text("Reply not available (authentication required)")
         .appFont(AppTextRole.subheadline)
         .foregroundColor(.gray)
+        .padding(.leading, indent)
 
     case .unexpected(let unexpected):
       Text("Unexpected reply type: \(unexpected.textRepresentation)")
         .foregroundColor(.orange)
+        .padding(.leading, indent)
     }
     if item.hasAdditionalReplies {
-      continuationButton(for: nestedWrapper.uri)
+      continuationButton(for: nestedWrapper.uri, count: item.additionalReplyCount, depth: item.depth)
     }
   }
 
-  private func continuationButton(for uri: ATProtocolURI) -> some View {
+  /// Opens the reply's focused thread. Flat mode labels it with the number of
+  /// collapsed replies; nested mode uses it past the depth cap.
+  private func continuationButton(for uri: ATProtocolURI, count: Int, depth: Int) -> some View {
     Button {
       path.append(NavigationDestination.post(uri))
     } label: {
       HStack {
-        Text("Continue thread").appFont(AppTextRole.subheadline)
+        Text(continuationTitle(count: count)).appFont(AppTextRole.subheadline)
         Image(systemName: "chevron.right").appFont(AppTextRole.subheadline)
       }
       .foregroundColor(.accentColor)
@@ -359,7 +340,16 @@ struct ReplyView: View {
       .frame(maxWidth: .infinity, alignment: .leading)
       .contentShape(Rectangle())
     }
+    .padding(
+      .leading,
+      ThreadReplyPresentationMetrics.leadingIndent(forDepth: depth, isEnabled: isThreadedRepliesMode)
+    )
     .accessibilityHint("Opens this post to show more replies")
+  }
+
+  private func continuationTitle(count: Int) -> String {
+    guard !isThreadedRepliesMode, count > 0 else { return "Continue thread" }
+    return count == 1 ? "Show 1 more reply" : "Show \(count) more replies"
   }
 }
 #endif

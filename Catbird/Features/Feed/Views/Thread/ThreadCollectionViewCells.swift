@@ -33,7 +33,8 @@ final class ParentPostCell: UICollectionViewCell {
     parentPost: ParentPost,
     appState: AppState,
     path: Binding<NavigationPath>,
-    visibilityContext: PostVisibilityContext = .public
+    visibilityContext: PostVisibilityContext = .public,
+    showsConnectorAbove: Bool = false
   ) {
     // Set themed background color
       contentView.backgroundColor = UIColor(
@@ -59,18 +60,23 @@ final class ParentPostCell: UICollectionViewCell {
           parentPost: parentPost,
           path: path,
           appState: appState,
-          visibilityContext: visibilityContext
+          visibilityContext: visibilityContext,
+          showsConnectorAbove: showsConnectorAbove
         )
-        .padding(.horizontal, 3)
-        .padding(.vertical, 3)
+        // No top padding: the avatar column's own inset is where the connector
+        // from the ancestor above arrives, so consecutive ancestors join up.
+        // Horizontal inset matches MainPostCell so the line stays on one axis.
+        .padding(.horizontal, 6)
+        .padding(.bottom, 3)
       }
     )
 
-    // Only reconfigure if needed (using post id as identity check)
+    // Only reconfigure if needed (identity covers the connector state too)
+    let identity = parentPost.id + (showsConnectorAbove ? "|above" : "")
     if contentConfiguration == nil
-      || parentPost.id != configuredIdentity {
+      || identity != configuredIdentity {
 
-      configuredIdentity = parentPost.id
+      configuredIdentity = identity
 
       // Configure with SwiftUI content
       contentConfiguration = UIHostingConfiguration {
@@ -129,7 +135,8 @@ final class MainPostCell: UICollectionViewCell {
     path: Binding<NavigationPath>,
     opThreadPostIndex: Int? = nil,
     opThreadPostCount: Int? = nil,
-    visibilityContext: PostVisibilityContext = .public
+    visibilityContext: PostVisibilityContext = .public,
+    showsConnectorAbove: Bool = false
   ) {
     let postIdentity = post.uri.uriString()
 
@@ -154,14 +161,23 @@ final class MainPostCell: UICollectionViewCell {
           ThreadViewMainPostView(
             post: post,
             showLine: false,
+            hasThreadLineAbove: showsConnectorAbove,
             path: path,
             appState: appState,
             visibilityContext: visibilityContext,
             opThreadPostIndex: opThreadPostIndex,
             opThreadPostCount: opThreadPostCount
           )
+          // Flush to the ancestor above so its connector meets this avatar.
+          .padding(.top, showsConnectorAbove ? 0 : 6)
+          .padding(.bottom, 6)
           .padding(.horizontal, 6)
-          .padding(.vertical, 6)
+          // The focused post reads as the anchor of the conversation.
+          .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+              .fill(Color.primary.opacity(0.04))
+              .padding(.horizontal, 3)
+          )
         }
 
         // Full-bleed divider across entire screen width
@@ -170,11 +186,12 @@ final class MainPostCell: UICollectionViewCell {
       }
     .id(postIdentity)
 
-    // Only reconfigure if needed (using post URI as identity check)
+    // Only reconfigure if needed (identity covers the connector state too)
+    let identity = postIdentity + (showsConnectorAbove ? "|above" : "")
     if contentConfiguration == nil
-      || postIdentity != configuredIdentity {
+      || identity != configuredIdentity {
 
-      configuredIdentity = postIdentity
+      configuredIdentity = identity
 
       // Supply state at the UIKit hosting boundary for all main-post descendants.
       contentConfiguration = UIHostingConfiguration {

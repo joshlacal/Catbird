@@ -34,7 +34,7 @@ public struct LiveStatusEditorSheet: View {
                 Section {
                     TextField("https://twitch.tv/...", text: $streamURLString)
                         .platformURLInput()
-                        .disableAutocorrection(true)
+                        .autocorrectionDisabled()
                         .onChange(of: streamURLString) { _, newValue in
                             loadPreviewDebounced(for: newValue)
                         }

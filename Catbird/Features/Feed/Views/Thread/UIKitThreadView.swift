@@ -555,7 +555,8 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     case .loadMoreParents:
       layoutSection.interGroupSpacing = 0
     case .parentPosts:
-      layoutSection.interGroupSpacing = 3
+      // Ancestors sit flush so their connector reads as one continuous line.
+      layoutSection.interGroupSpacing = 0
       layoutSection.contentInsets = NSDirectionalEdgeInsets(
         top: 0, leading: 0, bottom: 0, trailing: 0)
     case .mainPost:
@@ -657,7 +658,8 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
           parentPost: parentPost,
           appState: self.appState,
           path: self.path,
-          visibilityContext: self.visibilityContext
+          visibilityContext: self.visibilityContext,
+          showsConnectorAbove: indexPath.item > 0
         )
         return cell
 
@@ -671,7 +673,8 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
           path: self.path,
           opThreadPostIndex: self.mainPostIndex,
           opThreadPostCount: self.mainPostCount,
-          visibilityContext: self.visibilityContext
+          visibilityContext: self.visibilityContext,
+          showsConnectorAbove: !self.parentPosts.isEmpty
         )
         return cell
       case .blockedAnchor:
@@ -1649,6 +1652,9 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     // parentPosts is already sorted by depth with oldest (most negative) first
     let parentItems = parentPosts.map { Item.parentPost($0) }
     snapshot.appendItems(parentItems, toSection: .parentPosts)
+    // The previously oldest parent now has an ancestor above it; refresh the
+    // connector state of every parent row.
+    snapshot.reconfigureItems(parentItems)
     
     // Add main post
     if let mainPost = mainPost {
