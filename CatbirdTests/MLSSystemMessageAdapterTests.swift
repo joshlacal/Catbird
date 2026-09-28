@@ -12,10 +12,34 @@ struct MLSSystemMessageAdapterTests {
   private let conversationID = "550e8400-e29b-41d4-a716-446655440000"
 
   private func adapter(payload: MLSMessagePayload) throws -> MLSMessageAdapter {
+    let did = try DID(didString: account)
+    let bytes = Bytes(data: Data([1]))
+    let prior = BlueCatbirdChatDefs.MlsAadPriorContext(
+      conversationId: bytes, generation: 1, stateVersion: 1, groupId: bytes,
+      epoch: 1, groupContextHash: bytes, confirmationTag: bytes, lifecycle: "active")
+    let coordinates = BlueCatbirdChatDefs.ConversationCoordinates(
+      conversationId: conversationID, generation: 1, stateVersion: 1, groupId: bytes,
+      epoch: 1, groupContextHash: bytes, confirmationTag: bytes, lifecycle: .value_active)
+    let body = BlueCatbirdChatDefs.ApplicationSendBody(
+      signatureDomain: "blue.catbird.chat.application",
+      messageId: "650e8400-e29b-41d4-a716-446655440000",
+      actorDid: did, actorDeviceId: "device-1", keyId: "key-1", authGeneration: 1,
+      prior: coordinates,
+      aad: BlueCatbirdChatDefs.ApplicationAad(
+        protocolVersion: .value_1, conversationId: bytes, generation: 1,
+        messageId: bytes, prior: prior),
+      applicationMessage: BlueCatbirdChatDefs.PrivateApplicationMessage(
+        framing: "mls", contentType: "application/octet-stream",
+        bytes: bytes, sha256: bytes),
+      blobBindings: [], signedAt: ATProtocolDate(date: Date()))
     let entry = BlueCatbirdChatDefs.ApplicationEntry(
-      convoId: conversationID, id: "650e8400-e29b-41d4-a716-446655440000",
-      senderDid: try DID(didString: account), ciphertext: Bytes(data: Data()), epoch: 1, seq: 5)
-    return MLSMessageAdapter(messageView: entry, payload: payload, senderDID: account, currentUserDID: account)
+      entryId: "650e8400-e29b-41d4-a716-446655440000",
+      conversationId: conversationID, seq: 5,
+      signedRequest: .init(
+        body: .blueCatbirdChatDefsApplicationSendBody(body), signature: bytes),
+      receivedAt: ATProtocolDate(date: Date()))
+    return try #require(MLSMessageAdapter(
+      messageView: entry, payload: payload, senderDID: account, currentUserDID: account))
   }
 
   @Test func onlyStructuredSystemMessagesGetNoticeStyleAndCannotBeEdited() throws {
