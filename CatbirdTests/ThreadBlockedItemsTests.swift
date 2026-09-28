@@ -2,9 +2,9 @@
 //  ThreadBlockedItemsTests.swift
 //  CatbirdTests
 //
-//  Verifies the thread reply-grouping pipeline keeps blocked / not-found items
-//  as tombstone wrappers in place, with their subtrees intact, instead of
-//  silently dropping them.
+//  Verifies the thread row pipeline keeps blocked / not-found items as
+//  tombstone rows in place, with their subtrees intact, instead of silently
+//  dropping them.
 //
 
 import Foundation
@@ -102,91 +102,73 @@ struct ThreadBlockedItemsTests {
     )
   }
 
+  private func rows(
+    _ items: [AppBskyUnspeccedGetPostThreadV2.ThreadItem],
+    mode: ThreadLayoutMode
+  ) -> [ThreadRow] {
+    ThreadRowBuilder.build(
+      items: items.map(ThreadRowBuilder.Item.init),
+      mode: mode,
+      maxIndentLevels: ThreadReplyGeometry.compactMaxIndentLevels
+    )
+  }
+
   // MARK: Tests
 
-  @Test("A blocked depth-1 reply is preserved as a tombstone with its subtree intact")
-  func blockedChainRootKeepsSubtree() throws {
-    let mainPost = try makePostView(did: opDID, rkey: "main")
+  @Test("A blocked depth-1 reply is a tombstone row whose subtree stays connected", arguments: [
+    ThreadLayoutMode.linear, .tree
+  ])
+  func blockedChainRootKeepsSubtree(mode: ThreadLayoutMode) throws {
+    let anchor = try postItem(did: opDID, rkey: "main", depth: 0)
     let blocked = try blockedItem(did: blockedDID, rkey: "blocked1", depth: 1)
     let child = try postItem(did: opDID, rkey: "child1", depth: 2)
 
-    let result = buildReplyWrappers(items: [blocked, child], mainPost: mainPost)
+    let result = rows([anchor, blocked, child], mode: mode)
 
-    // The blocked reply must remain as the single top-level chain root.
-    #expect(result.topLevel.count == 1)
-    let root = try #require(result.topLevel.first)
-    #expect(root.id == blocked.uri.uriString())
-    // It is a tombstone: no resolvable post, neutral flags.
-    #expect(root.post == nil)
-    #expect(root.isFromOP == false)
-    #expect(root.isOpThread == false)
+    #expect(result.map(\.id) == [anchor, blocked, child].map { $0.uri.uriString() })
+    let blockedRow = result[1]
+    #expect(blockedRow.kind == .tombstone(.blocked))
+    #expect(blockedRow.startsBranch)
+    #expect(blockedRow.lineOut)
 
-    // The depth-2 child lands under the blocked root, not dropped.
-    let nested = try #require(result.nested[blocked.uri.uriString()])
-    #expect(nested.count == 1)
-    let nestedChild = try #require(nested.first)
-    #expect(nestedChild.id == child.uri.uriString())
-    #expect(nestedChild.post != nil)
+    // The child has no record parent to read (fixtures carry no reply ref),
+    // so its parent is recovered from depth.
+    let childRow = result[2]
+    #expect(childRow.kind == .reply)
+    #expect(childRow.parentID == blocked.uri.uriString())
+    #expect(childRow.lineIn)
   }
 
-  @Test("A blocked chain root still produces non-empty nested render input")
-  func blockedRootYieldsNestedRenderInput() throws {
-    // Closest testable seam to the SwiftUI render layer: `ReplyView` feeds the
-    // blocked root's nested wrappers through `ThreadReplyLayoutBuilder` to
-    // decide what to draw. If that input is non-empty, the shared
-    // `nestedRepliesSection` (invoked from every root arm) renders the subtree.
-    let mainPost = try makePostView(did: opDID, rkey: "main")
-    let blocked = try blockedItem(did: blockedDID, rkey: "blocked1", depth: 1)
-    let child = try postItem(did: opDID, rkey: "child1", depth: 2)
-
-    let result = buildReplyWrappers(items: [blocked, child], mainPost: mainPost)
-    let rootID = blocked.uri.uriString()
-    let nested = try #require(result.nested[rootID])
-
-    // Mirror ReplyView.nestedLayout's input computation exactly.
-    let layout = ThreadReplyLayoutBuilder.build(
-      rootID: rootID,
-      nestedItems: nested.map {
-        ThreadReplyLayoutInput(id: $0.id, parentID: $0.parentURI, hasUnloadedReplies: $0.hasReplies, depth: $0.depth)
-      },
-      maximumDepth: ThreadReplyPresentationMetrics.maximumDepth(isEnabled: true)
-    )
-
-    #expect(!layout.items.isEmpty)
-    #expect(layout.items.contains(where: { $0.id == child.uri.uriString() }))
-  }
-
-  @Test("A pure-post thread groups identically with no tombstones (zero-diff behavior)")
-  func purePostThreadUnchanged() throws {
-    let mainPost = try makePostView(did: opDID, rkey: "main")
+  @Test("A pure-post thread pins the OP continuation and links its child")
+  func purePostThread() throws {
+    let anchor = try postItem(did: opDID, rkey: "main", depth: 0)
+    let other = try postItem(did: "did:plc:replier", rkey: "other", depth: 1)
     let top = try postItem(did: opDID, rkey: "top", depth: 1, opThread: true)
     let child = try postItem(did: "did:plc:replier", rkey: "child", depth: 2)
 
-    let result = buildReplyWrappers(items: [top, child], mainPost: mainPost)
+    let result = rows([anchor, other, top, child], mode: .linear)
 
-    #expect(result.topLevel.count == 1)
-    let root = try #require(result.topLevel.first)
-    #expect(root.id == top.uri.uriString())
-    #expect(root.post != nil)
-    #expect(root.isFromOP == true)
-    #expect(root.isOpThread == true)
-
-    let nested = try #require(result.nested[top.uri.uriString()])
-    #expect(nested.map(\.id) == [child.uri.uriString()])
+    #expect(result.map(\.id) == [anchor, top, child, other].map { $0.uri.uriString() })
+    #expect(result.allSatisfy { $0.kind != .tombstone(.blocked) })
+    #expect(result[2].lineIn)
+    #expect(result[1].lineOut)
+    #expect(result[3].startsBranch)
+    #expect(!result[3].lineIn)
   }
 
-  @Test("A blocked leaf reply is preserved as its own top-level tombstone")
+  @Test("A blocked leaf reply is its own unconnected branch")
   func blockedLeafPreserved() throws {
-    let mainPost = try makePostView(did: opDID, rkey: "main")
+    let anchor = try postItem(did: opDID, rkey: "main", depth: 0)
     let post1 = try postItem(did: opDID, rkey: "p1", depth: 1)
     let blockedLeaf = try blockedItem(did: blockedDID, rkey: "b1", depth: 1)
 
-    let result = buildReplyWrappers(items: [post1, blockedLeaf], mainPost: mainPost)
+    let result = rows([anchor, post1, blockedLeaf], mode: .tree)
 
-    #expect(result.topLevel.map(\.id) == [post1.uri.uriString(), blockedLeaf.uri.uriString()])
-    let blockedWrapper = try #require(result.topLevel.last)
-    #expect(blockedWrapper.post == nil)
-    #expect(result.nested[blockedLeaf.uri.uriString()]?.isEmpty == true)
+    #expect(result.map(\.id) == [anchor, post1, blockedLeaf].map { $0.uri.uriString() })
+    let blockedRow = try #require(result.last)
+    #expect(blockedRow.kind == .tombstone(.blocked))
+    #expect(blockedRow.startsBranch)
+    #expect(!blockedRow.lineIn && !blockedRow.lineOut)
   }
 
   // MARK: Blocked anchor detection

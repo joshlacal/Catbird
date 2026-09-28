@@ -164,10 +164,14 @@ final class ThreadManager: StateInvalidationSubscriber {
         return
       }
       
+      // Linear threads fetch one deep chain per reply; tree threads fetch a
+      // shallower but fully branching tree.
+      let layoutMode = ThreadLayoutMode(threadedReplies: appState.appSettings.threadedReplies)
       let params = AppBskyUnspeccedGetPostThreadV2.Parameters(
         anchor: uri,
         above: true,  // Load parent posts
-        below: 10,  // Load reply depth
+        below: layoutMode.fetchDepth,
+        branchingFactor: layoutMode.fetchBranchingFactor,
         sort: ThreadSortAPIMapper.apiValue(for: appState.appSettings.threadSortOrder)
       )
       let (responseCode, output) = try await client.app.bsky.unspecced.getPostThreadV2(input: params)
@@ -629,24 +633,6 @@ public struct ParentPost: Identifiable, Equatable, Hashable, Sendable {
   
   // Ensure hash value is based only on id to match equality implementation
   public func hash(into hasher: inout Hasher) {
-    hasher.combine(id)
-  }
-}
-
-struct ReplyWrapper: Identifiable, Equatable, Hashable {
-  let id: String
-  let threadItem: AppBskyUnspeccedGetPostThreadV2.ThreadItem
-  let depth: Int
-  let isFromOP: Bool
-  let isOpThread: Bool  // Whether this post is part of OP's contiguous thread
-  let hasReplies: Bool
-      
-  static func == (lhs: ReplyWrapper, rhs: ReplyWrapper) -> Bool {
-    return lhs.id == rhs.id
-  }
-  
-  // Ensure hash value is based only on id to match equality implementation
-  func hash(into hasher: inout Hasher) {
     hasher.combine(id)
   }
 }
