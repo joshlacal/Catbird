@@ -36,6 +36,19 @@ private var isEncryptedRequestUIFixture: Bool {
   #endif
 }
 
+private var isMessageRequestsUIFixture: Bool {
+  #if DEBUG
+  ProcessInfo.processInfo.arguments.contains("--message-requests-ui-fixture")
+  #else
+  false
+  #endif
+}
+
+/// Any presentation fixture: skips account bootstrap, MLS lifecycle, and URL handling.
+private var isPresentationUIFixture: Bool {
+  isEncryptedRequestUIFixture || isMessageRequestsUIFixture
+}
+
 // App-wide logger
 let logger = Logger(subsystem: "blue.catbird", category: "AppLifecycle")
 
@@ -343,7 +356,7 @@ struct CatbirdApp: App {
       _ application: UIApplication,
       didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
-      if isEncryptedRequestUIFixture { return true }
+      if isPresentationUIFixture { return true }
       prepareInitialMLSAdmission(
         applicationState: application.applicationState,
         source: "didFinishLaunching"
@@ -650,7 +663,7 @@ struct CatbirdApp: App {
 
   // MARK: - Initialization
   init() {
-    if isEncryptedRequestUIFixture { return }
+    if isPresentationUIFixture { return }
     // Resolve routing first: in DEBUG this installs an explicitly configured runtime fixture
     // transport before any client exists (and refuses to launch on an invalid config).
     _ = CatbirdGatewayConfiguration.current
@@ -1322,6 +1335,8 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
         #if DEBUG
         if isEncryptedRequestUIFixture {
           MLSEncryptedRequestUIFixture()
+        } else if isMessageRequestsUIFixture {
+          MessageRequestsUIFixture()
         } else {
           applicationContent
         }
@@ -1341,7 +1356,7 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
       }
       #endif
       .onOpenURL { url in
-          guard !isEncryptedRequestUIFixture else { return }
+          guard !isPresentationUIFixture else { return }
           logger.info(
             "Received URL for scheme=\(url.scheme ?? "none", privacy: .public) host=\(url.host ?? "none", privacy: .public) path=\(url.path, privacy: .public)"
           )
@@ -1603,7 +1618,7 @@ private extension CatbirdApp {
 
   @MainActor
   func handleScenePhaseChange(from oldPhase: ScenePhase, to newPhase: ScenePhase) {
-    guard !isEncryptedRequestUIFixture else { return }
+    guard !isPresentationUIFixture else { return }
     MLSInitialLifecycleCoordinator.shared.recordSceneObservation()
     let sceneTransitionToken = MLSForegroundResumeCoordinator.recordSceneTransition(to: newPhase)
     let suspensionCloseClaim = MLSSceneSuspensionCloseClaim(
