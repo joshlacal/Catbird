@@ -1608,11 +1608,16 @@ final class AppState {
             )
 
             // Propagate fresh database pools to AppState after corruption recovery.
+            let managerIdentity = ObjectIdentifier(manager)
             manager.onDatabaseRefreshed = { [weak self] newDatabase in
                 Task { @MainActor in
-                    if let pool = newDatabase as? DatabasePool {
-                        self?.mlsDatabase = pool
-                    }
+                    guard let self, let currentManager = self.mlsConversationManagerStorage,
+                        ObjectIdentifier(currentManager) == managerIdentity,
+                        let pool = newDatabase as? DatabasePool,
+                        let currentPool = currentManager.database as? DatabasePool,
+                        currentPool === pool
+                    else { return }
+                    self.mlsDatabase = pool
                 }
             }
 
@@ -1630,6 +1635,9 @@ final class AppState {
                 try await manager.initialize()
                 logger.info("MLS: ✅ Created and initialized new conversation manager successfully")
                 mlsConversationManagerStorage = manager
+                if let pool = manager.database as? DatabasePool {
+                    mlsDatabase = pool
+                }
                 mlsServiceState.status = .ready
                 mlsServiceState.retryCount = 0 // Reset retry count on success
                 mlsServiceState.lastError = nil

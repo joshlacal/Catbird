@@ -26,18 +26,16 @@ import SwiftUI
   }
 }
 
-/// Avatar sizing used to make reply depth visible without changing ordinary
-/// feed and profile rows. The default preserves PostView's original geometry.
+/// Avatar sizing for `PostView`. `.tree` is the constant compact avatar of
+/// nested thread replies; every other surface uses `.regular`.
 enum PostAvatarScale: Equatable, Sendable {
   case regular
-  case compact
-  case mini
+  case tree
 
   var avatarSize: CGFloat {
     switch self {
-    case .regular: 48
-    case .compact: 32
-    case .mini: 24
+    case .regular: ThreadReplyGeometry.linearAvatarSize
+    case .tree: ThreadReplyGeometry.treeAvatarSize
     }
   }
 
@@ -48,7 +46,6 @@ enum PostAvatarScale: Equatable, Sendable {
 
 /// A view that displays a single post with its content, avatar, and actions
 struct PostView: View, Equatable, Identifiable {
-  @Environment(\.threadAvatarID) private var threadAvatarID
     static func == (lhs: PostView, rhs: PostView) -> Bool {
         lhs.post.uri == rhs.post.uri && lhs.post.cid == rhs.post.cid
     }
@@ -69,8 +66,6 @@ struct PostView: View, Equatable, Identifiable {
   let isReplyHiddenByThreadgate: Bool
   let opThreadPostIndex: Int?
   let opThreadPostCount: Int?
-  /// Draws the thread connector above the avatar (continuing from a post above).
-  let hasThreadLineAbove: Bool
   @Binding var path: NavigationPath
   @Environment(\.feedPostID) private var feedPostID
   // MARK: - State
@@ -128,8 +123,7 @@ var id: String {
     rootAuthorDID: String? = nil,
     isReplyHiddenByThreadgate: Bool = false,
     opThreadPostIndex: Int? = nil,
-    opThreadPostCount: Int? = nil,
-    hasThreadLineAbove: Bool = false
+    opThreadPostCount: Int? = nil
   ) {
     self.post = post
     self.grandparentAuthor = grandparentAuthor
@@ -145,7 +139,6 @@ var id: String {
     self.isReplyHiddenByThreadgate = isReplyHiddenByThreadgate
     self.opThreadPostIndex = opThreadPostIndex
     self.opThreadPostCount = opThreadPostCount
-    self.hasThreadLineAbove = hasThreadLineAbove
     _postState = State(initialValue: PostState(post: post))  // Initialize consolidated state
     _viewModel = State(initialValue: PostViewModel(post: post, appState: appState, visibilityContext: visibilityContext))
     _contextMenuViewModel = State(
@@ -168,9 +161,7 @@ var id: String {
         isParentPost: isParentPost,
         isAvatarLoaded: $postState.isAvatarLoaded,
         path: $path,
-        avatarScale: avatarScale,
-        threadAvatarID: threadAvatarID == post.uri.uriString() ? threadAvatarID : nil,
-        hasThreadLineAbove: hasThreadLineAbove
+        avatarScale: avatarScale
       )
 
       // Content column - show error view or normal post content
@@ -1319,25 +1310,6 @@ private struct ThreadSummarySheet: View {
   }
 }
 
-// Detail thread rows opt into measured avatar geometry; feed rows stay unchanged.
-struct ThreadAvatarAnchorKey: PreferenceKey {
-  static let defaultValue: [String: Anchor<CGRect>] = [:]
-  static func reduce(value: inout [String: Anchor<CGRect>], nextValue: () -> [String: Anchor<CGRect>]) {
-    value.merge(nextValue(), uniquingKeysWith: { _, new in new })
-  }
-}
-
-private struct ThreadAvatarIDKey: EnvironmentKey {
-  static let defaultValue: String? = nil
-}
-
-extension EnvironmentValues {
-  var threadAvatarID: String? {
-    get { self[ThreadAvatarIDKey.self] }
-    set { self[ThreadAvatarIDKey.self] = newValue }
-  }
-}
-
 // MARK: - Extracted AuthorAvatarColumn View
 struct AuthorAvatarColumn: View {
   let author: AppBskyActorDefs.ProfileViewBasic
@@ -1345,8 +1317,6 @@ struct AuthorAvatarColumn: View {
   @Binding var isAvatarLoaded: Bool
   @Binding var path: NavigationPath
   var avatarScale: PostAvatarScale = .regular
-  var threadAvatarID: String? = nil
-  var hasThreadLineAbove: Bool = false
 
   // Using multiples of 3 for spacing
   private static let baseUnit: CGFloat = 3
@@ -1393,27 +1363,11 @@ struct AuthorAvatarColumn: View {
         noAvatarView
       }
     }
-    .anchorPreference(key: ThreadAvatarAnchorKey.self, value: .bounds) { anchor in
-      guard let threadAvatarID else { return [:] }
-      return [threadAvatarID: anchor]
-    }
     .frame(maxHeight: .infinity, alignment: .top)
     .frame(width: avatarContainerWidth)
     .padding(.horizontal, Self.baseUnit)
     .padding(.top, Self.baseUnit)
-    .overlay(alignment: .topLeading) {
-      ThreadAvatarConnector(
-        showsAbove: hasThreadLineAbove,
-        showsBelow: isParentPost,
-        avatarSize: avatarSize,
-        topInset: Self.baseUnit
-      )
-      .padding(
-        .leading,
-        Self.baseUnit + ThreadReplyGeometry.avatarCenterX(for: avatarScale)
-          - ThreadReplyGeometry.lineWidth / 2
-      )
-    }
+    .background(parentPostIndicator)
     // Do not add a ProfileEntity context inside a PostEntity-annotated post.
     // iOS 27 can flatten nested entity contexts during view annotation
     // collection and hydrate the author's DID as the surrounding PostEntity.
@@ -1451,34 +1405,17 @@ struct AuthorAvatarColumn: View {
     }
   }
 
-}
-
-/// Vertical thread connector for an avatar column: a segment above the avatar
-/// (continuing from the previous post) and one below it (continuing to the
-/// next post). Geometry comes from `ThreadReplyGeometry` so it lines up with
-/// the connector overlay drawn for nested replies.
-struct ThreadAvatarConnector: View {
-  let showsAbove: Bool
-  let showsBelow: Bool
-  let avatarSize: CGFloat
-  let topInset: CGFloat
-
-  var body: some View {
-    if showsAbove || showsBelow {
-      VStack(spacing: 0) {
-        segment(showsAbove).frame(height: topInset)
-        Color.clear.frame(height: avatarSize)
-        segment(showsBelow).frame(maxHeight: .infinity)
-      }
-      .frame(width: ThreadReplyGeometry.lineWidth)
-      .frame(maxHeight: .infinity, alignment: .top)
-      .allowsHitTesting(false)
-      .accessibilityHidden(true)
+  // Line connecting parent and child posts
+  @ViewBuilder
+  private var parentPostIndicator: some View {
+    if isParentPost {
+      Rectangle()
+        .fill(Color.systemGray4)
+        .frame(width: 2)
+        .frame(maxHeight: .infinity)
+        .padding(.bottom, avatarSize + Self.baseUnit * 2)
+        .offset(y: avatarSize + Self.baseUnit * 3)
     }
-  }
-
-  private func segment(_ visible: Bool) -> some View {
-    Rectangle().fill(visible ? ThreadReplyGeometry.connectorColor : Color.clear)
   }
 }
 

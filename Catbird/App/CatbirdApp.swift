@@ -36,6 +36,19 @@ private var isEncryptedRequestUIFixture: Bool {
   #endif
 }
 
+private var isMessageRequestsUIFixture: Bool {
+  #if DEBUG
+  ProcessInfo.processInfo.arguments.contains("--message-requests-ui-fixture")
+  #else
+  false
+  #endif
+}
+
+/// Any presentation fixture: skips account bootstrap, MLS lifecycle, and URL handling.
+private var isPresentationUIFixture: Bool {
+  isEncryptedRequestUIFixture || isMessageRequestsUIFixture
+}
+
 // App-wide logger
 let logger = Logger(subsystem: "blue.catbird", category: "AppLifecycle")
 
@@ -43,6 +56,7 @@ enum MLSForegroundResumeOutcome: Equatable {
   case managerUnavailable
   case preparationFailed
   case failedStillSuspended
+  case runtimeRecoveryFailed
   case staleTransition
   case resumed
 }
@@ -124,6 +138,7 @@ enum MLSForegroundResumeCoordinator {
   enum MLSResumeResult: Equatable {
     case resumed
     case failedStillSuspended
+    case runtimeRecoveryFailed
   }
 
   static func run(
@@ -148,6 +163,8 @@ enum MLSForegroundResumeCoordinator {
     switch await resumeManager() {
     case .failedStillSuspended:
       return .failedStillSuspended
+    case .runtimeRecoveryFailed:
+      return .runtimeRecoveryFailed
     case .resumed:
       guard resumeStillCurrent() else {
         reassertSuspensionAfterStaleResume()
@@ -343,7 +360,7 @@ struct CatbirdApp: App {
       _ application: UIApplication,
       didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
-      if isEncryptedRequestUIFixture { return true }
+      if isPresentationUIFixture { return true }
       prepareInitialMLSAdmission(
         applicationState: application.applicationState,
         source: "didFinishLaunching"
@@ -650,7 +667,7 @@ struct CatbirdApp: App {
 
   // MARK: - Initialization
   init() {
-    if isEncryptedRequestUIFixture { return }
+    if isPresentationUIFixture { return }
     // Resolve routing first: in DEBUG this installs an explicitly configured runtime fixture
     // transport before any client exists (and refuses to launch on an invalid config).
     _ = CatbirdGatewayConfiguration.current
@@ -1322,6 +1339,8 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
         #if DEBUG
         if isEncryptedRequestUIFixture {
           MLSEncryptedRequestUIFixture()
+        } else if isMessageRequestsUIFixture {
+          MessageRequestsUIFixture()
         } else {
           applicationContent
         }
@@ -1344,7 +1363,7 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
       }
       #endif
       .onOpenURL { url in
-          guard !isEncryptedRequestUIFixture else { return }
+          guard !isPresentationUIFixture else { return }
           logger.info(
             "Received URL for scheme=\(url.scheme ?? "none", privacy: .public) host=\(url.host ?? "none", privacy: .public) path=\(url.path, privacy: .public)"
           )
@@ -1606,7 +1625,7 @@ private extension CatbirdApp {
 
   @MainActor
   func handleScenePhaseChange(from oldPhase: ScenePhase, to newPhase: ScenePhase) {
-    guard !isEncryptedRequestUIFixture else { return }
+    guard !isPresentationUIFixture else { return }
     MLSInitialLifecycleCoordinator.shared.recordSceneObservation()
     let sceneTransitionToken = MLSForegroundResumeCoordinator.recordSceneTransition(to: newPhase)
     let suspensionCloseClaim = MLSSceneSuspensionCloseClaim(
@@ -1974,8 +1993,12 @@ private extension CatbirdApp {
         appState.mlsServiceState.clearDatabaseFailure()
       },
       resumeManager: {
-        await manager.resumeMLSOperations()
-        return MLSClient.isSuspensionInProgress ? .failedStillSuspended : .resumed
+        let resumed = await manager.resumeMLSOperations()
+        guard resumed else {
+          return MLSClient.isSuspensionInProgress || MLSCoreContext.isSuspensionInProgress
+            ? .failedStillSuspended : .runtimeRecoveryFailed
+        }
+        return .resumed
       },
       reassertSuspensionAfterStaleResume: {
         guard !MLSForegroundResumeCoordinator.isApplicationActive else {
@@ -1989,6 +2012,12 @@ private extension CatbirdApp {
         MLSCoreContext.interruptAllContexts()
       },
       reloadProjection: {
+        // Suspension closes the pool retained by AppState. Core has adopted the
+        // replacement before completing resume; publish that same pool before
+        // any projection read, without waiting for the legacy refresh callback.
+        if let database = manager.database as? DatabasePool {
+          appState?.updateMLSDatabase(database)
+        }
         await appState?.reloadMLSProjectionFromDisk()
       },
       performBackup: {
@@ -2005,6 +2034,8 @@ private extension CatbirdApp {
       logger.error("❌ [RESUME] Foreground MLS preparation failed; keeping MLS lifecycle gates closed")
     case .failedStillSuspended:
       logger.error("❌ [RESUME] MLS manager resume failed; lifecycle gates remain closed")
+    case .runtimeRecoveryFailed:
+      logger.error("❌ [RESUME] MLS runtime recovery failed; foreground transaction did not complete")
     case .staleTransition:
       logger.warning("⏭️ [RESUME] Discarded stale foreground transition")
     case .resumed:

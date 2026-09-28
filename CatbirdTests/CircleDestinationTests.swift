@@ -718,7 +718,7 @@ struct CircleDestinationTests {
     appState.circleService = service
     let binding = Binding.constant(NavigationPath())
 
-    // 1. ParentPostView with circle visibility context vs default public
+    // 1. ThreadRowView (ancestor and reply rows) with circle visibility context vs default public
     let threadItemPost = AppBskyUnspeccedDefs.ThreadItemPost(
       post: circlePost,
       moreParents: false,
@@ -729,61 +729,39 @@ struct CircleDestinationTests {
       hiddenByThreadgate: false,
       mutedByViewer: false
     )
-    let parentPost = ParentPost(
-      id: circlePost.uri.uriString(),
-      threadItem: AppBskyUnspeccedGetPostThreadV2.ThreadItem(
-        uri: circlePost.uri,
-        depth: 0,
-        value: .appBskyUnspeccedDefsThreadItemPost(threadItemPost)
-      ),
-      grandparentAuthor: nil
-    )
-
-    let defaultParentView = ParentPostView(parentPost: parentPost, path: binding, appState: appState)
-    #expect(defaultParentView.visibilityContext == .public)
-
-    let circleParentView = ParentPostView(
-      parentPost: parentPost,
-      path: binding,
-      appState: appState,
-      visibilityContext: .circle(family)
-    )
-    #expect(circleParentView.visibilityContext == .circle(family))
-
-    // 2. ReplyView with circle visibility context vs default public
-    let replyWrapper = ReplyWrapper(
-      id: circlePost.uri.uriString(),
-      threadItem: AppBskyUnspeccedGetPostThreadV2.ThreadItem(
-        uri: circlePost.uri,
-        depth: 1,
-        value: .appBskyUnspeccedDefsThreadItemPost(threadItemPost)
-      ),
+    let threadItem = AppBskyUnspeccedGetPostThreadV2.ThreadItem(
+      uri: circlePost.uri,
       depth: 1,
-      isFromOP: false,
-      isOpThread: false,
-      hasReplies: false
+      value: .appBskyUnspeccedDefsThreadItemPost(threadItemPost)
+    )
+    let replyRow = try #require(
+      ThreadRowBuilder.build(
+        items: [ThreadRowBuilder.Item(threadItem)],
+        mode: .linear,
+        maxIndentLevels: ThreadReplyGeometry.compactMaxIndentLevels
+      ).first
     )
 
-    let defaultReplyView = ReplyView(
-      replyWrapper: replyWrapper,
-      opAuthorID: "did:plc:alice",
-      nestedReplies: [],
+    let defaultRowView = ThreadRowView(
+      row: replyRow,
+      threadItem: threadItem,
+      parentAuthor: nil,
       path: binding,
       appState: appState
     )
-    #expect(defaultReplyView.visibilityContext == .public)
+    #expect(defaultRowView.visibilityContext == .public)
 
-    let circleReplyView = ReplyView(
-      replyWrapper: replyWrapper,
-      opAuthorID: "did:plc:alice",
-      nestedReplies: [],
+    let circleRowView = ThreadRowView(
+      row: replyRow,
+      threadItem: threadItem,
+      parentAuthor: nil,
       path: binding,
       appState: appState,
       visibilityContext: .circle(family)
     )
-    #expect(circleReplyView.visibilityContext == .circle(family))
+    #expect(circleRowView.visibilityContext == .circle(family))
 
-    // 3. ThreadViewMainPostView with circle visibility creates PostViewModel routing to CircleService
+    // 2. ThreadViewMainPostView with circle visibility creates PostViewModel routing to CircleService
     let mainPostView = ThreadViewMainPostView(
       post: circlePost,
       showLine: false,
@@ -793,7 +771,7 @@ struct CircleDestinationTests {
     )
     #expect(mainPostView.visibilityContext == .circle(family))
 
-    // 4. PostView with circle visibility context initializes PostViewModel with disabled public capabilities and Circle routing
+    // 3. PostView with circle visibility context initializes PostViewModel with disabled public capabilities and Circle routing
     let postView = PostView(
       post: circlePost,
       grandparentAuthor: nil,

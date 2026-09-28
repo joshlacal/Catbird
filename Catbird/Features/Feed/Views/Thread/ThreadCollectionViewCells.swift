@@ -5,13 +5,11 @@ import SwiftUI
 import UIKit
 
 // MARK: - Cell Types
+/// Hosts one `ThreadRowView`: an ancestor, reply, tombstone or control row.
 @available(iOS 18.0, *)
-final class ParentPostCell: UICollectionViewCell {
-  private var configuredIdentity: String?
-
+final class ThreadRowCell: UICollectionViewCell {
   override init(frame: CGRect) {
     super.init(frame: frame)
-    // Background color will be set in configure method
     // Disable implicit layer animations on this cell
     let noAnim: [String: CAAction] = [
       "bounds": NSNull(),
@@ -30,60 +28,53 @@ final class ParentPostCell: UICollectionViewCell {
   }
 
   func configure(
-    parentPost: ParentPost,
+    row: ThreadRow,
+    threadItem: AppBskyUnspeccedGetPostThreadV2.ThreadItem?,
+    parentAuthor: AppBskyActorDefs.ProfileViewBasic?,
     appState: AppState,
     path: Binding<NavigationPath>,
     visibilityContext: PostVisibilityContext = .public,
-    showsConnectorAbove: Bool = false
+    isActionLoading: Bool = false,
+    onAction: (() -> Void)? = nil
   ) {
-    // Set themed background color
-      contentView.backgroundColor = UIColor(
-        Color.dynamicBackground(appState.themeManager, currentScheme: contentView.getCurrentColorScheme())
-      )
-
     // Responder-level onscreen-context annotation — SwiftUI modifiers inside
     // UIHostingConfiguration content aren't collected by the system.
-    // Only annotate if the id is a real at-uri; synthetic ids (e.g. from
+    // Only annotate if the id is a real at-uri; synthetic ids (control rows,
     // .unexpected thread items) can't be resolved and would cause ATProtocolError.
 #if compiler(>=6.4)
-    if #available(iOS 26.0, *),
-      let entityURI = AppEntityAnnotationIdentifiers.postURI(parentPost.id) {
+    if #available(anyAppleOS 26.0, *),
+      row.isPost,
+      let entityURI = AppEntityAnnotationIdentifiers.postURI(row.id) {
       appEntityIdentifier = EntityIdentifier(for: PostEntity.self, identifier: entityURI)
-    } else if #available(iOS 26.0, *) {
+    } else if #available(anyAppleOS 26.0, *) {
       appEntityIdentifier = nil
     }
 #endif
-    
-    let content = AnyView(
-      WidthLimitedContainer(maxWidth: 600) {
-        ParentPostView(
-          parentPost: parentPost,
-          path: path,
-          appState: appState,
-          visibilityContext: visibilityContext,
-          showsConnectorAbove: showsConnectorAbove
-        )
-        // No top padding: the avatar column's own inset is where the connector
-        // from the ancestor above arrives, so consecutive ancestors join up.
-        // Horizontal inset matches MainPostCell so the line stays on one axis.
-        .padding(.horizontal, 6)
-        .padding(.bottom, 3)
-      }
+
+    contentView.backgroundColor = UIColor(
+      Color.dynamicBackground(appState.themeManager, currentScheme: contentView.getCurrentColorScheme())
     )
 
-    // Only reconfigure if needed (identity covers the connector state too)
-    let identity = parentPost.id + (showsConnectorAbove ? "|above" : "")
-    if contentConfiguration == nil
-      || identity != configuredIdentity {
+    let maxContentWidth: CGFloat = traitCollection.horizontalSizeClass == .compact ? .infinity : 600
+    let content = ThreadRowView(
+      row: row,
+      threadItem: threadItem,
+      parentAuthor: parentAuthor,
+      path: path,
+      appState: appState,
+      visibilityContext: visibilityContext,
+      maxContentWidth: maxContentWidth,
+      isActionLoading: isActionLoading,
+      onAction: onAction
+    )
 
-      configuredIdentity = identity
-
-      // Configure with SwiftUI content
-      contentConfiguration = UIHostingConfiguration {
-        content.transaction { txn in txn.animation = nil }.fixedSize(horizontal: false, vertical: true)
-      }
-      .margins(.all, .zero)
+    contentConfiguration = UIHostingConfiguration {
+      content
+        .applyAppStateEnvironment(appState)
+        .transaction { txn in txn.animation = nil }
+        .fixedSize(horizontal: false, vertical: true)
     }
+    .margins(.all, .zero)
   }
 
   override func prepareForReuse() {
@@ -93,9 +84,7 @@ final class ParentPostCell: UICollectionViewCell {
       appEntityIdentifier = nil
     }
 #endif
-    // Clean up resources when cell is reused
     contentConfiguration = nil
-    configuredIdentity = nil
   }
 }
 
@@ -136,9 +125,10 @@ final class MainPostCell: UICollectionViewCell {
     opThreadPostIndex: Int? = nil,
     opThreadPostCount: Int? = nil,
     visibilityContext: PostVisibilityContext = .public,
-    showsConnectorAbove: Bool = false
+    showsLineFromParent: Bool = false
   ) {
     let postIdentity = post.uri.uriString()
+    let configurationIdentity = postIdentity + (showsLineFromParent ? "|line-in" : "")
 
 #if compiler(>=6.4)
     if #available(anyAppleOS 26.0, *),
@@ -154,44 +144,25 @@ final class MainPostCell: UICollectionViewCell {
         Color.dynamicBackground(appState.themeManager, currentScheme: contentView.getCurrentColorScheme())
       )
     
-    // Avoid removing/readding subviews if configuration hasn't changed
     let content =
-      VStack(spacing: 0) {
-        WidthLimitedContainer(maxWidth: 600) {
-          ThreadViewMainPostView(
-            post: post,
-            showLine: false,
-            hasThreadLineAbove: showsConnectorAbove,
-            path: path,
-            appState: appState,
-            visibilityContext: visibilityContext,
-            opThreadPostIndex: opThreadPostIndex,
-            opThreadPostCount: opThreadPostCount
-          )
-          // Flush to the ancestor above so its connector meets this avatar.
-          .padding(.top, showsConnectorAbove ? 0 : 6)
-          .padding(.bottom, 6)
-          .padding(.horizontal, 6)
-          // The focused post reads as the anchor of the conversation.
-          .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-              .fill(Color.primary.opacity(0.04))
-              .padding(.horizontal, 3)
-          )
-        }
-
-        // Full-bleed divider across entire screen width
-        Divider()
-          .padding(.bottom, 9)
+      WidthLimitedContainer(maxWidth: 600) {
+        ThreadAnchorPostView(
+          post: post,
+          showsLineFromParent: showsLineFromParent,
+          path: path,
+          appState: appState,
+          visibilityContext: visibilityContext,
+          opThreadPostIndex: opThreadPostIndex,
+          opThreadPostCount: opThreadPostCount
+        )
       }
-    .id(postIdentity)
+      .id(postIdentity)
 
-    // Only reconfigure if needed (identity covers the connector state too)
-    let identity = postIdentity + (showsConnectorAbove ? "|above" : "")
+    // Only reconfigure if needed (using post URI as identity check)
     if contentConfiguration == nil
-      || identity != configuredIdentity {
+      || configurationIdentity != configuredIdentity {
 
-      configuredIdentity = identity
+      configuredIdentity = configurationIdentity
 
       // Supply state at the UIKit hosting boundary for all main-post descendants.
       contentConfiguration = UIHostingConfiguration {
@@ -259,22 +230,17 @@ final class BlockedAnchorCell: UICollectionViewCell {
     configuredIdentity = identity
 
     let content =
-      VStack(spacing: 0) {
-        WidthLimitedContainer(maxWidth: 600) {
-          BlockedContentCard(
-            relationship: BlockRelationship(threadItemBlocked: blocked),
-            authorDid: blocked.author.did.didString(),
-            postUri: anchorURI,
-            variant: .anchor,
-            path: path
-          )
-          .applyAppStateEnvironment(appState)
-          .padding(.horizontal, 6)
-          .padding(.vertical, 6)
-        }
-
-        Divider()
-          .padding(.bottom, 9)
+      WidthLimitedContainer(maxWidth: 600) {
+        BlockedContentCard(
+          relationship: BlockRelationship(threadItemBlocked: blocked),
+          authorDid: blocked.author.did.didString(),
+          postUri: anchorURI,
+          variant: .anchor,
+          path: path
+        )
+        .applyAppStateEnvironment(appState)
+        .padding(.horizontal, ThreadReplyGeometry.rowInset)
+        .padding(.vertical, ThreadReplyGeometry.connectedTopSpacing)
       }
       .id(identity)
 
@@ -288,88 +254,6 @@ final class BlockedAnchorCell: UICollectionViewCell {
     super.prepareForReuse()
     contentConfiguration = nil
     configuredIdentity = nil
-  }
-}
-
-@available(iOS 18.0, *)
-final class ReplyCell: UICollectionViewCell {
-  override init(frame: CGRect) {
-    super.init(frame: frame)
-    // Background color will be set in configure method
-    // Disable implicit layer animations on this cell
-    let noAnim: [String: CAAction] = [
-      "bounds": NSNull(),
-      "position": NSNull(),
-      "frame": NSNull(),
-      "contents": NSNull(),
-      "onOrderIn": NSNull(),
-      "onOrderOut": NSNull()
-    ]
-    layer.actions = noAnim
-    contentView.layer.actions = noAnim
-  }
-
-  required init?(coder: NSCoder) {
-    fatalError("init(coder:) has not been implemented")
-  }
-
-  func configure(
-    replyWrapper: ReplyWrapper, 
-    nestedReplies: [ReplyWrapper],
-    opAuthorID: String, 
-    appState: AppState,
-    path: Binding<NavigationPath>,
-    visibilityContext: PostVisibilityContext = .public
-  ) {
-#if compiler(>=6.4)
-    if #available(anyAppleOS 26.0, *),
-      let entityURI = AppEntityAnnotationIdentifiers.postURI(replyWrapper.id) {
-      appEntityIdentifier = EntityIdentifier(for: PostEntity.self, identifier: entityURI)
-    } else if #available(anyAppleOS 26.0, *) {
-      appEntityIdentifier = nil
-    }
-#endif
-
-    // Set themed background color
-      contentView.backgroundColor = UIColor(
-        Color.dynamicBackground(appState.themeManager, currentScheme: contentView.getCurrentColorScheme())
-      )
-    
-    let content = AnyView(
-      VStack(spacing: 0) {
-        WidthLimitedContainer(maxWidth: 600) {
-          ReplyView(
-            replyWrapper: replyWrapper,
-            opAuthorID: opAuthorID,
-            nestedReplies: nestedReplies,
-            path: path,
-            appState: appState,
-            visibilityContext: visibilityContext
-          )
-          .padding(.horizontal, 10)
-        }
-
-        // Full-bleed divider across entire screen width
-        Divider()
-          .padding(.vertical, 3)
-      }
-    )
-
-    // Configure with SwiftUI content
-    contentConfiguration = UIHostingConfiguration {
-      content.transaction { txn in txn.animation = nil }.fixedSize(horizontal: false, vertical: true)
-    }
-    .margins(.all, .zero)
-  }
-
-  override func prepareForReuse() {
-    super.prepareForReuse()
-#if compiler(>=6.4)
-    if #available(anyAppleOS 26.0, *) {
-      appEntityIdentifier = nil
-    }
-#endif
-    contentConfiguration = nil
   }
 }
 #endif

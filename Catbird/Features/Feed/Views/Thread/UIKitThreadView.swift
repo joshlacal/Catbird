@@ -43,9 +43,22 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   private var mainPost: AppBskyFeedDefs.PostView?
   private var mainPostIndex: Int?
   private var mainPostCount: Int?
-  private var opThreadContinuations: [ReplyWrapper] = []  // OP's thread continuations
-  private var replyWrappers: [ReplyWrapper] = []  // Regular replies only
-  private var nestedRepliesMap: [String: [ReplyWrapper]] = [:]  // Maps reply URI to nested replies
+  /// Every loaded thread item (server, hidden and optimistic) by URI string.
+  private var threadItemsByID: [String: AppBskyUnspeccedGetPostThreadV2.ThreadItem] = [:]
+  /// Replies the viewer just posted that the AppView has not returned yet.
+  private var optimisticReplies: [OptimisticReply] = []
+  /// Display rows for the whole thread, rebuilt by `rebuildRows()`.
+  private var rows: [ThreadRow] = []
+  /// Rows whose thread item changed in the last rebuild and need reconfiguring.
+  private var changedRowIDs: Set<String> = []
+  private var parentRows: [ThreadRow] = []
+  private var anchorRow: ThreadRow?
+  private var replyRows: [ThreadRow] = []
+
+  private struct OptimisticReply {
+    let threadItem: AppBskyUnspeccedGetPostThreadV2.ThreadItem
+    let parentID: String
+  }
 
   // Bottom quick reply prompt
   private let composePromptContainer = UIView()
@@ -129,20 +142,18 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     case parentPosts
     case mainPost
     case replies
-    case showMoreReplies
     case bottomSpacer
   }
 
   private enum Item: Hashable, Sendable {
     case loadMoreParentsTrigger
-    case parentPost(ParentPost)
-    case mainPost(AppBskyFeedDefs.PostView)
+    case parentPost(ThreadRow)
+    case mainPost(ThreadRow)
     /// Anchor slot when the thread's depth-0 post is blocked. The payload lives
     /// on `threadManager.blockedAnchor`; the case is keyed by the anchor URI so
     /// the diffable snapshot has a stable identity.
     case blockedAnchor(String)
-    case reply(ReplyWrapper)
-    case showMoreRepliesButton
+    case reply(ThreadRow)
     case spacer
   }
 
@@ -307,6 +318,13 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
     super.traitCollectionDidChange(previousTraitCollection)
     
+    // The indent cap depends on width, so a size-class change re-lays out replies.
+    if previousTraitCollection?.horizontalSizeClass != traitCollection.horizontalSizeClass,
+      threadManager?.threadData != nil {
+      rebuildRows()
+      updateDataSnapshot(animatingDifferences: false)
+    }
+
     // Update theme when system appearance changes
     if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
       // Apply theme directly to this view controller
@@ -498,12 +516,10 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   }
 
   private func registerCells() {
-    collectionView.register(ParentPostCell.self, forCellWithReuseIdentifier: "ParentPostCell")
+    collectionView.register(ThreadRowCell.self, forCellWithReuseIdentifier: "ThreadRowCell")
     collectionView.register(MainPostCell.self, forCellWithReuseIdentifier: "MainPostCell")
     collectionView.register(BlockedAnchorCell.self, forCellWithReuseIdentifier: "BlockedAnchorCell")
-    collectionView.register(ReplyCell.self, forCellWithReuseIdentifier: "ReplyCell")
     collectionView.register(LoadMoreCell.self, forCellWithReuseIdentifier: "LoadMoreCell")
-    collectionView.register(ShowMoreRepliesCell.self, forCellWithReuseIdentifier: "ShowMoreRepliesCell")
     collectionView.register(SpacerCell.self, forCellWithReuseIdentifier: "SpacerCell")
   }
 
@@ -550,24 +566,8 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
 
     let layoutSection = NSCollectionLayoutSection(group: group)
 
-    // Add spacing based on section type
-    switch section {
-    case .loadMoreParents:
-      layoutSection.interGroupSpacing = 0
-    case .parentPosts:
-      // Ancestors sit flush so their connector reads as one continuous line.
-      layoutSection.interGroupSpacing = 0
-      layoutSection.contentInsets = NSDirectionalEdgeInsets(
-        top: 0, leading: 0, bottom: 0, trailing: 0)
-    case .mainPost:
-      layoutSection.interGroupSpacing = 0
-    case .replies:
-      layoutSection.interGroupSpacing = 9
-    case .showMoreReplies:
-      layoutSection.interGroupSpacing = 0
-    case .bottomSpacer:
-      break
-    }
+    // Rows own their spacing so connectors can run edge to edge between cells.
+    layoutSection.interGroupSpacing = 0
 
     return layoutSection
   }
@@ -606,13 +606,11 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
         estimatedHeight = max(computedHeight, mainPostEstimatedHeightFloor)
 
       case .replies:
-        let computedHeight = self.replyWrappers
-            .map { self.heightCalculator.calculateReplyHeight(for: $0, showingNestedReply: $0.hasReplies) }
+        let computedHeight = self.replyRows
+            .compactMap { self.threadItemsByID[$0.id] }
+            .map { self.heightCalculator.calculateThreadItemHeight(for: $0) }
             .max() ?? repliesEstimatedHeightFloor
         estimatedHeight = max(computedHeight, repliesEstimatedHeightFloor)
-        
-      case .showMoreReplies:
-        estimatedHeight = 50  // Fixed height for show more button
 
       case .bottomSpacer:
         estimatedHeight = 600
@@ -650,32 +648,28 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
         cell.configure(isLoading: self.isLoadingMoreParents)
         return cell
 
-      case .parentPost(let parentPost):
+      case .parentPost(let row), .reply(let row):
         let cell =
-          collectionView.dequeueReusableCell(withReuseIdentifier: "ParentPostCell", for: indexPath)
-          as! ParentPostCell
-        cell.configure(
-          parentPost: parentPost,
-          appState: self.appState,
-          path: self.path,
-          visibilityContext: self.visibilityContext,
-          showsConnectorAbove: indexPath.item > 0
-        )
+          collectionView.dequeueReusableCell(withReuseIdentifier: "ThreadRowCell", for: indexPath)
+          as! ThreadRowCell
+        self.configure(cell, for: row)
         return cell
 
-      case .mainPost(let post):
+      case .mainPost(let row):
         let cell =
           collectionView.dequeueReusableCell(withReuseIdentifier: "MainPostCell", for: indexPath)
           as! MainPostCell
-        cell.configure(
-          post: post,
-          appState: self.appState,
-          path: self.path,
-          opThreadPostIndex: self.mainPostIndex,
-          opThreadPostCount: self.mainPostCount,
-          visibilityContext: self.visibilityContext,
-          showsConnectorAbove: !self.parentPosts.isEmpty
-        )
+        if let mainPost = self.mainPost {
+          cell.configure(
+            post: mainPost,
+            appState: self.appState,
+            path: self.path,
+            opThreadPostIndex: self.mainPostIndex,
+            opThreadPostCount: self.mainPostCount,
+            visibilityContext: self.visibilityContext,
+            showsLineFromParent: row.lineIn
+          )
+        }
         return cell
       case .blockedAnchor:
         let cell =
@@ -691,33 +685,6 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
         }
         return cell
 
-      case .reply(let replyWrapper):
-        let cell =
-          collectionView.dequeueReusableCell(withReuseIdentifier: "ReplyCell", for: indexPath)
-          as! ReplyCell
-        
-        // Get nested replies for this reply (if any)
-        let nestedReplies = self.nestedRepliesMap[replyWrapper.id] ?? []
-        
-        cell.configure(
-          replyWrapper: replyWrapper,
-          nestedReplies: nestedReplies,
-          opAuthorID: self.mainPost?.author.did.didString() ?? "",
-          appState: self.appState,
-          path: self.path,
-          visibilityContext: self.visibilityContext
-        )
-        return cell
-        
-      case .showMoreRepliesButton:
-        let cell =
-          collectionView.dequeueReusableCell(withReuseIdentifier: "ShowMoreRepliesCell", for: indexPath)
-          as! ShowMoreRepliesCell
-        cell.configure(isLoading: self.isLoadingHiddenReplies) { [weak self] in
-          self?.loadHiddenRepliesFromButton()
-        }
-        return cell
-        
       case .spacer:
         return collectionView.dequeueReusableCell(withReuseIdentifier: "SpacerCell", for: indexPath)
       }
@@ -725,7 +692,30 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
 
     return dataSource
   }
-  
+
+  private func configure(_ cell: ThreadRowCell, for row: ThreadRow) {
+    let parentAuthor = row.parentID.flatMap { self.threadItemsByID[$0]?.post?.author }
+    let action: (() -> Void)?
+    switch row.kind {
+    case .showOtherReplies:
+      action = { [weak self] in self?.loadHiddenRepliesFromButton() }
+    case .readMoreUp:
+      action = { [weak self] in self?.loadMoreParents() }
+    case .ancestor, .anchor, .reply, .tombstone, .readMore:
+      action = nil
+    }
+    cell.configure(
+      row: row,
+      threadItem: threadItemsByID[row.id],
+      parentAuthor: parentAuthor,
+      appState: appState,
+      path: path,
+      visibilityContext: visibilityContext,
+      isActionLoading: row.kind == .showOtherReplies && isLoadingHiddenReplies,
+      onAction: action
+    )
+  }
+
   /// Called when user taps the "Show More Replies" button
   private func loadHiddenRepliesFromButton() {
     guard !isLoadingHiddenReplies, !hasLoadedHiddenReplies else { return }
@@ -735,23 +725,25 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     
     Task { @MainActor in
       await threadManager?.loadHiddenReplies(uri: postURI)
-      processHiddenReplies()
-      
+
       hasLoadedHiddenReplies = true
       isLoadingHiddenReplies = false
-      
-      // Refresh the snapshot to show the new replies and remove the button
+
+      // Rebuild so the hidden replies replace the button
+      rebuildRows()
       updateDataSnapshot(animatingDifferences: true)
     }
   }
-  
-  /// Update the show more replies cell to reflect loading state
+
+  /// Update the show more replies row to reflect loading state
   private func updateShowMoreRepliesCell() {
     var snapshot = dataSource.snapshot()
-    guard let showMoreItem = snapshot.itemIdentifiers(inSection: .showMoreReplies).first else {
-      return
+    let showMoreItems = snapshot.itemIdentifiers(inSection: .replies).filter {
+      if case .reply(let row) = $0 { return row.kind == .showOtherReplies }
+      return false
     }
-    snapshot.reconfigureItems([showMoreItem])
+    guard !showMoreItems.isEmpty else { return }
+    snapshot.reconfigureItems(showMoreItems)
     applySnapshot(snapshot, animatingDifferences: false)
   }
 
@@ -804,7 +796,6 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     guard !Task.isCancelled && self.loadGeneration == thisGeneration else { return }
 
     processThreadData()
-    processHiddenReplies()
 
     // Pre-calculate all post heights
     if let mainPost = self.mainPost {
@@ -814,8 +805,10 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
         _ = heightCalculator.calculateParentPostHeight(for: parent)
       }
       
-      for reply in replyWrappers {
-        _ = heightCalculator.calculateReplyHeight(for: reply, showingNestedReply: reply.hasReplies)
+      for row in replyRows {
+        if let item = threadItemsByID[row.id] {
+          _ = heightCalculator.calculateThreadItemHeight(for: item)
+        }
       }
     }
 
@@ -823,7 +816,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     
     // Apply snapshot synchronously without animations
     controllerLogger.debug(
-      "🧪 TEMP THREAD JUMP: about to apply initial snapshot - parents: \(self.parentPosts.count), replies: \(self.replyWrappers.count), hasMainPost: \(self.mainPost != nil)"
+      "🧪 TEMP THREAD JUMP: about to apply initial snapshot - parents: \(self.parentPosts.count), replies: \(self.replyRows.count), hasMainPost: \(self.mainPost != nil)"
     )
     updateDataSnapshot(animatingDifferences: false)
     
@@ -881,7 +874,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     }
   }
 
-    private func processThreadData() {
+  private func processThreadData() {
     guard let threadManager = threadManager,
       let threadData = threadManager.threadData
     else {
@@ -903,215 +896,92 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       Task { await appState.blockedAuthorHydrator?.prefetch(dids: blockedDids) }
     }
 
-    // Find main post (depth = 0)
     guard let mainItem = threadData.thread.first(where: { $0.depth == 0 }) else {
       parentPosts = []
       mainPost = nil
       mainPostIndex = nil
       mainPostCount = nil
-      replyWrappers = []
+      rebuildRows()
       return
     }
-    
-    // Extract main post
-    if case .appBskyUnspeccedDefsThreadItemPost(let threadItemPost) = mainItem.value {
+
+    switch mainItem.value {
+    case .appBskyUnspeccedDefsThreadItemPost(let threadItemPost):
       mainPost = threadItemPost.post
       mainPostIndex = threadItemPost.opThreadPostIndex
       mainPostCount = threadItemPost.opThreadPostCount
-      // Collect parent posts (depth < 0), sorted by depth (oldest = most negative)
-      let parentItems = threadData.thread.filter { $0.depth < 0 }.sorted { $0.depth < $1.depth }
-      parentPosts = collectParentPostsV2(from: parentItems)
-      
-      // Collect reply posts (depth > 0) - Keep API order which has chains grouped together
-      let replyItems = threadData.thread.filter { $0.depth > 0 }
-
-      // Group replies into chains (pure logic extracted for unit testing).
-      // `threadItemPost.post` is the resolved main post here, so no force-unwrap.
-      let grouped = buildReplyWrappers(items: replyItems, mainPost: threadItemPost.post)
-      let topLevelReplies = grouped.topLevel
-
-      let previousNestedRepliesMap = self.nestedRepliesMap
-      // Store the nested replies map
-      self.nestedRepliesMap = grouped.nested
-      var topLevelParentIdsToReconfigure = Set<String>()
-      // Separate OP thread continuations from regular replies (only depth-1)
-      opThreadContinuations = topLevelReplies.filter { $0.isOpThread }
-      var regularReplies = topLevelReplies.filter { !$0.isOpThread }
-      
-      // If we have optimistic updates, merge them with server data
-      if hasOptimisticUpdates && !optimisticReplyUris.isEmpty {
-        // Keep track of which optimistic replies are confirmed by server
-        var confirmedOptimisticUris = Set<String>()
-        
-        // Check if any server replies match our optimistic URIs (top-level and nested)
-        for wrapper in regularReplies {
-          guard let uri = wrapper.post?.uri.uriString(),
-                optimisticReplyUris.contains(uri)
-          else { continue }
-          confirmedOptimisticUris.insert(uri)
-        }
-        for (parentId, nestedList) in nestedRepliesMap {
-          for wrapper in nestedList {
-            guard let uri = wrapper.post?.uri.uriString(),
-                  optimisticReplyUris.contains(uri)
-            else { continue }
-            confirmedOptimisticUris.insert(uri)
-            topLevelParentIdsToReconfigure.insert(parentId)
-          }
-        }
-        
-        // Add unconfirmed optimistic top-level replies back to the list
-        for existingWrapper in replyWrappers {
-          guard let uri = existingWrapper.post?.uri.uriString(),
-                optimisticReplyUris.contains(uri),
-                !confirmedOptimisticUris.contains(uri),
-                !regularReplies.contains(where: { $0.id == existingWrapper.id })
-          else { continue }
-          regularReplies.append(existingWrapper)
-        }
-
-        // Add unconfirmed optimistic nested replies back to nestedRepliesMap
-        for (parentId, nestedList) in previousNestedRepliesMap {
-          for existingWrapper in nestedList {
-            guard let uri = existingWrapper.post?.uri.uriString(),
-                  optimisticReplyUris.contains(uri),
-                  !confirmedOptimisticUris.contains(uri),
-                  !nestedRepliesMap[parentId, default: []].contains(where: { $0.id == existingWrapper.id })
-            else { continue }
-            nestedRepliesMap[parentId, default: []].append(existingWrapper)
-            topLevelParentIdsToReconfigure.insert(parentId)
-            if let parentIndex = regularReplies.firstIndex(where: { $0.id == parentId }) {
-              let parent = regularReplies[parentIndex]
-              regularReplies[parentIndex] = ReplyWrapper(
-                id: parent.id,
-                threadItem: parent.threadItem,
-                depth: parent.depth,
-                isFromOP: parent.isFromOP,
-                isOpThread: parent.isOpThread,
-                hasReplies: true
-              )
-            }
-          }
-        }
-
-        // Cancel retry tasks for confirmed replies
-        for confirmedUri in confirmedOptimisticUris {
-          optimisticRetryTasks[confirmedUri]?.cancel()
-          optimisticRetryTasks.removeValue(forKey: confirmedUri)
-        }
-        
-        // Remove confirmed optimistic URIs
-        optimisticReplyUris.subtract(confirmedOptimisticUris)
-        
-        // Clear optimistic state if all updates are confirmed
-        if optimisticReplyUris.isEmpty {
-          hasOptimisticUpdates = false
-        }
-      }
-      
-      replyWrappers = regularReplies
-      if !topLevelParentIdsToReconfigure.isEmpty {
-        var snapshot = dataSource.snapshot()
-        let itemsToReconfigure = replyWrappers
-          .filter { topLevelParentIdsToReconfigure.contains($0.id) }
-          .map { Item.reply($0) }
-          .filter { snapshot.indexOfItem($0) != nil }
-        if !itemsToReconfigure.isEmpty {
-          snapshot.reconfigureItems(itemsToReconfigure)
-          applySnapshot(snapshot, animatingDifferences: false)
-        }
-      }
-    } else if case .appBskyUnspeccedDefsThreadItemBlocked = mainItem.value {
+    case .appBskyUnspeccedDefsThreadItemBlocked:
       // Blocked anchor: the original post is hidden, but the AppView still
       // returns its parents and replies. Keep them so the conversation stays
       // reachable — the anchor slot renders a BlockedContentCard(.anchor).
       mainPost = nil
       mainPostIndex = nil
       mainPostCount = nil
-
-      let parentItems = threadData.thread.filter { $0.depth < 0 }.sorted { $0.depth < $1.depth }
-      parentPosts = collectParentPostsV2(from: parentItems)
-
-      let replyItems = threadData.thread.filter { $0.depth > 0 }
-      let grouped = buildReplyWrappers(items: replyItems, mainPost: nil)
-      self.nestedRepliesMap = grouped.nested
-      let topLevelReplies = grouped.topLevel
-      opThreadContinuations = topLevelReplies.filter { $0.isOpThread }
-      replyWrappers = topLevelReplies.filter { !$0.isOpThread }
-    } else {
+    default:
       parentPosts = []
       mainPost = nil
       mainPostIndex = nil
       mainPostCount = nil
-      opThreadContinuations = []
-      replyWrappers = []
-    }
-  }
-  
-  /// Process hidden replies from the threadManager and merge into replyWrappers
-  /// These are replies that Bluesky's algorithm filtered out but the user wants to see
-  private func processHiddenReplies() {
-    guard let hiddenReplies = threadManager?.hiddenReplies, !hiddenReplies.isEmpty else {
+      optimisticReplies = []
+      rebuildRows()
       return
     }
 
-    // Get existing reply URIs to avoid duplicates
-    let existingURIs = Set(replyWrappers.map { $0.id })
-    
-    var additionalReplies: [ReplyWrapper] = []
-    
-    for item in hiddenReplies {
-      let id = item.uri.uriString()
+    // Parent posts (depth < 0), oldest (most negative) first
+    let parentItems = threadData.thread.filter { $0.depth < 0 }.sorted { $0.depth < $1.depth }
+    parentPosts = collectParentPostsV2(from: parentItems)
+    rebuildRows()
+  }
 
-      // Skip if already in the main replies
-      if existingURIs.contains(id) {
-        continue
-      }
-
-      // The "other" (hidden) thread endpoint only carries posts or unknown
-      // items. Convert to the v2 ThreadItem type; unknown items become
-      // tombstone wrappers instead of being silently dropped.
-      let v2Value: AppBskyUnspeccedGetPostThreadV2.ThreadItemValueUnion
-      let isFromOP: Bool
-      let isOpThread: Bool
-      let hasReplies: Bool
-      switch item.value {
-      case .appBskyUnspeccedDefsThreadItemPost(let threadItemPost):
-        v2Value = .appBskyUnspeccedDefsThreadItemPost(threadItemPost)
-        // Optional-safe: with a blocked anchor there is no OP to compare against,
-        // so `mainPost == nil` yields `isFromOP == false`.
-        isFromOP = mainPost?.author.did.didString() == threadItemPost.post.author.did.didString()
-        isOpThread = threadItemPost.opThread
-        hasReplies = threadItemPost.moreReplies > 0
-      case .unexpected(let container):
-        v2Value = .unexpected(container)
-        isFromOP = false
-        isOpThread = false
-        hasReplies = false
-      }
-
-      let v2ThreadItem = AppBskyUnspeccedGetPostThreadV2.ThreadItem(
-        uri: item.uri,
-        depth: item.depth,
-        value: v2Value
-      )
-
-      let wrapper = ReplyWrapper(
-        id: id,
-        threadItem: v2ThreadItem,
-        depth: item.depth,
-        isFromOP: isFromOP,
-        isOpThread: isOpThread,
-        hasReplies: hasReplies
-      )
-      additionalReplies.append(wrapper)
+  /// Rebuilds `rows` from the thread data, loaded hidden replies and pending
+  /// optimistic replies, and settles optimistic replies the server confirmed.
+  private func rebuildRows() {
+    let serverItems = threadManager?.threadData?.thread ?? []
+    let hiddenItems = (threadManager?.hiddenReplies ?? []).map {
+      AppBskyUnspeccedGetPostThreadV2.ThreadItem(otherItem: $0)
     }
-    
-    // Append hidden replies to the main replies list
-    if !additionalReplies.isEmpty {
-      replyWrappers.append(contentsOf: additionalReplies)
-      controllerLogger.debug("🧵 THREAD LOAD: Merged \(additionalReplies.count) previously-filtered replies into thread")
+
+    // Optimistic replies the server now returns are confirmed.
+    let serverIDs = Set((serverItems + hiddenItems).map { $0.uri.uriString() })
+    let confirmedURIs = Set(optimisticReplies.map { $0.threadItem.uri.uriString() }).intersection(serverIDs)
+    if !confirmedURIs.isEmpty {
+      optimisticReplies.removeAll { confirmedURIs.contains($0.threadItem.uri.uriString()) }
+      for confirmedURI in confirmedURIs {
+        optimisticRetryTasks[confirmedURI]?.cancel()
+        optimisticRetryTasks.removeValue(forKey: confirmedURI)
+      }
+      optimisticReplyUris.subtract(confirmedURIs)
+      hasOptimisticUpdates = !optimisticReplyUris.isEmpty
     }
+
+    let pendingItems = optimisticReplies.map {
+      ThreadRowBuilder.Item(
+        uri: $0.threadItem.uri,
+        depth: $0.threadItem.depth,
+        content: .post(recordParentID: $0.parentID, isOpThread: false, moreReplies: 0, moreParents: false)
+      )
+    }
+
+    var itemsByID: [String: AppBskyUnspeccedGetPostThreadV2.ThreadItem] = [:]
+    for item in serverItems + hiddenItems + optimisticReplies.map(\.threadItem) {
+      itemsByID[item.uri.uriString()] = itemsByID[item.uri.uriString()] ?? item
+    }
+    changedRowIDs = Set(itemsByID.compactMap { id, item in
+      threadItemsByID[id].map { $0 != item ? id : nil } ?? nil
+    })
+    threadItemsByID = itemsByID
+
+    rows = ThreadRowBuilder.build(
+      items: ThreadRowBuilder.inserting(pendingItems, into: serverItems.map(ThreadRowBuilder.Item.init)),
+      otherItems: hiddenItems.map(ThreadRowBuilder.Item.init),
+      mode: ThreadLayoutMode(threadedReplies: appState.appSettings.threadedReplies),
+      maxIndentLevels: ThreadReplyGeometry.maxIndentLevels(
+        isRegularWidth: traitCollection.horizontalSizeClass == .regular),
+      showsOtherRepliesPrompt: hasOtherReplies && !hasLoadedHiddenReplies
+    )
+    parentRows = rows.filter { $0.depth < 0 && $0.kind != .readMoreUp }
+    anchorRow = rows.first { $0.kind == .anchor }
+    replyRows = rows.filter { $0.depth > 0 }
   }
 
   // MARK: - Compose Prompt Management
@@ -1174,46 +1044,50 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   private func updateDataSnapshot(animatingDifferences: Bool = false) {
     seedThreadEntityCache()
     updateComposePrompt()
-    var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
+    applySnapshot(makeSnapshot(), animatingDifferences: animatingDifferences)
+  }
 
-    // Add all sections
+  /// A snapshot of the current rows. Rows whose thread item changed since the
+  /// previous rebuild are reconfigured in place.
+  private func makeSnapshot() -> NSDiffableDataSourceSnapshot<Section, Item> {
+    var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
     snapshot.appendSections(Section.allCases)
 
-    // Add load more trigger if we have parent posts and haven't reached the top
+    // The load more trigger stays while parents exist and the top is unreached
     if !parentPosts.isEmpty && !hasReachedTopOfThread {
       snapshot.appendItems([.loadMoreParentsTrigger], toSection: .loadMoreParents)
     }
 
-    // Add parent posts in chronological order (oldest first, newest last)
-    // parentPosts is already sorted by depth with oldest (most negative) first
-    let parentItems = parentPosts.map { Item.parentPost($0) }
-    snapshot.appendItems(parentItems, toSection: .parentPosts)
+    // Parents in chronological order (oldest first, newest last)
+    snapshot.appendItems(parentRows.map { Item.parentPost($0) }, toSection: .parentPosts)
 
-    // Add main post if available, else the blocked-anchor tombstone card.
-    if let mainPost = mainPost {
-      snapshot.appendItems([.mainPost(mainPost)], toSection: .mainPost)
+    // Main post if available, else the blocked-anchor tombstone card.
+    if mainPost != nil, let anchorRow {
+      snapshot.appendItems([.mainPost(anchorRow)], toSection: .mainPost)
     } else if threadManager?.blockedAnchor != nil {
       snapshot.appendItems([.blockedAnchor(postURI.uriString())], toSection: .mainPost)
     }
 
-    // Add OP thread continuations first (these are part of OP's continued thread)
-    let opThreadItems = opThreadContinuations.map { Item.reply($0) }
-    snapshot.appendItems(opThreadItems, toSection: .replies)
-    
-    // Then add regular replies (from other users) - includes merged hidden replies
-    let replyItems = replyWrappers.map { Item.reply($0) }
-    snapshot.appendItems(replyItems, toSection: .replies)
-    
-    // Add "Show More Replies" button if there are hidden replies and they haven't been loaded yet
-    if hasOtherReplies && !hasLoadedHiddenReplies {
-      snapshot.appendItems([.showMoreRepliesButton], toSection: .showMoreReplies)
-    }
-
-    // Add bottom spacer
+    snapshot.appendItems(replyRows.map { Item.reply($0) }, toSection: .replies)
     snapshot.appendItems([.spacer], toSection: .bottomSpacer)
 
-    // Apply snapshot via serialized helper to avoid overlap
-    applySnapshot(snapshot, animatingDifferences: animatingDifferences)
+    if !changedRowIDs.isEmpty {
+      let current = dataSource.snapshot()
+      let changed = snapshot.itemIdentifiers.filter { item in
+        switch item {
+        case .parentPost(let row), .reply(let row):
+          return changedRowIDs.contains(row.id) && current.indexOfItem(item) != nil
+        case .loadMoreParentsTrigger, .mainPost, .blockedAnchor, .spacer:
+          return false
+        }
+      }
+      if !changed.isEmpty {
+        snapshot.reconfigureItems(changed)
+      }
+      changedRowIDs = []
+    }
+
+    return snapshot
   }
 
   private func updateLoadingCell(isLoading: Bool) {
@@ -1284,10 +1158,9 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
 
   // MARK: - Scrolling
     private func focusVoiceOverOnMainPost() {
-        guard let mainPost = mainPost else { return }
-        
+        guard mainPost != nil else { return }
+
         let snapshot = dataSource.snapshot()
-        _ = Item.mainPost(mainPost)
         
         guard let sectionIndex = snapshot.indexOfSection(.mainPost),
               snapshot.numberOfItems(inSection: .mainPost) > 0 else {
@@ -1320,14 +1193,13 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     }
     
     private func performScrollToMainPost(animated: Bool, completion: (() -> Void)? = nil) {
-        guard let mainPost = mainPost else {
+        guard mainPost != nil else {
             completion?()
             return
         }
-        
+
         // Find the index path for the main post
         let snapshot = dataSource.snapshot()
-        _ = Item.mainPost(mainPost)
         
         guard let sectionIndex = snapshot.indexOfSection(.mainPost),
               snapshot.numberOfItems(inSection: .mainPost) > 0
@@ -1637,39 +1509,11 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       hasReachedTopOfThread = true
     }
 
+    rebuildRows()
     seedThreadEntityCache()
-    
-    // Create new snapshot with updated data
-    var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
-    snapshot.appendSections(Section.allCases)
-    
-    // Add load more trigger only if we haven't reached the top
-    if !parentPosts.isEmpty && !hasReachedTopOfThread {
-      snapshot.appendItems([.loadMoreParentsTrigger], toSection: .loadMoreParents)
-    }
-    
-    // Add parent posts in chronological order (oldest first, newest last)
-    // parentPosts is already sorted by depth with oldest (most negative) first
-    let parentItems = parentPosts.map { Item.parentPost($0) }
-    snapshot.appendItems(parentItems, toSection: .parentPosts)
-    // The previously oldest parent now has an ancestor above it; refresh the
-    // connector state of every parent row.
-    snapshot.reconfigureItems(parentItems)
-    
-    // Add main post
-    if let mainPost = mainPost {
-      snapshot.appendItems([.mainPost(mainPost)], toSection: .mainPost)
-    }
-    
-    // Add regular replies as flat items
-    let replyItems = replyWrappers.map { Item.reply($0) }
-    snapshot.appendItems(replyItems, toSection: .replies)
-    
-    // Add bottom spacer
-    snapshot.appendItems([.spacer], toSection: .bottomSpacer)
-    
+
     // Apply snapshot immediately for layout calculation
-    applySnapshot(snapshot, animatingDifferences: false)
+    applySnapshot(makeSnapshot(), animatingDifferences: false)
     
     // Use sophisticated position preservation like feed view
     Task { @MainActor in
@@ -1733,7 +1577,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     }
 
     // Add reply URIs
-    currentPostIds.append(contentsOf: replyWrappers.compactMap { $0.post?.uri.uriString() })
+    currentPostIds.append(contentsOf: replyRows.filter(\.isPost).map(\.id))
 
     // Filter out unknown URIs
     currentPostIds = currentPostIds.filter { !$0.hasPrefix("at://unknown") }
@@ -1976,16 +1820,11 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       postId = mainPostUri
       
     case Section.replies.rawValue: // Section 3 - Replies
-      guard firstVisibleIndexPath.item < replyWrappers.count else {
+      guard firstVisibleIndexPath.item < replyRows.count else {
         controllerLogger.debug("⚠️ Reply index out of bounds: \(firstVisibleIndexPath.item)")
         return nil
       }
-      if let replyPost = replyWrappers[firstVisibleIndexPath.item].post {
-        postId = replyPost.uri.uriString()
-      } else {
-        // Use the reply wrapper's URI for non-accessible posts
-        postId = replyWrappers[firstVisibleIndexPath.item].uri.uriString()
-      }
+      postId = replyRows[firstVisibleIndexPath.item].id
       
     default:
       controllerLogger.debug("⚠️ Unknown section for anchor capture: \(firstVisibleIndexPath.section)")
@@ -2043,11 +1882,8 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       }
       
       // Replies section (Section.replies.rawValue = 3)
-      for (index, replyWrapper) in replyWrappers.enumerated() {
-        let key = replyWrapper.uri.uriString()
-        if key.hasPrefix("at://unknown") == false {
-          mapping[key] = IndexPath(item: index, section: Section.replies.rawValue)
-        }
+      for (index, row) in replyRows.enumerated() where !row.id.hasPrefix("at://unknown") {
+        mapping[row.id] = IndexPath(item: index, section: Section.replies.rawValue)
       }
       
       return mapping
@@ -2251,19 +2087,8 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       return true
     }
     
-    // Check existing replies
-    if replyWrappers.contains(where: { $0.threadItem.uri.uriString() == parentUri }) {
-      return true
-    }
-
-    // Check nested replies
-    for nestedList in nestedRepliesMap.values {
-      if nestedList.contains(where: { $0.threadItem.uri.uriString() == parentUri }) {
-        return true
-      }
-    }
-    
-    return false
+    // Check loaded and optimistic replies
+    return threadItemsByID[parentUri].map { $0.depth > 0 } ?? false
   }
   
   /// Reload the thread to pick up new content
@@ -2284,14 +2109,6 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     reloadThread()
   }
 
-  @MainActor
-  func rebuildReplyCellsFromLayoutChange() {
-    for reply in replyWrappers {
-      _ = heightCalculator.calculateReplyHeight(for: reply, showingNestedReply: reply.hasReplies)
-    }
-    updateDataSnapshot(animatingDifferences: true)
-  }
-  
   // MARK: - Optimistic Updates
   
   @MainActor
@@ -2299,58 +2116,26 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     let replyUriString = reply.uri.uriString()
     controllerLogger.info("Adding reply optimistically: \(replyUriString) to parent: \(parentUri)")
     
-    // Find where to insert the reply
+    // Replies to ancestors are not part of this thread's reply tree.
+    let parentDepth: Int
     if parentUri == mainPost?.uri.uriString() {
-      // Reply to main post - add to replies section
-      let newReply = createReplyWrapper(from: reply, depth: 1)
-      replyWrappers.append(newReply)
-      applySnapshotOptimistically()
-    } else if let parentIndex = replyWrappers.firstIndex(where: { $0.threadItem.uri.uriString() == parentUri }) {
-      // Reply to a top-level reply
-      let parentWrapper = replyWrappers[parentIndex]
-      let updatedParent = ReplyWrapper(
-        id: parentWrapper.id,
-        threadItem: parentWrapper.threadItem,
-        depth: parentWrapper.depth,
-        isFromOP: parentWrapper.isFromOP,
-        isOpThread: parentWrapper.isOpThread,
-        hasReplies: true
-      )
-      replyWrappers[parentIndex] = updatedParent
-      let newReply = createReplyWrapper(from: reply, depth: parentWrapper.depth + 1)
-      nestedRepliesMap[parentWrapper.id, default: []].append(newReply)
-      applySnapshotOptimistically(reconfiguring: [.reply(updatedParent)])
+      parentDepth = 0
+    } else if let parentItem = threadItemsByID[parentUri], parentItem.depth > 0 {
+      parentDepth = parentItem.depth
     } else {
-      // Reply to a nested reply (or continuation)
-      var insertedTopLevelParent: ReplyWrapper?
-      for (topLevelId, var nestedList) in nestedRepliesMap {
-        if let matchedParent = nestedList.first(where: { $0.threadItem.uri.uriString() == parentUri }) {
-          let newReply = createReplyWrapper(from: reply, depth: matchedParent.depth + 1)
-          nestedList.append(newReply)
-          nestedRepliesMap[topLevelId] = nestedList
-          if let idx = replyWrappers.firstIndex(where: { $0.id == topLevelId }) {
-            let p = replyWrappers[idx]
-            let updated = ReplyWrapper(
-              id: p.id,
-              threadItem: p.threadItem,
-              depth: p.depth,
-              isFromOP: p.isFromOP,
-              isOpThread: p.isOpThread,
-              hasReplies: true
-            )
-            replyWrappers[idx] = updated
-            insertedTopLevelParent = updated
-          }
-          break
-        }
-      }
-      if let insertedTopLevelParent {
-        applySnapshotOptimistically(reconfiguring: [.reply(insertedTopLevelParent)])
-      } else {
-        // Reply is to an ancestor post or unknown parent - do not falsely insert top-level
-        return
-      }
+      return
     }
+    guard threadItemsByID[replyUriString] == nil else { return }
+
+    optimisticReplies.append(
+      OptimisticReply(
+        threadItem: AppBskyUnspeccedGetPostThreadV2.ThreadItem(optimisticReply: reply, depth: parentDepth + 1),
+        parentID: parentUri
+      ))
+    rebuildRows()
+    // Apply without animation for optimistic updates to avoid fly-in
+    updateDataSnapshot(animatingDifferences: false)
+
     hasOptimisticUpdates = true
     optimisticReplyUris.insert(replyUriString)
     
@@ -2390,6 +2175,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
         if self.optimisticReplyUris.contains(replyUriString) {
           self.controllerLogger.warning("Failed to confirm optimistic reply after 5 attempts, removing: \(replyUriString)")
           self.optimisticReplyUris.remove(replyUriString)
+          self.optimisticReplies.removeAll { $0.threadItem.uri.uriString() == replyUriString }
           if self.optimisticReplyUris.isEmpty {
             self.hasOptimisticUpdates = false
           }
@@ -2399,83 +2185,13 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     }
   }
   
-  // Helper to create a reply wrapper from a PostView
-  private func createReplyWrapper(from post: AppBskyFeedDefs.PostView, depth: Int = 1) -> ReplyWrapper {
-    // Create a ThreadItem for the optimistic reply with v2 structure
-    let threadItemPost = AppBskyUnspeccedDefs.ThreadItemPost(
-      post: post,
-      moreParents: false,
-      moreReplies: 0,
-      opThread: false,
-      opThreadPostIndex: nil,
-      opThreadPostCount: nil,
-      hiddenByThreadgate: false,
-      mutedByViewer: false
-    )
-    
-    let threadItem = AppBskyUnspeccedGetPostThreadV2.ThreadItem(
-      uri: post.uri,
-      depth: depth,
-      value: .appBskyUnspeccedDefsThreadItemPost(threadItemPost)
-    )
-    
-    let isFromOP = post.author.did.didString() == mainPost?.author.did.didString()
-    
-    return ReplyWrapper(
-      id: post.uri.uriString(),
-      threadItem: threadItem,
-      depth: depth,
-      isFromOP: isFromOP,
-      isOpThread: false,  // Optimistic replies are not part of OP thread
-      hasReplies: false
-    )
-  }
-  
-  // Helper to apply snapshot with optimistic updates
-  @MainActor
-  private func applySnapshotOptimistically(reconfiguring itemsToReconfigure: [Item] = []) {
-    seedThreadEntityCache()
-    var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
-    
-    // Add sections
-    snapshot.appendSections(Section.allCases)
-    
-    if !hasReachedTopOfThread && !parentPosts.isEmpty {
-      snapshot.appendItems([.loadMoreParentsTrigger], toSection: .loadMoreParents)
-    }
-    
-    let parentItems = parentPosts.map { Item.parentPost($0) }
-    snapshot.appendItems(parentItems, toSection: .parentPosts)
-    
-    if let mainPost = mainPost {
-      snapshot.appendItems([.mainPost(mainPost)], toSection: .mainPost)
-    }
-    
-    let replyItems = replyWrappers.map { Item.reply($0) }
-    snapshot.appendItems(replyItems, toSection: .replies)
-    
-    snapshot.appendItems([.spacer], toSection: .bottomSpacer)
-    
-    if !itemsToReconfigure.isEmpty {
-      let validReconfigureItems = itemsToReconfigure.filter { snapshot.indexOfItem($0) != nil }
-      if !validReconfigureItems.isEmpty {
-        snapshot.reconfigureItems(validReconfigureItems)
-      }
-    }
-    
-    // Apply without animation for optimistic updates to avoid fly-in
-    applySnapshot(snapshot, animatingDifferences: false)
-  }
-
   /// Writes every post represented by the upcoming UIKit snapshot before its
   /// responder annotations become visible to Siri/AppIntentsTesting.
   private func seedThreadEntityCache() {
-    var posts: [AppBskyFeedDefs.PostView] = []
-    posts.append(contentsOf: parentPosts.compactMap(\.post))
-    if let mainPost { posts.append(mainPost) }
-    posts.append(contentsOf: opThreadContinuations.compactMap(\.post))
-    posts.append(contentsOf: replyWrappers.compactMap(\.post))
-    posts.append(contentsOf: nestedRepliesMap.values.flatMap { $0 }.compactMap(\.post))
+    var posts: [AppBskyFeedDefs.PostView] = rows.compactMap { self.threadItemsByID[$0.id]?.post }
+    if let mainPost, !posts.contains(where: { $0.uri == mainPost.uri }) {
+      posts.append(mainPost)
+    }
     PostEntityCache.upsert(posts)
   }
 }

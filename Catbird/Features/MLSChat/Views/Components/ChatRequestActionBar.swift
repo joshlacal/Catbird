@@ -4,13 +4,14 @@ import SwiftUI
 
     extension MLSOrdinaryConversationDetailView {
         /// Action bar shown at the bottom of a conversation detail view when the conversation
-        /// is a pending inbound chat request that needs acceptance.
+        /// is a pending inbound chat request that needs acceptance. Uses the same floating
+        /// Decline/Accept pair as the Message Requests sheet.
         struct ChatRequestActionBar: View {
             let conversationId: String
             let onAccept: () async -> Void
             let onDecline: () async -> Void
 
-            @State private var isProcessing = false
+            @State private var inFlight: MessageRequestDecision?
 
             internal init(
                 conversationId: String,
@@ -23,59 +24,28 @@ import SwiftUI
             }
 
             var body: some View {
-                VStack(spacing: 0) {
-                    Divider()
-
-                    VStack(spacing: 12) {
+                RequestDecisionBar(
+                    inFlight: inFlight,
+                    onAccept: { run(.accept, onAccept) },
+                    onDecline: { run(.decline, onDecline) }
+                ) {
+                    VStack(spacing: 2) {
                         Text("This is a message request")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-
+                            .font(.subheadline.weight(.semibold))
                         Text("Accept to continue the conversation")
                             .font(.caption)
-                            .foregroundColor(.secondary)
-
-                        HStack(spacing: 16) {
-                            Button(role: .destructive) {
-                                isProcessing = true
-                                Task { @MainActor in
-                                    defer { isProcessing = false }
-                                    await onDecline()
-                                }
-                            } label: {
-                                HStack {
-                                    Image(systemName: "xmark")
-                                    Text("Decline")
-                                }
-                                .frame(maxWidth: .infinity)
-                            }
-                            .buttonStyle(.bordered)
-                            .disabled(isProcessing)
-
-                            Button {
-                                isProcessing = true
-                                Task { @MainActor in
-                                    defer { isProcessing = false }
-                                    await onAccept()
-                                }
-                            } label: {
-                                HStack {
-                                    if isProcessing {
-                                        ProgressView()
-                                            .tint(.white)
-                                    } else {
-                                        Image(systemName: "checkmark")
-                                        Text("Accept")
-                                    }
-                                }
-                                .frame(maxWidth: .infinity)
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .disabled(isProcessing)
-                        }
+                            .foregroundStyle(.secondary)
                     }
-                    .padding()
-                    .background(.ultraThinMaterial)
+                    .multilineTextAlignment(.center)
+                }
+            }
+
+            private func run(_ decision: MessageRequestDecision, _ action: @escaping () async -> Void) {
+                guard inFlight == nil else { return }
+                inFlight = decision
+                Task { @MainActor in
+                    defer { inFlight = nil }
+                    await action()
                 }
             }
         }

@@ -110,8 +110,6 @@ struct FeedCollectionViewWrapper: View {
     @Binding var navigationPath: NavigationPath
     var onScrollOffsetChanged: ((CGFloat) -> Void)?
     var headerView: AnyView? = nil
-    @State private var trendingContent = TrendingFeedContent()
-    @State private var loadedTrendingRequestID: String?
 
     private var trendingRequestID: String {
         let appState = stateManager.appState
@@ -124,22 +122,15 @@ struct FeedCollectionViewWrapper: View {
             navigationPath: $navigationPath,
             onScrollOffsetChanged: onScrollOffsetChanged,
             headerView: headerView,
-            trendingContent: loadedTrendingRequestID == trendingRequestID ? trendingContent : TrendingFeedContent()
+            trendingContent: stateManager.trendingContent(for: trendingRequestID)
         )
         .catalystPlainButtons()
         .task(id: trendingRequestID) {
-            let requestID = trendingRequestID
-            // `.task` restarts on every reappear (e.g. back from a pushed post); keep the
-            // already-loaded trending content instead of refetching a reshuffled set.
-            guard loadedTrendingRequestID != requestID else { return }
             let feed = stateManager.currentFeedType
             guard feed == .timeline || feed.identifier.contains("discover") || feed.identifier == "timeline" else {
                 return
             }
-            let content = await TrendingFeedContent.load(appState: stateManager.appState)
-            guard !Task.isCancelled else { return }
-            trendingContent = content
-            loadedTrendingRequestID = requestID
+            await stateManager.loadTrendingIfNeeded(requestID: trendingRequestID)
         }
     }
 }

@@ -41,9 +41,11 @@ struct ThreadViewControllerRepresentable: UIViewControllerRepresentable {
     }
     context.coordinator.lastSortOrder = currentSort
 
+    // Linear and tree layouts fetch different reply shapes, so a layout
+    // change refetches rather than re-laying out the loaded replies.
     if context.coordinator.lastThreadedReplies != currentThreaded {
       context.coordinator.lastThreadedReplies = currentThreaded
-      uiViewController.rebuildReplyCellsFromLayoutChange()
+      uiViewController.reloadThreadFromSettingsChange()
     }
   }
 

@@ -171,7 +171,7 @@ struct ConversationContextMenu: ViewModifier {
 /// Button to show message requests with badge for unread count
 struct MessageRequestsButton: View {
   @Environment(AppState.self) private var appState
-  @State private var requestProvider: MessageRequestProvider?
+  @State private var isShowingRequests = false
   @State private var pendingCatbirdCount = 0
   @State private var countGeneration = UUID()
   
@@ -185,12 +185,7 @@ struct MessageRequestsButton: View {
   
   var body: some View {
     Button {
-      Task { @MainActor in
-        let userDID = appState.userDID
-        await refreshCatbirdCount()
-        guard !Task.isCancelled, appState.userDID == userDID else { return }
-        requestProvider = .initial(pendingCatbirdCount: pendingCatbirdCount)
-      }
+      isShowingRequests = true
     } label: {
       ZStack {
         Image(systemName: "tray")
@@ -211,13 +206,14 @@ struct MessageRequestsButton: View {
       }
     }
     .accessibilityLabel(requestsCount == 0 ? "Message requests" : "Message requests, \(requestsCount) pending")
-    .modifier(MessageRequestSheet(provider: $requestProvider, onDismiss: {
+    .accessibilityIdentifier("messageRequests.open")
+    .modifier(MessageRequestSheet(isPresented: $isShowingRequests, onDismiss: {
       Task { await refreshCatbirdCount() }
-    }, sheetContent: { provider in
-      UnifiedMessageRequestsView(initialProvider: provider)
+    }, sheetContent: {
+      UnifiedMessageRequestsView()
     }))
     .task(id: appState.userDID) {
-      requestProvider = nil
+      isShowingRequests = false
       pendingCatbirdCount = 0
       let bus = appState.stateInvalidationBus
       let stream = AsyncStream<Void> { continuation in

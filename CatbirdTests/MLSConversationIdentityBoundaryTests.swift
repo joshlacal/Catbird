@@ -270,56 +270,6 @@ import UIKit
 
 extension MLSConversationIdentityBoundaryTests {
   @MainActor
-  @Test("main Inbox exposes both providers without stealing an explicit selection")
-  func requestProviderPickerRoutesActualHostedContent() async throws {
-    var visible: [MessageRequestProvider] = []
-    let controller = UIHostingController(rootView: MessageRequestProviderContainer(
-      initialProvider: .initial(pendingCatbirdCount: 1),
-      bluesky: { Text("Bluesky requests").onAppear { visible.append(.bluesky) } },
-      catbird: { Text("Catbird requests").onAppear { visible.append(.catbird) } }))
-    let window = UIWindow(frame: UIScreen.main.bounds)
-    window.rootViewController = controller
-    window.makeKeyAndVisible()
-    defer { window.isHidden = true; window.rootViewController = nil }
-    controller.view.layoutIfNeeded()
-    func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
-    for _ in 0..<100 where visible.isEmpty { try await Task.sleep(for: .milliseconds(20)) }
-    #expect(visible.last == .catbird)
-    let picker = try #require(descendants(controller.view).compactMap { $0 as? UISegmentedControl }.first)
-    #expect(picker.numberOfSegments == 2)
-    #expect(picker.titleForSegment(at: 0) == "Bluesky")
-    #expect(picker.titleForSegment(at: 1) == "Catbird")
-    picker.selectedSegmentIndex = 0
-    picker.sendActions(for: .valueChanged)
-    for _ in 0..<100 where visible.last != .bluesky { try await Task.sleep(for: .milliseconds(20)) }
-    #expect(visible.last == .bluesky)
-    // Re-rendering for a changed pending count must keep the user's choice.
-    controller.rootView = MessageRequestProviderContainer(initialProvider: .catbird,
-      bluesky: { Text("Bluesky requests").onAppear { visible.append(.bluesky) } },
-      catbird: { Text("Catbird requests").onAppear { visible.append(.catbird) } })
-    try await Task.sleep(for: .milliseconds(40))
-    #expect(picker.selectedSegmentIndex == 0)
-    #expect(visible.last == .bluesky)
-  }
-
-  @MainActor
-  @Test("the first actual Inbox sheet renders its pending Catbird presentation item")
-  func requestSheetFirstPresentationUsesItem() async throws {
-    let state = InboxSheetTestPresentation()
-    let controller = UIHostingController(rootView: InboxSheetTestHarness(state: state))
-    let window = UIWindow(frame: UIScreen.main.bounds)
-    window.rootViewController = controller
-    window.makeKeyAndVisible()
-    defer { controller.dismiss(animated: false); window.isHidden = true; window.rootViewController = nil }
-    controller.view.layoutIfNeeded()
-    try await Task.sleep(for: .milliseconds(80))
-    state.provider = .initial(pendingCatbirdCount: 1)
-    for _ in 0..<100 where state.visible == nil { try await Task.sleep(for: .milliseconds(20)) }
-    #expect(controller.presentedViewController != nil)
-    #expect(state.visible == .catbird)
-  }
-
-  @MainActor
   @Test("accept keeps failure retryable and only routes the accepted stable conversation")
   func requestAcceptanceFailureRetryAndSessionFence() async throws {
     enum Failure: Error { case unavailable }
@@ -346,19 +296,5 @@ extension MLSConversationIdentityBoundaryTests {
     #expect(routed == [id])
   }
 }
-@MainActor @Observable private final class InboxSheetTestPresentation {
-      var provider: MessageRequestProvider?
-      var visible: MessageRequestProvider?
-    }
-@MainActor private struct InboxSheetTestHarness: View {
-      @Bindable var state: InboxSheetTestPresentation
-      var body: some View {
-        Text("Inbox").modifier(MessageRequestSheet(provider: $state.provider, onDismiss: {}, sheetContent: { provider in
-          MessageRequestProviderContainer(initialProvider: provider,
-            bluesky: { Text("Bluesky").onAppear { state.visible = .bluesky } },
-            catbird: { Text("Catbird").onAppear { state.visible = .catbird } })
-        }))
-      }
-    }
 
 #endif

@@ -172,29 +172,15 @@ class PostHeightCalculator {
         }
     }
     
-    /// Calculate height for a reply wrapper
-    func calculateReplyHeight(for replyWrapper: ReplyWrapper, showingNestedReply: Bool = false) -> CGFloat {
-        var totalHeight: CGFloat = 0
-        
-        switch replyWrapper.threadItem.value {
+    /// Calculate height for one reply row in the thread view
+    func calculateThreadItemHeight(for threadItem: AppBskyUnspeccedGetPostThreadV2.ThreadItem) -> CGFloat {
+        switch threadItem.value {
         case .appBskyUnspeccedDefsThreadItemPost(let threadItemPost):
-            // Calculate height for the reply post
-            totalHeight += calculateHeight(for: threadItemPost.post, mode: .compact)
-            
-            // V2 API uses flat structure, so nested replies would be separate items
-            // Add small padding for reply indication if this has more replies
-            if showingNestedReply && threadItemPost.moreReplies > 0 {
-                // Simplified height calculation for nested reply indication
-                totalHeight += 12 // Spacing
-                totalHeight += 40 // "Continue thread" button height
-            }
-            
+            return calculateHeight(for: threadItemPost.post, mode: .compact)
         case .appBskyUnspeccedDefsThreadItemNotFound, .appBskyUnspeccedDefsThreadItemBlocked,
              .appBskyUnspeccedDefsThreadItemNoUnauthenticated, .unexpected:
-            totalHeight = 60
+            return 60
         }
-        
-        return totalHeight
     }
     
     /// Invalidate all caches
@@ -741,7 +727,7 @@ class PostHeightCalculator {
         return 180
     }
     
-    func calculateReplyHeight(for replyWrapper: ReplyWrapper, showingNestedReply: Bool = false) -> CGFloat {
+    func calculateThreadItemHeight(for threadItem: AppBskyUnspeccedGetPostThreadV2.ThreadItem) -> CGFloat {
         return 160
     }
     

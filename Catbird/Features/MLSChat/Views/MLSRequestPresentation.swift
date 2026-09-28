@@ -16,6 +16,10 @@ struct MLSRequestPresentation: View {
   let onRefresh: () -> Void
   var onOpenInvitation: ((GroupInvitationReference) -> Void)?
 
+  /// The decision last tapped, so the bar can show progress on that button
+  /// while `busy` is true.
+  @State private var tapped: MessageRequestDecision?
+
   var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 20) {
@@ -26,44 +30,59 @@ struct MLSRequestPresentation: View {
             .textSelection(.enabled)
             .accessibilityIdentifier("request-first-message")
             .frame(maxWidth: .infinity, alignment: .leading)
-      
-      .padding()
-          .background(.quaternary, in: .rect(cornerRadius: 12))
-        if let invitation {
-          Text("Includes a group invitation. Accepting this message request does not accept the group invitation.")
-            .font(.caption).foregroundStyle(.secondary)
-          if let onOpenInvitation {
-            Button("View group invitation") { onOpenInvitation(invitation) }
+            .padding()
+            .background(.quaternary, in: .rect(cornerRadius: 18))
+          if let invitation {
+            Text("Includes a group invitation. Accepting this message request does not accept the group invitation.")
+              .font(.caption).foregroundStyle(.secondary)
+            if let onOpenInvitation {
+              Button("View group invitation") { onOpenInvitation(invitation) }
+            }
           }
+        case .unavailable:
+          Text("This introduction is unavailable on this device. Accepting does not recover an expired introduction.")
+            .foregroundStyle(.secondary)
+        case nil:
+          ProgressView("Preparing encrypted preview…")
         }
-      case .unavailable:
-        Text("This introduction is unavailable on this device. Accepting does not recover an expired introduction.")
-          .foregroundStyle(.secondary)
-      case nil:
-        ProgressView("Preparing encrypted preview…")
-      }
-      if consent == .outgoingPending {
-        Text("Waiting for acceptance. You can send more messages after your request is accepted.").foregroundStyle(.secondary)
-      } else if consent == .accepted {
-        ProgressView("Request accepted. Setting up secure access on this device…")
-      }
-      if let error { Text(error).foregroundStyle(.red) }
-      Spacer(minLength: 8)
-      if consent == .incomingPending {
-        HStack {
-          Button("Decline", role: .destructive, action: onDecline).disabled(busy || !canClose)
-          Button("Block", role: .destructive, action: onBlock).disabled(busy)
-          Spacer()
-          Button("Accept", action: onAccept).buttonStyle(.borderedProminent).disabled(busy || !canAccept)
+        if consent == .outgoingPending {
+          Text("Waiting for acceptance. You can send more messages after your request is accepted.").foregroundStyle(.secondary)
+        } else if consent == .accepted {
+          ProgressView("Request accepted. Setting up secure access on this device…")
         }
-      } else if consent == .outgoingPending && canClose {
-        Button("Close request", role: .destructive, action: onDecline).disabled(busy)
+        if let error { Text(error).foregroundStyle(.red) }
+        HStack(spacing: 16) {
+          if consent == .incomingPending {
+            Button(role: .destructive, action: onBlock) {
+              Label("Block", systemImage: "hand.raised")
+            }
+            .disabled(busy)
+          } else if consent == .outgoingPending && canClose {
+            Button("Close request", role: .destructive, action: onDecline).disabled(busy)
+          }
+          Button(action: onRefresh) {
+            Label("Refresh", systemImage: "arrow.clockwise")
+          }
+          .disabled(busy)
+          if busy && consent != .incomingPending { ProgressView() }
+        }
+        .buttonStyle(.borderless)
+        .font(.footnote)
       }
-      Button("Refresh", action: onRefresh).disabled(busy)
-      if busy { ProgressView() }
-    }
       .padding()
       .frame(maxWidth: 720, alignment: .leading)
+      .frame(maxWidth: .infinity)
+    }
+    .safeAreaInset(edge: .bottom) {
+      if consent == .incomingPending {
+        RequestDecisionBar(
+          inFlight: busy ? tapped : nil,
+          canAccept: canAccept && !busy,
+          canDecline: canClose && !busy,
+          onAccept: { tapped = .accept; onAccept() },
+          onDecline: { tapped = .decline; onDecline() }
+        )
+      }
     }
   }
 

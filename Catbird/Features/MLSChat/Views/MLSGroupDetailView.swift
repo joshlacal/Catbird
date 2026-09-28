@@ -166,7 +166,7 @@ struct MLSGroupDetailView: View {
           MLSMemberHistoryView(
             conversationID: conversationId,
             currentUserDID: currentUserDID,
-            database: conversationManager.database
+            conversationManager: conversationManager
           )
         }
       }

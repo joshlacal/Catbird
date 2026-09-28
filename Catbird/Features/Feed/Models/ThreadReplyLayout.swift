@@ -4,249 +4,247 @@
 //
 
 import CoreGraphics
-import SwiftUI
+import Petrel
 
-/// Geometry shared by avatar placement and thread-connector drawing.
-///
-/// The avatar column (`AuthorAvatarColumn`), the main-post column and the
-/// connector overlay in `ReplyView` all read these values, so a connector can
-/// never drift away from the avatar it is supposed to run through.
-enum ThreadReplyGeometry {
-  /// Stroke width of every thread connector.
-  static let lineWidth: CGFloat = 2
+// MARK: - Layout Mode
 
-  /// Gap between an avatar's edge and the end of a connector.
-  static let connectorGap: CGFloat = 3
-
-  /// Corner radius where a vertical connector turns into a child avatar.
-  static let elbowRadius: CGFloat = 8
-
-  /// Leading offset added per nesting level in nested (threaded) mode.
-  static let indentStep: CGFloat = DesignTokens.Spacing.xl
-
-  /// Deepest level that still receives an indent; deeper levels reuse the last.
-  static let maximumIndentDepth = 5
-
-  /// Height reserved above an avatar so a connector can continue upward.
-  static let connectorTopInset: CGFloat = DesignTokens.Spacing.xs
-
-  /// Colour of every thread connector.
-  static let connectorColor = Color.systemGray4
-
-  /// Horizontal centre of an avatar inside its column.
-  static func avatarCenterX(for scale: PostAvatarScale) -> CGFloat {
-    scale.containerWidth / 2
-  }
-
-  /// Leading inset that corresponds to `depth` in nested mode (depth 1 = flush).
-  static func indentation(forDepth depth: Int) -> CGFloat {
-    CGFloat(min(max(depth - 1, 0), maximumIndentDepth - 1)) * indentStep
-  }
-
-  /// Appends the connector that links `parentAvatar` to `childAvatar`.
-  ///
-  /// - Child directly under (or overlapping) the parent's centre line: the line
-  ///   drops straight from the parent avatar's bottom edge to the child
-  ///   avatar's top edge.
-  /// - Indented child: the line runs down the parent avatar's centre line and
-  ///   elbows into the child avatar's near edge at the child's vertical centre.
-  static func appendConnector(
-    to path: inout Path,
-    parentAvatar: CGRect,
-    childAvatar: CGRect
-  ) {
-    let startX = parentAvatar.midX
-    let startY = parentAvatar.maxY + connectorGap
-
-    if childAvatar.minX <= startX, startX <= childAvatar.maxX {
-      path.move(to: CGPoint(x: startX, y: startY))
-      path.addLine(to: CGPoint(x: startX, y: childAvatar.minY - connectorGap))
-      return
-    }
-
-    let edgeX = startX < childAvatar.minX ? childAvatar.minX : childAvatar.maxX
-    let elbowY = childAvatar.midY
-    path.move(to: CGPoint(x: startX, y: startY))
-    path.addLine(to: CGPoint(x: startX, y: elbowY - elbowRadius))
-    path.addQuadCurve(
-      to: CGPoint(x: edgeX, y: elbowY),
-      control: CGPoint(x: startX, y: elbowY)
-    )
-  }
-}
-
-/// Presentation metrics that depend on the selected thread layout mode.
-enum ThreadReplyPresentationMetrics {
-  /// Maximum reply depth rendered inline before the chain is deferred to a
-  /// "continue thread" row. Flat (chain) mode shows the focused post's single
-  /// best continuation chain; nested mode shows the whole tree.
-  static func maximumDepth(isEnabled: Bool) -> Int {
-    isEnabled ? ThreadReplyGeometry.maximumIndentDepth : 3
-  }
-
-  static func avatarScale(forDepth depth: Int, isEnabled: Bool) -> PostAvatarScale {
-    guard isEnabled else { return .regular }
-
-    switch depth {
-    case ...1: return .regular
-    case 2: return .compact
-    default: return .mini
-    }
-  }
-
-  static func leadingIndent(forDepth depth: Int, isEnabled: Bool) -> CGFloat {
-    guard isEnabled else { return 0 }
-    return ThreadReplyGeometry.indentation(forDepth: depth)
-  }
-}
-
-/// How the builder picks the replies it renders.
-enum ThreadReplySelection: Equatable, Sendable {
-  /// Flat mode: follow one continuation chain from the root, collapsing every
-  /// other branch behind a "show more replies" row.
-  case chain
-  /// Nested mode: every reply within the depth limit.
+/// The two thread presentations offered by the thread options menu.
+enum ThreadLayoutMode: String, Hashable, Sendable {
+  /// Every post sits at the same indent and each top-level reply shows a
+  /// single short chain beneath it.
+  case linear
+  /// Replies indent under their parent and hang off the parent's rail.
   case tree
+
+  init(threadedReplies: Bool) {
+    self = threadedReplies ? .tree : .linear
+  }
+
+  /// `below` for `getPostThreadV2`.
+  var fetchDepth: Int {
+    switch self {
+    case .linear: 10
+    case .tree: 6
+    }
+  }
+
+  /// `branchingFactor` for `getPostThreadV2`; `nil` keeps the AppView default.
+  var fetchBranchingFactor: Int? {
+    switch self {
+    case .linear: 1
+    case .tree: nil
+    }
+  }
 }
 
-struct ThreadReplyLayoutInput: Equatable, Sendable {
+// MARK: - Geometry
+
+/// Every length used to place avatars and draw thread connectors.
+///
+/// Rows never measure each other: each row derives its avatar frame from
+/// these constants and draws only its own connector pieces, so lines meet
+/// across cell boundaries by construction.
+enum ThreadReplyGeometry {
+  /// Leading distance from the row edge to a depth-0 avatar.
+  static let rowInset: CGFloat = 12
+  static let lineWidth: CGFloat = 2
+  /// Gap between a connector's end and the avatar it points at.
+  static let lineGap: CGFloat = 3
+  /// Top/bottom padding of a row that neither connects upward nor starts a branch.
+  static let rowSpacing: CGFloat = 8
+  /// Top padding of a row that connects upward or starts a branch. For a
+  /// connected row this is the band the incoming line crosses.
+  static let connectedTopSpacing: CGFloat = 12
+
+  static let linearAvatarSize: CGFloat = 48
+  static let treeAvatarSize: CGFloat = 28
+  /// Horizontal distance from a parent's rail to its child's avatar edge.
+  static let elbowRun: CGFloat = 14
+  static let indentStep: CGFloat = treeAvatarSize
+  static let elbowRadius: CGFloat = 6
+
+  /// Posts shown per linear branch before a "Show more replies" row.
+  static let linearBranchPostLimit = 3
+  static let compactMaxIndentLevels = 5
+  static let regularMaxIndentLevels = 8
+
+  /// `PostView` centres its avatar in a column 6pt wider than the avatar and
+  /// pads that column by 3pt, so the avatar sits 6pt in from the view's edge.
+  static let postAvatarLeadingInset: CGFloat = 6
+  /// `AuthorAvatarColumn` pads its avatar 3pt from the top of `PostView`.
+  static let postAvatarTopInset: CGFloat = 3
+  /// Distance from an avatar's trailing edge to `PostView`'s text column.
+  static let postTextSpacing: CGFloat = 9
+  /// Height of the label area in read-more rows.
+  static let readMoreHeight: CGFloat = 28
+
+  /// x of the vertical line through every linear-mode avatar.
+  static var linearLineX: CGFloat { rowInset + linearAvatarSize / 2 }
+
+  /// Top of the anchor post's avatar inside its cell.
+  static let anchorAvatarTop: CGFloat = connectedTopSpacing
+
+  static func maxIndentLevels(isRegularWidth: Bool) -> Int {
+    isRegularWidth ? regularMaxIndentLevels : compactMaxIndentLevels
+  }
+
+  /// x of the rail drawn beneath the avatar of a tree row at `level`.
+  static func railX(level: Int) -> CGFloat {
+    rowInset + CGFloat(level) * indentStep + elbowRun
+  }
+}
+
+// MARK: - Rows
+
+/// One visible item in a thread: a post, a tombstone, or a control row.
+///
+/// Rows carry their full connector state, so a cell renders from its row
+/// alone. `mode` participates in equality so a layout change reconfigures
+/// every cell.
+struct ThreadRow: Hashable, Sendable, Identifiable {
+  enum TombstoneReason: Hashable, Sendable {
+    case blocked
+    case notFound
+    case noUnauthenticated
+    case unexpected
+  }
+
+  enum Kind: Hashable, Sendable {
+    /// Ancestors above the first loaded one exist but were not fetched.
+    case readMoreUp
+    case ancestor
+    case anchor
+    case reply
+    case tombstone(TombstoneReason)
+    /// Replies that are not rendered inline; `target` is the post that shows them.
+    case readMore(count: Int, target: ATProtocolURI)
+    /// Replies the AppView ranks as low quality, available on request.
+    case showOtherReplies
+  }
+
   let id: String
+  let kind: Kind
+  /// API depth: negative for ancestors, 0 for the anchor, 1+ for replies.
+  let depth: Int
   let parentID: String?
-  let hasUnloadedReplies: Bool
-  /// Replies the API reports but has not returned, when the count is known.
-  let unloadedReplyCount: Int
-  let depth: Int
+  /// Tree: `depth - 1`, bounded by the indent cap (read-more rows sit one
+  /// level below their parent). Linear: always 0.
+  let indentLevel: Int
+  /// Tree: one entry per ancestor level; `true` when that level's rail runs
+  /// the full height of this row because a later sibling still hangs off it.
+  let continuingRails: [Bool]
+  /// A connector enters this row from its parent.
+  let lineIn: Bool
+  /// A connector leaves this row towards the next row.
+  let lineOut: Bool
+  let isLastSibling: Bool
+  /// First row of a top-level reply branch; drawn with a divider above it.
+  let startsBranch: Bool
+  let mode: ThreadLayoutMode
 
-  init(
-    id: String,
-    parentID: String?,
-    hasUnloadedReplies: Bool,
-    unloadedReplyCount: Int = 0,
-    depth: Int = 2
-  ) {
-    self.id = id
-    self.parentID = parentID
-    self.hasUnloadedReplies = hasUnloadedReplies
-    self.unloadedReplyCount = unloadedReplyCount
-    self.depth = depth
-  }
-}
-
-struct ThreadReplyLayoutItem: Identifiable, Equatable, Sendable {
-  let id: String
-  let depth: Int
-  let connectsToNext: Bool
-  let hasAdditionalReplies: Bool
-  /// Number of hidden replies behind the continuation row, when known.
-  let additionalReplyCount: Int
-}
-
-struct ThreadReplyLayout: Equatable, Sendable {
-  let connectsRootToFirst: Bool
-  let rootHasAdditionalReplies: Bool
-  let rootAdditionalReplyCount: Int
-  let items: [ThreadReplyLayoutItem]
-}
-
-enum ThreadReplyLayoutBuilder {
-  static func build(
-    rootID: String,
-    nestedItems: [ThreadReplyLayoutInput],
-    maximumDepth: Int,
-    rootHasUnloadedReplies: Bool = false,
-    rootUnloadedReplyCount: Int = 0,
-    selection: ThreadReplySelection = .tree
-  ) -> ThreadReplyLayout {
-    // V2 is depth-first; tombstones have no record containing their parent URI.
-    // Recover those edges from depth while retaining explicit record parents.
-    let parentIDs = parentEdges(rootID: rootID, items: nestedItems)
-
-    switch selection {
-    case .tree:
-      let visibleItems = nestedItems.filter { $0.depth <= maximumDepth }
-      let visible = Set(visibleItems.map(\.id)).union([rootID])
-
-      // Attribute every hidden reply to its nearest visible ancestor so each
-      // row can say how many replies it collapses.
-      var collapsedCounts: [String: Int] = [:]
-      for item in nestedItems where !visible.contains(item.id) {
-        var ancestor = parentIDs[item.id]
-        while let current = ancestor, !visible.contains(current) {
-          ancestor = parentIDs[current]
-        }
-        guard let owner = ancestor else { continue }
-        collapsedCounts[owner, default: 0] += 1
-      }
-
-      let items = visibleItems.enumerated().map { index, item in
-        let next = visibleItems.indices.contains(index + 1) ? visibleItems[index + 1] : nil
-        let collapsed = collapsedCounts[item.id] ?? 0
-        return ThreadReplyLayoutItem(
-          id: item.id,
-          depth: item.depth,
-          connectsToNext: next.map { parentIDs[$0.id] == item.id } ?? false,
-          hasAdditionalReplies: item.hasUnloadedReplies || collapsed > 0,
-          additionalReplyCount: collapsed + item.unloadedReplyCount
-        )
-      }
-      let rootCollapsed = (collapsedCounts[rootID] ?? 0) + rootUnloadedReplyCount
-      return ThreadReplyLayout(
-        connectsRootToFirst: visibleItems.first.map { parentIDs[$0.id] == rootID } ?? false,
-        rootHasAdditionalReplies: rootHasUnloadedReplies || rootCollapsed > 0,
-        rootAdditionalReplyCount: rootCollapsed,
-        items: items
-      )
-
-    case .chain:
-      // Follow one continuation chain: at each level take the first child in
-      // API order (the API ranks replies best-first).
-      var chain: [ThreadReplyLayoutInput] = []
-      var current = rootID
-      while chain.count < maximumDepth - 1,
-        let next = nestedItems.first(where: { parentIDs[$0.id] == current }),
-        next.depth <= maximumDepth {
-        chain.append(next)
-        current = next.id
-      }
-
-      // A continuation row mid-chain would sit under the connector, so every
-      // hidden branch collapses into the single row at the end of the block.
-      let items = chain.enumerated().map { index, item in
-        ThreadReplyLayoutItem(
-          id: item.id,
-          depth: item.depth,
-          connectsToNext: index < chain.count - 1,
-          hasAdditionalReplies: false,
-          additionalReplyCount: 0
-        )
-      }
-      let hiddenCount = nestedItems.count - chain.count
-      let unloadedCount = chain.reduce(rootUnloadedReplyCount) { $0 + $1.unloadedReplyCount }
-      let hasUnloaded = rootHasUnloadedReplies || chain.contains { $0.hasUnloadedReplies }
-      return ThreadReplyLayout(
-        connectsRootToFirst: !chain.isEmpty,
-        rootHasAdditionalReplies: hasUnloaded || hiddenCount > 0,
-        rootAdditionalReplyCount: hiddenCount + unloadedCount,
-        items: items
-      )
+  var isPost: Bool {
+    switch kind {
+    case .ancestor, .anchor, .reply: true
+    case .readMoreUp, .tombstone, .readMore, .showOtherReplies: false
     }
   }
 
-  /// Explicit record parents, falling back to the depth stack for tombstones.
-  private static func parentEdges(
-    rootID: String,
-    items: [ThreadReplyLayoutInput]
-  ) -> [String: String] {
-    var ancestors: [Int: String] = [1: rootID]
-    var parentIDs: [String: String] = [:]
-    for item in items {
-      let depthParent = item.depth > 0 ? ancestors[item.depth - 1] : nil
-      if let parent = item.parentID ?? depthParent {
-        parentIDs[item.id] = parent
-      }
-      ancestors = ancestors.filter { $0.key < item.depth }
-      ancestors[item.depth] = item.id
+  /// Reply-side rows in tree mode use the compact avatar and indentation;
+  /// ancestors and the anchor keep the linear geometry in both modes.
+  var usesTreeGeometry: Bool {
+    guard mode == .tree, depth > 0 else { return false }
+    switch kind {
+    case .reply, .tombstone, .readMore: return true
+    case .readMoreUp, .ancestor, .anchor, .showOtherReplies: return false
     }
-    return parentIDs
+  }
+}
+
+/// Frames and connector endpoints for one row, derived from its `ThreadRow`.
+struct ThreadRowMetrics: Equatable, Sendable {
+  let row: ThreadRow
+
+  init(row: ThreadRow) {
+    self.row = row
+  }
+
+  var topPadding: CGFloat {
+    row.lineIn || row.startsBranch
+      ? ThreadReplyGeometry.connectedTopSpacing
+      : ThreadReplyGeometry.rowSpacing
+  }
+
+  var bottomPadding: CGFloat { ThreadReplyGeometry.rowSpacing }
+
+  /// Diameter of the avatar, or height of the box a connector points at in
+  /// rows without an avatar.
+  var markerSize: CGFloat {
+    switch row.kind {
+    case .readMore, .readMoreUp, .showOtherReplies:
+      ThreadReplyGeometry.readMoreHeight
+    case .ancestor, .anchor, .reply, .tombstone:
+      row.usesTreeGeometry ? ThreadReplyGeometry.treeAvatarSize : ThreadReplyGeometry.linearAvatarSize
+    }
+  }
+
+  /// Leading edge of the avatar (or of the label/card in non-post rows).
+  var markerLeading: CGFloat {
+    if row.usesTreeGeometry {
+      return ThreadReplyGeometry.rowInset + CGFloat(row.indentLevel) * ThreadReplyGeometry.indentStep
+    }
+    switch row.kind {
+    case .readMore, .readMoreUp:
+      // Linear read-more labels align with the text column of the posts above.
+      return ThreadReplyGeometry.rowInset + ThreadReplyGeometry.linearAvatarSize
+        + ThreadReplyGeometry.postTextSpacing
+    case .ancestor, .anchor, .reply, .tombstone, .showOtherReplies:
+      return ThreadReplyGeometry.rowInset
+    }
+  }
+
+  var markerTop: CGFloat {
+    row.isPost ? topPadding + ThreadReplyGeometry.postAvatarTopInset : topPadding
+  }
+
+  var markerCenterY: CGFloat { markerTop + markerSize / 2 }
+
+  /// Leading edge of the row's content view. `PostView` insets its own avatar,
+  /// so post rows start that much earlier.
+  var contentLeading: CGFloat {
+    row.isPost ? markerLeading - ThreadReplyGeometry.postAvatarLeadingInset : markerLeading
+  }
+
+  /// x of the line that leaves this row towards its children.
+  var outgoingLineX: CGFloat {
+    row.usesTreeGeometry
+      ? ThreadReplyGeometry.railX(level: row.indentLevel)
+      : ThreadReplyGeometry.linearLineX
+  }
+
+  /// x of the line that enters this row from its parent.
+  var incomingLineX: CGFloat {
+    row.usesTreeGeometry && row.indentLevel > 0
+      ? ThreadReplyGeometry.railX(level: row.indentLevel - 1)
+      : ThreadReplyGeometry.linearLineX
+  }
+
+  /// Whether the incoming line bends into the marker instead of dropping
+  /// straight onto it.
+  var incomingLineBends: Bool {
+    abs(incomingLineX - (markerLeading + markerSize / 2)) > 0.5
+  }
+
+  /// Tombstone cards span the row, so linear lines meet their top edge.
+  private var isCardRow: Bool {
+    if case .tombstone = row.kind { return true }
+    return false
+  }
+
+  /// y where the outgoing line starts, given the row's rendered height.
+  func outgoingLineStartY(rowHeight: CGFloat) -> CGFloat {
+    if isCardRow {
+      return rowHeight - bottomPadding + ThreadReplyGeometry.lineGap
+    }
+    return markerTop + markerSize + ThreadReplyGeometry.lineGap
   }
 }

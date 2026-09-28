@@ -9,8 +9,6 @@ struct ThreadViewMainPostView: View, Equatable {
     
     let post: AppBskyFeedDefs.PostView
     let showLine: Bool
-    /// Draws the connector arriving from the ancestor directly above.
-    let hasThreadLineAbove: Bool
     let appState: AppState
     let visibilityContext: PostVisibilityContext
     @Binding var path: NavigationPath
@@ -28,8 +26,8 @@ struct ThreadViewMainPostView: View, Equatable {
     @State private var showingLabelsOnPost = false
     // Using multiples of 3 for spacing
     private static let baseUnit: CGFloat = 3
-    private static let avatarSize: CGFloat = PostAvatarScale.regular.avatarSize
-    private static let avatarContainerWidth: CGFloat = PostAvatarScale.regular.containerWidth
+    private static let avatarSize: CGFloat = 48
+    private static let avatarContainerWidth: CGFloat = 54
     
     private static let dateTimeFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -45,7 +43,6 @@ struct ThreadViewMainPostView: View, Equatable {
     init(
         post: AppBskyFeedDefs.PostView,
         showLine: Bool,
-        hasThreadLineAbove: Bool = false,
         path: Binding<NavigationPath>,
         appState: AppState,
         visibilityContext: PostVisibilityContext = .public,
@@ -54,7 +51,6 @@ struct ThreadViewMainPostView: View, Equatable {
     ) {
         self.post = post
         self.showLine = showLine
-        self.hasThreadLineAbove = hasThreadLineAbove
         self._path = path
         self.appState = appState
         self.visibilityContext = visibilityContext
@@ -112,20 +108,6 @@ struct ThreadViewMainPostView: View, Equatable {
         .frame(maxHeight: .infinity, alignment: .top)
         .frame(width: Self.avatarContainerWidth)
         .padding(.horizontal, ThreadViewMainPostView.baseUnit)
-        .padding(.top, hasThreadLineAbove ? ThreadReplyGeometry.connectorTopInset : 0)
-        .overlay(alignment: .topLeading) {
-            ThreadAvatarConnector(
-                showsAbove: hasThreadLineAbove,
-                showsBelow: false,
-                avatarSize: Self.avatarSize,
-                topInset: ThreadReplyGeometry.connectorTopInset
-            )
-            .padding(
-                .leading,
-                Self.baseUnit + ThreadReplyGeometry.avatarCenterX(for: .regular)
-                    - ThreadReplyGeometry.lineWidth / 2
-            )
-        }
         // Keep this subtree free of ProfileEntity context. The enclosing
         // thread post is annotated as PostEntity, and iOS 27 can flatten a
         // nested profile DID into that post annotation during collection.

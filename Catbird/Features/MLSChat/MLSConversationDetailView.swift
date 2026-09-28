@@ -309,7 +309,17 @@ import SwiftUI
                             emojiPickerMessageID = nil
                         }
                     }
-                    .task {
+                    .task(id: "\(appState.nseStateReloadTrigger):\(scenePhase)") {
+                        guard !Task.isCancelled,
+                              scenePhase == .active,
+                              !MLSClient.isSuspensionInProgress,
+                              !MLSCoreContext.isSuspensionInProgress,
+                              let manager = viewModel?.conversationManager,
+                              manager.userDid == appState.userDID,
+                              appState.mlsConversationManager === manager,
+                              !manager.isShuttingDown,
+                              manager.currentCoordinationGeneration == MLSCoordinationStore.shared.currentGeneration
+                        else { return }
                         await dataSource.loadMessages()
                         consumePendingChatDraft()
                     }
@@ -1191,7 +1201,6 @@ import SwiftUI
 
                 let newViewModel = MLSConversationDetailViewModel(
                     conversationId: conversationId,
-                    database: dependencies.conversationManager.database,
                     apiClient: dependencies.apiClient,
                     conversationManager: dependencies.conversationManager
                 )
