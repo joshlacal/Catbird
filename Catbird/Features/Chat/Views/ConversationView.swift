@@ -1,7 +1,6 @@
 import SwiftUI
 import OSLog
 import Petrel
-import CatbirdMLSCore
 //import MCEmojiPicker
 
 #if os(iOS)

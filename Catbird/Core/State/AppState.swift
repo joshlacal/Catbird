@@ -1,6 +1,5 @@
 import AVKit
 import BluemojiKit
-import CatbirdMLSCore
 import Foundation
 import GRDB
 import NaturalLanguage

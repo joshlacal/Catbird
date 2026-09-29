@@ -10,7 +10,6 @@
 //  in the intent's process.
 //
 
-import CatbirdMLSCore
 import Foundation
 import Petrel
 import PetrelCatbird

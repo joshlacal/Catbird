@@ -10,7 +10,6 @@
 #if os(iOS) && canImport(GeoToolbox) && compiler(>=6.4)
 
 import AppIntents
-import CatbirdMLSCore
 import Foundation
 import Petrel
 import PetrelCatbird

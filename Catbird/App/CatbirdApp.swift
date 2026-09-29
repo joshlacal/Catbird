@@ -14,7 +14,6 @@ import Security
 import SwiftData
 import SwiftUI
 import TipKit
-import CatbirdMLSCore
 #if os(iOS)
 import UIKit
 #elseif os(macOS)

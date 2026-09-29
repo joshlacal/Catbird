@@ -1,4 +1,3 @@
-import CatbirdMLSCore
 //
 //  ShareToChatActivity.swift
 //  Catbird
@@ -11,7 +10,6 @@ import CatbirdMLSCore
   import SwiftUI
   import Petrel
   import OSLog
-  import CatbirdMLSCore
   import GRDB
 
   /// Custom UIActivity for sharing posts to chat

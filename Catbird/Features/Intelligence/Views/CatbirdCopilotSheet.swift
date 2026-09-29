@@ -1,6 +1,5 @@
 import SwiftUI
 import Petrel
-import CatbirdMLSCore
 
 struct CatbirdCopilotSheet: View {
     @Environment(AppState.self) private var appState

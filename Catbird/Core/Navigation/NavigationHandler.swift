@@ -1,6 +1,5 @@
 import Petrel
 import SwiftUI
-import CatbirdMLSCore
 
 /// Utility for handling navigation destination resolution throughout the app
 struct NavigationHandler {

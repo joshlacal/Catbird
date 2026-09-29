@@ -19,20 +19,17 @@
 		217ECDA92EB4268100BD113B /* Mantis in Frameworks */ = {isa = PBXBuildFile; platformFilter = ios; productRef = 217ECDA82EB4268100BD113B /* Mantis */; };
 		21886699300B5FE800215DE7 /* Petrel in Frameworks */ = {isa = PBXBuildFile; productRef = 21886698300B5FE800215DE7 /* Petrel */; };
 		2188669C300B600600215DE7 /* PetrelCatbird in Frameworks */ = {isa = PBXBuildFile; productRef = 2188669B300B600600215DE7 /* PetrelCatbird */; };
-		2188669F300B606F00215DE7 /* CatbirdMLSCore in Frameworks */ = {isa = PBXBuildFile; productRef = 2188669E300B606F00215DE7 /* CatbirdMLSCore */; };
 		218866A2300B61AC00215DE7 /* CatbirdBrand in Frameworks */ = {isa = PBXBuildFile; productRef = 218866A1300B61AC00215DE7 /* CatbirdBrand */; };
 		218866A5300B678A00215DE7 /* BluemojiKit in Frameworks */ = {isa = PBXBuildFile; productRef = 218866A4300B678A00215DE7 /* BluemojiKit */; };
 		218B7A8C2D70B1AE0053987F /* LazyPager in Frameworks */ = {isa = PBXBuildFile; platformFilter = ios; productRef = 218B7A8B2D70B1AE0053987F /* LazyPager */; };
 		219DA5B92EED838E00F717FA /* EmojiKit in Frameworks */ = {isa = PBXBuildFile; productRef = 219DA5B82EED838E00F717FA /* EmojiKit */; };
 		219E58032EBC27F500C8D6F2 /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 219E58022EBC27F500C8D6F2 /* Security.framework */; };
 		219E58052EBC27FF00C8D6F2 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 219E58042EBC27FF00C8D6F2 /* Foundation.framework */; };
-		21A0C0DE300C0DE100000001 /* CatbirdMLSCore in Frameworks */ = {isa = PBXBuildFile; productRef = 21A0C0DE300C0DE100000002 /* CatbirdMLSCore */; };
 		21A0C0DE300C0DE100000003 /* PetrelCatbird in Frameworks */ = {isa = PBXBuildFile; productRef = 21A0C0DE300C0DE100000004 /* PetrelCatbird */; };
 		21AC6E642DD0E0E700251536 /* .swiftlint.yml in Resources */ = {isa = PBXBuildFile; fileRef = 21AC6E632DD0E0E700251536 /* .swiftlint.yml */; };
 		21DDE5EF2DF4EDAF009E9825 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 21196F102DC1115900662CC3 /* WidgetKit.framework */; platformFilters = (ios, macos, ); };
 		21DDE5F02DF4EDAF009E9825 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 21196F122DC1115900662CC3 /* SwiftUI.framework */; };
 		21E1082A2D70BE6F0030A71C /* OrderedCollections in Frameworks */ = {isa = PBXBuildFile; productRef = 21E108292D70BE6F0030A71C /* OrderedCollections */; };
-		21FFA23B2EBB8450009825BD /* SQLCipher in Frameworks */ = {isa = PBXBuildFile; productRef = 21FFA23A2EBB8450009825BD /* SQLCipher */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -329,7 +326,6 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				21A0C0DE300C0DE100000001 /* CatbirdMLSCore in Frameworks */,
 				21A0C0DE300C0DE100000003 /* PetrelCatbird in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -338,7 +334,6 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				21FFA23B2EBB8450009825BD /* SQLCipher in Frameworks */,
 				212E94692D6183D600D3E1DD /* Nuke in Frameworks */,
 				219E58052EBC27FF00C8D6F2 /* Foundation.framework in Frameworks */,
 				21E1082A2D70BE6F0030A71C /* OrderedCollections in Frameworks */,
@@ -354,7 +349,6 @@
 				219E58032EBC27F500C8D6F2 /* Security.framework in Frameworks */,
 				217ECDA92EB4268100BD113B /* Mantis in Frameworks */,
 				218866A2300B61AC00215DE7 /* CatbirdBrand in Frameworks */,
-				2188669F300B606F00215DE7 /* CatbirdMLSCore in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -466,7 +460,6 @@
 			);
 			name = NotificationServiceExtension;
 			packageProductDependencies = (
-				21A0C0DE300C0DE100000002 /* CatbirdMLSCore */,
 				21A0C0DE300C0DE100000004 /* PetrelCatbird */,
 			);
 			productName = NotificationServiceExtension;
@@ -505,12 +498,10 @@
 				21E108292D70BE6F0030A71C /* OrderedCollections */,
 				215ADE7E2E847268003F0DA4 /* Sentry-Dynamic */,
 				217ECDA82EB4268100BD113B /* Mantis */,
-				21FFA23A2EBB8450009825BD /* SQLCipher */,
 				21094CF32EBD09010084BFBD /* GRDB */,
 				219DA5B82EED838E00F717FA /* EmojiKit */,
 				21886698300B5FE800215DE7 /* Petrel */,
 				2188669B300B600600215DE7 /* PetrelCatbird */,
-				2188669E300B606F00215DE7 /* CatbirdMLSCore */,
 				218866A1300B61AC00215DE7 /* CatbirdBrand */,
 				218866A4300B678A00215DE7 /* BluemojiKit */,
 			);
@@ -648,12 +639,10 @@
 				218B7A8A2D70B1AE0053987F /* XCRemoteSwiftPackageReference "LazyPager" */,
 				215ADE7D2E847268003F0DA4 /* XCRemoteSwiftPackageReference "sentry-cocoa" */,
 				217ECDA72EB4268100BD113B /* XCRemoteSwiftPackageReference "Mantis" */,
-				21FFA2392EBB8450009825BD /* XCRemoteSwiftPackageReference "SQLCipher.swift" */,
 				21094CF22EBD09010084BFBD /* XCRemoteSwiftPackageReference "GRDB.swift" */,
 				219DA5B72EED838E00F717FA /* XCRemoteSwiftPackageReference "EmojiKit" */,
 				21A0C1AA300D0001000000A1 /* XCLocalSwiftPackageReference "../Petrel" */,
 				21A0C1AA300D0001000000A2 /* XCLocalSwiftPackageReference "../PetrelCatbird" */,
-				21A0C1AA300D0001000000A3 /* XCLocalSwiftPackageReference "../CatbirdMLSCore" */,
 				218866A0300B61AC00215DE7 /* XCRemoteSwiftPackageReference "CatbirdBrand" */,
 				218866A3300B678A00215DE7 /* XCRemoteSwiftPackageReference "BluemojiKit" */,
 			);
@@ -971,7 +960,7 @@
 				REGISTER_APP_GROUPS = YES;
 				SKIP_INSTALL = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
 				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
@@ -1021,7 +1010,7 @@
 				REGISTER_APP_GROUPS = YES;
 				SKIP_INSTALL = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
 				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
@@ -1118,7 +1107,7 @@
 				RUNTIME_EXCEPTION_DEBUGGING_TOOL = NO;
 				RUNTIME_EXCEPTION_DISABLE_EXECUTABLE_PAGE_PROTECTION = NO;
 				RUNTIME_EXCEPTION_DISABLE_LIBRARY_VALIDATION = YES;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
 				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
@@ -1210,7 +1199,7 @@
 				RUNTIME_EXCEPTION_DEBUGGING_TOOL = NO;
 				RUNTIME_EXCEPTION_DISABLE_EXECUTABLE_PAGE_PROTECTION = NO;
 				RUNTIME_EXCEPTION_DISABLE_LIBRARY_VALIDATION = YES;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
 				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
@@ -1666,10 +1655,6 @@
 			isa = XCLocalSwiftPackageReference;
 			relativePath = ../PetrelCatbird;
 		};
-		21A0C1AA300D0001000000A3 /* XCLocalSwiftPackageReference "../CatbirdMLSCore" */ = {
-			isa = XCLocalSwiftPackageReference;
-			relativePath = ../CatbirdMLSCore;
-		};
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCRemoteSwiftPackageReference section */
@@ -1745,14 +1730,6 @@
 				minimumVersion = 2.2.1;
 			};
 		};
-		21FFA2392EBB8450009825BD /* XCRemoteSwiftPackageReference "SQLCipher.swift" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/sqlcipher/SQLCipher.swift.git";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 4.11.0;
-			};
-		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -1794,10 +1771,6 @@
 			isa = XCSwiftPackageProductDependency;
 			productName = PetrelCatbird;
 		};
-		2188669E300B606F00215DE7 /* CatbirdMLSCore */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = CatbirdMLSCore;
-		};
 		218866A1300B61AC00215DE7 /* CatbirdBrand */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 218866A0300B61AC00215DE7 /* XCRemoteSwiftPackageReference "CatbirdBrand" */;
@@ -1818,10 +1791,6 @@
 			package = 219DA5B72EED838E00F717FA /* XCRemoteSwiftPackageReference "EmojiKit" */;
 			productName = EmojiKit;
 		};
-		21A0C0DE300C0DE100000002 /* CatbirdMLSCore */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = CatbirdMLSCore;
-		};
 		21A0C0DE300C0DE100000004 /* PetrelCatbird */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = PetrelCatbird;
@@ -1830,11 +1799,6 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 2194B3C42D70AA13004268BE /* XCRemoteSwiftPackageReference "swift-collections" */;
 			productName = OrderedCollections;
-		};
-		21FFA23A2EBB8450009825BD /* SQLCipher */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 21FFA2392EBB8450009825BD /* XCRemoteSwiftPackageReference "SQLCipher.swift" */;
-			productName = SQLCipher;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

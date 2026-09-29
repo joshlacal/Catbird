@@ -1,5 +1,4 @@
 #if os(macOS)
-import CatbirdMLSCore
 import GRDB
 import OSLog
 import Petrel

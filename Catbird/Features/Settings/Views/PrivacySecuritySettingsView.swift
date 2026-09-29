@@ -2,7 +2,6 @@ import SwiftUI
 import Petrel
 import LocalAuthentication
 import OSLog
-import CatbirdMLSCore
 
 // MARK: - Protocols
 

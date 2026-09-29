@@ -9,7 +9,6 @@
 //
 
 import Foundation
-import CatbirdMLSCore
 import GRDB
 
 struct PendingChatDraft: Codable, Sendable, Equatable {

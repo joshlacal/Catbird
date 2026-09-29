@@ -2,7 +2,6 @@ import SwiftUI
 import Petrel
 import PetrelCatbird
 import OSLog
-import CatbirdMLSCore
 
 @available(iOS 18.0, macOS 13.0, *)
 struct DeviceManagementView: View {

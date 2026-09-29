@@ -1,4 +1,3 @@
-import CatbirdMLSCore
 import SwiftUI
 
 /// Group configuration step for creating a Catbird Group.

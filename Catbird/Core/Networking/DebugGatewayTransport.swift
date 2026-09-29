@@ -7,7 +7,6 @@
 //
 
 #if DEBUG && canImport(Network) && canImport(Security)
-import CatbirdMLSCore
 import CryptoKit
 import Foundation
 import Network

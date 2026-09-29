@@ -1,5 +1,4 @@
 #if os(macOS)
-import CatbirdMLSCore
 import NukeUI
 import Petrel
 import SwiftUI

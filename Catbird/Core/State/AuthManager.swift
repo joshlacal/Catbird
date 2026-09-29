@@ -1,5 +1,4 @@
 import AuthenticationServices
-import CatbirdMLSCore
 import Foundation
 import LocalAuthentication
 import OSLog
