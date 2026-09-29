@@ -60,7 +60,6 @@ extension PostComposerViewUIKit {
   }
   
   func canSubmit(vm: PostComposerViewModel) -> Bool {
-    guard vm.destination == .public || appState.circlesEnabled else { return false }
     return vm.submitValidationState.canSubmit
   }
   
@@ -79,12 +78,6 @@ extension PostComposerViewUIKit {
   }
   
   func presentPhotoPicker(vm: PostComposerViewModel) {
-    #if DEBUG
-    if let transport = appState.e2eCircleTransport {
-      vm.ingestCapturedPhoto(transport.fixtureImageData)
-      return
-    }
-    #endif
     photoPickerVisible = true
   }
   

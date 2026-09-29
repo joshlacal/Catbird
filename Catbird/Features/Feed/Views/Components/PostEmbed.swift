@@ -81,14 +81,10 @@ struct PostEmbed: View {
             labels: labels,
             contentType: "image"
         ) {
-            if case .circle(let circle) = visibilityContext {
-                circleImageGridView(imagesView: imagesView, circle: circle)
-            } else {
-                ViewImageGridView(
-                    viewImages: imagesView.images,
-                    shouldBlur: false // We're handling blur at the ContentLabelManager level now
-                )
-            }
+            ViewImageGridView(
+                viewImages: imagesView.images,
+                shouldBlur: false // We're handling blur at the ContentLabelManager level now
+            )
         }
         .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
     }
@@ -152,14 +148,10 @@ struct PostEmbed: View {
                     labels: labels,
                     contentType: "image"
                 ) {
-                    if case .circle(let circle) = visibilityContext {
-                        circleImageGridView(imagesView: imagesView, circle: circle)
-                    } else {
-                        ViewImageGridView(
-                            viewImages: imagesView.images,
-                            shouldBlur: false // We're handling blur at the ContentLabelManager level now
-                        )
-                    }
+                    ViewImageGridView(
+                        viewImages: imagesView.images,
+                        shouldBlur: false // We're handling blur at the ContentLabelManager level now
+                    )
                 }
                 .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
 
@@ -267,31 +259,6 @@ struct PostEmbed: View {
         .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
     }
 
-    @ViewBuilder
-    private func circleImageGridView(imagesView: AppBskyEmbedImages.View, circle: CircleSummary) -> some View {
-        let images = imagesView.images
-        if images.count == 1, let first = images.first {
-            CircleMediaView(
-                viewImage: first,
-                circle: circle,
-                authorDID: authorDID,
-                shouldBlur: false
-            )
-        } else {
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 4) {
-                ForEach(Array(images.enumerated()), id: \.element.id) { _, img in
-                    CircleMediaView(
-                        viewImage: img,
-                        circle: circle,
-                        authorDID: authorDID,
-                        shouldBlur: false
-                    )
-                    .frame(minHeight: 120)
-                }
-            }
-        }
-    }
-    
     // MARK: - Helper Methods
     
     /// This method is deprecated - ContentLabelManager now handles all visibility logic

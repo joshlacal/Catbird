@@ -15,7 +15,6 @@ struct NotificationsView: View {
   @State private var selectedFilter: NotificationsViewModel.NotificationFilter = .all
   @State private var lastLoadMoreTriggerTime: TimeInterval = .zero
   @State private var showingSettings = false
-  @State private var circleRefresh = NotificationSupplementRefresh()
   private let loadMoreTriggerDedupInterval: TimeInterval = 0.35
 
   private let logger = Logger(subsystem: "blue.catbird", category: "NotificationsView")
@@ -33,7 +32,6 @@ struct NotificationsView: View {
     .onChange(of: lastTappedTab) { _, newValue in
       if newValue == 2, selectedTab == 2 {
         Task {
-          startCircleRefresh()
           await viewModel.refreshNotifications()
         }
         lastTappedTab = nil
@@ -42,7 +40,6 @@ struct NotificationsView: View {
     .onChange(of: selectedTab) { oldValue, newValue in
       if newValue == 2 && oldValue != 2 {
         Task {
-          startCircleRefresh()
           await viewModel.refreshNotifications()
           try? await viewModel.markNotificationsAsSeen()
         }
@@ -53,26 +50,12 @@ struct NotificationsView: View {
         await viewModel.setFilter(newFilter)
       }
     }.task {
-      #if DEBUG
-      if appState.e2eCircleTransport == nil, viewModel.groupedNotifications.isEmpty {
-        await viewModel.loadNotifications()
-      }
-      #else
       if viewModel.groupedNotifications.isEmpty {
         await viewModel.loadNotifications()
       }
-      #endif
       // Force widget update when notifications view appears
       appState.notificationManager.updateWidgetUnreadCount(appState.notificationManager.unreadCount)
     }
-    .task(id: appState.circlesEnabled) {
-      if appState.circlesEnabled {
-        startCircleRefresh()
-      } else {
-        circleRefresh.cancel()
-      }
-    }
-    .onDisappear { circleRefresh.cancel() }
     // Check scene phase changes
     #if os(iOS)
     .onChange(of: UIApplication.shared.applicationState) { newState in
@@ -83,19 +66,6 @@ struct NotificationsView: View {
       }
     }
     #endif
-  }
-
-  @MainActor
-  private func startCircleRefresh() {
-    guard appState.circlesEnabled else { return }
-    let model = appState.circleNotificationsModel
-    circleRefresh.start {
-      do {
-        try await model.refresh()
-      } catch {
-        // Circle errors stay in the Circle model and never block public activity.
-      }
-    }
   }
 
   private var notificationsLeadingPlacement: ToolbarItemPlacement {
@@ -188,20 +158,16 @@ struct NotificationsView: View {
 
   @ViewBuilder
   private var notificationContent: some View {
-    if !appState.circlesEnabled {
-      if let error = viewModel.error {
-        ErrorStateView(
-          error: error,
-          context: "Failed to load notifications",
-          retryAction: { Task { await retryLoadNotifications() } }
-        )
-      } else if viewModel.isLoading && viewModel.groupedNotifications.isEmpty {
-        loadingView
-      } else if viewModel.groupedNotifications.isEmpty {
-        emptyView
-      } else {
-        notificationsList
-      }
+    if let error = viewModel.error {
+      ErrorStateView(
+        error: error,
+        context: "Failed to load notifications",
+        retryAction: { Task { await retryLoadNotifications() } }
+      )
+    } else if viewModel.isLoading && viewModel.groupedNotifications.isEmpty {
+      loadingView
+    } else if viewModel.groupedNotifications.isEmpty {
+      emptyView
     } else {
       notificationsList
     }
@@ -256,46 +222,6 @@ struct NotificationsView: View {
 
     ScrollViewReader { _ in
       List {
-        if appState.circlesEnabled {
-          CircleNotificationsSection(appState: appState, navigationPath: navigationPath)
-            #if os(macOS)
-            .frame(maxWidth: 700)
-            .frame(maxWidth: .infinity, alignment: .center)
-            #endif
-            .listSectionSeparator(.hidden, edges: .top)
-        }
-
-        if let error = viewModel.error, appState.circlesEnabled {
-          ErrorStateView(
-            error: error,
-            context: "Failed to load public notifications",
-            retryAction: { Task { await retryLoadNotifications() } }
-          )
-          .listRowSeparator(.hidden)
-          .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
-        } else if viewModel.isLoading && viewModel.groupedNotifications.isEmpty && appState.circlesEnabled {
-          HStack {
-            Spacer()
-            ProgressView("Loading notifications")
-            Spacer()
-          }
-          .padding(.vertical, DesignTokens.Spacing.xl)
-          .listRowSeparator(.hidden)
-          .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
-        } else if viewModel.groupedNotifications.isEmpty && appState.circlesEnabled {
-          VStack(spacing: DesignTokens.Spacing.md) {
-            Image(systemName: "bell.slash")
-              .appFont(size: 32)
-              .foregroundColor(.secondary)
-            Text("No Public Notifications")
-              .enhancedAppSubheadline()
-              .foregroundColor(.secondary)
-          }
-          .frame(maxWidth: .infinity)
-          .padding(.vertical, DesignTokens.Spacing.xl)
-          .listRowSeparator(.hidden)
-          .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
-        }
         ForEach(indexedGroups, id: \.element.id) { item in
           let index = item.offset
           let group = item.element
@@ -350,7 +276,6 @@ struct NotificationsView: View {
       //      }
     }
     .refreshable {
-      startCircleRefresh()
       await viewModel.refreshNotifications()
       try? await viewModel.markNotificationsAsSeen()
     }

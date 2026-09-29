@@ -4,8 +4,7 @@ import SwiftUI
 // MARK: - Request Model
 
 /// A person shown in a message request: the sender, or another member of the
-/// chat. Built from Bluesky chat profiles or MLS enricher data so both request
-/// providers render through one row.
+/// chat. Built from Bluesky chat profiles.
 struct RequestParticipant: Hashable, Sendable, Identifiable {
   let did: String
   let handle: String?
@@ -44,12 +43,10 @@ struct RequestParticipant: Hashable, Sendable, Identifiable {
 /// Which request system a request belongs to. Each becomes one list section.
 enum MessageRequestSource: String, CaseIterable, Hashable, Sendable {
   case bluesky
-  case encrypted
 
   var title: String {
     switch self {
     case .bluesky: "Bluesky"
-    case .encrypted: "Encrypted chats"
     }
   }
 }
@@ -58,15 +55,10 @@ enum MessageRequestSource: String, CaseIterable, Hashable, Sendable {
 enum MessageRequestOrigin: Hashable, Sendable {
   /// A `chat.bsky` conversation with status "request".
   case bluesky(convoID: String)
-  /// A verified MLS direct request with a Rust-side consent projection.
-  case encryptedDirect(conversationID: String)
-  /// A pre-verification MLS request (direct or group) tracked only locally.
-  case encryptedLegacy(conversationID: String)
 
   var source: MessageRequestSource {
     switch self {
     case .bluesky: .bluesky
-    case .encryptedDirect, .encryptedLegacy: .encrypted
     }
   }
 }
@@ -108,7 +100,7 @@ struct MessageRequestItem: Identifiable, Hashable, Sendable {
   var title: String {
     if let name = sender?.name { return name }
     if let groupTitle { return groupTitle }
-    return source == .encrypted ? "Encrypted chat request" : "Chat request"
+    return "Chat request"
   }
 
   /// Block and report both target the sender's account.
@@ -139,7 +131,6 @@ enum MessageRequestDecision: Hashable, Sendable {
 /// they are unit-testable.
 enum MessageRequestPresentation {
   static let newAccountWindow: TimeInterval = 7 * 24 * 60 * 60
-  static let encryptedDirectDescription = "Wants to start an encrypted chat"
 
   /// The social-proof line under a sender's name, or nil when nothing is known.
   static func contextLine(
@@ -197,24 +188,10 @@ enum MessageRequestPresentation {
   }
 
   /// Non-empty sections in display order. Empty sections are hidden.
-  static func sections(
-    bluesky: [MessageRequestItem],
-    encrypted: [MessageRequestItem]
-  ) -> [MessageRequestSection] {
+  static func sections(bluesky: [MessageRequestItem]) -> [MessageRequestSection] {
     [
       MessageRequestSection(source: .bluesky, items: bluesky),
-      MessageRequestSection(source: .encrypted, items: encrypted),
     ].filter { !$0.items.isEmpty }
-  }
-
-  /// Parses the RFC 3339 timestamps carried in MLS request metadata.
-  static func parseTimestamp(_ value: String) -> Date? {
-    let fractional = ISO8601DateFormatter()
-    fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-    if let date = fractional.date(from: value) { return date }
-    let plain = ISO8601DateFormatter()
-    plain.formatOptions = [.withInternetDateTime]
-    return plain.date(from: value)
   }
 }
 
@@ -528,37 +505,22 @@ struct RequestAvatar: View {
   var body: some View {
     if let sender = item.sender {
       AsyncProfileImage(url: sender.avatarURL, size: size)
-        .overlay(alignment: .bottomTrailing) { encryptedBadge }
         .accessibilityHidden(true)
     } else if !item.participants.isEmpty {
-      MLSGroupAvatarView(
+      ChatGroupAvatarView(
         participants: item.participants.map {
-          MLSParticipantViewModel(id: $0.did, handle: $0.handle ?? "", displayName: $0.displayName, avatarURL: $0.avatarURL)
+          ChatParticipant(id: $0.did, handle: $0.handle ?? "", displayName: $0.displayName, avatarURL: $0.avatarURL)
         },
         size: size
       )
-      .overlay(alignment: .bottomTrailing) { encryptedBadge }
       .accessibilityHidden(true)
     } else {
-      Image(systemName: item.isGroup ? "person.2.fill" : "lock.fill")
+      Image(systemName: item.isGroup ? "person.2.fill" : "person.fill")
         .font(.system(size: size * 0.4))
         .foregroundStyle(.secondary)
         .frame(width: size, height: size)
         .background(.quaternary, in: Circle())
         .accessibilityHidden(true)
-    }
-  }
-
-  @ViewBuilder
-  private var encryptedBadge: some View {
-    if item.source == .encrypted {
-      Image(systemName: "lock.fill")
-        .font(.system(size: size * 0.2, weight: .bold))
-        .foregroundStyle(.white)
-        .frame(width: size * 0.38, height: size * 0.38)
-        .background(Color.accentColor, in: Circle())
-        .overlay(Circle().stroke(Color.systemBackground, lineWidth: 2))
-        .offset(x: 2, y: 2)
     }
   }
 }

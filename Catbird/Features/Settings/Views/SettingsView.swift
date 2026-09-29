@@ -72,15 +72,6 @@ struct SettingsView: View {
                         .foregroundStyle(.purple)
                 }
             }
-
-            NavigationLink(destination: DataBackupSettingsView()) {
-                Label {
-                    Text("Data & Backup")
-                } icon: {
-                    Image(systemName: "externaldrive.fill")
-                        .foregroundStyle(.cyan)
-                }
-            }
         }
 
         Section {
@@ -270,69 +261,11 @@ struct SettingsView: View {
             }
           }
 
-          NavigationLink(destination: DiagnosticsSettingsView()) {
-            Label {
-              Text("Diagnostics")
-            } icon: {
-              Image(systemName: "stethoscope")
-                .foregroundStyle(.gray)
-            }
-          }
-
-          if #available(iOS 18.0, macOS 13.0, *) {
-            NavigationLink(destination: DeviceManagementView()) {
-              Label {
-                Text("Devices")
-              } icon: {
-                Image(systemName: "ipad.landscape.and.iphone")
-                    .foregroundStyle(.blue)
-              }
-            }
-          }
-
           #if DEBUG
           VersionRow()
           #endif
         }
         
-        #if os(iOS)
-        Section("Experimental") {
-          Toggle(isOn: Binding(
-            get: {
-              return ExperimentalSettings.shared.isMLSChatEnabled(for: appState.userDID)
-            },
-            set: { newValue in
-              if newValue {
-                // CRITICAL FIX: Initialize MLS (device registration + key packages) and call optIn
-                // This ensures other users can find and add this user to conversations
-                Task {
-                  await optInToMLS()
-                }
-              } else {
-                ExperimentalSettings.shared.disableMLSChat(for: appState.userDID)
-                // Opt out from MLS server
-                Task {
-                  await optOutFromMLS()
-                }
-              }
-            }
-          )) {
-            Label {
-              VStack(alignment: .leading, spacing: 2) {
-                Text("Catbird Groups")
-                Text("E2E encrypted group chat")
-                  .font(.caption)
-                  .foregroundStyle(.secondary)
-              }
-            } icon: {
-              Image(systemName: "lock.shield")
-                .foregroundStyle(.orange)
-            }
-          }
-          .tint(.orange)
-        }
-        #endif
-
         Section {
             LogoutButton(isLoggingOut: $isLoggingOut, handleLogout: handleLogout)
         }
@@ -441,57 +374,6 @@ struct SettingsView: View {
       availableAccounts = AppStateManager.shared.authentication.availableAccounts.count
     }
   }
-  
-  // MARK: - MLS Opt-In/Out
-  
-  /// Opt in to MLS on the server and initialize device/key packages
-  /// CRITICAL: Must initialize MLS before optIn to ensure key packages are uploaded
-  #if os(iOS)
-  private func optInToMLS() async {
-    let userDID = appState.userDID
-
-    do {
-      // Initialize MLS first (device registration + key packages)
-      try await appState.initializeMLS()
-
-      // Then call optIn to mark user as available
-      guard let apiClient = await appState.getMLSAPIClient() else {
-        return
-      }
-      _ = try await apiClient.optIn()
-
-      if let conversationManager = await appState.getMLSConversationManager() {
-        do {
-          try await conversationManager.ensureDeviceRecordPublished()
-        } catch {
-          logger.error("Device record publish after opt-in failed: \(error.localizedDescription)")
-        }
-      }
-
-      // Save local setting only after successful server opt-in
-      ExperimentalSettings.shared.enableMLSChat(for: userDID)
-    } catch {
-      // Failed to opt in - don't save local setting
-      // User will need to try again
-    }
-  }
-
-  /// Opt out from MLS on the server when user disables the feature
-  private func optOutFromMLS() async {
-    guard let apiClient = await appState.getMLSAPIClient() else {
-      return
-    }
-
-    do {
-      _ = try await apiClient.optOut()
-      if let conversationManager = await appState.getMLSConversationManager() {
-        try? await conversationManager.removeCurrentDeviceRecord()
-      }
-    } catch {
-      // Silently fail - the local toggle is already off
-    }
-  }
-  #endif
   
   // MARK: - Authentication Helpers
 

@@ -1,8 +1,9 @@
 import Observation
 import Petrel
 
-/// Lightweight merge coordinator that combines Bluesky DM and MLS conversation lists
-/// into a single sorted array. Does not own either data source — just merges their outputs.
+/// Lightweight coordinator that exposes the accepted Bluesky DM conversations
+/// as a single list sorted by most recent activity. Does not own the data
+/// source — ChatTabView feeds it from `appState.chatManager`.
 @Observable
 final class UnifiedChatCoordinator {
   private(set) var conversations: [UnifiedConversation] = []
@@ -12,42 +13,14 @@ final class UnifiedChatCoordinator {
     didSet { recompute() }
   }
 
-  /// Set by ChatTabView after MLS polling builds a complete state struct
-  var mlsState: MLSConversationListState = .init() {
-    didSet { recompute() }
-  }
-
-  /// Whether MLS is enabled for the current account. When false, only Bluesky convos appear.
-  var mlsEnabled: Bool = false {
-    didSet { recompute() }
-  }
-
   func reset() {
     blueskyConversations = []
-    mlsState = .init()
-    mlsEnabled = false
     conversations = []
   }
 
   private func recompute() {
-    let bsky = blueskyConversations.map { UnifiedConversation.bluesky($0) }
-
-    let mls: [UnifiedConversation]
-    if mlsEnabled {
-      mls = mlsState.conversations.map { convo in
-        UnifiedConversation.mls(
-          conversation: convo,
-          participants: mlsState.participants[convo.conversationID] ?? [],
-          unreadCount: mlsState.unreadCounts[convo.conversationID] ?? 0,
-          lastMessage: mlsState.lastMessages[convo.conversationID],
-          memberChange: mlsState.memberChanges[convo.conversationID],
-          lastActivityDate: mlsState.latestActivity[convo.conversationID] ?? convo.createdAt
-        )
-      }
-    } else {
-      mls = []
-    }
-
-    conversations = (bsky + mls).sorted { $0.lastActivityDate > $1.lastActivityDate }
+    conversations = blueskyConversations
+      .map { UnifiedConversation.bluesky($0) }
+      .sorted { $0.lastActivityDate > $1.lastActivityDate }
   }
 }

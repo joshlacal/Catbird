@@ -3,7 +3,7 @@ import SwiftUI
 
 // MARK: - UnifiedChatDataSource
 
-/// Protocol for chat data sources (Bluesky and MLS)
+/// Protocol for chat data sources
 @MainActor
 protocol UnifiedChatDataSource: Observable, AnyObject {
   associatedtype Message: UnifiedChatMessage

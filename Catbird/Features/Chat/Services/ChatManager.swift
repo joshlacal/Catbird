@@ -70,7 +70,7 @@ final class ChatManager: StateInvalidationSubscriber {
   var onUnreadCountChanged: (() -> Void)?
 
   // Fired after every conversations poll tick, so AppState can refresh adjacent
-  // state (unread badge, MLS list) off the single list poller
+  // state (unread badge, conversation list) off the single list poller
   var onConversationsPolled: (() -> Void)?
 
   // Reference to app state for notifications
@@ -237,9 +237,6 @@ final class ChatManager: StateInvalidationSubscriber {
       break
     case .feedListChanged:
       // Feed list changes don't affect chat content
-      break
-    case .mlsConversationListChanged:
-      // MLS conversation list changes don't affect Bluesky chat content
       break
     }
   }

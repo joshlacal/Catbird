@@ -2,7 +2,6 @@ import Foundation
 import OSLog
 import Petrel
 import SwiftData
-import Synchronization
 import SwiftUI
 
 // MARK: - ModelContainer State
@@ -32,7 +31,6 @@ enum ModelContainerState {
 }
 enum AccountSwitchError: LocalizedError, Equatable {
   case invalidDID
-  case databaseDrainFailed
   case authSwitchFailed(String)
   case clientUnavailable
 
@@ -40,8 +38,6 @@ enum AccountSwitchError: LocalizedError, Equatable {
     switch self {
     case .invalidDID:
       return "Invalid account identifier"
-    case .databaseDrainFailed:
-      return "Failed to close previous account database"
     case .authSwitchFailed(let msg):
       return "AuthManager failed to switch: \(msg)"
     case .clientUnavailable:
@@ -70,35 +66,16 @@ final class AppStateManager {
 
   private let logger = Logger(subsystem: "blue.catbird", category: "AppStateManager")
 
-  /// Stable storage for the exact lifecycle owner used before an MLS manager exists.
-  /// The owner rotates per suspension so a stale foreground task cannot acquire a
-  /// capability for a newer background signal that arrived before its Core call.
-  @ObservationIgnored
-  private(set) var contextFreeMLSSuspensionOwner = MLSContextFreeLifecycleSuspensionOwner()
-
-  /// Thread-safe active user DID box for nonisolated provider access
-  nonisolated private static let activeUserDIDBox = Mutex<String?>(nil)
   /// The authentication manager (owned by AppStateManager)
   private let authManager = AuthenticationManager()
 
   /// Current application lifecycle state
-  private(set) var lifecycle: AppLifecycle = .launching {
-    didSet {
-      guard lifecycle != oldValue else { return }
-      let newDID = lifecycle.userDID
-      Self.activeUserDIDBox.withLock { $0 = newDID }
-      MLSCoordinationStore.shared.setActiveUserDID(newDID)
-      MLSNotificationCoordinator.updateActiveUserDID(newDID)
-    }
-  }
+  private(set) var lifecycle: AppLifecycle = .launching
 
   #if DEBUG
   func setLifecycleForTesting(_ newLifecycle: AppLifecycle) {
     self.lifecycle = newLifecycle
   }
-  #if DEBUG
-  nonisolated(unsafe) static var databaseDrainOverride: (@Sendable (String, TimeInterval) async -> Bool)?
-  #endif
   #endif
 
   /// Observes auth state changes and keeps lifecycle in sync (e.g. session expiry → login/reauth)
@@ -108,9 +85,6 @@ final class AppStateManager {
   /// Pool of authenticated AppState instances, keyed by user DID
   /// NO GUEST STATES - only authenticated accounts are cached
   private var authenticatedStates: [String: AppState] = [:]
-  
-  /// Users currently undergoing MLS storage maintenance (prevents DB access)
-  private var storageMaintenanceUsers: Set<String> = []
 
   /// Pending composer draft to be reopened after account switch
   var pendingComposerDraft: PostComposerDraft?
@@ -199,29 +173,11 @@ final class AppStateManager {
     } else {
       logger.info("[E2E-DEBUG] E2E mode not detected (--e2e-mode not in args)")
     }
-    
-    Task { await MLSClient.shared.setStorageMaintenanceCoordinator(self) }
-    MLSCoordinationStore.shared.setActiveUserProvider {
-      AppStateManager.activeUserDIDBox.withLock { $0 }
-    }
-  }
-
-  /// Starts a new context-free suspension with a distinct opaque Core owner.
-  /// This synchronous MainActor operation publishes the owner before closing the gate.
-  func beginContextFreeMLSSuspension(reason: String) {
-    let owner = MLSContextFreeLifecycleSuspensionOwner()
-    contextFreeMLSSuspensionOwner = owner
-    owner.markSuspensionInProgress(reason: reason)
   }
 
   /// Initialize the app - check for saved session and transition to appropriate state
   func initialize() async {
     logger.info("🚀 Initializing AppStateManager")
-    
-    // Log E2E mode startup if enabled
-    if isE2EMode, let runId = e2eRunId {
-      MLSDiagnosticLogger.shared.logE2EModeStarted(runId: runId)
-    }
 
     #if os(iOS)
     if isE2EMode {
@@ -240,14 +196,8 @@ final class AppStateManager {
       authManager.cacheProfileData(for: bobDID, handle: "bob.test", displayName: "Bob", avatarURL: nil)
       authManager.updateAccountOrder([fixtureDID, bobDID])
 
-
-      let store = E2ECircleStore()
-      setAppStateFactoryForTesting { [weak self] did, cli in
+      setAppStateFactoryForTesting { did, cli in
         let state = AppState(userDID: did, client: cli)
-        if let targetDID = try? DID(didString: did) {
-          let transport = E2ECircleTransport(accountDID: targetDID, store: store)
-          state.installE2ECircleFixture(transport: transport)
-        }
         let isBob = (did == bobDID)
         let author = AppBskyActorDefs.ProfileViewBasic(
           did: try! DID(didString: did),
@@ -320,7 +270,6 @@ final class AppStateManager {
       updateAccessOrder(fixtureDID)
       authManager.updateState(.authenticated(userDID: fixtureDID))
       lifecycle = .authenticated(appState)
-      MLSDiagnosticLogger.shared.logMLSReady(userDID: fixtureDID)
       startAuthStateObservationIfNeeded()
       await authManager.refreshAvailableAccounts()
       return
@@ -339,7 +288,6 @@ final class AppStateManager {
           logger.info("[E2E] Auto-login successful for: \(userDID)")
           do {
             try await transitionToAuthenticated(userDID: userDID)
-            MLSDiagnosticLogger.shared.logMLSReady(userDID: userDID)
           } catch {
             logger.error("[E2E] Transition failed: \(error)")
             lifecycle = .unauthenticated
@@ -456,59 +404,11 @@ final class AppStateManager {
 
     let effectivePreviousDID = previousUserDID ?? lifecycle.userDID
     
-    // OOM FIX: Close the previous account's database BEFORE switching
-    // This prevents the race condition where two databases are open simultaneously
-    // with potential key mismatch or WAL corruption
-    if let oldUserDID = effectivePreviousDID, oldUserDID != userDID {
-      logger.info("🔒 Closing previous account's MLS database before switch: \(oldUserDID.prefix(20))")
-      
-      // Evict and prepare the previous AppState for storage reset if it exists
-      if let previousAppState = authenticatedStates.removeValue(forKey: oldUserDID) {
-        accessOrder.removeAll { $0 == oldUserDID }
-        #if os(iOS)
-        // FIX #5: Stop all streams and pause sync BEFORE database closure
-        previousAppState.stopMLSStreams()
-
-        // DEFENSIVE TIMEOUT: Wrap MLS shutdown in 5-second timeout
-        let shutdownOk = await withTaskGroup(of: Bool.self) { group in
-          group.addTask {
-            await previousAppState.prepareMLSStorageReset()
-            return true
-          }
-          group.addTask {
-            try? await Task.sleep(nanoseconds: 5_000_000_000)
-            return false
-          }
-          let result = await group.next() ?? false
-          group.cancelAll()
-          return result
-        }
-        if !shutdownOk {
-          logger.critical("🚨 [transitionToAuthenticated] MLS shutdown timed out - forcing ahead")
-        }
-        #endif
-        previousAppState.cleanup()
-      }
-      
-      // Ensure the database is fully closed and checkpointed
-      #if DEBUG
-      let closeSuccess: Bool
-      if let override = AppStateManager.databaseDrainOverride {
-        closeSuccess = await override(oldUserDID, 5.0)
-      } else {
-        closeSuccess = await MLSGRDBManager.shared.closeDatabaseAndDrain(for: oldUserDID, timeout: 5.0)
-      }
-      #else
-      let closeSuccess = await MLSGRDBManager.shared.closeDatabaseAndDrain(for: oldUserDID, timeout: 5.0)
-      #endif
-      if !closeSuccess {
-        logger.critical("🚨 Previous database drain failed - aborting account transition to prevent corruption")
-        authManager.pendingAuthAlert = AuthenticationManager.AuthAlert(
-          title: "Restart Required",
-          message: "Catbird couldn’t safely close the encrypted database for the previous account. Please restart the app and try switching again."
-        )
-        throw AccountSwitchError.databaseDrainFailed
-      }
+    // Evict the previous account's AppState before switching
+    if let oldUserDID = effectivePreviousDID, oldUserDID != userDID,
+       let previousAppState = authenticatedStates.removeValue(forKey: oldUserDID) {
+      accessOrder.removeAll { $0 == oldUserDID }
+      previousAppState.cleanup()
     }
 
     // CRITICAL: Switch AuthManager to the target account FIRST before getting client
@@ -547,7 +447,6 @@ final class AppStateManager {
       if let container = modelContainerState.container {
         appState.composerDraftManager.setModelContext(container.mainContext)
         appState.notificationManager.setModelContext(container.mainContext)
-        appState.configureDataServices(modelContainer: container)
       }
 
       // Only show transition overlay for actual account switches, not initial launch
@@ -563,14 +462,12 @@ final class AppStateManager {
       isCachedAccount = false
       updateAccessOrder(userDID)
 
-      // OOM FIX: Await eviction to ensure databases are properly closed before proceeding
-      await evictLRUIfNeeded()
+      evictLRUIfNeeded()
 
-      // Initialize model context for draft persistence and data services
+      // Initialize model context for draft persistence
       if let container = modelContainerState.container {
         appState.composerDraftManager.setModelContext(container.mainContext)
         appState.notificationManager.setModelContext(container.mainContext)
-        appState.configureDataServices(modelContainer: container)
       }
       
       // Only show transition overlay for actual account switches, not initial launch
@@ -598,10 +495,6 @@ final class AppStateManager {
       logger.info("Account is restricted (\(String(describing: newLifecycle))) - skipping normal authenticated initialization")
       return
     }
-    // Ensure active account is published to coordination store before async AppState init
-    Self.activeUserDIDBox.withLock { $0 = userDID }
-    MLSCoordinationStore.shared.setActiveUserDID(userDID)
-    MLSNotificationCoordinator.setMainAppActive(true, activeUserDID: userDID)
     if !isCachedAccount {
       // Initialize the new AppState in the background to unblock UI swap
       logger.info("🔄 Initializing new AppState asynchronously")
@@ -680,32 +573,12 @@ final class AppStateManager {
   func logout(isManual: Bool = true) async {
     logger.info("🚪 Logging out (isManual: \(isManual))")
     if let currentUserDID = lifecycle.userDID {
-      NotificationCenter.default.post(
-        name: .circleAccountInvalidated,
-        object: nil,
-        userInfo: ["accountDID": currentUserDID]
-      )
-      if let currentState = authenticatedStates[currentUserDID] {
-        await currentState.prepareMLSStorageReset()
-        currentState.cleanup()
-      }
+      authenticatedStates[currentUserDID]?.cleanup()
       authenticatedStates.removeValue(forKey: currentUserDID)
       accessOrder.removeAll { $0 == currentUserDID }
-      await MLSImageCache.shared.purge(for: currentUserDID)
-      NotificationCenter.default.post(
-        name: .circleAccountInvalidated,
-        object: self,
-        userInfo: ["did": currentUserDID]
-      )
     }
     // Clear auth manager session - pass isManual to control re-auth behavior
     await authManager.logout(isManual: isManual)
-
-    // Transition to unauthenticated
-    Self.activeUserDIDBox.withLock { $0 = nil }
-    MLSCoordinationStore.shared.setActiveUserDID(nil)
-    MLSNotificationCoordinator.setMainAppActive(false, activeUserDID: nil)
-
 
     // Update widget account list after logout
     writeAccountsToAppGroup()
@@ -813,12 +686,9 @@ final class AppStateManager {
     lifecycle = .launching
 
     do {
-      try await MLSAccountSwitchSerializer.shared.serialize { [weak self] in
-        guard let self = self else { return }
-        try await self.performSwitchAccount(to: userDID, previousUserDID: previousUserDID, withDraft: draft)
-      }
+      try await performSwitchAccount(to: userDID, previousUserDID: previousUserDID, withDraft: draft)
     } catch {
-      logger.error("❌ Failed to perform serialized account switch: \(error.localizedDescription)")
+      logger.error("❌ Failed to perform account switch: \(error.localizedDescription)")
       await recoverFromSwitchFailure()
     }
   }
@@ -841,36 +711,6 @@ final class AppStateManager {
     withDraft draft: PostComposerDraft? = nil
   ) async throws {
     logger.info("🔄 Switching to account: \(userDID)")
-    // ═══════════════════════════════════════════════════════════════════════════
-    // This tells the NSE to skip decryption for BOTH the old and new user during
-    // the entire switch window. Without this, the NSE can race in and access
-    // the database with the wrong encryption key, causing HMAC check failures.
-    // ═══════════════════════════════════════════════════════════════════════════
-    MLSNotificationCoordinator.beginAccountSwitch(from: previousUserDID, to: userDID)
-    MLSCoordinationStore.shared.updatePhase(.switching)
-    MLSCoordinationStore.shared.incrementGeneration(for: userDID)
-    
-    // Ensure we clear the switch state even if we fail
-    defer {
-      MLSNotificationCoordinator.endAccountSwitch()
-      if let currentActive = self.lifecycle.userDID {
-        Self.activeUserDIDBox.withLock { $0 = currentActive }
-        MLSCoordinationStore.shared.setActiveUserDID(currentActive)
-      }
-    }
-
-    if let oldUserDID = previousUserDID, oldUserDID != userDID {
-      #if os(iOS)
-      beginStorageMaintenance(for: oldUserDID)
-      defer { endStorageMaintenance(for: oldUserDID) }
-      #endif
-      logger.info("MLS: SQLite storage for previous user \(oldUserDID) is automatically persisted")
-      NotificationCenter.default.post(
-        name: .circleAccountInvalidated,
-        object: self,
-        userInfo: ["did": oldUserDID]
-      )
-    }
 
     // Store draft for transfer
     if let draft = draft {
@@ -882,23 +722,10 @@ final class AppStateManager {
     try await transitionToAuthenticated(userDID: userDID, previousUserDID: previousUserDID)
   }
 
-  /// Remove a specific account completely and destroy all persisted MLS data
+  /// Remove a specific account's cached state
   /// - Parameter userDID: The DID of the account to remove
   func removeAccount(_ userDID: String) async throws {
-    logger.info("🗑️ Removing account state and completely destroying MLS data: \(userDID)")
-
-    if let appState = authenticatedStates[userDID] {
-      #if os(iOS)
-        // Use async shutdown to properly close database connections
-        await appState.prepareMLSStorageReset()
-      #endif
-    }
-
-    // Purge decrypted image cache for this user
-    await MLSImageCache.shared.purge(for: userDID)
-
-    // Authoritative throwing reset: MUST succeed before in-memory state is cleared
-    try await MLSClient.shared.clearStorage(for: userDID)
+    logger.info("🗑️ Removing account state: \(userDID)")
 
     if let appState = authenticatedStates[userDID] {
       appState.cleanup()
@@ -907,11 +734,6 @@ final class AppStateManager {
     authenticatedStates.removeValue(forKey: userDID)
     accessOrder.removeAll { $0 == userDID }
 
-    NotificationCenter.default.post(
-      name: .circleAccountInvalidated,
-      object: self,
-      userInfo: ["did": userDID]
-    )
     // Update widget account list after removal
     writeAccountsToAppGroup()
   }
@@ -935,32 +757,6 @@ final class AppStateManager {
     return Array(authenticatedStates.keys)
   }
 
-  // MARK: - MLS Storage Maintenance
-
-  func beginStorageMaintenance(for userDID: String) {
-    storageMaintenanceUsers.insert(userDID)
-  }
-
-  func endStorageMaintenance(for userDID: String) {
-    storageMaintenanceUsers.remove(userDID)
-  }
-
-  func isUserUnderStorageMaintenance(_ userDID: String) -> Bool {
-    storageMaintenanceUsers.contains(userDID)
-  }
-
-  func prepareMLSStorageReset(for userDID: String) async {
-    logger.info("MLS: Preparing AppState for storage reset: \(userDID)")
-    guard let state = authenticatedStates[userDID] else {
-      logger.info("MLS: No cached AppState for \(userDID) - nothing to reset")
-      return
-    }
-
-    #if os(iOS)
-    await state.prepareMLSStorageReset()
-    #endif
-  }
-
   // MARK: - Memory Management
 
   /// Update access order for LRU tracking
@@ -970,8 +766,7 @@ final class AppStateManager {
   }
 
   /// Evict least recently used accounts if over limit
-  /// NOTE: This is now async to properly await database closure
-  private func evictLRUIfNeeded() async {
+  private func evictLRUIfNeeded() {
     guard authenticatedStates.count > maxCachedAccounts else { return }
 
     // Keep the most recent accounts
@@ -994,24 +789,10 @@ final class AppStateManager {
 
       authenticatedStates.removeValue(forKey: lruDID)
       accessOrder.removeFirst()
-
-      // OOM FIX: AWAIT database closure to prevent race conditions
-      // Previously this was fire-and-forget which caused OOM errors during account switching
-      await MLSGRDBManager.shared.closeDatabaseAndDrain(for: lruDID, timeout: 3.0)
-      logger.debug("Closed MLS database for evicted account: \(lruDID)")
-    }
-  }
-  
-  /// Synchronous wrapper for evictLRUIfNeeded (for use in non-async contexts)
-  /// Schedules the eviction but doesn't wait - use sparingly
-  private func scheduleEvictLRUIfNeeded() {
-    Task {
-      await evictLRUIfNeeded()
     }
   }
 
   /// Manually clear all cached accounts except active
-  /// NOTE: This is now async to properly await database closure
   func clearInactiveAccounts() async {
     let activeUserDID = lifecycle.userDID
     let inactiveAccounts = authenticatedStates.keys.filter { $0 != activeUserDID }
@@ -1024,12 +805,6 @@ final class AppStateManager {
 
       authenticatedStates.removeValue(forKey: did)
       accessOrder.removeAll { $0 == did }
-    }
-    
-    // OOM FIX: Close all inactive databases in one call
-    // This is more efficient and ensures proper serialization
-    if let activeUserDID = activeUserDID {
-      await MLSGRDBManager.shared.closeAllExcept(keepUserDID: activeUserDID)
     }
 
     logger.info("🗑️ Cleared \(inactiveAccounts.count) inactive account(s)")
@@ -1113,7 +888,7 @@ final class AppStateManager {
 
     // Published for the Notification Service Extension: it matches the
     // `recipient_account` push-payload hash against these DIDs to target the
-    // right account on notification tap (covers accounts without an MLS DB).
+    // right account on notification tap.
     defaults?.set(accounts.map { $0.did }, forKey: "knownAccountDIDs")
 
     if let activeDID = lifecycle.userDID {
@@ -1154,5 +929,3 @@ final class AppStateManager {
     return AppState(userDID: userDID, client: client)
   }
 }
-
-extension AppStateManager: MLSStorageMaintenanceCoordinating {}

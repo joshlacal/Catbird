@@ -190,22 +190,6 @@ struct ThreadViewMainPostView: View, Equatable {
                             .frame(height: 60, alignment: .center)
                             .padding(.bottom, 3)
 
-                            if case .circle(let circle) = visibilityContext {
-                                HStack(spacing: 4) {
-                                    Image(systemName: "person.2.circle.fill")
-                                        .font(.caption)
-                                        .foregroundStyle(Color.accentColor)
-                                    Text("Circle · \(circle.name)")
-                                        .appSubheadline()
-                                        .fontWeight(.medium)
-                                        .foregroundStyle(Color.accentColor)
-                                }
-                                .padding(.horizontal, 6)
-                                .padding(.bottom, 4)
-                                .accessibilityElement(children: .combine)
-                                .accessibilityLabel("Circle: \(circle.name)")
-                            }
-
                             if !feedPost.text.isEmpty {
                                 // Reuse Post component to unify selectable text + translation
                                 Post(
@@ -282,12 +266,7 @@ struct ThreadViewMainPostView: View, Equatable {
             }
             // Present the report form when showingReportView is true
             .sheet(isPresented: $showingReportView) {
-                if case .circle(let circle) = visibilityContext {
-                    CircleReportView(
-                        post: post,
-                        circle: circle
-                    )
-                } else if let client = appState.atProtoClient {
+                if let client = appState.atProtoClient {
                     let reportingService = ReportingService(client: client)
                     let subject = contextMenuViewModel.createReportSubject()
                     let description = contextMenuViewModel.getReportDescription()

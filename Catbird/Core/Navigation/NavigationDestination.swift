@@ -22,15 +22,11 @@ public enum NavigationDestination: Hashable, Sendable {
     case postQuotes(String) // postUri
     case bookmarks
     case activitySubscriptions
-    case circlePost(ATProtocolURI, CircleSummary)
-    case circlesFeed
-    case circleDetail(CircleSummary)
     case notificationActivity([ATProtocolURI])
     case videoFeed
     case settings(SettingsRoute)
     #if os(iOS)
     case conversation(String) // convoId
-    case mlsConversation(String) // MLS secure conversation ID
     case chatTab
     #endif
     
@@ -90,15 +86,6 @@ public enum NavigationDestination: Hashable, Sendable {
             hasher.combine("bookmarks")
         case .activitySubscriptions:
             hasher.combine("activitySubscriptions")
-        case .circlePost(let uri, let circle):
-            hasher.combine("circlePost")
-            hasher.combine(uri.uriString())
-            hasher.combine(circle.uri)
-        case .circlesFeed:
-            hasher.combine("circlesFeed")
-        case .circleDetail(let circle):
-            hasher.combine("circleDetail")
-            hasher.combine(circle.uri)
         case .notificationActivity(let uris):
             hasher.combine("notificationActivity")
             for uri in uris {
@@ -112,9 +99,6 @@ public enum NavigationDestination: Hashable, Sendable {
         #if os(iOS)
         case .conversation(let convoId):
             hasher.combine("conversation")
-            hasher.combine(convoId)
-        case .mlsConversation(let convoId):
-            hasher.combine("mlsConversation")
             hasher.combine(convoId)
         case .chatTab:
             hasher.combine("chatTab")
@@ -162,12 +146,6 @@ public enum NavigationDestination: Hashable, Sendable {
             return true
         case (.activitySubscriptions, .activitySubscriptions):
             return true
-        case (.circlePost(let lUri, let lCircle), .circlePost(let rUri, let rCircle)):
-            return lUri.uriString() == rUri.uriString() && lCircle == rCircle
-        case (.circlesFeed, .circlesFeed):
-            return true
-        case (.circleDetail(let lCircle), .circleDetail(let rCircle)):
-            return lCircle == rCircle
         case (.notificationActivity(let lhsUris), .notificationActivity(let rhsUris)):
             return lhsUris.map { $0.uriString() } == rhsUris.map { $0.uriString() }
         case (.videoFeed, .videoFeed):
@@ -176,8 +154,6 @@ public enum NavigationDestination: Hashable, Sendable {
             return lhsRoute == rhsRoute
         #if os(iOS)
         case (.conversation(let lhsId), .conversation(let rhsId)):
-            return lhsId == rhsId
-        case (.mlsConversation(let lhsId), .mlsConversation(let rhsId)):
             return lhsId == rhsId
         case (.chatTab, .chatTab):
             return true

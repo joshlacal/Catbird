@@ -117,10 +117,6 @@ enum SentryService {
 
     #if canImport(Sentry)
     private static func filterEvent(_ event: Event) -> Event? {
-        // Explicitly allowlist MLS.Chat events so they are never dropped by benign/system pattern filters
-        if let tags = event.tags, tags["category"] == "MLS.Chat" {
-            return event
-        }
         // Drop events that are clearly noise
         if let message = event.message?.formatted {
             // Filter out verbose debug messages

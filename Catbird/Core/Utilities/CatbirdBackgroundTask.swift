@@ -6,7 +6,7 @@ import Synchronization
 /// Modeled after Signal's OWSBackgroundTask pattern.
 ///
 /// Usage:
-///   let task = CatbirdBackgroundTask(name: "MLSSync")
+///   let task = CatbirdBackgroundTask(name: "FeedSync")
 ///   defer { task.end() }
 ///   // ... do work
 ///   // Task auto-released on dealloc if not explicitly ended

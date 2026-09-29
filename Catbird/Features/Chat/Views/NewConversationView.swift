@@ -1,37 +1,31 @@
-import GRDB
 import OSLog
 import Petrel
 import SwiftUI
 
-/// Unified new conversation view with segmented picker for Bluesky DM and Catbird Group modes.
+/// New conversation view with a segmented picker for Bluesky DM and Bluesky group modes.
 struct NewConversationView: View {
   @Environment(AppState.self) private var appState
   @Environment(\.dismiss) private var dismiss
 
   // MARK: - State
 
-  @State private var introductionText = ""
-  @State private var invitationNotes: MLSGroupInvitationNotes?
-  @State private var directDraft: MLSDirectComposeDraft?
   @State private var mode: ConversationMode = .bluesky
   @State private var step: Step = .selectContacts
   @State private var selectedDIDs: Set<String> = []
   @State private var selectionOrder: [String] = []
-  @State private var selectedProfiles: [String: MLSParticipantViewModel] = [:]
+  @State private var selectedProfiles: [String: ChatParticipant] = [:]
   @State private var groupName = ""
   @State private var isCreating = false
   @State private var creationProgress = ""
   @State private var creationTask: Task<Void, Never>?
   @State private var showingError = false
   @State private var errorMessage: String?
-  @State private var isCheckingExisting = false
 
   private let logger = Logger(subsystem: "blue.catbird", category: "NewConversation")
 
   enum ConversationMode: String, CaseIterable {
     case bluesky = "Bluesky DM"
     case blueskyGroup = "Bluesky Group"
-    case catbirdGroup = "Catbird Group"
   }
 
   enum Step {
@@ -40,28 +34,16 @@ struct NewConversationView: View {
     case creating
   }
 
-  private var mlsEnabled: Bool {
-    #if DEBUG
-    if CatbirdGatewayConfiguration.current.isRuntimeFixture {
-      return true
-    }
-    #endif
-    return ExperimentalSettings.shared.isMLSChatEnabled(for: appState.userDID)
-  }
-
   private var navigationTitle: String {
     switch (mode, step) {
     case (.bluesky, _): return "New Message"
     case (.blueskyGroup, .selectContacts): return "Add Participants"
     case (.blueskyGroup, .configureGroup): return "Group Details"
     case (.blueskyGroup, .creating): return "Creating Group"
-    case (.catbirdGroup, .selectContacts): return mlsEnabled ? "Add Participants" : "Catbird Groups"
-    case (.catbirdGroup, .configureGroup): return "Group Details"
-    case (.catbirdGroup, .creating): return "Creating Group"
     }
   }
 
-  private var orderedSelectedParticipants: [MLSParticipantViewModel] {
+  private var orderedSelectedParticipants: [ChatParticipant] {
     selectionOrder.compactMap { selectedProfiles[$0] }
   }
 
@@ -70,32 +52,20 @@ struct NewConversationView: View {
   var body: some View {
     NavigationStack {
       ZStack {
-        if let invitationNotes {
-          MLSGroupInvitationNotesView(batch: invitationNotes) { dismiss() }
-        } else {
-          VStack(spacing: 0) {
-            segmentedPicker
-            mainContent
-          }
+        VStack(spacing: 0) {
+          segmentedPicker
+          mainContent
         }
 
         if isCreating {
           creationOverlay
         }
       }
-      .sheet(item: $directDraft) { draft in
-        MLSDirectComposeView(draft: draft) { conversationID in
-          appState.navigationManager.targetMLSConversationId = conversationID
-          dismiss()
-        }
-      }
-      .navigationTitle(invitationNotes == nil ? navigationTitle : "Invitation Notes")
+      .navigationTitle(navigationTitle)
       .toolbarTitleDisplayMode(.inline)
       .toolbar {
         ToolbarItem(placement: .cancellationAction) {
-          if invitationNotes != nil {
-            EmptyView()
-          } else if step == .configureGroup {
+          if step == .configureGroup {
             Button("Back") {
               withAnimation(.spring(response: 0.25)) {
                 step = .selectContacts
@@ -109,7 +79,7 @@ struct NewConversationView: View {
           }
         }
         ToolbarItem(placement: .confirmationAction) {
-          if invitationNotes == nil { confirmationButton }
+          confirmationButton
         }
       }
       .alert("Error", isPresented: $showingError) {
@@ -130,9 +100,6 @@ struct NewConversationView: View {
       }
       .onChange(of: appState.userDID) { _, _ in
         dismiss()
-        invitationNotes = nil
-        introductionText = ""
-        directDraft = nil
         creationTask?.cancel()
         step = .selectContacts
         selectedDIDs.removeAll()
@@ -165,7 +132,6 @@ struct NewConversationView: View {
     case (.bluesky, _):
       ContactSearchList(
         selectionMode: .single,
-        showMLSStatus: false,
         selectedDIDs: .constant([]),
         selectionOrder: .constant([]),
         selectedProfiles: .constant([:]),
@@ -175,7 +141,6 @@ struct NewConversationView: View {
     case (.blueskyGroup, .selectContacts):
       ContactSearchList(
         selectionMode: .multi,
-        showMLSStatus: false,
         selectedDIDs: $selectedDIDs,
         selectionOrder: $selectionOrder,
         selectedProfiles: $selectedProfiles
@@ -188,7 +153,6 @@ struct NewConversationView: View {
       GroupConfigView(
         groupName: $groupName,
         participants: orderedSelectedParticipants,
-        kind: .bluesky,
         onEditSelection: {
           withAnimation(.spring(response: 0.25)) {
             step = .selectContacts
@@ -199,36 +163,6 @@ struct NewConversationView: View {
     case (.blueskyGroup, .creating):
       Color.clear
 
-    case (.catbirdGroup, .selectContacts) where mlsEnabled:
-      ContactSearchList(
-        selectionMode: .multi,
-        showMLSStatus: true,
-        selectedDIDs: $selectedDIDs,
-        selectionOrder: $selectionOrder,
-        selectedProfiles: $selectedProfiles
-      )
-      .safeAreaInset(edge: .bottom) {
-        selectionActionBar
-      }
-
-    case (.catbirdGroup, .selectContacts):
-      MLSOptInGateView()
-
-    case (.catbirdGroup, .configureGroup):
-      GroupConfigView(
-        groupName: $groupName,
-        participants: orderedSelectedParticipants,
-        kind: .mls,
-        introduction: $introductionText,
-        onEditSelection: {
-          withAnimation(.spring(response: 0.25)) {
-            step = .selectContacts
-          }
-        }
-      )
-
-    case (.catbirdGroup, .creating):
-      Color.clear
     }
   }
 
@@ -236,8 +170,6 @@ struct NewConversationView: View {
 
   @ViewBuilder
   private var selectionActionBar: some View {
-    let isBlueskyGroup = mode == .blueskyGroup
-
     VStack(spacing: DesignTokens.Spacing.sm) {
       HStack {
         if !selectedDIDs.isEmpty {
@@ -253,25 +185,16 @@ struct NewConversationView: View {
       }
 
       Button {
-        if !isBlueskyGroup && selectedDIDs.count == 1 {
-          creationTask = Task { await handleDirectMLSMessage() }
-        } else {
-          withAnimation(.spring(response: 0.25)) {
-            step = .configureGroup
-          }
+        withAnimation(.spring(response: 0.25)) {
+          step = .configureGroup
         }
       } label: {
-        if isCheckingExisting {
-          ProgressView()
-            .frame(maxWidth: .infinity)
-        } else {
-          Text(selectedDIDs.isEmpty ? "Continue" : "Continue (\(selectedDIDs.count))")
-            .fontWeight(.semibold)
-            .frame(maxWidth: .infinity)
-        }
+        Text(selectedDIDs.isEmpty ? "Continue" : "Continue (\(selectedDIDs.count))")
+          .fontWeight(.semibold)
+          .frame(maxWidth: .infinity)
       }
       .buttonStyle(.borderedProminent)
-      .disabled(selectedDIDs.isEmpty || isCheckingExisting)
+      .disabled(selectedDIDs.isEmpty)
     }
     .padding(.horizontal)
     .padding(.vertical, DesignTokens.Spacing.base)
@@ -298,24 +221,6 @@ struct NewConversationView: View {
       }
       .disabled(isCreating || groupName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
       .fontWeight(.semibold)
-    case (.catbirdGroup, .selectContacts) where mlsEnabled:
-      Button("Next") {
-        if selectedDIDs.count == 1 {
-          creationTask = Task { await handleDirectMLSMessage() }
-        } else {
-          withAnimation(.spring(response: 0.25)) {
-            step = .configureGroup
-          }
-        }
-      }
-      .disabled(selectedDIDs.isEmpty || isCheckingExisting)
-      .fontWeight(.semibold)
-    case (.catbirdGroup, .configureGroup):
-      Button("Create") {
-        creationTask = Task { await createMLSGroup() }
-      }
-      .disabled(isCreating)
-      .fontWeight(.semibold)
     default:
       EmptyView()
     }
@@ -325,8 +230,6 @@ struct NewConversationView: View {
 
   @ViewBuilder
   private var creationOverlay: some View {
-    let isBlueskyGroup = mode == .blueskyGroup
-
     ZStack {
       Color.black.opacity(0.4)
         .ignoresSafeArea()
@@ -334,16 +237,16 @@ struct NewConversationView: View {
       VStack(spacing: DesignTokens.Spacing.lg) {
         ZStack {
           Circle()
-            .fill((isBlueskyGroup ? Color.accentColor : Color.green).opacity(0.2))
+            .fill(Color.accentColor.opacity(0.2))
             .frame(width: 80, height: 80)
-          Image(systemName: isBlueskyGroup ? "person.3.fill" : "lock.shield.fill")
+          Image(systemName: "person.3.fill")
             .font(.system(size: 36))
-            .foregroundColor(isBlueskyGroup ? .accentColor : .green)
+            .foregroundColor(.accentColor)
             .symbolEffect(.pulse)
         }
 
         VStack(spacing: DesignTokens.Spacing.sm) {
-          Text(isBlueskyGroup ? "Creating Group Chat" : "Creating Secure Group")
+          Text("Creating Group Chat")
             .font(.title3)
             .fontWeight(.semibold)
             .foregroundColor(.white)
@@ -429,130 +332,5 @@ struct NewConversationView: View {
         }
       }
     }
-  }
-
-  // MARK: - MLS Direct Message (1:1)
-
-  @MainActor
-  private func handleDirectMLSMessage() async {
-    let accountDID = appState.userDID
-    guard selectedDIDs.count == 1,
-          let participantDid = selectedDIDs.first else { return }
-
-    isCheckingExisting = true
-    defer { isCheckingExisting = false }
-
-    guard let conversationManager = await appState.getMLSConversationManager() else {
-      guard !Task.isCancelled else { return }
-      errorMessage = "MLS service not available"
-      showingError = true
-      return
-    }
-
-    do {
-      let did = try DID(didString: participantDid)
-      if let existingConvoId = try await conversationManager.findDirectConversation(with: did) {
-        guard !Task.isCancelled, AppStateManager.shared.lifecycle.userDID == accountDID else { return }
-        do {
-          try await conversationManager.clearLocalConversationDeletion(convoId: existingConvoId)
-        } catch {
-          guard !Task.isCancelled, AppStateManager.shared.lifecycle.userDID == accountDID else { return }
-          logger.error("Failed to restore deleted 1:1 conversation: \(error.localizedDescription)")
-          errorMessage = "Failed to restore conversation: \(error.localizedDescription)"
-          showingError = true
-          return
-        }
-        guard !Task.isCancelled, AppStateManager.shared.lifecycle.userDID == accountDID else { return }
-        dismiss()
-        appState.navigationManager.targetMLSConversationId = existingConvoId
-        return
-      }
-    } catch {
-      guard !Task.isCancelled, AppStateManager.shared.lifecycle.userDID == accountDID else { return }
-      logger.error("Failed to check existing 1:1: \(error.localizedDescription)")
-      errorMessage = "Failed to check existing conversation: \(error.localizedDescription)"
-      showingError = true
-      return
-    }
-
-    do {
-      guard let database = appState.mlsDatabase, appState.userDID == accountDID,
-            let recipient = selectedDIDs.first else { return }
-      directDraft = try await MLSDirectComposeDraftStore.open(
-        accountDID: accountDID, recipientDID: recipient, database: database)
-    } catch {
-      errorMessage = "Could not save this draft. Please try again."
-      showingError = true
-    }
-  }
-
-  // MARK: - MLS Group Creation
-
-  @MainActor
-  private func createMLSGroup() async {
-    let accountDID = appState.userDID
-    let membersSnapshot = Array(selectedDIDs)
-    let nameSnapshot = groupName
-    let noteSnapshot = introductionText
-    guard !membersSnapshot.isEmpty,
-          let database = appState.mlsDatabase,
-          let conversationManager = await appState.getMLSConversationManager() else {
-      guard !Task.isCancelled else { return }
-      errorMessage = "MLS service not available"
-      showingError = true
-      return
-    }
-
-    guard !Task.isCancelled, AppStateManager.shared.lifecycle.userDID == accountDID else { return }
-    isCreating = true
-    defer { isCreating = false }
-    step = .creating
-
-    do {
-      creationProgress = "Fetching encryption keys..."
-
-      let viewModel = MLSNewConversationViewModel(
-        database: database,
-        conversationManager: conversationManager
-      )
-
-      if !nameSnapshot.isEmpty {
-        viewModel.conversationName = nameSnapshot
-      }
-
-      viewModel.selectedMembers = membersSnapshot
-
-      creationProgress = "Setting up secure group..."
-      guard let created = await viewModel.createConversation(onProgress: { creationProgress = $0 }) else {
-        guard !Task.isCancelled, AppStateManager.shared.lifecycle.userDID == accountDID else { return }
-        if let error = viewModel.error { throw error }
-        return
-      }
-      guard !Task.isCancelled, AppStateManager.shared.lifecycle.userDID == accountDID else { return }
-
-      if !noteSnapshot.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-        let notes = MLSGroupInvitationNotes(accountDID: accountDID,
-          conversationID: created.conversationId, recipients: membersSnapshot.sorted(), text: noteSnapshot)
-        invitationNotes = notes
-        do { try await MLSGroupInvitationNotesStore.save(notes, database: database) }
-        catch { logger.warning("Group created; optional notes require local save retry") }
-        return
-      }
-
-      creationProgress = "Finalizing..."
-      await appState.reloadMLSConversations()
-
-      guard !Task.isCancelled, AppStateManager.shared.lifecycle.userDID == accountDID else { return }
-      logger.info("Successfully created MLS conversation")
-      dismiss()
-    } catch {
-      guard !Task.isCancelled, !(error is CancellationError), AppStateManager.shared.lifecycle.userDID == accountDID else { return }
-      logger.error("Failed to create MLS conversation: \(error.localizedDescription)")
-      errorMessage = error.localizedDescription
-      showingError = true
-      step = selectedDIDs.count == 1 ? .selectContacts : .configureGroup
-    }
-
-    isCreating = false
   }
 }

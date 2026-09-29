@@ -155,13 +155,7 @@ struct UnifiedInputBar: View {
       return "GIF"
     case .post(let post):
       return post.authorHandle ?? "Shared Post"
-    case .tile(let tile):
-      return tile.name
-    case .image:
-      return "Image"
-    case .audio:
-      return "Voice Message"
-    case .groupInvite, .groupInvitation:
+    case .groupInvite:
       return "Group Invite"
     }
   }
@@ -176,14 +170,6 @@ struct UnifiedInputBar: View {
       return gif.url.absoluteString
     case .post(let post):
       return post.text ?? post.uri
-    case .tile(let tile):
-        return tile.tileDescription ?? tile.uri
-    case .image(let imageData):
-      return "\(imageData.width)x\(imageData.height)"
-    case .audio(let data):
-      return "\(data.durationMs / 1000)s"
-    case .groupInvitation:
-      return "Separate group invitation"
     case .groupInvite(let invite):
       switch invite {
       case .preview(let name, _, _, _):

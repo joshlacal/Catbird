@@ -227,19 +227,6 @@ final class ParsedATProtocolRecord: @unchecked Sendable {
         decoder.dateDecodingStrategy = .iso8601
         return try decoder.decode(ATProtocolValueContainer.self, from: recordData)
     }
-
-    /// Helper to get the record as a specific AT Protocol type
-    func getRecord<T: ATProtocolCodable>() throws -> T {
-        let container = try getATProtocolRecord()
-
-        // Use the correct pattern to unwrap ATProtocolValueContainer
-        if case .knownType(let value) = container,
-           let record = value as? T {
-            return record
-        }
-
-        throw RepositoryParsingError.invalidRecordData("Failed to cast record to \(T.self)")
-    }
 }
 
 /// Represents a parsed post from the repository

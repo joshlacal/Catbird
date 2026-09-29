@@ -10,7 +10,6 @@ enum ProfileTab: String, CaseIterable, Hashable {
   case lists
   case starterPacks
   case feeds
-  case videos
   case more
 
   var title: String {
@@ -23,7 +22,6 @@ enum ProfileTab: String, CaseIterable, Hashable {
     case .lists: return "Lists"
     case .starterPacks: return "Starter Packs"
     case .feeds: return "Feeds"
-    case .videos: return "Streamplace Videos"
     case .more: return "More"
     }
   }
@@ -38,7 +36,6 @@ enum ProfileTab: String, CaseIterable, Hashable {
     case .lists: return "list.bullet"
     case .starterPacks: return "star.circle"
     case .feeds: return "lines.measurement.horizontal"
-    case .videos: return "play.rectangle.fill"
     case .more: return "ellipsis"
     }
   }
@@ -53,7 +50,6 @@ enum ProfileTab: String, CaseIterable, Hashable {
     case .lists: return "User lists"
     case .starterPacks: return "Curated starter packs"
     case .feeds: return "Custom feeds"
-    case .videos: return "Streamplace Video-on-Demand"
     case .more: return "Additional options"
     }
   }

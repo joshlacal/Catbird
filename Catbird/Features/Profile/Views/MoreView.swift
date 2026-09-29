@@ -15,7 +15,7 @@ struct MoreView: View {
     @State private var isNavigating = false
 
     // Tabs to show in the More menu
-    private let moreTabs = [ProfileTab.likes, ProfileTab.lists, ProfileTab.starterPacks, ProfileTab.feeds, ProfileTab.videos]
+    private let moreTabs = [ProfileTab.likes, ProfileTab.lists, ProfileTab.starterPacks, ProfileTab.feeds]
     
     var body: some View {
         LazyVStack(spacing: 0) {

@@ -5,7 +5,7 @@ enum CatbirdGatewayConfigurationError: Error, Equatable {
   case invalidOverride
 }
 
-/// The single routing decision for foreground Catbird traffic that terminates at Nest or MLS.
+/// The single routing decision for foreground Catbird traffic that terminates at Nest.
 ///
 /// Production is immutable. The staging deployment can be selected only by the exact launch
 /// argument emitted by the E2E harness while `--e2e-mode` is also present. DEBUG builds given an
@@ -84,20 +84,6 @@ struct CatbirdGatewayConfiguration: Sendable, Equatable {
     #if DEBUG
     case .runtimeFixture(let origin):
       "did:web:\(origin.host ?? "")"
-    #endif
-    }
-  }
-
-  /// MLS uses a distinct DID from Nest and must never inherit the Nest service DID.
-  var mlsServiceDID: String? {
-    switch deployment {
-    case .production:
-      nil
-    case .stagingE2E:
-      "did:web:dev-api.catbird.blue:mls#atproto_mls"
-    #if DEBUG
-    case .runtimeFixture(let origin):
-      "did:web:\(origin.host ?? ""):mls#atproto_mls"
     #endif
     }
   }

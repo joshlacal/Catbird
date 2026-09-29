@@ -20,11 +20,6 @@ import SwiftUI
     /// The post view model that handles actual interactions
     private let postViewModel: PostViewModel
     
-    /// Capabilities for interaction based on post visibility context
-    var capabilities: PostCapabilities {
-        postViewModel.capabilities
-    }
-    
     /// Reference to the app state
     let appState: AppState
     // MARK: - Initialization
@@ -51,14 +46,12 @@ import SwiftUI
     /// Toggle repost status for the post with optimistic updates
     /// - Returns: True if the operation was successful
     func toggleRepost() async throws {
-        guard postViewModel.capabilities.canRepost else { return }
         try await postViewModel.toggleRepost()
     }
     /// Share the post using system share sheet or to chat
     /// - Parameter post: The post to share
     @MainActor
     func share(post: AppBskyFeedDefs.PostView) async {
-        guard postViewModel.capabilities.canPublicShare else { return }
         #if os(iOS)
         // Build a Bluesky URL that can be opened in any Bluesky client
         let username = post.author.handle.description == "handle.invalid" ? post.author.did.didString() : post.author.handle.description
@@ -67,12 +60,11 @@ import SwiftUI
         
         guard let url = shareURL else { return }
         let shareToChat = ShareToChatActivity(post: post, appState: appState)
-        let shareToMLSChat = ShareToMLSChatActivity(post: post, appState: appState)
         
         // Only pass ShareablePost which handles both URL and post data
         let activityViewController = UIActivityViewController(
             activityItems: [ShareablePost(post: post)],
-            applicationActivities: [shareToMLSChat, shareToChat]  // MLS first for prominence
+            applicationActivities: [shareToChat]
         )
         
         // Customize the order of activities to show Share to Chat first
@@ -114,7 +106,6 @@ import SwiftUI
     /// - Parameter text: The text for the quote
     /// - Returns: True if the operation was successful
     func createQuotePost(text: String) async throws -> Bool {
-        guard postViewModel.capabilities.canQuote else { return false }
         return try await postViewModel.createQuotePost(text: text)
     }
 }

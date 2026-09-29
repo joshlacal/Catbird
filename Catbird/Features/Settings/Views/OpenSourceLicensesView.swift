@@ -55,14 +55,6 @@ struct OpenSourceLicensesView: View {
             )
             
             LicenseRow(
-              name: "OpenMLS",
-              author: "OpenMLS",
-              version: "0.6.0",
-              url: "https://github.com/openmls/openmls",
-              license: "MIT"
-            )
-            
-            LicenseRow(
               name: "Petrel",
               author: "joshlacal",
               version: "1.0.0",
@@ -76,14 +68,6 @@ struct OpenSourceLicensesView: View {
               version: "8.56.1",
               url: "https://github.com/getsentry/sentry-cocoa",
               license: "MIT"
-            )
-            
-            LicenseRow(
-              name: "SQLCipher",
-              author: "ZETETIC LLC",
-              version: "4.11.0",
-              url: "https://github.com/sqlcipher/SQLCipher.swift.git",
-              license: "Community Edition"
             )
             
             LicenseRow(

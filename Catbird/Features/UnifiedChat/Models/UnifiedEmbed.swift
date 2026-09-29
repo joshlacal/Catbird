@@ -2,17 +2,13 @@ import Foundation
 
 // MARK: - UnifiedEmbed
 
-/// Unified embed type for both Bluesky and MLS chat messages
+/// Embed attached to a chat message
 enum UnifiedEmbed: Hashable, Sendable {
   case blueskyRecord(recordData: BlueskyRecordEmbedData)
   case link(LinkEmbedData)
   case gif(GIFEmbedData)
   case post(PostEmbedData)
-  case tile(TileEmbedData)
-  case image(ImageEmbedData)
-  case audio(AudioEmbedData)
   case groupInvite(GroupInviteEmbedData)
-  case groupInvitation(MLSGroupInvitationReference)
 }
 
 // MARK: - GroupInviteEmbedData
@@ -58,33 +54,4 @@ struct PostEmbedData: Hashable, Sendable {
   let authorDID: String
   let authorHandle: String?
   let text: String?
-}
-
-// MARK: - ImageEmbedData
-
-struct ImageEmbedData: Hashable, Sendable {
-  let blobId: String
-  let key: Data
-  let iv: Data
-  let sha256: String
-  let contentType: String
-  let size: Int
-  let width: Int
-  let height: Int
-  let altText: String?
-  let blurhash: String?
-}
-
-// MARK: - AudioEmbedData
-
-struct AudioEmbedData: Hashable, Sendable {
-  let blobId: String
-  let key: Data
-  let iv: Data
-  let sha256: String
-  let contentType: String
-  let size: UInt64
-  let durationMs: UInt64
-  let waveform: [Float]
-  let transcript: String?
 }

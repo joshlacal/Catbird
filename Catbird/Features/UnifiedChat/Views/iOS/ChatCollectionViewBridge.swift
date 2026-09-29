@@ -2,44 +2,6 @@
 import SwiftUI
 import UIKit
 
-/// Configuration for the inline UIKit composer hosted inside ChatCollectionViewController.
-/// Pass `nil` to omit the composer (e.g. for ConversationView, UnifiedChatView).
-struct InlineComposerConfig {
-  var placeholderText: String = "Message"
-  /// When true the send button is disabled and taps are ignored, leaving the
-  /// draft intact (WS-6.5: sends blocked during conversation recovery).
-  var isSendBlocked: Bool = false
-  var onSend: (String) -> Void
-  var onAttachTapped: () -> Void
-  var onTypingChanged: ((Bool) -> Void)?
-  var onPhotoPicker: (() -> Void)?
-  var onGifPicker: (() -> Void)?
-  var onPostPicker: (() -> Void)?
-  var embedPreviewImage: UIImage? = nil
-  var hasEmbed: Bool = false
-  var onEmbedRemoved: (() -> Void)?
-
-  // Voice recording
-  var voiceMode: ComposerMode = .compose
-  var voicePreviewURL: URL? = nil
-  var voiceRecordingDuration: TimeInterval = 0
-  var onVoiceRecordingStarted: (() -> Void)?
-  var onVoiceRecordingLocked: (() -> Void)?
-  var onVoiceRecordingStopped: (() -> Void)?
-  var onVoiceRecordingCancelled: (() -> Void)?
-  var onVoicePreviewSend: (() -> Void)?
-  var onVoicePreviewDiscard: (() -> Void)?
-
-  var isEditMode: Bool = false
-  var editMessageText: String? = nil
-  var onCancelEdit: (() -> Void)? = nil
-
-  // One-shot Siri/Shortcuts draft handoff. The owner clears this only after
-  // the UIKit composer confirms that it applied the text.
-  var prefillText: String? = nil
-  var onPrefillApplied: (() -> Void)? = nil
-}
-
 @available(iOS 16.0, *)
 struct ChatCollectionViewBridge<DataSource: UnifiedChatDataSource>: UIViewControllerRepresentable {
   @Environment(AppState.self) private var appState
@@ -52,7 +14,6 @@ struct ChatCollectionViewBridge<DataSource: UnifiedChatDataSource>: UIViewContro
   var onEditMessage: ((DataSource.Message) -> Void)?
   var onUnsendMessage: ((DataSource.Message) -> Void)?
   var onReply: ((DataSource.Message) -> Void)?
-  var composerConfig: InlineComposerConfig?
 
   func makeUIViewController(context: Context) -> ChatCollectionViewController<DataSource> {
     let controller = ChatCollectionViewController(
@@ -66,7 +27,6 @@ struct ChatCollectionViewBridge<DataSource: UnifiedChatDataSource>: UIViewContro
     controller.onEditMessage = onEditMessage
     controller.onUnsendMessage = onUnsendMessage
     controller.onReply = onReply
-    controller.updateComposer(config: composerConfig)
     return controller
   }
 
@@ -82,7 +42,6 @@ struct ChatCollectionViewBridge<DataSource: UnifiedChatDataSource>: UIViewContro
     controller.onEditMessage = onEditMessage
     controller.onUnsendMessage = onUnsendMessage
     controller.onReply = onReply
-    controller.updateComposer(config: composerConfig)
   }
 }
 #endif

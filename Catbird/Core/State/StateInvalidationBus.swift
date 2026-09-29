@@ -18,7 +18,6 @@ enum StateInvalidationEvent {
   case chatMessageReceived
   case notificationsUpdated
   case feedListChanged  // New event for when feeds are added/removed
-  case mlsConversationListChanged
 }
 
 /// Central event bus for coordinating state invalidation across the app
@@ -209,8 +208,6 @@ final class StateInvalidationBus {
       return "notificationsUpdated"
     case .feedListChanged:
       return "feedListChanged"
-    case .mlsConversationListChanged:
-      return "mlsConversationListChanged"
     }
   }
 
@@ -244,8 +241,6 @@ final class StateInvalidationBus {
       return "notificationsUpdated"
     case .feedListChanged:
       return "feedListChanged"
-    case .mlsConversationListChanged:
-      return "mlsConversationListChanged"
     }
   }
 }

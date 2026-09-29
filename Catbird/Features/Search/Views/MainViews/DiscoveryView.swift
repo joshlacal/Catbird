@@ -46,11 +46,6 @@ struct DiscoveryView: View {
                         }
                     )
                 }
-                // Live Events Banner (G52)
-                if let liveEvent = appState.liveEventService.activeEvents.first {
-                    LiveEventBanner(event: liveEvent, style: .wide)
-                        .padding(.horizontal)
-                }
                 // Explore interests NUX card (G07)
                 if viewModel.showExploreInterestsCard {
                     ExploreInterestsCard(
@@ -132,7 +127,6 @@ struct DiscoveryView: View {
         .refreshable {
             guard let client = appState.atProtoClient else { return }
             await viewModel.refreshDiscoveryContent(client: client)
-            await appState.liveEventService.fetchLiveEvents(force: true)
         }
         .sheet(isPresented: $showInterestPicker) {
             InterestPickerSheet(

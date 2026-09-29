@@ -29,7 +29,6 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
     case message(id: String)
     case dateSeparator(Date)
     case typingIndicator(TypingAvatarItem)
-    case historyBoundary(id: String, text: String)
 
     func hash(into hasher: inout Hasher) {
       switch self {
@@ -41,9 +40,6 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
         hasher.combine(date)
       case .typingIndicator:
         hasher.combine(2)
-      case .historyBoundary(let id, _):
-        hasher.combine(3)
-        hasher.combine(id)
       }
     }
 
@@ -52,7 +48,6 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
       case (.message(let a), .message(let b)): return a == b
       case (.dateSeparator(let a), .dateSeparator(let b)): return a == b
       case (.typingIndicator, .typingIndicator): return true
-      case (.historyBoundary(let a, _), .historyBoundary(let b, _)): return a == b
       default: return false
       }
     }
@@ -95,7 +90,7 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
   private var hasPerformedInitialScroll = false
   private var lastScrollToBottomTrigger: Int = 0
   /// Extra bottom inset to keep content above the floating composer.
-  private var composerInset: CGFloat = 100
+  private let composerInset: CGFloat = 100
   /// Current keyboard overlap with this view (0 when keyboard is hidden).
   private var keyboardOverlap: CGFloat = 0
 
@@ -130,25 +125,6 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
   }()
 
   private var pillBottomConstraint: NSLayoutConstraint?
-
-  // MARK: - Inline Composer
-
-  private var composerView: UIKitMLSComposerView?
-  private var composerBottomConstraint: NSLayoutConstraint?
-  private var onComposerSend: ((String) -> Void)?
-  private var onComposerAttach: (() -> Void)?
-  private var onComposerTypingChanged: ((Bool) -> Void)?
-  private var onComposerPhoto: (() -> Void)?
-  private var onComposerGif: (() -> Void)?
-  private var onComposerSharePost: (() -> Void)?
-  private var onComposerEmbedRemoved: (() -> Void)?
-  private var onComposerVoiceStarted: (() -> Void)?
-  private var onComposerVoiceLocked: (() -> Void)?
-  private var onComposerVoiceStopped: (() -> Void)?
-  private var onComposerVoiceCancelled: (() -> Void)?
-  private var onComposerVoicePreviewSend: (() -> Void)?
-  private var onComposerVoicePreviewDiscard: (() -> Void)?
-  private var onComposerCancelEdit: (() -> Void)?
 
   private weak var reactionDetailsController: UIViewController?
   private var reactionOverlayControl: UIControl?
@@ -244,7 +220,7 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
     view.addSubview(newMessagesPillButton)
     newMessagesPillButton.addTarget(self, action: #selector(didTapNewMessagesPill), for: .touchUpInside)
 
-    let bottomAnchor = composerView?.topAnchor ?? view.safeAreaLayoutGuide.bottomAnchor
+    let bottomAnchor = view.safeAreaLayoutGuide.bottomAnchor
     let constraint = newMessagesPillButton.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12)
     pillBottomConstraint = constraint
 
@@ -420,19 +396,6 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
       .margins(.all, 0)
     }
 
-    let historyBoundaryRegistration = UICollectionView.CellRegistration<ChatTranscriptCell, String> {
-      cell, _, text in
-      cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
-      cell.selectedBackgroundView = nil
-
-      cell.contentConfiguration = UIHostingConfiguration {
-        ChatTranscriptContent(cell: cell) {
-          HistoryBoundaryView(text: text)
-        }
-      }
-      .margins(.all, 0)
-    }
-
     diffableDataSource = UICollectionViewDiffableDataSource(collectionView: collectionView) {
       collectionView, indexPath, item in
       switch item {
@@ -453,12 +416,6 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
           using: typingIndicatorRegistration,
           for: indexPath,
           item: avatarItem
-        )
-      case .historyBoundary(_, let text):
-        return collectionView.dequeueConfiguredReusableCell(
-          using: historyBoundaryRegistration,
-          for: indexPath,
-          item: text
         )
       }
     }
@@ -587,7 +544,7 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
     if !reconfiguringMessageIDs.isEmpty {
       let itemsToReconfigure = items.filter { item in
         switch item {
-        case .message(let id), .historyBoundary(let id, _):
+        case .message(let id):
           return reconfiguringMessageIDs.contains(id)
         case .dateSeparator, .typingIndicator:
           return false
@@ -672,184 +629,6 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
       dismissReactionOverlay()
     }
     appState = newAppState
-  }
-
-  // MARK: - Inline Composer Management
-
-  func updateComposer(config: InlineComposerConfig?) {
-    guard let config else {
-      removeComposer()
-      return
-    }
-    installComposer(config: config)
-    updateComposerEmbedState(hasEmbed: config.hasEmbed, previewImage: config.embedPreviewImage)
-    updateComposerVoiceMode(config: config)
-    updateComposerEditState(isEditMode: config.isEditMode, text: config.editMessageText,
-      onCancelEdit: config.onCancelEdit)
-    if let prefill = config.prefillText, !config.isEditMode,
-       applyComposerPrefill(text: prefill) {
-      config.onPrefillApplied?()
-    }
-  }
-
-  func installComposer(config: InlineComposerConfig) {
-    guard composerView == nil else {
-      updateComposerCallbacks(config: config)
-      return
-    }
-
-    let composer = UIKitMLSComposerView()
-    composer.delegate = self
-    composer.placeholderText = config.placeholderText
-    composer.isSendBlocked = config.isSendBlocked
-
-    onComposerSend = config.onSend
-    onComposerAttach = config.onAttachTapped
-    onComposerTypingChanged = config.onTypingChanged
-    onComposerPhoto = config.onPhotoPicker
-    onComposerGif = config.onGifPicker
-    onComposerSharePost = config.onPostPicker
-    onComposerEmbedRemoved = config.onEmbedRemoved
-    onComposerVoiceStarted = config.onVoiceRecordingStarted
-    onComposerVoiceLocked = config.onVoiceRecordingLocked
-    onComposerVoiceStopped = config.onVoiceRecordingStopped
-    onComposerVoiceCancelled = config.onVoiceRecordingCancelled
-    onComposerVoicePreviewSend = config.onVoicePreviewSend
-    onComposerVoicePreviewDiscard = config.onVoicePreviewDiscard
-    onComposerCancelEdit = config.onCancelEdit
-    composerView?.hasEmbed = config.hasEmbed
-    composerView?.embedPreviewImage = config.embedPreviewImage
-    composerView?.onEmbedRemoved = { [weak self] in self?.onComposerEmbedRemoved?() }
-
-    view.addSubview(composer)
-
-    // Pin horizontally and to keyboard layout guide bottom
-    let bottomConstraint = view.keyboardLayoutGuide.topAnchor.constraint(
-      equalTo: composer.bottomAnchor
-    )
-    composerBottomConstraint = bottomConstraint
-
-    NSLayoutConstraint.activate([
-      composer.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-      composer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-      bottomConstraint,
-    ])
-
-
-    pillBottomConstraint?.isActive = false
-    let newPillConstraint = newMessagesPillButton.bottomAnchor.constraint(equalTo: composer.topAnchor, constant: -12)
-    pillBottomConstraint = newPillConstraint
-    newPillConstraint.isActive = true
-    composerView = composer
-
-    // Update inset after layout pass
-    view.layoutIfNeeded()
-    updateComposerInset()
-  }
-
-  func updateComposerCallbacks(config: InlineComposerConfig) {
-    onComposerSend = config.onSend
-    onComposerAttach = config.onAttachTapped
-    onComposerTypingChanged = config.onTypingChanged
-    onComposerPhoto = config.onPhotoPicker
-    onComposerGif = config.onGifPicker
-    onComposerSharePost = config.onPostPicker
-    onComposerEmbedRemoved = config.onEmbedRemoved
-    onComposerVoiceStarted = config.onVoiceRecordingStarted
-    onComposerVoiceLocked = config.onVoiceRecordingLocked
-    onComposerVoiceStopped = config.onVoiceRecordingStopped
-    onComposerVoiceCancelled = config.onVoiceRecordingCancelled
-    onComposerVoicePreviewSend = config.onVoicePreviewSend
-    onComposerVoicePreviewDiscard = config.onVoicePreviewDiscard
-    onComposerCancelEdit = config.onCancelEdit
-    composerView?.placeholderText = config.placeholderText
-    composerView?.isSendBlocked = config.isSendBlocked
-    composerView?.hasEmbed = config.hasEmbed
-    composerView?.embedPreviewImage = config.embedPreviewImage
-    composerView?.onEmbedRemoved = { [weak self] in self?.onComposerEmbedRemoved?() }
-  }
-
-  /// Reconcile a transition to pending consent or a retained read-only chat.
-  /// Removing the view also retires callbacks held by a previously open menu.
-  func removeComposer() {
-    guard let composer = composerView else { return }
-    composer.endEditing(true)
-    composer.delegate = nil
-    composer.onEmbedRemoved = nil
-    composerBottomConstraint?.isActive = false
-    composerBottomConstraint = nil
-    pillBottomConstraint?.isActive = false
-    let pillConstraint = newMessagesPillButton.bottomAnchor.constraint(
-      equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -12)
-    pillBottomConstraint = pillConstraint
-    pillConstraint.isActive = true
-    composer.removeFromSuperview()
-    composerView = nil
-    onComposerSend = nil
-    onComposerAttach = nil
-    onComposerTypingChanged = nil
-    onComposerPhoto = nil
-    onComposerGif = nil
-    onComposerSharePost = nil
-    onComposerEmbedRemoved = nil
-    onComposerVoiceStarted = nil
-    onComposerVoiceLocked = nil
-    onComposerVoiceStopped = nil
-    onComposerVoiceCancelled = nil
-    onComposerVoicePreviewSend = nil
-    onComposerVoicePreviewDiscard = nil
-    onComposerCancelEdit = nil
-    composerInset = 0
-    collectionView.contentInset.bottom = keyboardOverlap
-    collectionView.verticalScrollIndicatorInsets.bottom = keyboardOverlap
-  }
-
-  func updateComposerVoiceMode(config: InlineComposerConfig) {
-    composerView?.setMode(config.voiceMode)
-    if case .recording = config.voiceMode {
-      composerView?.updateRecordingDuration(config.voiceRecordingDuration)
-    }
-    if let url = config.voicePreviewURL, case .preview = config.voiceMode {
-      composerView?.loadPreviewAudio(url: url)
-    }
-  }
-
-  func updateComposerEditState(isEditMode: Bool, text: String?, onCancelEdit: (() -> Void)?) {
-    composerView?.onCancelEdit = onCancelEdit
-    composerView?.isEditMode = isEditMode
-    if isEditMode, let text, composerView?.text != text {
-      composerView?.text = text
-    }
-  }
-
-  /// Applies an external draft only when doing so cannot overwrite user text
-  /// or an active edit session.
-  func applyComposerPrefill(text: String) -> Bool {
-    guard let composer = composerView, !composer.isEditMode else { return false }
-    guard composer.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-      return false
-    }
-    composer.text = text
-    return true
-  }
-
-  func updateComposerEmbedState(hasEmbed: Bool, previewImage: UIImage?) {
-    composerView?.hasEmbed = hasEmbed
-    composerView?.embedPreviewImage = previewImage
-  }
-
-  private func updateComposerInset() {
-    guard let composer = composerView else { return }
-    let height = composer.systemLayoutSizeFitting(
-      CGSize(width: view.bounds.width, height: UIView.layoutFittingCompressedSize.height),
-      withHorizontalFittingPriority: .required,
-      verticalFittingPriority: .fittingSizeLevel
-    ).height
-    let newInset = max(height, 60)
-    guard abs(newInset - composerInset) > 1 else { return }
-    composerInset = newInset
-    collectionView.contentInset.bottom = composerInset + keyboardOverlap
-    collectionView.verticalScrollIndicatorInsets.bottom = composerInset + keyboardOverlap
   }
 
   // MARK: - Actions
@@ -1027,12 +806,7 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
       if seenDays.insert(messageDay).inserted {
         items.append(.dateSeparator(messageDay))
       }
-      // Render history boundary markers as inline system pills
-      if message.id.hasPrefix("hb-") {
-        items.append(.historyBoundary(id: message.id, text: message.text))
-      } else {
-        items.append(.message(id: message.diffableID))
-      }
+      items.append(.message(id: message.diffableID))
     }
 
     if dataSource.showsTypingIndicator {
@@ -1309,86 +1083,6 @@ private struct TypingIndicatorView: View {
     .frame(maxWidth: .infinity, alignment: .leading)
     .padding(.leading, 12)
     .onAppear { animate = true }
-  }
-}
-
-// MARK: - UIKitMLSComposerDelegate
-
-@available(iOS 16.0, *)
-extension ChatCollectionViewController: UIKitMLSComposerDelegate {
-  func composerDidChangeHeight(_ composer: UIKitMLSComposerView, height: CGFloat) {
-    guard composer === composerView else { return }
-    updateComposerInset()
-  }
-
-  func composerDidTapSend(_ composer: UIKitMLSComposerView, text: String) {
-    guard composer === composerView else { return }
-    onComposerSend?(text)
-    // Trigger scroll to bottom after sending
-    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-      self?.scrollToBottom(animated: true)
-    }
-  }
-
-
-  func composerDidTapAttach(_ composer: UIKitMLSComposerView) {
-    guard composer === composerView else { return }
-    onComposerAttach?()
-  }
-
-  func composerDidChangeTypingState(_ composer: UIKitMLSComposerView, isTyping: Bool) {
-    guard composer === composerView else { return }
-    onComposerTypingChanged?(isTyping)
-  }
-
-  func composerDidStartVoiceRecording(_ composer: UIKitMLSComposerView) {
-    guard composer === composerView else { return }
-    onComposerVoiceStarted?()
-  }
-
-  func composerDidLockVoiceRecording(_ composer: UIKitMLSComposerView) {
-    guard composer === composerView else { return }
-    onComposerVoiceLocked?()
-  }
-
-  func composerDidStopVoiceRecording(_ composer: UIKitMLSComposerView) {
-    guard composer === composerView else { return }
-    onComposerVoiceStopped?()
-  }
-
-  func composerDidCancelVoiceRecording(_ composer: UIKitMLSComposerView) {
-    guard composer === composerView else { return }
-    onComposerVoiceCancelled?()
-  }
-
-  func composerDidTapSendVoice(_ composer: UIKitMLSComposerView) {
-    guard composer === composerView else { return }
-    onComposerVoicePreviewSend?()
-  }
-
-  func composerDidTapDiscardVoice(_ composer: UIKitMLSComposerView) {
-    guard composer === composerView else { return }
-    onComposerVoicePreviewDiscard?()
-  }
-
-  func composerDidTapPhoto(_ composer: UIKitMLSComposerView) {
-    guard composer === composerView else { return }
-    onComposerPhoto?()
-  }
-
-  func composerDidTapGif(_ composer: UIKitMLSComposerView) {
-    guard composer === composerView else { return }
-    onComposerGif?()
-  }
-
-  func composerDidTapSharePost(_ composer: UIKitMLSComposerView) {
-    guard composer === composerView else { return }
-    onComposerSharePost?()
-  }
-
-  func composerDidTapCancelEdit(_ composer: UIKitMLSComposerView) {
-    guard composer === composerView else { return }
-    onComposerCancelEdit?()
   }
 }
 

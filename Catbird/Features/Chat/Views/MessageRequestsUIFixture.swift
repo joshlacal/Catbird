@@ -4,7 +4,7 @@ import SwiftUI
 
 /// Presentation fixture for the Message Requests sheet, launched with
 /// `--message-requests-ui-fixture`. It renders the real `MessageRequestsScreen`
-/// against canned requests and makes no network or MLS calls.
+/// against canned requests and makes no network calls.
 ///
 /// Extra launch arguments:
 /// - `--message-requests-empty`: no requests (empty state).
@@ -50,27 +50,21 @@ struct MessageRequestsUIFixture: View {
 }
 
 /// Canned requests covering every row shape: Bluesky direct with social
-/// context, a new account, a Bluesky group, and both encrypted kinds.
+/// context, a new account, and a Bluesky group.
 @MainActor
 @Observable
 final class FixtureMessageRequestsStore: MessageRequestsStore {
   static let accountDID = "did:plc:requestsfixtureself"
 
   private(set) var blueskyRequests: [MessageRequestItem]
-  private(set) var encryptedRequests: [MessageRequestItem]
-  let groupInvitationNotes: [MLSGroupInvitationNotes] = []
-  let savedInvitationNotes: [MLSDirectComposeDraft] = []
   private(set) var isLoading = false
   private(set) var hasLoaded = true
   private(set) var inFlight: [MessageRequestItem.ID: MessageRequestDecision] = [:]
   var errorMessage: String?
-  let usesVerifiedEncryptedDetail: Bool
 
-  init(empty: Bool, usesVerifiedEncryptedDetail: Bool = false) {
-    self.usesVerifiedEncryptedDetail = usesVerifiedEncryptedDetail
+  init(empty: Bool) {
     guard !empty else {
       blueskyRequests = []
-      encryptedRequests = []
       return
     }
     let now = Date()
@@ -78,9 +72,6 @@ final class FixtureMessageRequestsStore: MessageRequestsStore {
     let newcomer = RequestParticipant(did: "did:plc:fixturenew", handle: "quietfern.bsky.social", displayName: nil, avatarURL: nil)
     let sam = RequestParticipant(did: "did:plc:fixturesam", handle: "samortiz.dev", displayName: "Sam Ortiz", avatarURL: nil)
     let lee = RequestParticipant(did: "did:plc:fixturelee", handle: "lee.bsky.social", displayName: "Lee Park", avatarURL: nil)
-    let priya = RequestParticipant(did: "did:plc:fixturepriya", handle: "priya.dev", displayName: "Priya Raman", avatarURL: nil)
-    let alex = RequestParticipant(did: "did:plc:fixturealex", handle: "alexkim.art", displayName: "Alex Kim", avatarURL: nil)
-    let jo = RequestParticipant(did: "did:plc:fixturejo", handle: "jo.bsky.social", displayName: "Jo Rivera", avatarURL: nil)
 
     blueskyRequests = [
       MessageRequestItem(
@@ -106,20 +97,6 @@ final class FixtureMessageRequestsStore: MessageRequestsStore {
         preview: .description(MessageRequestPresentation.groupInvitationDescription(title: "Swift Devs NYC", memberCount: 6)),
         isUnread: false),
     ]
-    encryptedRequests = [
-      MessageRequestItem(
-        id: "mls:priya", origin: .encryptedDirect(conversationID: "priya"), sender: priya, participants: [priya],
-        groupTitle: nil, memberCount: nil, date: now.addingTimeInterval(-5 * 60),
-        context: nil,
-        preview: .message("Sending this over encrypted chat. Can you take a look at the key package fix before Friday?"),
-        isUnread: false),
-      MessageRequestItem(
-        id: "mls:designcrit", origin: .encryptedLegacy(conversationID: "designcrit"), sender: alex, participants: [alex, jo, priya],
-        groupTitle: "Design Crit", memberCount: 4, date: now.addingTimeInterval(-2 * 24 * 60 * 60),
-        context: nil,
-        preview: .description(MessageRequestPresentation.groupInvitationDescription(title: "Design Crit", memberCount: 4)),
-        isUnread: false),
-    ]
   }
 
   func refresh() async {}
@@ -127,9 +104,7 @@ final class FixtureMessageRequestsStore: MessageRequestsStore {
   func accept(_ item: MessageRequestItem) async -> MessageRequestAcceptance? {
     guard await simulate(.accept, on: item) else { return nil }
     remove(item)
-    return item.source == .bluesky
-      ? .bluesky(convoID: item.conversationID)
-      : .encrypted(conversationID: item.conversationID)
+    return .bluesky(convoID: item.conversationID)
   }
 
   func decline(_ item: MessageRequestItem) async -> Bool {
@@ -150,8 +125,6 @@ final class FixtureMessageRequestsStore: MessageRequestsStore {
 
   func blueskyConversation(for item: MessageRequestItem) -> ChatBskyConvoDefs.ConvoView? { nil }
 
-  func mlsReportClient() async -> MLSAPIClient? { nil }
-
   func invalidate() {}
 
   private func simulate(_ decision: MessageRequestDecision, on item: MessageRequestItem) async -> Bool {
@@ -164,7 +137,6 @@ final class FixtureMessageRequestsStore: MessageRequestsStore {
 
   private func remove(_ item: MessageRequestItem) {
     blueskyRequests.removeAll { $0.id == item.id }
-    encryptedRequests.removeAll { $0.id == item.id }
   }
 }
 #endif

@@ -7,7 +7,6 @@
 		<string>blue.catbird.posting.retry</string>
 		<string>blue.catbird.chat.refresh</string>
 		<string>blue.catbird.cache.refresh</string>
-		<string>blue.catbird.key-package-refresh</string>
 	</array>
 	<key>CFBundleURLTypes</key>
 	<array>

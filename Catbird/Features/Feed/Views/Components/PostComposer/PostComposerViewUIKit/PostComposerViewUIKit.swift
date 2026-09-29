@@ -30,7 +30,6 @@ struct PostComposerViewUIKit: View {
   @State var viewModel: PostComposerViewModel?
   private let initialParentPost: AppBskyFeedDefs.PostView?
   private let initialQuotedPost: AppBskyFeedDefs.PostView?
-  private let initialDestination: CircleDestination
   private let initialTextParam: String?
   private let restoringDraftParam: PostComposerDraft?
   private let initialCapturedMediaParam: CapturedMedia?
@@ -74,13 +73,11 @@ struct PostComposerViewUIKit: View {
   
   init(parentPost: AppBskyFeedDefs.PostView? = nil,
        quotedPost: AppBskyFeedDefs.PostView? = nil,
-       destination: CircleDestination = .public,
        initialText: String? = nil,
        appState: AppState) {
     self.appState = appState
     self.initialParentPost = parentPost
     self.initialQuotedPost = quotedPost
-    self.initialDestination = destination
     self.initialTextParam = initialText
     self.restoringDraftParam = nil
     self.initialCapturedMediaParam = nil
@@ -91,7 +88,6 @@ struct PostComposerViewUIKit: View {
     self.appState = appState
     self.initialParentPost = nil
     self.initialQuotedPost = nil
-    self.initialDestination = .public
     self.initialTextParam = nil
     self.restoringDraftParam = draft
     self.initialCapturedMediaParam = nil
@@ -102,7 +98,6 @@ struct PostComposerViewUIKit: View {
     self.appState = appState
     self.initialParentPost = nil
     self.initialQuotedPost = nil
-    self.initialDestination = .public
     self.initialTextParam = nil
     self.restoringDraftParam = nil
     self.initialCapturedMediaParam = initialCapturedMedia
@@ -136,7 +131,6 @@ struct PostComposerViewUIKit: View {
       let vm = PostComposerViewModel(
         parentPost: initialParentPost,
         quotedPost: initialQuotedPost,
-        destination: initialDestination,
         appState: appState
       )
       
@@ -152,15 +146,6 @@ struct PostComposerViewUIKit: View {
         pcUIKitLogger.info("PostComposerViewUIKit: Restoring current draft (likely from account switch)")
         vm.restoreDraftState(currentDraft)
       }
-      #if DEBUG
-      let arguments = ProcessInfo.processInfo.arguments
-      if arguments.contains("--e2e-mode"),
-        arguments.contains("--e2e-auto-photo"),
-        let transport = appState.e2eCircleTransport
-      {
-        vm.ingestCapturedPhoto(transport.fixtureImageData)
-      }
-      #endif
       
       viewModel = vm
 
@@ -411,17 +396,6 @@ struct PostComposerViewUIKit: View {
           // Show a single editor instance.
           // In thread mode, the active editor is rendered inside threadEntriesSection.
           if !vm.isThreadMode {
-            if appState.circlesEnabled || vm.destination != .public {
-              CircleAudiencePicker(
-                selectedDestination: Binding(
-                  get: { vm.destination },
-                  set: { vm.selectDestination($0) }
-                ),
-                isReplyLocked: vm.isReplyLockedToCircle,
-                isSubmitting: isSubmitting || vm.activeSubmission != nil || vm.mediaItems.contains { $0.isLoading }
-              )
-              .padding(.horizontal, 16)
-            }
             composerEditorSection(vm: vm)
             mentionSuggestionsSection(vm: vm)
             mediaAttachmentsSection(vm: vm)
@@ -492,7 +466,6 @@ struct PostComposerViewUIKit: View {
         isPlusMenuOpen: $showingPlusMenu,
         characterCount: vm.postText.count,
         allowTenor: appState.appSettings.externalMediaConsent(for: .tenor) != .hide,
-        isAddToThreadDisabled: vm.destination != .public,
         threadgateValue: vm.interactionSettings.summary,
         languageValue: languageSummary(vm: vm),
         actions: ComposerBarActions(
@@ -506,7 +479,6 @@ struct PostComposerViewUIKit: View {
           onTags: { showingOutlineTagsEditor = true },
           onLabels: { showingLabelSelector = true },
           onAddToThread: {
-            guard vm.destination == .public else { return }
             withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
               if vm.isThreadMode {
                 vm.addNewThreadEntry()
@@ -651,7 +623,7 @@ struct PostComposerViewUIKit: View {
         },
         onThreadAction: { 
           pcUIKitLogger.info("PostComposerViewUIKit: Thread action triggered - isThreadMode: \(viewModel?.isThreadMode ?? false)")
-          guard let vm = viewModel, vm.destination == .public else { return }
+          guard let vm = viewModel else { return }
           withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
             // Properly enter thread mode and add a new entry,
             // mirroring the legacy behavior.

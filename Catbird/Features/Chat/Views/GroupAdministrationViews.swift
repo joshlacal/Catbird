@@ -15,7 +15,7 @@ struct AddGroupMembersSheet: View {
 
   @State private var selectedDIDs: Set<String> = []
   @State private var selectionOrder: [String] = []
-  @State private var selectedProfiles: [String: MLSParticipantViewModel] = [:]
+  @State private var selectedProfiles: [String: ChatParticipant] = [:]
   @State private var isAdding = false
   @State private var errorMessage: String?
 
@@ -29,7 +29,6 @@ struct AddGroupMembersSheet: View {
     NavigationStack {
       ContactSearchList(
         selectionMode: .multi,
-        showMLSStatus: false,
         selectedDIDs: $selectedDIDs,
         selectionOrder: $selectionOrder,
         selectedProfiles: $selectedProfiles

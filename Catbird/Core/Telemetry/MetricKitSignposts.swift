@@ -143,27 +143,6 @@ enum MetricKitSignposts {
     os_signpost(.end, log: log, name: "PostComposition", signpostID: signpostID)
   }
 
-  // MARK: - MLS Operations
-
-  private static var mlsSignpostIDs: [String: OSSignpostID] = [:]
-
-  /// Begins an MLS operation signpost interval
-  static func beginMLSOperation(operation: String) {
-    guard let log = MetricKitManager.shared.mlsOperationLog else { return }
-    let signpostID = OSSignpostID(log: log)
-    mlsSignpostIDs[operation] = signpostID
-
-    os_signpost(.begin, log: log, name: "MLSOperation", signpostID: signpostID)
-  }
-
-  /// Ends an MLS operation signpost interval
-  static func endMLSOperation(operation: String, success: Bool = true) {
-    guard let log = MetricKitManager.shared.mlsOperationLog,
-          let signpostID = mlsSignpostIDs.removeValue(forKey: operation) else { return }
-
-    os_signpost(.end, log: log, name: "MLSOperation", signpostID: signpostID)
-  }
-
   // MARK: - Animation Tracking
 
   private static var animationSignpostIDs: [String: OSSignpostID] = [:]

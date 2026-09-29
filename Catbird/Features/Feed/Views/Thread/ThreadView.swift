@@ -385,7 +385,7 @@ private struct SwiftUIThreadView: View {
 
         let manager = ThreadManager(appState: appState)
         manager.setModelContext(modelContext)
-        await manager.loadThread(uri: postURI, visibilityContext: visibilityContext, circleService: appState.circleService)
+        await manager.loadThread(uri: postURI, visibilityContext: visibilityContext)
         threadManager = manager
 
         hasOtherReplies = manager.threadData?.hasOtherReplies ?? false
@@ -540,21 +540,6 @@ struct NavigationTitleDisplayModeModifier: ViewModifier {
         content
         #endif
     }
-}
-
-extension ThreadView {
-  /// Minimal production Circle thread factory.
-  public static func circleThread(
-    uri: ATProtocolURI,
-    circle: CircleSummary,
-    path: Binding<NavigationPath>
-  ) -> ThreadView {
-    ThreadView(
-      postURI: uri,
-      path: path,
-      visibilityContext: .circle(circle)
-    )
-  }
 }
 
 #Preview("ThreadView") {

@@ -5,7 +5,7 @@ import SwiftUI
 
 // MARK: - Contact Search List
 
-/// Shared contact search component for both Bluesky DM and Catbird Group modes.
+/// Shared contact search component for Bluesky DM and Bluesky group modes.
 /// Handles AT Protocol typeahead search, "People You Follow" default list,
 /// and both single-select (tap → callback) and multi-select (tap → toggle) modes.
 struct ContactSearchList: View {
@@ -15,21 +15,20 @@ struct ContactSearchList: View {
   }
 
   let selectionMode: SelectionMode
-  let showMLSStatus: Bool
 
   /// Multi-select: bound set of selected DIDs
   @Binding var selectedDIDs: Set<String>
   /// Multi-select: bound ordered list for chip display
   @Binding var selectionOrder: [String]
   /// Multi-select: bound profile details for selected contacts
-  @Binding var selectedProfiles: [String: MLSParticipantViewModel]
+  @Binding var selectedProfiles: [String: ChatParticipant]
   /// Single-select: called when a contact is tapped
   var onSingleSelect: ((any ProfileDisplayable) -> Void)?
 
   @Environment(AppState.self) private var appState
   @State private var searchText = ""
   @State private var searchResults: [AppBskyActorDefs.ProfileViewBasic] = []
-  @State private var mlsSearchResults: [MLSParticipantViewModel] = []
+  @State private var participantSearchResults: [ChatParticipant] = []
   @State private var followingProfiles: [AppBskyActorDefs.ProfileView] = []
   @State private var isSearching = false
   @State private var isLoadingFollows = false
@@ -37,9 +36,6 @@ struct ContactSearchList: View {
   @State private var searchTask: Task<Void, Never>?
   @State private var searchGeneration = UUID()
   @State private var isStartingConversation = false
-  @State private var participantAvailability: [String: MLSAPIClient.MLSChatAvailability] = [:]
-  @State private var checkingAvailability: Set<String> = []
-  @State private var availabilityRequests: [String: UUID] = [:]
   @State private var blueskyChatAvailability: [String: Bool] = [:]
 
   private let logger = Logger(subsystem: "blue.catbird", category: "ContactSearchList")
@@ -57,7 +53,7 @@ struct ContactSearchList: View {
           searchingRow
         } else if let error = searchError {
           errorRow(error)
-        } else if !searchText.isEmpty && searchResults.isEmpty && mlsSearchResults.isEmpty {
+        } else if !searchText.isEmpty && searchResults.isEmpty && participantSearchResults.isEmpty {
           noResultsRow
         } else if !searchText.isEmpty {
           searchResultsSection
@@ -91,11 +87,8 @@ struct ContactSearchList: View {
       searchGeneration = UUID()
       searchTask?.cancel()
       searchResults = []
-      mlsSearchResults = []
+      participantSearchResults = []
       followingProfiles = []
-      participantAvailability = [:]
-      checkingAvailability = []
-      availabilityRequests = [:]
       blueskyChatAvailability = [:]
       Task { await loadFollowing() }
     }
@@ -189,7 +182,7 @@ struct ContactSearchList: View {
           )
         }
       case .multi:
-        ForEach(mlsSearchResults, id: \.id) { participant in
+        ForEach(participantSearchResults, id: \.id) { participant in
           participantRow(
             participant,
             blueskyAvailable: blueskyChatAvailability[participant.id] ?? true
@@ -232,7 +225,7 @@ struct ContactSearchList: View {
         case .multi:
           ForEach(followingProfiles, id: \.did) { profile in
             let did = profile.did.didString()
-            let participant = MLSParticipantViewModel(
+            let participant = ChatParticipant(
               id: did,
               handle: profile.handle.description,
               displayName: profile.displayName,
@@ -253,64 +246,24 @@ struct ContactSearchList: View {
 
   @ViewBuilder
   private func participantRow(
-    _ participant: MLSParticipantViewModel,
+    _ participant: ChatParticipant,
     blueskyAvailable: Bool
   ) -> some View {
-    let availability = participantAvailability[participant.id]
-    let isChecking = checkingAvailability.contains(participant.id) || availability == nil
-    if showMLSStatus && (isChecking || availability == .unknown) {
-      Button {
-        Task { await checkMLSOptIn(for: participant.id) }
-      } label: {
-        HStack(spacing: DesignTokens.Spacing.base) {
-          AsyncProfileImage(url: participant.avatarURL, size: DesignTokens.Size.avatarMD)
-          VStack(alignment: .leading, spacing: 4) {
-            if let displayName = participant.displayName {
-              Text(displayName)
-                .designCallout()
-                .foregroundColor(.primary)
-                .lineLimit(1)
-            }
-            Text("@\(participant.handle)")
-              .designCaption()
-              .foregroundColor(.secondary)
-              .lineLimit(1)
-            Text(isChecking ? "Checking chat availability…" : "Couldn't check availability")
-              .designCaption()
-              .foregroundColor(.secondary)
-          }
-          Spacer()
-          if isChecking {
-            ProgressView()
-          } else {
-            Label("Retry", systemImage: "arrow.clockwise")
-              .designCaption()
-          }
-        }
-        .contentShape(Rectangle())
-      }
-      .buttonStyle(.plain)
-      .disabled(isChecking)
-      .accessibilityHint(isChecking ? "" : "Checks whether this person can receive Catbird chats")
-    } else {
-      let isAvailable = showMLSStatus ? availability == .available : blueskyAvailable
-      ParticipantRow(
-        participant: participant,
-        isSelected: selectedDIDs.contains(participant.id),
-        isMLSAvailable: isAvailable,
-        showsEncryptionBadge: showMLSStatus,
-        unavailableLabel: showMLSStatus ? "Not registered" : "Chat restricted"
-      ) {
-        if isAvailable { toggleParticipant(participant) }
-      }
-      .disabled(!isAvailable)
-      .opacity(isAvailable ? 1.0 : 0.6)
+    ParticipantRow(
+      participant: participant,
+      isSelected: selectedDIDs.contains(participant.id),
+      isAvailable: blueskyAvailable,
+      unavailableLabel: "Chat restricted"
+    ) {
+      if blueskyAvailable { toggleParticipant(participant) }
     }
+    .disabled(!blueskyAvailable)
+    .opacity(blueskyAvailable ? 1.0 : 0.6)
   }
 
   // MARK: - Multi-Select Helpers
 
-  private func toggleParticipant(_ participant: MLSParticipantViewModel) {
+  private func toggleParticipant(_ participant: ChatParticipant) {
     withAnimation(.spring(response: 0.3)) {
       if selectedDIDs.contains(participant.id) {
         selectedDIDs.remove(participant.id)
@@ -358,7 +311,7 @@ struct ContactSearchList: View {
     } else {
       isSearching = false
       searchResults = []
-      mlsSearchResults = []
+      participantSearchResults = []
     }
   }
 
@@ -453,30 +406,28 @@ struct ContactSearchList: View {
 
       searchResults = actors
 
-      if !showMLSStatus {
-        let targetDids = actors.filter { $0.viewer == nil }.map(\.did)
-        let relationships = (try? await fetchFollowedBy(client: client, targets: targetDids)) ?? [:]
-        guard isCurrentSearch(query: query, generation: generation, accountDID: accountDID) else { return }
+      let targetDids = actors.filter { $0.viewer == nil }.map(\.did)
+      let relationships = (try? await fetchFollowedBy(client: client, targets: targetDids)) ?? [:]
+      guard isCurrentSearch(query: query, generation: generation, accountDID: accountDID) else { return }
 
-        for actor in actors {
-          let didString = actor.did.description
-          let followedBy: Bool
-          if let viewer = actor.viewer {
-            followedBy = viewer.followedBy != nil
-          } else if let didObj = try? DID(didString: didString), let rel = relationships[didObj] {
-            followedBy = rel
-          } else {
-            followedBy = false
-          }
-          blueskyChatAvailability[didString] = blueskyAddable(
-            chatSetting: actor.associated?.chat?.allowIncoming,
-            followedBy: followedBy
-          )
+      for actor in actors {
+        let didString = actor.did.description
+        let followedBy: Bool
+        if let viewer = actor.viewer {
+          followedBy = viewer.followedBy != nil
+        } else if let didObj = try? DID(didString: didString), let rel = relationships[didObj] {
+          followedBy = rel
+        } else {
+          followedBy = false
         }
+        blueskyChatAvailability[didString] = blueskyAddable(
+          chatSetting: actor.associated?.chat?.allowIncoming,
+          followedBy: followedBy
+        )
       }
 
-      mlsSearchResults = actors.map { actor in
-        MLSParticipantViewModel(
+      participantSearchResults = actors.map { actor in
+        ChatParticipant(
           id: actor.did.description,
           handle: actor.handle.description,
           displayName: actor.displayName,
@@ -484,7 +435,7 @@ struct ContactSearchList: View {
         )
       }
 
-      for participant in mlsSearchResults where selectedDIDs.contains(participant.id) {
+      for participant in participantSearchResults where selectedDIDs.contains(participant.id) {
         selectedProfiles[participant.id] = participant
       }
 
@@ -492,13 +443,9 @@ struct ContactSearchList: View {
       if searchGeneration == generation && appState.userDID == accountDID {
         isSearching = false
       }
-
-      if showMLSStatus {
-        await checkMLSOptInBatch(dids: actors.map { $0.did.description })
-      }
     } catch {
       guard isCurrentSearch(query: query, generation: generation, accountDID: accountDID) else { return }
-      if searchResults.isEmpty && mlsSearchResults.isEmpty {
+      if searchResults.isEmpty && participantSearchResults.isEmpty {
         searchError = error.localizedDescription
       }
     }
@@ -543,62 +490,8 @@ struct ContactSearchList: View {
       guard code >= 200 && code < 300, let response else { return }
       guard !Task.isCancelled, appState.userDID == accountDID else { return }
       followingProfiles = response.follows
-
-      if showMLSStatus {
-        let dids = followingProfiles.map { $0.did.didString() }
-        await checkMLSOptInBatch(dids: dids)
-      }
     } catch {
       logger.error("Error loading following: \(error.localizedDescription)")
     }
-  }
-
-  // MARK: - MLS Opt-In Check
-
-  @MainActor
-  private func checkMLSOptInBatch(dids: [String]) async {
-    let didObjects = dids.compactMap { try? DID(didString: $0) }
-    guard !didObjects.isEmpty else { return }
-    let accountDID = appState.userDID
-    let requestID = UUID()
-    for did in didObjects {
-      let key = did.didString()
-      availabilityRequests[key] = requestID
-      checkingAvailability.insert(key)
-    }
-
-    defer {
-      for did in didObjects {
-        let key = did.didString()
-        if availabilityRequests[key] == requestID {
-          checkingAvailability.remove(key)
-          if Task.isCancelled || appState.userDID != accountDID {
-            availabilityRequests.removeValue(forKey: key)
-          }
-        }
-      }
-    }
-    var resolved: [String: MLSAPIClient.MLSChatAvailability] = [:]
-    if let apiClient = await appState.getMLSAPIClient(), !Task.isCancelled, appState.userDID == accountDID {
-      let statuses = await apiClient.getChatAvailability(dids: didObjects)
-      if !Task.isCancelled, appState.userDID == accountDID {
-        for status in statuses { resolved[status.did.didString()] = status.availability }
-      }
-    }
-
-    guard !Task.isCancelled, appState.userDID == accountDID else { return }
-
-    for did in didObjects {
-      let key = did.didString()
-      // A superseded search/retry must not overwrite a newer result for this person.
-      guard availabilityRequests[key] == requestID else { continue }
-      participantAvailability[key] = resolved[key] ?? .unknown
-      availabilityRequests.removeValue(forKey: key)
-    }
-  }
-
-  @MainActor
-  private func checkMLSOptIn(for did: String) async {
-    await checkMLSOptInBatch(dids: [did])
   }
 }

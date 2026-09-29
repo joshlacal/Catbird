@@ -208,7 +208,6 @@ public final class DebugGatewayTransport: @unchecked Sendable {
             self.activeManifest = manifestInfo
             self.activeAccount = account
             self.underlyingTransport = transport
-            MLSStoragePaths.setBaseDirectoryOverride(URL(fileURLWithPath: config.profilePath))
             self.isActivated = true
         }
     }

@@ -2,7 +2,7 @@
 //  MessagesSchemaEntities.swift
 //  Catbird
 //
-//  iOS 27 Messages App Schema entities for Catbird MLS chat.
+//  iOS 27 Messages App Schema entities for Bluesky direct messages.
 //
 
 #if os(iOS) && canImport(GeoToolbox) && compiler(>=6.4)
@@ -11,7 +11,6 @@ import AppIntents
 import CoreTransferable
 import Foundation
 import Petrel
-import PetrelCatbird
 import LinkPresentation
 import GeoToolbox
 
@@ -192,38 +191,55 @@ struct CatbirdMessagesConversationEntity: Identifiable, Hashable, Sendable {
 @available(anyAppleOS 27.0, *)
 struct CatbirdMessagesConversationQuery: EntityStringQuery {
   func entities(for identifiers: [String]) async throws -> [CatbirdMessagesConversationEntity] {
-    let manager = try await MessagesSchemaRuntime.conversationManager()
-    let directory = try await MessagesSchemaRuntime.directory(manager: manager)
+    let client = try await MessagesSchemaRuntime.client()
+    let directory = try await MessagesSchemaRuntime.directory(client: client)
     let byID = Dictionary(
-      uniqueKeysWithValues: directory.conversations.map { ($0.conversationID, $0) })
+      directory.conversations.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
 
-    return identifiers.compactMap { id in
-      guard let canonicalID = try? MessagesSchemaRuntime.resolveConversationID(id, in: directory),
-            let model = byID[canonicalID] else { return nil }
-      return MessagesSchemaRuntime.conversationEntity(model: model, directory: directory)
+    var result: [CatbirdMessagesConversationEntity] = []
+    for id in identifiers {
+      if let convo = byID[id] {
+        result.append(MessagesSchemaRuntime.conversationEntity(convo: convo, directory: directory))
+      } else if let output = try? unwrapIntentResponse(
+        await client.chat.bsky.convo.getConvo(input: ChatBskyConvoGetConvo.Parameters(convoId: id))) {
+        // Older conversation outside the recent-list window.
+        let convo = output.convo
+        var membersByConvoID = directory.membersByConvoID
+        membersByConvoID[convo.id] = convo.members.map {
+          MessagesSchemaRuntime.Member(
+            did: $0.did.didString(), displayName: $0.displayName, handle: $0.handle.value)
+        }
+        let extended = MessagesSchemaRuntime.ChatDirectory(
+          conversations: directory.conversations + [convo],
+          membersByConvoID: membersByConvoID,
+          currentUserDID: directory.currentUserDID
+        )
+        result.append(MessagesSchemaRuntime.conversationEntity(convo: convo, directory: extended))
+      }
     }
+    return result
   }
 
   func entities(matching string: String) async throws -> [CatbirdMessagesConversationEntity] {
-    let manager = try await MessagesSchemaRuntime.conversationManager()
-    let directory = try await MessagesSchemaRuntime.directory(manager: manager)
+    let client = try await MessagesSchemaRuntime.client()
+    let directory = try await MessagesSchemaRuntime.directory(client: client)
     let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
 
-    // Conversations arrive lastMessageAt-descending from storage. Match the
-    // title OR any member's name/handle, so "messages with Alex" resolves the
-    // conversation even when it has an explicit group title.
+    // Conversations arrive recency-ordered. Match the title OR any member's
+    // name/handle, so "messages with Alex" resolves the conversation even
+    // when it has an explicit group name.
     return directory.conversations
-      .filter { model in
+      .filter { convo in
         guard !trimmed.isEmpty else { return true }
-        if directory.title(for: model).localizedCaseInsensitiveContains(trimmed) {
+        if directory.title(for: convo).localizedCaseInsensitiveContains(trimmed) {
           return true
         }
-        return directory.members(in: model.conversationID).contains { member in
+        return directory.members(in: convo.id).contains { member in
           directory.name(for: member).localizedCaseInsensitiveContains(trimmed)
             || (directory.handle(for: member)?.localizedCaseInsensitiveContains(trimmed) ?? false)
         }
       }
-      .map { MessagesSchemaRuntime.conversationEntity(model: $0, directory: directory) }
+      .map { MessagesSchemaRuntime.conversationEntity(convo: $0, directory: directory) }
   }
 
   func suggestedEntities() async throws -> [CatbirdMessagesConversationEntity] {
@@ -315,32 +331,24 @@ struct CatbirdMessagesMessageEntity: Identifiable, Hashable, Sendable {
 
 @available(anyAppleOS 27.0, *)
 struct CatbirdMessagesMessageQuery: EntityStringQuery {
+  /// chat.bsky has no fetch-message-by-ID endpoint, so identifiers are looked
+  /// up in the recent history of the most recent conversations.
   func entities(for identifiers: [String]) async throws -> [CatbirdMessagesMessageEntity] {
-    let manager = try await MessagesSchemaRuntime.conversationManager()
-    let directory = try await MessagesSchemaRuntime.directory(manager: manager)
-    let byID = Dictionary(
-      uniqueKeysWithValues: directory.conversations.map { ($0.conversationID, $0) })
+    let client = try await MessagesSchemaRuntime.client()
+    let directory = try await MessagesSchemaRuntime.directory(client: client)
+    var remaining = Set(identifiers)
+    var found: [String: CatbirdMessagesMessageEntity] = [:]
 
-    var entities: [CatbirdMessagesMessageEntity] = []
-    for identifier in identifiers {
-      let message = try await MessagesSchemaRuntime.fetchMessage(identifier, manager: manager)
-      guard let canonicalID = try? MessagesSchemaRuntime.resolveConversationID(
-        message.conversationID,
-        in: directory
-      ) else {
-        continue
+    for convo in directory.conversations.prefix(10) where !remaining.isEmpty {
+      let messages = try await MessagesSchemaRuntime.recentMessages(
+        in: convo.id, limit: 50, client: client)
+      for message in messages where remaining.contains(message.id) {
+        remaining.remove(message.id)
+        found[message.id] = MessagesSchemaRuntime.messageEntity(
+          from: message, convo: convo, directory: directory)
       }
-      let title = byID[canonicalID].map { directory.title(for: $0) }
-      entities.append(
-        MessagesSchemaRuntime.messageEntity(
-          from: message,
-          conversationTitle: title,
-          directory: directory,
-          conversationIDOverride: canonicalID
-        )
-      )
     }
-    return entities
+    return identifiers.compactMap { found[$0] }
   }
 
   func entities(matching string: String) async throws -> [CatbirdMessagesMessageEntity] {
@@ -352,40 +360,25 @@ struct CatbirdMessagesMessageQuery: EntityStringQuery {
   }
 
   /// Siri runs these queries synchronously during a request, so both entry
-  /// points are capped: conversations arrive recency-ordered from storage, and
-  /// only the most recent few are scanned.
+  /// points are capped: conversations arrive recency-ordered, and only the
+  /// most recent few are scanned.
   private func matchingEntities(
     _ string: String,
     conversationLimit: Int,
     messagesPerConversation: Int
   ) async throws -> [CatbirdMessagesMessageEntity] {
-    let manager = try await MessagesSchemaRuntime.conversationManager()
-    let directory = try await MessagesSchemaRuntime.directory(manager: manager)
+    let client = try await MessagesSchemaRuntime.client()
+    let directory = try await MessagesSchemaRuntime.directory(client: client)
     let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard let userDID = manager.userDid else {
-      throw IntentError.notSignedIn
-    }
 
     var matchingEntities: [CatbirdMessagesMessageEntity] = []
     for convo in directory.conversations.prefix(conversationLimit) {
-      let messages = try await manager.storage.fetchMessagesForConversation(
-        convo.conversationID,
-        currentUserDID: userDID,
-        database: manager.database,
-        limit: messagesPerConversation
-      )
-
-      for message in messages {
-        let plaintext = message.plaintext ?? ""
-        if trimmed.isEmpty || plaintext.localizedCaseInsensitiveContains(trimmed) {
-          matchingEntities.append(
-            MessagesSchemaRuntime.messageEntity(
-              from: message,
-              conversationTitle: directory.title(for: convo),
-              directory: directory,
-              conversationIDOverride: convo.conversationID)
-          )
-        }
+      let messages = try await MessagesSchemaRuntime.recentMessages(
+        in: convo.id, limit: messagesPerConversation, client: client)
+      for message in messages
+      where trimmed.isEmpty || message.text.localizedCaseInsensitiveContains(trimmed) {
+        matchingEntities.append(
+          MessagesSchemaRuntime.messageEntity(from: message, convo: convo, directory: directory))
       }
     }
     return matchingEntities
@@ -443,8 +436,8 @@ extension CatbirdMessagesMessageEntity: Transferable {
 @available(anyAppleOS 27.0, *)
 struct CatbirdMessagesPersonQuery: EntityStringQuery {
   func entities(for identifiers: [String]) async throws -> [CatbirdMessagesPersonEntity] {
-    let manager = try await MessagesSchemaRuntime.conversationManager()
-    let directory = try await MessagesSchemaRuntime.directory(manager: manager)
+    let client = try await MessagesSchemaRuntime.client()
+    let directory = try await MessagesSchemaRuntime.directory(client: client)
 
     return identifiers.map { did in
       if let member = directory.member(withDID: did) {
@@ -455,8 +448,8 @@ struct CatbirdMessagesPersonQuery: EntityStringQuery {
   }
 
   func entities(matching string: String) async throws -> [CatbirdMessagesPersonEntity] {
-    let manager = try await MessagesSchemaRuntime.conversationManager()
-    let directory = try await MessagesSchemaRuntime.directory(manager: manager)
+    let client = try await MessagesSchemaRuntime.client()
+    let directory = try await MessagesSchemaRuntime.directory(client: client)
     let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
 
     // Candidates are chat members (excluding self), recency-ordered. Siri

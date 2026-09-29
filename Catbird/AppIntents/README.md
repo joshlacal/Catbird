@@ -51,17 +51,17 @@ createRecord/deleteRecord. All generated intents speak an `IntentDialog`.
 ## DirectMessages/ — Bluesky DMs (chat.bsky.convo, hand-written)
 
 `BskyConversationEntity` + Send/GetConversations/UnreadCount/MarkRead intents
-against the standalone client (chat service proxy is automatic). Deliberately
-NOT in the iOS 27 Messages App Schema — that domain is MLS-only (below), and
-ConvoView's lastMessage union rules out entity codegen.
+against the standalone client (chat service proxy is automatic). ConvoView's
+lastMessage union rules out entity codegen.
 
 ## MessagesSchema/ — iOS 27 Messages App Schema domain (hand-written)
 
 The five `@AppIntent(schema: .messages.*)` intents plus
-conversation/message/messagePerson schema entities for MLS chat.
+conversation/message/messagePerson schema entities for Bluesky DMs
+(chat.bsky.convo via the standalone client).
 The messages domain is all-or-nothing: adopting any of the five requires all
-five (Xcode build-validates). Wire protocol for edit/unsend is specced in
-`docs/MLS_CLIENT_PROTOCOL.md` §5.7–5.9.
+five (Xcode build-validates). chat.bsky has no edit/unsend, so those two intents
+fail with an explanatory error; mark-unread is likewise unsupported.
 
 Tests: `CatbirdTests/AppIntents/`.
 

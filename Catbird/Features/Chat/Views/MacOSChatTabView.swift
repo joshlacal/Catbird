@@ -339,7 +339,7 @@ struct MacOSChatContentView: View {
       }
 
       // Build participants from DB-cached profiles
-      var participants: [String: [MLSParticipantViewModel]] = [:]
+      var participants: [String: [ChatParticipant]] = [:]
       var dbProfiles: [MLSProfileEnricher.ProfileData] = []
       for members in canonicalMembersByConvoID.values {
         for member in members where member.handle != nil || member.displayName != nil {
@@ -359,7 +359,7 @@ struct MacOSChatContentView: View {
         participants[convoID] = members.map { member in
           let canonicalDID = MLSProfileEnricher.canonicalDID(member.did)
           let profile = dbProfilesByDID[canonicalDID]
-          return MLSParticipantViewModel(
+          return ChatParticipant(
             id: member.did,
             handle: profile?.handle ?? member.handle ?? member.did.split(separator: ":").last.map(String.init) ?? member.did,
             displayName: profile?.displayName ?? member.displayName,
@@ -410,12 +410,12 @@ struct MacOSChatContentView: View {
     guard !profilesByDID.isEmpty else { return }
     guard coordinatorAccountDID == userDID else { return }
 
-    var enrichedParticipants: [String: [MLSParticipantViewModel]] = [:]
+    var enrichedParticipants: [String: [ChatParticipant]] = [:]
     for (convoID, members) in membersByConvoID {
       enrichedParticipants[convoID] = members.map { member in
         let canonicalDID = MLSProfileEnricher.canonicalDID(member.did)
         let profile = profilesByDID[canonicalDID] ?? profilesByDID[member.did]
-        return MLSParticipantViewModel(
+        return ChatParticipant(
           id: member.did,
           handle: profile?.handle ?? member.handle ?? member.did.split(separator: ":").last.map(String.init) ?? member.did,
           displayName: profile?.displayName ?? member.displayName,

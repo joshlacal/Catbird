@@ -2,7 +2,10 @@
 //  MessagesSchemaIntents.swift
 //  Catbird
 //
-//  iOS 27 Messages App Schema intents for Catbird MLS chat.
+//  iOS 27 Messages App Schema intents for Bluesky direct messages.
+//  The messages schema domain is all-or-nothing (Xcode build-validates all
+//  five intents), but chat.bsky has no edit or unsend: those two intents exist
+//  to satisfy the domain and fail with an explanatory error.
 //
 
 #if os(iOS) && canImport(GeoToolbox) && compiler(>=6.4)
@@ -57,11 +60,8 @@ struct CatbirdDraftMessageSchemaIntent {
       : ""
 
     guard let destination else {
-      let manager = try await MessagesSchemaRuntime.conversationManager()
-      guard let account = manager.userDid else { throw IntentError.notSignedIn }
-      try await ChatDraftHandoff.shared.storeDurably(
-        PendingChatDraft(conversationID: nil, text: draftText), accountDID: account, database: manager.database)
       await MainActor.run {
+        ChatDraftHandoff.shared.store(PendingChatDraft(conversationID: nil, text: draftText))
         AppStateManager.shared.lifecycle.appState?.navigationManager.navigate(to: .chatTab, in: 4)
       }
       return .result(
@@ -70,25 +70,14 @@ struct CatbirdDraftMessageSchemaIntent {
             "Pick a conversation in Catbird to start your draft.\(unsupportedNote)"))
     }
 
-    let manager = try await MessagesSchemaRuntime.conversationManager()
-    let directory = try await MessagesSchemaRuntime.directory(manager: manager)
+    let client = try await MessagesSchemaRuntime.client()
+    let directory = try await MessagesSchemaRuntime.directory(client: client)
     let recipients = try MessagesSchemaRuntime.recipients(for: destination, directory: directory)
-    let target = try await MessagesSchemaRuntime.resolveDestination(
-      recipients: recipients, manager: manager, directory: directory)
-    switch target {
-    case .existing(let convoId):
-      try await ChatDraftHandoff.shared.storeDurably(
-        PendingChatDraft(conversationID: convoId, text: draftText),
-        accountDID: directory.currentUserDID, database: manager.database)
-      await MainActor.run {
-        AppStateManager.shared.lifecycle.appState?.navigationManager.navigate(to: .mlsConversation(convoId), in: 4)
-      }
-    case .recipientDraft(var draft):
-      guard !draft.submitted else {
-        throw IntentError.invalidParameter("A saved request is still resolving. Open Catbird to retry or cancel it.")
-      }
-      draft.text = draftText
-      try await MLSDirectComposeDraftStore.requestPresentation(draft, database: manager.database)
+    let convoId = try await MessagesSchemaRuntime.resolveDestination(
+      recipients: recipients, client: client, directory: directory)
+    await MainActor.run {
+      ChatDraftHandoff.shared.store(PendingChatDraft(conversationID: convoId, text: draftText))
+      AppStateManager.shared.lifecycle.appState?.navigationManager.navigate(to: .conversation(convoId), in: 4)
     }
 
     return .result(
@@ -132,65 +121,35 @@ struct CatbirdSendMessageSchemaIntent {
     }
 
     let text = try MessagesSchemaRuntime.text(from: content ?? AttributedString(""))
-    let manager = try await MessagesSchemaRuntime.conversationManager()
-    let directory = try await MessagesSchemaRuntime.directory(manager: manager)
+    let client = try await MessagesSchemaRuntime.client()
+    let directory = try await MessagesSchemaRuntime.directory(client: client)
 
     let recipients = try MessagesSchemaRuntime.recipients(for: destination, directory: directory)
-    let target = try await MessagesSchemaRuntime.resolveDestination(
-      recipients: recipients, manager: manager, directory: directory)
-    let finalConvoId: String
-    let sentMessageID: String
-    let sentAt: Date
-    switch target {
-    case .existing(let conversationID):
-      guard try await MLSDirectRequestAccess.allowsOrdinaryEffects(manager: manager, conversationID: conversationID) else {
-        throw IntentError.invalidParameter("This request must be accepted and ready before sending another message.")
-      }
-      let result = try await manager.sendMessage(convoId: conversationID, plaintext: text)
-      finalConvoId = conversationID
-      sentMessageID = result.messageId
-      sentAt = result.receivedAt.date
-    case .recipientDraft(var draft):
-      guard !draft.submitted || draft.text == text else {
-        throw IntentError.invalidParameter("A different saved request is still resolving. Open Catbird to retry or cancel it.")
-      }
-      draft.text = text
-      draft.submitted = true
-      try await MLSDirectComposeDraftStore.validateText(text)
-      try await MLSDirectComposeDraftStore.save(draft, database: manager.database)
-      let outcome = try await manager.startDirectRequest(input: DirectRequestInput(
-        draftId: draft.id.uuidString.lowercased(), recipientDid: draft.recipientDID, text: text, invitation: nil))
-      guard case .requestSent(let conversationID, let messageID, _) = outcome else {
-        try await MLSDirectComposeDraftStore.requestPresentation(draft, database: manager.database)
-        throw IntentError.serviceUnavailable("Your request is saved. Open Catbird to check its outcome or retry the same request.")
-      }
-      finalConvoId = conversationID
-      sentMessageID = messageID
-      sentAt = Date()
-      try await MLSDirectComposeDraftStore.archive(draft, database: manager.database)
-    }
+    let finalConvoId = try await MessagesSchemaRuntime.resolveDestination(
+      recipients: recipients, client: client, directory: directory)
+    let sent = try unwrapIntentResponse(
+      await client.chat.bsky.convo.sendMessage(
+        input: ChatBskyConvoSendMessage.Input(
+          convoId: finalConvoId,
+          message: ChatBskyConvoDefs.MessageInput(
+            text: text, facets: nil, embed: nil, replyTo: nil))))
+    let sentMessageID = sent.id
+    let sentAt = sent.sentAt.date
 
     // Sender must be the user's human name (never a raw DID) with isMe set —
     // Siri surfaces this entity in follow-up conversation.
     let selfDID = directory.currentUserDID
-    let selfName: String
-    if let selfMember = directory.member(withDID: selfDID) {
-      selfName = directory.name(for: selfMember)
-    } else {
-      let resolved = await MessagesSchemaRuntime.ProfileNameCache.shared.resolve(dids: [selfDID])
-      selfName = resolved[selfDID]?.displayName
-        ?? resolved[selfDID]?.handle.map { "@\($0)" }
-        ?? String(selfDID.suffix(8))
-    }
+    let selfName = directory.member(withDID: selfDID).map { directory.name(for: $0) }
+      ?? String(selfDID.suffix(8))
     let sender = CatbirdMessagesPersonEntity(id: selfDID, displayName: selfName, isMe: true)
 
     let recipientEntities = recipients.map {
       CatbirdMessagesPersonEntity(id: $0.did, displayName: $0.displayName)
     }
-    let convoModel = directory.conversations.first { $0.conversationID == finalConvoId }
+    let convoModel = directory.conversations.first { $0.id == finalConvoId }
     let convoTitle = convoModel.map { directory.title(for: $0) }
       ?? recipients.map(\.displayName).joined(separator: ", ")
-    let preview = AttributedString("MLS Chat")
+    let preview = AttributedString(text)
 
     let convoEntity = CatbirdMessagesConversationEntity(
       id: finalConvoId,
@@ -239,23 +198,8 @@ struct CatbirdEditSentMessageSchemaIntent {
   @Parameter(title: "Content")
   var content: AttributedString
 
-  func perform() async throws -> some IntentResult & ProvidesDialog {
-    let text = try MessagesSchemaRuntime.text(from: content)
-    let manager = try await MessagesSchemaRuntime.conversationManager()
-    let canonicalID = try await MessagesSchemaRuntime.resolveConversationID(
-      message.conversation.id,
-      manager: manager
-    )
-    guard try await MLSDirectRequestAccess.allowsOrdinaryEffects(manager: manager, conversationID: canonicalID) else {
-      throw IntentError.invalidParameter("This request must be accepted and ready before editing messages.")
-    }
-    _ = try await manager.editMessage(
-      convoId: canonicalID,
-      messageId: message.id,
-      newText: text
-    )
-
-    return .result(dialog: "Edited.")
+  func perform() async throws -> IntentResultContainer<Never, Never, Never, IntentDialog> {
+    throw IntentError.invalidParameter("Bluesky direct messages can't be edited.")
   }
 }
 
@@ -267,18 +211,8 @@ struct CatbirdUnsendMessageSchemaIntent {
   @Parameter(title: "Message")
   var message: CatbirdMessagesMessageEntity
 
-  func perform() async throws -> some IntentResult & ProvidesDialog {
-    let manager = try await MessagesSchemaRuntime.conversationManager()
-    let canonicalID = try await MessagesSchemaRuntime.resolveConversationID(
-      message.conversation.id,
-      manager: manager
-    )
-    _ = try await manager.unsendMessage(
-      convoId: canonicalID,
-      messageId: message.id
-    )
-
-    return .result(dialog: "Unsent.")
+  func perform() async throws -> IntentResultContainer<Never, Never, Never, IntentDialog> {
+    throw IntentError.invalidParameter("Bluesky direct messages can't be unsent.")
   }
 }
 
@@ -294,16 +228,14 @@ struct CatbirdSetMessageReadStatusSchemaIntent {
   var isRead: Bool
 
   func perform() async throws -> some IntentResult & ProvidesDialog {
-    let manager = try await MessagesSchemaRuntime.conversationManager()
-    let canonicalID = try await MessagesSchemaRuntime.resolveConversationID(
-      message.conversation.id,
-      manager: manager
-    )
-    try await manager.setMessageReadStatus(
-      convoId: canonicalID,
-      messageId: message.id,
-      read: isRead
-    )
+    guard isRead else {
+      throw IntentError.invalidParameter("Bluesky direct messages can't be marked unread.")
+    }
+    let client = try await MessagesSchemaRuntime.client()
+    _ = try unwrapIntentResponse(
+      await client.chat.bsky.convo.updateRead(
+        input: ChatBskyConvoUpdateRead.Input(
+          convoId: message.conversation.id, messageId: message.id)))
 
     return .result(dialog: isRead ? "Marked read." : "Marked unread.")
   }

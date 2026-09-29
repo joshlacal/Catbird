@@ -206,12 +206,7 @@ var id: String {
       threadSummaryTask = nil
     }
     .sheet(isPresented: $postState.showingReportView) {
-      if case .circle(let circle) = visibilityContext {
-        CircleReportView(
-          post: postState.currentPost,
-          circle: circle
-        )
-      } else if let client = appState.atProtoClient {
+      if let client = appState.atProtoClient {
         let reportingService = ReportingService(client: client)
         let subject = contextMenuViewModel.createReportSubject()
         let description = contextMenuViewModel.getReportDescription()
@@ -415,22 +410,6 @@ var id: String {
           postEllipsisMenuView
         }
         .padding(.horizontal, PostView.baseUnit)
-
-        if case .circle(let circle) = visibilityContext {
-          HStack(spacing: 4) {
-            Image(systemName: "person.2.circle.fill")
-              .font(.caption2)
-              .foregroundStyle(Color.accentColor)
-            Text("Circle · \(circle.name)")
-              .appCaption()
-              .fontWeight(.medium)
-              .foregroundStyle(Color.accentColor)
-          }
-          .padding(.horizontal, PostView.baseUnit)
-          .padding(.top, 2)
-          .accessibilityElement(children: .combine)
-          .accessibilityLabel("Circle: \(circle.name)")
-        }
 
         if let grandparentAuthor = grandparentAuthor {
           replyIndicatorView(grandparentAuthor: grandparentAuthor)
@@ -1440,53 +1419,6 @@ enum PostViewError {
 }
 
 
-extension PostView {
-  /// Minimal production Circle row factory from a generated `BlueCatbirdCircleDefs.FeedItem`.
-  public static func circleRow(
-    item: BlueCatbirdCircleDefs.FeedItem,
-    path: Binding<NavigationPath>,
-    appState: AppState,
-    isParentPost: Bool = false,
-    isSelectable: Bool = true,
-    avatarScale: PostAvatarScale = .regular
-  ) -> PostView {
-    PostView(
-      post: item.post.post,
-      grandparentAuthor: nil,
-      isParentPost: isParentPost,
-      isSelectable: isSelectable,
-      path: path,
-      appState: appState,
-      avatarScale: avatarScale,
-      visibilityContext: .circle(item.circle)
-    )
-  }
-
-  /// Minimal production Circle detail factory.
-  public static func circleDetail(
-    post: AppBskyFeedDefs.PostView,
-    circle: CircleSummary,
-    path: Binding<NavigationPath>,
-    appState: AppState,
-    grandparentAuthor: AppBskyActorDefs.ProfileViewBasic? = nil,
-    isParentPost: Bool = false,
-    isSelectable: Bool = true,
-    hasVisibleThreadContext: Bool = false,
-    avatarScale: PostAvatarScale = .regular
-  ) -> PostView {
-    PostView(
-      post: post,
-      grandparentAuthor: grandparentAuthor,
-      isParentPost: isParentPost,
-      isSelectable: isSelectable,
-      path: path,
-      appState: appState,
-      hasVisibleThreadContext: hasVisibleThreadContext,
-      avatarScale: avatarScale,
-      visibilityContext: .circle(circle)
-    )
-  }
-}
 #Preview("PostView") {
   AsyncPreviewDataContent { appState in
     await PreviewData.firstPostView(from: appState)

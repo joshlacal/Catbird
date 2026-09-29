@@ -22,7 +22,6 @@ struct UnifiedProfileView: View {
   @State private var isShowingAccountSwitcher = false
   @State private var isShowingUnblockConfirmation = false
   @State private var isShowingBlockSheet = false
-  @State private var isShowingLiveStatusEditor = false
   @State private var isShowingLabelsOnMe = false
   @State private var isShowingMuteConfirmation = false
   @State private var isShowingAddToListSheet = false
@@ -30,10 +29,6 @@ struct UnifiedProfileView: View {
   @State private var pendingDedicatedProposal: CopilotProposal?
   @State private var isShowingSmartFilterEditor = false
   @State private var isBlocking = false
-  /// Conversations the current user would auto-leave if they block this profile.
-  /// Populated just before presenting the block-confirmation alert so the
-  /// dialog can warn "you'll leave N shared conversations".
-  @State private var blockAffectedConvos: [MLSConversationSnapshot] = []
   @State private var isMuting = false
   @State private var profileForAddToList: AppBskyActorDefs.ProfileViewDetailed?
   @State private var hasAttemptedLoad = false
@@ -356,17 +351,9 @@ struct UnifiedProfileView: View {
     let previousState = isBlocking
     isBlocking = blocking
     do {
-      if let coord = appState.mlsBlockCoordinator {
-        if blocking {
-          try await coord.block(did: did)
-        } else {
-          try await coord.unblock(did: did)
-        }
-      } else {
-        let success = blocking ? try await appState.block(did: did) : try await appState.unblock(did: did)
-        if !success {
-          isBlocking = previousState
-        }
+      let success = blocking ? try await appState.block(did: did) : try await appState.unblock(did: did)
+      if !success {
+        isBlocking = previousState
       }
     } catch {
       isBlocking = previousState
@@ -374,19 +361,11 @@ struct UnifiedProfileView: View {
     }
   }
 
-  /// Compute the list of MLS conversations that would be left when blocking
-  /// the displayed profile, then present the confirmation sheet or alert.
+  /// Present the block confirmation sheet or the unblock alert.
   private func prepareBlockConfirmation() async {
     if isBlocking {
       isShowingUnblockConfirmation = true
     } else {
-      if let profile = viewModel.profile,
-         let coord = appState.mlsBlockCoordinator {
-        let did = profile.did.didString()
-        blockAffectedConvos = await coord.affectedConversations(for: did)
-      } else {
-        blockAffectedConvos = []
-      }
       isShowingBlockSheet = true
     }
   }
@@ -767,19 +746,11 @@ struct UnifiedProfileView: View {
           )
           BlockAccountView(
             profile: basic,
-            mlsAffectedConvoCount: blockAffectedConvos.count,
             onConfirmBlock: {
               await performBlock()
             }
           )
         }
-      }
-      .sheet(isPresented: $isShowingLiveStatusEditor, onDismiss: {
-        Task {
-          await viewModel.loadProfile()
-        }
-      }) {
-        LiveStatusEditorSheet()
       }
       .sheet(isPresented: $isShowingLabelsOnMe) {
         if let profile = viewModel.profile,
@@ -849,19 +820,6 @@ struct UnifiedProfileView: View {
       profileShareLink
 
       Divider()
-
-      Button {
-        Task {
-          await appState.liveStatusManager.fetchCurrentStatus()
-          isShowingLiveStatusEditor = true
-        }
-      } label: {
-        if appState.liveStatusManager.hasActiveLiveStatus {
-          Label("Edit Live", systemImage: "antenna.radiowaves.left.and.right")
-        } else {
-          Label("Go Live", systemImage: "antenna.radiowaves.left.and.right")
-        }
-      }
 
       Button {
         isShowingLabelsOnMe = true

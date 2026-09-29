@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		21094CF42EBD09010084BFBD /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = 21094CF32EBD09010084BFBD /* GRDB */; };
+		B1A7E0000000000000000001 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = B1A7E0000000000000000002 /* GRDB */; };
 		21196F592DC25F5B00662CC3 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 21196F102DC1115900662CC3 /* WidgetKit.framework */; };
 		21196F5A2DC25F5B00662CC3 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 21196F122DC1115900662CC3 /* SwiftUI.framework */; };
 		212D4B462ED1FE740036E016 /* NotificationServiceExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 212D4B3F2ED1FE730036E016 /* NotificationServiceExtension.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
@@ -186,13 +187,6 @@
 			);
 			target = 212E94102D60132A00D3E1DD /* CatbirdTests */;
 		};
-		212D4B4F2ED205D00036E016 /* Exceptions for "Catbird" folder in "NotificationServiceExtension" target */ = {
-			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
-			membershipExceptions = (
-				Services/MLS/CursorStore.swift,
-			);
-			target = 212D4B3E2ED1FE730036E016 /* NotificationServiceExtension */;
-		};
 		21A1B3C42F800000DEADBEEF /* Exceptions for "CatbirdTests" folder in "CatbirdTests" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
@@ -284,7 +278,6 @@
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
 				21DDCCF92DD2AD59004947CD /* Exceptions for "Catbird" folder in "Catbird" target */,
-				212D4B4F2ED205D00036E016 /* Exceptions for "Catbird" folder in "NotificationServiceExtension" target */,
 			);
 			path = Catbird;
 			sourceTree = "<group>";
@@ -327,6 +320,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				21A0C0DE300C0DE100000003 /* PetrelCatbird in Frameworks */,
+				B1A7E0000000000000000001 /* GRDB in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -461,6 +455,7 @@
 			name = NotificationServiceExtension;
 			packageProductDependencies = (
 				21A0C0DE300C0DE100000004 /* PetrelCatbird */,
+				B1A7E0000000000000000002 /* GRDB */,
 			);
 			productName = NotificationServiceExtension;
 			productReference = 212D4B3F2ED1FE730036E016 /* NotificationServiceExtension.appex */;
@@ -1733,6 +1728,11 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		B1A7E0000000000000000002 /* GRDB */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 21094CF22EBD09010084BFBD /* XCRemoteSwiftPackageReference "GRDB.swift" */;
+			productName = GRDB;
+		};
 		21094CF32EBD09010084BFBD /* GRDB */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 21094CF22EBD09010084BFBD /* XCRemoteSwiftPackageReference "GRDB.swift" */;

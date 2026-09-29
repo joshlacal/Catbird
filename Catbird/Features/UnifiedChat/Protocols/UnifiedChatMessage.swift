@@ -2,10 +2,10 @@ import Foundation
 
 // MARK: - UnifiedChatMessage
 
-/// Protocol that unifies Bluesky Chat and MLS Chat messages
+/// Protocol describing a chat message rendered by the unified chat UI
 protocol UnifiedChatMessage: Identifiable, Hashable, Sendable {
   var id: String { get }
-  /// Identity used for collection-view diffing. Defaults to `id`. MLS keeps
+  /// Identity used for collection-view diffing. Defaults to `id`. Sources can keep
   /// one stable item identity across the optimistic-pending → server-confirmed
   /// handover so the bubble reconfigures in place instead of being deleted and
   /// re-inserted (which flickers).

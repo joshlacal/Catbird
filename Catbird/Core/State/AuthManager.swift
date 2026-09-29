@@ -221,15 +221,6 @@ public enum AuthLogEvent: Sendable, Equatable {
   case accountSwitchClientUnavailable
   case accountSwitchAlreadyActive
   case accountSwitchProceeding
-  case accountSwitchMLSCleanupStarted
-  case accountSwitchMLSContextClosed
-  case accountSwitchMLSCoreShutdownSuccess
-  case accountSwitchMLSCoreShutdownWarning
-  case accountSwitchMLSCoreShutdownTimeout
-  case accountSwitchMLSCoreShutdownFailed
-  case accountSwitchMLSCleanupTimedOut
-  case accountSwitchDatabasePrewarmed
-  case accountSwitchDatabasePrewarmFailed
   case accountSwitchClientSwitchCalled
   case accountSwitchClientSwitchCompleted
   case accountSwitchSessionInvalid
@@ -355,15 +346,6 @@ public enum AuthLogEvent: Sendable, Equatable {
     case .accountSwitchClientUnavailable: "AUTH_SWITCH_CLIENT_UNAVAILABLE"
     case .accountSwitchAlreadyActive: "AUTH_SWITCH_ALREADY_ACTIVE"
     case .accountSwitchProceeding: "AUTH_SWITCH_PROCEEDING"
-    case .accountSwitchMLSCleanupStarted: "AUTH_SWITCH_MLS_CLEANUP_STARTED"
-    case .accountSwitchMLSContextClosed: "AUTH_SWITCH_MLS_CONTEXT_CLOSED"
-    case .accountSwitchMLSCoreShutdownSuccess: "AUTH_SWITCH_MLS_CORE_SHUTDOWN_SUCCESS"
-    case .accountSwitchMLSCoreShutdownWarning: "AUTH_SWITCH_MLS_CORE_SHUTDOWN_WARNING"
-    case .accountSwitchMLSCoreShutdownTimeout: "AUTH_SWITCH_MLS_CORE_SHUTDOWN_TIMEOUT"
-    case .accountSwitchMLSCoreShutdownFailed: "AUTH_SWITCH_MLS_CORE_SHUTDOWN_FAILED"
-    case .accountSwitchMLSCleanupTimedOut: "AUTH_SWITCH_MLS_CLEANUP_TIMED_OUT"
-    case .accountSwitchDatabasePrewarmed: "AUTH_SWITCH_DB_PREWARMED"
-    case .accountSwitchDatabasePrewarmFailed: "AUTH_SWITCH_DB_PREWARM_FAILED"
     case .accountSwitchClientSwitchCalled: "AUTH_SWITCH_CLIENT_SWITCH_CALLED"
     case .accountSwitchClientSwitchCompleted: "AUTH_SWITCH_CLIENT_SWITCH_COMPLETED"
     case .accountSwitchSessionInvalid: "AUTH_SWITCH_SESSION_INVALID"
@@ -770,21 +752,7 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
         false
       }
 
-    let departingDID = did ?? state.userDID
-    if let departingDID {
-      NotificationCenter.default.post(
-        name: .circleAccountInvalidated,
-        object: nil,
-        userInfo: ["accountDID": departingDID]
-      )
-    }
-
     updateState(.unauthenticated)
-    if let departingDID {
-      await CircleFeedCache.shared.purge(accountDID: departingDID)
-      await CircleMediaLoader.shared.purge(accountDID: departingDID)
-      await CircleNotificationCache.shared.purge(accountDID: departingDID)
-    }
     client = nil
 
     if wasActiveAccount {
@@ -899,7 +867,7 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
       #if targetEnvironment(simulator)
         let accessGroup: String? = nil
       #else
-        let accessGroup: String? = MLSKeychainManager.resolvedAccessGroup(
+        let accessGroup: String? = KeychainAccessGroup.resolved(
           suffix: "blue.catbird.shared")
       #endif
 
@@ -1210,7 +1178,7 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
       #if targetEnvironment(simulator)
         let accessGroup: String? = nil
       #else
-        let accessGroup: String? = MLSKeychainManager.resolvedAccessGroup(
+        let accessGroup: String? = KeychainAccessGroup.resolved(
           suffix: "blue.catbird.shared")
       #endif
 
@@ -1357,7 +1325,7 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
     #if targetEnvironment(simulator)
       let accessGroup: String? = nil
     #else
-      let accessGroup: String? = MLSKeychainManager.resolvedAccessGroup(
+      let accessGroup: String? = KeychainAccessGroup.resolved(
         suffix: "blue.catbird.shared")
     #endif
     
@@ -1723,31 +1691,15 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
   @MainActor
   func logout(isManual: Bool = false) async {
     logger.info(.logoutStarted)
-    let departingDID = state.userDID
     isAuthenticationCancelled = false
     cancelInFlightPermissionUpgrade()
     updateState(.unauthenticated)
 
-    if let departingDID {
-      NotificationCenter.default.post(
-        name: .circleAccountInvalidated,
-        object: nil,
-        userInfo: ["accountDID": departingDID]
-      )
-    }
     // Cleanup notifications before logging out
     Task {
       if case .authenticated(let appState) = AppStateManager.shared.lifecycle {
         await appState.notificationManager.cleanupNotifications(previousClient: client)
       }
-    }
-
-    // Purge memory-only Circle caches for the logged-out account so a future
-    // login never reuses a previous account's permissioned responses.
-    if let departingDID {
-      await CircleFeedCache.shared.purge(accountDID: departingDID)
-      await CircleMediaLoader.shared.purge(accountDID: departingDID)
-      await CircleNotificationCache.shared.purge(accountDID: departingDID)
     }
 
     // Note: AppStateManager calls this method, so we don't call back to avoid infinite loop
@@ -2432,18 +2384,12 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
     )
   }
 
-  /// Remove an account completely (including stored handle and on-disk/keychain MLS data)
+  /// Remove an account completely (including stored handle and cached state)
   @MainActor
   func removeAccount(did: String) async throws {
     logger.info(.accountRemovalStarted)
 
-    NotificationCenter.default.post(
-      name: .circleAccountInvalidated,
-      object: nil,
-      userInfo: ["accountDID": did]
-    )
-
-    // Clean up cached AppState and completely destroy all persistent MLS files, databases, and Keychain materials
+    // Clean up cached AppState
     try await AppStateManager.shared.removeAccount(did)
 
     removeStoredHandle(for: did)
@@ -2459,10 +2405,6 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
       }
     }
 
-    // Purge memory-only Circle caches for the removed account.
-    await CircleFeedCache.shared.purge(accountDID: did)
-    await CircleMediaLoader.shared.purge(accountDID: did)
-    await CircleNotificationCache.shared.purge(accountDID: did)
     await refreshAvailableAccounts()
   }
 
@@ -2570,7 +2512,7 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
     #if targetEnvironment(simulator)
       let accessGroup: String? = nil
     #else
-      let accessGroup: String? = MLSKeychainManager.resolvedAccessGroup(
+      let accessGroup: String? = KeychainAccessGroup.resolved(
         suffix: "blue.catbird.shared")
     #endif
 
@@ -2698,112 +2640,6 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
     logger.debug(.accountSwitchProceeding)
     isSwitchingAccount = true
     cancelInFlightPermissionUpgrade()
-    // ═══════════════════════════════════════════════════════════════════════════
-    // CRITICAL FIX (2024-12): Close current user's MLS databases before switching
-    // ═══════════════════════════════════════════════════════════════════════════
-    //
-    // BOTH databases must be properly closed and checkpointed BEFORE opening
-    // the new user's database:
-    //
-    // 1. **MLS FFI Context (Rust layer)** - Contains OpenMLS cryptographic state
-    //    - Secret tree, epoch keys, ratchet state
-    //    - Uses its own SQLite database (via rusqlite)
-    //    - If not flushed: SecretReuseError on reload (ratchet advanced but not persisted)
-    //
-    // 2. **MLSGRDBManager (Swift layer)** - Contains message cache and metadata
-    //    - Decrypted plaintexts, conversation records
-    //    - Uses GRDB/SQLCipher
-    //    - If not checkpointed: WAL grows unbounded, "SQLite error 7"
-    //
-    // Without proper closing of BOTH:
-    // - WAL files grow unbounded (no checkpoint)
-    // - File descriptors exhausted ("SQLite error 7")
-    // - HMAC verification fails (reading wrong user's WAL)
-    // - SecretReuseError (MLS ratchet advanced in memory but not persisted)
-    //
-    // ═══════════════════════════════════════════════════════════════════════════
-    if case .authenticated(let currentDid) = state {
-      // ═══════════════════════════════════════════════════════════════════════════
-      // Use MLSShutdownCoordinator for proper shutdown sequence
-      // ═══════════════════════════════════════════════════════════════════════════
-      // The coordinator enforces the correct order:
-      // 1. Close FFI context (flush Rust ratchet state)
-      // 2. Checkpoint WAL (flush Swift database writes)
-      // 3. Close Swift DB (close GRDB pool)
-      // 4. Sleep 200ms (let OS reclaim mlocked memory)
-      //
-      // This prevents SQLite error 21, SecretReuseError, and HMAC check failures.
-      // ═══════════════════════════════════════════════════════════════════════════
-
-      logger.info(.accountSwitchMLSCleanupStarted)
-
-      // DEFENSIVE TIMEOUT: Wrap entire MLS cleanup in 10-second hard timeout
-      // If any operation hangs, we force ahead. Better degraded MLS than frozen app.
-      let mlsCleanupOk = await withTaskGroup(of: Bool.self) { group in
-        group.addTask {
-          // First bump generation to invalidate stale tasks
-          await MLSClient.shared.bumpGeneration(for: currentDid)
-
-          // Close app-layer MLSClient context (separate from core package)
-          let ffiClosed = await MLSClient.shared.closeContext(for: currentDid)
-          if ffiClosed {
-            self.logger.info(.accountSwitchMLSContextClosed)
-          }
-
-          // Use the centralized shutdown coordinator (single attempt, no retries)
-          let result = await MLSShutdownCoordinator.shared.shutdown(
-            for: currentDid, databaseManager: .shared, timeout: 5.0)
-
-          switch result {
-          case .success:
-            self.logger.info(.accountSwitchMLSCoreShutdownSuccess)
-          case .successWithWarnings:
-            self.logger.warning(.accountSwitchMLSCoreShutdownWarning)
-          case .timedOut:
-            self.logger.warning(.accountSwitchMLSCoreShutdownTimeout)
-          case .failed:
-            self.logger.error(.accountSwitchMLSCoreShutdownFailed)
-          }
-          return true
-        }
-        group.addTask {
-          try? await Task.sleep(nanoseconds: 10_000_000_000)  // 10 second hard timeout
-          return false
-        }
-        let result = await group.next() ?? false
-        group.cancelAll()
-        return result
-      }
-
-      if !mlsCleanupOk {
-        logger.critical(.accountSwitchMLSCleanupTimedOut)
-        // Don't abort - force ahead. User can restart if MLS is broken.
-      }
-    }
-
-    // Purge memory-only Circle caches for the previous account so the target
-    // account never reuses the prior account's permissioned responses.
-    if let previousDID = state.userDID, previousDID != targetDID {
-      NotificationCenter.default.post(
-        name: .circleAccountInvalidated,
-        object: nil,
-        userInfo: ["accountDID": previousDID]
-      )
-      await CircleFeedCache.shared.purge(accountDID: previousDID)
-      await CircleMediaLoader.shared.purge(accountDID: previousDID)
-      await CircleNotificationCache.shared.purge(accountDID: previousDID)
-    }
-
-    // Prewarm the target account's database now that the previous account is fully drained.
-    // Set the target as active BEFORE prewarming to avoid OOM-blocking rejection.
-    do {
-      await MLSGRDBManager.shared.setActiveUser(targetDID)
-      _ = try await MLSGRDBManager.shared.getDatabasePool(for: targetDID)
-      logger.debug(.accountSwitchDatabasePrewarmed)
-    } catch {
-      logger.debug(.accountSwitchDatabasePrewarmFailed)
-    }
-
     cancelInFlightPermissionUpgrade()
     do {
       logger.debug(.accountSwitchProceeding)
@@ -2814,7 +2650,6 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
         let (resolvedDID, resolvedHandle) = try await override(targetDID)
         self.handle = resolvedHandle
         updateState(.authenticated(userDID: resolvedDID))
-        MLSNotificationCoordinator.updateActiveUserDID(resolvedDID)
         logger.info(.accountSwitchSuccessful)
         isSwitchingAccount = false
         await refreshAvailableAccounts()
@@ -2858,7 +2693,6 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
 
       logger.debug(.stateUpdated)
       updateState(.authenticated(userDID: newDid))
-      MLSNotificationCoordinator.updateActiveUserDID(newDid)
 
       logger.info(.accountSwitchSuccessful)
     } catch {
@@ -3225,7 +3059,6 @@ enum AuthError: Error, LocalizedError {
   /// Account switch is already in progress - prevents re-entrancy
   case accountSwitchInProgress
   /// Database drain failed during account switch; do not proceed to avoid corruption.
-  case databaseDrainFailed
   /// Received an empty, DID-formatted, or malformed handle.
   case invalidHandle
 
@@ -3253,8 +3086,6 @@ enum AuthError: Error, LocalizedError {
       return "Received an invalid account identifier"
     case .accountSwitchInProgress:
       return "Please wait for the current account switch to complete"
-    case .databaseDrainFailed:
-      return "Could not safely close the database. Please restart the app and try again."
     case .invalidHandle:
       return "Received an invalid handle"
     }
@@ -3284,9 +3115,6 @@ enum AuthError: Error, LocalizedError {
       return "An unexpected error occurred during authentication."
     case .invalidUserDID:
       return "The authentication response did not include a usable account identifier."
-    case .databaseDrainFailed:
-      return
-        "The app couldn’t acquire exclusive access to the encrypted database to flush and close it safely."
     case .invalidHandle:
       return "The handle is empty, malformed, or formatted as a DID."
     default:
@@ -3320,8 +3148,6 @@ enum AuthError: Error, LocalizedError {
       return "Sign in again to re-establish a valid account session."
     case .accountSwitchInProgress:
       return "Wait a moment for the current account switch to finish, then try again."
-    case .databaseDrainFailed:
-      return "Restart the app, then try switching accounts again."
     case .invalidHandle:
       return "Please check the handle format and try again."
     default:
@@ -3341,7 +3167,6 @@ extension AuthError: Equatable {
       (.cancelled, .cancelled),
       (.invalidUserDID, .invalidUserDID),
       (.accountSwitchInProgress, .accountSwitchInProgress),
-      (.databaseDrainFailed, .databaseDrainFailed),
       (.invalidHandle, .invalidHandle):
       return true
     case (.badResponse(let l), .badResponse(let r)):

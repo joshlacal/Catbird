@@ -2,9 +2,9 @@
 //  MessagesSchemaRuntime.swift
 //  Catbird
 //
-//  Runtime bridge for iOS 27 Messages App Schema intents. MLS mutations must go
-//  through the live app-state-owned manager because they depend on local device
-//  keys, storage, and recovery state.
+//  Runtime bridge for iOS 27 Messages App Schema intents, backed by Bluesky
+//  direct messages (chat.bsky.convo). All calls go through the standalone
+//  IntentClientProvider client, so they work without the app UI running.
 //
 
 #if os(iOS) && canImport(GeoToolbox) && compiler(>=6.4)
@@ -12,34 +12,13 @@
 import AppIntents
 import Foundation
 import Petrel
-import PetrelCatbird
 import LinkPresentation
 import GeoToolbox
 
 @available(anyAppleOS 27.0, *)
 enum MessagesSchemaRuntime {
-  static func conversationManager() async throws -> MLSConversationManager {
-    // Background intent launches run the app's init path, but lifecycle.appState
-    // is populated asynchronously — poll briefly instead of failing the intent
-    // the instant it's still nil.
-    let deadline = ContinuousClock.now.advanced(by: .seconds(10))
-    var appState = await MainActor.run { AppStateManager.shared.lifecycle.appState }
-    while appState == nil, ContinuousClock.now < deadline {
-      try? await Task.sleep(for: .milliseconds(250))
-      appState = await MainActor.run { AppStateManager.shared.lifecycle.appState }
-    }
-
-    guard let appState else {
-      throw IntentError.notSignedIn
-    }
-
-    guard let manager = await appState.getMLSConversationManager(timeout: 15.0) else {
-      throw IntentError.serviceUnavailable(
-        "Catbird's secure chat service is still starting. Open Catbird and try again."
-      )
-    }
-
-    return manager
+  static func client() async throws -> ATProtoClient {
+    try await IntentClientProvider.shared.client(for: IntentAccountResolver.activeDID())
   }
 
   static func text(from attributedString: AttributedString) throws -> String {
@@ -105,7 +84,7 @@ enum MessagesSchemaRuntime {
 
   /// First chat member (recency-ordered, excluding self) whose resolved name
   /// or handle contains `name`, case-insensitively.
-  static func member(matchingName name: String, in directory: ChatDirectory) -> MLSMemberModel? {
+  static func member(matchingName name: String, in directory: ChatDirectory) -> Member? {
     let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return nil }
     return directory.recipientCandidates().first { member in
@@ -138,104 +117,75 @@ enum MessagesSchemaRuntime {
     return nil
   }
 
-  enum ComposeDestination {
-    case existing(String)
-    case recipientDraft(MLSDirectComposeDraft)
-  }
-
-  /// Read-only resolution plus a local draft. No destination lookup creates MLS state.
+  /// Existing conversation with exactly these recipients, else the
+  /// conversation chat.bsky returns for the member set (created on demand).
   static func resolveDestination(
     recipients: [(did: String, displayName: String)],
-    manager: MLSConversationManager,
+    client: ATProtoClient,
     directory: ChatDirectory
-  ) async throws -> ComposeDestination {
+  ) async throws -> String {
     guard !recipients.isEmpty else { throw IntentError.invalidParameter("No recipients specified.") }
-    if let existing = conversationID(matching: recipients.map(\.did),
+    if let existing = conversationID(
+      matching: recipients.map(\.did),
       in: directory.membersByConvoID.mapValues { $0.map(\.did) },
-      conversationOrder: directory.conversations.map(\.conversationID), selfDID: directory.currentUserDID) {
-      guard isCanonicalStableID(existing) else { throw MLSConversationIdentityBoundary.Error.invalidStableID(existing) }
-      return .existing(existing)
+      conversationOrder: directory.conversations.map(\.id),
+      selfDID: directory.currentUserDID
+    ) {
+      return existing
     }
-    guard recipients.count == 1 else {
-      throw IntentError.invalidParameter("Create a group in Catbird before sending to multiple recipients.")
+    let members = try recipients.map { try DID(didString: $0.did) }
+    let (code, data) = try await client.chat.bsky.convo.getConvoForMembers(
+      input: ChatBskyConvoGetConvoForMembers.Parameters(members: members))
+    guard (200..<300).contains(code), let convo = data?.convo else {
+      let names = recipients.map(\.displayName).joined(separator: ", ")
+      throw IntentError.invalidParameter("\(names) can't receive direct messages right now.")
     }
-    return .recipientDraft(try await MLSDirectComposeDraftStore.open(
-      accountDID: directory.currentUserDID, recipientDID: recipients[0].did, database: manager.database))
+    return convo.id
   }
 
-  private static func isCanonicalStableID(_ value: String) -> Bool {
-    MLSConversationIdentityBoundary.isCanonicalStableID(value)
+  // MARK: - Name directory
+
+  struct Member: Sendable, Equatable {
+    let did: String
+    let displayName: String?
+    let handle: String?
   }
 
-  // MARK: - Name directory (GRDB-backed, profile-enriched)
-
-  /// Process-lifetime cache of DID → (displayName, handle) resolved via
-  /// app.bsky.actor.getProfiles. Member rows in GRDB don't carry names, so
-  /// without this Siri would try to match spoken names against DIDs.
-  actor ProfileNameCache {
-    static let shared = ProfileNameCache()
-    private var names: [String: (displayName: String?, handle: String?)] = [:]
-
-    func resolve(dids: [String]) async -> [String: (displayName: String?, handle: String?)] {
-      let missing = dids.filter { names[$0] == nil }
-      let client = await MainActor.run {
-        AppStateManager.shared.lifecycle.appState?.atProtoClient
-      }
-      if !missing.isEmpty, let client {
-        for start in stride(from: 0, to: missing.count, by: 25) {
-          let chunk = Array(missing[start..<min(start + 25, missing.count)])
-          guard
-            let actors = try? chunk.map({ try ATIdentifier(string: $0) }),
-            let (code, data) = try? await client.app.bsky.actor.getProfiles(
-              input: AppBskyActorGetProfiles.Parameters(actors: actors)),
-            (200...299).contains(code), let profiles = data?.profiles
-          else { continue }
-          for profile in profiles {
-            names[profile.did.didString()] = (profile.displayName, profile.handle.value)
-          }
-        }
-      }
-      return names.filter { dids.contains($0.key) }
-    }
-  }
-
-  /// Snapshot of every active conversation + its members, with resolved
-  /// handles/display names. This is what Siri entity resolution matches
-  /// against, so names here must be human names — never raw DIDs.
+  /// Snapshot of recent conversations + their members. This is what Siri
+  /// entity resolution matches against, so names here must be human names —
+  /// never raw DIDs.
   struct ChatDirectory {
-    let conversations: [MLSConversationModel]
-    let membersByConvoID: [String: [MLSMemberModel]]
+    let conversations: [ChatBskyConvoDefs.ConvoView]
+    let membersByConvoID: [String: [Member]]
     let currentUserDID: String
-    var namesByDID: [String: (displayName: String?, handle: String?)] = [:]
 
-    /// Best human-readable name for a member: resolved profile, then cached
-    /// row fields, then a DID suffix as last resort.
-    func name(for member: MLSMemberModel) -> String {
-      let resolved = namesByDID[member.did]
-      if let displayName = resolved?.displayName ?? member.displayName, !displayName.isEmpty {
+    /// Best human-readable name for a member: display name, then handle,
+    /// then a DID suffix as last resort.
+    func name(for member: Member) -> String {
+      if let displayName = member.displayName, !displayName.isEmpty {
         return displayName
       }
-      if let handle = resolved?.handle ?? member.handle, !handle.isEmpty {
+      if let handle = member.handle, !handle.isEmpty {
         return "@\(handle)"
       }
       return String(member.did.suffix(8))
     }
 
-    func handle(for member: MLSMemberModel) -> String? {
-      namesByDID[member.did]?.handle ?? member.handle
+    func handle(for member: Member) -> String? {
+      member.handle
     }
 
-    func members(in conversationID: String) -> [MLSMemberModel] {
+    func members(in conversationID: String) -> [Member] {
       membersByConvoID[conversationID] ?? []
     }
 
     /// Members across all conversations, excluding self, deduplicated by DID,
     /// in conversation-recency order.
-    func recipientCandidates() -> [MLSMemberModel] {
+    func recipientCandidates() -> [Member] {
       var seen = Set<String>()
-      var result: [MLSMemberModel] = []
+      var result: [Member] = []
       for convo in conversations {
-        for member in members(in: convo.conversationID)
+        for member in members(in: convo.id)
         where member.did != currentUserDID && seen.insert(member.did).inserted {
           result.append(member)
         }
@@ -243,7 +193,7 @@ enum MessagesSchemaRuntime {
       return result
     }
 
-    func member(withDID did: String) -> MLSMemberModel? {
+    func member(withDID did: String) -> Member? {
       for members in membersByConvoID.values {
         if let match = members.first(where: { $0.did == did }) {
           return match
@@ -252,148 +202,112 @@ enum MessagesSchemaRuntime {
       return nil
     }
 
-    /// Conversation title: explicit title if set, otherwise the other
-    /// members' names.
-    func title(for conversation: MLSConversationModel) -> String {
-      if let title = conversation.title, !title.isEmpty {
-        return title
+    /// Conversation title: group name if set, otherwise the other members'
+    /// names.
+    func title(for conversation: ChatBskyConvoDefs.ConvoView) -> String {
+      if case .chatBskyConvoDefsGroupConvo(let group)? = conversation.kind, !group.name.isEmpty {
+        return group.name
       }
-      let others = members(in: conversation.conversationID)
+      let others = members(in: conversation.id)
         .filter { $0.did != currentUserDID }
         .map { name(for: $0) }
       return others.isEmpty ? "Conversation" : others.joined(separator: ", ")
     }
   }
 
-  static func directory(manager: MLSConversationManager) async throws -> ChatDirectory {
-    guard let userDID = manager.userDid else {
-      throw IntentError.notSignedIn
-    }
-    let result = try await manager.storage.fetchConversationsWithMembers(
-      currentUserDID: userDID,
-      database: manager.database
-    )
-    let identityRecords = result.conversations.map {
-      MLSConversationIdentityBoundary.Record(
-        conversationID: $0.conversationID,
-        groupID: $0.groupID.hexEncodedString()
-      )
-    }
-    let canonicalRecords = try MLSConversationIdentityBoundary.canonicalize(identityRecords)
-    let canonicalIDs = Set(canonicalRecords.map(\.conversationID))
-    let canonicalConversations = result.conversations.filter {
-      canonicalIDs.contains($0.conversationID)
-    }
-    var canonicalMembersByConvoID: [String: [MLSMemberModel]] = [:]
-    for (requestedID, members) in result.membersByConvoID {
-      guard let canonicalID = try? MLSConversationIdentityBoundary.resolve(
-        requestedID,
-        in: identityRecords
-      ) else {
-        continue
+  static func directory(client: ATProtoClient, limit: Int = 100) async throws -> ChatDirectory {
+    let userDID = try await client.getDid()
+    let output = try unwrapIntentResponse(
+      await client.chat.bsky.convo.listConvos(
+        input: ChatBskyConvoListConvos.Parameters(limit: min(max(limit, 1), 100))))
+    var membersByConvoID: [String: [Member]] = [:]
+    for convo in output.convos {
+      membersByConvoID[convo.id] = convo.members.map {
+        Member(did: $0.did.didString(), displayName: $0.displayName, handle: $0.handle.value)
       }
-      canonicalMembersByConvoID[canonicalID, default: []].append(contentsOf: members)
     }
-
-    var directory = ChatDirectory(
-      conversations: canonicalConversations,
-      membersByConvoID: canonicalMembersByConvoID,
+    return ChatDirectory(
+      conversations: output.convos,
+      membersByConvoID: membersByConvoID,
       currentUserDID: userDID
     )
-
-    // Best-effort profile enrichment: member rows carry no names, and Siri
-    // matches spoken names against these entities. Failure degrades to
-    // handle/DID-suffix display, never blocks resolution.
-    let memberDIDs = Set(result.membersByConvoID.values.flatMap { $0.map(\.did) })
-    directory.namesByDID = await ProfileNameCache.shared.resolve(dids: Array(memberDIDs))
-    return directory
-  }
-
-  static func resolveConversationID(
-    _ requestedID: String,
-    in directory: ChatDirectory
-  ) throws -> String {
-    let records = directory.conversations.map {
-      MLSConversationIdentityBoundary.Record(
-        conversationID: $0.conversationID,
-        groupID: $0.groupID.hexEncodedString()
-      )
-    }
-    return try MLSConversationIdentityBoundary.resolve(requestedID, in: records)
-  }
-
-  static func resolveConversationID(
-    _ requestedID: String,
-    manager: MLSConversationManager
-  ) async throws -> String {
-    let directory = try await directory(manager: manager)
-    return try resolveConversationID(requestedID, in: directory)
   }
 
   static func personEntity(
-    from member: MLSMemberModel, directory: ChatDirectory
+    from member: Member, directory: ChatDirectory
   ) -> CatbirdMessagesPersonEntity {
-    CatbirdMessagesPersonEntity(id: member.did, displayName: directory.name(for: member))
+    CatbirdMessagesPersonEntity(
+      id: member.did,
+      displayName: directory.name(for: member),
+      isMe: member.did == directory.currentUserDID
+    )
+  }
+
+  static func previewText(for conversation: ChatBskyConvoDefs.ConvoView) -> AttributedString {
+    if case .chatBskyConvoDefsMessageView(let message)? = conversation.lastMessage {
+      return AttributedString(message.text)
+    }
+    return AttributedString("")
   }
 
   static func conversationEntity(
-    model: MLSConversationModel,
+    convo: ChatBskyConvoDefs.ConvoView,
     directory: ChatDirectory
   ) -> CatbirdMessagesConversationEntity {
-    let members = directory.members(in: model.conversationID)
+    let members = directory.members(in: convo.id)
     let recipients = members
       .filter { $0.did != directory.currentUserDID }
       .map { personEntity(from: $0, directory: directory) }
-    let title = directory.title(for: model)
+    let title = directory.title(for: convo)
+
+    var attributes: Set<CatbirdMessagesConversationAttribute> = []
+    if members.count > 2 { attributes.insert(.group) }
+    if convo.muted { attributes.insert(.mute) }
+
+    var lastActive: Date?
+    if case .chatBskyConvoDefsMessageView(let message)? = convo.lastMessage {
+      lastActive = message.sentAt.date
+    }
 
     return CatbirdMessagesConversationEntity(
-      id: model.conversationID,
+      id: convo.id,
       recipients: recipients,
       displayName: title,
-      previewText: AttributedString("MLS chat"),
+      previewText: previewText(for: convo),
       conversationName: title,
-      isRead: true,
-      attributes: members.count > 2 ? [.group] : [],
-      dateLastActive: model.lastMessageAt
+      isRead: convo.unreadCount == 0,
+      attributes: attributes,
+      dateLastActive: lastActive
     )
   }
 
   static func messageEntity(
-    from message: MLSMessageModel,
-    conversationTitle: String? = nil,
-    directory: ChatDirectory? = nil,
-    conversationIDOverride: String? = nil
+    from message: ChatBskyConvoDefs.MessageView,
+    convo: ChatBskyConvoDefs.ConvoView,
+    directory: ChatDirectory
   ) -> CatbirdMessagesMessageEntity {
+    let senderDID = message.sender.did.didString()
     let sender: CatbirdMessagesPersonEntity
-    if let directory, let member = directory.member(withDID: message.senderID) {
+    if let member = directory.member(withDID: senderDID) {
       sender = personEntity(from: member, directory: directory)
     } else {
       sender = CatbirdMessagesPersonEntity(
-        id: message.senderID, displayName: String(message.senderID.suffix(8)))
+        id: senderDID,
+        displayName: String(senderDID.suffix(8)),
+        isMe: senderDID == directory.currentUserDID
+      )
     }
-    let preview = AttributedString("MLS Chat")
-
-    let convoEntity = CatbirdMessagesConversationEntity(
-      id: conversationIDOverride ?? message.conversationID,
-      recipients: [sender],
-      displayName: conversationTitle ?? "Conversation",
-      previewText: preview,
-      conversationName: conversationTitle,
-      isRead: message.isRead,
-      attributes: [],
-      dateLastActive: message.timestamp
-    )
 
     return CatbirdMessagesMessageEntity(
-      id: message.messageID,
+      id: message.id,
       messageType: .text,
       author: sender,
-      isRead: message.isRead,
+      isRead: true,
       attributes: [],
-      conversation: convoEntity,
-      date: message.timestamp,
+      conversation: conversationEntity(convo: convo, directory: directory),
+      date: message.sentAt.date,
       subject: nil,
-      body: AttributedString(message.plaintext ?? "Encrypted message"),
+      body: AttributedString(message.text),
       attachments: [],
       audioMessage: nil,
       customAttachments: [],
@@ -406,25 +320,20 @@ enum MessagesSchemaRuntime {
     )
   }
 
-  static func fetchMessage(
-    _ messageID: String,
-    manager: MLSConversationManager
-  ) async throws -> MLSMessageModel {
-    guard let userDID = manager.userDid else {
-      throw IntentError.notSignedIn
+  /// Recent messages (newest first) of a conversation; deleted and system
+  /// messages are skipped.
+  static func recentMessages(
+    in convoID: String,
+    limit: Int,
+    client: ATProtoClient
+  ) async throws -> [ChatBskyConvoDefs.MessageView] {
+    let output = try unwrapIntentResponse(
+      await client.chat.bsky.convo.getMessages(
+        input: ChatBskyConvoGetMessages.Parameters(convoId: convoID, limit: min(max(limit, 1), 100))))
+    return output.messages.compactMap {
+      if case .chatBskyConvoDefsMessageView(let message) = $0 { return message }
+      return nil
     }
-
-    guard
-      let message = try await manager.storage.fetchMessage(
-        messageID: messageID,
-        currentUserDID: userDID,
-        database: manager.database
-      )
-    else {
-      throw IntentError.invalidParameter("Catbird could not find that message.")
-    }
-
-    return message
   }
 }
 

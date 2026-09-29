@@ -125,29 +125,6 @@ struct NavigationHandler {
         .toolbarTitleDisplayMode(.large)
         #endif
         .id("activitySubscriptions")
-    case .circlePost(let uri, let circle):
-      if appState.circlesEnabled {
-        ThreadView(postURI: uri, path: path, visibilityContext: .circle(circle))
-          .ignoresSafeArea()
-          #if os(iOS)
-          .toolbarTitleDisplayMode(.inline)
-          #endif
-          .navigationTitle(circle.name)
-          .id(uri.uriString())
-      }
-
-    case .circlesFeed:
-      if appState.circlesEnabled {
-        CirclesFeedView(path: path)
-          .id("circlesFeed")
-      }
-
-    case .circleDetail(let circle):
-      if appState.circlesEnabled {
-        CircleDetailView(circle: circle, path: path)
-          .id(circle.uri.description)
-      }
-
     case .notificationActivity(let uris):
       NotificationsActivityListView(postURIs: uris, path: path)
         .navigationTitle("Activity")
@@ -168,12 +145,6 @@ struct NavigationHandler {
     case .conversation(let convoId):
       ConversationView(convoId: convoId)
         .id(convoId)
-
-    case .mlsConversation(let convoId):
-      MLSRequestConversationGate(conversationID: convoId) {
-        MLSConversationDetailView(conversationId: convoId)
-      }
-      .id(convoId)
 
     case .chatTab:
       ChatTabView(
@@ -286,12 +257,6 @@ struct NavigationHandler {
       return "Bookmarks"
     case .activitySubscriptions:
       return "Activity Alerts"
-    case .circlePost(_, let circle):
-      return circle.name
-    case .circlesFeed:
-      return "Circles"
-    case .circleDetail(let circle):
-      return circle.name
     case .notificationActivity:
       return "Activity"
     case .videoFeed:
@@ -317,8 +282,6 @@ struct NavigationHandler {
     #if os(iOS)
     case .conversation:
       return "Conversation"
-    case .mlsConversation:
-      return "Secure Conversation"
     case .chatTab:
       return "Messages"
     #endif
@@ -364,12 +327,6 @@ struct NavigationHandler {
       return "bookmark"
     case .activitySubscriptions:
       return "bell.badge"
-    case .circlePost:
-      return "person.2.circle"
-    case .circlesFeed:
-      return "person.2.circle.fill"
-    case .circleDetail:
-      return "person.2.circle"
     case .notificationActivity:
       return "bell"
     case .videoFeed:
@@ -379,8 +336,6 @@ struct NavigationHandler {
     #if os(iOS)
     case .conversation:
       return "bubble.left.and.bubble.right"
-    case .mlsConversation:
-      return "lock.bubble"
     case .chatTab:
       return "message"
     #endif

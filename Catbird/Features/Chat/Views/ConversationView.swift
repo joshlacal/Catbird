@@ -19,7 +19,7 @@ struct ConversationView: View {
   }
   @State private var unifiedDataSource: BlueskyConversationDataSource?
   @State private var isInitialized = false
-  @State private var attachedEmbed: MLSEmbedData?
+  @State private var attachedEmbed: ChatSharedPostPreview?
   @State private var pendingPostRef: ComAtprotoRepoStrongRef?
   @State private var stagedReplyTarget: BlueskyMessageAdapter?
   private var chatNavigationPath: Binding<NavigationPath> {
@@ -61,6 +61,16 @@ struct ConversationView: View {
     appState.navigationManager.pendingChatShare = nil
   }
 
+  /// Applies a Siri/Shortcuts draft (Messages-schema intents) targeting this
+  /// conversation, only when the composer is empty so typed text is never lost.
+  @MainActor
+  private func consumePendingDraftIfNeeded() {
+    guard let dataSource = unifiedDataSource,
+          dataSource.draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+          let text = ChatDraftHandoff.shared.consume(for: convoId) else { return }
+    dataSource.draftText = text
+  }
+
   var body: some View {
       Group {
         chatContent
@@ -68,6 +78,7 @@ struct ConversationView: View {
             // Initialize data source before loading
             ensureUnifiedDataSource()
             consumePendingShareIfNeeded()
+            consumePendingDraftIfNeeded()
             if let dataSource = unifiedDataSource {
               await dataSource.loadMessages()
             }
@@ -96,11 +107,15 @@ struct ConversationView: View {
     .onAppear {
       ensureUnifiedDataSource()
       consumePendingShareIfNeeded()
+      consumePendingDraftIfNeeded()
       Task {
         await chatManager.markConversationAsRead(convoId: convoId)
       }
       chatManager.startMessagePolling(for: convoId)
       appState.chatHeartbeatManager.viewAppeared()
+    }
+    .onReceive(NotificationCenter.default.publisher(for: ChatDraftHandoff.didStoreDraft)) { _ in
+      consumePendingDraftIfNeeded()
     }
     .onDisappear {
       chatManager.stopMessagePolling(for: convoId)
@@ -248,12 +263,12 @@ struct ConversationView: View {
         .padding(.bottom, 4)
       }
 
-      MLSMessageComposerView(
+      ChatMessageComposerView(
         text: Binding(
           get: { dataSource.draftText },
           set: { dataSource.draftText = $0 }
         ),
-        attachedEmbed: $attachedEmbed,
+        attachedPost: $attachedEmbed,
         conversationId: convoId,
         onSend: { text, stagedEmbed in
           let embedUnion: ChatBskyConvoDefs.MessageInputEmbedUnion?
@@ -279,8 +294,6 @@ struct ConversationView: View {
             }
           }
         },
-        supportsEmbeds: false,
-        showsAttachmentMenu: false,
         dismissKeyboardOnSend: false
       )
     }

@@ -124,8 +124,7 @@ final class ThreadManager: StateInvalidationSubscriber {
   /// Load a thread by its URI
   func loadThread(
     uri: ATProtocolURI,
-    visibilityContext: PostVisibilityContext = .public,
-    circleService: CircleService? = nil
+    visibilityContext: PostVisibilityContext = .public
   ) async {
     isLoading = true
     error = nil
@@ -134,21 +133,6 @@ final class ThreadManager: StateInvalidationSubscriber {
 
     logger.debug("Loading thread: \(uri.uriString()) (context: \(visibilityContext))")
 
-    if case .circle(let circle) = visibilityContext {
-      let service = circleService ?? appState.circleService
-      do {
-        let threadPage = try await service.getPostThread(uri: uri, space: circle.uri)
-        let threadItems = Self.flattenThreadViewPost(threadPage.thread)
-        let output = AppBskyUnspeccedGetPostThreadV2.Output(thread: threadItems, hasOtherReplies: false)
-        self.threadData = output
-        self.blockedAnchor = nil
-        isLoading = false
-      } catch {
-        self.error = circleError(from: error)
-        isLoading = false
-      }
-      return
-    }
     let hasCached = await hasCachedThread(uri: uri)
     if hasCached {
       logger.info("📦 Cache exists for this thread - will refresh with fresh data")

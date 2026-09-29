@@ -225,7 +225,6 @@ struct MainContentView: View {
   #endif
   // Namespace for iOS 26 matched transitions
   @Namespace private var composeTransitionNamespace
-  // chatMode is now stored per-account in appState.chatMode
 
   // Access the navigation manager directly
   private var navigationManager: AppNavigationManager {

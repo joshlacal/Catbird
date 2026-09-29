@@ -41,18 +41,6 @@ struct UnifiedEmbedView: View {
       )
       .id("\(ObjectIdentifier(appState)):\(String(describing: appState.atProtoClient.map(ObjectIdentifier.init))):\(post.uri)")
 
-    case .tile(let tile):
-      TileCardView(tile: tile)
-
-    case .image(let imageData):
-      imageEmbed(imageData)
-
-    case .audio(let audioData):
-      audioEmbed(audioData)
-
-    case .groupInvitation(let reference):
-      MLSGroupInvitationCard(reference: reference)
-
     case .groupInvite(let invite):
       groupInviteEmbed(invite)
     }
@@ -106,51 +94,6 @@ struct UnifiedEmbedView: View {
       .frame(maxWidth: .infinity, alignment: .leading)
       .embedCardStyle(colorScheme: colorScheme)
     }
-  }
-
-  // MARK: - Image Embed
-
-  @ViewBuilder
-  private func imageEmbed(_ imageData: ImageEmbedData) -> some View {
-    #if os(iOS)
-    let embed = MLSImageEmbed(
-      blobId: imageData.blobId,
-      key: imageData.key,
-      iv: imageData.iv,
-      sha256: imageData.sha256,
-      contentType: imageData.contentType,
-      size: imageData.size,
-      width: imageData.width,
-      height: imageData.height,
-      altText: imageData.altText,
-      blurhash: imageData.blurhash
-    )
-    MLSImageView(imageEmbed: embed)
-    #else
-    Text("Image embed")
-      .foregroundStyle(.secondary)
-    #endif
-  }
-
-  // MARK: - Audio Embed
-
-  @ViewBuilder
-  private func audioEmbed(_ audioData: AudioEmbedData) -> some View {
-    #if os(iOS)
-    VoiceMessagePlayerView(
-      audioData: audioData,
-      isOwnMessage: isOwnMessage
-    )
-    #else
-    HStack(spacing: 8) {
-      Image(systemName: "waveform")
-        .foregroundStyle(.secondary)
-      Text("Voice message (\(audioData.durationMs / 1000)s)")
-        .font(.caption)
-        .foregroundStyle(.secondary)
-    }
-    .padding(8)
-    #endif
   }
 
   // MARK: - Link Embed
@@ -215,7 +158,7 @@ struct UnifiedEmbedView: View {
 
   @ViewBuilder
   private func gifEmbed(_ gif: GIFEmbedData) -> some View {
-    // MLS currently provides Tenor MP4 URLs (not image/gif data), so render via video player.
+    // Tenor GIFs arrive as MP4 URLs (not image/gif data), so render via video player.
     UnifiedGIFView(gif: gif)
   }
 }
@@ -504,7 +447,7 @@ private struct UnifiedGIFView: View {
   }
 }
 
-// MARK: - Record Embed (Bluesky + MLS)
+// MARK: - Record Embed
 
 private struct RecordEmbedContainer: View {
   let uriString: String

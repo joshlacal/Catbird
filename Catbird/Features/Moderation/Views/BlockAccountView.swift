@@ -8,7 +8,6 @@ struct BlockAccountView: View {
     @Environment(\.dismiss) private var dismiss
     
     let profile: AppBskyActorDefs.ProfileViewBasic
-    let mlsAffectedConvoCount: Int
     let onConfirmBlock: () async -> Void
     
     @State private var mutualGroups: [ChatBskyConvoDefs.ConvoView] = []
@@ -29,10 +28,6 @@ struct BlockAccountView: View {
         NavigationStack {
             List {
                 profileHeaderSection
-                
-                if mlsAffectedConvoCount > 0 {
-                    mlsWarningSection
-                }
                 
                 mutualGroupsSection
                 
@@ -101,27 +96,6 @@ struct BlockAccountView: View {
             Text("Blocking this user will prevent them from seeing your posts, following you, or mentioning you. They will not be notified that you blocked them.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
-        }
-    }
-    
-    private var mlsWarningSection: some View {
-        Section {
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: "lock.shield.fill")
-                    .font(.title3)
-                    .foregroundStyle(.orange)
-                
-                VStack(alignment: .leading, spacing: 4) {
-                    let plural = mlsAffectedConvoCount == 1 ? "" : "s"
-                    Text("Encrypted Chat Notice")
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                    Text("You share \(mlsAffectedConvoCount) end-to-end encrypted conversation\(plural) with this user. Blocking them will cause you to leave those conversations.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .padding(.vertical, 4)
         }
     }
     

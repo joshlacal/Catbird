@@ -2,10 +2,9 @@
 //  DirectMessageIntents.swift
 //  Catbird
 //
-//  Plain App Intents for Bluesky direct messages (chat.bsky.convo). These are
-//  deliberately NOT part of the iOS 27 Messages App Schema — that domain is
-//  reserved for MLS chat (see MessagesSchema/) — but they make Bluesky DMs
-//  fully scriptable from Shortcuts. All calls go through the standalone
+//  Plain App Intents for Bluesky direct messages (chat.bsky.convo). These
+//  complement the iOS 27 Messages App Schema intents (see MessagesSchema/)
+//  and make Bluesky DMs fully scriptable from Shortcuts on earlier OSes. All calls go through the standalone
 //  IntentClientProvider client, so they work with the app not running.
 //
 

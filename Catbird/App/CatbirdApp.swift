@@ -2,7 +2,6 @@ import AVFoundation
 #if os(iOS)
 import BackgroundTasks
 #endif
-import CryptoKit
 import Sentry
 
 import CoreText
@@ -27,14 +26,6 @@ import FoundationModels
 #endif
 
 // Presentation fixtures deliberately bypass account bootstrap and networking.
-private var isEncryptedRequestUIFixture: Bool {
-  #if DEBUG
-  ProcessInfo.processInfo.arguments.contains("--encrypted-request-ui-fixture")
-  #else
-  false
-  #endif
-}
-
 private var isMessageRequestsUIFixture: Bool {
   #if DEBUG
   ProcessInfo.processInfo.arguments.contains("--message-requests-ui-fixture")
@@ -43,200 +34,13 @@ private var isMessageRequestsUIFixture: Bool {
   #endif
 }
 
-/// Any presentation fixture: skips account bootstrap, MLS lifecycle, and URL handling.
+/// Any presentation fixture: skips account bootstrap and URL handling.
 private var isPresentationUIFixture: Bool {
-  isEncryptedRequestUIFixture || isMessageRequestsUIFixture
+  isMessageRequestsUIFixture
 }
 
 // App-wide logger
 let logger = Logger(subsystem: "blue.catbird", category: "AppLifecycle")
-
-enum MLSForegroundResumeOutcome: Equatable {
-  case managerUnavailable
-  case preparationFailed
-  case failedStillSuspended
-  case runtimeRecoveryFailed
-  case staleTransition
-  case resumed
-}
-
-enum MLSContextFreeForegroundResumeOutcome: Equatable {
-  case failedStillSuspended
-  case staleTransition
-  case resumed
-}
-
-@MainActor
-enum MLSForegroundResumeCoordinator {
-  private static var sceneTransitionGeneration: UInt64 = 0
-  private static var currentScenePhase: ScenePhase?
-  private static var rustRuntimeClosedForCurrentSuspension = false
-  private static var foregroundStoragePermit: MLSGRDBManager.ForegroundResumePermit?
-
-  static func recordSceneTransition(to phase: ScenePhase) -> UInt64 {
-    // Revoke before publishing a new scene generation. A storage probe may be
-    // awaiting Keychain or SQLite on another executor while this transition runs.
-    foregroundStoragePermit?.revoke()
-    foregroundStoragePermit = nil
-    sceneTransitionGeneration &+= 1
-    currentScenePhase = phase
-    if phase == .active {
-      rustRuntimeClosedForCurrentSuspension = false
-      foregroundStoragePermit = MLSGRDBManager.ForegroundResumePermit()
-    }
-    return sceneTransitionGeneration
-  }
-
-  static func isCurrentActiveTransition(_ generation: UInt64) -> Bool {
-    isCurrentTransition(generation, expectedPhase: .active)
-  }
-
-  static func storagePreparationPermit(
-    for generation: UInt64
-  ) -> MLSGRDBManager.ForegroundResumePermit? {
-    guard isCurrentActiveTransition(generation),
-          let permit = foregroundStoragePermit,
-          permit.isValid
-    else {
-      return nil
-    }
-    return permit
-  }
-
-  static func isCurrentTransition(_ generation: UInt64, expectedPhase: ScenePhase) -> Bool {
-    generation == sceneTransitionGeneration && currentScenePhase == expectedPhase
-  }
-
-  static var isApplicationActive: Bool {
-    currentScenePhase == .active
-  }
-
-  @discardableResult
-  static func markRustRuntimeClosedForSuspension(
-    _ generation: UInt64,
-    expectedPhase: ScenePhase
-  ) -> Bool {
-    guard expectedPhase != .active,
-          isCurrentTransition(generation, expectedPhase: expectedPhase)
-    else {
-      return false
-    }
-    rustRuntimeClosedForCurrentSuspension = true
-    return true
-  }
-
-  static func hasClosedRustRuntimeForSuspension(
-    _ generation: UInt64,
-    expectedPhase: ScenePhase
-  ) -> Bool {
-    expectedPhase != .active
-      && isCurrentTransition(generation, expectedPhase: expectedPhase)
-      && rustRuntimeClosedForCurrentSuspension
-  }
-
-  enum MLSResumeResult: Equatable {
-    case resumed
-    case failedStillSuspended
-    case runtimeRecoveryFailed
-  }
-
-  static func run(
-    managerAvailable: Bool,
-    resumeStillCurrent: () -> Bool,
-    prepareStorage: () async throws -> Void,
-    resumeManager: () async -> MLSResumeResult,
-    reassertSuspensionAfterStaleResume: () -> Void,
-    reloadProjection: () async -> Void,
-    performBackup: () async -> Void
-  ) async -> MLSForegroundResumeOutcome {
-    guard managerAvailable else { return .managerUnavailable }
-    guard resumeStillCurrent() else { return .staleTransition }
-
-    do {
-      try await prepareStorage()
-    } catch {
-      return .preparationFailed
-    }
-    guard resumeStillCurrent() else { return .staleTransition }
-
-    switch await resumeManager() {
-    case .failedStillSuspended:
-      return .failedStillSuspended
-    case .runtimeRecoveryFailed:
-      return .runtimeRecoveryFailed
-    case .resumed:
-      guard resumeStillCurrent() else {
-        reassertSuspensionAfterStaleResume()
-        return .staleTransition
-      }
-      await reloadProjection()
-      guard resumeStillCurrent() else {
-        reassertSuspensionAfterStaleResume()
-        return .staleTransition
-      }
-      await performBackup()
-      return .resumed
-    }
-  }
-
-  static func runContextFree(
-    resumeStillCurrent: () -> Bool,
-    releaseOwnedSuspension: () async -> Bool
-  ) async -> MLSContextFreeForegroundResumeOutcome {
-    guard resumeStillCurrent() else { return .staleTransition }
-
-    let released = await releaseOwnedSuspension()
-
-    // The Core release performs the security decision through a two-sided owner and
-    // generation CAS. This post-await check only classifies the UI transition outcome;
-    // it must never clear or reassert either global gate.
-    guard resumeStillCurrent() else { return .staleTransition }
-    return released ? .resumed : .failedStillSuspended
-  }
-}
-
-@MainActor
-final class MLSSceneSuspensionCloseClaim {
-  let transitionToken: UInt64
-  let expectedPhase: ScenePhase
-  private var claimed = false
-  private(set) var expirationRequested = false
-
-  init(transitionToken: UInt64, expectedPhase: ScenePhase) {
-    self.transitionToken = transitionToken
-    self.expectedPhase = expectedPhase
-  }
-
-  func claimExpirationIfCurrent() -> Bool {
-    claimIfCurrent()
-  }
-
-  var isCurrent: Bool {
-    expectedPhase != .active
-      && MLSForegroundResumeCoordinator.isCurrentTransition(
-        transitionToken,
-        expectedPhase: expectedPhase
-      )
-  }
-
-  func requestExpirationIfCurrent() -> Bool {
-    guard isCurrent else { return false }
-    expirationRequested = true
-    return true
-  }
-
-  func claimNormalCloseIfCurrent() -> Bool {
-    claimIfCurrent()
-  }
-
-  private func claimIfCurrent() -> Bool {
-    guard !claimed, isCurrent else {
-      return false
-    }
-    claimed = true
-    return true
-  }
-}
 
 /// Owns the production SwiftData schema so app startup and migration tests open
 /// exactly the same store shape.
@@ -265,86 +69,6 @@ enum CatbirdSwiftDataStore {
     return try ModelContainer(for: schema, configurations: [configuration])
   }
 }
-#if os(iOS)
-/// Background launches may never create or transition a SwiftUI scene. Establish
-/// MLS admission before authentication's asynchronous startup can open storage.
-@MainActor
-private func prepareInitialMLSAdmission(applicationState: UIApplication.State, source: String) {
-  MLSInitialLifecycleCoordinator.shared.prepareForLaunch(
-    applicationIsActive: applicationState == .active
-  ) {
-    AppStateManager.shared.beginContextFreeMLSSuspension(reason: "Nonactive launch: \(source)")
-  }
-  let stateDescription: String
-  switch applicationState {
-  case .active: stateDescription = "active"
-  case .inactive: stateDescription = "inactive"
-  case .background: stateDescription = "background"
-  @unknown default: stateDescription = "unknown"
-  }
-  let clientSuspended = MLSClient.isSuspensionInProgress
-  let coreSuspended = MLSCoreContext.isSuspensionInProgress
-  let admissionBlocked = clientSuspended || coreSuspended
-  logger.notice("[InitialMLSLifecycle] source=\(source, privacy: .public) applicationState=\(stateDescription, privacy: .public) admissionBlocked=\(admissionBlocked) clientSuspended=\(clientSuspended) coreSuspended=\(coreSuspended)")
-}
-
-/// Close storage for the exact scene suspension during background-task expiration.
-/// Claim validation, close, and lifecycle marking all execute in one MainActor turn
-/// so a newer foreground generation cannot interleave.
-private func forceCloseSceneSuspensionSynchronously(
-  claim: MLSSceneSuspensionCloseClaim,
-  manager: MLSConversationManager?,
-  contextFreeSuspensionOwner: MLSContextFreeLifecycleSuspensionOwner?,
-  reason: String
-) {
-  let closeIfClaimed: @MainActor () -> Void = {
-    guard claim.requestExpirationIfCurrent() else { return }
-    let swiftStorageClosed = MLSSuspensionCloseCoordinator.runExpiration(
-      transitionStillCurrent: { claim.isCurrent },
-      claimRustRuntimeClose: { claim.claimExpirationIfCurrent() },
-      closeRustRuntime: {
-        if let manager {
-          MLSClient.interruptAllContexts()
-          MLSCoreContext.interruptAllContexts()
-          MLSClient.emergencyCloseAllContexts(reason: reason)
-          manager.markRustRuntimeClosedForSuspend(reason: reason)
-        } else {
-          guard
-            let contextFreeSuspensionOwner,
-            contextFreeSuspensionOwner.emergencyCloseAllContextsIfOwned(reason: reason)
-          else {
-            return
-          }
-        }
-        MLSForegroundResumeCoordinator.markRustRuntimeClosedForSuspension(
-          claim.transitionToken,
-          expectedPhase: claim.expectedPhase
-        )
-      },
-      closeSwiftStorage: {
-        MLSGRDBManager.closeAllDatabasesForSuspension().isComplete
-      }
-    )
-    if swiftStorageClosed {
-      logger.info("Swift storage closed during suspension expiration: \(reason, privacy: .public)")
-    } else {
-      logger.error("Swift storage remains open at suspension expiration; retaining admission leases and lifecycle gates: \(reason, privacy: .public)")
-    }
-  }
-
-  if Thread.isMainThread {
-    MainActor.assumeIsolated {
-      closeIfClaimed()
-    }
-  } else {
-    DispatchQueue.main.sync {
-      MainActor.assumeIsolated {
-        closeIfClaimed()
-      }
-    }
-  }
-}
-#endif
 
 // NOTE: ModelContainerState enum moved to AppStateManager.swift to persist across App struct recreations
 
@@ -360,10 +84,6 @@ struct CatbirdApp: App {
       didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
       if isPresentationUIFixture { return true }
-      prepareInitialMLSAdmission(
-        applicationState: application.applicationState,
-        source: "didFinishLaunching"
-      )
         // Initialize Sentry through SentryService for proper configuration
         SentryService.start()
 
@@ -373,7 +93,7 @@ struct CatbirdApp: App {
           MetricKitManager.shared.beginExtendedLaunchMeasurement(taskName: "AppInitialization")
         }
 
-        // Set notification center delegate for handling MLS notifications
+        // Set notification center delegate for handling notification taps and presentation
         UNUserNotificationCenter.current().delegate = self
 
       // BGTask handlers MUST be registered before didFinishLaunchingWithOptions returns
@@ -381,19 +101,6 @@ struct CatbirdApp: App {
         BGTaskSchedulerManager.registerIfNeeded()
         ChatBackgroundRefreshManager.registerIfNeeded()
         BackgroundCacheRefreshManager.registerIfNeeded()
-        // MLSBackgroundRefreshManager is actor-isolated, so register directly
-        BGTaskScheduler.shared.register(
-          forTaskWithIdentifier: MLSBackgroundRefreshManager.taskIdentifier,
-          using: nil
-        ) { task in
-          guard let processingTask = task as? BGProcessingTask else {
-            task.setTaskCompleted(success: false)
-            return
-          }
-          Task {
-            await MLSBackgroundRefreshManager.shared.handleRegisteredTask(processingTask)
-          }
-        }
       }
 
       // Request widget updates at app launch
@@ -410,7 +117,6 @@ struct CatbirdApp: App {
         BGTaskSchedulerManager.schedule()
         ChatBackgroundRefreshManager.schedule()
         BackgroundCacheRefreshManager.schedule()
-        MLSBackgroundRefreshManager.scheduleInitialRefresh()
       }
       
       return true
@@ -439,111 +145,6 @@ struct CatbirdApp: App {
     ) {
       let logger = Logger(subsystem: "blue.catbird", category: "AppDelegate")
       logger.error("Failed to register for remote notifications: \(error.localizedDescription)")
-    }
-
-    func application(
-      _ application: UIApplication,
-      didReceiveRemoteNotification userInfo: [AnyHashable: Any],
-      fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void
-    ) {
-      let logger = Logger(subsystem: "blue.catbird", category: "AppDelegate")
-      logger.info("Received remote notification")
-      // Check if this is a generic Circle activity notification
-      if let kind = userInfo["kind"] as? String, kind == "circle_activity" {
-        logger.info("Processing generic Circle activity push notification")
-        Task { @MainActor in
-          if let activeState = AppStateManager.shared.lifecycle.appState {
-            await activeState.notificationManager.handlePush(userInfo)
-            completionHandler(.newData)
-          } else {
-            completionHandler(.noData)
-          }
-        }
-        return
-      }
-
-
-      // Check if this is an MLS key package inventory notification
-      if let type = userInfo["type"] as? String,
-         type == "keyPackageLowInventory" || type == "keyPackageReplenishRequested" {
-        logger.info("Processing MLS key package notification (\(type))")
-
-        guard application.applicationState == .active else {
-          logger.info(
-            "Deferring key package replenishment while app state=\(application.applicationState.rawValue)"
-          )
-          if #available(iOS 13.0, *) {
-            Task {
-              await MLSBackgroundRefreshManager.shared.scheduleBackgroundRefresh(delay: 5 * 60)
-            }
-          }
-          completionHandler(.noData)
-          return
-        }
-
-        Task { @MainActor in
-          guard let activeState = AppStateManager.shared.lifecycle.appState else {
-            logger.warning("AppState not available for MLS notification handling")
-            completionHandler(.noData)
-            return
-          }
-          // Protect with background task assertion to prevent 0xdead10cc if the app
-          // transitions to background while this notification-triggered work is in flight.
-          var bgTaskId: UIBackgroundTaskIdentifier = .invalid
-          bgTaskId = UIApplication.shared.beginBackgroundTask(withName: "MLSNotification") {
-            MLSClient.interruptAllContexts()
-            MLSCoreContext.interruptAllContexts()
-            UIApplication.shared.endBackgroundTask(bgTaskId)
-            bgTaskId = .invalid
-          }
-          await MLSNotificationHandler.shared.handleNotification(
-            userInfo: userInfo,
-            appState: activeState
-          )
-          if bgTaskId != .invalid {
-            UIApplication.shared.endBackgroundTask(bgTaskId)
-          }
-          completionHandler(.newData)
-        }
-      } else if let convoId = userInfo["convoId"] as? String ?? userInfo["conversationId"] as? String {
-        logger.info("Processing MLS chat notification for conversation: \(convoId)")
-        
-        guard application.applicationState == .active else {
-          logger.info(
-            "Deferring MLS catchup while app state=\(application.applicationState.rawValue) to avoid app/NSE races"
-          )
-          completionHandler(.noData)
-          return
-        }
-        
-        // Trigger a sync for this conversation if possible
-        Task { @MainActor in
-            guard let activeState = AppStateManager.shared.lifecycle.appState else {
-                completionHandler(.noData)
-                return
-            }
-            
-            // If we have a conversation manager, trigger a sync/catchup
-            if let manager = await activeState.getMLSConversationManager() {
-                guard let canonicalID = await self.resolveMLSConversationRoute(
-                  convoId,
-                  manager: manager
-                ) else {
-                  logger.warning("Refusing catchup for unresolved MLS conversation route")
-                  completionHandler(.noData)
-                  return
-                }
-                logger.info("Triggering catchup for conversation \(canonicalID)")
-                await manager.triggerCatchup(for: canonicalID)
-                completionHandler(.newData)
-            } else {
-                completionHandler(.noData)
-            }
-        }
-      } else {
-        logger.debug("Not an MLS notification, ignoring. Keys: \(userInfo.keys.map { String(describing: $0) }.joined(separator: ", "))")
-        completionHandler(.noData)
-      }
     }
 
     override func buildMenu(with builder: UIMenuBuilder) {
@@ -667,15 +268,14 @@ struct CatbirdApp: App {
   // MARK: - Initialization
   init() {
     if isPresentationUIFixture { return }
+    // One-time removal of MLS chat data left by TestFlight builds. Nothing in Lite
+    // reads those paths, so it runs off the main thread without ordering constraints.
+    Task.detached(priority: .utility) {
+      LegacyMLSDataPurge.runOnceIfNeeded()
+    }
     // Resolve routing first: in DEBUG this installs an explicitly configured runtime fixture
     // transport before any client exists (and refuses to launch on an invalid config).
     _ = CatbirdGatewayConfiguration.current
-    #if os(iOS)
-    prepareInitialMLSAdmission(
-      applicationState: UIApplication.shared.applicationState,
-      source: "CatbirdApp.init"
-    )
-    #endif
     logger.info("🚀 CatbirdApp initializing")
 
     // Register blue.catbird.* / place.stream.* lexicon types with Petrel's decoder registry
@@ -685,8 +285,6 @@ struct CatbirdApp: App {
 
     // Bridge Petrel logs into Sentry (Sentry is initialized in AppDelegate)
     PetrelSentryBridge.enable()
-    // Bridge MLS diagnostic records into Sentry
-    MLSSentryBridge.enable()
     // Bridge Petrel auth incidents to UI to prevent silent auto-switching UX
     PetrelAuthUIBridge.enable()
 
@@ -738,7 +336,7 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
 
   // MARK: - SwiftData Store Configuration
 
-  /// App group identifier for shared storage (used by MLS databases and NSE, NOT SwiftData)
+  /// App group identifier for shared storage (used by the NSE and widgets, NOT SwiftData)
   private static let appGroupIdentifier = "group.blue.catbird.shared"
 
   /// SwiftData store in the app's PRIVATE Application Support directory.
@@ -1231,7 +829,6 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
       BGTaskSchedulerManager.registerIfNeeded()
       ChatBackgroundRefreshManager.registerIfNeeded()
       BackgroundCacheRefreshManager.registerIfNeeded()
-      // MLSBackgroundRefreshManager is registered directly in didFinishLaunchingWithOptions
       logger.debug("✅ Background tasks registered")
     }
     #endif
@@ -1336,9 +933,7 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
     WindowGroup(id: "main") {
       Group {
         #if DEBUG
-        if isEncryptedRequestUIFixture {
-          MLSEncryptedRequestUIFixture()
-        } else if isMessageRequestsUIFixture {
+        if isMessageRequestsUIFixture {
           MessageRequestsUIFixture()
         } else {
           applicationContent
@@ -1346,9 +941,6 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
         #else
         applicationContent
         #endif
-      }
-      .onChange(of: scenePhase, initial: true) { oldPhase, newPhase in
-        handleScenePhaseChange(from: oldPhase, to: newPhase)
       }
       .onChange(of: scenePhase, initial: true) { oldPhase, newPhase in
         handleScenePhaseChange(from: oldPhase, to: newPhase)
@@ -1410,17 +1002,9 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
                 appState.navigationManager.updateCurrentTab(2)
               }
             }
-          } else if url.scheme == "blue.catbird" && url.host == "oauth"
-                      && url.lastPathComponent == "circle-appview" {
-            // Circle AppView authorization completed. The AppView owns the
-            // grant server-side; this only records that it succeeded.
-            logger.info("Circle AppView OAuth completion deep link received")
-            Task { @MainActor in
-              CircleAppViewAuthCoordinator.shared.complete(callback: url)
-            }
           } else if (url.scheme == "blue.catbird" || url.scheme == "catbird") && (url.host == "e2e" || url.host == "test") {
-            // Handle E2E testing commands (only in E2E mode)
-            #if os(iOS) || (DEBUG && os(macOS))
+            // Handle E2E testing commands (DEBUG builds, E2E mode only)
+            #if DEBUG
             logger.error("[E2E-URL] Received E2E URL: \(url.absoluteString), isE2EMode: \(appStateManager.isE2EMode)")
             if appStateManager.isE2EMode {
               Task { @MainActor in
@@ -1430,6 +1014,8 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
             } else {
               logger.error("[E2E-URL] E2E URL received but not in E2E mode: \(url.absoluteString)")
             }
+            #else
+            logger.info("Ignoring test-harness URL in a release build")
             #endif
           } else if let intent = ExternalURLIntent.parse(from: url) {
             // Route bluesky://intent/* (compose prefill, verify-email) and group-chat join links through ExternalURLIntentPresenter
@@ -1510,7 +1096,6 @@ private extension CatbirdApp {
       case .authenticated(let appState):
         if shouldShowContentForAuthenticatedState {
           ContentView()
-            .modifier(MLSDirectDraftPresentation())
             .id(appState.userDID)
             .applyAppStateEnvironment(appState)
         } else {
@@ -1625,67 +1210,24 @@ private extension CatbirdApp {
   @MainActor
   func handleScenePhaseChange(from oldPhase: ScenePhase, to newPhase: ScenePhase) {
     guard !isPresentationUIFixture else { return }
-    MLSInitialLifecycleCoordinator.shared.recordSceneObservation()
-    let sceneTransitionToken = MLSForegroundResumeCoordinator.recordSceneTransition(to: newPhase)
-    let suspensionCloseClaim = MLSSceneSuspensionCloseClaim(
-      transitionToken: sceneTransitionToken,
-      expectedPhase: newPhase
-    )
     #if os(iOS)
-    let hasOtherScenes = hasOtherActiveScenes
+    let otherScenesActive = hasOtherActiveScenes
     #else
-    let hasOtherScenes = false
+    let otherScenesActive = false
     #endif
-    #if os(macOS)
-    let isMacOS = true
-    #else
-    let isMacOS = false
-    #endif
-    let otherScenesActive = Self.sceneDeactivationPreservesMLS(
-      isMacOS: isMacOS,
-      otherScenesActive: hasOtherScenes
-    )
+    let isLeavingForeground = (newPhase == .inactive || newPhase == .background)
 
-    if otherScenesActive && (newPhase == .inactive || newPhase == .background) {
-      logger.info("Scene transitioned to \(String(describing: newPhase)), but other connected scenes remain active in foreground. Preserving process-wide database and MLS connections.")
+    if otherScenesActive && isLeavingForeground {
+      logger.info("Scene transitioned to \(String(describing: newPhase)), but other connected scenes remain active in foreground. Preserving process-wide database connections.")
     }
 
-    let suspensionManager = (newPhase != .active && !otherScenesActive)
-      ? appStateManager.lifecycle.appState?.mlsConversationManager : nil
-    let contextFreeSuspensionOwner: MLSContextFreeLifecycleSuspensionOwner?
-    if newPhase != .active, !otherScenesActive, suspensionManager == nil {
-      // Establish the exact owner before the expiration handler captures it.
-      // This only closes admission; potentially blocking Rust preparation follows
-      // acquisition of the background assertion below.
-      appStateManager.beginContextFreeMLSSuspension(
-        reason: "scenePhase → \(String(describing: newPhase))"
-      )
-      contextFreeSuspensionOwner = appStateManager.contextFreeMLSSuspensionOwner
-    } else {
-      contextFreeSuspensionOwner = nil
-    }
-    var rustPathAvailable = false
-    MLSSuspensionFlightRecorder.shared.record(
-      .scenePhaseChange,
-      details: "\(String(describing: oldPhase)) → \(String(describing: newPhase))",
-      process: "app"
-    )
-
     #if os(iOS)
-    // Acquire execution time before synchronous Rust preparation: it can wait
-    // for in-flight database operations while they still hold file locks.
-    // Keep this assertion through the asynchronous close and state-save work.
+    // Keep execution time while feed state is saved and GRDB is suspended so no
+    // SQLite file lock is held when RunningBoard suspends the process (0xdead10cc).
     var taskId: UIBackgroundTaskIdentifier = .invalid
-    if (newPhase == .inactive || newPhase == .background) && !otherScenesActive {
+    if isLeavingForeground && !otherScenesActive {
       taskId = UIApplication.shared.beginBackgroundTask(withName: "ScenePhaseTransition") {
-        // Expiration: iOS is reclaiming time. Force-close everything NOW.
-        logger.warning("ScenePhaseTransition expired — force-closing all contexts")
-        forceCloseSceneSuspensionSynchronously(
-          claim: suspensionCloseClaim,
-          manager: suspensionManager,
-          contextFreeSuspensionOwner: contextFreeSuspensionOwner,
-          reason: "ScenePhaseTransition expired"
-        )
+        logger.warning("ScenePhaseTransition background time expired")
         if taskId != .invalid {
           UIApplication.shared.endBackgroundTask(taskId)
           taskId = .invalid
@@ -1694,62 +1236,7 @@ private extension CatbirdApp {
     }
     #endif
 
-    #if os(iOS)
-      if (newPhase == .inactive || newPhase == .background) && !otherScenesActive {
-        MLSGRDBManager.setPeriodicCheckpointingSuspended(
-          true,
-          reason: "scenePhase \(String(describing: oldPhase)) → \(String(describing: newPhase))"
-        )
-      } else if newPhase == .active {
-        MLSGRDBManager.setPeriodicCheckpointingSuspended(
-          false,
-          reason: "scenePhase \(String(describing: oldPhase)) → active"
-        )
-      }
-    #endif
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // CRITICAL FIX (0xdead10cc): Cancel MLS tasks BEFORE GRDB suspension
-    // ═══════════════════════════════════════════════════════════════════════════
-    // MLS initialization tasks (missingConversationsTask, groupInfoRefreshTask, etc.)
-    // continue running with open database connections when the user backgrounds the app.
-    // These tasks hold SQLite/SQLCipher file locks, which causes iOS to kill the app
-    // with 0xdead10cc (file locks held during suspension).
-    //
-    // We must cancel these tasks SYNCHRONOUSLY before GRDBSuspensionCoordinator starts
-    // rejecting database operations, so they stop cleanly rather than crashing.
-    // Using MainActor.assumeIsolated because onChange runs on main thread.
-    // ═══════════════════════════════════════════════════════════════════════════
-    if (newPhase == .inactive || newPhase == .background) && !otherScenesActive {
-      // Cancel any in-flight initialization task immediately before suspending
-      appStateManager.lifecycle.appState?.cancelMLSInitialization()
-
-      // Block new MLS FFI work immediately while we transition to background.
-      // Every entry path uses the coupled MLSClient lifecycle boundary, which
-      // owns both client and Core admission gates.
-      if let manager = suspensionManager {
-        rustPathAvailable = manager.suspendMLSOperations()
-      }
-    }
-
-    #if os(iOS)
-    let suspensionOwner = suspensionManager
-    let contextFreeOwner = contextFreeSuspensionOwner
-    #endif
-
-    if (newPhase == .inactive || newPhase == .background) && !otherScenesActive, !rustPathAvailable {
-      #if os(iOS)
-      // A missing rustFull runtime has no normal close path. Keep every gate closed
-      // and interrupt any straggler; only background-task expiration may force-close.
-      MLSClient.interruptAllContexts()
-      MLSCoreContext.interruptAllContexts()
-      #else
-      MLSClient.interruptAllContexts()
-      MLSCoreContext.interruptAllContexts()
-      #endif
-    }
-
-    // Suspend/resume GRDB early to avoid holding SQLite/SQLCipher locks across suspension (0xdead10cc).
+    // Suspend/resume GRDB early to avoid holding SQLite locks across suspension (0xdead10cc).
     // In multi-window environments, protect process-wide database connections if another scene is still active.
     let shouldSuspendGRDB = (newPhase != .active) && !otherScenesActive
     GRDBSuspensionCoordinator.setLifecycleSuspended(
@@ -1770,138 +1257,6 @@ private extension CatbirdApp {
 
       await FeedStateStore.shared.handleScenePhaseChange(newPhase)
 
-      guard MLSForegroundResumeCoordinator.isCurrentTransition(
-        sceneTransitionToken,
-        expectedPhase: newPhase
-      ) else {
-        logger.debug("Skipping stale scene lifecycle task after feed-state update")
-        return
-      }
-
-#if os(iOS)
-      // ═══════════════════════════════════════════════════════════════════════════
-      // Close Rust contexts and Swift GRDB handles before ending execution time.
-      // GRDB suspension alone retains Catbird's separate admission file leases.
-      // Signal the NSE immediately on foreground, and signal inactivity only
-      // after both storage layers have actually finished closing.
-      // ═══════════════════════════════════════════════════════════════════════════
-      if newPhase == .active {
-        // Tell NSE immediately: "I'm active, don't decrypt"
-        if let appState = appStateManager.lifecycle.appState {
-          MLSNotificationCoordinator.setMainAppActive(true, activeUserDID: appState.userDID)
-        } else {
-          MLSNotificationCoordinator.setMainAppActive(true, activeUserDID: nil)
-        }
-      }
-
-      if (newPhase == .inactive || newPhase == .background) {
-        if otherScenesActive {
-          logger.info("Other window scenes are still active; skipping process-wide MLS and storage close")
-        } else {
-          // WAL health snapshot BEFORE suspension — baseline for corruption detection
-          MLSGRDBManager.probeWALHealth(for: "all", label: "APP_SUSPENDING")
-
-          // RAII background task protects the close operations
-          let bgTask = CatbirdBackgroundTask(name: "MLSSuspensionClose") {
-            // Last resort: iOS is killing our background time
-            forceCloseSceneSuspensionSynchronously(
-              claim: suspensionCloseClaim,
-              manager: suspensionOwner,
-              contextFreeSuspensionOwner: contextFreeOwner,
-              reason: "MLSSuspensionClose expired"
-            )
-          }
-
-          defer { bgTask.end() }
-
-          let closeOutcome = await MLSSuspensionCloseCoordinator.run(
-            rustPathAvailable: rustPathAvailable || suspensionOwner == nil,
-            transitionStillCurrent: { suspensionCloseClaim.isCurrent },
-            prepareRustRuntime: { true },
-            closePreparedRuntime: {
-              guard suspensionCloseClaim.claimNormalCloseIfCurrent() else { return }
-              let reason = "scenePhase active→\(String(describing: newPhase))"
-              if let manager = suspensionOwner {
-                MLSClient.emergencyCloseAllContexts(reason: reason)
-                manager.markRustRuntimeClosedForSuspend(reason: reason)
-              } else {
-                // Closing through the captured owner preserves the context-free
-                // suspension boundary if manager initialization races this scene.
-                guard contextFreeOwner?.emergencyCloseAllContextsIfOwned(reason: reason) == true else {
-                  return
-                }
-              }
-              MLSForegroundResumeCoordinator.markRustRuntimeClosedForSuspension(
-                sceneTransitionToken,
-                expectedPhase: newPhase
-              )
-            },
-            closeSwiftStorage: {
-              MLSGRDBManager.closeAllDatabasesForSuspension().isComplete
-            },
-            waitForSwiftStorageRetry: {
-              // Let an already-admitted open or another closer finish publishing
-              // its handle/lease result without spinning or flooding close logs.
-              // This backoff only schedules another observed close result.
-              do {
-                try await Task.sleep(nanoseconds: 25_000_000)
-              } catch {
-                return false
-              }
-              return suspensionCloseClaim.isCurrent
-                && !suspensionCloseClaim.expirationRequested
-                && taskId != .invalid
-                && UIApplication.shared.backgroundTimeRemaining > 0
-                && !Task.isCancelled
-            }
-          )
-
-          switch closeOutcome {
-          case .closed, .rustPathUnavailable:
-            break
-          case .staleTransition:
-            logger.debug("Skipping stale suspension lifecycle task after storage close wait")
-            return
-          case .preparationFailed:
-            logger.error("Rust suspension preparation failed; Swift storage drained and lifecycle gates retained")
-            return
-          case .storageCloseIncomplete:
-            logger.error("Swift suspension close incomplete; retaining admission leases and lifecycle gates")
-            return
-          }
-
-          // A missing Rust path can be reused only if the preceding suspended
-          // phase or expiration closed it. Swift storage was still drained above.
-          guard MLSForegroundResumeCoordinator.hasClosedRustRuntimeForSuspension(
-            sceneTransitionToken,
-            expectedPhase: newPhase
-          ) else {
-            logger.warning("Rust suspension close unconfirmed; Swift storage drained and lifecycle gates retained")
-            return
-          }
-
-          // Both close results are confirmed in this MainActor turn. The NSE may
-          // now open the shared storage without the app retaining admission leases.
-          if let appState = appStateManager.lifecycle.appState {
-            MLSNotificationCoordinator.setMainAppActive(false, activeUserDID: appState.userDID)
-          } else {
-            MLSNotificationCoordinator.setMainAppActive(false, activeUserDID: nil)
-          }
-
-          logger.info("Rust runtime and Swift storage closed; NSE allowed for suspension")
-        }
-      }
-
-      // Reload MLS state from disk when returning to foreground.
-      // The NSE may have advanced the MLS ratchet while the app was in background.
-      if newPhase == .active,
-         oldPhase != .active || MLSClient.isSuspensionInProgress || MLSCoreContext.isSuspensionInProgress {
-        // WAL health snapshot ON RESUME — detect corruption from NSE activity while suspended
-        MLSGRDBManager.probeWALHealth(for: "all", label: "APP_RESUMING")
-        await resumeMLSAfterReturningToForeground(transitionToken: sceneTransitionToken)
-      }
-#endif
-
       if newPhase == .background {
         saveApplicationState()
 #if os(iOS)
@@ -1909,152 +1264,16 @@ private extension CatbirdApp {
           if #available(iOS 13.0, *) {
             ChatBackgroundRefreshManager.schedule()
             BackgroundCacheRefreshManager.schedule()
-            MLSBackgroundRefreshManager.scheduleInitialRefresh()
           }
-          logger.info("Background work scheduled after Rust and Swift storage close")
+          logger.info("Background work scheduled")
         }
 #endif
       }
     }
   }
 
-  @MainActor
-  private func resumeMLSAfterReturningToForeground(transitionToken: UInt64) async {
-    let appState = appStateManager.lifecycle.appState
-    let manager = appState?.mlsConversationManager
-
-    guard let manager else {
-      // Capture the exact suspension owner before the first await. A newer
-      // background transition rotates AppStateManager to a different owner,
-      // so this stale task cannot acquire its Core release capability.
-      let contextFreeSuspensionOwner = appStateManager.contextFreeMLSSuspensionOwner
-      let contextFreeOutcome = await MLSForegroundResumeCoordinator.runContextFree(
-        resumeStillCurrent: {
-          MLSForegroundResumeCoordinator.isCurrentActiveTransition(transitionToken)
-        },
-        releaseOwnedSuspension: {
-          await contextFreeSuspensionOwner.resumeSuspensionIfOwnedAndContextFree()
-        }
-      )
-
-      switch contextFreeOutcome {
-      case .failedStillSuspended:
-        logger.warning(
-          "⏭️ [RESUME] No MLS manager and no matching context-free suspension; gates remain closed"
-        )
-      case .staleTransition:
-        logger.warning("⏭️ [RESUME] Discarded stale context-free foreground transition")
-      case .resumed:
-        logger.info("✅ [RESUME] Released exact context-free MLS lifecycle suspension")
-        // Startup may already have deferred its one-shot MLS initialization while
-        // the cold-launch owner held admission closed. Retry only after releasing
-        // that owner, and only for this still-active scene's enabled account.
-        if MLSForegroundResumeCoordinator.isCurrentActiveTransition(transitionToken),
-           let foregroundAppState = appStateManager.lifecycle.appState,
-           ExperimentalSettings.shared.isMLSChatEnabled(for: foregroundAppState.userDID)
-             || ProcessInfo.processInfo.arguments.contains("--e2e-mode") {
-          do {
-            try await foregroundAppState.initializeMLS()
-          } catch {
-            logger.error("MLS initialization after context-free foreground resume failed: \(error.localizedDescription, privacy: .public)")
-          }
-        }
-      }
-      return
-    }
-
-    let outcome = await MLSForegroundResumeCoordinator.run(
-      managerAvailable: true,
-      resumeStillCurrent: {
-        MLSForegroundResumeCoordinator.isCurrentActiveTransition(transitionToken)
-      },
-      prepareStorage: {
-        guard let appState else { return }
-        guard let permit = MLSForegroundResumeCoordinator.storagePreparationPermit(
-          for: transitionToken
-        ) else {
-          throw CancellationError()
-        }
-        let preparation = try await MLSGRDBManager.shared.prepareForForegroundResume(
-          for: appState.userDID,
-          permit: permit
-        )
-        switch preparation {
-        case .ready:
-          logger.debug("✅ [RESUME] MLS storage healthy before foreground reopen")
-        case .repaired:
-          logger.info("✅ [RESUME] MLS storage repaired before foreground reopen")
-        case .reset:
-          logger.warning(
-            "🧰 [RESUME] MLS storage was rebuilt before foreground reopen after verified corruption"
-          )
-        }
-        appState.mlsServiceState.clearDatabaseFailure()
-      },
-      resumeManager: {
-        let resumed = await manager.resumeMLSOperations()
-        guard resumed else {
-          return MLSClient.isSuspensionInProgress || MLSCoreContext.isSuspensionInProgress
-            ? .failedStillSuspended : .runtimeRecoveryFailed
-        }
-        return .resumed
-      },
-      reassertSuspensionAfterStaleResume: {
-        guard !MLSForegroundResumeCoordinator.isApplicationActive else {
-          return
-        }
-
-        // The newer inactive/background transition already owns suspension and
-        // preparation. Only interrupt stragglers here; never advance its generation
-        // or close beneath its in-flight drain.
-        MLSClient.interruptAllContexts()
-        MLSCoreContext.interruptAllContexts()
-      },
-      reloadProjection: {
-        // Suspension closes the pool retained by AppState. Core has adopted the
-        // replacement before completing resume; publish that same pool before
-        // any projection read, without waiting for the legacy refresh callback.
-        if let database = manager.database as? DatabasePool {
-          appState?.updateMLSDatabase(database)
-        }
-        await appState?.reloadMLSProjectionFromDisk()
-      },
-      performBackup: {
-        if let backupManager = appState?.backupManager {
-          await backupManager.checkAndPerformAutoBackupIfNeeded()
-        }
-      }
-    )
-
-    switch outcome {
-    case .managerUnavailable:
-      logger.warning("⏭️ [RESUME] No MLS manager; keeping MLS lifecycle gates closed")
-    case .preparationFailed:
-      logger.error("❌ [RESUME] Foreground MLS preparation failed; keeping MLS lifecycle gates closed")
-    case .failedStillSuspended:
-      logger.error("❌ [RESUME] MLS manager resume failed; lifecycle gates remain closed")
-    case .runtimeRecoveryFailed:
-      logger.error("❌ [RESUME] MLS runtime recovery failed; foreground transaction did not complete")
-    case .staleTransition:
-      logger.warning("⏭️ [RESUME] Discarded stale foreground transition")
-    case .resumed:
-      logger.info("✅ [RESUME] MLS transaction completed and UI projection reloaded")
-    }
-  }
-
   func initializeApplicationIfNeeded() async {
     logger.info("📍 initializeApplicationIfNeeded called")
-    
-    // ═══════════════════════════════════════════════════════════════════════════
-    // Log MLS FFI build ID for verification
-    // ═══════════════════════════════════════════════════════════════════════════
-    // This helps diagnose issues where the wrong FFI binary is shipped.
-    // Both main app and NSE should log this - if they differ, it's a build problem.
-    // ═══════════════════════════════════════════════════════════════════════════
-    let ffiBuildId = getFfiBuildId()
-    let ffiBuildInfo = getFfiBuildInfo()
-    logger.info("🔧 [MLS-FFI] Build ID: \(ffiBuildId)")
-    logger.info("🔧 [MLS-FFI] Build Info: \(ffiBuildInfo)")
     
     let shouldInitialize = await MainActor.run { () -> Bool in
       guard !appStateManager.didInitialize else {
@@ -2088,7 +1307,6 @@ private extension CatbirdApp {
     // If authenticated, initialize preferences manager and app services
     if let appState = appStateManager.lifecycle.appState {
       appState.initializePreferencesManager(with: modelContext)
-      appState.configureDataServices(modelContainer: modelContext.container)
 
       #if canImport(FoundationModels)
       if #available(iOS 26.0, macOS 26.0, *) {
@@ -2109,7 +1327,6 @@ private extension CatbirdApp {
         }
       }
 
-      // MLS initialization removed - will be lazily initialized when user opens chat
       routePendingLaunchURLIfNeeded(with: appState)
     }
 
@@ -2498,51 +1715,45 @@ private extension CatbirdApp {
   }
 #endif
 
-#if os(iOS) || (DEBUG && os(macOS))
+#if DEBUG
   // MARK: - E2E Testing URL Handlers
 
-  /// Handle E2E testing URL commands
+  /// Handle E2E testing URL commands (DEBUG builds only, and only in `--e2e-mode`).
   /// Format: blue.catbird://e2e/{command}?{params}
   /// Commands:
-  /// - create-conversation?targetDID=... - Create/join a conversation with the target user
-  /// - accept-conversation?conversationId=... - Accept a pending clean-chat invitation
-  /// - send-message?text=...&conversationId=... - Send a message to a conversation
-  /// - dump-state - Write MLS state dump to app container
-  /// - block?did=... - Block a DID and leave shared MLS conversations
+  /// - login?handle=...&password=... - Password login for a test account
+  /// - login-fixture - Password login from the sandboxed fixture file
+  /// - request-notification-permission - Request push notification authorization
   func handleE2ECommand(url: URL) async {
     let e2eLogger = Logger(subsystem: "blue.catbird.e2e", category: "Commands")
-    
+
     guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
           let command = components.path.split(separator: "/").last.map(String.init) else {
       e2eLogger.error("[E2E] Invalid E2E URL: \(url.absoluteString)")
       return
     }
-    
+
     let params = Dictionary(uniqueKeysWithValues: (components.queryItems ?? []).compactMap { item -> (String, String)? in
       guard let value = item.value else { return nil }
       return (item.name, value)
     })
-    
+
     e2eLogger.info("[E2E] Handling command: \(command) with params: \(params.keys.joined(separator: ", "))")
-    
+
     // Use AppStateManager singleton directly for E2E operations
     // The self.appState computed property may not be available if lifecycle is loading
     let manager = AppStateManager.shared
-    
+
     // Proactively refresh token before any command to ensure fresh auth (especially for 60s token PDSs)
-    #if DEBUG
     let skipProactiveRefresh = CatbirdGatewayConfiguration.current.isRuntimeFixture
-    #else
-    let skipProactiveRefresh = false
-    #endif
-    if !skipProactiveRefresh, let appState = manager.lifecycle.appState, command != "dump-state", command != "request-notification-permission" {
+    if !skipProactiveRefresh, let appState = manager.lifecycle.appState, command != "request-notification-permission" {
       do {
         e2eLogger.info("[E2E] Proactively refreshing token before command...")
         let refreshed = try await appState.client.refreshToken()
         e2eLogger.info("[E2E] Token refresh result: \(refreshed)")
       } catch {
         e2eLogger.warning("[E2E] Proactive token refresh failed: \(error.localizedDescription)")
-        
+
         // For E2E mode with short-lived tokens, attempt full re-login
         e2eLogger.info("[E2E] Attempting fresh re-login due to expired tokens...")
         let reloginSuccess = await manager.e2eRelogin()
@@ -2553,89 +1764,14 @@ private extension CatbirdApp {
         }
       }
     }
-    
+
     switch command {
     case "login":
       await handleLogin(params: params, manager: manager, logger: e2eLogger)
-#if DEBUG
+
     case "login-fixture":
       await handleLoginFixture(manager: manager, logger: e2eLogger)
-#endif
-      
-    case "register-device":
-      await handleRegisterDevice(params: params, manager: manager, logger: e2eLogger)
-      
-    case "request-send":
-      await handleDirectRequest(params: params, manager: manager, inspect: false)
 
-    case "request-inspect":
-      await handleDirectRequest(params: params, manager: manager, inspect: true)
-
-    case "request-delivery-enable":
-      await handleRequestDeliveryEnable(params: params, manager: manager, logger: e2eLogger)
-
-    case "create-conversation":
-      await handleCreateConversation(params: params, manager: manager, logger: e2eLogger)
-
-    case "accept-conversation":
-      await handleAcceptConversation(params: params, manager: manager, logger: e2eLogger)
-      
-    case "send-message":
-      await handleSendMessage(params: params, manager: manager, logger: e2eLogger)
-      
-    case "get-messages":
-      await handleGetMessages(params: params, manager: manager, logger: e2eLogger)
-      
-    case "dump-state":
-      await handleDumpState(params: params, manager: manager, logger: e2eLogger)
-      
-    case "sync":
-      await handleSync(params: params, manager: manager, logger: e2eLogger)
-
-    case "block":
-      await handleBlock(params: params, manager: manager, logger: e2eLogger)
-
-    case "add-member":
-      await handleAddMember(params: params, manager: manager, logger: e2eLogger)
-
-    case "remove-member":
-      await handleRemoveMember(params: params, manager: manager, logger: e2eLogger)
-
-    case "list-members":
-      await handleListMembers(params: params, manager: manager, logger: e2eLogger)
-
-    case "check-message":
-      await handleCheckMessage(params: params, manager: manager, logger: e2eLogger)
-
-    case "get-epoch":
-      await handleGetEpoch(params: params, manager: manager, logger: e2eLogger)
-
-    case "cleanup-stale":
-      await handleCleanupStale(params: params, manager: manager, logger: e2eLogger)
-
-    case "force-delete-conversation", "force_delete_conversation":
-      await handleForceDeleteConversation(params: params, manager: manager, logger: e2eLogger)
-
-    case "drain-key-packages":
-      await handleDrainKeyPackages(params: params, manager: manager, logger: e2eLogger)
-
-    case "keypackage-state":
-      await handleKeyPackageState(params: params, manager: manager, logger: e2eLogger)
-
-    case "refresh-key-packages":
-      await handleRefreshKeyPackages(params: params, manager: manager, logger: e2eLogger)
-
-    case "request-keypackage-replenish":
-      await handleRequestKeyPackageReplenish(params: params, manager: manager, logger: e2eLogger)
-
-    case "wipe-mls-state", "wipe_mls_state":
-      await handleWipeMLSState(params: params, manager: manager, logger: e2eLogger)
-
-    case "get-recovery-state", "get_recovery_state":
-      await handleGetRecoveryState(params: params, manager: manager, logger: e2eLogger)
-
-    case "send-blob", "send_blob":
-      await handleSendBlob(params: params, manager: manager, logger: e2eLogger)
     case "request-notification-permission":
       do {
         let granted = try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])
@@ -2643,98 +1779,12 @@ private extension CatbirdApp {
       } catch {
         await writeE2EResult(command: "request-notification-permission", success: false, error: error.localizedDescription)
       }
-    case "cancel-draft":
-      await handleCancelDraft(params: params, manager: manager, logger: e2eLogger)
-
-    case "decline-conversation":
-      await handleDeclineConversation(params: params, manager: manager, logger: e2eLogger)
-
-    case "open-conversation", "open-request":
-      await handleOpenConversation(params: params, manager: manager, logger: e2eLogger)
-
 
     default:
       e2eLogger.warning("[E2E] Unknown command: \(command)")
       await writeE2EResult(command: command, success: false, error: "Unknown command")
     }
   }
-  
-  private func handleRegisterDevice(params: [String: String], manager: AppStateManager, logger e2eLogger: Logger) async {
-    e2eLogger.error("[E2E-REGISTER] Starting device registration / MLS opt-in")
-    
-    // Check if force flag is set (use force=true to re-register even if already registered)
-    let forceReregister = params["force"]?.lowercased() == "true"
-    
-    guard let appState = manager.lifecycle.appState else {
-      e2eLogger.error("[E2E-REGISTER] Not authenticated")
-      await writeE2EResult(command: "register-device", success: false, error: "Not authenticated")
-      return
-    }
-    
-    do {
-      guard let conversationManager = await appState.getMLSConversationManager() else {
-        throw NSError(domain: "E2E", code: 1, userInfo: [NSLocalizedDescriptionKey: "MLS not initialized"])
-      }
-      
-      // Step 1: Opt-in to MLS via the API client
-      e2eLogger.error("[E2E-REGISTER] Calling optIn on MLSAPIClient")
-      let (optedIn, optedInAt) = try await conversationManager.apiClient.optIn()
-      e2eLogger.error("[E2E-REGISTER] optIn result: optedIn=\(optedIn), at=\(optedInAt)")
-      try await conversationManager.ensureDeviceRecordPublished()
-
-      if conversationManager.protocolAuthorityMode == .rustFull {
-        if forceReregister {
-          e2eLogger.error(
-            "[E2E-REGISTER] rustFull authority active; ignoring force=true to avoid Swift OpenMLS reregistration"
-          )
-        }
-        e2eLogger.error("[E2E-REGISTER] rustFull authority active; ensuring device through Rust")
-        let deviceInfo = try await conversationManager.registeredDeviceInfoForPushTokenRegistration()
-        try await conversationManager.smartRefreshKeyPackages()
-        await writeE2EResult(command: "register-device", success: true, data: [
-          "status": forceReregister ? "rust_authoritative_registered_force_ignored" : "rust_authoritative_registered",
-          "optedIn": String(optedIn),
-          "deviceId": deviceInfo?.deviceId ?? "unknown",
-          "deviceUUID": deviceInfo?.deviceUUID ?? "unknown"
-        ])
-        return
-      }
-
-      // Step 2: Check if already registered to avoid invalidating existing key packages
-      if let existingDeviceInfo = await conversationManager.mlsClient.getDeviceInfo(for: appState.userDID), !forceReregister {
-        e2eLogger.error("[E2E-REGISTER] Already registered with deviceId: \(existingDeviceInfo.deviceId) - skipping reregistration to preserve key packages")
-        await writeE2EResult(command: "register-device", success: true, data: [
-          "status": "already_registered",
-          "optedIn": String(optedIn),
-          "deviceId": existingDeviceInfo.deviceId
-        ])
-        return
-      }
-      
-      // Step 3: Register device (only if not already registered or force=true)
-      e2eLogger.error("[E2E-REGISTER] \(forceReregister ? "Force re-registering" : "Registering") device for MLS")
-      let deviceId = try await conversationManager.mlsClient.reregisterDevice(for: appState.userDID)
-      e2eLogger.error("[E2E-REGISTER] Device registered: \(deviceId)")
-
-      // Ensure device record is published after registration.
-      do {
-        try await conversationManager.ensureDeviceRecordPublished()
-      } catch {
-        e2eLogger.error("[E2E-REGISTER] Device record publish after registration failed: \(error.localizedDescription)")
-      }
-      
-      await writeE2EResult(command: "register-device", success: true, data: [
-        "status": "registered",
-        "optedIn": String(optedIn),
-        "deviceId": deviceId
-      ])
-    } catch {
-      e2eLogger.error("[E2E-REGISTER] Failed: \(error.localizedDescription)")
-      await writeE2EResult(command: "register-device", success: false, error: error.localizedDescription)
-    }
-  }
-  
-#if DEBUG
   /// Dedicated simulator fixture input. Credentials never travel in a URL,
   /// process argument, or result file; consume the fixed sandbox file once.
   private func handleLoginFixture(manager: AppStateManager, logger e2eLogger: Logger) async {
@@ -2759,7 +1809,6 @@ private extension CatbirdApp {
       await writeE2EResult(command: "login-fixture", success: false, error: "Could not consume login fixture")
     }
   }
-#endif
 
   private func handleLogin(params: [String: String], manager: AppStateManager, logger e2eLogger: Logger) async {
     guard let handle = params["handle"], let password = params["password"] else {
@@ -2789,1488 +1838,11 @@ private extension CatbirdApp {
     }
   }
 
-  @MainActor
-  private func handleBlock(params: [String: String], manager: AppStateManager, logger e2eLogger: Logger) async {
-    guard manager.isE2EMode else {
-      e2eLogger.error("[E2E-BLOCK] Rejected block command outside E2E mode")
-      await writeE2EResult(command: "block", success: false, error: "E2E mode disabled")
-      return
-    }
-
-    guard let rawDID = params["did"]?.trimmingCharacters(in: .whitespacesAndNewlines),
-          !rawDID.isEmpty else {
-      e2eLogger.error("[E2E-BLOCK] block requires did parameter")
-      await writeE2EResult(command: "block", success: false, error: "Missing did")
-      return
-    }
-
-    do {
-      _ = try DID(didString: rawDID)
-    } catch {
-      e2eLogger.error("[E2E-BLOCK] Invalid DID: \(rawDID)")
-      await writeE2EResult(command: "block", success: false, error: "Invalid did")
-      return
-    }
-
-    guard let appState = manager.lifecycle.appState else {
-      e2eLogger.error("[E2E-BLOCK] Not authenticated")
-      await writeE2EResult(command: "block", success: false, error: "Not authenticated")
-      return
-    }
-
-    guard await appState.getMLSConversationManager() != nil,
-          let coordinator = appState.mlsBlockCoordinator else {
-      e2eLogger.error("[E2E-BLOCK] MLS not initialized")
-      await writeE2EResult(command: "block", success: false, error: "MLS not initialized")
-      return
-    }
-
-    do {
-      e2eLogger.info("[E2E-BLOCK] Blocking \(rawDID)")
-      try await coordinator.block(did: rawDID)
-      await writeE2EResult(command: "block", success: true, data: [
-        "did": rawDID
-      ])
-    } catch {
-      e2eLogger.error("[E2E-BLOCK] Failed: \(error.localizedDescription)")
-      await writeE2EResult(command: "block", success: false, error: error.localizedDescription)
-    }
-  }
-
-  private func resolveE2EConversationID(
-    _ requestedID: String,
-    manager: MLSConversationManager
-  ) async throws -> String {
-    guard let userDID = manager.userDid else {
-      throw MLSConversationIdentityBoundary.Error.unresolved(requestedID)
-    }
-    let snapshot = try await manager.storage.fetchConversationsWithMembers(
-      currentUserDID: userDID,
-      database: manager.database
-    )
-    let records = snapshot.conversations.map {
-      MLSConversationIdentityBoundary.Record(
-        conversationID: $0.conversationID,
-        groupID: $0.groupID.hexEncodedString()
-      )
-    }
-    return try MLSConversationIdentityBoundary.resolve(requestedID, in: records)
-  }
-
-  private func canonicalE2EConversationIDs(
-    manager: MLSConversationManager
-  ) throws -> [String] {
-    try MLSConversationIdentityBoundary
-      .canonicalize(Array(manager.conversations.values))
-      .map(\.coordinates.conversationId)
-  }
-
-  private func handleCreateConversation(params: [String: String], manager: AppStateManager, logger e2eLogger: Logger) async {
-    guard let targetDID = params["targetDID"] else {
-      e2eLogger.error("[E2E] create-conversation requires targetDID parameter")
-      await writeE2EResult(command: "create-conversation", success: false, error: "Missing targetDID")
-      return
-    }
-    
-    guard let appState = manager.lifecycle.appState else {
-      e2eLogger.error("[E2E] Not authenticated - cannot create conversation")
-      await writeE2EResult(command: "create-conversation", success: false, error: "Not authenticated")
-      return
-    }
-    
-    do {
-      guard let database = appState.mlsDatabase else { throw MLSAPIError.serverUnavailable }
-      let draft = try await MLSDirectComposeDraftStore.open(accountDID: appState.userDID,
-        recipientDID: targetDID, database: database)
-      await writeE2EResult(command: "create-conversation", success: true, data: [
-        "draftId": draft.id.uuidString.lowercased(), "recipientDid": draft.recipientDID, "status": "localDraft"
-      ])
-    } catch {
-      await writeE2EResult(command: "create-conversation", success: false, error: "Could not save local draft")
-    }
-  }
-  private func handleCancelDraft(params: [String: String], manager: AppStateManager, logger e2eLogger: Logger) async {
-    guard let targetDID = params["targetDID"] else {
-      await writeE2EResult(command: "cancel-draft", success: false, error: "Missing targetDID")
-      return
-    }
-    guard let appState = manager.lifecycle.appState, let database = appState.mlsDatabase else {
-      await writeE2EResult(command: "cancel-draft", success: false, error: "Not authenticated or MLS database unavailable")
-      return
-    }
-    do {
-      let draft = try await MLSDirectComposeDraftStore.open(accountDID: appState.userDID, recipientDID: targetDID, database: database)
-      try await MLSDirectComposeDraftStore.archive(draft, database: database)
-      await writeE2EResult(command: "cancel-draft", success: true, data: [
-        "draftId": draft.id.uuidString.lowercased(), "status": "draftCancelled"
-      ])
-    } catch {
-      await writeE2EResult(command: "cancel-draft", success: false, error: error.localizedDescription)
-    }
-  }
-
-  private func handleDeclineConversation(
-    params: [String: String],
-    manager: AppStateManager,
-    logger e2eLogger: Logger
-  ) async {
-    guard let conversationId = params["conversationId"],
-          MLSConversationIdentityBoundary.isCanonicalStableID(conversationId) else {
-      await writeE2EResult(command: "decline-conversation", success: false, error: "Missing or invalid conversationId")
-      return
-    }
-    guard let appState = manager.lifecycle.appState,
-          let conversationManager = await appState.getMLSConversationManager() else {
-      await writeE2EResult(command: "decline-conversation", success: false, error: "MLS not initialized")
-      return
-    }
-    do {
-      try await conversationManager.declineConversationRequest(convoId: conversationId)
-      await writeE2EResult(command: "decline-conversation", success: true, data: ["conversationId": conversationId, "status": "declined"])
-    } catch {
-      e2eLogger.error("[E2E] decline-conversation failed: \(error.localizedDescription)")
-      await writeE2EResult(command: "decline-conversation", success: false, error: error.localizedDescription)
-    }
-  }
-
-  private func handleOpenConversation(
-    params: [String: String],
-    manager: AppStateManager,
-    logger e2eLogger: Logger
-  ) async {
-    guard let conversationId = params["conversationId"],
-          MLSConversationIdentityBoundary.isCanonicalStableID(conversationId) else {
-      await writeE2EResult(command: "open-conversation", success: false, error: "Missing or invalid conversationId")
-      return
-    }
-    guard let appState = manager.lifecycle.appState else {
-      await writeE2EResult(command: "open-conversation", success: false, error: "Not authenticated")
-      return
-    }
-    await MainActor.run {
-      appState.navigateToMLSConversation(conversationId)
-    }
-    e2eLogger.info("[E2E] open-conversation navigated to \(conversationId.prefix(16))...")
-    await writeE2EResult(command: "open-conversation", success: true, data: ["conversationId": conversationId])
-  }
-
-
-
-  private func handleDirectRequest(params: [String: String], manager: AppStateManager, inspect: Bool) async {
-    let command = inspect ? "request-inspect" : "request-send"
-    do {
-      guard let appState = manager.lifecycle.appState,
-            let conversations = await appState.getMLSConversationManager() else { throw MLSAPIError.serverUnavailable }
-      let account = appState.userDID
-      if inspect {
-        guard let id = params["conversationId"], MLSConversationIdentityBoundary.isCanonicalStableID(id) else {
-          throw MLSDirectComposeDraftStore.Failure.accountChanged
-        }
-        let view = try await conversations.refreshRequestPreview(conversationId: id)
-        guard appState.userDID == account else { throw CancellationError() }
-        let preview: String
-        if case .ready(let text, _) = view.preview { preview = text } else { preview = "" }
-        await writeE2EResult(command: command, success: true, data: ["conversationId": id,
-          "consent": String(describing: view.consent), "crypto": String(describing: view.crypto),
-          "preview": preview, "canSend": String(view.capabilities.canSend)])
-      } else {
-        guard let recipient = params["recipientDID"] ?? params["targetDID"], let text = params["text"] else {
-          throw MLSDirectComposeDraftStore.Failure.invalidText
-        }
-        var draft = try await MLSDirectComposeDraftStore.open(accountDID: account, recipientDID: recipient, database: conversations.database)
-        guard !draft.submitted || draft.text == text else { throw MLSDirectComposeDraftStore.Failure.immutableSubmittedDraft }
-        try MLSDirectComposeDraftStore.validateText(text)
-        draft.text = text
-        draft.submitted = true
-        try await MLSDirectComposeDraftStore.save(draft, database: conversations.database)
-        let outcome = try await conversations.startDirectRequest(input: DirectRequestInput(
-          draftId: draft.id.uuidString.lowercased(), recipientDid: recipient, text: text, invitation: nil))
-        guard appState.userDID == account else { throw CancellationError() }
-        var data = ["draftId": draft.id.uuidString.lowercased()]
-        switch outcome {
-        case .requestSent(let conversationID, let messageID, let requestID):
-          data.merge(["status": "requestSent", "conversationId": conversationID, "messageId": messageID, "requestId": requestID]) { _, new in new }
-        case .outcomeUnknown(let requestID): data.merge(["status": "outcomeUnknown", "requestId": requestID]) { _, new in new }
-        case .existingDirect(let conversationID, let requiresAcceptance): data.merge(["status": "existingDirect", "conversationId": conversationID, "requiresAcceptance": String(requiresAcceptance)]) { _, new in new }
-        case .retryable(let code): data.merge(["status": "retryable", "code": code]) { _, new in new }
-        case .terminalNotPublished(let requestID, let code):
-          // Same as MLSDirectComposeView: the text moves to a fresh editable draft.
-          _ = try await MLSDirectComposeDraftStore.reopenAfterTerminal(draft, database: conversations.database)
-          data.merge(["status": "terminalNotPublished", "requestId": requestID, "code": code]) { _, new in new }
-        }
-        await writeE2EResult(command: command, success: true, data: data)
-      }
-    } catch {
-      await writeE2EResult(command: command, success: false, error: "Request operation failed: \(error)")
-    }
-  }
-
-  private func handleRequestDeliveryEnable(params: [String: String], manager: AppStateManager, logger e2eLogger: Logger) async {
-    guard let appState = manager.lifecycle.appState,
-          let conversations = await appState.getMLSConversationManager() else {
-      await writeE2EResult(command: "request-delivery-enable", success: false, error: "MLS not initialized")
-      return
-    }
-    do {
-      try await conversations.setDirectRequestDeliveryEnabled(true)
-      await writeE2EResult(command: "request-delivery-enable", success: true, data: ["enabled": "true"])
-    } catch {
-      await writeE2EResult(command: "request-delivery-enable", success: false, error: error.localizedDescription)
-    }
-  }
-
-  private func handleAcceptConversation(
-    params: [String: String],
-    manager: AppStateManager,
-    logger e2eLogger: Logger
-  ) async {
-    guard let conversationId = params["conversationId"],
-          MLSConversationIdentityBoundary.isCanonicalStableID(conversationId) else {
-      e2eLogger.error("[E2E] accept-conversation requires a canonical conversationId")
-      await writeE2EResult(
-        command: "accept-conversation",
-        success: false,
-        error: "Missing or invalid conversationId"
-      )
-      return
-    }
-
-    guard let appState = manager.lifecycle.appState,
-          let conversationManager = await appState.getMLSConversationManager() else {
-      e2eLogger.error("[E2E] MLS not initialized - cannot accept conversation")
-      await writeE2EResult(
-        command: "accept-conversation",
-        success: false,
-        error: "MLS not initialized"
-      )
-      return
-    }
-
-    do {
-      try await conversationManager.acceptConversationRequest(convoId: conversationId)
-      await writeE2EResult(
-        command: "accept-conversation",
-        success: true,
-        data: ["conversationId": conversationId]
-      )
-    } catch {
-      e2eLogger.error("[E2E] Failed to accept conversation: \(error.localizedDescription)")
-      await writeE2EResult(
-        command: "accept-conversation",
-        success: false,
-        error: error.localizedDescription
-      )
-    }
-  }
-  
-  private func handleSendMessage(params: [String: String], manager: AppStateManager, logger e2eLogger: Logger) async {
-    guard let text = params["text"],
-          let conversationId = params["conversationId"] else {
-      e2eLogger.error("[E2E] send-message requires text and conversationId parameters")
-      await writeE2EResult(command: "send-message", success: false, error: "Missing text or conversationId")
-      return
-    }
-    
-    guard let appState = manager.lifecycle.appState else {
-      e2eLogger.error("[E2E] Not authenticated - cannot send message")
-      await writeE2EResult(command: "send-message", success: false, error: "Not authenticated")
-      return
-    }
-    
-    e2eLogger.info("[E2E] Sending message to conversation: \(conversationId)")
-    
-    do {
-      guard let conversationManager = await appState.getMLSConversationManager() else {
-        throw NSError(domain: "E2E", code: 1, userInfo: [NSLocalizedDescriptionKey: "MLS not initialized"])
-      }
-      
-      let canonicalConversationID = try await resolveE2EConversationID(
-        conversationId,
-        manager: conversationManager
-      )
-
-      // Send the message using the stable public route.
-      let result = try await conversationManager.sendMessage(
-        convoId: canonicalConversationID,
-        plaintext: text
-      )
-      
-      e2eLogger.info("[E2E] Message sent: \(result.messageId)")
-      MLSDiagnosticLogger.shared.logE2EMessageSent(
-        correlationId: manager.e2eRunId ?? "unknown",
-        conversationId: canonicalConversationID,
-        contentPreview: String(text.prefix(20))
-      )
-      
-      await writeE2EResult(command: "send-message", success: true, data: [
-        "messageId": result.messageId,
-        "conversationId": canonicalConversationID,
-        "epoch": "\(result.epoch)"
-      ])
-      
-    } catch {
-      e2eLogger.error("[E2E] Failed to send message: \(error.localizedDescription)")
-      await writeE2EResult(command: "send-message", success: false, error: error.localizedDescription)
-    }
-  }
-
-  private func handleSendBlob(params: [String: String], manager: AppStateManager, logger e2eLogger: Logger) async {
-    guard let appState = manager.lifecycle.appState else {
-      e2eLogger.error("[E2E-BLOB] Not authenticated")
-      await writeE2EResult(command: "send-blob", success: false, error: "Not authenticated")
-      return
-    }
-
-    guard let conversationManager = await appState.getMLSConversationManager() else {
-      e2eLogger.error("[E2E-BLOB] MLS not initialized")
-      await writeE2EResult(command: "send-blob", success: false, error: "MLS not initialized")
-      return
-    }
-
-    // 1. Resolve Target Conversation ID
-    let convoId: String
-    if let id = params["conversationId"] ?? params["convoId"], !id.isEmpty {
-      do {
-        convoId = try await resolveE2EConversationID(id, manager: conversationManager)
-      } catch {
-        e2eLogger.error("[E2E-BLOB] Refusing unresolved conversation identity: \(error.localizedDescription)")
-        await writeE2EResult(command: "send-blob", success: false, error: error.localizedDescription)
-        return
-      }
-    } else if let targetDID = params["targetDID"] ?? params["recipientDID"], !targetDID.isEmpty {
-      // Find existing conversation with target member
-      if let existing = conversationManager.conversations.values.first(where: { convo in
-        convo.members.contains(where: { $0.did.description == targetDID })
-      }) {
-        convoId = existing.conversationId
-      } else {
-        await writeE2EResult(command: "send-blob", success: false,
-          error: "Send a text introduction and wait for acceptance before attaching media")
-        return
-      }
-    } else {
-      e2eLogger.error("[E2E-BLOB] Missing conversationId or targetDID")
-      await writeE2EResult(command: "send-blob", success: false, error: "Missing conversationId or targetDID")
-      return
-    }
-
-    do {
-      let allowed = try await MLSDirectRequestAccess.allowsOrdinaryEffects(manager: conversationManager, conversationID: convoId)
-      let pending = try await conversationManager.fetchPendingRequestConversations()
-      guard !pending.contains(where: { $0.conversationID == convoId }),
-            allowed else {
-        await writeE2EResult(command: "send-blob", success: false, error: "Message request is not accepted and ready")
-        return
-      }
-    } catch {
-      await writeE2EResult(command: "send-blob", success: false, error: "Could not verify permission to send attachments")
-      return
-    }
-
-    // 2. Resolve Raw Blob Plaintext Data
-    let rawData: Data
-    let mediaType = params["mediaType"]?.lowercased() ?? params["type"]?.lowercased() ?? "image"
-    var contentType = params["mimeType"] ?? params["contentType"] ?? (mediaType == "audio" ? "audio/mp4" : "image/png")
-    let width = Int(params["width"] ?? "100") ?? 100
-    let height = Int(params["height"] ?? "100") ?? 100
-
-    if let filePath = params["filePath"] ?? params["path"], !filePath.isEmpty {
-      do {
-        rawData = try Data(contentsOf: URL(fileURLWithPath: filePath))
-        e2eLogger.info("[E2E-BLOB] Loaded \(rawData.count) bytes from \(filePath)")
-      } catch {
-        e2eLogger.error("[E2E-BLOB] Failed to read file at \(filePath): \(error.localizedDescription)")
-        await writeE2EResult(command: "send-blob", success: false, error: "Failed to read file: \(error.localizedDescription)")
-        return
-      }
-    } else if let base64Str = params["base64"] ?? params["data"], !base64Str.isEmpty {
-      guard let decoded = Data(base64Encoded: base64Str) else {
-        e2eLogger.error("[E2E-BLOB] Invalid base64 data")
-        await writeE2EResult(command: "send-blob", success: false, error: "Invalid base64 data")
-        return
-      }
-      rawData = decoded
-      e2eLogger.info("[E2E-BLOB] Decoded \(rawData.count) bytes from base64")
-    } else {
-      // Generate synthetic 100x100 PNG test image
-      let size = CGSize(width: CGFloat(width), height: CGFloat(height))
-      let renderer = CrossPlatformImageRenderer(size: size)
-      let syntheticImage = renderer.image { ctx in
-        #if os(iOS)
-        UIColor.systemBlue.setFill()
-        UIRectFill(CGRect(origin: .zero, size: size))
-        #endif
-      }
-      #if os(iOS)
-      guard let pngData = syntheticImage?.pngData() else {
-        e2eLogger.error("[E2E-BLOB] Failed to generate synthetic PNG")
-        await writeE2EResult(command: "send-blob", success: false, error: "Failed to generate synthetic PNG")
-        return
-      }
-      rawData = pngData
-      #else
-      guard let pngData = syntheticImage?.pngImageData() else {
-        await writeE2EResult(command: "send-blob", success: false, error: "Failed to generate synthetic PNG")
-        return
-      }
-      rawData = pngData
-      #endif
-      contentType = "image/png"
-      e2eLogger.info("[E2E-BLOB] Generated synthetic PNG of size \(rawData.count) bytes")
-    }
-
-    let caption = params["caption"] ?? params["text"] ?? "E2E Blob Test Attachment"
-    let altText = params["altText"] ?? params["alt"]
-
-    // 3. Encrypt Blob via AES-256-GCM
-    let encrypted: BlobCrypto.EncryptedBlob
-    do {
-      encrypted = try BlobCrypto.encrypt(plaintext: rawData)
-      e2eLogger.info("[E2E-BLOB] Encrypted blob: ciphertext=\(encrypted.ciphertext.count)B sha256=\(encrypted.sha256.prefix(16))...")
-    } catch {
-      e2eLogger.error("[E2E-BLOB] Blob encryption failed: \(error.localizedDescription)")
-      await writeE2EResult(command: "send-blob", success: false, error: "Blob encryption failed: \(error.localizedDescription)")
-      return
-    }
-
-    // 4. Upload Ciphertext to Delivery Service
-    let blobId = UUID().uuidString.lowercased()
-    e2eLogger.info("[E2E-BLOB] Generated blobId: \(blobId)")
-
-    // 5. Construct Embed & Transmit MLS Message
-    let embed: MLSEmbedData
-    if mediaType == "audio" {
-      let audioEmbed = MLSAudioEmbed(
-        blobId: blobId,
-        key: encrypted.key,
-        iv: encrypted.iv,
-        sha256: encrypted.sha256,
-        contentType: contentType,
-        size: UInt64(rawData.count),
-        durationMs: UInt64(params["durationMs"].flatMap(Int.init) ?? 1000),
-        waveform: [0.5, 0.8, 0.4, 0.9, 0.2],
-        transcript: params["transcript"]
-      )
-      embed = .audio(audioEmbed)
-    } else {
-      let imageEmbed = MLSImageEmbed(
-        blobId: blobId,
-        key: encrypted.key,
-        iv: encrypted.iv,
-        sha256: encrypted.sha256,
-        contentType: contentType,
-        size: rawData.count,
-        width: width,
-        height: height,
-        altText: altText,
-        blurhash: nil
-      )
-      embed = .image(imageEmbed)
-    }
-
-    do {
-      let sendResult = try await conversationManager.sendMessage(
-        convoId: convoId,
-        plaintext: caption,
-        embed: embed
-      )
-      e2eLogger.info("[E2E-BLOB] Message with blob embed sent: msgId=\(sendResult.messageId) epoch=\(sendResult.epoch)")
-      await writeE2EResult(command: "send-blob", success: true, data: [
-        "messageId": sendResult.messageId,
-        "conversationId": convoId,
-        "blobId": blobId,
-        "blobSize": "\(rawData.count)",
-        "sha256": encrypted.sha256,
-        "epoch": "\(sendResult.epoch)",
-        "mediaType": mediaType
-      ])
-    } catch {
-      e2eLogger.error("[E2E-BLOB] Failed to send MLS message: \(error.localizedDescription)")
-      await writeE2EResult(command: "send-blob", success: false, error: "Send message failed: \(error.localizedDescription)")
-    }
-  }
-  
-  private func handleGetMessages(params: [String: String], manager: AppStateManager, logger e2eLogger: Logger) async {
-    guard let conversationId = params["conversationId"] else {
-      e2eLogger.error("[E2E] get-messages requires conversationId parameter")
-      await writeE2EResult(command: "get-messages", success: false, error: "Missing conversationId")
-      return
-    }
-    
-    guard let appState = manager.lifecycle.appState else {
-      e2eLogger.error("[E2E] Not authenticated")
-      await writeE2EResult(command: "get-messages", success: false, error: "Not authenticated")
-      return
-    }
-    
-    guard let conversationManager = await appState.getMLSConversationManager() else {
-      e2eLogger.error("[E2E] MLS not initialized")
-      await writeE2EResult(command: "get-messages", success: false, error: "MLS not initialized")
-      return
-    }
-    
-    do {
-      let canonicalConversationID = try await resolveE2EConversationID(
-        conversationId,
-        manager: conversationManager
-      )
-      // Get encrypted messages from server
-      let (messageViews, lastSeq) = try await conversationManager.apiClient.getMessages(
-        convoId: canonicalConversationID,
-        limit: 50
-      )
-      
-      // Decrypt messages that we can
-      var decryptedTexts: [String] = []
-      for messageView in messageViews {
-        do {
-          let decrypted = try await conversationManager.decryptMessage(messageView, source: "e2e-test")
-          let payload = decrypted.payload
-          if payload.messageType == .text {
-            let text = payload.text ?? ""
-            if let embed = payload.embed {
-              let prefix = text.isEmpty ? "" : "\(text) "
-              switch embed {
-              case .image(let img):
-                decryptedTexts.append("\(prefix)[image:\(img.blobId)]")
-              case .audio(let audio):
-                decryptedTexts.append("\(prefix)[audio:\(audio.blobId)]")
-              case .link(let link):
-                decryptedTexts.append("\(prefix)[link:\(link.url)]")
-              case .gif(let gif):
-                decryptedTexts.append("\(prefix)[gif:\(gif.tenorURL)]")
-              case .post(let post):
-                decryptedTexts.append("\(prefix)[post:\(post.uri)]")
-              case .groupInvitation(let reference):
-                decryptedTexts.append("\(prefix)[groupInvitation:\(reference.conversationId)]")
-              case .unknown(let type):
-                decryptedTexts.append("\(prefix)[unknown:\(type)]")
-              }
-            } else if !text.isEmpty {
-              decryptedTexts.append(text)
-            }
-          } else if payload.messageType == .reaction, let reaction = payload.reaction {
-            decryptedTexts.append("[reaction:\(reaction.action.rawValue):\(reaction.emoji) on \(reaction.messageId.prefix(8))]")
-          }
-        } catch {
-          e2eLogger.error("[E2E] Could not decrypt message: \(error)")
-          decryptedTexts.append("[DECRYPT_FAILED: \(error)]")
-        }
-      }
-      
-      e2eLogger.info("[E2E] Got \(messageViews.count) messages, decrypted \(decryptedTexts.count) for conversation \(canonicalConversationID)")
-      await writeE2EResult(command: "get-messages", success: true, data: [
-        "conversationId": canonicalConversationID,
-        "totalMessages": "\(messageViews.count)",
-        "decryptedCount": "\(decryptedTexts.count)",
-        "lastSeq": "\(lastSeq ?? 0)",
-        "messages": decryptedTexts.joined(separator: "|")
-      ])
-    } catch {
-      e2eLogger.error("[E2E] Failed to get messages: \(error.localizedDescription)")
-      await writeE2EResult(command: "get-messages", success: false, error: error.localizedDescription)
-    }
-  }
-  
-  private func handleDumpState(params: [String: String], manager: AppStateManager, logger e2eLogger: Logger) async {
-    e2eLogger.error("[E2E-DUMP] Entering handleDumpState")
-    e2eLogger.error("[E2E-DUMP] manager.lifecycle: \(String(describing: manager.lifecycle))")
-    
-    guard let appState = manager.lifecycle.appState else {
-      e2eLogger.error("[E2E-DUMP] Not authenticated - manager.lifecycle.appState is nil")
-      await writeE2EResult(command: "dump-state", success: false, error: "Not authenticated")
-      return
-    }
-    
-    guard let conversationManager = await appState.getMLSConversationManager() else {
-      e2eLogger.error("[E2E] MLS not initialized - getMLSConversationManager returned nil")
-      await writeE2EResult(command: "dump-state", success: false, error: "MLS not initialized")
-      return
-    }
-    
-    e2eLogger.info("[E2E] Got conversation manager, reading conversations")
-    
-    do {
-      let conversations = try canonicalE2EConversationIDs(manager: conversationManager)
-      e2eLogger.info("[E2E] State dump: \(conversations.count) conversations")
-      MLSDiagnosticLogger.shared.logMLSStateDump(
-        conversationCount: conversations.count,
-        groupCount: conversations.count,
-        pendingMessages: 0
-      )
-
-      e2eLogger.info("[E2E] Writing result file")
-      await writeE2EResult(command: "dump-state", success: true, data: [
-        "conversationCount": "\(conversations.count)",
-        "conversations": conversations.joined(separator: ",")
-      ])
-      e2eLogger.info("[E2E] Dump state complete")
-    } catch {
-      e2eLogger.error("[E2E-DUMP] Refusing ambiguous conversation state: \(error.localizedDescription)")
-      await writeE2EResult(command: "dump-state", success: false, error: error.localizedDescription)
-    }
-  }
-  
-  private func handleSync(params: [String: String], manager: AppStateManager, logger e2eLogger: Logger) async {
-    e2eLogger.info("[E2E-SYNC] Starting sync")
-    
-    guard let appState = manager.lifecycle.appState else {
-      e2eLogger.error("[E2E-SYNC] Not authenticated")
-      await writeE2EResult(command: "sync", success: false, error: "Not authenticated")
-      return
-    }
-    
-    guard let conversationManager = await appState.getMLSConversationManager() else {
-      e2eLogger.error("[E2E-SYNC] MLS not initialized")
-      await writeE2EResult(command: "sync", success: false, error: "MLS not initialized")
-      return
-    }
-    
-    do {
-      // Use waitAndSyncWithServer to properly wait for any ongoing sync to complete
-      // then trigger a fresh sync that actually fetches from server
-      e2eLogger.info("[E2E-SYNC] Calling waitAndSyncWithServer (waits up to 60s for lock)...")
-      try await conversationManager.waitAndSyncWithServer(maxWait: 60)
-      
-      let conversations = try canonicalE2EConversationIDs(manager: conversationManager)
-      e2eLogger.info("[E2E-SYNC] Sync complete, \(conversations.count) conversations")
-      
-      await writeE2EResult(command: "sync", success: true, data: [
-        "conversationCount": "\(conversations.count)",
-        "conversations": conversations.joined(separator: ",")
-      ])
-    } catch {
-      e2eLogger.error("[E2E-SYNC] Sync failed: \(error.localizedDescription)")
-      await writeE2EResult(command: "sync", success: false, error: error.localizedDescription)
-    }
-  }
-  
-  // MARK: - E2E Group Chat Commands
-
-  private func handleAddMember(params: [String: String], manager: AppStateManager, logger e2eLogger: Logger) async {
-    guard let conversationId = params["conversationId"],
-          let memberDID = params["memberDID"] else {
-      e2eLogger.error("[E2E] add-member requires conversationId and memberDID parameters")
-      await writeE2EResult(command: "add-member", success: false, error: "Missing conversationId or memberDID")
-      return
-    }
-
-    guard let appState = manager.lifecycle.appState else {
-      e2eLogger.error("[E2E] Not authenticated")
-      await writeE2EResult(command: "add-member", success: false, error: "Not authenticated")
-      return
-    }
-
-    e2eLogger.info("[E2E] Adding member \(memberDID) to conversation \(conversationId)")
-
-    do {
-      guard let conversationManager = await appState.getMLSConversationManager() else {
-        throw NSError(domain: "E2E", code: 1, userInfo: [NSLocalizedDescriptionKey: "MLS not initialized"])
-      }
-
-      let canonicalConversationID = try await resolveE2EConversationID(
-        conversationId,
-        manager: conversationManager
-      )
-      try await conversationManager.addMembers(convoId: canonicalConversationID, memberDids: [memberDID])
-
-      e2eLogger.info("[E2E] Member added successfully")
-      await writeE2EResult(command: "add-member", success: true, data: [
-        "conversationId": canonicalConversationID,
-        "memberDID": memberDID
-      ])
-    } catch {
-      e2eLogger.error("[E2E] Failed to add member: \(error.localizedDescription)")
-      await writeE2EResult(command: "add-member", success: false, error: error.localizedDescription)
-    }
-  }
-
-  private func handleRemoveMember(params: [String: String], manager: AppStateManager, logger e2eLogger: Logger) async {
-    guard let conversationId = params["conversationId"],
-          let memberDID = params["memberDID"] else {
-      e2eLogger.error("[E2E] remove-member requires conversationId and memberDID parameters")
-      await writeE2EResult(command: "remove-member", success: false, error: "Missing conversationId or memberDID")
-      return
-    }
-
-    guard let appState = manager.lifecycle.appState else {
-      e2eLogger.error("[E2E] Not authenticated")
-      await writeE2EResult(command: "remove-member", success: false, error: "Not authenticated")
-      return
-    }
-
-    let reason = params["reason"]
-    e2eLogger.info("[E2E] Removing member \(memberDID) from conversation \(conversationId)")
-
-    do {
-      guard let conversationManager = await appState.getMLSConversationManager() else {
-        throw NSError(domain: "E2E", code: 1, userInfo: [NSLocalizedDescriptionKey: "MLS not initialized"])
-      }
-
-      let canonicalConversationID = try await resolveE2EConversationID(
-        conversationId,
-        manager: conversationManager
-      )
-      try await conversationManager.removeMember(from: canonicalConversationID, memberDid: memberDID, reason: reason)
-
-      e2eLogger.info("[E2E] Member removed successfully")
-      await writeE2EResult(command: "remove-member", success: true, data: [
-        "conversationId": canonicalConversationID,
-        "memberDID": memberDID
-      ])
-    } catch {
-      e2eLogger.error("[E2E] Failed to remove member: \(error.localizedDescription)")
-      await writeE2EResult(command: "remove-member", success: false, error: error.localizedDescription)
-    }
-  }
-
-  private func handleListMembers(params: [String: String], manager: AppStateManager, logger e2eLogger: Logger) async {
-    guard let conversationId = params["conversationId"] else {
-      e2eLogger.error("[E2E] list-members requires conversationId parameter")
-      await writeE2EResult(command: "list-members", success: false, error: "Missing conversationId")
-      return
-    }
-
-    guard let appState = manager.lifecycle.appState else {
-      e2eLogger.error("[E2E] Not authenticated")
-      await writeE2EResult(command: "list-members", success: false, error: "Not authenticated")
-      return
-    }
-
-    do {
-      guard let conversationManager = await appState.getMLSConversationManager() else {
-        throw NSError(domain: "E2E", code: 1, userInfo: [NSLocalizedDescriptionKey: "MLS not initialized"])
-      }
-
-      let canonicalConversationID = try await resolveE2EConversationID(
-        conversationId,
-        manager: conversationManager
-      )
-      guard let convo = conversationManager.conversations[canonicalConversationID] else {
-        throw NSError(domain: "E2E", code: 2, userInfo: [NSLocalizedDescriptionKey: "Conversation not found"])
-      }
-
-      let memberDIDs = convo.members.map { $0.did.description }
-      let adminDIDs = convo.members.filter { $0.isAdmin }.map { $0.did.description }
-
-      e2eLogger.info("[E2E] Listed \(memberDIDs.count) members for conversation \(canonicalConversationID)")
-      await writeE2EResult(command: "list-members", success: true, data: [
-        "conversationId": canonicalConversationID,
-        "memberCount": "\(memberDIDs.count)",
-        "members": memberDIDs.joined(separator: ","),
-        "admins": adminDIDs.joined(separator: ",")
-      ])
-    } catch {
-      e2eLogger.error("[E2E] Failed to list members: \(error.localizedDescription)")
-      await writeE2EResult(command: "list-members", success: false, error: error.localizedDescription)
-    }
-  }
-
-  private func handleCheckMessage(params: [String: String], manager: AppStateManager, logger e2eLogger: Logger) async {
-    guard let conversationId = params["conversationId"],
-          let contentPrefix = params["contentPrefix"] else {
-      e2eLogger.error("[E2E] check-message requires conversationId and contentPrefix parameters")
-      await writeE2EResult(command: "check-message", success: false, error: "Missing conversationId or contentPrefix")
-      return
-    }
-
-    guard let appState = manager.lifecycle.appState else {
-      e2eLogger.error("[E2E] Not authenticated")
-      await writeE2EResult(command: "check-message", success: false, error: "Not authenticated")
-      return
-    }
-
-    do {
-      guard let conversationManager = await appState.getMLSConversationManager() else {
-        throw NSError(domain: "E2E", code: 1, userInfo: [NSLocalizedDescriptionKey: "MLS not initialized"])
-      }
-
-      let canonicalConversationID = try await resolveE2EConversationID(
-        conversationId,
-        manager: conversationManager
-      )
-
-      guard let userDid = conversationManager.userDid else {
-        throw NSError(domain: "E2E", code: 3, userInfo: [NSLocalizedDescriptionKey: "No user DID"])
-      }
-
-      let messages = try await conversationManager.storage.fetchMessagesForConversation(
-        canonicalConversationID,
-        currentUserDID: userDid,
-        database: conversationManager.database,
-        limit: 200
-      )
-
-      let mlsContext = try await CatbirdMLSCore.MLSCoreContext.shared.getContext(for: userDid)
-      let matching = messages.compactMap { msg -> (text: String, state: String)? in
-        guard let text = msg.decryptedPayload(context: mlsContext)?.text ?? msg.plaintext,
-              text.hasPrefix(contentPrefix) else { return nil }
-        return (text, msg.processingState)
-      }
-
-      e2eLogger.info("[E2E] Found \(matching.count) messages matching prefix '\(contentPrefix)' in \(canonicalConversationID)")
-      await writeE2EResult(command: "check-message", success: true, data: [
-        "conversationId": canonicalConversationID,
-        "contentPrefix": contentPrefix,
-        "matchCount": "\(matching.count)",
-        "totalMessages": "\(messages.count)",
-        "matches": matching.map(\.text).joined(separator: "|"),
-        "processingStates": matching.map(\.state).joined(separator: "|")
-      ])
-    } catch {
-      e2eLogger.error("[E2E] Failed to check messages: \(error.localizedDescription)")
-      await writeE2EResult(command: "check-message", success: false, error: error.localizedDescription)
-    }
-  }
-
-  private func handleGetEpoch(params: [String: String], manager: AppStateManager, logger e2eLogger: Logger) async {
-    guard let conversationId = params["conversationId"] else {
-      e2eLogger.error("[E2E] get-epoch requires conversationId parameter")
-      await writeE2EResult(command: "get-epoch", success: false, error: "Missing conversationId")
-      return
-    }
-
-    guard let appState = manager.lifecycle.appState else {
-      e2eLogger.error("[E2E] Not authenticated")
-      await writeE2EResult(command: "get-epoch", success: false, error: "Not authenticated")
-      return
-    }
-
-    do {
-      guard let conversationManager = await appState.getMLSConversationManager() else {
-        throw NSError(domain: "E2E", code: 1, userInfo: [NSLocalizedDescriptionKey: "MLS not initialized"])
-      }
-
-      let canonicalConversationID = try await resolveE2EConversationID(
-        conversationId,
-        manager: conversationManager
-      )
-
-      guard let userDid = conversationManager.userDid else {
-        throw NSError(domain: "E2E", code: 3, userInfo: [NSLocalizedDescriptionKey: "No user DID"])
-      }
-
-      // Sync first to ensure conversation model is up-to-date after add/remove operations
-      try? await conversationManager.syncWithServer(fullSync: false)
-
-      if conversationManager.protocolAuthorityMode == .rustFull {
-        let projection = try await conversationManager.conversationDiagnosticsProjection(
-          conversationId: canonicalConversationID,
-          ensureReady: true
-        )
-        let epoch = projection.epoch ?? 0
-        e2eLogger.info(
-          "[E2E] Rust epoch projection for \(conversationId): epoch=\(epoch), state=\(projection.recoveryState.rawValue), sendAllowed=\(projection.sendAllowed.map(String.init) ?? "nil")"
-        )
-        await writeE2EResult(command: "get-epoch", success: true, data: [
-          "conversationId": canonicalConversationID,
-          "serverEpoch": "\(epoch)",
-          "ffiEpoch": "\(epoch)",
-          "recoveryState": projection.recoveryState.rawValue,
-          "sendAllowed": projection.sendAllowed.map(String.init) ?? "unknown"
-        ])
-        return
-      }
-
-      guard let convo = conversationManager.conversations[canonicalConversationID] else {
-        throw NSError(domain: "E2E", code: 2, userInfo: [NSLocalizedDescriptionKey: "Conversation not found"])
-      }
-
-      // Query FFI for ground-truth epoch (authoritative source)
-      var ffiEpoch: UInt64 = 0
-      if let groupIdData = Data(hexEncoded: convo.groupId) {
-        ffiEpoch = try await conversationManager.mlsClient.getEpoch(for: userDid, groupId: groupIdData)
-      }
-
-      // Use FFI epoch as the primary value since server epoch may lag
-      let epoch = ffiEpoch > 0 ? ffiEpoch : UInt64(convo.epoch)
-      e2eLogger.info("[E2E] Epoch for \(canonicalConversationID): server=\(convo.epoch), ffi=\(ffiEpoch), reported=\(epoch)")
-      await writeE2EResult(command: "get-epoch", success: true, data: [
-        "conversationId": canonicalConversationID,
-        "serverEpoch": "\(epoch)",
-        "ffiEpoch": "\(ffiEpoch)"
-      ])
-    } catch {
-      e2eLogger.error("[E2E] Failed to get epoch: \(error.localizedDescription)")
-      await writeE2EResult(command: "get-epoch", success: false, error: error.localizedDescription)
-    }
-  }
-
-  /// E2E: wipe local MLS state for a conversation so the deferred recovery
-  /// loop treats it as needing rejoin.
-  ///
-  /// Used by `scripts/e2e_mls_auto_reset_ios.sh` to deterministically push a
-  /// client into the `groupMissing`/`needsRejoin` cohort without resorting to
-  /// filesystem corruption. Sequence:
-  /// In rustFull authority this delegates to Rust so the same owner that runs
-  /// recovery also performs the fault injection. Legacy modes keep the Swift
-  /// path:
-  ///   1. FFI `deleteGroup` to drop OpenMLS state for the convo's groupId.
-  ///   2. Evict the in-memory conversation cache + group state.
-  ///   3. Set `needsRejoin = 1` in GRDB (clears `isUnrecoverable`/`needsReset`)
-  ///      so the next deferred-recovery tick re-enters the rejoin path.
-  ///
-  /// Accepts `conversationId` (canonical iOS param name) or `convoId` (the
-  /// e2e script's shorthand).
-  private func handleWipeMLSState(params: [String: String], manager: AppStateManager, logger e2eLogger: Logger) async {
-    guard let conversationId = params["conversationId"] ?? params["convoId"] else {
-      e2eLogger.error("[E2E-WIPE] requires conversationId or convoId parameter")
-      await writeE2EResult(command: "wipe-mls-state", success: false, error: "Missing conversationId")
-      return
-    }
-
-    guard let appState = manager.lifecycle.appState else {
-      e2eLogger.error("[E2E-WIPE] Not authenticated")
-      await writeE2EResult(command: "wipe-mls-state", success: false, error: "Not authenticated")
-      return
-    }
-
-    guard let conversationManager = await appState.getMLSConversationManager() else {
-      e2eLogger.error("[E2E-WIPE] MLS not initialized")
-      await writeE2EResult(command: "wipe-mls-state", success: false, error: "MLS not initialized")
-      return
-    }
-
-    let canonicalConversationID: String
-    do {
-      canonicalConversationID = try await resolveE2EConversationID(
-        conversationId,
-        manager: conversationManager
-      )
-    } catch {
-      e2eLogger.error("[E2E-WIPE] Refusing unresolved conversation identity: \(error.localizedDescription)")
-      await writeE2EResult(command: "wipe-mls-state", success: false, error: error.localizedDescription)
-      return
-    }
-
-    guard let userDid = conversationManager.userDid else {
-      e2eLogger.error("[E2E-WIPE] No user DID")
-      await writeE2EResult(command: "wipe-mls-state", success: false, error: "No user DID")
-      return
-    }
-
-    if conversationManager.protocolAuthorityMode == .rustFull {
-      do {
-        guard let result = try await conversationManager.debugWipeLocalGroupForRecovery(
-          conversationId: canonicalConversationID
-        ) else {
-          await writeE2EResult(
-            command: "wipe-mls-state",
-            success: false,
-            error: "Rust debug wipe returned no result in rustFull authority"
-          )
-          return
-        }
-
-        e2eLogger.info(
-          "[E2E-WIPE] Rust debug wipe complete for \(canonicalConversationID.prefix(16)) deletedLocalGroup=\(result.deletedLocalGroup)"
-        )
-        await writeE2EResult(command: "wipe-mls-state", success: true, data: [
-          "conversationId": canonicalConversationID,
-          "groupId": result.groupId ?? "",
-          "groupIdPresent": result.groupId == nil ? "false" : "true",
-          "deletedLocalGroup": result.deletedLocalGroup ? "true" : "false",
-          "authority": "rustFull"
-        ])
-      } catch {
-        e2eLogger.error("[E2E-WIPE] Rust debug wipe failed: \(error.localizedDescription)")
-        await writeE2EResult(command: "wipe-mls-state", success: false, error: error.localizedDescription)
-      }
-      return
-    }
-
-    do {
-      let model = try await conversationManager.storage.fetchConversation(
-        conversationID: canonicalConversationID,
-        currentUserDID: userDid,
-        database: conversationManager.database
-      )
-      let groupIdData: Data? = model?.groupID
-        ?? conversationManager.conversations[canonicalConversationID].flatMap { Data(hexEncoded: $0.groupId) }
-
-      if let groupIdData {
-        try? await conversationManager.mlsClient.deleteGroup(for: userDid, groupId: groupIdData)
-        e2eLogger.info("[E2E-WIPE] Deleted FFI group state for \(canonicalConversationID.prefix(16))")
-      } else {
-        e2eLogger.warning("[E2E-WIPE] No groupId found for \(canonicalConversationID.prefix(16)) — proceeding with DB-only wipe")
-      }
-
-      conversationManager.conversations.removeValue(forKey: canonicalConversationID)
-      conversationManager.groupStates.removeValue(forKey: canonicalConversationID)
-
-      try await conversationManager.database.write { db in
-        try db.execute(
-          sql: """
-                UPDATE MLSConversationModel
-                SET needsRejoin = 1,
-                    needsReset = 0,
-                    isUnrecoverable = 0,
-                    pendingNewGroupId = NULL,
-                    pendingResetGeneration = NULL,
-                    updatedAt = ?
-                WHERE conversationID = ? AND currentUserDID = ?;
-            """,
-          arguments: [Date(), canonicalConversationID, userDid]
-        )
-      }
-
-      if let recoveryManager = await conversationManager.mlsClient.recovery(for: userDid) {
-        await recoveryManager.clearRejoinTrackingAfterLocalStateLoss(convoId: canonicalConversationID)
-      }
-
-      e2eLogger.info("[E2E-WIPE] Wipe complete for \(canonicalConversationID.prefix(16))")
-      await writeE2EResult(command: "wipe-mls-state", success: true, data: [
-        "conversationId": canonicalConversationID,
-        "groupIdPresent": groupIdData != nil ? "true" : "false"
-      ])
-    } catch {
-      e2eLogger.error("[E2E-WIPE] Failed: \(error.localizedDescription)")
-      await writeE2EResult(command: "wipe-mls-state", success: false, error: error.localizedDescription)
-    }
-  }
-
-  private func e2eRecoveryStateNames(_ state: ConversationRecoveryState) -> (stateName: String, externalName: String) {
-    switch state {
-    case .healthy:
-      return ("healthy", "Active")
-    case .epochBehind:
-      return ("epochBehind", "EpochBehind")
-    case .groupMissing:
-      return ("groupMissing", "GroupMissing")
-    case .needsRejoin:
-      return ("needsRejoin", "NeedsRejoin")
-    case .recovering:
-      return ("recovering", "Recovering")
-    case .unrecoverableLocal:
-      return ("unrecoverableLocal", "UnrecoverableLocal")
-    case .resetPending:
-      return ("resetPending", "ResetPending")
-    case .deviceRemoved:
-      return ("deviceRemoved", "DeviceRemoved")
-    case .closed:
-      return ("closed", "Closed")
-    }
-  }
-
-  /// E2E: report MLS recovery state for a conversation.
-  ///
-  /// Returns the spec §8.1 recovery state (`Active` / `EpochBehind` /
-  /// `GroupMissing` / `NeedsRejoin` / `Recovering` / `UnrecoverableLocal` /
-  /// `ResetPending`), the FFI epoch, and the `pendingResetGeneration` if
-  /// staged. Used by `scripts/e2e_mls_auto_reset_ios.sh` to assert the
-  /// auto-reset pyramid drove a client to the expected recovery state.
-  ///
-  /// Accepts `conversationId` (canonical) or `convoId` (e2e script
-  /// shorthand).
-  private func handleGetRecoveryState(params: [String: String], manager: AppStateManager, logger e2eLogger: Logger) async {
-    guard let conversationId = params["conversationId"] ?? params["convoId"] else {
-      e2eLogger.error("[E2E-RECOVERY] requires conversationId or convoId parameter")
-      await writeE2EResult(command: "get-recovery-state", success: false, error: "Missing conversationId")
-      return
-    }
-
-    guard let appState = manager.lifecycle.appState else {
-      await writeE2EResult(command: "get-recovery-state", success: false, error: "Not authenticated")
-      return
-    }
-
-    guard let conversationManager = await appState.getMLSConversationManager() else {
-      await writeE2EResult(command: "get-recovery-state", success: false, error: "MLS not initialized")
-      return
-    }
-
-    let canonicalConversationID: String
-    do {
-      canonicalConversationID = try await resolveE2EConversationID(
-        conversationId,
-        manager: conversationManager
-      )
-    } catch {
-      e2eLogger.error("[E2E-RECOVERY] Refusing unresolved conversation identity: \(error.localizedDescription)")
-      await writeE2EResult(command: "get-recovery-state", success: false, error: error.localizedDescription)
-      return
-    }
-
-    guard let userDid = conversationManager.userDid else {
-      await writeE2EResult(command: "get-recovery-state", success: false, error: "No user DID")
-      return
-    }
-
-    do {
-      let model = try await conversationManager.storage.fetchConversation(
-        conversationID: canonicalConversationID,
-        currentUserDID: userDid,
-        database: conversationManager.database
-      )
-
-      if conversationManager.protocolAuthorityMode == .rustFull {
-        let projection = try await conversationManager.conversationDiagnosticsProjection(
-          conversationId: canonicalConversationID,
-          ensureReady: false
-        )
-
-        let (stateName, externalName) = e2eRecoveryStateNames(projection.recoveryState)
-        let epoch = projection.epoch ?? UInt64(model?.epoch ?? 0)
-        let generation = model?.pendingResetGeneration
-
-        e2eLogger.info(
-          "[E2E-RECOVERY] rustFull \(canonicalConversationID.prefix(16)) state=\(externalName) epoch=\(epoch) generation=\(generation.map(String.init) ?? "nil")"
-        )
-
-        var data: [String: String] = [
-          "conversationId": canonicalConversationID,
-          "state": externalName,
-          "stateRaw": stateName,
-          "epoch": "\(epoch)",
-          "modelPresent": model == nil ? "false" : "true"
-        ]
-        if let generation {
-          data["resetGeneration"] = "\(generation)"
-        }
-
-        await writeE2EResult(command: "get-recovery-state", success: true, data: data)
-        return
-      }
-
-      let state: ConversationRecoveryState
-      if let recoveryManager = await conversationManager.mlsClient.recovery(for: userDid) {
-        state = await recoveryManager.recoveryState(for: canonicalConversationID, model: model)
-      } else {
-        state = model?.persistedRecoveryState ?? .healthy
-      }
-
-      // Map spec §8.1 enum to the names the e2e script asserts on.
-      // Keep the script's vocabulary (`Active` for `.healthy`) on top of the
-      // canonical Swift case names so consumers can pick whichever matches.
-      let stateName: String
-      let externalName: String
-      switch state {
-      case .healthy:
-        stateName = "healthy"; externalName = "Active"
-      case .epochBehind:
-        stateName = "epochBehind"; externalName = "EpochBehind"
-      case .groupMissing:
-        stateName = "groupMissing"; externalName = "GroupMissing"
-      case .needsRejoin:
-        stateName = "needsRejoin"; externalName = "NeedsRejoin"
-      case .recovering:
-        stateName = "recovering"; externalName = "Recovering"
-      case .unrecoverableLocal:
-        stateName = "unrecoverableLocal"; externalName = "UnrecoverableLocal"
-      case .resetPending:
-        stateName = "resetPending"; externalName = "ResetPending"
-      case .deviceRemoved:
-        stateName = "deviceRemoved"; externalName = "DeviceRemoved"
-      case .closed:
-        stateName = "closed"; externalName = "Closed"
-      }
-
-      // FFI-actual epoch is authoritative (mirrors handleGetEpoch). Falls
-      // back to the model's last-known epoch if the local group is gone.
-      var epoch: UInt64 = 0
-      if let groupIdData = model?.groupID {
-        epoch = (try? await conversationManager.mlsClient.getEpoch(
-          for: userDid, groupId: groupIdData)) ?? UInt64(model?.epoch ?? 0)
-      } else if let convo = conversationManager.conversations[canonicalConversationID],
-                let groupIdData = Data(hexEncoded: convo.groupId) {
-        epoch = (try? await conversationManager.mlsClient.getEpoch(
-          for: userDid, groupId: groupIdData)) ?? UInt64(convo.epoch)
-      } else if let model {
-        epoch = UInt64(model.epoch)
-      }
-
-      let generation = model?.pendingResetGeneration
-
-      e2eLogger.info(
-        "[E2E-RECOVERY] \(canonicalConversationID.prefix(16)) state=\(externalName) epoch=\(epoch) generation=\(generation.map(String.init) ?? "nil")"
-      )
-
-      var data: [String: String] = [
-        "conversationId": canonicalConversationID,
-        "state": externalName,
-        "stateRaw": stateName,
-        "epoch": "\(epoch)"
-      ]
-      if let generation {
-        data["generation"] = "\(generation)"
-      }
-      if let model {
-        data["needsRejoin"] = model.needsRejoin ? "true" : "false"
-        data["needsReset"] = model.needsReset ? "true" : "false"
-        data["isUnrecoverable"] = model.isUnrecoverable ? "true" : "false"
-      } else {
-        data["modelPresent"] = "false"
-      }
-      await writeE2EResult(command: "get-recovery-state", success: true, data: data)
-    } catch {
-      e2eLogger.error("[E2E-RECOVERY] Failed: \(error.localizedDescription)")
-      await writeE2EResult(command: "get-recovery-state", success: false, error: error.localizedDescription)
-    }
-  }
-
-  /// E2E: Clean up stale conversations and run GRDB/FFI reconciliation.
-  /// Purges local conversations that no longer exist on the server or have no FFI counterpart.
-  private func handleCleanupStale(params: [String: String], manager: AppStateManager, logger e2eLogger: Logger) async {
-    guard let appState = manager.lifecycle.appState else {
-      e2eLogger.error("[E2E] Not authenticated - cannot cleanup")
-      await writeE2EResult(command: "cleanup-stale", success: false, error: "Not authenticated")
-      return
-    }
-
-    do {
-      guard let conversationManager = await appState.getMLSConversationManager() else {
-        throw NSError(domain: "E2E", code: 1, userInfo: [NSLocalizedDescriptionKey: "MLS not initialized"])
-      }
-
-      e2eLogger.info("[E2E] Running sync to trigger reconciliation and zombie detection...")
-      try await conversationManager.syncWithServer(fullSync: true)
-
-      let convoCount = conversationManager.conversations.count
-      e2eLogger.info("[E2E] Cleanup complete - \(convoCount) conversations remain after reconciliation")
-      await writeE2EResult(command: "cleanup-stale", success: true, data: [
-        "remainingConversations": "\(convoCount)"
-      ])
-    } catch {
-      e2eLogger.error("[E2E] Cleanup failed: \(error.localizedDescription)")
-      await writeE2EResult(command: "cleanup-stale", success: false, error: error.localizedDescription)
-    }
-  }
-
-  /// E2E: force-delete a single ghost/zombie conversation from local storage.
-  ///
-  /// Unlike `cleanup-stale` (which runs a full sync and only removes conversations
-  /// the server no longer lists), this bypasses all reconciliation safeguards and
-  /// the server entirely — it tears down the local conversation + manifest + MLS
-  /// group even when the underlying MLS group is missing/desynced. Use it to clear
-  /// a conversation the user can neither open nor delete from the UI.
-  ///
-  /// Format: blue.catbird://e2e/force-delete-conversation?convoId=<conversationId>
-  private func handleForceDeleteConversation(params: [String: String], manager: AppStateManager, logger e2eLogger: Logger) async {
-    guard let appState = manager.lifecycle.appState else {
-      e2eLogger.error("[E2E] Not authenticated - cannot force delete")
-      await writeE2EResult(command: "force-delete-conversation", success: false, error: "Not authenticated")
-      return
-    }
-
-    guard let convoId = params["convoId"], !convoId.isEmpty else {
-      e2eLogger.error("[E2E] force-delete-conversation requires convoId parameter")
-      await writeE2EResult(command: "force-delete-conversation", success: false, error: "Missing convoId parameter")
-      return
-    }
-
-    guard let conversationManager = await appState.getMLSConversationManager() else {
-      e2eLogger.error("[E2E] MLS not initialized - cannot force delete")
-      await writeE2EResult(command: "force-delete-conversation", success: false, error: "MLS not initialized")
-      return
-    }
-
-    let canonicalConvoID: String
-    do {
-      canonicalConvoID = try await resolveE2EConversationID(convoId, manager: conversationManager)
-    } catch {
-      e2eLogger.error("[E2E] Refusing unresolved conversation identity: \(error.localizedDescription)")
-      await writeE2EResult(command: "force-delete-conversation", success: false, error: error.localizedDescription)
-      return
-    }
-
-    e2eLogger.info("[E2E] Force-deleting conversation \(canonicalConvoID, privacy: .public)")
-    await conversationManager.forceDeleteConversation(convoId: canonicalConvoID)
-
-    let remaining = conversationManager.conversations.count
-    e2eLogger.info("[E2E] Force delete complete - \(remaining) conversations remain")
-    await writeE2EResult(command: "force-delete-conversation", success: true, data: [
-      "deletedConvoId": canonicalConvoID,
-      "remainingConversations": "\(remaining)"
-    ])
-  }
-
-  /// E2E: publish fresh local key packages for this simulator's active device.
-  private func handleRefreshKeyPackages(params: [String: String], manager: AppStateManager, logger e2eLogger: Logger) async {
-    guard let appState = manager.lifecycle.appState else {
-      e2eLogger.error("[E2E] Not authenticated - cannot refresh key packages")
-      await writeE2EResult(command: "refresh-key-packages", success: false, error: "Not authenticated")
-      return
-    }
-
-    do {
-      guard let conversationManager = await appState.getMLSConversationManager() else {
-        throw NSError(domain: "E2E", code: 1, userInfo: [NSLocalizedDescriptionKey: "MLS not initialized"])
-      }
-
-      let maxGeneratedPackages = params["maxGeneratedPackages"].flatMap(Int.init)
-      e2eLogger.info("[E2E] Refreshing local key packages for active device")
-      try await conversationManager.smartRefreshKeyPackages(maxGeneratedPackages: maxGeneratedPackages)
-
-      let userDid = appState.userDID
-      let stats = try await conversationManager.apiClient.getKeyPackageStats()
-      let currentDeviceId: String
-      if conversationManager.protocolAuthorityMode == .rustFull {
-        currentDeviceId = try await conversationManager.registeredDeviceInfoForPushTokenRegistration()?.deviceId
-          ?? "unknown"
-      } else {
-        currentDeviceId = await conversationManager.mlsClient.getDeviceInfo(for: userDid)?.deviceId ?? "unknown"
-      }
-      let (_, listOutput) = try await conversationManager.apiClient.client.blue.catbird.chat.getOwnDevices(
-        input: BlueCatbirdChatGetOwnDevices.Parameters(actorDeviceId: currentDeviceId)
-      )
-      let currentDevicePackages = listOutput?.items.first(where: { $0.device.deviceId == currentDeviceId })?.device.availablePackageCount ?? -1
-
-      await writeE2EResult(command: "refresh-key-packages", success: true, data: [
-        "userDid": userDid,
-        "currentDeviceId": currentDeviceId,
-        "aggregateAvailable": "\(stats.stats.available)",
-        "currentDeviceAvailable": "\(currentDevicePackages)"
-      ])
-    } catch {
-      e2eLogger.error("[E2E] refresh-key-packages failed: \(error.localizedDescription)")
-      await writeE2EResult(
-        command: "refresh-key-packages",
-        success: false,
-        error: error.localizedDescription
-      )
-    }
-  }
-
-  /// E2E: Delete all local key packages for the current device and sync hashes to server.
-  private func handleDrainKeyPackages(params: [String: String], manager: AppStateManager, logger e2eLogger: Logger) async {
-    guard let appState = manager.lifecycle.appState else {
-      e2eLogger.error("[E2E] Not authenticated")
-      await writeE2EResult(command: "drain-key-packages", success: false, error: "Not authenticated")
-      return
-    }
-
-    do {
-      guard let conversationManager = await appState.getMLSConversationManager() else {
-        throw NSError(domain: "E2E", code: 1, userInfo: [NSLocalizedDescriptionKey: "MLS not initialized"])
-      }
-
-      if conversationManager.protocolAuthorityMode == .rustFull {
-        e2eLogger.error(
-          "[E2E] drain-key-packages unsupported in rustFull authority; refusing to mutate Swift OpenMLS storage"
-        )
-        await writeE2EResult(
-          command: "drain-key-packages",
-          success: false,
-          error: "drain-key-packages is unsupported in rustFull authority until Rust exposes a drain hook"
-        )
-        return
-      }
-
-      let userDid = appState.userDID
-      let localHashes = try await conversationManager.mlsClient.getLocalKeyPackageHashes(for: userDid)
-      let hashRefs: [Data] = localHashes.compactMap { Data(hexEncoded: $0) }
-      let deletedLocal = try await conversationManager.mlsClient.deleteKeyPackageBundles(
-        for: userDid,
-        hashRefs: hashRefs
-      )
-      let syncResult = try await conversationManager.mlsClient.syncKeyPackageHashes(for: userDid)
-      let stats = try await conversationManager.apiClient.getKeyPackageStats()
-      let currentDeviceId = await conversationManager.mlsClient.getDeviceInfo(for: userDid)?.deviceId ?? "unknown"
-
-      await writeE2EResult(command: "drain-key-packages", success: true, data: [
-        "userDid": userDid,
-        "deviceId": currentDeviceId,
-        "localHashesBefore": "\(localHashes.count)",
-        "deletedLocalBundles": "\(deletedLocal)",
-        "serverOrphaned": "\(syncResult.orphanedCount)",
-        "serverDeleted": "\(syncResult.deletedCount)",
-        "serverRemainingAvailable": "\(syncResult.remainingAvailable)",
-        "aggregateAvailableAfter": "\(stats.stats.available)"
-      ])
-    } catch {
-      e2eLogger.error("[E2E] drain-key-packages failed: \(error.localizedDescription)")
-      await writeE2EResult(
-        command: "drain-key-packages",
-        success: false,
-        error: error.localizedDescription
-      )
-    }
-  }
-
-  /// E2E: Capture aggregate and per-device key package inventory for current account.
-  private func handleKeyPackageState(params: [String: String], manager: AppStateManager, logger e2eLogger: Logger) async {
-    guard let appState = manager.lifecycle.appState else {
-      e2eLogger.error("[E2E] Not authenticated")
-      await writeE2EResult(command: "keypackage-state", success: false, error: "Not authenticated")
-      return
-    }
-
-    do {
-      guard let conversationManager = await appState.getMLSConversationManager() else {
-        throw NSError(domain: "E2E", code: 1, userInfo: [NSLocalizedDescriptionKey: "MLS not initialized"])
-      }
-
-      let userDid = appState.userDID
-      let currentDeviceId: String
-      if conversationManager.protocolAuthorityMode == .rustFull {
-        currentDeviceId = try await conversationManager.registeredDeviceInfoForPushTokenRegistration()?.deviceId
-          ?? "unknown"
-      } else {
-        currentDeviceId = await conversationManager.mlsClient.getDeviceInfo(for: userDid)?.deviceId
-          ?? "unknown"
-      }
-
-      let stats = try await conversationManager.apiClient.getKeyPackageStats()
-      let (statusCode, listOutput) = try await conversationManager.apiClient.client.blue.catbird.chat.getOwnDevices(
-        input: BlueCatbirdChatGetOwnDevices.Parameters(actorDeviceId: currentDeviceId)
-      )
-      guard statusCode == 200, let listOutput else {
-        throw NSError(
-          domain: "E2E",
-          code: statusCode,
-          userInfo: [NSLocalizedDescriptionKey: "getOwnDevices failed with HTTP \(statusCode)"]
-        )
-      }
-
-      let devices = listOutput.items
-      let currentDevicePackages = devices.first(where: { $0.device.deviceId == currentDeviceId })?.device.availablePackageCount ?? -1
-      let deviceCounts = devices.map { "\($0.device.deviceId):\($0.device.availablePackageCount)" }.joined(separator: ",")
-
-      await writeE2EResult(command: "keypackage-state", success: true, data: [
-        "userDid": userDid,
-        "currentDeviceId": currentDeviceId,
-        "aggregateAvailable": "\(stats.stats.available)",
-        "currentDeviceAvailable": "\(currentDevicePackages)",
-        "totalDevices": "\(devices.count)",
-        "deviceCounts": deviceCounts
-      ])
-    } catch {
-      e2eLogger.error("[E2E] keypackage-state failed: \(error.localizedDescription)")
-      await writeE2EResult(
-        command: "keypackage-state",
-        success: false,
-        error: error.localizedDescription
-      )
-    }
-  }
-
-  /// E2E: Explicitly request peer key package replenishment signal.
-  ///
-  /// **Phase F: retired.** The `requestReplenish` action / targetDids /
-  /// replenishResult fields were removed from the
-  /// `blue.catbird.chat.publishKeyPackages` lexicon as part of the
-  /// MLS metadata cutover; there is no peer-replenish RPC anymore.
-  /// This E2E handler stays to keep the URL-scheme contract stable
-  /// (so external test scripts that still POST `e2e/request-keypackage-replenish`
-  /// don't 404) but it now returns a not-supported result and logs.
-  private func handleRequestKeyPackageReplenish(params: [String: String], manager: AppStateManager, logger e2eLogger: Logger) async {
-    _ = params
-    _ = manager
-    e2eLogger.warning(
-      "[E2E] request-keypackage-replenish is no longer supported (Phase F: peer-replenish RPC retired)"
-    )
-    await writeE2EResult(
-      command: "request-keypackage-replenish",
-      success: false,
-      error: "Phase F: peer-replenish RPC was removed from the publishKeyPackages lexicon. There is no replacement endpoint; rely on normal local replenish on bundle-low."
-    )
-  }
-
   /// Write E2E command result to a file the harness can read
   private func writeE2EResult(command: String, success: Bool, error: String? = nil, data: [String: String]? = nil) async {
     let e2eLogger = Logger(subsystem: "blue.catbird.e2e", category: "Results")
     
-    // Debug runtime fixtures write results beside their isolated MLS profile, never into the user's App Group.
+    // Debug runtime fixtures write results beside their isolated profile, never into the user's App Group.
     #if DEBUG && os(macOS)
     let fixtureContainer = DebugGatewayTransport.shared.activeConfig.map {
       URL(fileURLWithPath: $0.profilePath, isDirectory: true)
@@ -4432,256 +2004,15 @@ extension CatbirdApp.AppDelegate {
     withCompletionHandler completionHandler: @escaping () -> Void
   ) {
     let logger = Logger(subsystem: "blue.catbird", category: "AppDelegate")
-    let userInfo = response.notification.request.content.userInfo
-
     logger.info("User tapped notification")
 
-    // 1. Handle key package notifications
-    if let type = userInfo["type"] as? String,
-       type == "keyPackageLowInventory" || type == "keyPackageReplenishRequested" {
-      Task { @MainActor in
-        guard let appState = AppStateManager.shared.lifecycle.appState else {
-          logger.warning("AppState not available for MLS notification handling")
-          completionHandler()
-          return
-        }
-        await MLSNotificationHandler.shared.handleNotification(userInfo: userInfo, appState: appState)
-        completionHandler()
-      }
-      return
-    }
-    
-    // 2. Forward to NotificationManager for navigation handling if available
+    // Forward to NotificationManager for navigation handling if available
     if let appState = AppStateManager.shared.lifecycle.appState {
       appState.notificationManager.userNotificationCenter(center, didReceive: response, withCompletionHandler: completionHandler)
       return
     }
 
-    // 3. Fallback handling if AppState/NotificationManager not ready
-    // Handle MLS notifications
-    if let type = userInfo["type"] as? String {
-      switch type {
-      case "mls_message", "mls_message_decrypted", "mls_message_request":
-        // Handle MLS chat message notification tap
-        // Navigate to the conversation and switch account if needed
-        logger.info("🔐 MLS message notification tapped - navigating to conversation")
-        
-        guard let convoId = userInfo["convo_id"] as? String else {
-          logger.warning("MLS notification missing convo_id")
-          completionHandler()
-          return
-        }
-        
-        let recipientDid: String? = {
-          // Prefer recipient_did (set by NSE after resolving hash, or legacy payload)
-          if let did = userInfo["recipient_did"] as? String {
-            return did
-          }
-          // Fall back to resolving recipient_account hash against local accounts
-          if let hash = userInfo["recipient_account"] as? String {
-            return Self.resolveRecipientDID(fromHash: hash)
-          }
-          return nil
-        }()
-        
-        Task { @MainActor in
-          // Switch to the correct account if needed
-          if let targetDid = recipientDid {
-            await self.switchToAccountIfNeeded(did: targetDid)
-          }
-          
-          // Navigate to the MLS conversation
-          await self.navigateToMLSConversation(convoId: convoId)
-          
-          completionHandler()
-        }
-        return
-        
-      default:
-        break
-      }
-    }
-
     completionHandler()
-  }
-  
-  /// Switch to a different account if it's not currently active
-  @MainActor
-  private func switchToAccountIfNeeded(did: String) async {
-    let logger = Logger(subsystem: "blue.catbird", category: "AppDelegate")
-    let appStateManager = AppStateManager.shared
-    
-    // Check if we're already on the correct account
-    if appStateManager.lifecycle.userDID == did {
-      logger.debug("Already on correct account: \(did.prefix(24))...")
-      return
-    }
-    
-    logger.info("🔄 Switching account to \(did.prefix(24))... for notification navigation")
-    _ = await appStateManager.switchAccount(to: did)
-    logger.info("✅ Account switched for notification navigation")
-  }
-
-  /// Compute SHA-256 hash of a DID for push notification account matching.
-  private static func hashForAccountMatching(_ did: String) -> String {
-    let digest = SHA256.hash(data: Data(did.utf8))
-    return digest.map { String(format: "%02x", $0) }.joined()
-  }
-
-  /// Resolve a recipient DID from a SHA-256 hash by checking locally known accounts.
-  private static func resolveRecipientDID(fromHash hash: String) -> String? {
-    return MainActor.assumeIsolated {
-      let appStateManager = AppStateManager.shared
-      // Check the active account first
-      if let activeDID = appStateManager.lifecycle.userDID,
-        hashForAccountMatching(activeDID) == hash {
-        return activeDID
-      }
-      // Check all authenticated accounts
-      for did in appStateManager.authenticatedDIDs {
-        if hashForAccountMatching(did) == hash {
-          return did
-        }
-      }
-      return nil
-    }
-  }
-  
-  /// Navigate to an MLS conversation
-  @MainActor
-  private func navigateToMLSConversation(convoId: String) async {
-    let logger = Logger(subsystem: "blue.catbird", category: "AppDelegate")
-    
-    // CRITICAL FIX: Wait for account transition to complete
-    // This prevents accessing the wrong AppState or MLS manager during switch
-    let maxTransitionWait: TimeInterval = 10.0
-    let transitionCheckInterval: TimeInterval = 0.1
-    var transitionElapsed: TimeInterval = 0
-    
-    while AppStateManager.shared.isTransitioning && transitionElapsed < maxTransitionWait {
-        logger.debug("⏳ Waiting for account transition to complete...")
-        try? await Task.sleep(nanoseconds: UInt64(transitionCheckInterval * 1_000_000_000))
-        transitionElapsed += transitionCheckInterval
-    }
-    
-    if AppStateManager.shared.isTransitioning {
-        logger.error("❌ Account transition timed out - navigation may fail")
-    } else {
-        logger.info("✅ Account transition complete (or not needed)")
-    }
-    
-    guard let appState = AppStateManager.shared.lifecycle.appState else {
-      logger.warning("Cannot navigate to MLS conversation - AppState not available")
-      return
-    }
-
-    guard let manager = await appState.getMLSConversationManager(),
-          let canonicalID = await resolveMLSConversationRoute(convoId, manager: manager) else {
-      logger.warning("Refusing navigation for unresolved MLS conversation route")
-      return
-    }
-
-    // Wait for MLS service to be ready and suspension to clear (up to 10 seconds)
-    let maxWaitTime: TimeInterval = 10.0
-    let checkInterval: TimeInterval = 0.2
-    var elapsed: TimeInterval = 0
-    var shouldWait = true
-    
-    while shouldWait && elapsed < maxWaitTime {
-      if CatbirdMLSCore.MLSClient.isSuspensionInProgress || CatbirdMLSCore.MLSCoreContext.isSuspensionInProgress {
-        logger.info("⏳ [AppDelegate] Deferring navigation while MLS suspension gate is active...")
-        try? await Task.sleep(nanoseconds: UInt64(checkInterval * 1_000_000_000))
-        elapsed += checkInterval
-        continue
-      }
-      let status = appState.mlsServiceState.status
-      switch status {
-      case .ready:
-        logger.info("MLS service ready, proceeding with navigation")
-        shouldWait = false
-      case .failed, .databaseFailed:
-        logger.warning("MLS service in failed state, proceeding with navigation anyway")
-        shouldWait = false
-      case .initializing, .notStarted, .retrying:
-        // Still initializing, wait a bit
-        try? await Task.sleep(nanoseconds: UInt64(checkInterval * 1_000_000_000))
-        elapsed += checkInterval
-      }
-    }
-    
-    if elapsed >= maxWaitTime {
-      logger.warning("MLS service did not become ready within \(maxWaitTime)s, proceeding with navigation anyway")
-    }
-    
-    logger.info("📍 Navigating to MLS conversation: \(canonicalID.prefix(16))...")
-    
-    appState.navigateToMLSConversation(canonicalID)
-    
-    logger.info("✅ Navigation to MLS conversation initiated")
-  }
-
-  internal func resolveMLSConversationRoute(
-    _ requestedID: String,
-    manager: MLSConversationManager,
-    maxWaitTime: TimeInterval = 10.0
-  ) async -> String? {
-    guard let userDID = manager.userDid else { return nil }
-    return await resolveMLSConversationRoute(requestedID, recipientDID: userDID, maxWaitTime: maxWaitTime)
-  }
-
-  internal func resolveMLSConversationRoute(
-    _ requestedID: String,
-    recipientDID: String,
-    maxWaitTime: TimeInterval = 10.0
-  ) async -> String? {
-    let userDID = recipientDID
-    let checkInterval: TimeInterval = 0.2
-    var elapsed: TimeInterval = 0
-
-    while elapsed < maxWaitTime {
-      if CatbirdMLSCore.MLSClient.isSuspensionInProgress || CatbirdMLSCore.MLSCoreContext.isSuspensionInProgress {
-        logger.info("⏳ [MLS Route] Deferring route resolution while MLS suspension gate is active...")
-        do { try await Task.sleep(nanoseconds: UInt64(checkInterval * 1_000_000_000)) } catch {}
-        elapsed += checkInterval
-        continue
-      }
-
-      do {
-        let models = try await CatbirdMLSCore.MLSGRDBManager.shared.read(for: userDID) { db in
-          try CatbirdMLSCore.MLSConversationModel
-            .filter(CatbirdMLSCore.MLSConversationModel.Columns.currentUserDID == userDID)
-            .fetchAll(db)
-        }
-        let records = models.map {
-          MLSConversationIdentityBoundary.Record(
-            conversationID: $0.conversationID,
-            groupID: $0.groupID.hexEncodedString()
-          )
-        }
-        return try MLSConversationIdentityBoundary.resolve(requestedID, in: records)
-      } catch let error as MLSSQLCipherError {
-        if case .storageUnavailable(let reason) = error, reason.contains("suspension") {
-          logger.info("⏳ [MLS Route] Deferring route resolution while storage is suspended (\(reason))...")
-          do { try await Task.sleep(nanoseconds: UInt64(checkInterval * 1_000_000_000)) } catch {}
-          elapsed += checkInterval
-          continue
-        }
-        logger.warning("Refusing unresolved MLS route: \(error.localizedDescription)")
-        return nil
-      } catch {
-        let desc = error.localizedDescription
-        if desc.contains("suspension") || desc.contains("Database open blocked") || desc.contains("still in progress") || desc.contains("temporarily unavailable") {
-          logger.info("⏳ [MLS Route] Deferring route resolution while storage is suspended: \(desc)...")
-          do { try await Task.sleep(nanoseconds: UInt64(checkInterval * 1_000_000_000)) } catch {}
-          elapsed += checkInterval
-          continue
-        }
-        logger.warning("Refusing unresolved MLS route: \(error.localizedDescription)")
-        return nil
-      }
-    }
-    logger.warning("Refusing unresolved MLS route: timed out after \(maxWaitTime)s waiting for storage resumption")
-    return nil
   }
 
   func userNotificationCenter(
@@ -4689,43 +2020,14 @@ extension CatbirdApp.AppDelegate {
     willPresent notification: UNNotification,
     withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
   ) {
-    let userInfo = notification.request.content.userInfo
-    
-    // 1. Handle key package notifications
-    if let type = userInfo["type"] as? String,
-       type == "keyPackageLowInventory" || type == "keyPackageReplenishRequested" {
-      Task { @MainActor in
-        guard let appState = AppStateManager.shared.lifecycle.appState else {
-          let logger = Logger(subsystem: "blue.catbird", category: "AppDelegate")
-          logger.warning("AppState not available for MLS notification handling")
-          return
-        }
-        await MLSNotificationHandler.shared.handleNotification(userInfo: userInfo, appState: appState)
-      }
-      completionHandler([]) // No presentation
-      return
-    }
-    
-    // 2. Forward to NotificationManager for rich content/decryption if available
+    // Forward to NotificationManager for rich content if available
     if let appState = AppStateManager.shared.lifecycle.appState {
       appState.notificationManager.userNotificationCenter(center, willPresent: notification, withCompletionHandler: completionHandler)
       return
     }
-    
-    // 3. Fallback: Show standard notifications normally
+
+    // Fallback: Show standard notifications normally
     completionHandler([.banner, .sound, .badge])
   }
 }
-#endif 
-
-extension CatbirdApp {
-  /// Whether a scene leaving `.active` keeps the process-wide database and MLS connections open.
-  /// iOS (unchanged): only while another scene of this process is still foreground-active;
-  /// otherwise the 0xdead10cc suspension closes them before RunningBoard suspends the process.
-  /// macOS (F50): always. The process is never suspended there, but SwiftUI reports `.inactive`
-  /// whenever another app takes focus; closing MLS then dropped delivery and aborted in-flight
-  /// work every time the user switched apps.
-  nonisolated static func sceneDeactivationPreservesMLS(isMacOS: Bool, otherScenesActive: Bool) -> Bool {
-    isMacOS || otherScenesActive
-  }
-}
+#endif

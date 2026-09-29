@@ -499,65 +499,6 @@ struct FeedsStartPage: View {
   }
 
   @ViewBuilder
-  private var circlesFeedEntry: some View {
-    if appState.circlesEnabled {
-      Button {
-        guard !isEditingFeeds else { return }
-        #if os(iOS)
-        PlatformHaptics.rigid()
-        #endif
-        appState.navigationManager.navigate(to: .circlesFeed)
-        isDrawerOpen = false
-      } label: {
-        HStack(spacing: 21) {
-          ZStack {
-            HStack {
-              Image(systemName: "person.2.circle.fill")
-                .font(.system(size: 28))
-                .foregroundStyle(Color.accentColor)
-
-              VStack(alignment: .leading, spacing: 2) {
-                Text("Circles")
-                  .padding(.leading, 6)
-                  .appFont(AppTextRole.headline)
-                  .foregroundStyle(drawerPrimaryTextColor)
-                  .multilineTextAlignment(.leading)
-                  .frame(maxWidth: .infinity, alignment: .leading)
-                Text("Private feeds and spaces")
-                  .padding(.leading, 6)
-                  .appFont(AppTextRole.caption)
-                  .foregroundStyle(drawerSecondaryTextColor)
-                  .multilineTextAlignment(.leading)
-                  .frame(maxWidth: .infinity, alignment: .leading)
-              }
-
-              Spacer()
-
-              Image(systemName: "chevron.right")
-                .appFont(AppTextRole.caption)
-                .foregroundColor(drawerSecondaryTextColor)
-            }
-          }
-          .padding(12)
-          .background {
-            if !inSideDrawer {
-              RoundedRectangle(cornerRadius: cardCornerRadius)
-                .fill(.ultraThinMaterial)
-            }
-          }
-          .modifier(LaunchpadGlassChip(cornerRadius: cardCornerRadius, isEnabled: inSideDrawer))
-          .contentShape(RoundedRectangle(cornerRadius: cardCornerRadius, style: .continuous))
-        }
-      }
-      .buttonStyle(PlainButtonStyle())
-      .padding(.vertical, 4)
-      .accessibilityLabel("Circles")
-      .accessibilityHint("Opens Circles feed and closes drawer")
-      .accessibilityAddTraits(.isButton)
-    }
-  }
-
-  @ViewBuilder
   private func defaultFeedIcon(iconSize: CGFloat) -> some View {
     Group {
       if let feedURI = defaultFeed,
@@ -1479,7 +1420,6 @@ struct FeedsStartPage: View {
 
               // Big default feed button as first feed in hierarchy
               defaultFeedReorderTarget
-              circlesFeedEntry
 
               // Pinned feeds section - continue the hierarchy
               if !filteredPinnedFeeds.isEmpty {

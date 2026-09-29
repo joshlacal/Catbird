@@ -120,20 +120,17 @@ struct ActionButtonsView: View {
       }
       .accessibilityIdentifier("replyButton")
         .accessibilityLabel("Reply. Replies count: \(interactionState.replyCount)")
-      .disabled((post.viewer?.replyDisabled ?? false) || !viewModel.capabilities.canReply)
+      .disabled(post.viewer?.replyDisabled ?? false)
       // Subtle glass and mark as the matched transition source for this post
       .padding(.vertical, isBig ? 3 : 2)
       .padding(.horizontal, isBig ? 6 : 5)
       #if os(iOS)
       .modifier(ReplyZoomSource(id: replySourceID, namespace: replyTransition))
       #endif
-      if viewModel.capabilities.canRepost || viewModel.capabilities.canQuote {
-        Spacer()
+      Spacer()
 
-        repostMenu
-          .disabled(!viewModel.capabilities.canRepost && !viewModel.capabilities.canQuote)
-          .accessibilityIdentifier("repostButton")
-      }
+      repostMenu
+        .accessibilityIdentifier("repostButton")
 
       Spacer()
 
@@ -162,30 +159,26 @@ struct ActionButtonsView: View {
           await MainActor.run { interactionState.animateLike = false }
         }
       }
-      .disabled(!viewModel.capabilities.canLike)
       .accessibilityIdentifier("likeButton")
       .accessibilityLabel(interactionState.isLiked ? "Unlike. Like count: \(interactionState.likeCount)" : "Like. Like count: \(interactionState.likeCount)")
 
-      if viewModel.capabilities.canPublicShare {
-        Spacer()
+      Spacer()
 
-        // Share Button (system share sheet only)
-        InteractionButton(
-          iconName: "square.and.arrow.up",
-          count: nil,  // Share doesn't have a count
-          isActive: false,
-          isFirstAppear: isFirstAppear,
-          color: .secondary,
-          isBig: isBig
-        ) {
-          Task {
-            await viewModel.share(post: post)
-          }
+      // Share Button (system share sheet only)
+      InteractionButton(
+        iconName: "square.and.arrow.up",
+        count: nil,  // Share doesn't have a count
+        isActive: false,
+        isFirstAppear: isFirstAppear,
+        color: .secondary,
+        isBig: isBig
+      ) {
+        Task {
+          await viewModel.share(post: post)
         }
-        .disabled(!viewModel.capabilities.canPublicShare)
-        .accessibilityIdentifier("shareButton")
-        .accessibilityLabel("Share")
       }
+      .accessibilityIdentifier("shareButton")
+      .accessibilityLabel("Share")
     }
     .font(isBig ? .title3 : .callout)
     .frame(height: isBig ? 54 : 45)
@@ -234,12 +227,6 @@ struct ActionButtonsView: View {
       Group {
         PostComposerViewUIKit(
           parentPost: post,
-          destination: {
-            if case .circle(let summary) = postViewModel.visibilityContext {
-              return .circle(summary)
-            }
-            return .public
-          }(),
           appState: appState
         )
         .applyAppStateEnvironment(appState)
@@ -274,26 +261,21 @@ struct ActionButtonsView: View {
 
   private var repostMenu: some View {
     Menu {
-      if viewModel.capabilities.canRepost {
-        Button {
-          handleRepostToggle()
-        } label: {
-          Label(repostActionTitle, systemImage: "arrow.2.squarepath")
-        }
+      Button {
+        handleRepostToggle()
+      } label: {
+        Label(repostActionTitle, systemImage: "arrow.2.squarepath")
       }
 
-      if viewModel.capabilities.canQuote {
-        Button {
-          handleQuotePost()
-        } label: {
-          Label("Quote Post", systemImage: "quote.bubble")
-        }
-        .disabled(post.viewer?.embeddingDisabled ?? false)
+      Button {
+        handleQuotePost()
+      } label: {
+        Label("Quote Post", systemImage: "quote.bubble")
       }
+      .disabled(post.viewer?.embeddingDisabled ?? false)
     } label: {
       repostLabel
     }
-    .disabled(!viewModel.capabilities.canRepost && !viewModel.capabilities.canQuote)
     .id("repost-\(post.uri.uriString())")
   }
 

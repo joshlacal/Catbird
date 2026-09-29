@@ -228,9 +228,6 @@ final class AppSettingsModel {
 
         // Privacy
         target.loggedOutVisibility = source.loggedOutVisibility
-
-        // MLS Chat
-        target.mlsMessageRetentionDays = source.mlsMessageRetentionDays
     }
 
     // Unique identifier — per-account, set via init(accountDID:)
@@ -332,9 +329,6 @@ final class AppSettingsModel {
     
     // Privacy
     var loggedOutVisibility: Bool = true
-
-    // MLS Chat Settings
-    var mlsMessageRetentionDays: Int = 30  // Default: 30 days (balanced policy)
 
     // Developer Settings
     
@@ -439,11 +433,6 @@ final class AppSettingsModel {
         // Privacy
         if let value = Self.boolValue(for: "loggedOutVisibility", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { loggedOutVisibility = value }
 
-        // MLS Chat Settings
-        if let value = Self.intValue(for: "mlsMessageRetentionDays", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) {
-            mlsMessageRetentionDays = value
-        }
-
         // Developer Settings
         
     }
@@ -528,9 +517,6 @@ final class AppSettingsModel {
         
         // Privacy
         loggedOutVisibility = true
-
-        // MLS Chat Settings
-        mlsMessageRetentionDays = 30
 
         // Developer Settings
         

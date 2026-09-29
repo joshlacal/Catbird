@@ -88,7 +88,7 @@ actor IntentClientProvider {
     #if targetEnvironment(simulator)
       let accessGroup: String? = nil
     #else
-      let accessGroup: String? = MLSKeychainManager.resolvedAccessGroup(
+      let accessGroup: String? = KeychainAccessGroup.resolved(
         suffix: "blue.catbird.shared")
     #endif
 

@@ -90,26 +90,19 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
   @Environment(\.colorScheme) private var colorScheme
 
   @State private var bubbleGlobalFrame: CGRect = .zero
-  @State private var showingMLSErrorDetails = false
   @State private var dragOffset: CGFloat = 0
   @State private var hasTriggeredHaptic = false
   private let cornerRadius: CGFloat = 18
   private let maxBubbleWidth: CGFloat = 280
 
-  private var mlsMessageTextIdentifier: String? {
-    guard message is MLSMessageAdapter else { return nil }
-    return message.isFromCurrentUser ? "mls.messageText.outgoing" : "mls.messageText.incoming"
-  }
-
-  /// True when the message is just a media embed (image or GIF) with no text and no MLS error.
+  /// True when the message is just a media embed (GIF) with no text.
   /// Media-only bubbles drop the bubble chrome — the media surface IS the bubble.
   private var isMediaOnly: Bool {
     guard !message.isTombstone else { return false }
     guard message.text.isEmpty else { return false }
-    if (message as? MLSMessageAdapter)?.debugInfo != nil { return false }
     guard let embed = message.embed else { return false }
     switch embed {
-    case .image, .gif:
+    case .gif:
       return true
     default:
       return false
@@ -368,19 +361,9 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
 
   @ViewBuilder
   private var bubbleContent: some View {
-    let mlsDebugInfo = (message as? MLSMessageAdapter)?.debugInfo
-
-    // Audio bubbles still want compact padding (the voice player has its own chrome),
-    // but image/gif bubbles drop padding entirely so the media fills the bubble.
-    let isAudioOnly: Bool = {
-      guard !message.isTombstone else { return false }
-      guard message.text.isEmpty, mlsDebugInfo == nil else { return false }
-      if case .audio = message.embed { return true }
-      return false
-    }()
-
-    let horizontalPadding: CGFloat = isMediaOnly ? 0 : (isAudioOnly ? 4 : 14)
-    let verticalPadding: CGFloat = isMediaOnly ? 0 : (isAudioOnly ? 4 : 10)
+    // GIF bubbles drop padding entirely so the media fills the bubble.
+    let horizontalPadding: CGFloat = isMediaOnly ? 0 : 14
+    let verticalPadding: CGFloat = isMediaOnly ? 0 : 10
 
     let bubble = BubbleWidthLimiter(maxWidth: maxBubbleWidth) {
       VStack(alignment: .leading, spacing: 8) {
@@ -392,20 +375,6 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
               .italic()
               .foregroundStyle(message.isFromCurrentUser ? .white.opacity(0.8) : .secondary)
           }
-        } else if mlsDebugInfo != nil {
-          HStack(spacing: 6) {
-            Image(systemName: "exclamationmark.triangle.fill")
-              .font(.caption)
-              .foregroundStyle(.orange)
-            Text("Message unavailable")
-              .font(.caption)
-              .foregroundStyle(message.isFromCurrentUser ? .white.opacity(0.85) : .secondary)
-            Spacer(minLength: 0)
-            Image(systemName: "info.circle")
-              .font(.caption)
-              .foregroundStyle(message.isFromCurrentUser ? .white.opacity(0.85) : .secondary)
-          }
-          .accessibilityHint("Tap for error details")
         }
         // Reply preview inside bubble
         if !message.isTombstone, let reply = message.replyContext {
@@ -420,19 +389,13 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
 
         // Message text
         if !message.isTombstone, !message.text.isEmpty {
-          let messageTextView = ChatRichTextView(
+          ChatRichTextView(
             attributedText: message.attributedText,
             isCurrentUser: message.isFromCurrentUser
           )
           .font(.body)
           .lineLimit(nil)
           .fixedSize(horizontal: false, vertical: true)
-
-          if let identifier = mlsMessageTextIdentifier {
-            messageTextView.accessibilityIdentifier(identifier)
-          } else {
-            messageTextView
-          }
         }
       }
       .padding(.horizontal, horizontalPadding)
@@ -440,25 +403,7 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
     }
     .contentShape(Rectangle())
 
-    if let info = mlsDebugInfo {
-      let interactiveBubble = bubble
-        .onTapGesture {
-          showingMLSErrorDetails = true
-        }
-        .sheet(isPresented: $showingMLSErrorDetails) {
-          MLSMessageErrorDetailsSheet(info: info)
-        }
-
-      if message is MLSMessageAdapter {
-        interactiveBubble.accessibilityElement(children: .contain)
-      } else {
-        interactiveBubble
-      }
-    } else if message is MLSMessageAdapter {
-      bubble.accessibilityElement(children: .contain)
-    } else {
-      bubble
-    }
+    bubble
   }
 
   // MARK: - Reply Preview Inside Bubble
@@ -500,69 +445,6 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
     }
     .buttonStyle(.plain)
     .disabled(!reply.isTappable)
-  }
-
-  // MARK: - MLS Error Details
-
-  private struct MLSMessageErrorDetailsSheet: View {
-    let info: MLSMessageAdapter.MLSMessageDebugInfo
-
-    var body: some View {
-      NavigationStack {
-        List {
-          Section("Error") {
-            if let processingError = info.processingError {
-              DetailRow(label: "Processing Error", value: processingError)
-            }
-            if let validation = info.validationFailureReason {
-              DetailRow(label: "Validation Failure", value: validation)
-            }
-            if let attempts = info.processingAttempts {
-              DetailRow(label: "Processing Attempts", value: "\(attempts)")
-            }
-          }
-
-          Section("Debug") {
-            DetailRow(label: "Message ID", value: info.messageID)
-            DetailRow(label: "Conversation ID", value: info.conversationID)
-            DetailRow(label: "Sender DID", value: info.senderDID)
-            if let epoch = info.epoch {
-              DetailRow(label: "Epoch", value: "\(epoch)")
-            }
-            if let sequence = info.sequence {
-              DetailRow(label: "Sequence", value: "\(sequence)")
-            }
-            DetailRow(label: "Sent At", value: info.sentAt.formatted(date: .abbreviated, time: .standard))
-          }
-        }
-        #if os(iOS)
-        .listStyle(.insetGrouped)
-        #else
-        .listStyle(.automatic)
-        #endif
-        .navigationTitle("Message Error")
-        #if os(iOS)
-        .navigationBarTitleDisplayMode(.inline)
-        #endif
-      }
-    }
-
-    private struct DetailRow: View {
-      let label: String
-      let value: String
-
-      var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-          Text(label)
-            .font(.footnote)
-            .foregroundStyle(.secondary)
-          Text(value)
-            .font(.body)
-            .textSelection(.enabled)
-        }
-        .padding(.vertical, 2)
-      }
-    }
   }
 
   // MARK: - Send State Indicator

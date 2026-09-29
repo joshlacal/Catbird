@@ -125,11 +125,6 @@ private struct MacOSDeepLinkHandlers: ViewModifier {
           appState.navigationManager.targetConversationId = nil
         }
       }
-      .onChange(of: appState.navigationManager.targetMLSConversationId) { _, newValue in
-        if newValue != nil {
-          selectedItem = .chat
-        }
-      }
   }
 }
 #endif

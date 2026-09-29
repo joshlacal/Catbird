@@ -1,46 +1,16 @@
 import SwiftUI
 
-/// Group configuration step for creating a Catbird Group.
+/// Group configuration step for creating a Bluesky group chat.
 /// Shows group name field and participant summary.
 struct GroupConfigView: View {
-  enum GroupKind {
-    case bluesky
-    case mls
-  }
-
   @Binding var groupName: String
-  let participants: [MLSParticipantViewModel]
-  var kind: GroupKind = .mls
-  var introduction: Binding<String>?
+  let participants: [ChatParticipant]
   var onEditSelection: (() -> Void)?
 
-  private var defaultGroupName: String {
-    switch kind {
-    case .bluesky: return "Group Chat"
-    case .mls: return "Secure Group"
-    }
-  }
-
-  private var namePlaceholder: String {
-    switch kind {
-    case .bluesky: return "Group Name"
-    case .mls: return "Group Name (optional)"
-    }
-  }
-
-  private var nameFooter: String {
-    switch kind {
-    case .bluesky: return "Choose a name for this Bluesky group chat."
-    case .mls: return "Give your secure group a name, or leave blank for a default."
-    }
-  }
-
-  private var participantsFooter: String {
-    switch kind {
-    case .bluesky: return "Everyone listed will be invited when this group chat is created."
-    case .mls: return "Everyone listed receives a separate group invitation when the group is created."
-    }
-  }
+  private let defaultGroupName = "Group Chat"
+  private let namePlaceholder = "Group Name"
+  private let nameFooter = "Choose a name for this Bluesky group chat."
+  private let participantsFooter = "Everyone listed will be invited when this group chat is created."
 
   var body: some View {
     List {
@@ -82,8 +52,6 @@ struct GroupConfigView: View {
           .designCaption()
       }
 
-      if let introduction { MLSOptionalGroupIntroductionSection(text: introduction) }
-
       securitySection
     }
     #if os(iOS)
@@ -112,9 +80,9 @@ struct GroupConfigView: View {
           .lineLimit(1)
 
         HStack(spacing: 4) {
-          Image(systemName: kind == .mls ? "lock.shield.fill" : "person.3.fill")
+          Image(systemName: "person.3.fill")
             .font(.system(size: 12))
-            .foregroundColor(kind == .mls ? .green : .accentColor)
+            .foregroundColor(.accentColor)
           Text(previewSubtitle)
             .designCaption()
             .foregroundColor(.secondary)
@@ -129,46 +97,26 @@ struct GroupConfigView: View {
   }
 
   private var previewSubtitle: String {
-    let memberText = "\(participants.count) member\(participants.count == 1 ? "" : "s")"
-
-    switch kind {
-    case .bluesky:
-      return memberText
-    case .mls:
-      return "\(memberText) - E2E Encrypted"
-    }
+    "\(participants.count) member\(participants.count == 1 ? "" : "s")"
   }
 
-  @ViewBuilder
   private var securitySection: some View {
-    switch kind {
-    case .bluesky:
-      Section {
-        detailRow(
-          icon: "bubble.left.and.bubble.right.fill",
-          title: "Bluesky Chat",
-          detail: "Native chat.bsky group",
-          iconColor: .accentColor
-        )
-        detailRow(
-          icon: "lock.slash.fill",
-          title: "Encryption",
-          detail: "Not end-to-end encrypted",
-          iconColor: .secondary
-        )
-      } header: {
-        Label("Delivery", systemImage: "person.3")
-          .designCaption()
-      }
-    case .mls:
-      Section {
-        detailRow(icon: "lock.shield.fill", title: "MLS Protocol", detail: "RFC 9420 standard", iconColor: .green)
-        detailRow(icon: "key.fill", title: "Forward Secrecy", detail: "Unique keys per message", iconColor: .green)
-        detailRow(icon: "checkmark.seal.fill", title: "Verified Identity", detail: "AT Protocol DIDs", iconColor: .green)
-      } header: {
-        Label("Security", systemImage: "checkmark.shield")
-          .designCaption()
-      }
+    Section {
+      detailRow(
+        icon: "bubble.left.and.bubble.right.fill",
+        title: "Bluesky Chat",
+        detail: "Native chat.bsky group",
+        iconColor: .accentColor
+      )
+      detailRow(
+        icon: "lock.slash.fill",
+        title: "Encryption",
+        detail: "Not end-to-end encrypted",
+        iconColor: .secondary
+      )
+    } header: {
+      Label("Delivery", systemImage: "person.3")
+        .designCaption()
     }
   }
 

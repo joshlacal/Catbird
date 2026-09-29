@@ -762,7 +762,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     isLoading = true
 
     let manager = ThreadManager(appState: appState)
-    await manager.loadThread(uri: postURI, visibilityContext: visibilityContext, circleService: appState.circleService)
+    await manager.loadThread(uri: postURI, visibilityContext: visibilityContext)
 
     guard !Task.isCancelled && self.loadGeneration == thisGeneration else {
       controllerLogger.debug("🧵 THREAD LOAD: Task cancelled or superseded after loadThread [gen: \(thisGeneration)]")

@@ -42,15 +42,10 @@ final class PostViewModel {
     private(set) var likeUri: ATProtocolURI?
     private(set) var repostUri: ATProtocolURI?
 
-    /// Visibility context for the post (public or circle)
+    /// Visibility context for the post
     var visibilityContext: PostVisibilityContext = .public
     private let authorDid: String?
 
-    /// Capabilities available for this post given its visibility context
-    var capabilities: PostCapabilities {
-        let isAuthor = authorDid != nil && authorDid == appState.userDID
-        return PostCapabilities.forContext(visibilityContext, isAuthor: isAuthor)
-    }
     /// Logger for debugging
     let logger = Logger(subsystem: "blue.catbird", category: "PostViewModel")
     
@@ -288,59 +283,6 @@ final class PostViewModel {
                     if let postURI = try? ATProtocolURI(uriString: postId) {
                         appState.feedFeedbackManager.trackLike(postURI: postURI)
                     }
-                case let .circle(circle):
-                    let postRef = ComAtprotoRepoStrongRef(
-                        uri: try ATProtocolURI(uriString: postId),
-                        cid: postCid
-                    )
-                    let postView = AppBskyFeedDefs.PostView(
-                        uri: postRef.uri,
-                        cid: postRef.cid,
-                        author: AppBskyActorDefs.ProfileViewBasic(
-                            did: try DID(didString: "did:plc:author"),
-                            handle: try Handle(handleString: "handle.invalid"),
-                            displayName: nil,
-                            pronouns: nil,
-                            avatar: nil,
-                            associated: nil,
-                            viewer: nil,
-                            labels: nil,
-                            createdAt: nil,
-                            verification: nil,
-                            status: nil,
-                            debug: nil
-                        ),
-                        record: ATProtocolValueContainer.knownType(
-                            AppBskyFeedPost(
-                                text: "",
-                                entities: nil,
-                                facets: nil,
-                                reply: nil,
-                                embed: nil,
-                                langs: [],
-                                labels: nil,
-                                tags: nil,
-                                createdAt: ATProtocolDate(date: Date())
-                            )
-                        ),
-                        embed: nil,
-                        bookmarkCount: nil,
-                        replyCount: nil,
-                        repostCount: nil,
-                        likeCount: nil,
-                        quoteCount: nil,
-                        indexedAt: ATProtocolDate(date: Date()),
-                        viewer: nil,
-                        labels: nil,
-                        threadgate: nil,
-                        debug: nil
-                    )
-                    let service = appState.circleService
-                    let responseUri = try await service.like(post: postView, circle: circle)
-                    self.likeUri = responseUri
-                    await appState.postShadowManager.updateShadow(forUri: postId) { shadow in
-                        shadow.decideLike(responseUri)
-                    }
                 }
             } else { // Deleting an existing like
                 switch visibilityContext {
@@ -362,16 +304,6 @@ final class PostViewModel {
                         throw PostViewModelError.requestFailed
                     }
                     
-                    self.likeUri = nil
-                    await appState.postShadowManager.updateShadow(forUri: postId) { shadow in
-                        shadow.decideLike(nil)
-                    }
-                case let .circle(circle):
-                    guard let uri = likeUri else {
-                        throw CircleError.missingLikeUri
-                    }
-                    let service = appState.circleService
-                    try await service.deleteLike(uri: uri, circle: circle)
                     self.likeUri = nil
                     await appState.postShadowManager.updateShadow(forUri: postId) { shadow in
                         shadow.decideLike(nil)
@@ -398,10 +330,6 @@ final class PostViewModel {
     ///   Note: Attribution is controlled by the enableViaAttribution setting
     @discardableResult
     func toggleRepost(via: ComAtprotoRepoStrongRef? = nil) async throws -> Bool {
-        guard capabilities.canRepost else {
-            logger.info("Repost unavailable for visibility context")
-            return false
-        }
         guard let client = appState.atProtoClient else {
             throw PostViewModelError.missingClient
         }
@@ -572,10 +500,6 @@ final class PostViewModel {
     /// Create a quote post
     @discardableResult
     func createQuotePost(text: String) async throws -> Bool {
-        guard capabilities.canQuote else {
-            logger.info("Quote unavailable for visibility context")
-            return false
-        }
         guard let client = appState.atProtoClient else {
             throw PostViewModelError.missingClient
         }
@@ -635,31 +559,4 @@ final class PostViewModel {
         self.likeUri = likeUri
     }
     #endif
-}
-
-extension PostViewModel {
-    @MainActor
-    public static func forCircleItem(
-        _ item: BlueCatbirdCircleDefs.FeedItem,
-        appState: AppState
-    ) -> PostViewModel {
-        PostViewModel(
-            post: item.post.post,
-            appState: appState,
-            visibilityContext: .circle(item.circle)
-        )
-    }
-
-    @MainActor
-    public static func forCircle(
-        post: AppBskyFeedDefs.PostView,
-        circle: CircleSummary,
-        appState: AppState
-    ) -> PostViewModel {
-        PostViewModel(
-            post: post,
-            appState: appState,
-            visibilityContext: .circle(circle)
-        )
-    }
 }

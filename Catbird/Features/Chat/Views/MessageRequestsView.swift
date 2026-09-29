@@ -18,8 +18,8 @@ struct MessageRequestSheet<SheetContent: View>: ViewModifier {
   }
 }
 
-/// Live Message Requests sheet for the signed-in account: Bluesky and
-/// encrypted requests in one list. Accepting routes to the new conversation
+/// Live Message Requests sheet for the signed-in account's Bluesky
+/// requests. Accepting routes to the new conversation
 /// and closes the sheet; declining keeps the sheet open.
 struct UnifiedMessageRequestsView: View {
   @Environment(AppState.self) private var appState
@@ -50,17 +50,12 @@ struct UnifiedMessageRequestsView: View {
 
   /// F79: an accepted request opens its conversation in the Inbox and closes
   /// the sheet, but only while the accepting account is still active.
-  /// F81: encrypted conversations route through the unified AppState helper,
-  /// which selects the chat tab and resolves the route fail-closed.
   private func routeAccepted(_ acceptance: MessageRequestAcceptance, accountDID: String) {
     guard appState.userDID == accountDID else { return }
     switch acceptance {
     case .bluesky(let convoID):
       appState.navigationManager.targetConversationId = convoID
       selectChatTabOnMac()
-    case .encrypted(let conversationID):
-      appState.navigateToMLSConversation(conversationID)
-      appState.stateInvalidationBus.notify(.mlsConversationListChanged)
     }
     dismiss()
   }
@@ -81,9 +76,7 @@ enum MessageRequestRoute: Hashable {
 
 /// What a request route shows.
 enum MessageRequestDestination: Equatable {
-  /// A verified encrypted request, shown through `MLSRequestConversationGate`.
-  case verifiedEncrypted(conversationID: String)
-  /// Any other request, shown by `MessageRequestDetailView`.
+  /// A pending request, shown by `MessageRequestDetailView`.
   case detail(MessageRequestItem)
   /// The request is gone (accepted, declined, or closed elsewhere).
   case handled
@@ -95,9 +88,6 @@ extension MessageRequestRoute {
     switch self {
     case .detail(let id):
       guard let item = store.item(withID: id) else { return .handled }
-      if case .encryptedDirect(let conversationID) = item.origin, store.usesVerifiedEncryptedDetail {
-        return .verifiedEncrypted(conversationID: conversationID)
-      }
       return .detail(item)
     }
   }
@@ -119,9 +109,7 @@ struct MessageRequestsScreen: View {
   /// user's posts"; profiles pushed in the sheet must not switch app tabs.
   @State private var sheetTab = 0
   @State private var blockCandidate: MessageRequestBlock?
-  @State private var legacyBlockCandidate: MessageRequestItem?
   @State private var report: MessageRequestReport?
-  @State private var noteDraft: MLSDirectComposeDraft?
   @State private var showingChatSettings = false
   @State private var showingDeclineAll = false
 
@@ -168,9 +156,7 @@ struct MessageRequestsScreen: View {
       }
       Button("Cancel", role: .cancel) {}
     } message: { request in
-      Text(request.item.source == .encrypted
-        ? "Your Bluesky block is published first. The request closes only after the server confirms it."
-        : "They won't be able to message you, and this request will be removed.")
+      Text("They won't be able to message you, and this request will be removed.")
     }
     .confirmationDialog("Decline all Bluesky requests?", isPresented: $showingDeclineAll, titleVisibility: .visible) {
       Button("Decline All", role: .destructive) {
@@ -178,26 +164,10 @@ struct MessageRequestsScreen: View {
       }
       Button("Cancel", role: .cancel) {}
     } message: {
-      Text("Every pending Bluesky request will be removed. Encrypted requests are not affected.")
-    }
-    .sheet(item: $legacyBlockCandidate) { item in
-      if let sender = item.sender {
-        BlockChatSenderSheet(
-          senderDid: sender.did,
-          senderHandle: sender.handle,
-          senderDisplayName: sender.displayName,
-          requestId: item.conversationID,
-          onBlocked: { Task { await store.refresh() } }
-        )
-      }
+      Text("Every pending Bluesky request will be removed.")
     }
     .sheet(item: $report) { report in
       reportSheet(report)
-    }
-    .sheet(item: $noteDraft, onDismiss: { Task { await store.refresh() } }) { draft in
-      MLSDirectComposeView(draft: draft) { conversationID in
-        onAccepted(.encrypted(conversationID: conversationID))
-      }
     }
     .sheet(isPresented: $showingChatSettings) {
       ChatSettingsView()
@@ -220,24 +190,18 @@ struct MessageRequestsScreen: View {
 
   private var requestList: some View {
     List {
-      ForEach(MessageRequestPresentation.sections(bluesky: store.blueskyRequests, encrypted: store.encryptedRequests)) { section in
+      ForEach(MessageRequestPresentation.sections(bluesky: store.blueskyRequests)) { section in
         Section {
           ForEach(section.items) { item in
             row(for: item)
           }
         } header: {
           MessageRequestsSectionHeader(source: section.source, count: section.items.count)
-        } footer: {
-          if section.source == .encrypted {
-            Text("Encrypted requests are end-to-end encrypted. Only the people in the chat can read them.")
-          }
         }
       }
-      invitationNoteSections
     }
     .modifier(MessageRequestsListStyle())
     .animation(.default, value: store.blueskyRequests.map(\.id))
-    .animation(.default, value: store.encryptedRequests.map(\.id))
     .accessibilityIdentifier("messageRequests.list")
   }
 
@@ -254,55 +218,11 @@ struct MessageRequestsScreen: View {
     )
   }
 
-  @ViewBuilder
-  private var invitationNoteSections: some View {
-    if !store.groupInvitationNotes.isEmpty {
-      Section("Group invitation notes") {
-        ForEach(store.groupInvitationNotes) { batch in
-          NavigationLink {
-            MLSGroupInvitationNotesView(batch: batch) { onClose() }
-          } label: {
-            VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
-              Text("Review notes for \(batch.recipients.count) invitees")
-                .designCallout()
-              Text(verbatim: batch.text)
-                .designFootnote()
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
-            }
-          }
-        }
-      }
-    }
-    if !store.savedInvitationNotes.isEmpty {
-      Section("Saved invitation notes") {
-        ForEach(store.savedInvitationNotes) { draft in
-          Button { noteDraft = draft } label: {
-            VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
-              Label(draft.noteAttempted == true ? "Check note delivery" : "Unsent invitation note", systemImage: "square.and.pencil")
-                .designCallout()
-              Text(verbatim: draft.text.isEmpty ? "Write a separate encrypted note" : draft.text)
-                .designFootnote()
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
-            }
-          }
-        }
-      }
-    }
-  }
-
   // MARK: Destinations
 
   @ViewBuilder
   private func destination(for route: MessageRequestRoute) -> some View {
     switch route.destination(in: store) {
-    case .verifiedEncrypted(let conversationID):
-      MLSRequestConversationGate(conversationID: conversationID, onAccepted: { convoID in
-        onAccepted(.encrypted(conversationID: convoID))
-      }) {
-        MLSRequestOrdinaryConversation(conversationID: conversationID)
-      }
     case .detail(let item):
       MessageRequestDetailView(
         item: item,
@@ -371,11 +291,7 @@ struct MessageRequestsScreen: View {
 
   private func requestBlock(_ item: MessageRequestItem, fromDetail: Bool) {
     guard item.canModerateSender else { return }
-    if case .encryptedLegacy = item.origin {
-      legacyBlockCandidate = item
-    } else {
-      blockCandidate = MessageRequestBlock(item: item, fromDetail: fromDetail)
-    }
+    blockCandidate = MessageRequestBlock(item: item, fromDetail: fromDetail)
   }
 
   private func block(_ request: MessageRequestBlock) async {
@@ -384,21 +300,11 @@ struct MessageRequestsScreen: View {
   }
 
   private func requestReport(_ item: MessageRequestItem) async {
-    guard let sender = item.sender, item.canModerateSender else { return }
+    guard item.sender != nil, item.canModerateSender else { return }
     switch item.origin {
     case .bluesky:
       if let conversation = store.blueskyConversation(for: item) {
         report = .bluesky(conversation)
-      }
-    case .encryptedDirect(let conversationID), .encryptedLegacy(let conversationID):
-      if let client = await store.mlsReportClient() {
-        report = .encrypted(
-          conversationID: conversationID,
-          reportedDID: sender.did,
-          reportedName: sender.name ?? item.title,
-          client: client)
-      } else {
-        store.errorMessage = "Reporting is unavailable right now. Please try again."
       }
     }
   }
@@ -410,13 +316,6 @@ struct MessageRequestsScreen: View {
       ReportConversationView(conversation: conversation, onConversationLeft: {
         Task { await store.refresh() }
       })
-    case .encrypted(let conversationID, let reportedDID, let reportedName, let client):
-      MLSReportSpamSheet(
-        conversationId: conversationID,
-        reportedDid: reportedDID,
-        reportedDisplayName: reportedName,
-        apiClient: client
-      )
     }
   }
 
@@ -447,12 +346,10 @@ struct MessageRequestBlock {
 /// Which report flow a row's "Report…" opens.
 enum MessageRequestReport: Identifiable {
   case bluesky(ChatBskyConvoDefs.ConvoView)
-  case encrypted(conversationID: String, reportedDID: String, reportedName: String, client: MLSAPIClient)
 
   var id: String {
     switch self {
     case .bluesky(let conversation): "bsky:\(conversation.id)"
-    case .encrypted(let conversationID, _, _, _): "mls:\(conversationID)"
     }
   }
 }
@@ -461,22 +358,8 @@ extension MessageRequestItem {
   /// The conversation identifier the request's provider uses.
   var conversationID: String {
     switch origin {
-    case .bluesky(let id), .encryptedDirect(let id), .encryptedLegacy(let id): id
+    case .bluesky(let id): id
     }
-  }
-}
-
-/// The platform's ordinary encrypted conversation, shown by
-/// `MLSRequestConversationGate` once a request is accepted.
-struct MLSRequestOrdinaryConversation: View {
-  let conversationID: String
-
-  var body: some View {
-    #if os(iOS)
-    MLSOrdinaryConversationDetailView(conversationId: conversationID)
-    #elseif os(macOS)
-    MacOSMLSOrdinaryConversationView(conversationId: conversationID)
-    #endif
   }
 }
 
@@ -488,11 +371,6 @@ struct MessageRequestsSectionHeader: View {
 
   var body: some View {
     HStack(spacing: DesignTokens.Spacing.xs) {
-      if source == .encrypted {
-        Image(systemName: "lock.fill")
-          .imageScale(.small)
-          .accessibilityHidden(true)
-      }
       Text(source.title)
       Text("\(count)")
         .foregroundStyle(.secondary)
@@ -678,7 +556,7 @@ struct MessageRequestDetailView: View {
     let label = HStack(spacing: DesignTokens.Spacing.base) {
       AsyncProfileImage(url: participant.avatarURL, size: DesignTokens.Size.avatarMD)
       VStack(alignment: .leading, spacing: 2) {
-        Text(participant.name ?? "Encrypted chat member")
+        Text(participant.name ?? "Chat member")
           .designCallout()
           .foregroundStyle(.primary)
           .lineLimit(1)

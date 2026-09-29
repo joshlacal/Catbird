@@ -509,9 +509,9 @@ private struct ConversationHeroView: View {
     conversation.displayMembersExcludingCurrentUser(currentUserDID: currentUserDID)
   }
 
-  private var avatarParticipants: [MLSParticipantViewModel] {
+  private var avatarParticipants: [ChatParticipant] {
     otherMembers.map { member in
-      MLSParticipantViewModel(
+      ChatParticipant(
         id: member.did.didString(),
         handle: member.handle.description,
         displayName: member.displayName,
@@ -552,7 +552,7 @@ private struct ConversationHeroView: View {
   @ViewBuilder
   private var avatarView: some View {
     if conversation.isGroupConversation {
-      MLSGroupAvatarView(participants: avatarParticipants, size: 96)
+      ChatGroupAvatarView(participants: avatarParticipants, size: 96)
     } else {
       ChatProfileAvatarView(
         profile: conversation.directDisplayMember(currentUserDID: currentUserDID),

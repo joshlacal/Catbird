@@ -15,9 +15,7 @@ struct ProfileSectionView: View {
     private static let baseUnit: CGFloat = 3
     var body: some View {
         Group {
-            if tab == .videos {
-                StreamplaceVideoListView(userDID: viewModel.userDID)
-            } else if isInitialLoading {
+            if isInitialLoading {
                 ProgressView("Loading \(tab.title.lowercased())...")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let error = loadError {
@@ -75,8 +73,6 @@ struct ProfileSectionView: View {
                 await viewModel.loadStarterPacks()
             case .feeds:
                 await viewModel.loadFeeds()
-            case .videos:
-                break // StreamplaceVideoListView handles its own loading
             default:
                 break
             }

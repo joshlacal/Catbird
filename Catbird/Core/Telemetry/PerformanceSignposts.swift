@@ -38,7 +38,6 @@ enum PerformanceSignposts {
   private static let cellLog = OSLog(subsystem: subsystem, category: "Cell")
   private static let imageLog = OSLog(subsystem: subsystem, category: "Image")
   private static let navigationLog = OSLog(subsystem: subsystem, category: "Navigation")
-  private static let mlsLog = OSLog(subsystem: subsystem, category: "MLS")
   private static let networkLog = OSLog(subsystem: subsystem, category: "Network")
   private static let threadLog = OSLog(subsystem: subsystem, category: "Thread")
   
@@ -196,38 +195,6 @@ enum PerformanceSignposts {
   
   static func endThreadLoad(id: OSSignpostID, replyCount: Int) {
     os_signpost(.end, log: threadLog, name: "ThreadLoad", signpostID: id, "replies: %d", replyCount)
-  }
-  
-  // MARK: - MLS Operations
-  
-  static func beginMLSOperation(_ operation: String) -> OSSignpostID {
-    let id = nextID()
-    os_signpost(.begin, log: mlsLog, name: "MLSOperation", signpostID: id, "%{public}s", operation)
-    return id
-  }
-  
-  static func endMLSOperation(id: OSSignpostID, success: Bool) {
-    os_signpost(.end, log: mlsLog, name: "MLSOperation", signpostID: id, "success: %d", success ? 1 : 0)
-  }
-  
-  static func beginMLSDecrypt(messageCount: Int) -> OSSignpostID {
-    let id = nextID()
-    os_signpost(.begin, log: mlsLog, name: "MLSDecrypt", signpostID: id, "messages: %d", messageCount)
-    return id
-  }
-  
-  static func endMLSDecrypt(id: OSSignpostID, decryptedCount: Int) {
-    os_signpost(.end, log: mlsLog, name: "MLSDecrypt", signpostID: id, "decrypted: %d", decryptedCount)
-  }
-  
-  static func beginMLSEncrypt() -> OSSignpostID {
-    let id = nextID()
-    os_signpost(.begin, log: mlsLog, name: "MLSEncrypt", signpostID: id)
-    return id
-  }
-  
-  static func endMLSEncrypt(id: OSSignpostID) {
-    os_signpost(.end, log: mlsLog, name: "MLSEncrypt", signpostID: id)
   }
   
   // MARK: - Network

@@ -133,61 +133,13 @@ final class PostContextMenuViewModel {
             } catch {
                 logger.debug("Error deleting post: \(error)")
             }
-        case let .circle(circle):
-            let did = appState.userDID
-            do {
-                try await appState.circleService.deletePost(uri: post.uri, circle: circle)
-                await appState.postShadowManager.updateShadow(forUri: post.uri.uriString()) { shadow in
-                    shadow.isDeleted = true
-                }
-                await MainActor.run {
-                    appState.stateInvalidationBus.notify(.feedUpdated(.timeline))
-                    appState.stateInvalidationBus.notify(.profileUpdated(did: did))
-                    if let rootURI = resolvedRootPostURI?.uriString() {
-                        appState.stateInvalidationBus.notify(.threadUpdated(rootUri: rootURI))
-                    }
-                    appState.toastManager.show(
-                        ToastItem(
-                            message: "Post deleted",
-                            icon: "trash.fill",
-                            duration: 2.5
-                        )
-                    )
-                }
-            } catch {
-                logger.debug("Error deleting circle post: \(error)")
-            }
         }
     }
 
     func blockUser() async {
         let targetDid = post.author.did.didString()
 
-        // Prefer the MLS-aware coordinator when available — it publishes the
-        // block record AND auto-leaves any shared MLS groups. Falls back to
-        // the raw createRecord path on non-MLS installs so that existing
-        // behavior is preserved.
-        let coordinator = await MainActor.run { appState.mlsBlockCoordinator }
-        if let coord = coordinator {
-            do {
-                try await coord.block(did: targetDid)
-                logger.debug("User blocked successfully via MLSBlockCoordinator")
-                await MainActor.run {
-                    appState.toastManager.show(
-                        ToastItem(
-                            message: "User blocked",
-                            icon: "hand.raised.fill",
-                            duration: 2.5
-                        )
-                    )
-                }
-            } catch {
-                logger.debug("Error blocking user via coordinator: \(error)")
-            }
-            return
-        }
-
-        // Fallback: publish the block record directly.
+        // Publish the block record directly.
         let did = appState.userDID
         let block = AppBskyGraphBlock(subject: post.author.did, createdAt: ATProtocolDate(date: Date()))
         do {
@@ -245,10 +197,6 @@ final class PostContextMenuViewModel {
     }
 
     func muteThread() async {
-        guard case .public = visibilityContext else {
-            logger.debug("muteThread skipped: private circle post context")
-            return
-        }
         let input = AppBskyGraphMuteThread.Input(root: post.uri)
         do {
             let responseCode = try await appState.atProtoClient?.app.bsky.graph.muteThread(input: input)
@@ -660,35 +608,6 @@ final class PostContextMenuViewModel {
     /// Returns a description of the post for reporting purposes
     func getReportDescription() -> String {
         return "Post by @\(post.author.handle)"
-    }
-}
-
-extension PostContextMenuViewModel {
-    public static func forCircleItem(
-        _ item: BlueCatbirdCircleDefs.FeedItem,
-        appState: AppState,
-        allowsThreadSummary: Bool = false
-    ) -> PostContextMenuViewModel {
-        PostContextMenuViewModel(
-            appState: appState,
-            post: item.post.post,
-            allowsThreadSummary: allowsThreadSummary,
-            visibilityContext: .circle(item.circle)
-        )
-    }
-
-    public static func forCircle(
-        post: AppBskyFeedDefs.PostView,
-        circle: CircleSummary,
-        appState: AppState,
-        allowsThreadSummary: Bool = false
-    ) -> PostContextMenuViewModel {
-        PostContextMenuViewModel(
-            appState: appState,
-            post: post,
-            allowsThreadSummary: allowsThreadSummary,
-            visibilityContext: .circle(circle)
-        )
     }
 }
 

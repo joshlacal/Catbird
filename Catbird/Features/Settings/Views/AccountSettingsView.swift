@@ -60,10 +60,6 @@ struct AccountSettingsView: View {
     @State private var isReactivating = false
     @State private var formError: String?
     @State private var showingFormError = false
-    
-    @State private var circleSetupTask: Task<Void, Never>?
-    @State private var circleSetupID: UUID?
-    @State private var circleSetupError: String?
 
     // Retained operation tasks
     @State private var loadDetailsTask: Task<Void, Never>?
@@ -144,7 +140,6 @@ struct AccountSettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
-                circlesSection
                 if isLoading {
                     Section {
                         ProgressView()
@@ -373,11 +368,7 @@ struct AccountSettingsView: View {
                 exportDocument = nil
             }
             .interactiveDismissDisabled(isDeactivating || isReactivating || isExportingData)
-            .onChange(of: appStateManager.lifecycle.userDID) { _, _ in
-                cancelCircleSetup()
-            }
             .onDisappear {
-                cancelCircleSetup()
                 loadDetailsTask?.cancel()
                 loadDetailsTask = nil
                 manageEmailTask?.cancel()
@@ -401,99 +392,6 @@ struct AccountSettingsView: View {
         }
     }
     
-    // MARK: - Circles Preview
-
-    private var circlesSection: some View {
-        Section {
-            switch appState.circleCapability {
-            case .supported:
-                Label("Circles Enabled", systemImage: "checkmark.circle.fill")
-            case .unsupported:
-                Text("Circles is unavailable on this account’s server.")
-                    .foregroundStyle(.secondary)
-                Button("Check Again") { configureCircles(requestPermission: false) }
-                    .disabled(circleSetupID != nil)
-            case .unknown:
-                Text("Circles availability has not been confirmed for this account.")
-                    .foregroundStyle(.secondary)
-                Button("Enable Circles") { configureCircles(requestPermission: true) }
-                    .accessibilityIdentifier("settings.enableCircles")
-                    .disabled(circleSetupID != nil)
-            }
-            if circleSetupID != nil {
-                ProgressView("Checking Circles availability…")
-            }
-            if let circleSetupError {
-                Text(circleSetupError)
-                    .foregroundStyle(.secondary)
-            }
-        } header: {
-            Text("Circles Preview")
-        } footer: {
-            Text("Circles requires a personal data server that supports Spaces. Enable Circles requests permission for this account, then checks availability. Granting permission alone does not guarantee support.")
-        }
-    }
-
-    @MainActor
-    private func cancelCircleSetup() {
-        circleSetupTask?.cancel()
-        circleSetupTask = nil
-        circleSetupID = nil
-        circleSetupError = nil
-    }
-
-    @MainActor
-    private func configureCircles(requestPermission: Bool) {
-        guard appStateManager.lifecycle.appState === appState else { return }
-        cancelCircleSetup()
-        let operationID = UUID()
-        let targetState = appState
-        let targetClient = appState.atProtoClient
-        let targetDID = appState.userDID
-        circleSetupID = operationID
-        circleSetupTask = Task { @MainActor in
-            defer {
-                if circleSetupID == operationID {
-                    circleSetupID = nil
-                    circleSetupTask = nil
-                }
-            }
-            do {
-                guard !Task.isCancelled, circleSetupID == operationID,
-                      appState === targetState, targetState.atProtoClient === targetClient,
-                      appStateManager.lifecycle.appState === targetState else { return }
-                if requestPermission {
-                    try await ensurePermission(.circleSpaces)
-                }
-                guard !Task.isCancelled, circleSetupID == operationID,
-                      appState === targetState, targetState.atProtoClient === targetClient,
-                      targetState.userDID == targetDID,
-                      appStateManager.lifecycle.appState === targetState else { return }
-                await targetState.probeCircleCapabilities()
-                guard !Task.isCancelled, circleSetupID == operationID,
-                      appState === targetState, targetState.atProtoClient === targetClient,
-                      targetState.userDID == targetDID,
-                      appStateManager.lifecycle.appState === targetState else { return }
-                if appState.circleCapability == .unknown {
-                    circleSetupError = "Couldn’t confirm Circles availability. Check your connection and account permissions, then try again."
-                }
-            } catch is CancellationError {
-                // Cancelling consent leaves Circles unchanged.
-            } catch GatewayPermissionError.cancelled {
-                // Cancelling consent leaves Circles unchanged.
-            } catch GatewayPermissionError.stateChanged {
-                // Discard results from a superseded authentication session.
-            } catch {
-                guard !Task.isCancelled, circleSetupID == operationID,
-                      appState === targetState, targetState.atProtoClient === targetClient,
-                      targetState.userDID == targetDID,
-                      appStateManager.lifecycle.appState === targetState else { return }
-                circleSetupError = "Couldn’t enable Circles. Please try again."
-                logger.debug("Circles permission request failed: \(error.localizedDescription)")
-            }
-        }
-    }
-
     // MARK: - Data Export
     
     @MainActor

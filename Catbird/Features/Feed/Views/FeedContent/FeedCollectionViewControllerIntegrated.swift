@@ -24,7 +24,6 @@ import os
     private enum Section: Int, CaseIterable { case main }
     private enum Item: Hashable {
       case header
-      case liveEvent(id: String)
       case trendingInterstitial
       case post(account: String, feed: String, id: String)
     }
@@ -536,32 +535,6 @@ import os
         cell.contentConfiguration = UIHostingConfiguration { header }
           .margins(.all, 0)
       }
-      // Registration for live event cell
-      let liveEventRegistration = UICollectionView.CellRegistration<UICollectionViewListCell, String> {
-        [weak self] cell, indexPath, eventId in
-        guard let self = self else {
-          cell.contentConfiguration = nil
-          return
-        }
-        let appState = self.stateManager.appState
-        guard let event = appState.liveEventService.activeEvents.first(where: { $0.id == eventId }) else {
-          cell.contentConfiguration = nil
-          return
-        }
-        cell.layoutMargins = .zero
-        cell.directionalLayoutMargins = NSDirectionalEdgeInsets.zero
-        cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
-        cell.selectedBackgroundView = nil
-
-        cell.contentConfiguration = UIHostingConfiguration {
-          LiveEventBanner(event: event, style: .wide)
-            .applyAppStateEnvironment(appState)
-            .padding(.horizontal)
-            .padding(.vertical, 4)
-        }
-        .margins(.all, 0)
-      }
-
       // Registration for trending interstitial cell
       let trendingInterstitialRegistration = UICollectionView.CellRegistration<UICollectionViewListCell, Void> {
         [weak self] cell, indexPath, _ in
@@ -590,9 +563,6 @@ import os
         case .header:
           return collectionView.dequeueConfiguredReusableCell(
             using: headerRegistration, for: indexPath, item: ())
-        case .liveEvent(let id):
-          return collectionView.dequeueConfiguredReusableCell(
-            using: liveEventRegistration, for: indexPath, item: id)
         case .trendingInterstitial:
           return collectionView.dequeueConfiguredReusableCell(
             using: trendingInterstitialRegistration, for: indexPath, item: ())
@@ -715,11 +685,6 @@ import os
         // Prepend header cell when available
         if capturedHeaderPresent {
           snapshot.appendItems([.header], toSection: .main)
-        }
-
-        let isDiscoverFeed = feedID.contains("whats-hot") || feedID.contains("discover")
-        if isDiscoverFeed, let liveEvent = stateManager.appState.liveEventService.activeEvents.first {
-          snapshot.appendItems([.liveEvent(id: liveEvent.id)], toSection: .main)
         }
 
         var items: [Item] = []

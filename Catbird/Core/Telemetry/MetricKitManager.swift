@@ -29,7 +29,6 @@ final class MetricKitManager: NSObject, @unchecked Sendable {
   private(set) var networkRequestLog: OSLog?
   private(set) var authenticationLog: OSLog?
   private(set) var composerLog: OSLog?
-  private(set) var mlsOperationLog: OSLog?
   
   // MARK: - Launch Task IDs
   
@@ -52,7 +51,6 @@ final class MetricKitManager: NSObject, @unchecked Sendable {
     networkRequestLog = MXMetricManager.makeLogHandle(category: "NetworkRequest")
     authenticationLog = MXMetricManager.makeLogHandle(category: "Authentication")
     composerLog = MXMetricManager.makeLogHandle(category: "Composer")
-    mlsOperationLog = MXMetricManager.makeLogHandle(category: "MLSOperation")
     
     metricLogger.info("✅ MetricKit log handles created")
   }

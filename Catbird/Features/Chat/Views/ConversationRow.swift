@@ -13,9 +13,9 @@ struct ConversationRow: View {
     convo.displayTitle(currentUserDID: currentUserDID)
   }
 
-  private var groupAvatarParticipants: [MLSParticipantViewModel] {
+  private var groupAvatarParticipants: [ChatParticipant] {
     convo.displayMembersExcludingCurrentUser(currentUserDID: currentUserDID).map { member in
-      MLSParticipantViewModel(
+      ChatParticipant(
         id: member.did.didString(),
         handle: member.handle.description,
         displayName: member.displayName,
@@ -115,7 +115,7 @@ struct ConversationRow: View {
   @ViewBuilder
   private var avatarView: some View {
     if convo.isGroupConversation {
-      MLSGroupAvatarView(
+      ChatGroupAvatarView(
         participants: groupAvatarParticipants,
         size: DesignTokens.Size.avatarLG
       )

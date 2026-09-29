@@ -1,3 +1,4 @@
+import Petrel
 import SwiftUI
 
 /// Displays grouped reactions below a message bubble
@@ -130,7 +131,7 @@ struct UnifiedReactionDetailsSheet<Source: UnifiedChatDataSource>: View {
   let accountDID: String
 
   @Environment(\.dismiss) private var dismiss
-  @State private var profiles: [String: MLSProfileEnricher.ProfileData] = [:]
+  @State private var profiles: [String: ReactorProfile] = [:]
 
   private var isActiveAccount: Bool {
     let lifecycle = AppStateManager.shared.lifecycle
@@ -191,13 +192,9 @@ struct UnifiedReactionDetailsSheet<Source: UnifiedChatDataSource>: View {
     }
     .task(id: ProfileRequestID(senders: senderDIDs, client: appState.atProtoClient.map(ObjectIdentifier.init))) {
       guard !Task.isCancelled, isActiveAccount, let client = appState.atProtoClient else { return }
-      let result = await appState.mlsProfileEnricher.ensureProfiles(
-        for: senderDIDs, using: client, currentUserDID: accountDID
-      )
+      let result = await Self.fetchProfiles(dids: senderDIDs, client: client)
       guard !Task.isCancelled, isActiveAccount, appState.atProtoClient === client else { return }
-      for (did, profile) in result {
-        profiles[MLSProfileEnricher.canonicalDID(did)] = profile
-      }
+      profiles.merge(result) { _, new in new }
     }
   }
 
@@ -206,8 +203,38 @@ struct UnifiedReactionDetailsSheet<Source: UnifiedChatDataSource>: View {
     let client: ObjectIdentifier?
   }
 
+  struct ReactorProfile {
+    let handle: String
+    let displayName: String?
+    let avatarURL: URL?
+  }
+
+  /// Resolves reactor profiles via `app.bsky.actor.getProfiles` (25 actors per request).
+  /// Failed batches are skipped; those rows fall back to showing the DID.
+  private static func fetchProfiles(dids: [String], client: ATProtoClient) async -> [String: ReactorProfile] {
+    var result: [String: ReactorProfile] = [:]
+    let batchSize = 25
+    for start in stride(from: 0, to: dids.count, by: batchSize) {
+      guard !Task.isCancelled else { break }
+      let batch = dids[start..<min(start + batchSize, dids.count)]
+      let actors = batch.compactMap { try? ATIdentifier(string: $0) }
+      guard !actors.isEmpty else { continue }
+      guard let (code, response) = try? await client.app.bsky.actor.getProfiles(
+        input: AppBskyActorGetProfiles.Parameters(actors: actors)
+      ), (200..<300).contains(code), let response else { continue }
+      for profile in response.profiles {
+        result[profile.did.didString()] = ReactorProfile(
+          handle: profile.handle.description,
+          displayName: profile.displayName,
+          avatarURL: profile.avatar.flatMap { URL(string: $0.uriString()) }
+        )
+      }
+    }
+    return result
+  }
+
   private func reactorRow(_ reaction: UnifiedReaction) -> some View {
-    let profile = profiles[MLSProfileEnricher.canonicalDID(reaction.senderDID)]
+    let profile = profiles[reaction.senderDID]
     return HStack(spacing: 12) {
       AsyncImage(url: profile?.avatarURL) { image in
         image.resizable().scaledToFill()

@@ -196,37 +196,6 @@ struct NotificationSettingsView: View {
                 }
                 .opacity(notificationManager.notificationsEnabled ? 1.0 : 0.6)
             }
-
-            Section("Encrypted Chats") {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Label {
-                            Text("Encrypted Messages")
-                                .appFont(AppTextRole.body)
-                        } icon: {
-                            Image(systemName: "lock.shield")
-                                .foregroundStyle(.blue)
-                        }
-
-                        Spacer()
-
-                        Toggle("", isOn: Binding(
-                            get: { notificationManager.mlsChatNotificationsEnabled },
-                            set: { newValue in
-                                notificationManager.mlsChatNotificationsEnabled = newValue
-                                logger.info("MLS chat notifications toggled to: \(newValue)")
-                            }
-                        ))
-                        .disabled(!notificationManager.notificationsEnabled)
-                    }
-
-                    Text("Get notifications for new encrypted chat messages")
-                        .appFont(AppTextRole.caption)
-                        .foregroundStyle(.secondary)
-                        .padding(.leading, 32)
-                }
-                .opacity(notificationManager.notificationsEnabled ? 1.0 : 0.6)
-            }
         }
     }
     #endif

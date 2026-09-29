@@ -101,7 +101,7 @@ struct MacOSUnifiedConversationRow: View {
   @ViewBuilder
   private func mlsRow(
     _ convo: MLSConversationModel,
-    participants: [MLSParticipantViewModel],
+    participants: [ChatParticipant],
     unreadCount: Int,
     lastMessage: MLSLastMessagePreview?,
     memberChange: MemberChangeInfo?
@@ -198,7 +198,7 @@ struct MacOSUnifiedConversationRow: View {
     }
   }
 
-  private func groupName(_ convo: MLSConversationModel, participants: [MLSParticipantViewModel]) -> String {
+  private func groupName(_ convo: MLSConversationModel, participants: [ChatParticipant]) -> String {
     if let title = convo.title, !title.isEmpty { return title }
     let otherParticipants = participants.filter { $0.id != currentUserDID }
     if otherParticipants.isEmpty { return "Group" }
@@ -207,7 +207,7 @@ struct MacOSUnifiedConversationRow: View {
   }
 
   @ViewBuilder
-  private func groupAvatar(participants: [MLSParticipantViewModel]) -> some View {
+  private func groupAvatar(participants: [ChatParticipant]) -> some View {
     let otherParticipants = participants.filter { $0.id != currentUserDID }
     let displayParticipants = Array(otherParticipants.prefix(2))
 
@@ -237,7 +237,7 @@ struct MacOSUnifiedConversationRow: View {
   }
 
   @ViewBuilder
-  private func avatarImage(for participant: MLSParticipantViewModel) -> some View {
+  private func avatarImage(for participant: ChatParticipant) -> some View {
     if let avatarURL = participant.avatarURL {
       LazyImage(url: avatarURL) { state in
         if let image = state.image {
