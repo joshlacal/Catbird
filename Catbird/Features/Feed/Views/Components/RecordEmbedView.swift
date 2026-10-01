@@ -60,7 +60,10 @@ struct RecordEmbedView: View {
                             .clipShape(Circle())
                         }
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(post.author.displayName ?? post.author.handle.description)
+                            EmbeddedAuthorNameView(
+                                name: post.author.displayName ?? post.author.handle.description,
+                                verification: post.author.verification
+                            )
                                 .appFont(AppTextRole.subheadline.weight(.semibold))
                                 .foregroundStyle(.primary)
                                 .lineLimit(1)
@@ -121,7 +124,12 @@ struct RecordEmbedView: View {
                                 .clipShape(Circle())
                             }
                             
-                            PostHeaderView(displayName: post.author.displayName ?? post.author.handle.description, handle: post.author.handle.description, timeAgo: post.indexedAt.date)
+                            PostHeaderView(
+                                displayName: post.author.displayName ?? post.author.handle.description,
+                                handle: post.author.handle.description,
+                                timeAgo: post.indexedAt.date,
+                                verificationKind: VerificationBadge.metadataKind(for: post.author.verification)
+                            )
                                 .textScale(.secondary)
                                 .foregroundStyle(.primary)
                             
@@ -244,7 +252,10 @@ struct RecordEmbedView: View {
                                     .appFont(AppTextRole.caption)
                                     .foregroundStyle(.secondary)
                                 
-                                Text("Quoting @\(viewRecord.author.handle)")
+                                EmbeddedAuthorNameView(
+                                    name: "Quoting @\(viewRecord.author.handle)",
+                                    verification: viewRecord.author.verification
+                                )
                                     .appFont(AppTextRole.caption)
                                     .fontWeight(.medium)
                                     .foregroundStyle(.secondary)

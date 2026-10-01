@@ -49,6 +49,8 @@ struct PostHeaderView: View {
                         if let verificationKind {
                             VerificationBadgeView(kind: verificationKind)
                                 .font(.caption)
+                                .fixedSize()
+                                .layoutPriority(1)
                         }
                         
                         if let pronouns, !pronouns.isEmpty {
