@@ -30,20 +30,11 @@ struct PostQuoteRowView: View {
                 .clipShape(Circle())
                 
                 VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 4) {
-                        Text(post.author.displayName ?? post.author.handle.description)
-                            .appFont(AppTextRole.headline)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-
-                        if let badgeKind = VerificationBadge.kind(
-                            for: post.author.verification,
-                            did: post.author.did
-                        ) {
-                            VerificationBadgeView(kind: badgeKind)
-                                .font(.caption)
-                        }
-                    }
+                    EmbeddedAuthorNameView(
+                        name: post.author.displayName ?? post.author.handle.description,
+                        verification: post.author.verification
+                    )
+                    .appFont(AppTextRole.headline)
 
                     Text("@\(post.author.handle)")
                         .appFont(AppTextRole.subheadline)

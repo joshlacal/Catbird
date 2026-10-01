@@ -44,6 +44,18 @@ enum VerificationBadge {
     return nil
   }
 
+  /// Embedded authors require server verification metadata. Identity alone does
+  /// not establish verification, including the legacy self-verified fallback.
+  static func metadataKind(
+    for state: AppBskyActorDefs.VerificationState?,
+    hideBadges: Bool = false
+  ) -> VerificationBadgeKind? {
+    guard !hideBadges else { return nil }
+    if state?.trustedVerifierStatus == "valid" { return .trustedVerifier }
+    if state?.verifiedStatus == "valid" { return .regular }
+    return nil
+  }
+
   /// Badge as a composed `Text` segment for inline contexts where a SwiftUI
   /// view can't be embedded (e.g. an `AttributedString`-style sentence built by
   /// concatenating `Text`). Returns `nil` when the actor is not verified.

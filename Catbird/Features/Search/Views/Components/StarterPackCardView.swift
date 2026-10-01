@@ -41,7 +41,10 @@ struct StarterPackCardView: View {
                                 .appFont(AppTextRole.headline)
                         }
                         
-                        Text("By @\(starterPack.creator.handle)")
+                        EmbeddedAuthorNameView(
+                            name: "By @\(starterPack.creator.handle)",
+                            verification: starterPack.creator.verification
+                        )
                             .appFont(AppTextRole.caption)
                             .foregroundColor(.secondary)
                     }

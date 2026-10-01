@@ -1718,10 +1718,23 @@ private struct DrawerAwareScrollBackground: ViewModifier {
             content
                 .scrollContentBackground(.hidden)
                 .background(Color.clear)
+                .modifier(DrawerBannerScrollEdgeModifier())
         } else {
             content
         }
     }
+}
+
+/// The banner supplies its own blur behind the top controls. The system scroll
+/// edge effect would cover that artwork with the drawer's backdrop color.
+private struct DrawerBannerScrollEdgeModifier: ViewModifier {
+  func body(content: Content) -> some View {
+    if #available(iOS 26.0, macOS 26.0, *) {
+      content.scrollEdgeEffectHidden(true, for: .top)
+    } else {
+      content
+    }
+  }
 }
 
 /// Clips the drawer banner to a uniform radius measured from its top corners.
