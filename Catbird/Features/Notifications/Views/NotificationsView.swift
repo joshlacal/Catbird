@@ -222,46 +222,49 @@ struct NotificationsView: View {
 
     ScrollViewReader { _ in
       List {
-        ForEach(indexedGroups, id: \.element.id) { item in
-          let index = item.offset
-          let group = item.element
-          NotificationCard(
-            group: group,
-            onTap: { destination in
-              navigationPath.wrappedValue.append(destination)
-            }, path: navigationPath
-          )
-          #if os(macOS)
-          .frame(maxWidth: 700)
-          .frame(maxWidth: .infinity, alignment: .center)
-          #endif
-          .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
-          .listRowSeparator(.visible)
-          .listRowSeparator(index == 0 ? .hidden : .visible, edges: .top)
-          .alignmentGuide(.listRowSeparatorLeading) { _ in
-            0
+        Section {
+          ForEach(indexedGroups, id: \.element.id) { item in
+            let index = item.offset
+            let group = item.element
+            NotificationCard(
+              group: group,
+              onTap: { destination in
+                navigationPath.wrappedValue.append(destination)
+              }, path: navigationPath
+            )
+            #if os(macOS)
+            .frame(maxWidth: 700)
+            .frame(maxWidth: .infinity, alignment: .center)
+            #endif
+            .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
+            .listRowSeparator(.visible)
+            .listRowSeparator(index == 0 ? .hidden : .visible, edges: .top)
+            .alignmentGuide(.listRowSeparatorLeading) { _ in
+              0
+            }
+            .alignmentGuide(.listRowSeparatorTrailing) { dimension in dimension.width }
+            .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
+            .onAppear {
+              triggerLoadMoreNotificationsIfNeeded(currentIndex: index)
+            }
           }
-          .alignmentGuide(.listRowSeparatorTrailing) { dimension in dimension.width }
-          .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
-          .onAppear {
-            triggerLoadMoreNotificationsIfNeeded(currentIndex: index)
-          }
-        }
 
-        if viewModel.hasMoreNotifications {
-          HStack {
-            Spacer()
-            ProgressView()
-              .padding()
-            Spacer()
+          if viewModel.hasMoreNotifications {
+            HStack {
+              Spacer()
+              ProgressView()
+                .padding()
+              Spacer()
+            }
+            #if os(macOS)
+            .frame(maxWidth: 700)
+            .frame(maxWidth: .infinity, alignment: .center)
+            #endif
+            .id("loadingIndicator")
+            .listRowSeparator(.hidden)
           }
-          #if os(macOS)
-          .frame(maxWidth: 700)
-          .frame(maxWidth: .infinity, alignment: .center)
-          #endif
-          .id("loadingIndicator")
-          .listRowSeparator(.hidden)
         }
+        .listSectionSeparator(.hidden, edges: .top)
       }
 
       .listStyle(.plain)

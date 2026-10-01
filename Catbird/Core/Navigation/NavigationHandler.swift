@@ -224,7 +224,7 @@ struct NavigationHandler {
     case .savedFeeds:
       ListsManagerView()
     case .intentControls:
-      IntentControlsSettingsView()
+      SettingsView()
     }
   }
 

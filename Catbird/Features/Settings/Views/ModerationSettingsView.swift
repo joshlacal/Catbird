@@ -101,15 +101,6 @@ struct ModerationSettingsView: View {
                         }
                     }
 
-                    NavigationLink(destination: SmartFiltersSettingsView()) {
-                        Label {
-                            Text("Smart Filters")
-                        } icon: {
-                            Image(systemName: "sparkles.rectangle.stack.fill")
-                                .foregroundStyle(.purple)
-                        }
-                    }
-                    
                     NavigationLink(destination: ListsManagerView()) {
                         Label {
                             VStack(alignment: .leading, spacing: 4) {

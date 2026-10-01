@@ -89,10 +89,6 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
   var onReply: ((Message) -> Void)?
   private var hasPerformedInitialScroll = false
   private var lastScrollToBottomTrigger: Int = 0
-  /// Extra bottom inset to keep content above the floating composer.
-  private let composerInset: CGFloat = 100
-  /// Current keyboard overlap with this view (0 when keyboard is hidden).
-  private var keyboardOverlap: CGFloat = 0
 
   private let newMessagesPillButton: UIButton = {
     var config = UIButton.Configuration.filled()
@@ -159,7 +155,6 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
     setupCollectionView()
     setupDataSource()
     setupObservation()
-    setupKeyboardObservers()
     setupNewMessagesPill()
   }
   override func viewWillAppear(_ animated: Bool) {
@@ -195,16 +190,12 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
     collectionView.keyboardDismissMode = .interactive
     collectionView.alwaysBounceVertical = true
     collectionView.showsVerticalScrollIndicator = true
-    collectionView.contentInsetAdjustmentBehavior = .automatic
     #if compiler(>=6.2)
     if #available(iOS 26.0, *) {
       collectionView.topEdgeEffect.style = .soft
       collectionView.bottomEdgeEffect.style = .soft
     }
     #endif
-
-    // Extra bottom inset so the last message clears the floating composer.
-    collectionView.contentInset.bottom = composerInset
 
     // Keep the collection view in a normal (unflipped) coordinate space.
     // We preserve scroll position when prepending older messages by adjusting contentOffset.
@@ -220,7 +211,7 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
     view.addSubview(newMessagesPillButton)
     newMessagesPillButton.addTarget(self, action: #selector(didTapNewMessagesPill), for: .touchUpInside)
 
-    let bottomAnchor = view.safeAreaLayoutGuide.bottomAnchor
+    let bottomAnchor = view.bottomAnchor
     let constraint = newMessagesPillButton.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12)
     pillBottomConstraint = constraint
 
@@ -231,68 +222,6 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
   }
   private func createLayout() -> UICollectionViewLayout {
     ChatAnchoredLayout()
-  }
-
-  // MARK: - Keyboard Tracking
-
-  private func setupKeyboardObservers() {
-    NotificationCenter.default.addObserver(
-      self,
-      selector: #selector(keyboardWillChangeFrame(_:)),
-      name: UIResponder.keyboardWillChangeFrameNotification,
-      object: nil
-    )
-    NotificationCenter.default.addObserver(
-      self,
-      selector: #selector(keyboardWillShow(_:)),
-      name: UIResponder.keyboardWillShowNotification,
-      object: nil
-    )
-    NotificationCenter.default.addObserver(
-      self,
-      selector: #selector(keyboardWillHide(_:)),
-      name: UIResponder.keyboardWillHideNotification,
-      object: nil
-    )
-  }
-
-  @objc private func keyboardWillChangeFrame(_ note: Notification) {
-    guard
-      let endFrame = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect,
-      let duration = note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double,
-      let curveRaw = note.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? UInt
-    else { return }
-
-    let viewFrame = view.convert(view.bounds, to: nil)
-    let overlap = max(0, viewFrame.maxY - endFrame.minY)
-    keyboardOverlap = overlap
-    let newBottom = composerInset + overlap
-
-    let options = UIView.AnimationOptions(rawValue: curveRaw << 16)
-    UIView.animate(withDuration: duration, delay: 0, options: options) {
-      self.collectionView.contentInset.bottom = newBottom
-      self.collectionView.verticalScrollIndicatorInsets.bottom = newBottom
-    }
-  }
-
-  @objc private func keyboardWillShow(_ note: Notification) {
-    let duration = (note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
-    // Scroll to bottom after the keyboard + inset animation settles
-    DispatchQueue.main.asyncAfter(deadline: .now() + duration) { [weak self] in
-      self?.scrollToBottom(animated: true)
-    }
-  }
-
-  @objc private func keyboardWillHide(_ note: Notification) {
-    let duration = (note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
-    let curveRaw = (note.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? UInt) ?? 7
-    keyboardOverlap = 0
-
-    let options = UIView.AnimationOptions(rawValue: curveRaw << 16)
-    UIView.animate(withDuration: duration, delay: 0, options: options) {
-      self.collectionView.contentInset.bottom = self.composerInset
-      self.collectionView.verticalScrollIndicatorInsets.bottom = self.composerInset
-    }
   }
 
   private func setupDataSource() {

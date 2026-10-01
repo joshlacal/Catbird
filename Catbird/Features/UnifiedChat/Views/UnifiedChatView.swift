@@ -46,7 +46,6 @@ struct UnifiedChatView<DataSource: UnifiedChatDataSource>: View {
         Task { await dataSource.retryFailedSend(pendingID: messageID) }
       }
     )
-    .ignoresSafeArea()
     #else
     ChatListView(
       dataSource: dataSource,

@@ -885,12 +885,6 @@ struct UnifiedProfileView: View {
             Label("Ask Catbird", systemImage: "sparkles")
           }
 
-          Button {
-            isShowingSmartFilterEditor = true
-          } label: {
-            Label("Filter Posts…", systemImage: "line.3.horizontal.decrease.circle")
-          }
-
           Divider()
 
           Button {

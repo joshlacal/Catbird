@@ -166,7 +166,6 @@ struct ConversationView: View {
           stagedReplyTarget = message
         }
       )
-      .ignoresSafeArea(.container)
       .onChange(of: selectedEmoji) { _, newEmoji in
         guard let messageID = emojiPickerMessageID, !newEmoji.isEmpty else { return }
         dataSource.addReaction(messageID: messageID, emoji: newEmoji)
@@ -180,7 +179,7 @@ struct ConversationView: View {
           emojiPickerMessageID = nil
         }
       }
-      .safeAreaInset(edge: .bottom) {
+      .chatTranscriptViewport {
         if chatNavigationPath.wrappedValue.isEmpty {
           if conversationBlockState.isBlocked {
             BlockedConversationFooter(

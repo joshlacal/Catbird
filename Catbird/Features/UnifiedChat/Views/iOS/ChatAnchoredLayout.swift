@@ -77,7 +77,7 @@ final class ChatAnchoredLayout: UICollectionViewFlowLayout {
 /// A transcript always has one full-width cell per row. Flow layout must not
 /// adopt a hosting view's narrower intrinsic width and then rewrap its text.
 final class ChatTranscriptCell: UICollectionViewCell {
-  // The collection owns keyboard and safe-area insets. Applying the window's
+  // The outer viewport owns keyboard and safe-area space. Applying the window's
   // safe area again inside each hosting cell changes its fitted height on scroll.
   override var safeAreaInsets: UIEdgeInsets { .zero }
 
@@ -105,6 +105,8 @@ final class ChatTranscriptCollectionView: UICollectionView {
   override init(frame: CGRect, collectionViewLayout layout: UICollectionViewLayout) {
     super.init(frame: frame, collectionViewLayout: layout)
     selfSizingInvalidation = .enabledIncludingConstraints
+    // The SwiftUI viewport has already excluded navigation, footer and keyboard.
+    contentInsetAdjustmentBehavior = .never
   }
 
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -125,6 +127,25 @@ final class ChatTranscriptCollectionView: UICollectionView {
 
   private var settledBottomOffsetY: CGFloat?
   private var isRestoringBottom = false
+  private var viewportReadingAnchor: (cell: UICollectionViewCell, index: IndexPath, y: CGFloat)?
+
+  override var bounds: CGRect {
+    willSet {
+      guard abs(newValue.height - bounds.height) > 0.5, bounds.height > 0 else { return }
+      // Capture against the old viewport before UIKit reacts to a keyboard or
+      // growing composer. Keeping a reader's origin and bottom intent are distinct.
+      let bottom = max(-adjustedContentInset.top,
+        contentSize.height - bounds.height + adjustedContentInset.bottom)
+      pendingInsetBottomFollow = pendingInsetBottomFollow || abs(contentOffset.y - bottom) <= 24
+      if viewportReadingAnchor == nil {
+        let visibleTop = contentOffset.y + adjustedContentInset.top
+        if let cell = visibleCells.filter({ $0.frame.maxY > visibleTop })
+          .min(by: { $0.frame.minY < $1.frame.minY }), let index = indexPath(for: cell) {
+          viewportReadingAnchor = (cell, index, cell.frame.minY - contentOffset.y)
+        }
+      }
+    }
+  }
 
   override func layoutSubviews() {
     guard !isRestoringBottom else {
@@ -137,10 +158,10 @@ final class ChatTranscriptCollectionView: UICollectionView {
     let wasAtBottom = settledBottomOffsetY.map { abs(contentOffset.y - $0) <= 24 } ?? false
 
     let visibleTop = contentOffset.y + adjustedContentInset.top
-    let readerCell = visibleCells.filter { $0.frame.maxY > visibleTop }
+    let readerCell = viewportReadingAnchor?.cell ?? visibleCells.filter { $0.frame.maxY > visibleTop }
       .min { $0.frame.minY < $1.frame.minY }
-    let readerIndex = readerCell.flatMap { indexPath(for: $0) }
-    let readerY = readerCell.map { $0.frame.minY - contentOffset.y }
+    let readerIndex = viewportReadingAnchor?.index ?? readerCell.flatMap { indexPath(for: $0) }
+    let readerY = viewportReadingAnchor?.y ?? readerCell.map { $0.frame.minY - contentOffset.y }
     layout?.managesReadingAnchor = layout?.preservesSelfSizingAnchor == true
     super.layoutSubviews()
     layout?.managesReadingAnchor = false
@@ -166,6 +187,7 @@ final class ChatTranscriptCollectionView: UICollectionView {
       }
     }
     pendingInsetBottomFollow = false
+    viewportReadingAnchor = nil
     settledBottomOffsetY = max(-adjustedContentInset.top, contentSize.height - bounds.height + adjustedContentInset.bottom)
   }
 }

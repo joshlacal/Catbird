@@ -107,19 +107,23 @@ struct ChatTabView: View {
       if !searchText.isEmpty {
         searchResultsContent
       } else {
-        ForEach(coordinator.conversations) { item in
-          unifiedRow(for: item)
-        }
+        Section {
+          ForEach(coordinator.conversations) { item in
+            unifiedRow(for: item)
+              .listRowSeparator(item.id == coordinator.conversations.first?.id ? .hidden : .visible, edges: .top)
+          }
 
-        if shouldShowPagination {
-          paginationView
-        }
+          if shouldShowPagination {
+            paginationView
+          }
 
-        Spacer()
-          .frame(height: 80)
-          .listRowSeparator(.hidden)
-          .listRowInsets(EdgeInsets())
-          .listRowBackground(Color.clear)
+          Spacer()
+            .frame(height: 80)
+            .listRowSeparator(.hidden)
+            .listRowInsets(EdgeInsets())
+            .listRowBackground(Color.clear)
+        }
+        .listSectionSeparator(.hidden, edges: .top)
       }
     }
     // Keyed on the account, not per row: explicit `.id()` on rows inside a List's

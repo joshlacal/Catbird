@@ -238,6 +238,9 @@ enum CopilotProposalCoordinator {
             }
 
         case .createSmartFilter(let rule):
+            guard IntelligenceFeatureFlags.smartFilterStructuralRulesEnabled else {
+                throw CopilotProposalError.unsupported
+            }
             guard rule.accountDID == expectedAccountDID else {
                 throw CopilotProposalError.staleTarget
             }
@@ -252,6 +255,9 @@ enum CopilotProposalCoordinator {
             }
 
         case .setSmartFilterEnabled(let id, _):
+            guard IntelligenceFeatureFlags.smartFilterStructuralRulesEnabled else {
+                throw CopilotProposalError.unsupported
+            }
             guard case .smartFilter(let filterID, _) = context, id == filterID else {
                 throw CopilotProposalError.staleTarget
             }

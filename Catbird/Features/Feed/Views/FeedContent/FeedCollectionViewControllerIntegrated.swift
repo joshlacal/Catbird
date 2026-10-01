@@ -97,6 +97,12 @@ import os
     /// O(1) post lookup used during cell configuration
     private var postsByID: [String: CachedFeedViewPost] = [:]
     private var trendingContent = TrendingFeedContent()
+    private var feedGeneration = 0
+    private var appliedSnapshotGeneration: Int?
+    private let scrollRestoration: FeedViewportRestoration
+    #if DEBUG
+    private var lastLayoutGeometry: FeedLayoutGeometry?
+    #endif
 
     func setTrendingContent(_ content: TrendingFeedContent) {
       guard content != trendingContent else { return }
@@ -115,6 +121,7 @@ import os
       self.stateManager = stateManager
       self.navigationPath = navigationPath
       self.onScrollOffsetChanged = onScrollOffsetChanged
+      self.scrollRestoration = FeedViewportRestoration(anchor: stateManager.getScrollAnchor()?.viewportAnchor)
 
       super.init(nibName: nil, bundle: nil)
     }
@@ -278,17 +285,31 @@ import os
       }
     }
 
-    override func viewDidDisappear(_ animated: Bool) {
-      super.viewDidDisappear(animated)
-
-      // Capture scroll position when view disappears to preserve it
+    override func viewWillDisappear(_ animated: Bool) {
+      // Capture before navigation changes the outgoing view's effective insets.
       captureCurrentScrollPosition()
+      super.viewWillDisappear(animated)
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+      super.viewDidAppear(animated)
+      restoreScrollPositionIfReady()
     }
     override func viewDidLayoutSubviews() {
       super.viewDidLayoutSubviews()
       if let collectionView = collectionView, let bgView = collectionView.backgroundView {
         bgView.frame = collectionView.bounds
       }
+      restoreScrollPositionIfReady()
+      #if DEBUG
+      if FeedLayoutGeometry.isTracingEnabled, let collectionView, dataSource != nil {
+        let geometry = FeedLayoutGeometry.capture(in: collectionView, postIDAt: postIDAt)
+        if geometry != lastLayoutGeometry {
+          lastLayoutGeometry = geometry
+          controllerLogger.debug("Feed layout geometry: \(String(describing: geometry), privacy: .public)")
+        }
+      }
+      #endif
     }
 
 
@@ -634,6 +655,8 @@ import os
       // Cancel any pending update task
       updateTask?.cancel()
 
+      let generation = feedGeneration
+      let manager = stateManager
       // Create new update task
       updateTask = Task { @MainActor in
         // Mark as performing update
@@ -720,8 +743,12 @@ import os
           await dataSource.apply(snapshot, animatingDifferences: false)
         }
 
-        guard !Task.isCancelled else { return }
+        guard !Task.isCancelled, generation == feedGeneration, manager === stateManager else { return }
 
+        appliedSnapshotGeneration = generation
+        collectionView.layoutIfNeeded()
+        restoreScrollPositionIfReady()
+        view.setNeedsLayout()
         controllerLogger.debug("✅ Fast update complete - \\(items.count) items")
         updateBackgroundState()
       }
@@ -737,11 +764,16 @@ import os
         return
       }
 
+      let generation = feedGeneration
+      let manager = stateManager
       let task = Task { @MainActor [weak self] in
         guard let self else { return }
-        defer { self.initialLoadTask = nil }
+        defer {
+          if self.feedGeneration == generation { self.initialLoadTask = nil }
+        }
         self.controllerLogger.debug("📥 Loading initial data")
-        await self.stateManager.loadInitialData()
+        await manager.loadInitialData()
+        guard !Task.isCancelled, self.feedGeneration == generation, self.stateManager === manager else { return }
         await self.performUpdate()
       }
       initialLoadTask = task
@@ -784,6 +816,7 @@ import os
     private func scrollToTopAnimated() {
       guard let collectionView = collectionView else { return }
 
+      scrollRestoration.cancel()
       let minOffsetY = -collectionView.adjustedContentInset.top
       let minOffsetX = -collectionView.adjustedContentInset.left
 
@@ -795,6 +828,7 @@ import os
     /// This is the behavior when the user taps the home tab while already on the home tab
     func scrollToTopAndRefresh() {
       guard let collectionView = collectionView else { return }
+      scrollRestoration.cancel()
       
       // Only refresh when we're truly already at the top.
       let topOffset = -collectionView.adjustedContentInset.top
@@ -840,66 +874,30 @@ import os
     private func captureCurrentScrollPosition() {
       guard let collectionView = collectionView else { return }
       #if os(iOS)
-        stateManager.captureScrollAnchor(from: collectionView)
+        stateManager.captureScrollAnchor(from: collectionView, postIDAt: postIDAt)
       #endif
     }
 
-    /// Restores scroll position from the state manager's scroll anchor
-    private func restoreScrollPosition() {
-      guard let collectionView = collectionView,
-        let anchor = stateManager.getScrollAnchor()
-      else {
-        // No saved position or post not found, scroll to top
-        resetScrollToTop()
-        return
-      }
-
-      guard let item = dataSource.snapshot().itemIdentifiers.first(where: {
-        if case .post(_, _, let id) = $0 { return id == anchor.postID }
-        return false
-      }), let indexPath = dataSource.indexPath(for: item) else {
-        // Post not found in current snapshot, scroll to top
-        resetScrollToTop()
-        return
-      }
-      // Scroll to the post first
-      collectionView.scrollToItem(at: indexPath, at: .top, animated: false)
-
-      // Then adjust by the saved offset
-      DispatchQueue.main.async { [weak self] in
-        guard let self = self, let collectionView = self.collectionView else { return }
-
-        let currentOffset = collectionView.contentOffset
-        let adjustedOffset = CGPoint(
-          x: currentOffset.x,
-          y: currentOffset.y + anchor.offsetFromTop
-        )
-
-        // Ensure we don't scroll beyond bounds. Respect adjusted content insets
-        let minOffsetY = -collectionView.adjustedContentInset.top
-        let maxOffsetY = max(
-          minOffsetY,
-          collectionView.contentSize.height + collectionView.adjustedContentInset.bottom
-            - collectionView.bounds.height
-        )
-        let clampedY = min(max(adjustedOffset.y, minOffsetY), maxOffsetY)
-        let clampedOffset = CGPoint(x: adjustedOffset.x, y: clampedY)
-
-        collectionView.setContentOffset(clampedOffset, animated: false)
-        self.controllerLogger.debug(
-          "📍 Restored scroll position for post: \(anchor.postID), offset: \(anchor.offsetFromTop)")
-      }
+    private func postIDAt(_ indexPath: IndexPath) -> String? {
+      guard case .post(_, _, let id) = dataSource?.itemIdentifier(for: indexPath) else { return nil }
+      return id
     }
 
-    /// Resets scroll position to the top (aligned to large title scroll edge)
-    private func resetScrollToTop() {
-      guard let collectionView = collectionView else { return }
-      let minOffsetY = -collectionView.adjustedContentInset.top
-      let minOffsetX = -collectionView.adjustedContentInset.left
-      collectionView.setContentOffset(CGPoint(x: minOffsetX, y: minOffsetY), animated: false)
-      controllerLogger.debug("🔝 Reset scroll position to top (respecting adjustedContentInset)")
+    private func restoreScrollPositionIfReady() {
+      guard scrollRestoration.isPending, let collectionView, let dataSource,
+        let appliedSnapshotGeneration else { return }
+      let snapshot = dataSource.snapshot()
+      let postItems = snapshot.itemIdentifiers.compactMap { item -> (String, Item)? in
+        if case .post(_, _, let id) = item { return (id, item) }
+        return nil
+      }
+      scrollRestoration.restoreIfReady(in: collectionView,
+        postCount: postItems.count, isLoading: stateManager.isLoading,
+        snapshotGeneration: appliedSnapshotGeneration) { id in
+          postItems.first(where: { $0.0 == id }).flatMap { dataSource.indexPath(for: $0.1) }
+        }
     }
-    
+
     private func cancelPendingLoadMoreRequest() {
       loadMoreTask?.cancel()
       loadMoreTask = nil
@@ -1026,7 +1024,9 @@ import os
       // Capture scroll position for the current feed before switching
       captureCurrentScrollPosition()
 
-      // Cancel ongoing operations
+      // Cancel ongoing operations and invalidate completions from the old feed.
+      feedGeneration += 1
+      updateTask?.cancel()
       cancelPendingLoadMoreRequest()
       initialLoadTask?.cancel()
       initialLoadTask = nil
@@ -1038,6 +1038,7 @@ import os
 
       // Update the state manager
       stateManager = newStateManager
+      scrollRestoration.reset(to: newStateManager.getScrollAnchor()?.viewportAnchor)
       resetTriggerDedupState()
 
       // Restart observations
@@ -1048,16 +1049,12 @@ import os
       setupAccountSwitchObserver()
       setupTabTapObserver()
 
-      // Load fresh data for new feed
-      Task { @MainActor in
-        self.shouldReloadDataOnce = true
-        await loadInitialData()
-
-        // After loading data, restore the scroll position for the new feed
-        // Give the collection view a moment to update its content
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-          self?.restoreScrollPosition()
-        }
+      // The snapshot/layout boundary restores this feed, without a timed callback.
+      shouldReloadDataOnce = true
+      let generation = feedGeneration
+      Task { @MainActor [weak self] in
+        guard let self, self.feedGeneration == generation else { return }
+        await self.loadInitialData()
       }
     }
   }
@@ -1075,6 +1072,22 @@ import os
 
       // Notify scroll offset callback
       onScrollOffsetChanged?(collectionView.contentOffset.y)
+    }
+
+    func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+      scrollRestoration.cancel()
+    }
+
+    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+      if !decelerate { captureCurrentScrollPosition() }
+    }
+
+    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+      captureCurrentScrollPosition()
+    }
+
+    func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) {
+      captureCurrentScrollPosition()
     }
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {

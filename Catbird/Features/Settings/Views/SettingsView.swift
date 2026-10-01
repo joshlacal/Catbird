@@ -152,40 +152,6 @@ struct SettingsView: View {
                 }
             }
 
-            NavigationLink {
-                SmartFiltersSettingsView()
-            } label: {
-                Label {
-                    Text("Smart Filters")
-                } icon: {
-                    Image(systemName: "sparkles.rectangle.stack.fill")
-                        .foregroundStyle(.purple)
-                }
-            }
-
-            NavigationLink {
-                IntentControlsSettingsView()
-            } label: {
-                HStack {
-                    Label {
-                        Text("Intent Controls")
-                    } icon: {
-                        Image(systemName: "brain.head.profile")
-                            .foregroundStyle(.purple)
-                    }
-                    Spacer()
-                    if IntelligenceFeatureFlags.intentControlsEnabled {
-                        Text("Beta")
-                            .appFont(AppTextRole.caption2.weight(.bold))
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Color.purple.opacity(0.15))
-                            .foregroundStyle(.purple)
-                            .clipShape(Capsule())
-                    }
-                }
-            }
-            
             Button {
                 appState.onboardingManager.resetAllOnboarding()
             } label: {
