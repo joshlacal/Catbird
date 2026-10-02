@@ -18,6 +18,10 @@ final class URLHandler {
     
     private let logger = Logger(subsystem: "blue.catbird", category: "URLHandler")
     private weak var appState: AppState?
+    private weak var navigationManager: AppNavigationManager?
+    private var configurationID = UUID()
+    private var isInvalidated = false
+    @ObservationIgnored private var settingsObservation: URLHandlerSettingsObservation?
     
     #if os(iOS)
     private weak var topViewController: UIViewController?
@@ -35,22 +39,60 @@ final class URLHandler {
         logger.debug("URLHandler initialized")
     }
     
-    /// Configure the handler with a reference to app state
+    /// Compatibility entry point while account-owned handlers are migrated.
     func configure(with appState: AppState) {
-        self.appState = appState
-        self.useInAppBrowser = appState.appSettings.useInAppBrowser
-        NotificationCenter.default.addObserver(
-            forName: NSNotification.Name("AppSettingsChanged"),
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            guard let self = self else { return }
-            let newValue = appState.appSettings.useInAppBrowser
-            self.logger.info("📲 URLHandler updating useInAppBrowser from \(self.useInAppBrowser) to \(newValue)")
-                        self.useInAppBrowser = newValue
-        }
+        configure(with: appState, navigationManager: appState.navigationManager)
     }
-    
+
+    /// Bind URL delivery to the navigation manager owned by the receiving scene.
+    func configure(with appState: AppState, navigationManager: AppNavigationManager) {
+        resetPresentationState()
+        self.configurationID = UUID()
+        self.isInvalidated = false
+        self.appState = appState
+        self.navigationManager = navigationManager
+        let boundConfigurationID = self.configurationID
+        self.navigateAction = { [weak self, weak navigationManager] destination, tabIndex in
+            guard let self, !self.isInvalidated,
+                  self.configurationID == boundConfigurationID else { return }
+            navigationManager?.navigate(to: destination, in: tabIndex)
+        }
+        self.useInAppBrowser = appState.appSettings.useInAppBrowser
+        self.settingsObservation = URLHandlerSettingsObservation(
+            NotificationCenter.default.addObserver(
+                forName: NSNotification.Name("AppSettingsChanged"),
+                object: nil,
+                queue: .main
+            ) { [weak self, weak appState] _ in
+                Task { @MainActor [weak self, weak appState] in
+                    guard let self, let appState,
+                          self.appState === appState, !self.isInvalidated else { return }
+                    self.useInAppBrowser = appState.appSettings.useInAppBrowser
+                }
+            }
+        )
+    }
+
+    /// Prevent suspended URL work from reaching a disconnected or replaced scene.
+    func invalidate() {
+        configurationID = UUID()
+        isInvalidated = true
+        navigateAction = nil
+        navigationManager = nil
+        appState = nil
+        settingsObservation = nil
+        resetPresentationState()
+    }
+
+    private func resetPresentationState() {
+        externalIntentPresenter.clearActiveIntent()
+        externalIntentPresenter.pendingIntent = nil
+        externalIntentPresenter.lastDeliveredURL = nil
+        #if os(iOS)
+        topViewController = nil
+        #endif
+    }
+
     #if os(iOS)
     func registerTopViewController(_ controller: UIViewController) {
         self.topViewController = controller
@@ -64,8 +106,10 @@ final class URLHandler {
     /// Returns an OpenURLAction.Result to indicate if the URL was handled
     @MainActor
     func handle(_ url: URL, tabIndex: Int? = nil) -> OpenURLAction.Result {
+        guard !isInvalidated else { return .discarded }
+        let requestConfigurationID = configurationID
         // Keep this request's tab stable across asynchronous resolution.
-        let effectiveTabIndex = tabIndex ?? appState?.navigationManager.currentTabIndex
+        let effectiveTabIndex = tabIndex ?? navigationManager?.currentTabIndex
         logger.info("📲 URLHandler processing URL: \(url.absoluteString, privacy: .private)")
 
         // OAuth callbacks, external intents, and custom schemes are handled
@@ -92,7 +136,7 @@ final class URLHandler {
 
         if isBlueskyOrBskyAppURL(url) {
             Task {
-                let handled = await routeResolvedURL(url, tabIndex: effectiveTabIndex)
+                let handled = await routeResolvedURL(url, tabIndex: effectiveTabIndex, configurationID: requestConfigurationID)
                 if !handled {
                     logger.warning("❓ URL not recognized: \(url.absoluteString, privacy: .private)")
                 }
@@ -117,8 +161,10 @@ final class URLHandler {
 
     @MainActor
     func handleURL(_ url: URL, tabIndex: Int? = nil) async -> Bool {
+        guard !isInvalidated else { return false }
+        let requestConfigurationID = configurationID
         // Keep this request's tab stable across asynchronous resolution.
-        let effectiveTabIndex = tabIndex ?? appState?.navigationManager.currentTabIndex
+        let effectiveTabIndex = tabIndex ?? navigationManager?.currentTabIndex
         logger.info("📲 URLHandler handleURL: \(url.absoluteString, privacy: .private)")
 
         if isOAuthCallbackURL(url) {
@@ -141,15 +187,18 @@ final class URLHandler {
             return true
         }
 
-        return await routeResolvedURL(url, tabIndex: effectiveTabIndex)
+        return await routeResolvedURL(url, tabIndex: effectiveTabIndex, configurationID: requestConfigurationID)
     }
 
     /// Routes a non-callback, non-intent URL to a navigation destination or the
     /// in-app browser. Returns whether the URL was handled.
     @MainActor
-    private func routeResolvedURL(_ url: URL, tabIndex: Int?) async -> Bool {
+    private func routeResolvedURL(_ url: URL, tabIndex: Int?, configurationID: UUID) async -> Bool {
+        guard !isInvalidated, self.configurationID == configurationID else { return false }
         if isBlueskyOrBskyAppURL(url) {
-            if let destination = await parseDestination(from: url) {
+            let destination = await parseDestination(from: url)
+            guard !isInvalidated, self.configurationID == configurationID else { return false }
+            if let destination {
                 logger.info("🔗 Parsed URL to navigation destination: \(String(describing: destination))")
                 navigateAction?(destination, tabIndex)
                 return true
@@ -588,5 +637,19 @@ final class URLHandler {
         NSWorkspace.shared.open(url)
         return true
         #endif
+    }
+}
+
+/// The immutable notification token may be released on any thread; the
+/// notification center supports removing its observer from that thread.
+private final class URLHandlerSettingsObservation: @unchecked Sendable {
+    private let token: NSObjectProtocol
+
+    init(_ token: NSObjectProtocol) {
+        self.token = token
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(token)
     }
 }
