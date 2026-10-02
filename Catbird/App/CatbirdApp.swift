@@ -50,9 +50,17 @@ private var isSocialActionsUIFixture: Bool {
   #endif
 }
 
+private var isSceneRuntimeUIFixture: Bool {
+  #if DEBUG && os(iOS)
+  ProcessInfo.processInfo.arguments.contains(SceneRuntimeFixture.launchArgument)
+  #else
+  false
+  #endif
+}
+
 /// Any presentation fixture: skips account bootstrap and URL handling.
 private var isPresentationUIFixture: Bool {
-  isMessageRequestsUIFixture || isVideoFeedUIFixture || isSocialActionsUIFixture || isSettingsUIFixture
+  isMessageRequestsUIFixture || isVideoFeedUIFixture || isSocialActionsUIFixture || isSettingsUIFixture || isSceneRuntimeUIFixture
 }
 
 private var isSettingsUIFixture: Bool {
@@ -987,6 +995,12 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
             VideoFeedUIFixture()
           } else if isSocialActionsUIFixture {
             SocialActionsUIFixture()
+          } else if isSceneRuntimeUIFixture {
+            #if os(iOS)
+            SceneRuntimeFixture(scene: scene)
+            #else
+            EmptyView()
+            #endif
           } else if isSettingsUIFixture {
             SettingsUIFixture()
           } else {
