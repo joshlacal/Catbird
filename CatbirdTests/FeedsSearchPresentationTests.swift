@@ -10,6 +10,8 @@ import Vision
 
 /// UIKit-hosted production components, with local data and no discovery lifecycle loads.
 /// The opt-in transport fixture exercises individual discovery fetch failures through Petrel.
+/// Full Dynamic Type evidence requires separate fresh launches with the simulator's system
+/// category matching CATBIRD_PRESENTATION_SYSTEM_CATEGORY; environment-only cases are limited.
 /// These receipts qualify presentation; they do not qualify authenticated actions or the
 /// FeedsStartPage preference-loading lifecycle, account switching, or a physical device.
 @Suite("Feeds and Search presentation", .serialized)
@@ -23,7 +25,7 @@ struct FeedsSearchPresentationTests {
       ("wide-dark", CGSize(width: 680, height: 500), .dark, .large),
       ("square-light", CGSize(width: 500, height: 500), .light, .large),
       ("short-light", CGSize(width: 430, height: 320), .light, .xxLarge),
-      ("narrow-larger-text", CGSize(width: 320, height: 760), .dark, .accessibility1),
+      ("narrow-tall-dark", CGSize(width: 320, height: 760), .dark, .accessibility1),
     ]
     for (name, size, scheme, typeSize) in cases {
       try await withHost(
@@ -48,10 +50,15 @@ struct FeedsSearchPresentationTests {
   @Test("Video bylines honor app font size and line spacing as well as Dynamic Type")
   func videoBylinesWithAppFontPreferences() async throws {
     let appState = try await makeAppState()
+    appState.fontManager.fontStyle = "system"
     appState.fontManager.fontSize = "extraLarge"
     appState.fontManager.lineSpacing = "relaxed"
+    appState.fontManager.dynamicTypeEnabled = true
+    appState.fontManager.maxDynamicTypeSize = "accessibility1"
     let video = try makeVideo(authorName: "River Garden Films")
-    for typeSize in [DynamicTypeSize.large, .accessibility1] {
+    let systemCategory = try PresentationSystemCategory.fromEnvironment()
+    let typeSizes = systemCategory.map { [$0.dynamicTypeSize] } ?? [.large, .accessibility1]
+    for typeSize in typeSizes {
       try await withHost(
         VStack(alignment: .leading, spacing: 0) {
           TrendingVideosSection(videos: [video], presentation: .timeline,
@@ -59,10 +66,24 @@ struct FeedsSearchPresentationTests {
           Text("NEXT POST").padding(16)
         }, appState: appState, size: CGSize(width: 320, height: 760), typeSize: typeSize
       ) { host in
-        let receipt = try await host.capture("video-byline-app-font-\(typeSize)", requiring: ["River Garden Films", "NEXT POST"])
+        let receipt = try await host.capture("video-byline-app-font-\(typeSize)",
+          requiring: ["River Garden Films", "NEXT POST"], measuringWord: "Films")
         let lastAuthorLine = try #require(receipt.lines.first { $0.text.contains("Films") })
         let nextPost = try #require(receipt.lines.first { $0.text.contains("NEXT POST") })
         #expect(lastAuthorLine.rect.maxY < nextPost.rect.minY, "The full byline must fit above the next timeline item")
+        let glyph = try #require(receipt.measuredWordRect, "Measure the same rendered word across fresh system-category runs")
+        let measurement: [String: Any] = [
+          "byline": "River Garden Films", "measuredWord": "Films", "units": "points",
+          "glyphRect": ["x": glyph.minX, "y": glyph.minY, "width": glyph.width, "height": glyph.height],
+          "typographyContext": host.typographyContext,
+          "fontManagerSystemCategory": appState.fontManager.currentContentSizeCategory.rawValue,
+          "fontPreferences": ["style": appState.fontManager.fontStyle, "size": appState.fontManager.fontSize,
+            "lineSpacing": appState.fontManager.lineSpacing, "letterSpacing": appState.fontManager.letterSpacing,
+            "dynamicTypeEnabled": appState.fontManager.dynamicTypeEnabled,
+            "maximumDynamicTypeSize": appState.fontManager.maxDynamicTypeSize]
+        ]
+        Attachment.record(Array(try JSONSerialization.data(withJSONObject: measurement, options: [.sortedKeys, .prettyPrinted])),
+          named: "video-byline-font-scale-\(systemCategory?.rawValue ?? String(describing: typeSize)).json")
       }
     }
   }
@@ -92,7 +113,7 @@ struct FeedsSearchPresentationTests {
     for (name, width, scheme, typeSize) in [
       ("narrow-light", CGFloat(320), ColorScheme.light, DynamicTypeSize.large),
       ("wide-dark", CGFloat(680), ColorScheme.dark, DynamicTypeSize.large),
-      ("narrow-larger-text", CGFloat(320), ColorScheme.dark, DynamicTypeSize.accessibility1),
+      ("narrow-dark", CGFloat(320), ColorScheme.dark, DynamicTypeSize.accessibility1),
     ] {
       try await withHost(
         trending(content, topics: true, videos: true), appState: appState,
@@ -278,17 +299,20 @@ struct FeedsSearchPresentationTests {
     }
   }
 
-  @Test("Search tools fit large text without clipping the action titles")
+  @Test("Search tools keep action titles readable in a narrow container")
   func discoveryToolsAtLargeText() async throws {
     let appState = try await makeAppState()
     try await withHost(
       DiscoveryToolsSection(onFindFriends: {}, onInviteFriends: {}, onScanQR: {}, onExploreFeeds: {}, onOpenTopics: {}),
       appState: appState, size: CGSize(width: 320, height: 1500), scheme: .dark, typeSize: .accessibility1
     ) { host in
-      _ = try await host.capture("search-tools-larger-text", requiring: ["Find Friends", "Invite Friends", "Scan QR", "Custom Feeds", "All Trending Topics"])
+      _ = try await host.capture("search-tools-narrow", requiring: ["Find Friends", "Invite Friends", "Scan QR", "Custom Feeds", "All Trending Topics"])
     }
   }
 
+}
+
+extension FeedsSearchPresentationTests {
   private func trending(_ content: TrendingFeedContent, topics: Bool, videos: Bool) -> some View {
     TrendingFeedPresentation(
       content: content, showTopics: topics, showVideos: videos, onSelectTopic: { _ in },
@@ -356,18 +380,38 @@ struct FeedsSearchPresentationTests {
     typeSize: DynamicTypeSize = .large, additionalSafeAreaInsets: UIEdgeInsets? = nil,
     body: (PresentationHost) async throws -> Void
   ) async throws {
+    let systemCategory = try PresentationSystemCategory.fromEnvironment()
+    let effectiveTypeSize = systemCategory?.dynamicTypeSize ?? typeSize
+    if let systemCategory {
+      try #require(UIApplication.shared.preferredContentSizeCategory == systemCategory.uiCategory,
+        "Set simulator content_size before a fresh test-process launch; environment values cannot change UIKit-resolved app fonts")
+    }
     let previousScheme = appState.themeManager.colorSchemeOverride
     appState.themeManager.colorSchemeOverride = scheme
     defer { appState.themeManager.colorSchemeOverride = previousScheme }
     let host = try PresentationHost(content: content.environment(appState).fontManager(appState.fontManager).environment(\.colorScheme, scheme)
-      .environment(\.dynamicTypeSize, typeSize).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+      .environment(\.dynamicTypeSize, effectiveTypeSize).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
       .background(scheme == .light ? Color.white : Color.black)
-      .ignoresSafeArea(.container, edges: additionalSafeAreaInsets == nil ? .all : []), size: size, scheme: scheme)
+      .ignoresSafeArea(.container, edges: additionalSafeAreaInsets == nil ? .all : []), size: size, scheme: scheme,
+      requestedTypeSize: typeSize, effectiveTypeSize: effectiveTypeSize, systemCategory: systemCategory)
     defer { host.close() }
     if let additionalSafeAreaInsets {
       try await host.applySyntheticSafeAreaInsets(additionalSafeAreaInsets)
     }
     try await body(host)
+  }
+}
+
+private enum PresentationSystemCategory: String {
+  case large
+  case accessibilityMedium = "accessibility-medium"
+
+  var dynamicTypeSize: DynamicTypeSize { self == .large ? .large : .accessibility1 }
+  var uiCategory: UIContentSizeCategory { self == .large ? .large : .accessibilityMedium }
+
+  static func fromEnvironment() throws -> Self? {
+    guard let value = ProcessInfo.processInfo.environment["CATBIRD_PRESENTATION_SYSTEM_CATEGORY"] else { return nil }
+    return try #require(Self(rawValue: value), "Expected system category large or accessibility-medium")
   }
 }
 
@@ -460,6 +504,7 @@ private final class PresentationHost {
 
   struct Receipt {
     let lines: [Line]
+    var measuredWordRect: CGRect?
     var transcript: String { lines.map(\.text).joined(separator: "\n") }
     func contains(_ text: String) -> Bool {
       PresentationHost.normalized(transcript).contains(PresentationHost.normalized(text))
@@ -469,13 +514,23 @@ private final class PresentationHost {
   let window: UIWindow
   let controller: UIViewController
   private let requestedSize: CGSize
+  private let requestedTypeSize: DynamicTypeSize
+  private let effectiveTypeSize: DynamicTypeSize
+  private let systemCategory: PresentationSystemCategory?
   private var requestedAdditionalSafeAreaInsets: UIEdgeInsets?
   private var baselineSafeAreaInsets = UIEdgeInsets.zero
   private weak var previousKeyWindow: UIWindow?
 
-  init<Content: View>(content: Content, size: CGSize, scheme: ColorScheme) throws {
+  init<Content: View>(
+    content: Content, size: CGSize, scheme: ColorScheme,
+    requestedTypeSize: DynamicTypeSize, effectiveTypeSize: DynamicTypeSize,
+    systemCategory: PresentationSystemCategory?
+  ) throws {
     let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
     requestedSize = size
+    self.requestedTypeSize = requestedTypeSize
+    self.effectiveTypeSize = effectiveTypeSize
+    self.systemCategory = systemCategory
     previousKeyWindow = scene.windows.first(where: \.isKeyWindow)
     window = UIWindow(windowScene: scene)
     window.frame = CGRect(origin: .zero, size: size)
@@ -494,6 +549,16 @@ private final class PresentationHost {
 
   var actualSafeAreaFrame: CGRect { controller.view.safeAreaLayoutGuide.layoutFrame }
 
+  var typographyContext: [String: String] {
+    ["mode": systemCategory == nil ? "synthetic-environment-only-limited" : "system-category-fresh-launch",
+      "requestedSystemCategory": systemCategory?.rawValue ?? "not-set",
+      "requestedSwiftUITypeSize": String(describing: requestedTypeSize),
+      "effectiveSwiftUITypeSize": String(describing: effectiveTypeSize),
+      "systemCategory": UIApplication.shared.preferredContentSizeCategory.rawValue,
+      "controllerCategory": controller.traitCollection.preferredContentSizeCategory.rawValue,
+      "viewCategory": controller.view.traitCollection.preferredContentSizeCategory.rawValue]
+  }
+
   func applySyntheticSafeAreaInsets(_ insets: UIEdgeInsets) async throws {
     try await Task.sleep(for: .milliseconds(80))
     window.layoutIfNeeded()
@@ -511,7 +576,7 @@ private final class PresentationHost {
     if becameKey { previousKeyWindow?.makeKey() }
   }
 
-  func capture(_ name: String, requiring expected: [String] = []) async throws -> Receipt {
+  func capture(_ name: String, requiring expected: [String] = [], measuringWord: String? = nil) async throws -> Receipt {
     let deadline = ContinuousClock.now + .seconds(3)
     var png = Data()
     var receipt = Receipt(lines: [])
@@ -536,24 +601,41 @@ private final class PresentationHost {
         request.recognitionLanguages = ["en-US"]
         request.usesLanguageCorrection = false
         try VNImageRequestHandler(cgImage: try #require(image.cgImage), options: [:]).perform([request])
+        var measuredWordRect: CGRect?
         receipt = Receipt(lines: (request.results ?? []).compactMap { observation in
-          guard let text = observation.topCandidates(1).first?.string else { return nil }
+          guard let candidate = observation.topCandidates(1).first else { return nil }
+          let text = candidate.string
+          if let measuringWord, let range = text.range(of: measuringWord),
+            let word = try? candidate.boundingBox(for: range) {
+            let bounds = word.boundingBox
+            measuredWordRect = CGRect(x: bounds.minX * image.size.width, y: (1 - bounds.maxY) * image.size.height,
+              width: bounds.width * image.size.width, height: bounds.height * image.size.height)
+          }
           let bounds = observation.boundingBox
           return Line(text: text, rect: CGRect(x: bounds.minX * image.size.width,
             y: (1 - bounds.maxY) * image.size.height, width: bounds.width * image.size.width, height: bounds.height * image.size.height))
         })
+        receipt.measuredWordRect = measuredWordRect
       } catch { errorText = String(describing: error) }
-      if didDraw && expected.allSatisfy({ receipt.contains($0) }) { break }
+      if didDraw && expected.allSatisfy({ receipt.contains($0) }) && (measuringWord == nil || receipt.measuredWordRect != nil) { break }
     } while ContinuousClock.now < deadline
 
     Attachment.record(Array(png), named: "\(name).png")
+    let typographyData = try JSONSerialization.data(withJSONObject: typographyContext, options: .sortedKeys)
+    let typographyText = try #require(String(data: typographyData, encoding: .utf8))
     let details = "requestedSize=\(requestedSize), actualWindow=\(window.bounds), renderedView=\(controller.view.bounds), scale=3, drawHierarchy=\(didDraw)\n"
       + "syntheticAdditionalInsets=\(String(describing: requestedAdditionalSafeAreaInsets)), baselineInsets=\(baselineSafeAreaInsets), actualInsets=\(controller.view.safeAreaInsets), actualSafeAreaFrame=\(actualSafeAreaFrame)\n"
+      + "typography=\(typographyText)\n"
       + "error=\(errorText)\n" + receipt.lines.map { "\($0.rect): \($0.text)" }.joined(separator: "\n")
     Attachment.record(Array(details.utf8), named: "\(name)-geometry-ocr.txt")
     #expect(!png.isEmpty && didDraw, "UIKit must produce a real rendered image")
     #expect(abs(requestedSize.width - controller.view.bounds.width) < 1, "The receiving width must equal the requested fixture width")
     #expect(abs(requestedSize.height - controller.view.bounds.height) < 1, "The receiving height must equal the requested fixture height")
+    if let systemCategory {
+      #expect(UIApplication.shared.preferredContentSizeCategory == systemCategory.uiCategory)
+      #expect(controller.traitCollection.preferredContentSizeCategory == systemCategory.uiCategory)
+      #expect(controller.view.traitCollection.preferredContentSizeCategory == systemCategory.uiCategory)
+    }
     if let requested = requestedAdditionalSafeAreaInsets {
       let actual = controller.view.safeAreaInsets
       for (edge, delta, expected) in [
