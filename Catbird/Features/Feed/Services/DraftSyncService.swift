@@ -530,7 +530,7 @@ private final class AppViewDraftTransport: DraftSyncTransport {
     let client = self.client
     let endpoint = method.contains(".") ? method : "app.bsky.draft." + method
     let result = try await client.performGeneratedRequestWithExactAuthContinuity(matching: identity) {
-      let network = client.networkService
+      let network = await client.networkService
       let query = method == "getDrafts"
         ? [URLQueryItem(name: "limit", value: "100")] + (cursor.map { [URLQueryItem(name: "cursor", value: $0)] } ?? [])
         : nil

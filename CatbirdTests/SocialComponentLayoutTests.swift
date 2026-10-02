@@ -244,7 +244,7 @@ final class SocialComponentLayoutTests: XCTestCase {
                      "bottom": host.view.safeAreaInsets.bottom, "right": host.view.safeAreaInsets.right],
         "swiftUISafeArea": ["top": probe.insets.top, "left": probe.insets.leading,
                             "bottom": probe.insets.bottom, "right": probe.insets.trailing],
-        "recognizedText": recognized.map { ["text": $0.text, "normalizedBounds": NSStringFromCGRect($0.bounds)] },
+        "recognizedText": recognized.map { ["text": $0.text, "normalizedBounds": NSCoder.string(for: $0.bounds)] },
       ])
     }
     let receipt = XCTAttachment(data: try JSONSerialization.data(withJSONObject: measurements, options: [.prettyPrinted, .sortedKeys]), uniformTypeIdentifier: "public.json")
