@@ -126,7 +126,7 @@ struct SocialActionsUIFixture: View {
       state.currentUserProfile = SocialActionsFixtureData.viewer
       AppStateManager.shared.setLifecycleForTesting(.authenticated(state))
       do {
-        let container = try ModelContainer(for: DraftPost.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        let container = try ModelContainer(for: DraftPost.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true, cloudKitDatabase: .none))
         let local = try DraftPost.create(from: SocialActionsFixtureData.draft("A draft saved on this device."), accountDID: state.userDID)
         let recovery = try DraftPost.create(from: SocialActionsFixtureData.draft("My earlier wording, kept after an edit on another device."), accountDID: state.userDID)
         var recoveryState = DraftSyncState()
