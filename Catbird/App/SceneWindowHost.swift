@@ -31,12 +31,12 @@ final class SceneWindowState {
   #endif
 
   init(
-    sceneID: UUID = UUID(), coordinator: SceneRouteCoordinator = .shared,
-    feedActivity: SceneFeedActivityRegistration = SceneFeedActivityRegistration()
+    sceneID: UUID = UUID(), coordinator: SceneRouteCoordinator? = nil,
+    feedActivity: SceneFeedActivityRegistration? = nil
   ) {
-    self.feedActivity = feedActivity
+    self.feedActivity = feedActivity ?? SceneFeedActivityRegistration()
     self.sceneID = sceneID
-    self.coordinator = coordinator
+    self.coordinator = coordinator ?? .shared
   }
 
   /// Account replacement retains the window and its explicitly targeted pending routes.
