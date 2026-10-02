@@ -314,7 +314,7 @@ struct LanguageSettingsView: View {
                     }
                 }
                 
-                Text("Your preferred language for content. This is shared with other apps.")
+                Text("Your preferred content language for this account in Catbird on this device.")
                     .appFont(AppTextRole.caption)
                     .foregroundStyle(.secondary)
             }
@@ -665,7 +665,7 @@ struct EnhancedContentLanguagesView: View {
     #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel", systemImage: "xmark") {
+                    Button("Done", systemImage: "checkmark") {
                         dismiss()
                     }
                 }

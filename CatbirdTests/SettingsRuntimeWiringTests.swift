@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import SwiftData
+import Petrel
 import Testing
 @testable import Catbird
 
@@ -154,6 +155,78 @@ struct SettingsRuntimeWiringTests {
     } catch {
       Issue.record("Unexpected refresh failure: \(error)")
     }
+  }
+
+  @Test("Clearing interests sends an empty list and preserves unrelated server preferences", arguments: [false, true])
+  @MainActor
+  func removeLastInterest(replaceAll: Bool) async throws {
+    let transport = SettingsInterestsTransportFixture(tags: ["Art"])
+    let (manager, context, local) = try makeInterestsManager(transport: transport, localTags: ["Art"])
+    if replaceAll {
+      try await manager.updateInterests([])
+    } else {
+      try await manager.removeInterest("Art")
+    }
+
+    #expect(transport.writes.count == 1)
+    #expect(transport.tags.isEmpty)
+    #expect(transport.serverPreferences.count == 3)
+    if case .adultContentPref(let pref) = transport.serverPreferences[0] {
+      #expect(pref.enabled)
+    } else { Issue.record("Unrelated adult-content preference was replaced") }
+    if case .threadViewPref(let pref) = transport.serverPreferences[2] {
+      #expect(pref.sort == "top")
+    } else { Issue.record("Unrelated thread preference was replaced") }
+    #expect(local.interests.isEmpty)
+    let fetched = try context.fetch(FetchDescriptor<Preferences>())
+    #expect(fetched.first?.interests.isEmpty == true)
+  }
+
+  @Test("Failed interest replacement keeps the previously saved local and server selections")
+  @MainActor
+  func failedInterestsSavePreservesSelection() async throws {
+    let transport = SettingsInterestsTransportFixture(tags: ["Art"])
+    transport.writeStatus = 500
+    let (manager, context, local) = try makeInterestsManager(transport: transport, localTags: ["Art"])
+    do {
+      try await manager.updateInterests([])
+      Issue.record("A failed write must surface an error")
+    } catch {
+      #expect((error as NSError).code == 500)
+    }
+    #expect(transport.writes.count == 1)
+    #expect(transport.tags == ["Art"])
+    #expect(local.interests == ["Art"])
+    #expect(try context.fetch(FetchDescriptor<Preferences>()).first?.interests == ["Art"])
+  }
+
+  @Test("Adding an interest preserves newer server selections missing from the local cache")
+  @MainActor
+  func addInterestUsesServerSnapshot() async throws {
+    let transport = SettingsInterestsTransportFixture(tags: ["Art", "Travel"])
+    let (manager, _, local) = try makeInterestsManager(transport: transport, localTags: ["Art"])
+    try await manager.addInterest("Music")
+    #expect(transport.tags == ["Art", "Travel", "Music"])
+    #expect(local.interests == transport.tags)
+    try await manager.addInterest("Music")
+    #expect(transport.writes.count == 1)
+  }
+
+  @MainActor
+  private func makeInterestsManager(
+    transport: SettingsInterestsTransportFixture, localTags: [String]
+  ) throws -> (PreferencesManager, ModelContext, Preferences) {
+    let configuration = ModelConfiguration(isStoredInMemoryOnly: true)
+    let container = try ModelContainer(for: Preferences.self, configurations: configuration)
+    let context = ModelContext(container)
+    let did = "did:plc:settings-interests-fixture"
+    let local = Preferences(accountDID: did)
+    local.interests = localTags
+    context.insert(local)
+    try context.save()
+    let manager = PreferencesManager(modelContext: context, specificPreferencesTransport: transport.transport)
+    manager.configure(accountDID: did)
+    return (manager, context, local)
   }
 
   @Test("Required alt text exposes an actionable composer reason")
@@ -510,6 +583,39 @@ private func sourceSlice(_ source: String, from start: String, through end: Stri
     throw SettingsRuntimeSourceError.missingBoundary
   }
   return source[startRange.lowerBound..<endRange.lowerBound]
+}
+
+@MainActor
+private final class SettingsInterestsTransportFixture {
+  var serverPreferences: [AppBskyActorDefs.PreferencesForUnionArray]
+  var writes: [[AppBskyActorDefs.PreferencesForUnionArray]] = []
+  var writeStatus = 200
+
+  init(tags: [String]) {
+    self.serverPreferences = [
+      .adultContentPref(.init(enabled: true)),
+      .interestsPref(.init(tags: tags)),
+      .threadViewPref(.init(sort: "top")),
+    ]
+  }
+
+  var tags: [String] {
+    for item in self.serverPreferences {
+      if case .interestsPref(let value) = item { return value.tags }
+    }
+    return []
+  }
+
+  var transport: PreferencesManager.SpecificPreferencesTransport {
+    .init(
+      getPreferences: { self.serverPreferences },
+      putPreferences: { items in
+        self.writes.append(items)
+        if self.writeStatus == 200 { self.serverPreferences = items }
+        return self.writeStatus
+      }
+    )
+  }
 }
 
 private enum SettingsRuntimeSourceError: Error {

@@ -52,9 +52,21 @@ final class PreferencesManager {
   private weak var client: ATProtoClient?
   private var modelContext: ModelContext?
 
+  /// Injectable I/O for focused preference edits; production uses the account's ATProto client.
+  struct SpecificPreferencesTransport {
+    let getPreferences: @MainActor () async throws -> [AppBskyActorDefs.PreferencesForUnionArray]
+    let putPreferences: @MainActor ([AppBskyActorDefs.PreferencesForUnionArray]) async throws -> Int
+  }
+  private let specificPreferencesTransport: SpecificPreferencesTransport?
+
   // MARK: - Initialization
 
-  init(client: ATProtoClient? = nil, modelContext: ModelContext? = nil) {
+  init(
+    client: ATProtoClient? = nil,
+    modelContext: ModelContext? = nil,
+    specificPreferencesTransport: SpecificPreferencesTransport? = nil
+  ) {
+    self.specificPreferencesTransport = specificPreferencesTransport
     self.client = client
     self.modelContext = modelContext
     logger.debug("PreferencesManager initialized")
@@ -1081,26 +1093,27 @@ final class PreferencesManager {
 
   @MainActor
   func addInterest(_ tag: String) async throws {
-    let preferences = try await getPreferences()
-    if !preferences.interests.contains(tag) {
-      preferences.interests.append(tag)
-      try await saveAndSyncPreferences(preferences)
+    try await updateSpecificPreferences(preferenceType: "interests") { (current: [String]?) -> [String]? in
+      var tags = current ?? []
+      guard !tags.contains(tag) else { return nil }
+      tags.append(tag)
+      return tags
     }
   }
 
   @MainActor
   func removeInterest(_ tag: String) async throws {
-    let preferences = try await getPreferences()
-    preferences.interests.removeAll { $0 == tag }
-    try await saveAndSyncPreferences(preferences)
+    try await updateSpecificPreferences(preferenceType: "interests") { (current: [String]?) -> [String]? in
+      (current ?? []).filter { $0 != tag }
+    }
   }
 
-  /// Updates the entire list of user interests and syncs with server
+  /// The lexicon permits an empty tag list; commit local values only after the server accepts it.
   @MainActor
   func updateInterests(_ interests: [String]) async throws {
-    let preferences = try await getPreferences()
-    preferences.interests = interests
-    try await saveAndSyncPreferences(preferences)
+    try await updateSpecificPreferences(preferenceType: "interests") { (_: [String]?) -> [String]? in
+      interests
+    }
   }
 
   /// Updates specific preferences with server-first approach for better safety
@@ -1109,21 +1122,22 @@ final class PreferencesManager {
     preferenceType: String,
     update: @escaping (T?) -> T?
   ) async throws where T: Codable {
-    // Get current server preferences
-    guard let client = client else {
-      throw PreferencesManagerError.clientNotInitialized
-    }
-
-    let params = AppBskyActorGetPreferences.Parameters()
-    let serverPrefs = try await client.app.bsky.actor.getPreferences(input: params)
-
-    guard serverPrefs.responseCode >= 200 && serverPrefs.responseCode < 300,
-          let items = serverPrefs.data?.preferences.items else {
-      throw NSError(
-        domain: "Preferences",
-        code: serverPrefs.responseCode != 0 ? serverPrefs.responseCode : -1,
-        userInfo: [NSLocalizedDescriptionKey: "Failed to fetch existing preferences from server before update"]
-      )
+    let items: [AppBskyActorDefs.PreferencesForUnionArray]
+    if let transport = specificPreferencesTransport {
+      items = try await transport.getPreferences()
+    } else {
+      guard let client else { throw PreferencesManagerError.clientNotInitialized }
+      let params = AppBskyActorGetPreferences.Parameters()
+      let serverPrefs = try await client.app.bsky.actor.getPreferences(input: params)
+      guard serverPrefs.responseCode >= 200 && serverPrefs.responseCode < 300,
+            let fetchedItems = serverPrefs.data?.preferences.items else {
+        throw NSError(
+          domain: "Preferences",
+          code: serverPrefs.responseCode != 0 ? serverPrefs.responseCode : -1,
+          userInfo: [NSLocalizedDescriptionKey: "Failed to fetch existing preferences from server before update"]
+        )
+      }
+      items = fetchedItems
     }
 
     // Keep all existing preferences
@@ -1291,7 +1305,13 @@ final class PreferencesManager {
       let apiPreferences = AppBskyActorDefs.Preferences(items: allPrefs)
       let input = AppBskyActorPutPreferences.Input(preferences: apiPreferences)
 
-      let responseCode = try await client.app.bsky.actor.putPreferences(input: input)
+      let responseCode: Int
+      if let transport = specificPreferencesTransport {
+        responseCode = try await transport.putPreferences(allPrefs)
+      } else {
+        guard let client else { throw PreferencesManagerError.clientNotInitialized }
+        responseCode = try await client.app.bsky.actor.putPreferences(input: input)
+      }
 
       if responseCode != 200 {
         throw NSError(
