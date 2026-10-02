@@ -112,6 +112,8 @@ struct PrivacySecuritySettingsView: View {
     
     var body: some View {
         Form {
+            SettingsPersistenceStatusSection(settings: appState.appSettings)
+
             // Biometric Authentication Section
             if AppStateManager.shared.authentication.biometricType != .none {
                 Section("App Security") {
@@ -185,6 +187,7 @@ struct PrivacySecuritySettingsView: View {
                     set: { appState.appSettings.enableViaAttribution = $0 }
                 ))
                 .tint(.blue)
+                .disabled(!appState.appSettings.canEditPersistedSettings)
                 
                 Text("When enabled, people who aren't signed into Bluesky can view your profile and posts.")
                     .appFont(AppTextRole.caption)

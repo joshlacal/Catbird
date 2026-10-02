@@ -6,147 +6,347 @@ import OSLog
 
 /// AppSettings manages all app-specific settings that aren't synced with the Bluesky server
 @Observable final class AppSettings {
-    // MARK: - Properties
-    private let logger = Logger(subsystem: "blue.catbird", category: "AppSettings")
-    private var modelContext: ModelContext?
-    private var settingsModel: AppSettingsModel?
-    private var accountDID: String?
-    
-    // Default values used until SwiftData is initialized
-    private var defaults = AppSettingsModel()
-    
-    // Flag to prevent notification loops during initialization
-    private var isInitializing = true
-    
-    // Debouncing to prevent notification loops
-    private var pendingChanges = false
-    private var notificationDebounceTimer: Timer?
-    
-    // MARK: - Initialization
-    
-    init() {
-        // Use default values until we can load from SwiftData
+    enum PersistenceState: Equatable {
+        case unavailable
+        case ready
+        case saving
+        case saveFailed
     }
 
-    func configure(accountDID: String) {
-        self.accountDID = accountDID
-    }
-    
-    // Initialize with ModelContext scoped to a specific account
-    func initialize(with modelContext: ModelContext, accountDID: String) {
-        self.modelContext = modelContext
-        self.accountDID = accountDID
-
-        let targetId = AppSettingsModel.settingsId(for: accountDID)
-
-        // Try to fetch existing per-account settings with timeout protection
-        do {
-            let descriptor = FetchDescriptor<AppSettingsModel>(
-                predicate: #Predicate { $0.id == targetId }
-            )
-
-            // Fetch with error handling
-            let existingSettings = try modelContext.fetch(descriptor)
-
-            if let settings = existingSettings.first {
-                // Found existing per-account settings
-                self.settingsModel = settings
-                logger.debug("Loaded existing app settings for account \(accountDID)")
-            } else {
-                let newSettings = AppSettingsModel(accountDID: accountDID)
-
-                if let legacy = try AppSettingsModel.legacySettingsForMigration(in: modelContext) {
-                    AppSettingsModel.copySettings(from: legacy, to: newSettings)
-                    modelContext.delete(legacy)
-                    logger.debug("Migrated legacy app settings to account \(accountDID) and deleted legacy singleton")
-                } else {
-                    let allowLegacyFallback = try !AppSettingsModel.hasPerAccountSettings(in: modelContext)
-                    newSettings.migrateFromUserDefaults(
-                        accountDID: accountDID,
-                        includeLegacyFallback: allowLegacyFallback
-                    )
-                }
-
-                modelContext.insert(newSettings)
-                self.settingsModel = newSettings
-
-                // Save the context with error handling
-                try modelContext.save()
-                logger.debug("Created new app settings for account \(accountDID)")
-            }
-
-            saveThemeSettingsToUserDefaults()
-        } catch {
-            logger.error("Error initializing app settings: \(error.localizedDescription)")
-            // Continue with defaults if SwiftData fails - don't block the app
-            logger.info("Continuing with UserDefaults fallback for app settings")
+    /// The narrow local-store boundary also lets failure fixtures exercise the real manager.
+    struct Persistence {
+        var fetch: (ModelContext, String) throws -> AppSettingsModel?
+        var save: (ModelContext) throws -> Void
+        var isActiveAccount: @MainActor (String, AppSettings) -> Bool = { accountDID, settings in
+            let lifecycle = AppStateManager.shared.lifecycle
+            guard let active = lifecycle.appState else { return false }
+            return lifecycle.userDID == accountDID && active.appSettings === settings
+        }
+        var scheduleSave: (@escaping () -> Void) -> Timer? = { action in
+            Timer.scheduledTimer(withTimeInterval: 0.1, repeats: false) { _ in action() }
         }
 
-        // IMPORTANT: Set isInitializing to false after initialization completes
-        isInitializing = false
-        logger.debug("AppSettings initialization complete, isInitializing set to false")
-        syncHapticsEnabledState(disableHaptics: disableHaptics)
+        static let live = Persistence(
+            fetch: { context, accountDID in
+                let targetId = AppSettingsModel.settingsId(for: accountDID)
+                let descriptor = FetchDescriptor<AppSettingsModel>(predicate: #Predicate { $0.id == targetId })
+                return try context.fetch(descriptor).first
+            },
+            save: { try $0.save() }
+        )
     }
 
-    // MARK: - Helper Methods
+    private let logger = Logger(subsystem: "blue.catbird", category: "AppSettings")
+    private var modelContext: ModelContext?
+    // These are detached copies. Failed writes cannot be autosaved by the shared context.
+    private var settingsModel: AppSettingsModel?
+    private var savedSettings: AppSettingsModel?
+    private var pendingDrafts: [String: AppSettingsModel] = [:]
+    private var pendingBaselines: [String: AppSettingsModel] = [:]
+    private struct PendingEffect {
+        let identity = UUID()
+        let action: @MainActor () async -> Void
+    }
+    private var pendingEffects: [String: [String: PendingEffect]] = [:]
+    private var accountDID: String?
+    private var generation: UInt64 = 0
+    private var defaults = AppSettingsModel()
+    private var isInitializing = true
+    private var notificationDebounceTimer: Timer?
+    var persistence = Persistence.live
+    private(set) var persistenceState: PersistenceState = .unavailable
 
-    private var standardDefaults: UserDefaults {
-        .standard
+    var canEditPersistedSettings: Bool {
+        persistenceState == .ready || persistenceState == .saving
     }
 
-    private var accountScopedDefaultsDID: String? {
-        accountDID
+    /// Describes the retained attempt while controls show the last confirmed values.
+    var pendingChangesDescription: String {
+        guard let accountDID, let pending = pendingDrafts[accountDID], let savedSettings = pendingBaselines[accountDID] else {
+            return "Pending changes will be available after your saved settings load."
+        }
+        var changes: [String] = []
+        func bool(_ title: String, _ path: KeyPath<AppSettingsModel, Bool>) {
+            if pending[keyPath: path] != savedSettings[keyPath: path] {
+                changes.append("\(title): \(pending[keyPath: path] ? "On" : "Off")")
+            }
+        }
+        func string(_ title: String, _ path: KeyPath<AppSettingsModel, String>, _ names: [String: String] = [:]) {
+            let value = pending[keyPath: path]
+            if value != savedSettings[keyPath: path] {
+                let display = names[value] ?? value
+                changes.append("\(title): \(display)")
+            }
+        }
+        string("Theme", \.theme, ["system": "Follow System", "light": "Light", "dark": "Dark"])
+        string("Dark Mode Style", \.darkThemeMode, ["dim": "Dim", "black": "True Black", "pureBlack": "Pure Black"])
+        string("Accent Color", \.accentColor, ["default": "Default", "twilight": "Twilight", "lavender": "Lavender", "sunrise": "Sunrise", "aurora": "Aurora", "dusk": "Dusk", "midnight": "Midnight"])
+        string("Font Style", \.fontStyle, ["system": "System", "serif": "Serif", "rounded": "Rounded", "monospaced": "Monospaced"])
+        string("Font Size", \.fontSize, ["small": "Small", "default": "Default", "large": "Large", "extraLarge": "Extra Large"])
+        string("Line Spacing", \.lineSpacing, ["tight": "Tight", "normal": "Normal", "relaxed": "Relaxed"])
+        string("Letter Spacing", \.letterSpacing, ["tight": "Tight", "normal": "Normal", "loose": "Loose"])
+        bool("Use System Text Size", \.dynamicTypeEnabled)
+        string("Maximum Text Size", \.maxDynamicTypeSize, ["xxLarge": "Extra Extra Large", "xxxLarge": "Extra Extra Extra Large", "accessibility1": "Accessibility Medium", "accessibility2": "Accessibility Large", "accessibility3": "Accessibility Extra Large", "accessibility4": "Accessibility Extra Extra Large", "accessibility5": "Accessibility Extra Extra Extra Large"])
+        bool("Require Alt Text", \.requireAltText)
+        bool("Larger Alt Text Badges", \.largerAltTextBadges)
+        bool("Disable Haptics", \.disableHaptics)
+        bool("Reduce Motion", \.reduceMotion)
+        bool("Prefer Crossfade Transitions", \.prefersCrossfade)
+        bool("Increase Contrast", \.increaseContrast)
+        bool("Bold Text", \.boldText)
+        if pending.displayScale != savedSettings.displayScale {
+            changes.append("Display Scale: \(Int(pending.displayScale * 100))%")
+        }
+        bool("Show Reading Time Estimates", \.showReadingTimeEstimates)
+        bool("Highlight Links", \.highlightLinks)
+        string("Link Style", \.linkStyle, ["color": "Color", "underline": "Underline", "both": "Color and Underline"])
+        bool("Confirm Before Actions", \.confirmBeforeActions)
+        if pending.longPressDuration != savedSettings.longPressDuration {
+            changes.append("Long Press Duration: \(pending.longPressDuration) seconds")
+        }
+        bool("Shake to Undo", \.shakeToUndo)
+        bool("Credit Repost Discovery", \.enableViaAttribution)
+        bool("Sensitive Content Scanning", \.sensitiveContentScanningEnabled)
+        bool("Autoplay Videos", \.autoplayVideos)
+        bool("Open Links in Catbird", \.useInAppBrowser)
+        bool("Show Trending Topics", \.showTrendingTopics)
+        bool("Show Trending Videos", \.showTrendingVideos)
+        string("Thread Sort Order", \.threadSortOrder, ["hot": "Top", "top": "Top", "oldest": "Oldest First", "newest": "Newest First", "random": "Random"])
+        bool("Prioritize Users I Follow", \.prioritizeFollowedUsers)
+        bool("Threaded Replies", \.threadedReplies)
+        bool("Show Hidden Posts", \.showHiddenPosts)
+        bool("Show Saved Feed Samples", \.showSavedFeedSamples)
+        for provider in ExternalMediaProvider.allCases where pending.consent(for: provider) != savedSettings.consent(for: provider) {
+            changes.append("\(provider.displayName): \(pending.consent(for: provider).title)")
+        }
+        bool("Use External Players", \.useWebViewEmbeds)
+        let languageName: (String) -> String = { code in
+            code == "system" ? "System Default" : Locale.current.localizedString(forIdentifier: code) ?? code
+        }
+        string("App Language", \.appLanguage, [pending.appLanguage: languageName(pending.appLanguage)])
+        string("Primary Language", \.primaryLanguage, [pending.primaryLanguage: languageName(pending.primaryLanguage)])
+        if pending.contentLanguages != savedSettings.contentLanguages {
+            changes.append("Content Languages: \(pending.contentLanguages.map(languageName).joined(separator: ", "))")
+        }
+        bool("Hide Other Languages", \.hideNonPreferredLanguages)
+        bool("Show Language Indicators", \.showLanguageIndicators)
+        bool("Logged-out Visibility", \.loggedOutVisibility)
+        return changes.isEmpty ? "Your selected settings are waiting to be saved." : changes.joined(separator: "\n")
     }
 
+    init() {}
+
+    func configure(accountDID: String) {
+        guard self.accountDID != accountDID else { return }
+        generation &+= 1
+        if let previousAccount = self.accountDID {
+            pendingDrafts.removeValue(forKey: previousAccount)
+            pendingBaselines.removeValue(forKey: previousAccount)
+            pendingEffects.removeValue(forKey: previousAccount)
+        }
+        notificationDebounceTimer?.invalidate()
+        notificationDebounceTimer = nil
+        self.accountDID = accountDID
+        modelContext = nil
+        settingsModel = nil
+        savedSettings = nil
+        persistenceState = .unavailable
+        isInitializing = true
+    }
+
+    func initialize(with modelContext: ModelContext, accountDID: String, notifyOnSuccess: Bool = false) {
+        configure(accountDID: accountDID)
+        generation &+= 1
+        let attemptGeneration = generation
+        notificationDebounceTimer?.invalidate()
+        notificationDebounceTimer = nil
+        self.modelContext = modelContext
+        isInitializing = true
+        let context = ModelContext(modelContext.container)
+        context.autosaveEnabled = false
+        do {
+            let row: AppSettingsModel
+            let existing = try persistence.fetch(context, accountDID)
+            guard isCurrent(accountDID, generation: attemptGeneration) else { return }
+            if let existing {
+                row = existing
+            } else {
+                row = AppSettingsModel(accountDID: accountDID)
+                if let legacy = try AppSettingsModel.legacySettingsForMigration(in: context) {
+                    AppSettingsModel.copySettings(from: legacy, to: row)
+                    context.delete(legacy)
+                } else {
+                    let allowLegacyFallback = try !AppSettingsModel.hasPerAccountSettings(in: context)
+                    row.migrateFromUserDefaults(accountDID: accountDID, includeLegacyFallback: allowLegacyFallback, writeWidgetBackup: false)
+                }
+                context.insert(row)
+                try persistence.save(context)
+            }
+            guard isCurrent(accountDID, generation: attemptGeneration) else { return }
+            savedSettings = snapshot(row, accountDID: accountDID)
+            settingsModel = snapshot(row, accountDID: accountDID)
+            // A repeat initialization must not silently discard a failed or debounced attempt.
+            persistenceState = pendingDrafts[accountDID] == nil ? .ready : .saveFailed
+            isInitializing = false
+            // A successful reload confirms this snapshot even while an older edit awaits Retry Saving.
+            saveThemeSettingsToUserDefaults(allowPendingDraft: true)
+            publishSavedSettings(
+                accountDID: accountDID, generation: attemptGeneration,
+                notify: notifyOnSuccess, allowPendingDraft: true
+            )
+        } catch {
+            guard isCurrent(accountDID, generation: attemptGeneration) else { return }
+            settingsModel = savedSettings.map { snapshot($0, accountDID: accountDID) }
+            persistenceState = .unavailable
+            isInitializing = false
+            logger.error("Local settings could not be loaded: \(error.localizedDescription)")
+        }
+    }
+
+    func retryPersistence() {
+        guard let accountDID, let modelContext else { return }
+        switch persistenceState {
+        case .unavailable:
+            initialize(with: modelContext, accountDID: accountDID, notifyOnSuccess: true)
+        case .saveFailed:
+            _ = persistPendingChanges()
+        case .ready, .saving:
+            break
+        }
+    }
+
+    /// Coalesce effects by purpose; retries apply only the effect belonging to the retained draft.
+    func afterPendingSave(key: String = "settings", _ action: @escaping @MainActor () async -> Void) {
+        guard let accountDID, pendingDrafts[accountDID] != nil else { return }
+        pendingEffects[accountDID, default: [:]][key] = PendingEffect(action: action)
+    }
+
+    private func publishSavedSettings(
+        accountDID: String, generation: UInt64, notify: Bool, allowPendingDraft: Bool = false
+    ) {
+        let confirmed = savedSettings
+        Task { @MainActor [weak self] in
+            guard let self, self.isCurrent(accountDID, generation: generation),
+                  self.savedSettings === confirmed,
+                  self.persistenceState == .ready || (allowPendingDraft && self.persistenceState == .saveFailed)
+            else { return }
+            if self.persistence.isActiveAccount(accountDID, self) {
+                self.saveThemeSettingsToUserDefaults(writesActiveBackup: true, allowPendingDraft: allowPendingDraft)
+                PlatformHaptics.isEnabled = HapticsPolicy.isEnabled(disableHaptics: confirmed?.disableHaptics ?? false)
+            }
+            if notify {
+                NotificationCenter.default.post(
+                    name: NSNotification.Name("AppSettingsChanged"), object: self,
+                    userInfo: ["accountDID": accountDID]
+                )
+            }
+            self.applyPendingEffects(accountDID: accountDID, generation: generation)
+        }
+    }
+
+    private func applyPendingEffects(accountDID: String, generation: UInt64) {
+        for (key, effect) in pendingEffects[accountDID] ?? [:] {
+            Task { @MainActor [weak self] in
+                guard let self, self.isCurrent(accountDID, generation: generation),
+                      self.persistenceState == .ready,
+                      self.persistence.isActiveAccount(accountDID, self),
+                      self.pendingEffects[accountDID]?[key]?.identity == effect.identity else { return }
+                self.pendingEffects[accountDID]?.removeValue(forKey: key)
+                await effect.action()
+            }
+        }
+    }
+
+    /// Flush the current account's pending edit. Returns true only after a successful save.
+    @discardableResult
+    func persistPendingChanges() -> Bool {
+        guard let accountDID, let modelContext, let draft = pendingDrafts[accountDID] else {
+            return persistenceState == .ready
+        }
+        let attemptGeneration = generation
+        notificationDebounceTimer?.invalidate()
+        notificationDebounceTimer = nil
+        let context = ModelContext(modelContext.container)
+        context.autosaveEnabled = false
+        do {
+            guard let row = try persistence.fetch(context, accountDID) else {
+                throw CocoaError(.persistentStoreOperation)
+            }
+            guard isCurrent(accountDID, generation: attemptGeneration) else { return false }
+            AppSettingsModel.copySettings(from: draft, to: row, changedFrom: pendingBaselines[accountDID])
+            try persistence.save(context)
+            guard isCurrent(accountDID, generation: attemptGeneration) else { return false }
+            savedSettings = snapshot(row, accountDID: accountDID)
+            settingsModel = snapshot(row, accountDID: accountDID)
+            pendingDrafts.removeValue(forKey: accountDID)
+            pendingBaselines.removeValue(forKey: accountDID)
+            persistenceState = .ready
+            saveThemeSettingsToUserDefaults()
+            publishSavedSettings(accountDID: accountDID, generation: attemptGeneration, notify: true)
+            return true
+        } catch {
+            guard isCurrent(accountDID, generation: attemptGeneration) else { return false }
+            // Drop the private context; only the detached attempted values survive for Retry.
+            settingsModel = savedSettings.map { snapshot($0, accountDID: accountDID) }
+            persistenceState = .saveFailed
+            logger.error("Local settings were not saved: \(error.localizedDescription)")
+            return false
+        }
+    }
+
+    private func snapshot(_ source: AppSettingsModel, accountDID: String) -> AppSettingsModel {
+        let copy = AppSettingsModel(accountDID: accountDID)
+        AppSettingsModel.copySettings(from: source, to: copy)
+        return copy
+    }
+
+    private func isCurrent(_ accountDID: String, generation: UInt64) -> Bool {
+        self.accountDID == accountDID && self.generation == generation
+    }
+
+    private var standardDefaults: UserDefaults { .standard }
+    private var accountScopedDefaultsDID: String? { accountDID }
     private var shouldUseRuntimeLegacyFallback: Bool {
         AppSettingsModel.shouldUseLegacyFallback(for: accountScopedDefaultsDID, defaults: standardDefaults)
     }
-    
+
     private func saveChanges() {
-        // Skip notifications during initialization to prevent loops
-        guard !isInitializing else {
-            logger.debug("Skipping notification during initialization")
-            return
+        guard !isInitializing, canEditPersistedSettings,
+              let accountDID, let settingsModel else { return }
+        if pendingBaselines[accountDID] == nil, let savedSettings {
+            pendingBaselines[accountDID] = snapshot(savedSettings, accountDID: accountDID)
         }
-        
-        // Debounce notifications to prevent loops
+        pendingDrafts[accountDID] = snapshot(settingsModel, accountDID: accountDID)
+        persistenceState = .saving
+        let attemptGeneration = generation
         notificationDebounceTimer?.invalidate()
-        notificationDebounceTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: false) { [weak self] _ in
-            guard let self = self else { return }
-            
-            // Only notify if there are actual pending changes
-            if self.pendingChanges {
-                self.pendingChanges = false
-                
-                // Save to storage
-                if let modelContext = self.modelContext {
-                    do {
-                        try modelContext.save()
-                        self.logger.debug("AppSettings saved to SwiftData")
-                    } catch {
-                        self.logger.error("Error saving to SwiftData: \(error.localizedDescription)")
-                    }
-                } else {
-                    self.logger.debug("No modelContext available, using UserDefaults fallback")
-                }
-                
-                // Always save to UserDefaults as backup
-                self.saveThemeSettingsToUserDefaults()
-                
-                // Post notification after successful save
-                NotificationCenter.default.post(name: NSNotification.Name("AppSettingsChanged"), object: nil)
-                self.logger.debug("Posted debounced AppSettingsChanged notification")
-            }
+        notificationDebounceTimer = persistence.scheduleSave { [weak self] in
+            guard let self, self.isCurrent(accountDID, generation: attemptGeneration) else { return }
+            self.persistPendingChanges()
         }
-        
-        pendingChanges = true
     }
-    
+
     /// Save critical settings to UserDefaults as backup
-    private func saveThemeSettingsToUserDefaults() {
+    private func saveThemeSettingsToUserDefaults(writesActiveBackup: Bool = false, allowPendingDraft: Bool = false) {
+        guard persistenceState == .ready || (allowPendingDraft && persistenceState == .saveFailed),
+              let confirmed = savedSettings else { return }
+        let theme = confirmed.theme
+        let darkThemeMode = confirmed.darkThemeMode
+        let accentColor = confirmed.accentColor
+        let fontStyle = confirmed.fontStyle
+        let fontSize = confirmed.fontSize
+        let lineSpacing = confirmed.lineSpacing
+        let letterSpacing = confirmed.letterSpacing
+        let dynamicTypeEnabled = confirmed.dynamicTypeEnabled
+        let maxDynamicTypeSize = confirmed.maxDynamicTypeSize
+        let useWebViewEmbeds = confirmed.useWebViewEmbeds
         let defaults = standardDefaults
-        AppSettingsModel.markActiveSettingsAccount(accountScopedDefaultsDID, defaults: defaults)
-        
+        if writesActiveBackup {
+            AppSettingsModel.markActiveSettingsAccount(accountScopedDefaultsDID, defaults: defaults)
+        }
+
+        // The global/widget backup belongs only to the active account.
+        if writesActiveBackup {
         // Save theme settings
         defaults.set(theme, forKey: "theme")
         defaults.set(darkThemeMode, forKey: "darkThemeMode")
@@ -163,8 +363,9 @@ import OSLog
         // Save webview settings for persistence
         defaults.set(useWebViewEmbeds, forKey: "useWebViewEmbeds")
         for provider in ExternalMediaProvider.allCases {
-            let consent = externalMediaConsent(for: provider)
+            let consent = confirmed.consent(for: provider)
             defaults.set(consent.rawValue, forKey: "externalMediaConsent.\(provider.rawValue)")
+        }
         }
         if let accountDID = accountScopedDefaultsDID {
             let accountScopedThemeKeys = [
@@ -187,7 +388,7 @@ import OSLog
                 ("useWebViewEmbeds", useWebViewEmbeds),
             ]
             for provider in ExternalMediaProvider.allCases {
-                let consent = externalMediaConsent(for: provider)
+                let consent = confirmed.consent(for: provider)
                 defaults.set(
                     consent.rawValue,
                     forKey: AppSettingsModel.scopedKey("externalMediaConsent.\(provider.rawValue)", accountDID: accountDID)
@@ -200,9 +401,11 @@ import OSLog
         }
         
         // Also save to app group for widgets
-        let groupDefaults = AppSettingsModel.sharedDefaults()
-        groupDefaults.set(theme, forKey: "theme")
-        groupDefaults.set(darkThemeMode, forKey: "darkThemeMode")
+        if writesActiveBackup {
+            let groupDefaults = AppSettingsModel.sharedDefaults()
+            groupDefaults.set(theme, forKey: "theme")
+            groupDefaults.set(darkThemeMode, forKey: "darkThemeMode")
+        }
         
         logger.debug("Settings saved to UserDefaults: theme=\(self.theme), darkMode=\(self.darkThemeMode), webViewEmbeds=\(self.useWebViewEmbeds)")
     }
@@ -268,6 +471,7 @@ import OSLog
             return loadThemeSettingsFromUserDefaults().theme
         }
         set {
+            guard canEditPersistedSettings else { return }
             settingsModel?.theme = newValue
             saveChanges()
         }
@@ -282,6 +486,7 @@ import OSLog
             return loadThemeSettingsFromUserDefaults().darkThemeMode
         }
         set {
+            guard canEditPersistedSettings else { return }
             settingsModel?.darkThemeMode = newValue
             saveChanges()
         }
@@ -300,6 +505,7 @@ import OSLog
             ) ?? "default"
         }
         set {
+            guard canEditPersistedSettings else { return }
             settingsModel?.accentColor = newValue
             saveChanges()
         }
@@ -313,6 +519,7 @@ import OSLog
             return loadFontSettingsFromUserDefaults().fontStyle
         }
         set {
+            guard canEditPersistedSettings else { return }
             if let settingsModel = settingsModel {
                 settingsModel.fontStyle = newValue
             }
@@ -328,6 +535,7 @@ import OSLog
             return loadFontSettingsFromUserDefaults().fontSize
         }
         set {
+            guard canEditPersistedSettings else { return }
             if let settingsModel = settingsModel {
                 settingsModel.fontSize = newValue
             }
@@ -343,6 +551,7 @@ import OSLog
             return loadFontSettingsFromUserDefaults().lineSpacing
         }
         set {
+            guard canEditPersistedSettings else { return }
             if let settingsModel = settingsModel {
                 settingsModel.lineSpacing = newValue
             }
@@ -358,6 +567,7 @@ import OSLog
             return loadFontSettingsFromUserDefaults().letterSpacing
         }
         set {
+            guard canEditPersistedSettings else { return }
             if let settingsModel = settingsModel {
                 settingsModel.letterSpacing = newValue
             }
@@ -373,6 +583,7 @@ import OSLog
             return loadFontSettingsFromUserDefaults().dynamicTypeEnabled
         }
         set {
+            guard canEditPersistedSettings else { return }
             if let settingsModel = settingsModel {
                 settingsModel.dynamicTypeEnabled = newValue
             }
@@ -388,6 +599,7 @@ import OSLog
             return loadFontSettingsFromUserDefaults().maxDynamicTypeSize
         }
         set {
+            guard canEditPersistedSettings else { return }
             if let settingsModel = settingsModel {
                 settingsModel.maxDynamicTypeSize = newValue
             }
@@ -399,6 +611,7 @@ import OSLog
     var requireAltText: Bool {
         get { settingsModel?.requireAltText ?? defaults.requireAltText }
         set {
+            guard canEditPersistedSettings else { return }
             settingsModel?.requireAltText = newValue
             saveChanges()
         }
@@ -407,6 +620,7 @@ import OSLog
     var largerAltTextBadges: Bool {
         get { settingsModel?.largerAltTextBadges ?? defaults.largerAltTextBadges }
         set {
+            guard canEditPersistedSettings else { return }
             settingsModel?.largerAltTextBadges = newValue
             saveChanges()
         }
@@ -415,22 +629,17 @@ import OSLog
     var disableHaptics: Bool {
         get { settingsModel?.disableHaptics ?? defaults.disableHaptics }
         set {
+            guard canEditPersistedSettings else { return }
             settingsModel?.disableHaptics = newValue
             saveChanges()
-            syncHapticsEnabledState(disableHaptics: newValue)
         }
     }
 
-    private func syncHapticsEnabledState(disableHaptics: Bool) {
-        Task { @MainActor in
-            PlatformHaptics.isEnabled = HapticsPolicy.isEnabled(disableHaptics: disableHaptics)
-        }
-    }
-    
     // Motion Settings
     var reduceMotion: Bool {
         get { settingsModel?.reduceMotion ?? defaults.reduceMotion }
         set {
+            guard canEditPersistedSettings else { return }
             settingsModel?.reduceMotion = newValue
             saveChanges()
         }
@@ -439,6 +648,7 @@ import OSLog
     var prefersCrossfade: Bool {
         get { settingsModel?.prefersCrossfade ?? defaults.prefersCrossfade }
         set {
+            guard canEditPersistedSettings else { return }
             settingsModel?.prefersCrossfade = newValue
             saveChanges()
         }
@@ -448,6 +658,7 @@ import OSLog
     var increaseContrast: Bool {
         get { settingsModel?.increaseContrast ?? defaults.increaseContrast }
         set {
+            guard canEditPersistedSettings else { return }
             settingsModel?.increaseContrast = newValue
             saveChanges()
         }
@@ -456,6 +667,7 @@ import OSLog
     var boldText: Bool {
         get { settingsModel?.boldText ?? defaults.boldText }
         set {
+            guard canEditPersistedSettings else { return }
             settingsModel?.boldText = newValue
             saveChanges()
         }
@@ -464,6 +676,7 @@ import OSLog
     var displayScale: Double {
         get { settingsModel?.displayScale ?? defaults.displayScale }
         set {
+            guard canEditPersistedSettings else { return }
             settingsModel?.displayScale = newValue
             saveChanges()
         }
@@ -473,6 +686,7 @@ import OSLog
     var showReadingTimeEstimates: Bool {
         get { settingsModel?.showReadingTimeEstimates ?? defaults.showReadingTimeEstimates }
         set {
+            guard canEditPersistedSettings else { return }
             settingsModel?.showReadingTimeEstimates = newValue
             saveChanges()
         }
@@ -481,6 +695,7 @@ import OSLog
     var highlightLinks: Bool {
         get { settingsModel?.highlightLinks ?? defaults.highlightLinks }
         set {
+            guard canEditPersistedSettings else { return }
             settingsModel?.highlightLinks = newValue
             saveChanges()
         }
@@ -489,6 +704,7 @@ import OSLog
     var linkStyle: String {
         get { settingsModel?.linkStyle ?? defaults.linkStyle }
         set {
+            guard canEditPersistedSettings else { return }
             settingsModel?.linkStyle = newValue
             saveChanges()
         }
@@ -498,6 +714,7 @@ import OSLog
     var confirmBeforeActions: Bool {
         get { settingsModel?.confirmBeforeActions ?? defaults.confirmBeforeActions }
         set {
+            guard canEditPersistedSettings else { return }
             settingsModel?.confirmBeforeActions = newValue
             saveChanges()
         }
@@ -506,6 +723,7 @@ import OSLog
     var longPressDuration: Double {
         get { settingsModel?.longPressDuration ?? defaults.longPressDuration }
         set {
+            guard canEditPersistedSettings else { return }
             settingsModel?.longPressDuration = newValue
             saveChanges()
         }
@@ -514,6 +732,7 @@ import OSLog
     var shakeToUndo: Bool {
         get { settingsModel?.shakeToUndo ?? defaults.shakeToUndo }
         set {
+            guard canEditPersistedSettings else { return }
             settingsModel?.shakeToUndo = newValue
             saveChanges()
         }
@@ -523,6 +742,7 @@ import OSLog
     var enableViaAttribution: Bool {
         get { settingsModel?.enableViaAttribution ?? defaults.enableViaAttribution }
         set {
+            guard canEditPersistedSettings else { return }
             settingsModel?.enableViaAttribution = newValue
             saveChanges()
         }
@@ -532,6 +752,7 @@ import OSLog
     var sensitiveContentScanningEnabled: Bool {
         get { settingsModel?.sensitiveContentScanningEnabled ?? defaults.sensitiveContentScanningEnabled }
         set {
+            guard canEditPersistedSettings else { return }
             settingsModel?.sensitiveContentScanningEnabled = newValue
             saveChanges()
         }
@@ -540,6 +761,7 @@ import OSLog
     var autoplayVideos: Bool {
         get { settingsModel?.autoplayVideos ?? defaults.autoplayVideos }
         set {
+            guard canEditPersistedSettings else { return }
             settingsModel?.autoplayVideos = newValue
             saveChanges()
         }
@@ -548,6 +770,7 @@ import OSLog
     var useInAppBrowser: Bool {
         get { settingsModel?.useInAppBrowser ?? defaults.useInAppBrowser }
         set {
+            guard canEditPersistedSettings else { return }
             settingsModel?.useInAppBrowser = newValue
             saveChanges()
         }
@@ -556,6 +779,7 @@ import OSLog
     var showTrendingTopics: Bool {
         get { settingsModel?.showTrendingTopics ?? defaults.showTrendingTopics }
         set {
+            guard canEditPersistedSettings else { return }
             settingsModel?.showTrendingTopics = newValue
             saveChanges()
         }
@@ -564,6 +788,7 @@ import OSLog
     var showTrendingVideos: Bool {
         get { settingsModel?.showTrendingVideos ?? defaults.showTrendingVideos }
         set {
+            guard canEditPersistedSettings else { return }
             settingsModel?.showTrendingVideos = newValue
             saveChanges()
         }
@@ -573,6 +798,7 @@ import OSLog
     var threadSortOrder: String {
         get { settingsModel?.threadSortOrder ?? defaults.threadSortOrder }
         set {
+            guard canEditPersistedSettings else { return }
             settingsModel?.threadSortOrder = newValue
             saveChanges()
         }
@@ -581,6 +807,7 @@ import OSLog
     var prioritizeFollowedUsers: Bool {
         get { settingsModel?.prioritizeFollowedUsers ?? defaults.prioritizeFollowedUsers }
         set {
+            guard canEditPersistedSettings else { return }
             settingsModel?.prioritizeFollowedUsers = newValue
             saveChanges()
         }
@@ -589,6 +816,7 @@ import OSLog
     var threadedReplies: Bool {
         get { settingsModel?.threadedReplies ?? defaults.threadedReplies }
         set {
+            guard canEditPersistedSettings else { return }
             settingsModel?.threadedReplies = newValue
             saveChanges()
         }
@@ -597,6 +825,7 @@ import OSLog
     var showHiddenPosts: Bool {
         get { settingsModel?.showHiddenPosts ?? defaults.showHiddenPosts }
         set {
+            guard canEditPersistedSettings else { return }
             settingsModel?.showHiddenPosts = newValue
             saveChanges()
         }
@@ -606,6 +835,7 @@ import OSLog
     var showSavedFeedSamples: Bool {
         get { settingsModel?.showSavedFeedSamples ?? defaults.showSavedFeedSamples }
         set {
+            guard canEditPersistedSettings else { return }
             settingsModel?.showSavedFeedSamples = newValue
             saveChanges()
         }
@@ -619,14 +849,8 @@ import OSLog
     }
 
     func setExternalMediaConsent(_ consent: ExternalMediaConsent, for provider: ExternalMediaProvider) {
+        guard canEditPersistedSettings else { return }
         settingsModel?.setConsent(consent, for: provider)
-        standardDefaults.set(consent.rawValue, forKey: "externalMediaConsent.\(provider.rawValue)")
-        if let accountDID = accountScopedDefaultsDID {
-            standardDefaults.set(
-                consent.rawValue,
-                forKey: AppSettingsModel.scopedKey("externalMediaConsent.\(provider.rawValue)", accountDID: accountDID)
-            )
-        }
         saveChanges()
     }
 
@@ -658,6 +882,7 @@ import OSLog
             return loadWebViewSettingsFromUserDefaults().useWebViewEmbeds
         }
         set {
+            guard canEditPersistedSettings else { return }
             settingsModel?.useWebViewEmbeds = newValue
             saveChanges()
         }
@@ -668,6 +893,7 @@ import OSLog
     var appLanguage: String {
         get { settingsModel?.appLanguage ?? defaults.appLanguage }
         set {
+            guard canEditPersistedSettings else { return }
             settingsModel?.appLanguage = newValue
             saveChanges()
         }
@@ -676,6 +902,7 @@ import OSLog
     var primaryLanguage: String {
         get { settingsModel?.primaryLanguage ?? defaults.primaryLanguage }
         set {
+            guard canEditPersistedSettings else { return }
             settingsModel?.primaryLanguage = newValue
             saveChanges()
         }
@@ -684,6 +911,7 @@ import OSLog
     var contentLanguages: [String] {
         get { settingsModel?.contentLanguages ?? defaults.contentLanguages }
         set {
+            guard canEditPersistedSettings else { return }
             settingsModel?.contentLanguages = newValue
             saveChanges()
         }
@@ -692,6 +920,7 @@ import OSLog
     var hideNonPreferredLanguages: Bool {
         get { settingsModel?.hideNonPreferredLanguages ?? defaults.hideNonPreferredLanguages }
         set {
+            guard canEditPersistedSettings else { return }
             settingsModel?.hideNonPreferredLanguages = newValue
             saveChanges()
         }
@@ -700,6 +929,7 @@ import OSLog
     var showLanguageIndicators: Bool {
         get { settingsModel?.showLanguageIndicators ?? defaults.showLanguageIndicators }
         set {
+            guard canEditPersistedSettings else { return }
             settingsModel?.showLanguageIndicators = newValue
             saveChanges()
         }
@@ -709,6 +939,7 @@ import OSLog
     var loggedOutVisibility: Bool {
         get { settingsModel?.loggedOutVisibility ?? defaults.loggedOutVisibility }
         set {
+            guard canEditPersistedSettings else { return }
             settingsModel?.loggedOutVisibility = newValue
             saveChanges()
         }
@@ -721,13 +952,19 @@ import OSLog
     
     /// Reset only the visual choices managed by Appearance, preserving accessibility and account data.
     func resetAppearanceToDefaults() {
+        guard canEditPersistedSettings else { return }
         settingsModel?.resetAppearanceToDefaults()
         saveChanges()
     }
 
     /// Reset all settings to defaults
     func resetToDefaults() {
-        settingsModel?.resetToDefaults()
+        guard canEditPersistedSettings, let settingsModel else { return }
+        // Keep the existing broad-reset exclusions without its eager UserDefaults writes.
+        let reset = AppSettingsModel()
+        reset.letterSpacing = settingsModel.letterSpacing
+        reset.sensitiveContentScanningEnabled = settingsModel.sensitiveContentScanningEnabled
+        AppSettingsModel.copySettings(from: reset, to: settingsModel)
         saveChanges()
     }
     
@@ -772,10 +1009,16 @@ import OSLog
         
         // Load settings from UserDefaults if SwiftData isn't available yet
         if settingsModel == nil {
-            currentSettings.migrateFromUserDefaults(
-                accountDID: accountScopedDefaultsDID,
-                includeLegacyFallback: shouldUseRuntimeLegacyFallback
-            )
+            let fontSettings = loadFontSettingsFromUserDefaults()
+            currentSettings.fontStyle = fontSettings.fontStyle
+            currentSettings.fontSize = fontSettings.fontSize
+            currentSettings.lineSpacing = fontSettings.lineSpacing
+            currentSettings.letterSpacing = fontSettings.letterSpacing
+            currentSettings.dynamicTypeEnabled = fontSettings.dynamicTypeEnabled
+            currentSettings.maxDynamicTypeSize = fontSettings.maxDynamicTypeSize
+            currentSettings.boldText = AppSettingsModel.boolValue(for: "boldText", accountDID: accountScopedDefaultsDID, defaults: standardDefaults, includeLegacyFallback: shouldUseRuntimeLegacyFallback) ?? defaults.boldText
+            currentSettings.increaseContrast = AppSettingsModel.boolValue(for: "increaseContrast", accountDID: accountScopedDefaultsDID, defaults: standardDefaults, includeLegacyFallback: shouldUseRuntimeLegacyFallback) ?? defaults.increaseContrast
+            currentSettings.displayScale = AppSettingsModel.doubleValue(for: "displayScale", accountDID: accountScopedDefaultsDID, defaults: standardDefaults, includeLegacyFallback: shouldUseRuntimeLegacyFallback) ?? defaults.displayScale
         } else {
             // Copy from existing settings model
             if let model = settingsModel {

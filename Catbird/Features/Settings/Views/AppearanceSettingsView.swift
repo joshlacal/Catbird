@@ -50,6 +50,8 @@ struct AppearanceSettingsView: View {
 
   var body: some View {
     Form {
+      SettingsPersistenceStatusSection(settings: appState.appSettings)
+
       // Theme Section
       Section("Theme") {
         Picker("App Theme", selection: theme) {
@@ -66,6 +68,7 @@ struct AppearanceSettingsView: View {
         }
       }
       .pickerStyle(.menu)
+      .disabled(!appState.appSettings.canEditPersistedSettings)
 
       #if os(iOS)
         if UIApplication.shared.supportsAlternateIcons {
@@ -91,6 +94,7 @@ struct AppearanceSettingsView: View {
       Section("Accent Color") {
         AccentColorPicker(selection: accentColor)
       }
+      .disabled(!appState.appSettings.canEditPersistedSettings)
 
       // Typography Section
       Section("Typography") {
@@ -116,6 +120,7 @@ struct AppearanceSettingsView: View {
 
         FontPreviewRow()
       }
+      .disabled(!appState.appSettings.canEditPersistedSettings)
 
       Section {
         NavigationLink("Text Scaling & Accessibility") {
@@ -139,6 +144,7 @@ struct AppearanceSettingsView: View {
         Button("Reset Appearance…", role: .destructive) {
           isShowingResetConfirmation = true
         }
+        .disabled(!appState.appSettings.canEditPersistedSettings)
       } footer: {
         Text("Resets the theme, accent color, and custom typography for this account. Your app icon and accessibility settings are kept.")
       }
@@ -148,6 +154,7 @@ struct AppearanceSettingsView: View {
       Button("Reset Appearance", role: .destructive) {
         appState.appSettings.resetAppearanceToDefaults()
       }
+      .disabled(!appState.appSettings.canEditPersistedSettings)
       Button("Cancel", role: .cancel) { }
     } message: {
       Text("Reset the theme, accent color, and custom typography for this account? Accessibility, content, privacy, languages, and accounts will stay as they are.")
@@ -317,4 +324,3 @@ struct ColorSchemePreview: View {
     }
   }
 }
-

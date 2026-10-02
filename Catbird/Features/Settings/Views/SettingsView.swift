@@ -23,6 +23,8 @@ struct SettingsView: View {
     NavigationStack {
       ResponsiveContentView {
         Form {
+          SettingsPersistenceStatusSection(settings: appState.appSettings)
+
           Section {
             AccountHeaderView(
               isShowingAccountSwitcher: $isShowingAccountSwitcher,
