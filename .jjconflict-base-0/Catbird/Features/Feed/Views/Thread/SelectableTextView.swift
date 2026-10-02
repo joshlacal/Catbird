@@ -1,0 +1,355 @@
+//
+//  SelectableTextView.swift
+//  Catbird
+//
+//  Created by Claude Code on 8/13/25.
+//
+
+import Foundation
+import SwiftUI
+#if os(iOS)
+import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
+
+#if os(iOS)
+// Custom UITextView that properly sizes itself and allows text selection
+class SelectableSelfSizingTextView: UITextView {
+  private func measuredHeight(for width: CGFloat) -> CGFloat? {
+    guard width.isFinite, width > 0 else { return nil }
+
+    // Measure via TextKit 2 only. Touching `layoutManager` (even once) drops
+    // the view into TextKit 1 compatibility mode, which cannot render
+    // NSAdaptiveImageGlyph runs (inline Bluemoji/Genmoji draw as nothing).
+    guard let textLayoutManager = textContainer.textLayoutManager else { return nil }
+
+    textContainer.size = CGSize(width: width, height: CGFloat.greatestFiniteMagnitude)
+    textLayoutManager.ensureLayout(for: textLayoutManager.documentRange)
+
+    // Get the used rect which accounts for all text content
+    let usedRect = textLayoutManager.usageBoundsForTextContainer
+
+    // Account for font descent and line spacing below the last line
+    var additionalBottomSpace: CGFloat = 0
+    if let attributedText = attributedText, attributedText.length > 0 {
+      let lastCharacterRange = NSRange(location: attributedText.length - 1, length: 1)
+
+      // Get font descent to ensure descenders are visible
+      if let font = attributedText.attribute(.font, at: lastCharacterRange.location, effectiveRange: nil) as? UIFont {
+        additionalBottomSpace += abs(font.descender)
+      }
+
+      // Add line spacing from paragraph style
+      if let paragraphStyle = attributedText.attribute(.paragraphStyle, at: lastCharacterRange.location, effectiveRange: nil) as? NSParagraphStyle {
+        additionalBottomSpace += paragraphStyle.lineSpacing
+        // Also account for line height multiple if set
+        if paragraphStyle.lineHeightMultiple > 0 {
+          additionalBottomSpace += paragraphStyle.lineSpacing * (paragraphStyle.lineHeightMultiple - 1)
+        }
+      }
+    }
+
+    // Add generous bottom padding to prevent clipping (8pt safety margin)
+    return ceil(usedRect.height + textContainerInset.top + textContainerInset.bottom + additionalBottomSpace + 8)
+  }
+
+  override var intrinsicContentSize: CGSize {
+    // Ensure we have a valid width to work with
+    let currentWidth = bounds.width > 0 ? bounds.width : frame.width
+
+    if let height = measuredHeight(for: currentWidth) {
+      return CGSize(width: UIView.noIntrinsicMetric, height: max(height, 1))
+    } else {
+      // Fallback for when width isn't available yet
+      return CGSize(width: UIView.noIntrinsicMetric, height: 1)
+    }
+  }
+
+  override func sizeThatFits(_ size: CGSize) -> CGSize {
+    if let height = measuredHeight(for: size.width) {
+      return CGSize(width: size.width, height: max(height, 1))
+    }
+
+    return super.sizeThatFits(size)
+  }
+  
+  private var lastKnownWidth: CGFloat = 0
+
+  override func layoutSubviews() {
+    super.layoutSubviews()
+
+    // Invalidate synchronously when width changes to prevent truncation on first render.
+    // The previous async dispatch caused the initial frame to render with stale height.
+    let currentWidth = bounds.width
+    if abs(currentWidth - lastKnownWidth) > 1 {
+      lastKnownWidth = currentWidth
+      invalidateIntrinsicContentSize()
+    }
+  }
+
+  override func didMoveToWindow() {
+    super.didMoveToWindow()
+    // When the view is added to a window (e.g. during navigation push),
+    // bounds.width is now correct. Force a fresh size calculation to fix
+    // truncation that occurs when intrinsicContentSize was first queried
+    // with a zero or transitional width.
+    if window != nil {
+      lastKnownWidth = bounds.width
+      invalidateIntrinsicContentSize()
+      setNeedsLayout()
+    }
+  }
+}
+
+struct SelectableTextView: UIViewRepresentable {
+  let attributedString: AttributedString
+  @Environment(AppState.self) private var appState
+  @Environment(\.colorScheme) private var colorScheme
+  @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+  @Environment(\.fontManager) private var fontManager
+    
+  private var textDesign: Font.Design
+  private var textWeight: Font.Weight
+  private var lineSpacing: CGFloat
+  private var letterSpacing: CGFloat
+  private var textStyle: Font.TextStyle
+  private var textSize: CGFloat?
+  private var fontWidth: CGFloat?
+
+  // Public initializer
+  public init(attributedString: AttributedString) {
+    self.attributedString = attributedString
+    self.textSize = nil
+    self.textStyle = .body
+    self.textDesign = .default
+    self.textWeight = .regular
+    self.fontWidth = nil
+    self.lineSpacing = 1.6
+    self.letterSpacing = 0.2
+  }
+    
+  public init(
+      attributedString: AttributedString,
+      textSize: CGFloat? = nil,
+      textStyle: Font.TextStyle = .body,
+      textDesign: Font.Design = .default,
+      textWeight: Font.Weight = .regular,
+      fontWidth: CGFloat? = nil,
+      lineSpacing: CGFloat = 1.6,
+      letterSpacing: CGFloat = 0.2
+  ) {
+      self.attributedString = attributedString
+      self.textSize = textSize
+      self.textStyle = textStyle
+      self.textDesign = textDesign
+      self.textWeight = textWeight
+      self.fontWidth = fontWidth
+      self.lineSpacing = lineSpacing
+      self.letterSpacing = letterSpacing
+  }
+
+  func makeUIView(context: Context) -> SelectableSelfSizingTextView {
+    let textView = SelectableSelfSizingTextView()
+    
+    // Configure basic properties
+    textView.isEditable = false
+    textView.supportsAdaptiveImageGlyph = true
+    textView.isSelectable = true  // Enable text selection
+    textView.isScrollEnabled = false
+    textView.backgroundColor = .clear
+    textView.textContainer.lineFragmentPadding = 0
+    textView.textContainerInset = .zero
+    textView.delegate = context.coordinator
+    
+    // Enable data detectors for URLs
+    textView.dataDetectorTypes = [.link]
+    
+    // Configure for proper text wrapping and sizing
+    textView.textContainer.lineBreakMode = .byWordWrapping
+    textView.textContainer.maximumNumberOfLines = 0
+    textView.textContainer.widthTracksTextView = true
+    textView.textContainer.heightTracksTextView = false
+    
+    // Set content compression and hugging priorities
+    textView.setContentCompressionResistancePriority(.required, for: .vertical)
+    textView.setContentHuggingPriority(.required, for: .vertical)
+    textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    
+    // Accessibility configuration
+    textView.isAccessibilityElement = true
+    textView.accessibilityTraits = [.staticText]
+    textView.adjustsFontForContentSizeCategory = true
+    
+    // Text selection configuration - enabled for thread main posts
+    textView.textDragInteraction?.isEnabled = true
+    
+    // Disable implicit Core Animation on common layer actions to prevent any fly-in
+    let noAnim: [String: CAAction] = [
+      "bounds": NSNull(),
+      "position": NSNull(),
+      "frame": NSNull(),
+      "contents": NSNull(),
+      "onOrderIn": NSNull(),
+      "onOrderOut": NSNull(),
+      "opacity": NSNull(),
+      "transform": NSNull(),
+      "sublayers": NSNull(),
+      "hidden": NSNull()
+    ]
+    textView.layer.actions = noAnim
+
+    return textView
+  }
+  
+  func updateUIView(_ uiView: SelectableSelfSizingTextView, context: Context) {
+    // Check for emoji-only content
+    let plainText = extractPlainText(from: attributedString)
+    let isEmojiOnly = plainText.containsOnlyEmojis
+    
+    // Create NSAttributedString with proper font attributes
+    let nsAttributedString = createNSAttributedString(from: attributedString, isEmojiOnly: isEmojiOnly)
+    
+    UIView.performWithoutAnimation {
+      CATransaction.begin()
+      CATransaction.setDisableActions(true)
+      defer { CATransaction.commit() }
+
+      if uiView.attributedText != nsAttributedString {
+        uiView.attributedText = nsAttributedString
+        // Trigger immediate layout update after content changes without animation
+        uiView.invalidateIntrinsicContentSize()
+        uiView.setNeedsLayout()
+        uiView.layoutIfNeeded()
+
+        // Force immediate superview layout to prevent cascading animations
+        uiView.superview?.layoutIfNeeded()
+      }
+    }
+    
+    // Apply theme colors
+    let effectiveColorScheme = appState.themeManager.effectiveColorScheme(for: colorScheme)
+    uiView.textColor = UIColor(Color.dynamicText(appState.themeManager, style: .primary, currentScheme: effectiveColorScheme))
+    uiView.tintColor = UIColor(.accentColor)
+    // UITextView paints `.link` runs using linkTextAttributes, ignoring the
+    // foregroundColor on the attributed string. Pin it to the text-safe accent.
+    uiView.linkTextAttributes = [.foregroundColor: UIColor(Color("AccentTextColor"))]
+    
+    // Update coordinator with current environment values
+    context.coordinator.appState = appState
+  }
+  
+  func makeCoordinator() -> Coordinator {
+    Coordinator()
+  }
+
+  func sizeThatFits(
+    _ proposal: ProposedViewSize,
+    uiView: SelectableSelfSizingTextView,
+    context: Context
+  ) -> CGSize? {
+    let width = proposal.width ?? uiView.bounds.width
+    guard width.isFinite, width > 0 else { return nil }
+
+    let fittingSize = uiView.sizeThatFits(CGSize(width: width, height: CGFloat.greatestFiniteMagnitude))
+    return CGSize(width: width, height: max(ceil(fittingSize.height), 1))
+  }
+  
+  class Coordinator: NSObject, UITextViewDelegate {
+    var appState: AppState?
+    
+    func textView(_ textView: UITextView, shouldInteractWith URL: URL, in characterRange: NSRange) -> Bool {
+      guard let appState = appState else { return true }
+      
+      // Handle URL through the app's URL handler on the main thread
+      DispatchQueue.main.async {
+        _ = appState.urlHandler.handle(URL)
+      }
+      
+      // Return false to prevent default system handling since we're handling it ourselves
+      return false
+    }
+  }
+  
+  // MARK: - Helper Functions
+  
+  private func extractPlainText(from attributedString: AttributedString) -> String {
+    return String(attributedString.characters.reduce("") { result, char in
+      result + String(char)
+    })
+  }
+  
+  private func createNSAttributedString(from attributedString: AttributedString, isEmojiOnly: Bool) -> NSAttributedString {
+    let nsAttributedString = NSMutableAttributedString(attributedString)
+    
+    // Calculate effective font size
+    let baseSize = textSize ?? Typography.Size.body
+    let effectiveSize = isEmojiOnly ? baseSize * 3 : baseSize
+    let scaledSize = fontManager.scaledSize(effectiveSize)
+    
+    // Create default font with FontManager integration
+    let defaultFont = createUIFont(size: scaledSize, weight: textWeight, design: textDesign)
+    
+    // Enumerate existing attributes and preserve formatting while updating font sizes
+    nsAttributedString.enumerateAttributes(in: NSRange(location: 0, length: nsAttributedString.length), options: []) { attributes, range, _ in
+      var newAttributes = attributes
+      
+      // Update font while preserving weight/traits if they exist
+      if let existingFont = attributes[.font] as? UIFont {
+        // Preserve existing font traits (bold, italic, etc.) but update size
+        let newFont = existingFont.withSize(scaledSize)
+        newAttributes[.font] = newFont
+      } else {
+        // No existing font, use default
+        newAttributes[.font] = defaultFont
+      }
+      
+      nsAttributedString.setAttributes(newAttributes, range: range)
+    }
+    
+    // Apply line spacing and paragraph style
+    let paragraphStyle = NSMutableParagraphStyle()
+    paragraphStyle.lineSpacing = fontManager.getLineSpacing(for: scaledSize) * lineSpacing
+    paragraphStyle.lineBreakMode = .byWordWrapping
+    paragraphStyle.alignment = .left
+    
+    // Apply letter spacing and paragraph style to entire string
+    let letterSpacingValue = fontManager.letterSpacingValue * letterSpacing
+    nsAttributedString.addAttribute(.kern, value: letterSpacingValue, range: NSRange(location: 0, length: nsAttributedString.length))
+    nsAttributedString.addAttribute(.paragraphStyle, value: paragraphStyle, range: NSRange(location: 0, length: nsAttributedString.length))
+    
+    return nsAttributedString
+  }
+  
+  private func createUIFont(size: CGFloat, weight: Font.Weight, design: Font.Design) -> UIFont {
+    let fontWeight: UIFont.Weight
+    switch weight {
+    case .ultraLight: fontWeight = .ultraLight
+    case .thin: fontWeight = .thin  
+    case .light: fontWeight = .light
+    case .regular: fontWeight = .regular
+    case .medium: fontWeight = .medium
+    case .semibold: fontWeight = .semibold
+    case .bold: fontWeight = .bold
+    case .heavy: fontWeight = .heavy
+    case .black: fontWeight = .black
+    default: fontWeight = .regular
+    }
+    
+    let fontDesign: UIFontDescriptor.SystemDesign
+    switch design {
+    case .default: fontDesign = .default
+    case .serif: fontDesign = .serif
+    case .monospaced: fontDesign = .monospaced
+    case .rounded: fontDesign = .rounded
+    default: fontDesign = .default
+    }
+    
+    if let descriptor = UIFont.systemFont(ofSize: size, weight: fontWeight).fontDescriptor.withDesign(fontDesign) {
+      return UIFont(descriptor: descriptor, size: size)
+    }
+    
+    return UIFont.systemFont(ofSize: size, weight: fontWeight)
+  }
+}
+#endif

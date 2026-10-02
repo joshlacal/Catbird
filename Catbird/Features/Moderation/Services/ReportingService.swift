@@ -5,12 +5,24 @@ import Petrel
 enum LabelAppealError: LocalizedError, Equatable {
     case selfLabelNotAppealable
     case alreadyAppealed
+    case subjectNotOwned
+    case inactiveLabel
+    case accountChanged
+    case invalidDetails
     case invalidLabelSubject(String)
     
     var errorDescription: String? {
         switch self {
         case .selfLabelNotAppealable:
             return "Self-applied labels cannot be appealed."
+        case .subjectNotOwned:
+            return "You can only appeal labels on your own account or posts."
+        case .inactiveLabel:
+            return "This label is no longer active."
+        case .accountChanged:
+            return "Your account changed. Reopen the label to appeal it."
+        case .invalidDetails:
+            return "Enter an appeal reason of 1 to 300 characters."
         case .alreadyAppealed:
             return "This label has already been appealed and is currently under review."
         case .invalidLabelSubject(let msg):
@@ -76,7 +88,7 @@ actor ReportDispatcher {
         try await acquire(id: id)
         defer { release() }
         try Task.checkCancellation()
-        let targetDid = labelerDid ?? ReportingService.officialBlueskyDID
+        let targetDid = ReportingService.labelerServiceDID(labelerDid ?? ReportingService.officialBlueskyDID)
         await client.setServiceDID(targetDid, for: "com.atproto.moderation.createReport")
         return try await operation(client)
     }
@@ -87,10 +99,23 @@ actor ReportDispatcher {
 final class ReportingService {
     public static let officialBlueskyDID = "did:plc:ar7c4by46qjdydhdevvrndac"
     
+    typealias ReportTransport = @Sendable (ComAtprotoModerationCreateReport.Input, String) async throws -> Bool
     private let client: ATProtoClient
-    
-    init(client: ATProtoClient) {
+    private let reportTransport: ReportTransport?
+    private let activeAccountDID: @Sendable () async -> String?
+
+    init(
+        client: ATProtoClient,
+        reportTransport: ReportTransport? = nil,
+        activeAccountDID: (@Sendable () async -> String?)? = nil
+    ) {
         self.client = client
+        self.reportTransport = reportTransport
+        self.activeAccountDID = activeAccountDID ?? { try? await client.getDid() }
+    }
+
+    static func labelerServiceDID(_ issuerDID: String) -> String {
+        issuerDID.hasSuffix("#atproto_labeler") ? issuerDID : issuerDID + "#atproto_labeler"
     }
     
     /// Submit a report to a moderation service
@@ -108,7 +133,8 @@ final class ReportingService {
         reason: String? = nil,
         labelerDid: String? = nil,
         videoTimestampSeconds: Int? = nil,
-        modTool: ComAtprotoModerationCreateReport.ModTool? = nil
+        modTool: ComAtprotoModerationCreateReport.ModTool? = nil,
+        expectedAccountDID: String? = nil
     ) async throws -> Bool {
         let isOfficial = (labelerDid == nil || labelerDid == Self.officialBlueskyDID)
         
@@ -127,57 +153,109 @@ final class ReportingService {
             modTool: finalModTool
         )
         
+        let transport = reportTransport
+        let accountDID = activeAccountDID
+        let destination = Self.labelerServiceDID(labelerDid ?? Self.officialBlueskyDID)
+        let continuity = expectedAccountDID != nil && transport == nil ? await client.authContinuitySnapshot() : nil
+        if let expectedAccountDID, let continuity, continuity.did != expectedAccountDID {
+            throw LabelAppealError.accountChanged
+        }
         return try await ReportDispatcher.shared.execute(client: client, labelerDid: labelerDid) { client in
-            let (responseCode, _) = try await client.com.atproto.moderation.createReport(input: input)
-            return responseCode >= 200 && responseCode < 300
+            try Task.checkCancellation()
+            if let expectedAccountDID, await accountDID() != expectedAccountDID {
+                throw LabelAppealError.accountChanged
+            }
+            if let transport { return try await transport(input, destination) }
+            if let continuity {
+                let result = try await client.performGeneratedRequestWithExactAuthContinuity(matching: continuity) {
+                    try await Self.performReport(client: client, input: input, destination: destination)
+                }
+                switch result {
+                case .performed(let success): return success
+                case .continuityChanged: throw LabelAppealError.accountChanged
+                }
+            }
+            return try await Self.performReport(client: client, input: input, destination: destination)
         }
     }
     
+    private static func performReport(
+        client: ATProtoClient, input: ComAtprotoModerationCreateReport.Input, destination: String
+    ) async throws -> Bool {
+            // This lexicon declares no error variants. Keep its generated input, but
+            // preserve the XRPC body so AlreadyAppealed remains distinguishable.
+            let request = try await client.networkService.createURLRequest(
+                endpoint: "com.atproto.moderation.createReport",
+                method: "POST",
+                headers: ["Content-Type": "application/json", "Accept": "application/json"],
+                body: try JSONEncoder().encode(input),
+                queryItems: nil
+            )
+            try Task.checkCancellation()
+            let (data, response) = try await client.networkService.performRequestReturningHTTPErrorResponses(
+                request, skipTokenRefresh: false, additionalHeaders: ["atproto-proxy": destination]
+            )
+            if (200...299).contains(response.statusCode) { return true }
+            if let error = ATProtoErrorParser.parseGeneric(data: data, statusCode: response.statusCode) {
+                throw error
+            }
+            return false
+    }
+
     /// Create a subject for reporting or appealing a label
     func createLabelSubject(for label: ComAtprotoLabelDefs.Label) throws -> ComAtprotoModerationCreateReport.InputSubjectUnion {
+        let value = label.uri.uriString()
         if let cid = label.cid {
-            let uri: ATProtocolURI
-            let uriString = label.uri.uriString()
-            if uriString.hasPrefix("at://"), let direct = try? ATProtocolURI(uriString: uriString) {
-                uri = direct
-            } else if !label.uri.authority.isEmpty && label.uri.authority != "invalid.invalid" {
-                let path = label.uri.path ?? ""
-                let formattedPath = path.hasPrefix("/") ? path : (path.isEmpty ? "" : "/\(path)")
-                uri = try ATProtocolURI(uriString: "at://\(label.uri.authority)\(formattedPath)")
-            } else {
-                uri = try ATProtocolURI(uriString: uriString)
+            guard let uri = try? ATProtocolURI(uriString: value),
+                  value.hasPrefix("at://"), uri.authority.hasPrefix("did:"),
+                  !uri.isSpace, uri.collection != nil, uri.recordKey != nil else {
+                throw LabelAppealError.invalidLabelSubject("Expected a record URI and CID")
             }
             return createRecordSubject(uri: uri, cid: cid)
-        } else {
-            let uriString = label.uri.uriString()
-            let didString: String
-            if label.uri.isDID {
-                didString = uriString
-            } else if uriString.hasPrefix("did:") {
-                didString = uriString
-            } else if uriString.hasPrefix("at://") {
-                let withoutPrefix = String(uriString.dropFirst(5))
-                didString = withoutPrefix.components(separatedBy: "/").first ?? withoutPrefix
-            } else if !label.uri.authority.isEmpty && label.uri.authority != "invalid.invalid" && label.uri.authority.hasPrefix("did:") {
-                didString = label.uri.authority
-            } else {
-                didString = uriString
-            }
-            let did = try DID(didString: didString)
-            return createUserSubject(did: did)
         }
+        guard value.hasPrefix("did:"), let did = try? DID(didString: value) else {
+            throw LabelAppealError.invalidLabelSubject("Expected an account DID")
+        }
+        return createUserSubject(did: did)
     }
-    
+
+    static func subjectOwnerDID(_ label: ComAtprotoLabelDefs.Label) -> String? {
+        let value = label.uri.uriString()
+        if value.hasPrefix("did:"), label.cid == nil, (try? DID(didString: value)) != nil {
+            return value
+        }
+        if value.hasPrefix("at://"),
+           let uri = try? ATProtocolURI(uriString: value),
+           uri.authority.hasPrefix("did:"), !uri.isSpace,
+           uri.collection != nil, uri.recordKey != nil {
+            return uri.authority
+        }
+        return nil
+    }
+
+    static func canAppeal(_ label: ComAtprotoLabelDefs.Label, viewerDID: String) -> Bool {
+        isLabelActive(label) && subjectOwnerDID(label) == viewerDID
+            && (label.cid != nil || label.uri.uriString().hasPrefix("did:"))
+            && !isSelfLabel(label, viewerDID: viewerDID)
+    }
+
     /// Submit an appeal for a label applied by a third-party labeler
     func submitAppeal(
         label: ComAtprotoLabelDefs.Label,
         viewerDID: String? = nil,
         details: String? = nil
     ) async throws -> Bool {
-        if let viewerDID = viewerDID, label.src.didString() == viewerDID {
+        try Task.checkCancellation()
+        guard let viewerDID, Self.subjectOwnerDID(label) == viewerDID else {
+            throw LabelAppealError.subjectNotOwned
+        }
+        guard !Self.isSelfLabel(label, viewerDID: viewerDID) else {
             throw LabelAppealError.selfLabelNotAppealable
         }
-        
+        guard Self.isLabelActive(label) else { throw LabelAppealError.inactiveLabel }
+        let reason = details?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !reason.isEmpty, reason.count <= 300 else { throw LabelAppealError.invalidDetails }
+
         let subject = try createLabelSubject(for: label)
         let labelerDid = label.src.didString()
         
@@ -185,12 +263,12 @@ final class ReportingService {
             return try await submitReport(
                 subject: subject,
                 reasonType: .toolsozonereportdefsreasonappeal,
-                reason: details,
-                labelerDid: labelerDid
+                reason: reason,
+                labelerDid: labelerDid,
+                expectedAccountDID: viewerDID
             )
         } catch {
-            let msg = error.localizedDescription.lowercased()
-            if msg.contains("already") || msg.contains("duplicate") || msg.contains("alreadyappealed") {
+            if let xrpcError = error as? ATProtoXRPCError, xrpcError.error == "AlreadyAppealed" {
                 throw LabelAppealError.alreadyAppealed
             }
             throw error
@@ -208,11 +286,11 @@ final class ReportingService {
                 subject: subject,
                 reasonType: .toolsozonereportdefsreasonappeal,
                 reason: details,
-                labelerDid: Self.officialBlueskyDID
+                labelerDid: Self.officialBlueskyDID,
+                expectedAccountDID: userDID
             )
         } catch {
-            let msg = error.localizedDescription.lowercased()
-            if msg.contains("already") || msg.contains("duplicate") || msg.contains("alreadyappealed") {
+            if let xrpcError = error as? ATProtoXRPCError, xrpcError.error == "AlreadyAppealed" {
                 throw LabelAppealError.alreadyAppealed
             }
             throw error
@@ -224,7 +302,7 @@ final class ReportingService {
         if label.neg == true {
             return false
         }
-        if let exp = label.exp?.date, exp < date {
+        if let exp = label.exp?.date, exp <= date {
             return false
         }
         return true

@@ -1,0 +1,93 @@
+//
+//  RepostHeaderView.swift
+//  Catbird
+//
+//  Created by Josh LaCalamito on 12/9/23.
+//
+
+import Petrel
+import SwiftUI
+
+struct RepostHeaderView: View {
+    @Environment(AppState.self) private var appState: AppState?
+    let reposter: AppBskyActorDefs.ProfileViewBasic
+    @Binding var path: NavigationPath
+    
+    var body: some View {
+        HStack(alignment: .center, spacing: 4) {
+            Image(systemName: "arrow.2.squarepath")
+                .foregroundColor(.secondary)
+                .appFont(AppTextRole.subheadline)
+            
+            repostedByText
+                .appFont(AppTextRole.body)
+                .textScale(.secondary)
+                .foregroundColor(.secondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .allowsTightening(true)
+                .offset(y: -2)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityLabel(repostedByAccessibilityLabel)
+
+        }
+        .onTapGesture {
+            path.append(NavigationDestination.profile(reposter.did.didString()))
+        }
+        .padding(.leading, 3)
+    }
+
+    private var reposterName: String {
+        reposter.displayName ?? reposter.handle.description
+    }
+
+    /// "reposted by <name> [badge]" as composed `Text` so the inline verified
+    /// badge keeps the surrounding typography and truncation.
+    private var repostedByText: Text {
+        let base = Text("reposted by \(reposterName)")
+        let hideBadges = appState?.preferencesManager.hideVerificationBadges ?? false
+        if let badge = VerificationBadge.inlineText(for: reposter.verification, did: reposter.did, hideBadges: hideBadges) {
+          return base + Text(verbatim: " ") + badge.font(.caption2)
+        }
+        return base
+    }
+
+    private var repostedByAccessibilityLabel: String {
+        let hideBadges = appState?.preferencesManager.hideVerificationBadges ?? false
+        if let kind = VerificationBadge.kind(for: reposter.verification, did: reposter.did, hideBadges: hideBadges) {
+            return "reposted by \(reposterName), \(kind.accessibilityLabel)"
+        }
+        return "reposted by \(reposterName)"
+    }
+}
+
+#Preview("Repost Header") {
+  AsyncPreviewContent { appState in
+    RepostHeaderPreviewLoader(appState: appState)
+  }
+}
+
+private struct RepostHeaderPreviewLoader: View {
+  let appState: AppState
+  @State private var reposter: AppBskyActorDefs.ProfileViewBasic?
+
+  var body: some View {
+    Group {
+      if let reposter {
+        RepostHeaderView(
+          reposter: reposter,
+          path: .constant(NavigationPath())
+        )
+        .padding()
+      } else {
+        ProgressView("Loading...")
+      }
+    }
+    .task {
+      if let feedPost = await PreviewData.firstRepost(from: appState),
+         case .appBskyFeedDefsReasonRepost(let reasonRepost) = feedPost.reason {
+        reposter = reasonRepost.by
+      }
+    }
+  }
+}

@@ -1,0 +1,131 @@
+//
+//  RepostsView.swift
+//  Catbird
+//
+//  Created by Josh LaCalamito on 2/26/25.
+//
+
+import SwiftUI
+import Petrel
+
+struct RepostsView: View {
+    let postUri: String
+    @Binding var path: NavigationPath
+    @Environment(AppState.self) private var appState
+    @Environment(\.horizontalSizeClass) private var hSizeClass
+    @State private var reposts: [AppBskyActorDefs.ProfileView] = []
+    @State private var loading: Bool = true
+    @State private var error: Error?
+    @State private var cursor: String?
+
+    private var contentMaxWidth: CGFloat {
+        hSizeClass == .compact ? .infinity : 600
+    }
+
+    var body: some View {
+        VStack {
+            if loading && reposts.isEmpty {
+                ProgressView()
+                    .padding()
+            } else if let error = error {
+                Text("Error loading reposts: \(error.localizedDescription)")
+                    .padding()
+            } else if reposts.isEmpty {
+                Text("No reposts yet")
+                    .padding()
+                    .foregroundColor(.secondary)
+            } else {
+                List {
+                    ForEach(reposts, id: \.did) { profile in
+                        ProfileRowView(profile: profile, path: $path)
+                            .mainContentFrame()
+                            .alignmentGuide(.listRowSeparatorLeading) { _ in 0 }
+                            .alignmentGuide(.listRowSeparatorTrailing) { d in d.width }
+                            .listRowSeparator(.visible)
+                            .listRowInsets(EdgeInsets())
+                    }
+
+                    if let cursor = cursor {
+                        ProgressView()
+                            .onAppear {
+                                Task { await loadMoreReposts() }
+                            }
+                            .listRowSeparator(.hidden)
+                    }
+                }
+                .listStyle(.plain)
+                .frame(maxWidth: contentMaxWidth)
+                .frame(maxWidth: .infinity, alignment: .center)
+            }
+        }
+        .navigationTitle("Reposts")
+        .task {
+            await loadReposts()
+        }
+    }
+    
+    private func loadReposts() async {
+        loading = true
+        
+        do {
+            guard let client = appState.atProtoClient else {
+                error = NSError(domain: "AppError", code: 0, userInfo: [NSLocalizedDescriptionKey: "Not logged in"])
+                loading = false
+                return
+            }
+            
+            let uri = try ATProtocolURI(uriString: postUri)
+            let input = AppBskyFeedGetRepostedBy.Parameters(uri: uri, limit: 50)
+            
+            let (_, result) = try await client.app.bsky.feed.getRepostedBy(input: input)
+            
+            if let result = result {
+                reposts = result.repostedBy
+                cursor = result.cursor
+            }
+        } catch {
+            self.error = error
+        }
+        
+        loading = false
+    }
+    
+    private func loadMoreReposts() async {
+        guard let client = appState.atProtoClient,
+              let currentCursor = cursor,
+              !loading else { return }
+        
+        loading = true
+        
+        do {
+            let uri = try ATProtocolURI(uriString: postUri)
+            let input = AppBskyFeedGetRepostedBy.Parameters(
+                uri: uri,
+                limit: 50,
+                cursor: currentCursor
+            )
+            
+            let (_, result) = try await client.app.bsky.feed.getRepostedBy(input: input)
+            
+            if let result = result {
+                reposts.append(contentsOf: result.repostedBy)
+                cursor = result.cursor
+            }
+        } catch {
+            self.error = error
+        }
+        
+        loading = false
+    }
+}
+
+#Preview("RepostsView") {
+  @Previewable @State var path = NavigationPath()
+  NavigationStack(path: $path) {
+    RepostsView(
+      postUri: "at://did:plc:z72i7hdynmk6r22z27h6tvur/app.bsky.feed.post/3l2s5xxv6fn2c",
+      path: $path
+    )
+  }
+  .previewWithAuthenticatedState()
+}

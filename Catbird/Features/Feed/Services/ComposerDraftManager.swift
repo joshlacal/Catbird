@@ -65,7 +65,13 @@ final class ComposerDraftManager {
   init(appState: AppState? = nil) {
     logger.info("🚀 ComposerDraftManager initializing - Has appState: \(appState != nil)")
     self.appState = appState
+    #if DEBUG
+    if !ProcessInfo.processInfo.arguments.contains("--social-actions-ui-fixture") {
+      loadPersistedDraft()
+    }
+    #else
     loadPersistedDraft()
+    #endif
     logger.debug("✅ ComposerDraftManager initialized - Current draft loaded: \(self.currentDraft != nil)")
   }
   
@@ -75,9 +81,15 @@ final class ComposerDraftManager {
     logger.info("🗄️ Setting model context for draft persistence")
     let persistence = DraftPersistence(modelContext: context)
     self.draftPersistence = persistence
-    self.draftSyncService = DraftSyncService(persistence: persistence) { [weak self] in
-      self?.appState?.atProtoClient
-    }
+    self.draftSyncService = DraftSyncService(
+      persistence: persistence,
+      clientProvider: { [weak self] in self?.appState?.atProtoClient },
+      accountProvider: { [weak self] in
+        guard let ownedDID = self?.currentAccountDID,
+              AppStateManager.shared.lifecycle.userDID == ownedDID else { return nil }
+        return ownedDID
+      }
+    )
 
     // Now that we have persistence, perform migration and load drafts
     Task {
@@ -87,10 +99,39 @@ final class ComposerDraftManager {
     }
   }
   
+  #if DEBUG
+  /// Isolated fixture setup: never migrates legacy files, writes migration
+  /// markers, observes authentication, or constructs a network sync service.
+  @MainActor
+  func configureForTesting(modelContext: ModelContext) {
+    accountObservation?.cancel()
+    accountObservation = nil
+    draftSyncService?.cancelPendingWork()
+    draftSyncService = nil
+    draftSyncIssue = nil
+    let persistence = DraftPersistence(modelContext: modelContext)
+    draftPersistence = persistence
+    if let accountDID = currentAccountDID {
+      savedDrafts = ((try? persistence.fetchDrafts(for: accountDID)) ?? [])
+        .map { DraftPostViewModel(draftPost: $0) }
+    } else {
+      savedDrafts = []
+    }
+    draftsLoaded = true
+  }
+  #endif
+
   /// Update the appState reference (called after AppState initialization)
   func updateAppState(_ appState: AppState?) {
     logger.info("🔄 Updating appState reference - Has appState: \(appState != nil)")
     self.appState = appState
+    #if DEBUG
+    if ProcessInfo.processInfo.arguments.contains("--social-actions-ui-fixture") {
+      accountObservation?.cancel()
+      accountObservation = nil
+      return
+    }
+    #endif
     
     // Cancel previous account observation
     if accountObservation != nil {
@@ -112,6 +153,7 @@ final class ComposerDraftManager {
             lastDID = currentDID
             // Clear current draft from previous account so it doesn't bleed over
             await MainActor.run {
+              self.draftSyncService?.cancelPendingWork()
               self.persistDebounceTask?.cancel()
               self.persistDebounceTask = nil
               self.clearGeneration += 1
@@ -156,11 +198,13 @@ final class ComposerDraftManager {
     
     logger.info("💾 Saving current draft to disk - Account: \(accountDID), Post text length: \(draft.postText.count)")
     
-    Task {
+    let capturedRestoredID = restoredSavedDraftId
+    let capturedGeneration = clearGeneration
+    Task { @MainActor in
       do {
         let savedDraftId: UUID
-        // If this draft was restored from a saved draft, update it instead of creating a new one
-        if let restoredId = restoredSavedDraftId {
+        // Save the captured draft, never a newly selected draft's identity.
+        if let restoredId = capturedRestoredID {
           logger.info("♻️ Updating existing saved draft: \(restoredId.uuidString)")
           try await persistence.updateDraft(id: restoredId, draft: draft, accountDID: accountDID)
           logger.info("✅ Successfully updated draft in SwiftData - ID: \(restoredId.uuidString)")
@@ -171,15 +215,9 @@ final class ComposerDraftManager {
           savedDraftId = draftId
         }
 
-        await MainActor.run {
-          currentDraft = nil
-          restoredSavedDraftId = nil
-          logger.debug("🧹 Cleared current draft")
-        }
-        // Remove UserDefaults entry on background thread
-        let key = draftKey
-        Task.detached(priority: .utility) {
-          UserDefaults.standard.removeObject(forKey: key)
+        if clearGeneration == capturedGeneration, currentAccountDID == accountDID,
+           restoredSavedDraftId == capturedRestoredID, currentDraft == draft {
+          clearWorkingDraftAfterStash()
         }
         await loadSavedDrafts()
         scheduleRemotePush(draftId: savedDraftId)
@@ -316,21 +354,38 @@ final class ComposerDraftManager {
     }
 
     Task { @MainActor in
-      // Capture remote identity before the local row is deleted so the
-      // deletion can propagate to the AppView
-      let remoteId = try? persistence.remoteId(for: draftId)
+      guard let accountDID = currentAccountDID else { return }
       do {
-        try await persistence.deleteDraft(id: draftId)
-        logger.info("✅ Successfully deleted draft - ID: \(draftId.uuidString)")
-        if let remoteId, let syncService = self.draftSyncService {
-          await syncService.deleteRemoteDraft(remoteId: remoteId)
-        }
+        try persistence.markDeleted(id: draftId, accountDID: accountDID)
         await loadSavedDrafts()
+        await self.draftSyncService?.syncDrafts(accountDID: accountDID)
+        self.draftSyncIssue = self.draftSyncService?.lastIssue
       } catch {
-        logger.error("❌ Failed to delete saved draft - ID: \(draftId.uuidString), Error: \(error.localizedDescription)")
+        self.draftSyncIssue = error.localizedDescription
       }
     }
   }
+
+  @MainActor
+  func enableDraftSync() async {
+    ExperimentalSettings.shared.draftSyncEnabled = true
+    await performRemoteSync()
+  }
+
+  /// Explicitly save a recovery row as a new draft. Existing remote identities
+  /// stay retired; no deleted remote record is resurrected by an ordinary sync.
+  @MainActor
+  func saveRecoveryCopyToBluesky(_ draft: DraftPostViewModel) async {
+    guard let persistence = draftPersistence, let account = currentAccountDID,
+          account == draft.accountDID, let content = try? draft.decodeDraft() else { return }
+    do {
+      _ = try persistence.saveDraft(content, accountDID: account)
+      await performRemoteSync()
+      await loadSavedDrafts()
+    } catch { draftSyncIssue = error.localizedDescription }
+  }
+
+  var draftSyncIssue: String?
 
   /// Whether AppView draft sync is active (drives the drafts sheet disclosure).
   @MainActor
@@ -345,6 +400,8 @@ final class ComposerDraftManager {
     guard let syncService = draftSyncService, syncService.isEnabled else { return }
     guard let accountDID = currentAccountDID else { return }
     await syncService.syncDrafts(accountDID: accountDID)
+    guard currentAccountDID == accountDID else { return }
+    draftSyncIssue = syncService.lastIssue
     await loadSavedDrafts()
   }
 
@@ -352,7 +409,7 @@ final class ComposerDraftManager {
   /// composing, when the draft was restored from a saved draft.
   @MainActor
   func scheduleWorkingDraftSync(_ draft: PostComposerDraft) {
-    guard let syncService = draftSyncService, syncService.isEnabled else { return }
+    guard let syncService = draftSyncService else { return }
     guard let restoredId = restoredSavedDraftId, let accountDID = currentAccountDID else { return }
     syncService.scheduleWorkingDraftPush(draftId: restoredId, draft: draft, accountDID: accountDID)
   }
@@ -729,6 +786,7 @@ final class ComposerDraftManager {
     }
   }
 
+  @MainActor
   private func performPersistDraft() async {
     logger.debug("💾 Persisting draft to UserDefaults (background)")
 
@@ -737,9 +795,7 @@ final class ComposerDraftManager {
 
     guard let draft = currentDraft else {
       logger.debug("  No draft - removing UserDefaults entry")
-      await Task.detached(priority: .utility) {
-        UserDefaults.standard.removeObject(forKey: self.draftKey)
-      }.value
+      UserDefaults.standard.removeObject(forKey: draftKey)
       return
     }
 
@@ -753,10 +809,9 @@ final class ComposerDraftManager {
         return
       }
 
-      let key = draftKey
-      await Task.detached(priority: .utility) {
-        UserDefaults.standard.set(data, forKey: key)
-      }.value
+      // This final write cannot suspend between the generation check and
+      // commit, so clear/account-switch cannot be undone by a detached writer.
+      UserDefaults.standard.set(data, forKey: draftKey)
       logger.debug("  ✅ Draft persisted - Size: \(data.count) bytes")
     } catch {
       logger.error("  ❌ Failed to persist composer draft: \(error.localizedDescription)")
@@ -801,6 +856,9 @@ struct DraftPostViewModel: Identifiable {
   let isQuote: Bool
   let isThread: Bool
   let isSynced: Bool
+  let syncIssue: String?
+  let recoveryReason: String?
+  let remoteId: String?
   let remoteMediaDeviceName: String?
   let postCount: Int
   let thumbnailURLs: [URL]
@@ -819,7 +877,13 @@ struct DraftPostViewModel: Identifiable {
     self.isReply = draftPost.isReply
     self.isQuote = draftPost.isQuote
     self.isThread = draftPost.isThread
-    self.isSynced = draftPost.remoteId != nil
+    let syncState = draftPost.syncMetadata.flatMap { try? JSONDecoder().decode(DraftSyncState.self, from: $0) }
+    let content = try? draftPost.decodeDraft()
+    self.isSynced = draftPost.remoteId != nil && syncState?.baselineLocal == content
+      && syncState?.issue == nil && syncState?.recoveryReason == nil
+    self.syncIssue = syncState?.issue
+    self.recoveryReason = syncState?.recoveryReason
+    self.remoteId = draftPost.remoteId
     self.remoteMediaDeviceName = draftPost.remoteMediaDeviceName
     self.draftData = draftPost.draftData
     if let draft = try? JSONDecoder().decode(PostComposerDraft.self, from: draftData) {

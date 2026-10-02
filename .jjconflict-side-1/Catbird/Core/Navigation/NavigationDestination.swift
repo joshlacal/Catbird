@@ -1,0 +1,167 @@
+import Foundation
+import Petrel
+
+public enum NavigationDestination: Hashable, Sendable {
+    case profile(String)  // DID or handle
+    case post(ATProtocolURI)
+    case hashtag(String)
+    case topic(String)
+    case timeline
+    case feed(ATProtocolURI)
+    case list(ATProtocolURI)
+    case createList
+    case editList(ATProtocolURI)
+    case listManager
+    case listDiscovery
+    case listFeed(ATProtocolURI)
+    case listMembers(ATProtocolURI)
+    case starterPack(ATProtocolURI)
+    case starterPackShort(String)
+    case postLikes(String) // postUri
+    case postReposts(String) // postUri
+    case postQuotes(String) // postUri
+    case bookmarks
+    case activitySubscriptions
+    case notificationActivity([ATProtocolURI])
+    case videoFeed
+    case settings(SettingsRoute)
+    #if os(iOS)
+    case conversation(String) // convoId
+    case chatTab
+    #endif
+    
+    public func hash(into hasher: inout Hasher) {
+        switch self {
+        case .profile(let did):
+            hasher.combine("profile")
+            hasher.combine(did)
+        case .post(let uri):
+            hasher.combine("post")
+            hasher.combine(uri.uriString())
+        case .hashtag(let tag):
+            hasher.combine("hashtag")
+            hasher.combine(tag)
+        case .topic(let topic):
+            hasher.combine("topic")
+            hasher.combine(topic)
+        case .timeline:
+            hasher.combine("timeline")
+        case .feed(let uri):
+            hasher.combine("feed")
+            hasher.combine(uri.uriString())
+        case .list(let uri):
+            hasher.combine("list")
+            hasher.combine(uri.uriString())
+        case .createList:
+            hasher.combine("createList")
+        case .editList(let uri):
+            hasher.combine("editList")
+            hasher.combine(uri.uriString())
+        case .listManager:
+            hasher.combine("listManager")
+        case .listDiscovery:
+            hasher.combine("listDiscovery")
+        case .listFeed(let uri):
+            hasher.combine("listFeed")
+            hasher.combine(uri.uriString())
+        case .listMembers(let uri):
+            hasher.combine("listMembers")
+            hasher.combine(uri.uriString())
+        case .starterPack(let uri):
+            hasher.combine("starterPack")
+            hasher.combine(uri.uriString())
+        case .starterPackShort(let code):
+            hasher.combine("starterPackShort")
+            hasher.combine(code)
+        case .postLikes(let postUri):
+            hasher.combine("postLikes")
+            hasher.combine(postUri)
+        case .postReposts(let postUri):
+            hasher.combine("postReposts")
+            hasher.combine(postUri)
+        case .postQuotes(let postUri):
+            hasher.combine("postQuotes")
+            hasher.combine(postUri)
+        case .bookmarks:
+            hasher.combine("bookmarks")
+        case .activitySubscriptions:
+            hasher.combine("activitySubscriptions")
+        case .notificationActivity(let uris):
+            hasher.combine("notificationActivity")
+            for uri in uris {
+                hasher.combine(uri.uriString())
+            }
+        case .videoFeed:
+            hasher.combine("videoFeed")
+        case .settings(let route):
+            hasher.combine("settings")
+            hasher.combine(route)
+        #if os(iOS)
+        case .conversation(let convoId):
+            hasher.combine("conversation")
+            hasher.combine(convoId)
+        case .chatTab:
+            hasher.combine("chatTab")
+        #endif
+        }
+    }
+    
+    public static func == (lhs: NavigationDestination, rhs: NavigationDestination) -> Bool {
+        switch (lhs, rhs) {
+        case (.profile(let lhsDid), .profile(let rhsDid)):
+            return lhsDid == rhsDid
+        case (.post(let lhsUri), .post(let rhsUri)):
+            return lhsUri.uriString() == rhsUri.uriString()
+        case (.hashtag(let lhsTag), .hashtag(let rhsTag)):
+            return lhsTag == rhsTag
+        case (.topic(let lhsTopic), .topic(let rhsTopic)):
+            return lhsTopic == rhsTopic
+        case (.feed(let lhsUri), .feed(let rhsUri)):
+            return lhsUri.uriString() == rhsUri.uriString()
+        case (.list(let lhsUri), .list(let rhsUri)):
+            return lhsUri.uriString() == rhsUri.uriString()
+        case (.createList, .createList):
+            return true
+        case (.editList(let lhsUri), .editList(let rhsUri)):
+            return lhsUri.uriString() == rhsUri.uriString()
+        case (.listManager, .listManager):
+            return true
+        case (.listDiscovery, .listDiscovery):
+            return true
+        case (.listFeed(let lhsUri), .listFeed(let rhsUri)):
+            return lhsUri.uriString() == rhsUri.uriString()
+        case (.listMembers(let lhsUri), .listMembers(let rhsUri)):
+            return lhsUri.uriString() == rhsUri.uriString()
+        case (.starterPack(let lhsUri), .starterPack(let rhsUri)):
+            return lhsUri.uriString() == rhsUri.uriString()
+        case (.starterPackShort(let lhsCode), .starterPackShort(let rhsCode)):
+            return lhsCode == rhsCode
+        case (.postLikes(let lhsUri), .postLikes(let rhsUri)):
+            return lhsUri == rhsUri
+        case (.postReposts(let lhsUri), .postReposts(let rhsUri)):
+            return lhsUri == rhsUri
+        case (.postQuotes(let lhsUri), .postQuotes(let rhsUri)):
+            return lhsUri == rhsUri
+        case (.bookmarks, .bookmarks):
+            return true
+        case (.activitySubscriptions, .activitySubscriptions):
+            return true
+        case (.notificationActivity(let lhsUris), .notificationActivity(let rhsUris)):
+            return lhsUris.map { $0.uriString() } == rhsUris.map { $0.uriString() }
+        case (.videoFeed, .videoFeed):
+            return true
+        case (.settings(let lhsRoute), .settings(let rhsRoute)):
+            return lhsRoute == rhsRoute
+        #if os(iOS)
+        case (.conversation(let lhsId), .conversation(let rhsId)):
+            return lhsId == rhsId
+        case (.chatTab, .chatTab):
+            return true
+        #endif
+        case (.timeline, .timeline):
+            return true
+        default:
+            return false
+        }
+    }
+}

@@ -45,8 +45,26 @@ final class PostComposerViewModel {
   
   // MARK: - Reply and Quote Properties
   
-  var parentPost: AppBskyFeedDefs.PostView?
-  var quotedPost: AppBskyFeedDefs.PostView?
+  var parentPost: AppBskyFeedDefs.PostView? {
+    didSet {
+      if !isUpdatingText {
+        pendingParentPostURI = parentPost?.uri.uriString()
+        parentRestorationTask?.cancel()
+      }
+    }
+  }
+  var quotedPost: AppBskyFeedDefs.PostView? {
+    didSet {
+      // Entry switching temporarily clears this property while loading a different entry.
+      guard !isUpdatingText, threadEntries.indices.contains(currentThreadIndex) else { return }
+      let entryID = threadEntries[currentThreadIndex].id
+      quoteRestorationTasks[entryID]?.cancel()
+      quoteRestorationTasks[entryID] = nil
+      threadEntries[currentThreadIndex].quotedPost = quotedPost
+      threadEntries[currentThreadIndex].draftQuotedPostURI = quotedPost?.uri.uriString()
+      threadEntries[currentThreadIndex].draftQuotedPostCID = quotedPost?.cid.string
+    }
+  }
   var replyTo: AppBskyFeedDefs.PostView?
   
   // MARK: - Media Properties
@@ -134,7 +152,9 @@ final class PostComposerViewModel {
   var mediaSourceTracker: Set<String> = []
   var showLabelSelector = false
   var showThreadgateOptions = false
-  var interactionSettings: PostInteractionSettingsState = PostInteractionSettingsState()
+  var interactionSettings: PostInteractionSettingsState = PostInteractionSettingsState() {
+    didSet { interactionSettingsRevision += 1 }
+  }
   var threadgateSettings: ThreadgateSettings {
     get { interactionSettings.threadgate }
     set { interactionSettings.threadgate = newValue }
@@ -142,6 +162,19 @@ final class PostComposerViewModel {
   // MARK: - Private Properties
   
   let appState: AppState
+
+  private var draftRestorationGeneration = UUID()
+  private var pendingParentPostURI: String?
+  private var parentRestorationTask: Task<Void, Never>?
+  private var quoteRestorationTasks: [UUID: Task<Void, Never>] = [:]
+  private var interactionDefaultsTask: Task<Void, Never>?
+  private var interactionSettingsRevision = 0
+  private struct DraftInteractionSnapshot {
+    let settings: PostInteractionSettingsState
+    let threadgateAllow: [AppBskyDraftDefs.DraftThreadgateAllowUnion]?
+    let postgateEmbeddingRules: [AppBskyDraftDefs.DraftPostgateEmbeddingRulesUnion]?
+  }
+  private var restoredInteractionSnapshot: DraftInteractionSnapshot?
   
   // MARK: - Performance Optimization
   
@@ -231,22 +264,7 @@ final class PostComposerViewModel {
     self.quotedPost = quotedPost
     self.appState = appState
 
-    // Initialize interaction settings from saved account defaults
-    if let defaultPref = appState.preferencesManager.cachedPostInteractionSettingsPref() {
-      self.interactionSettings = Self.interactionSettings(from: defaultPref)
-    } else {
-      self.interactionSettings = PostInteractionSettingsState()
-      Task { [weak self] in
-        guard let self = self else { return }
-        if let pref = try? await self.appState.preferencesManager.getPostInteractionSettingsPref() {
-          await MainActor.run {
-            if !self.interactionSettings.isCustom {
-              self.interactionSettings = Self.interactionSettings(from: pref)
-            }
-          }
-        }
-      }
-    }
+    loadDefaultInteractionSettings()
     if let client = appState.atProtoClient {
       self.mediaUploadManager = MediaUploadManager(client: client)
       logger.debug("PostComposerViewModel: MediaUploadManager initialized")
@@ -277,7 +295,12 @@ func saveDraftIfNeeded() {
     let hasVideo = videoItem != nil
     let hasGif = selectedGif != nil
     
-    guard hasText || hasMedia || hasVideo || hasGif else {
+    let hasQuote = quotedPost != nil || threadEntries.contains { $0.draftQuotedPostURI != nil || $0.quotedPost != nil }
+    let hasThreadContent = isThreadMode && threadEntries.contains {
+      !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !$0.mediaItems.isEmpty
+        || $0.videoItem != nil || $0.selectedGif != nil
+    }
+    guard hasText || hasMedia || hasVideo || hasGif || hasQuote || hasThreadContent else {
       logger.trace("PostComposerViewModel: saveDraftIfNeeded - no content to save")
       return
     }
@@ -377,6 +400,10 @@ func saveDraftIfNeeded() {
   }
   
   func saveDraftState() -> PostComposerDraft {
+    let rootQuote = isThreadMode && currentThreadIndex != 0 ? threadEntries.first?.quotedPost : quotedPost
+    let rootQuoteURI = threadEntries.first?.draftQuotedPostURI ?? rootQuote?.uri.uriString()
+    let rootQuoteCID = threadEntries.first?.draftQuotedPostCID ?? rootQuote?.cid.string
+    let rules = effectiveDraftInteractionRules()
     return PostComposerDraft(
       postText: postText,
       mediaItems: mediaItems.map(CodableMediaItem.init),
@@ -385,11 +412,19 @@ func saveDraftIfNeeded() {
       selectedLanguages: selectedLanguages,
       selectedLabels: selectedLabels,
       outlineTags: outlineTags,
-      threadEntries: threadEntries.map { CodableThreadEntry(from: $0, parentPost: parentPost, quotedPost: quotedPost) },
+      threadEntries: threadEntries.enumerated().map { index, entry in
+        CodableThreadEntry(from: entry, parentPost: index == 0 ? parentPost : nil,
+                           quotedPost: index == 0 ? rootQuote : nil,
+                           parentPostURI: index == 0 ? pendingParentPostURI : nil)
+      },
       isThreadMode: isThreadMode,
       currentThreadIndex: currentThreadIndex,
-      parentPostURI: parentPost?.uri.uriString(),
-      quotedPostURI: quotedPost?.uri.uriString()
+      parentPostURI: parentPost?.uri.uriString() ?? pendingParentPostURI,
+      quotedPostURI: rootQuoteURI,
+      quotedPostCID: rootQuoteCID,
+      draftPostgateEmbeddingRules: rules.postgate,
+      draftThreadgateAllow: rules.threadgate,
+      hasDraftInteractionSettings: true
     )
   }
   
@@ -397,6 +432,12 @@ func saveDraftIfNeeded() {
     logger.info("PostComposerViewModel: Clearing all composer state")
     isUpdatingText = true
     defer { isUpdatingText = false }
+    invalidateDraftRestoration()
+    parentPost = nil
+    replyTo = nil
+    quotedPost = nil
+    pendingParentPostURI = nil
+    restoredInteractionSnapshot = nil
     
     postText = ""
     richAttributedText = NSAttributedString()
@@ -415,21 +456,7 @@ func saveDraftIfNeeded() {
     selectedEmbedURL = nil
     urlsKeptForEmbed = []
     mentionSuggestions = []
-    if let defaultPref = appState.preferencesManager.cachedPostInteractionSettingsPref() {
-      interactionSettings = Self.interactionSettings(from: defaultPref)
-    } else {
-      interactionSettings = PostInteractionSettingsState()
-      Task { [weak self] in
-        guard let self = self else { return }
-        if let pref = try? await self.appState.preferencesManager.getPostInteractionSettingsPref() {
-          await MainActor.run {
-            if !self.interactionSettings.isCustom {
-              self.interactionSettings = Self.interactionSettings(from: pref)
-            }
-          }
-        }
-      }
-    }
+    loadDefaultInteractionSettings()
     
     logger.debug("PostComposerViewModel: All state cleared")
   }
@@ -438,6 +465,7 @@ func saveDraftIfNeeded() {
     logger.info("PostComposerViewModel: Restoring draft state - text length: \(draft.postText.count), media: \(draft.mediaItems.count), video: \(draft.videoItem != nil), gif: \(draft.selectedGif != nil)")
     isUpdatingText = true
     isDraftMode = true
+    invalidateDraftRestoration()
 
     defer {
       isUpdatingText = false
@@ -453,25 +481,41 @@ func saveDraftIfNeeded() {
     selectedLabels = draft.selectedLabels
     outlineTags = draft.outlineTags
     threadEntries = draft.threadEntries.map { $0.toThreadEntry() }
+    if threadEntries.isEmpty { threadEntries = [ThreadEntry()] }
     isThreadMode = draft.isThreadMode
-    currentThreadIndex = draft.currentThreadIndex
+    currentThreadIndex = min(max(0, draft.currentThreadIndex), threadEntries.count - 1)
+    parentPost = nil
+    replyTo = nil
+    quotedPost = nil
+    pendingParentPostURI = draft.parentPostURI
+    if threadEntries[0].draftQuotedPostURI == nil {
+      threadEntries[0].draftQuotedPostURI = draft.quotedPostURI
+      threadEntries[0].draftQuotedPostCID = draft.quotedPostCID
+    }
+    restoredInteractionSnapshot = nil
+    if draft.hasDraftInteractionSettings == true || draft.draftThreadgateAllow != nil || draft.draftPostgateEmbeddingRules != nil {
+      interactionSettings = Self.interactionSettings(fromDraft: draft)
+      restoredInteractionSnapshot = DraftInteractionSnapshot(
+        settings: interactionSettings,
+        threadgateAllow: draft.draftThreadgateAllow,
+        postgateEmbeddingRules: draft.draftPostgateEmbeddingRules
+      )
+    } else {
+      loadDefaultInteractionSettings()
+    }
     
       logger.debug("PostComposerViewModel: Draft state restored - isThreadMode: \(self.isThreadMode), threadEntries: \(self.threadEntries.count), currentIndex: \(self.currentThreadIndex)")
 
     richAttributedText = NSAttributedString(string: postText)
     updatePostContent()
 
-    // Restore parent and quoted post references from URIs
+    // Retain strong refs before fetching display metadata, so autosave is lossless.
     if let parentURI = draft.parentPostURI {
-      logger.debug("PostComposerViewModel: Restoring parent post from URI: \(parentURI)")
-      Task {
-        await restorePostFromURI(parentURI, isParent: true)
-      }
+      parentRestorationTask = restorePostFromURI(parentURI, entryID: nil)
     }
-    if let quotedURI = draft.quotedPostURI {
-      logger.debug("PostComposerViewModel: Restoring quoted post from URI: \(quotedURI)")
-      Task {
-        await restorePostFromURI(quotedURI, isParent: false)
+    for entry in threadEntries {
+      if let quotedURI = entry.draftQuotedPostURI {
+        quoteRestorationTasks[entry.id] = restorePostFromURI(quotedURI, entryID: entry.id)
       }
     }
 
@@ -490,32 +534,197 @@ func saveDraftIfNeeded() {
     }
   }
 
-  /// Fetch and restore a post from its URI
-  private func restorePostFromURI(_ uriString: String, isParent: Bool) async {
-    guard let client = appState.atProtoClient else { return }
+  private func invalidateDraftRestoration() {
+    draftRestorationGeneration = UUID()
+    parentRestorationTask?.cancel()
+    parentRestorationTask = nil
+    quoteRestorationTasks.values.forEach { $0.cancel() }
+    quoteRestorationTasks.removeAll()
+    interactionDefaultsTask?.cancel()
+    interactionDefaultsTask = nil
+  }
 
-    do {
-        let uri = try ATProtocolURI(uriString: uriString)
-      let params = AppBskyFeedGetPosts.Parameters(uris: [uri])
-      let (responseCode, response) = try await client.app.bsky.feed.getPosts(input: params)
-
-      if responseCode >= 200 && responseCode < 300,
-         let posts = response?.posts,
-         let post = posts.first {
-        await MainActor.run {
-          if isParent {
-            self.parentPost = post
-          } else {
-            self.quotedPost = post
-          }
-        }
-      }
-    } catch {
-      logger.error("Failed to restore post from URI \(uriString): \(error)")
+  private func loadDefaultInteractionSettings() {
+    interactionDefaultsTask?.cancel()
+    let preferences = appState.preferencesManager
+    if let pref = preferences.cachedPostInteractionSettingsPref() {
+      interactionSettings = Self.interactionSettings(from: pref)
+      return
+    }
+    interactionSettings = PostInteractionSettingsState()
+    let generation = draftRestorationGeneration
+    let revision = interactionSettingsRevision
+    let accountDID = appState.userDID
+    let activeAccountDID = AppStateManager.shared.lifecycle.userDID
+    interactionDefaultsTask = Task { [weak self] in
+      guard let pref = try? await preferences.getPostInteractionSettingsPref(),
+            !Task.isCancelled, let self,
+            self.appState.userDID == accountDID,
+            AppStateManager.shared.lifecycle.userDID == activeAccountDID,
+            self.draftRestorationGeneration == generation,
+            self.interactionSettingsRevision == revision,
+            self.restoredInteractionSnapshot == nil else { return }
+      self.interactionSettings = Self.interactionSettings(from: pref)
     }
   }
 
+  /// Fetch display metadata without replacing a removed or superseded strong reference.
+  private func restorePostFromURI(_ uriString: String, entryID: UUID?) -> Task<Void, Never>? {
+    guard let client = appState.atProtoClient else { return nil }
+    let generation = draftRestorationGeneration
+    let accountDID = appState.userDID
+    let activeAccountDID = AppStateManager.shared.lifecycle.userDID
+    guard activeAccountDID == nil || activeAccountDID == accountDID else { return nil }
+    return Task { [weak self] in
+      do {
+        let uri = try ATProtocolURI(uriString: uriString)
+        let params = AppBskyFeedGetPosts.Parameters(uris: [uri])
+        let (responseCode, response) = try await client.app.bsky.feed.getPosts(input: params)
+        guard !Task.isCancelled, let self,
+              self.draftRestorationGeneration == generation,
+              self.appState.userDID == accountDID,
+              AppStateManager.shared.lifecycle.userDID == activeAccountDID,
+              self.appState.atProtoClient === client,
+              (200..<300).contains(responseCode),
+              let post = response?.posts.first(where: { $0.uri.uriString() == uriString }) else { return }
+        if let entryID {
+          guard let index = self.threadEntries.firstIndex(where: { $0.id == entryID }),
+                self.threadEntries[index].draftQuotedPostURI == uriString else { return }
+          self.threadEntries[index].quotedPost = post
+          // Keep the saved CID stable; hydration is only for display metadata.
+          if self.threadEntries[index].draftQuotedPostCID.flatMap({ try? CID.parse($0) }) == nil {
+            self.threadEntries[index].draftQuotedPostCID = post.cid.string
+          }
+          self.quoteRestorationTasks[entryID] = nil
+          if index == self.currentThreadIndex {
+            let wasUpdatingText = self.isUpdatingText
+            self.isUpdatingText = true
+            self.quotedPost = post
+            self.isUpdatingText = wasUpdatingText
+          }
+        } else {
+          guard self.pendingParentPostURI == uriString else { return }
+          self.parentRestorationTask = nil
+          self.parentPost = post
+          self.replyTo = post
+        }
+      } catch {
+        guard !Task.isCancelled else { return }
+        self?.logger.error("Failed to restore draft post: \(error.localizedDescription)")
+      }
+    }
+  }
+
+  deinit {
+    parentRestorationTask?.cancel()
+    quoteRestorationTasks.values.forEach { $0.cancel() }
+    interactionDefaultsTask?.cancel()
+  }
+
   // MARK: - Post Interaction Settings Helper (G40)
+
+  /// A quote can be published from its strong reference even if its preview is unavailable.
+  func postingQuoteReference(for entry: ThreadEntry? = nil) -> ComAtprotoRepoStrongRef? {
+    let source = entry ?? (threadEntries.indices.contains(currentThreadIndex) ? threadEntries[currentThreadIndex] : nil)
+    if let uriString = source?.draftQuotedPostURI,
+       let cidString = source?.draftQuotedPostCID,
+       let uri = try? ATProtocolURI(uriString: uriString),
+       let cid = try? CID.parse(cidString) {
+      return .init(uri: uri, cid: cid)
+    }
+    let post = entry == nil ? quotedPost : entry?.quotedPost
+    return post.map { .init(uri: $0.uri, cid: $0.cid) }
+  }
+
+  var draftReferenceLoadingReason: PostComposerSubmitValidationState.Reason? {
+    if pendingParentPostURI != nil && parentPost == nil { return .replyLoading }
+    let entries = isThreadMode ? threadEntries : Array(threadEntries.prefix(1))
+    if entries.contains(where: { $0.draftQuotedPostURI != nil && postingQuoteReference(for: $0) == nil }) {
+      return .quoteLoading
+    }
+    return nil
+  }
+
+  func ensureDraftReferencesReadyForPosting() throws {
+    guard let reason = draftReferenceLoadingReason else { return }
+    let validation = PostComposerSubmitValidationState(canSubmit: false, reason: reason)
+    throw NSError(domain: "PostError", code: 0, userInfo: [NSLocalizedDescriptionKey: validation.message ?? "The saved post must load before posting."])
+  }
+
+  private func effectiveDraftInteractionRules() -> (
+    threadgate: [AppBskyDraftDefs.DraftThreadgateAllowUnion]?,
+    postgate: [AppBskyDraftDefs.DraftPostgateEmbeddingRulesUnion]?
+  ) {
+    let current = Self.draftInteractionRules(from: interactionSettings)
+    guard let restored = restoredInteractionSnapshot else { return current }
+    // Preserve unsupported rules, and nil versus [], until that control is edited.
+    return (
+      restored.settings.threadgate == interactionSettings.threadgate ? restored.threadgateAllow : current.threadgate,
+      restored.settings.allowQuotes == interactionSettings.allowQuotes ? restored.postgateEmbeddingRules : current.postgate
+    )
+  }
+
+  func postingThreadgateRules() -> [AppBskyFeedThreadgate.AppBskyFeedThreadgateAllowUnion]? {
+    effectiveDraftInteractionRules().threadgate?.map { rule in
+      switch rule {
+      case .appBskyFeedThreadgateMentionRule(let value): return .appBskyFeedThreadgateMentionRule(value)
+      case .appBskyFeedThreadgateFollowerRule(let value): return .appBskyFeedThreadgateFollowerRule(value)
+      case .appBskyFeedThreadgateFollowingRule(let value): return .appBskyFeedThreadgateFollowingRule(value)
+      case .appBskyFeedThreadgateListRule(let value): return .appBskyFeedThreadgateListRule(value)
+      case .unexpected(let value): return .unexpected(value)
+      }
+    }
+  }
+
+  func postingPostgateRules() -> [AppBskyFeedPostgate.AppBskyFeedPostgateEmbeddingRulesUnion]? {
+    effectiveDraftInteractionRules().postgate?.map { rule in
+      switch rule {
+      case .appBskyFeedPostgateDisableRule(let value): return .appBskyFeedPostgateDisableRule(value)
+      case .unexpected(let value): return .unexpected(value)
+      }
+    }
+  }
+
+  private static func draftInteractionRules(from settings: PostInteractionSettingsState) -> (
+    threadgate: [AppBskyDraftDefs.DraftThreadgateAllowUnion]?,
+    postgate: [AppBskyDraftDefs.DraftPostgateEmbeddingRulesUnion]?
+  ) {
+    let threadgate = settings.toThreadgateAllowRules()?.map { rule -> AppBskyDraftDefs.DraftThreadgateAllowUnion in
+      switch rule {
+      case .appBskyFeedThreadgateMentionRule(let value): return .appBskyFeedThreadgateMentionRule(value)
+      case .appBskyFeedThreadgateFollowerRule(let value): return .appBskyFeedThreadgateFollowerRule(value)
+      case .appBskyFeedThreadgateFollowingRule(let value): return .appBskyFeedThreadgateFollowingRule(value)
+      case .appBskyFeedThreadgateListRule(let value): return .appBskyFeedThreadgateListRule(value)
+      case .unexpected(let value): return .unexpected(value)
+      }
+    }
+    let postgate = settings.toPostgateEmbeddingRules()?.map { rule -> AppBskyDraftDefs.DraftPostgateEmbeddingRulesUnion in
+      switch rule {
+      case .appBskyFeedPostgateDisableRule(let value): return .appBskyFeedPostgateDisableRule(value)
+      case .unexpected(let value): return .unexpected(value)
+      }
+    }
+    return (threadgate, postgate)
+  }
+
+  static func interactionSettings(fromDraft draft: PostComposerDraft) -> PostInteractionSettingsState {
+    let threadgate = draft.draftThreadgateAllow?.map { rule -> AppBskyActorDefs.PostInteractionSettingsPrefThreadgateAllowRulesUnion in
+      switch rule {
+      case .appBskyFeedThreadgateMentionRule(let value): return .appBskyFeedThreadgateMentionRule(value)
+      case .appBskyFeedThreadgateFollowerRule(let value): return .appBskyFeedThreadgateFollowerRule(value)
+      case .appBskyFeedThreadgateFollowingRule(let value): return .appBskyFeedThreadgateFollowingRule(value)
+      case .appBskyFeedThreadgateListRule(let value): return .appBskyFeedThreadgateListRule(value)
+      case .unexpected(let value): return .unexpected(value)
+      }
+    }
+    let postgate = draft.draftPostgateEmbeddingRules?.map { rule -> AppBskyActorDefs.PostInteractionSettingsPrefPostgateEmbeddingRulesUnion in
+      switch rule {
+      case .appBskyFeedPostgateDisableRule(let value): return .appBskyFeedPostgateDisableRule(value)
+      case .unexpected(let value): return .unexpected(value)
+      }
+    }
+    return interactionSettings(from: .init(threadgateAllowRules: threadgate, postgateEmbeddingRules: postgate))
+  }
 
   static func interactionSettings(from pref: AppBskyActorDefs.PostInteractionSettingsPref?) -> PostInteractionSettingsState {
     guard let pref = pref else {

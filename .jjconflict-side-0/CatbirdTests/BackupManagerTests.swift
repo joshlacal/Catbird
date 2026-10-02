@@ -1,0 +1,280 @@
+import Testing
+import Foundation
+import SwiftData
+@testable import Catbird
+
+@Suite("Backup System Tests")
+struct BackupManagerTests {
+
+  // MARK: - BackupRecord Tests
+
+  @Test("BackupRecord creation with default values")
+  func testBackupRecordDefaults() {
+    let record = BackupRecord(
+      userDID: "did:plc:test123",
+      userHandle: "test.bsky.social",
+      filePath: "Backups/test.car",
+      fileSize: 1024,
+      carDataHash: "abc123"
+    )
+
+    #expect(record.userDID == "did:plc:test123")
+    #expect(record.userHandle == "test.bsky.social")
+    #expect(record.filePath == "Backups/test.car")
+    #expect(record.fileSize == 1024)
+    #expect(record.carDataHash == "abc123")
+    #expect(record.status == .inProgress)
+    #expect(record.errorMessage == nil)
+    #expect(record.isIntegrityValid == false)
+    #expect(record.repositorySize == nil)
+    #expect(record.recordCount == nil)
+    #expect(record.lastVerifiedDate == nil)
+  }
+
+  @Test("BackupRecord creation with explicit status")
+  func testBackupRecordExplicitStatus() {
+    let record = BackupRecord(
+      userDID: "did:plc:test123",
+      userHandle: "test.bsky.social",
+      filePath: "Backups/test.car",
+      fileSize: 2048,
+      carDataHash: "def456",
+      status: .completed,
+      repositorySize: 4096,
+      recordCount: 150
+    )
+
+    #expect(record.status == .completed)
+    #expect(record.repositorySize == 4096)
+    #expect(record.recordCount == 150)
+  }
+
+  @Test("BackupRecord status transitions")
+  func testStatusTransitions() {
+    let record = BackupRecord(
+      userDID: "did:plc:test123",
+      userHandle: "test.bsky.social",
+      filePath: "Backups/test.car",
+      fileSize: 1024,
+      carDataHash: "abc123",
+      status: .inProgress
+    )
+
+    #expect(record.status == .inProgress)
+
+    record.status = .completed
+    #expect(record.status == .completed)
+
+    record.status = .verifying
+    #expect(record.status == .verifying)
+
+    record.status = .verified
+    record.isIntegrityValid = true
+    record.lastVerifiedDate = Date()
+    #expect(record.status == .verified)
+    #expect(record.isIntegrityValid == true)
+    #expect(record.lastVerifiedDate != nil)
+  }
+
+  @Test("BackupRecord failure status with error message")
+  func testFailureStatus() {
+    let record = BackupRecord(
+      userDID: "did:plc:test123",
+      userHandle: "test.bsky.social",
+      filePath: "Backups/test.car",
+      fileSize: 0,
+      carDataHash: "",
+      status: .failed,
+      errorMessage: "Network connection lost"
+    )
+
+    #expect(record.status == .failed)
+    #expect(record.errorMessage == "Network connection lost")
+  }
+
+  @Test("BackupRecord corrupted status")
+  func testCorruptedStatus() {
+    let record = BackupRecord(
+      userDID: "did:plc:test123",
+      userHandle: "test.bsky.social",
+      filePath: "Backups/test.car",
+      fileSize: 1024,
+      carDataHash: "abc123",
+      status: .completed
+    )
+
+    record.status = .corrupted
+    record.errorMessage = "Hash verification failed"
+    record.isIntegrityValid = false
+
+    #expect(record.status == .corrupted)
+    #expect(record.errorMessage == "Hash verification failed")
+    #expect(record.isIntegrityValid == false)
+  }
+
+  @Test("BackupRecord formattedFileSize")
+  func testFormattedFileSize() {
+    let record = BackupRecord(
+      userDID: "did:plc:test123",
+      userHandle: "test.bsky.social",
+      filePath: "Backups/test.car",
+      fileSize: 1_048_576, // 1 MB
+      carDataHash: "abc123"
+    )
+
+    let formatted = record.formattedFileSize
+    #expect(formatted.contains("MB") || formatted.contains("1"))
+  }
+
+  @Test("BackupRecord ageDescription returns non-empty string")
+  func testAgeDescription() {
+    let record = BackupRecord(
+      userDID: "did:plc:test123",
+      userHandle: "test.bsky.social",
+      filePath: "Backups/test.car",
+      fileSize: 1024,
+      carDataHash: "abc123"
+    )
+
+    let description = record.ageDescription
+    #expect(!description.isEmpty)
+  }
+
+  @Test("BackupRecord fullFileURL points to Documents directory")
+  func testFullFileURL() {
+    let record = BackupRecord(
+      userDID: "did:plc:test123",
+      userHandle: "test.bsky.social",
+      filePath: "Backups/test-backup.car",
+      fileSize: 1024,
+      carDataHash: "abc123"
+    )
+
+    let url = record.fullFileURL
+    #expect(url.lastPathComponent == "test-backup.car")
+    #expect(url.pathComponents.contains("Backups"))
+  }
+
+  // MARK: - BackupConfiguration Tests
+
+  @Test("BackupConfiguration default values")
+  func testConfigDefaults() {
+    let config = BackupConfiguration(userDID: "did:plc:test123")
+
+    #expect(config.userDID == "did:plc:test123")
+    #expect(config.autoBackupEnabled == false)
+    #expect(config.backupFrequencyHours == 168) // Weekly
+    #expect(config.maxBackupsToKeep == 5)
+    #expect(config.lastAutoBackupDate == nil)
+    #expect(config.backupOnLaunch == false)
+    #expect(config.verifyIntegrityAfterBackup == true)
+    #expect(config.showBackupNotifications == true)
+    #expect(config.minimumBackupInterval == 3600)
+    #expect(config.autoParseAfterBackup == true)
+  }
+
+  @Test("BackupConfiguration needsAutomaticBackup when disabled")
+  func testNeedsBackupDisabled() {
+    let config = BackupConfiguration(userDID: "did:plc:test123", autoBackupEnabled: false)
+
+    #expect(config.needsAutomaticBackup == false)
+  }
+
+  @Test("BackupConfiguration needsAutomaticBackup when never backed up")
+  func testNeedsBackupNeverBackedUp() {
+    let config = BackupConfiguration(
+      userDID: "did:plc:test123",
+      autoBackupEnabled: true,
+      lastAutoBackupDate: nil
+    )
+
+    #expect(config.needsAutomaticBackup == true)
+  }
+
+  @Test("BackupConfiguration needsAutomaticBackup when interval elapsed")
+  func testNeedsBackupIntervalElapsed() {
+    let twoDaysAgo = Calendar.current.date(byAdding: .day, value: -2, to: Date())!
+    let config = BackupConfiguration(
+      userDID: "did:plc:test123",
+      autoBackupEnabled: true,
+      backupFrequencyHours: 24, // Daily
+      lastAutoBackupDate: twoDaysAgo
+    )
+
+    #expect(config.needsAutomaticBackup == true)
+  }
+
+  @Test("BackupConfiguration needsAutomaticBackup when interval not elapsed")
+  func testNeedsBackupIntervalNotElapsed() {
+    let oneHourAgo = Calendar.current.date(byAdding: .hour, value: -1, to: Date())!
+    let config = BackupConfiguration(
+      userDID: "did:plc:test123",
+      autoBackupEnabled: true,
+      backupFrequencyHours: 24, // Daily
+      lastAutoBackupDate: oneHourAgo
+    )
+
+    #expect(config.needsAutomaticBackup == false)
+  }
+
+  @Test("BackupConfiguration canCreateNewBackup when never backed up")
+  func testCanCreateNeverBackedUp() {
+    let config = BackupConfiguration(userDID: "did:plc:test123")
+
+    #expect(config.canCreateNewBackup == true)
+  }
+
+  @Test("BackupConfiguration canCreateNewBackup respects minimum interval")
+  func testCanCreateRespectsInterval() {
+    let thirtyMinutesAgo = Calendar.current.date(byAdding: .minute, value: -30, to: Date())!
+    let config = BackupConfiguration(
+      userDID: "did:plc:test123",
+      lastAutoBackupDate: thirtyMinutesAgo,
+      minimumBackupInterval: 3600 // 1 hour
+    )
+
+    #expect(config.canCreateNewBackup == false)
+  }
+
+  @Test("BackupConfiguration canCreateNewBackup after interval passes")
+  func testCanCreateAfterInterval() {
+    let twoHoursAgo = Calendar.current.date(byAdding: .hour, value: -2, to: Date())!
+    let config = BackupConfiguration(
+      userDID: "did:plc:test123",
+      lastAutoBackupDate: twoHoursAgo,
+      minimumBackupInterval: 3600 // 1 hour
+    )
+
+    #expect(config.canCreateNewBackup == true)
+  }
+
+  // MARK: - BackupStatus Tests
+
+  @Test("BackupStatus displayName values")
+  func testStatusDisplayNames() {
+    #expect(BackupStatus.inProgress.displayName == "In Progress")
+    #expect(BackupStatus.completed.displayName == "Completed")
+    #expect(BackupStatus.failed.displayName == "Failed")
+    #expect(BackupStatus.verifying.displayName == "Verifying")
+    #expect(BackupStatus.verified.displayName == "Verified")
+    #expect(BackupStatus.corrupted.displayName == "Corrupted")
+  }
+
+  @Test("BackupStatus systemImage values are non-empty")
+  func testStatusSystemImages() {
+    for status in BackupStatus.allCases {
+      #expect(!status.systemImage.isEmpty, "systemImage should not be empty for \(status)")
+    }
+  }
+
+  @Test("BackupStatus color values")
+  func testStatusColors() {
+    #expect(BackupStatus.inProgress.color == "blue")
+    #expect(BackupStatus.verifying.color == "blue")
+    #expect(BackupStatus.completed.color == "green")
+    #expect(BackupStatus.verified.color == "green")
+    #expect(BackupStatus.failed.color == "red")
+    #expect(BackupStatus.corrupted.color == "red")
+  }
+
+}

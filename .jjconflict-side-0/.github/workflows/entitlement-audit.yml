@@ -1,0 +1,29 @@
+name: Entitlement Audit
+
+on:
+  pull_request:
+    paths:
+      - '**/*.entitlements'
+      - 'scripts/audit_entitlements.sh'
+      - '.github/workflows/entitlement-audit.yml'
+  push:
+    branches:
+      - main
+      - staging
+    paths:
+      - '**/*.entitlements'
+      - 'scripts/audit_entitlements.sh'
+      - '.github/workflows/entitlement-audit.yml'
+  workflow_dispatch:
+
+jobs:
+  entitlement-audit:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run entitlement audit
+        run: |
+          ./scripts/audit_entitlements.sh

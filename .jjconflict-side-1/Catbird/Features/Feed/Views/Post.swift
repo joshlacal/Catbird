@@ -1,0 +1,722 @@
+//
+//  Post.swift
+//  Catbird
+//
+//  Created by Josh LaCalamito on 6/29/24.
+//
+
+import SwiftUI
+import Petrel
+import Translation
+import NaturalLanguage
+import OSLog
+#if os(iOS)
+import UIKit
+#endif
+
+struct Post: View, Equatable {
+    static func == (lhs: Post, rhs: Post) -> Bool {
+        lhs.post == rhs.post
+    }
+    
+    private let logger = Logger(subsystem: "blue.catbird", category: "Translation")
+
+    let post: AppBskyFeedPost
+    let isSelectable: Bool
+    let useUIKitSelectableText: Bool
+    @Binding var path: NavigationPath
+    @State private var showTranslation = false
+    @State private var translatedText: String?
+    @State private var translationConfig: Any? // Use Any instead of specific type for cross-platform compatibility
+    @State private var translationError: String?
+    @State private var isTranslating = false
+    @State private var shouldPrepareTranslation = false
+    @State private var showTranslationPopover = false
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(AppState.self) private var appState
+    @Environment(\.adultContentEnabled) private var adultContentEnabled
+    @State private var bluemojiEnriched: AttributedString?
+    /// Facet-styled body text, built once per `PostStyledTextKey` and reused by every
+    /// body evaluation and by the bluemoji enrichment task.
+    @State private var baseAttributed: AttributedString?
+    @State private var baseAttributedKey: PostStyledTextKey?
+    @State private var showLanguageSelection = false
+    private let textSize: CGFloat?
+    private let textStyle: Font.TextStyle
+    private let textDesign: Font.Design
+    private let textWeight: Font.Weight
+    private let fontWidth: CGFloat?
+    private let lineSpacing: CGFloat
+    private let letterSpacing: CGFloat
+
+    // public initalizer
+    public init(post: AppBskyFeedPost, isSelectable: Bool, path: Binding<NavigationPath>,
+//                textSize: CGFloat = 17,
+//                textStyle: Font.TextStyle = .body,
+//                textDesign: Font.Design = .default,
+//                textWeight: Font.Weight = .regular,
+//                fontWidth: CGFloat = 100,
+//                lineSpacing: CGFloat = 1.5,
+//                letterSpacing: CGFloat = 0
+                
+                textSize: CGFloat? = nil,
+                textStyle: Font.TextStyle = .body,
+                textDesign: Font.Design = .default,
+                textWeight: Font.Weight = .regular,
+                fontWidth: CGFloat? = nil,
+                lineSpacing: CGFloat = 1.2,
+                letterSpacing: CGFloat = 0.2,
+                useUIKitSelectableText: Bool = false
+
+    ) {
+        self.post = post
+        self.isSelectable = isSelectable
+        self.useUIKitSelectableText = useUIKitSelectableText
+        self._path = path
+        self.textSize = textSize
+        self.textStyle = textStyle
+        self.textDesign = textDesign
+        self.textWeight = textWeight
+        self.fontWidth = fontWidth
+        self.lineSpacing = lineSpacing
+        self.letterSpacing = letterSpacing
+
+    }
+    
+    // Typography configuration
+    //    @Environment(\.legibilityWeight) private var legibilityWeight
+    private var postTextDesign: Font.Design = .default
+    private var postTextWeight: Font.Weight = .regular
+    
+    private var sourceLanguages: [Locale.Language] {
+        post.langs?.map { $0.lang } ?? []
+    }
+    
+    private var targetLanguage: Locale.Language {
+        Locale.current.language
+    }
+    
+    private var shouldShowTranslationButton: Bool {
+        guard !post.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return false
+        }
+        let targetBase = targetLanguage.baseLanguageCode?.lowercased() ?? "en"
+        // Show the button if any source language's base code differs from the target
+        return sourceLanguages.contains { ($0.baseLanguageCode?.lowercased() ?? "") != targetBase }
+    }
+
+    private var indicatorLanguage: Locale.Language? {
+        guard PostLanguageIndicators.shouldShow(
+            isEnabled: appState.appSettings.showLanguageIndicators,
+            languageCount: sourceLanguages.count
+        ) else { return nil }
+        let deviceCode = targetLanguage.baseLanguageCode?.lowercased()
+        let preferredCodes = Set(appState.appSettings.contentLanguages.map { $0.lowercased() })
+        return sourceLanguages.first { language in
+            guard let code = language.baseLanguageCode?.lowercased() else { return false }
+            return code != deviceCode && !preferredCodes.contains(code)
+        }
+    }
+    
+    var body: some View {
+        let key = styledTextKey
+        let baseForBody: AttributedString = {
+            if let cached = baseAttributed, baseAttributedKey == key {
+                return cached
+            }
+            return Self.buildBaseStyledString(post: post, key: key)
+        }()
+        let displayString = displayAttributedString(base: baseForBody, key: key)
+
+        VStack(alignment: .leading, spacing: 6) {
+            // Translation button with enhanced styling
+            if shouldShowTranslationButton || indicatorLanguage != nil {
+                HStack(spacing: 6) {
+                    if shouldShowTranslationButton {
+                        translationButton
+                    }
+                    if let indicatorLanguage {
+                        Text(languageName(for: indicatorLanguage))
+                            .appCaption2()
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(.secondary.opacity(0.12), in: Capsule())
+                    }
+                }
+            }
+            
+            // Main post content with translation inline
+            if !post.text.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    // Show translated text or original text
+                    #if os(iOS)
+                    if useUIKitSelectableText && isSelectable {
+                        SelectableTextView(
+                            attributedString: displayString,
+                            textSize: textSize,
+                            textStyle: textStyle,
+                            textDesign: textDesign,
+                            textWeight: textWeight,
+                            fontWidth: fontWidth,
+                            lineSpacing: lineSpacing,
+                            letterSpacing: letterSpacing
+                        )
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(3)
+                        .transition(.opacity)
+                        .layoutPriority(1)
+                    } else {
+                        TappableTextView(
+                            attributedString: displayString,
+                            textSize: textSize,
+                            textStyle: textStyle,
+                        textDesign: textDesign,
+                        textWeight: textWeight,
+                        fontWidth: fontWidth,
+                        lineSpacing: lineSpacing,
+                        letterSpacing: letterSpacing
+                    )
+                    .fixedSize(horizontal: false, vertical: true)
+                    .modifier(SelectableModifier(isSelectable: isSelectable))
+                    .padding(3)
+                    .transition(.opacity)
+                    .layoutPriority(1)
+                    .modifier(TranslationPresentationIfAvailable(isPresented: $showTranslationPopover, text: post.text))
+                    }
+                #else
+                    TappableTextView(
+                        attributedString: displayString,
+                        textSize: textSize,
+                        textStyle: textStyle,
+                        textDesign: textDesign,
+                        textWeight: textWeight,
+                        fontWidth: fontWidth,
+                        lineSpacing: lineSpacing,
+                        letterSpacing: letterSpacing
+                    )
+                    .modifier(SelectableModifier(isSelectable: isSelectable))
+                    .padding(3)
+                    .transition(.opacity)
+                    .layoutPriority(1)
+                #endif
+                }
+                .id(showTranslation ? "translated" : "original")
+                .animation(.easeInOut(duration: 0.3), value: showTranslation)
+                    
+                    // Show original text below when translated
+                    if showTranslation, let _ = translatedText {
+                        Text(post.text)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .transition(.opacity.combined(with: .move(edge: .top)))
+                    }
+                }
+            }
+        .animation(.easeInOut(duration: 0.2), value: shouldAnimateTranslation)
+        .task(id: BluemojiTaskKey(styledTextKey: key, adultContentEnabled: adultContentEnabled)) {
+            let base: AttributedString
+            if let cached = baseAttributed, baseAttributedKey == key {
+                base = cached
+            } else {
+                base = baseForBody
+                baseAttributed = base
+                baseAttributedKey = key
+            }
+            bluemojiEnriched = nil
+            guard !post.text.isEmpty, let facets = post.facets, !facets.isEmpty else { return }
+            let enriched = await appState.bluemojiRenderer.enrich(
+                base, text: post.text, facets: facets, allowAdult: adultContentEnabled)
+            guard !Task.isCancelled, baseAttributedKey == key else { return }
+            if enriched != base { bluemojiEnriched = enriched }
+        }
+        .modifier(TranslationTaskModifier(config: translationConfig) { session in
+            if #available(iOS 18.0, macOS 15.0, macCatalyst 26.0, *),
+               let translationSession = session as? TranslationSession {
+                await performTranslation(session: translationSession)
+            }
+        })
+        .confirmationDialog("Select Language", isPresented: $showLanguageSelection, titleVisibility: .visible) {
+            ForEach(sourceLanguages, id: \.languageCode) { language in
+                Button(languageName(for: language)) {
+                    Task {
+                        await setupTranslation(sourceLanguage: language)
+                    }
+                }
+            }
+            
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("Choose the language to translate from")
+        }
+
+            // Translation error with enhanced styling
+            if let error = translationError {
+                Text(error)
+                    .captionStyle(color: .red)
+                    .padding(8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.red.opacity(0.1))
+                    )
+            }
+            
+            // Tags with enhanced styling
+            if let tags = post.tags, !tags.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(tags, id: \.self) { tag in
+                            Text("#\(tag)")
+                                .customScaledFont(size: 13, weight: .medium, design: .rounded)
+                                .foregroundColor(Color.accentColor)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 4)
+                                .background(
+                                    Capsule()
+                                        .fill(Color.accentColor.opacity(0.1))
+                                )
+                                .onTapGesture {
+                                    path.append(NavigationDestination.hashtag(tag))
+                                }
+                        }
+                    }
+                }
+                .padding(.top, 4)
+            }
+        }
+    
+    private var sourceLanguageCodes: String {
+        sourceLanguages
+            .compactMap { $0.baseLanguageCode }
+            .joined(separator: ", ")
+    }
+    
+    private var targetLanguageCode: String {
+        targetLanguage.baseLanguageCode?.lowercased() ?? "en"
+    }
+
+    private func displayAttributedString(
+        base: AttributedString,
+        key: PostStyledTextKey
+    ) -> AttributedString {
+        if showTranslation, let translated = translatedText {
+            return AttributedString(translated)
+        }
+        if baseAttributedKey == key, let enriched = bluemojiEnriched {
+            return enriched
+        }
+        return base
+    }
+
+    /// Identity of the facet-styled base string: the inputs that feed
+    /// `facetsAsAttributedString` plus the two link-accent settings.
+    private var styledTextKey: PostStyledTextKey {
+        PostStyledTextKey(
+            text: post.text,
+            facets: post.facets,
+            highlightLinks: appState.appSettings.highlightLinks,
+            linkStyle: appState.appSettings.linkStyle
+        )
+    }
+
+    /// Builds the facet-styled base string. Called once per key by the enrichment
+    /// task, and inline by `body` only until that task has populated the cache.
+    private static func buildBaseStyledString(post: AppBskyFeedPost, key: PostStyledTextKey) -> AttributedString {
+        post.facetsAsAttributedString.applyingPostBodyLinkAccent(
+            highlightLinks: key.highlightLinks,
+            linkStyle: key.linkStyle
+        )
+    }
+
+    // Extract complex animation value to prevent type checker explosion
+    private var shouldAnimateTranslation: Bool {
+        showTranslation && translatedText != nil && translationError == nil
+    }
+
+    // Extract language name formatting to prevent type checker explosion in ForEach
+    private func languageName(for language: Locale.Language) -> String {
+        let identifier = language.languageCode?.identifier ?? ""
+        let localized = Locale.current.localizedString(forLanguageCode: identifier)
+        return localized ?? (identifier.isEmpty ? "Unknown" : identifier)
+    }
+
+    // Enhanced translation button with better styling
+    private var translationButton: some View {
+        Button(action: toggleTranslation) {
+            HStack(spacing: 6) {
+                if isTranslating {
+                    ProgressView()
+                        .scaleEffect(0.7)
+                    Text("Translating...")
+                        .customScaledFont(size: 12, weight: .medium)
+                } else {
+                    Image(systemName: showTranslation ? "globe.americas.fill" : "globe.americas")
+                        .imageScale(.small)
+                    
+                    Text(showTranslation ? "Hide Translation" : "Translate")
+                        .customScaledFont(size: 12, weight: .medium)
+                    
+                    Text("(\(sourceLanguageCodes) → \(targetLanguageCode))")
+                        .customScaledFont(size: 11, weight: .regular)
+                        .foregroundColor(.secondary.opacity(0.8))
+                }
+            }
+            .padding(.vertical, 4)
+            .padding(.horizontal, 8)
+            .background(
+                Capsule()
+                    .fill(Color.secondary.opacity(0.15))
+            )
+            .foregroundColor(colorScheme == .dark ? .white.opacity(0.9) : .primary.opacity(0.8))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(PlainButtonStyle())
+        .disabled(isTranslating)
+    }
+
+    private func toggleTranslation() {
+#if os(iOS)
+        PlatformHaptics.light()
+#endif
+        
+#if targetEnvironment(simulator)
+        // Translation models and downloads are not available in Simulator.
+        withAnimation {
+            translationError = NSLocalizedString("Translation isn’t available in the iOS Simulator. Please test on a physical device.", comment: "")
+            showTranslation = false
+            translatedText = nil
+            translationConfig = nil
+            shouldPrepareTranslation = false
+        }
+        return
+#endif
+        
+        if showTranslation {
+            // Hide translation and reset state
+            withAnimation {
+                showTranslation = false
+                translatedText = nil
+                translationConfig = nil
+                shouldPrepareTranslation = false
+                translationError = nil
+            }
+        } else {
+            // Check language situation and handle accordingly
+            Task {
+                if sourceLanguages.count == 1 {
+                    // Case 1: Only one language - use it directly
+                    await setupTranslation(sourceLanguage: sourceLanguages[0])
+                } else if sourceLanguages.count > 1 {
+                    // Case 2: Multiple languages - try to detect
+                    if let detectedLanguage = detectTextLanguage() {
+                        await setupTranslation(sourceLanguage: detectedLanguage)
+                    } else {
+                        // Case 3: Couldn't detect, let user choose
+                        await MainActor.run {
+                            showLanguageSelection = true
+                        }
+                    }
+                } else {
+                    // No languages specified
+                    await MainActor.run {
+                        translationConfig = nil
+                        shouldPrepareTranslation = false
+                        translationError = NSLocalizedString("Source language not identified.", comment: "")
+                    }
+                }
+            }
+        }
+    }
+
+    private func normalizedTranslationLanguage(_ language: Locale.Language) -> Locale.Language {
+        guard let baseLanguageCode = language.baseLanguageCode else {
+            return language
+        }
+
+        return Locale.Language(identifier: baseLanguageCode)
+    }
+
+    private func detectTextLanguage() -> Locale.Language? {
+        let recognizer = NLLanguageRecognizer()
+        recognizer.processString(post.text)
+        
+        if let languageCode = recognizer.dominantLanguage?.rawValue {
+            return Locale.Language(identifier: languageCode)
+        }
+        return nil
+    }
+
+    private func setupTranslation(sourceLanguage: Locale.Language) async {
+        if #available(iOS 18.0, macOS 15.0, macCatalyst 26.0, *) {
+            let normalizedSourceLanguage = normalizedTranslationLanguage(sourceLanguage)
+            let normalizedTargetLanguage = normalizedTranslationLanguage(targetLanguage)
+            let availability = LanguageAvailability()
+            let status = await availability.status(from: normalizedSourceLanguage, to: normalizedTargetLanguage)
+            
+            logger.debug("Translation status: \(String(describing: status)) for \(String(describing: normalizedSourceLanguage)) -> \(String(describing: normalizedTargetLanguage))")
+            
+            #if compiler(>=6.2)
+            if case .installed = status, #available(iOS 26.0, macOS 26.0, macCatalyst 26.0, *) {
+                // Models already downloaded — translate directly without triggering
+                // the .translationTask() modifier (which shows the system download UI).
+                logger.debug("Models installed; translating directly via TranslationSession")
+                let session = TranslationSession(installedSource: normalizedSourceLanguage, target: normalizedTargetLanguage)
+                await performTranslation(session: session)
+                return
+            }
+            #endif
+
+            await MainActor.run {
+                switch status {
+                case .installed:
+                    // iOS 18–25 fallback: use .translationTask() modifier.
+                    let config = TranslationSession.Configuration(source: normalizedSourceLanguage, target: normalizedTargetLanguage)
+                    translationConfig = config
+                    shouldPrepareTranslation = false
+                    translationError = nil
+                    logger.debug("Translation configuration set for installed languages (pre-iOS 26 path)")
+                case .supported:
+                    let config = TranslationSession.Configuration(source: normalizedSourceLanguage, target: normalizedTargetLanguage)
+                    translationConfig = config
+                    shouldPrepareTranslation = true
+                    translationError = nil
+                    logger.debug("Translation configuration set for supported languages requiring preparation")
+                case .unsupported:
+                    // Handle unsupported language pairing
+                    shouldPrepareTranslation = false
+                    translationConfig = nil
+                    translationError = NSLocalizedString("Translation not supported for this language pair.", comment: "")
+                    logger.debug("Translation unsupported for language pair")
+                @unknown default:
+                    shouldPrepareTranslation = false
+                    translationConfig = nil
+                    translationError = NSLocalizedString("Translation not supported for this language pair.", comment: "")
+                    logger.debug("Translation status unknown")
+                }
+            }
+        } else {
+            await MainActor.run {
+                translationConfig = nil
+                shouldPrepareTranslation = false
+                translationError = NSLocalizedString("Translation requires iOS 18.0 or later.", comment: "")
+                logger.debug("Translation not available - iOS version too old")
+            }
+        }
+    }
+    
+    @MainActor @available(iOS 18.0, macOS 15.0, macCatalyst 26.0, *)
+    private func performTranslation(session: TranslationSession) async {
+        logger.debug("Starting translation...")
+        isTranslating = true
+        translationError = nil
+
+        if shouldPrepareTranslation {
+            do {
+                try await session.prepareTranslation()
+            } catch {
+                logger.debug("prepareTranslation failed: \(error.localizedDescription)")
+                // Continue — we’ll handle errors from translate and retry if appropriate.
+            }
+        }
+
+        func attemptTranslate() async throws -> String {
+            let response = try await session.translate(post.text)
+            return response.targetText
+        }
+
+        do {
+            let target = try await attemptTranslate()
+            withAnimation {
+                translatedText = target
+                showTranslation = true
+                translationError = nil
+                isTranslating = false
+            }
+        } catch {
+            #if compiler(>=6.2)
+            // If models aren’t installed, prompt and retry once.
+            if #available(iOS 26.0, macOS 26.0, macCatalyst 26.0, *), TranslationError.notInstalled ~= error {
+                logger.debug("Translate threw notInstalled; retrying after prepareTranslation prompt…")
+                do {
+                    try await session.prepareTranslation()
+                    let target = try await attemptTranslate()
+                    withAnimation {
+                        translatedText = target
+                        showTranslation = true
+                        translationError = nil
+                        isTranslating = false
+                    }
+                    return
+                } catch {
+                    // Fall through to unified error handling
+                }
+            }
+            #endif
+
+            logger.debug("Translation error: \(error.localizedDescription)")
+            withAnimation {
+                #if compiler(>=6.2)
+                if #available(iOS 26.0, macOS 26.0, macCatalyst 26.0, *), TranslationError.notInstalled ~= error {
+                    translationError = NSLocalizedString("On‑device translation languages aren’t installed. When prompted, allow the download and try again.", comment: "")
+                } else {
+                    let errorMessage = error.localizedDescription
+                    let nsError = error as NSError
+                    let failureReason = nsError.localizedFailureReason ?? ""
+                    let fullErrorText = "\(errorMessage) \(failureReason)"
+
+                    if fullErrorText.contains("Offline models not available") || fullErrorText.localizedCaseInsensitiveContains("models not available") {
+                        translationError = NSLocalizedString("On‑device translation languages aren’t installed. Approve the download when prompted, then retry.", comment: "")
+                    } else if fullErrorText.contains("network") || fullErrorText.contains("internet") {
+                        translationError = NSLocalizedString("Internet connection required to download translation models.", comment: "")
+                    } else {
+                        translationError = "Translation failed: \(fullErrorText.trimmingCharacters(in: .whitespaces))"
+                    }
+                }
+                #else
+                let errorMessage = error.localizedDescription
+                let nsError = error as NSError
+                let failureReason = nsError.localizedFailureReason ?? ""
+                let fullErrorText = "\(errorMessage) \(failureReason)"
+
+                if fullErrorText.contains("Offline models not available") || fullErrorText.localizedCaseInsensitiveContains("models not available") {
+                    translationError = NSLocalizedString("On‑device translation languages aren’t installed. Approve the download when prompted, then retry.", comment: "")
+                } else if fullErrorText.contains("network") || fullErrorText.contains("internet") {
+                    translationError = NSLocalizedString("Internet connection required to download translation models.", comment: "")
+                } else {
+                    translationError = "Translation failed: \(fullErrorText.trimmingCharacters(in: .whitespaces))"
+                }
+                #endif
+                isTranslating = false
+            }
+        }
+    }
+}
+
+enum PostLanguageIndicators {
+    static func shouldShow(isEnabled: Bool, languageCount: Int) -> Bool {
+        isEnabled && languageCount > 0
+    }
+}
+
+/// Cache key for `Post`'s facet-styled base string. Changing any field changes
+/// the output of `facetsAsAttributedString.applyingPostBodyLinkAccent`.
+private struct PostStyledTextKey: Hashable, Sendable {
+    let text: String
+    let facets: [AppBskyRichtextFacet]?
+    let highlightLinks: Bool
+    let linkStyle: String
+}
+
+/// Task identity for Bluemoji enrichment, combining the facet-styled text key
+/// with the user's adult-content policy preference.
+private struct BluemojiTaskKey: Hashable, Sendable {
+    let styledTextKey: PostStyledTextKey
+    let adultContentEnabled: Bool
+}
+
+// MARK: - Typography Configuration
+
+extension Post {
+    /// Sets the typography configuration for the post text
+    func postTypography(design: Font.Design, weight: Font.Weight) -> Self {
+        var view = self
+        view.postTextDesign = design
+        view.postTextWeight = weight
+        return view
+    }
+}
+
+// MARK: - Modifiers
+
+struct TranslationTaskModifier: ViewModifier {
+    let config: Any?
+    let action: (Any) async -> Void
+    
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, macOS 15.0, macCatalyst 26.0, *) {
+            if let config = config as? TranslationSession.Configuration {
+                content.translationTask(config) { session in
+                    await action(session)
+                }
+            } else {
+                content
+            }
+        } else {
+            content
+        }
+    }
+}
+
+// Presents the system translation popover as a fallback when downloads can’t be prompted programmatically (e.g., policy or transient issues).
+private struct TranslationPresentationIfAvailable: ViewModifier {
+    @Binding var isPresented: Bool
+    let text: String
+
+    func body(content: Content) -> some View {
+        #if targetEnvironment(macCatalyst)
+        content
+        #else
+        if #available(iOS 17.4, *) {
+            content.translationPresentation(isPresented: $isPresented, text: text)
+        } else {
+            content
+        }
+        #endif
+    }
+}
+
+struct SelectableModifier: ViewModifier {
+    let isSelectable: Bool
+    
+    func body(content: Content) -> some View {
+        if isSelectable {
+            content.textSelection(.enabled)
+        } else {
+            content.textSelection(.disabled)
+        }
+    }
+}
+
+// Extension to extract base language code
+extension Locale.Language {
+    /// Returns the base language code (e.g., "en" from "en-US")
+    var baseLanguageCode: String? {
+        return self.languageCode?.identifier
+    }
+}
+
+//// MARK: - Preview
+// #Preview {
+//    @Previewable @Environment(AppState.self) var appState
+//    let mockPost = AppBskyFeedPost(
+//        text: "This is a sample post with some #hashtags and @mentions that might need to be displayed properly in the UI.",
+//        entities: [],
+//        facets: [],
+//        reply: nil,
+//        embed: nil,
+//        langs: [LanguageCodeContainer(languageCode: "en-US")],
+//        labels: nil,
+//        tags: ["swiftui", "typography", "design"],
+//        createdAt: ATProtocolDate(date: Date())
+//    )
+//
+//    VStack {
+//        Post(post: mockPost, isSelectable: true, path: .constant(NavigationPath()))
+//            .padding()
+//            .background(Color(.systemBackground))
+//            .cornerRadius(12)
+//            .shadow(color: .black.opacity(0.1), radius: 2, x: 0, y: 1)
+//            .padding()
+//
+//        Post(post: mockPost, isSelectable: true, path: .constant(NavigationPath()))
+//            .postTypography(design: .serif, weight: .medium)
+//            .padding()
+//            .background(Color(.systemBackground))
+//            .cornerRadius(12)
+//            .shadow(color: .black.opacity(0.1), radius: 2, x: 0, y: 1)
+//            .padding()
+//    }
+//    .background(Color(.systemGroupedBackground))
+// }
