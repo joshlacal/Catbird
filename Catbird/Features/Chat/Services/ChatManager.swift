@@ -9,6 +9,90 @@ import SwiftUI
 
 // PostEmbedData is now defined in UnifiedChat/Models/UnifiedEmbed.swift
 
+/// Tracks requests owned by the notification/chat pollers, including caller-owned loads.
+/// Suspension closes admission immediately; draining waits for their actual completion.
+/// Safety: every mutable field is protected by `lock`; continuations resume outside it.
+/// Retained for nonisolated legacy manager entry points until those managers adopt one actor.
+final class AccountPollingBarrier: @unchecked Sendable {
+  struct Ticket: Sendable {
+    let id = UUID()
+    let generation: UInt64
+    let accountDID: String?
+  }
+
+  private let lock = NSLock()
+  private var generation: UInt64 = 0
+  private var suspended = false
+  private var suspendedAccountDID: String?
+  private var active: Set<UUID> = []
+  private var waiters: [CheckedContinuation<Void, Never>] = []
+
+  var isSuspended: Bool { lock.withLock { suspended } }
+  var suspensionGeneration: UInt64? { lock.withLock { suspended ? generation : nil } }
+
+  func begin(accountDID: String?) -> Ticket? {
+    lock.withLock {
+      guard !suspended else { return nil }
+      let ticket = Ticket(generation: generation, accountDID: accountDID)
+      active.insert(ticket.id)
+      return ticket
+    }
+  }
+
+  func isCurrent(_ ticket: Ticket, accountDID: String?) -> Bool {
+    lock.withLock {
+      !suspended && ticket.generation == generation && ticket.accountDID == accountDID
+        && active.contains(ticket.id)
+    }
+  }
+
+  func finish(_ ticket: Ticket) {
+    let ready = lock.withLock { () -> [CheckedContinuation<Void, Never>] in
+      active.remove(ticket.id)
+      guard active.isEmpty else { return [] }
+      let ready = waiters
+      waiters.removeAll()
+      return ready
+    }
+    for waiter in ready { waiter.resume() }
+  }
+
+  func invalidate() {
+    lock.withLock { generation &+= 1 }
+  }
+
+  func suspend(accountDID: String?) {
+    lock.withLock {
+      guard !suspended else { return }
+      suspended = true
+      suspendedAccountDID = accountDID
+      generation &+= 1
+    }
+  }
+
+  func drain() async {
+    await withCheckedContinuation { continuation in
+      let alreadyDrained = lock.withLock {
+        if active.isEmpty { return true }
+        waiters.append(continuation)
+        return false
+      }
+      if alreadyDrained { continuation.resume() }
+    }
+  }
+
+  func resume(accountDID: String, generation expectedGeneration: UInt64) -> Bool {
+    lock.withLock {
+      guard suspended, active.isEmpty, suspendedAccountDID == accountDID,
+        generation == expectedGeneration
+      else { return false }
+      suspended = false
+      suspendedAccountDID = nil
+      return true
+    }
+  }
+}
+
 /// Manages chat operations for the Bluesky chat feature
 @Observable
 final class ChatManager: StateInvalidationSubscriber {
@@ -77,6 +161,55 @@ final class ChatManager: StateInvalidationSubscriber {
   private weak var appState: AppState?
 
   @ObservationIgnored private var activeClientDid: String?
+  @ObservationIgnored private let pollingBarrier = AccountPollingBarrier()
+  @ObservationIgnored private var resumeConversationPolling = false
+  @ObservationIgnored private var resumeMessagePolling: Set<String> = []
+  @ObservationIgnored private var conversationLoadID: UUID?
+  @ObservationIgnored private var messageLoadIDs: [String: UUID] = [:]
+
+  private var pollingAccountDID: String? { appState?.userDID ?? activeClientDid }
+
+  private func isCurrentPollingOperation(_ ticket: AccountPollingBarrier.Ticket, client: ATProtoClient) -> Bool {
+    !Task.isCancelled && self.client === client
+      && pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID)
+  }
+
+  @MainActor
+  func suspendForAccountSwitch() async {
+    if !pollingBarrier.isSuspended {
+      resumeConversationPolling = conversationsPollingTask != nil
+      resumeMessagePolling = Set(messagePollingTasks.keys)
+    }
+    pollingBarrier.suspend(accountDID: pollingAccountDID)
+    let tasks = Array(messagePollingTasks.values) + [conversationsPollingTask, actorSearchTask].compactMap { $0 }
+    for task in tasks { task.cancel() }
+    conversationsPollingTask = nil
+    messagePollingTasks.removeAll()
+    actorSearchTask = nil
+    for task in tasks { await task.value }
+    await pollingBarrier.drain()
+  }
+
+  @MainActor
+  func resumeAfterInterruptedAccountSwitch(accountDID: String) async -> Bool {
+    guard let generation = pollingBarrier.suspensionGeneration,
+      pollingAccountDID == accountDID, let client
+    else { return false }
+    let authenticatedDID = try? await client.getDid()
+    guard self.client === client, pollingAccountDID == accountDID,
+      authenticatedDID == accountDID, pollingBarrier.resume(accountDID: accountDID, generation: generation)
+    else { return false }
+    let conversationIDs = resumeMessagePolling
+    let activeID = activeConversationId
+    let backoffs = messagePollBackoffs
+    if resumeConversationPolling { startConversationsPolling() }
+    for id in conversationIDs { startMessagePolling(for: id) }
+    activeConversationId = activeID
+    messagePollBackoffs = backoffs
+    resumeConversationPolling = false
+    resumeMessagePolling.removeAll()
+    return true
+  }
 
   init(client: ATProtoClient? = nil, appState: AppState? = nil) {
     self.client = client
@@ -139,22 +272,33 @@ final class ChatManager: StateInvalidationSubscriber {
   }
 
   // Update client when auth changes
+  @MainActor
   func updateClient(_ client: ATProtoClient?) async {
+    guard !pollingBarrier.isSuspended else { return }
+    pollingBarrier.invalidate()
+    guard let ticket = pollingBarrier.begin(accountDID: pollingAccountDID) else { return }
+    defer { pollingBarrier.finish(ticket) }
     let previousDid = activeClientDid
     self.client = client
     logger.debug("ChatManager client updated")
 
     guard let client else {
+      guard pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return }
       activeClientDid = nil
-      await MainActor.run { self.clearChatData() }
+      clearChatData()
       logger.debug("Chat data cleared because client became nil")
       return
     }
 
     let nextDid = try? await client.getDid()
+    guard isCurrentPollingOperation(ticket, client: client) else { return }
 
     if previousDid != nextDid {
-      await MainActor.run { self.clearChatData() }
+      await MainActor.run {
+        guard self.isCurrentPollingOperation(ticket, client: client) else { return }
+        self.clearChatData()
+      }
+      guard isCurrentPollingOperation(ticket, client: client) else { return }
       logger.debug("Chat data cleared due to client change")
     }
 
@@ -166,6 +310,7 @@ final class ChatManager: StateInvalidationSubscriber {
   
   /// Update app state reference and subscribe to state invalidation events
   func updateAppState(_ appState: AppState?) {
+    guard !pollingBarrier.isSuspended else { return }
     self.appState = appState
     if let appState = appState {
       appState.stateInvalidationBus.subscribe(self)
@@ -187,12 +332,15 @@ final class ChatManager: StateInvalidationSubscriber {
   
   /// Handle state invalidation events from the central event bus
   func handleStateInvalidation(_ event: StateInvalidationEvent) async {
+    guard let ticket = pollingBarrier.begin(accountDID: pollingAccountDID) else { return }
+    defer { pollingBarrier.finish(ticket) }
     logger.debug("Chat handling state invalidation event: \(String(describing: event))")
     
     switch event {
     case .accountSwitched:
       // Account switching should clear and reload chat data
       await MainActor.run {
+        guard self.pollingBarrier.isCurrent(ticket, accountDID: self.pollingAccountDID) else { return }
         logger.info("Account switched - clearing chat data and reloading")
         clearChatData()
         
@@ -207,6 +355,7 @@ final class ChatManager: StateInvalidationSubscriber {
     case .chatMessageReceived:
       // New message received - refresh conversations to update unread counts
       await MainActor.run {
+        guard self.pollingBarrier.isCurrent(ticket, accountDID: self.pollingAccountDID) else { return }
         if client != nil {
           Task {
             await loadConversations(refresh: true)
@@ -217,6 +366,7 @@ final class ChatManager: StateInvalidationSubscriber {
     case .authenticationCompleted:
       // Authentication completed - reload conversations if needed
       await MainActor.run {
+        guard self.pollingBarrier.isCurrent(ticket, accountDID: self.pollingAccountDID) else { return }
         if client != nil {
           Task {
             await loadConversations(refresh: true)
@@ -245,6 +395,8 @@ final class ChatManager: StateInvalidationSubscriber {
   private func clearChatData() {
     stopAllPolling()
     conversations = []
+    conversationLoadID = nil
+    messageLoadIDs.removeAll()
     originalMessagesMap = [:]
     systemMessagesMap = [:]
     relatedProfilesMap = [:]
@@ -270,6 +422,9 @@ final class ChatManager: StateInvalidationSubscriber {
 
   @MainActor
   func loadConversations(refresh: Bool = false) async {
+    guard let ticket = pollingBarrier.begin(accountDID: pollingAccountDID) else { return }
+    defer { pollingBarrier.finish(ticket) }
+
     guard let client = client else {
       logger.error("Cannot load conversations: client is nil")
       errorState = .noClient
@@ -293,6 +448,13 @@ final class ChatManager: StateInvalidationSubscriber {
 
     do {
       loadingConversations = true
+      conversationLoadID = ticket.id
+      defer {
+        if conversationLoadID == ticket.id {
+          loadingConversations = false
+          conversationLoadID = nil
+        }
+      }
       errorState = nil
 
       // Reset cursor if refreshing
@@ -305,6 +467,7 @@ final class ChatManager: StateInvalidationSubscriber {
 
       logger.debug("Loading conversations with cursor: \(cursorToUse ?? "nil")")
          let (responseCode, response) = try await client.chat.bsky.convo.listConvos(input: params)
+      guard isCurrentPollingOperation(ticket, client: client) else { return }
  
       guard responseCode >= 200 && responseCode < 300 else {
         // Insurance only: Petrel throws for non-400 client errors, so a 429
@@ -348,9 +511,12 @@ final class ChatManager: StateInvalidationSubscriber {
       onUnreadCountChanged?()
 
       // Prefetch member profiles for the UI cache
+      guard isCurrentPollingOperation(ticket, client: client) else { return }
       await prefetchConversationProfiles()
+      guard isCurrentPollingOperation(ticket, client: client) else { return }
 
     } catch {
+      guard isCurrentPollingOperation(ticket, client: client) else { return }
       // Rate limits surface as thrown errors (Petrel throws for non-400 client
       // errors); back off silently — a rate-limited background poll must not
       // alert the user on every tick.
@@ -370,6 +536,9 @@ final class ChatManager: StateInvalidationSubscriber {
 
   @MainActor
   func loadMessages(convoId: String, refresh: Bool = false) async {
+    guard let ticket = pollingBarrier.begin(accountDID: pollingAccountDID) else { return }
+    defer { pollingBarrier.finish(ticket) }
+
     guard let client = client else {
       logger.error("Cannot load messages for \(convoId): client is nil")
       errorState = .noClient
@@ -384,6 +553,13 @@ final class ChatManager: StateInvalidationSubscriber {
 
     do {
       loadingMessages[convoId] = true
+      messageLoadIDs[convoId] = ticket.id
+      defer {
+        if messageLoadIDs[convoId] == ticket.id {
+          loadingMessages[convoId] = false
+          messageLoadIDs[convoId] = nil
+        }
+      }
       errorState = nil
 
       // Reset cursor if refreshing
@@ -398,6 +574,7 @@ final class ChatManager: StateInvalidationSubscriber {
       logger.debug("Loading messages for \(convoId) with cursor: \(cursorToUse ?? "nil")")
    
       let (responseCode, response) = try await client.chat.bsky.convo.getMessages(input: params)
+      guard isCurrentPollingOperation(ticket, client: client) else { return }
  
       guard responseCode >= 200 && responseCode < 300 else {
         // Insurance only: Petrel throws for non-400 client errors, so a 429
@@ -477,9 +654,12 @@ final class ChatManager: StateInvalidationSubscriber {
       )
 
       // Mark conversation as read only after successfully loading messages
+      guard isCurrentPollingOperation(ticket, client: client) else { return }
       await markConversationAsRead(convoId: convoId)
+      guard isCurrentPollingOperation(ticket, client: client) else { return }
 
     } catch {
+      guard isCurrentPollingOperation(ticket, client: client) else { return }
       // Rate limits surface as thrown errors (Petrel throws for non-400 client
       // errors); back off silently — a rate-limited background poll must not
       // alert the user on every tick.
@@ -507,6 +687,9 @@ final class ChatManager: StateInvalidationSubscriber {
   @MainActor
   @discardableResult
   func leaveConversation(convoId: String) async -> LeaveConversationResult {
+    guard let ticket = pollingBarrier.begin(accountDID: pollingAccountDID) else { return .failure }
+    defer { pollingBarrier.finish(ticket) }
+
     guard let client = client else {
       logger.error("Cannot leave conversation \(convoId): client is nil")
       errorState = .noClient
@@ -516,16 +699,19 @@ final class ChatManager: StateInvalidationSubscriber {
     let leaveInput = ChatBskyConvoLeaveConvo.Input(convoId: convoId)
      do {
       let (responseCode, _) = try await client.chat.bsky.convo.leaveConvo(input: leaveInput)
+      guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return .failure }
 
       guard responseCode >= 200 && responseCode < 300 else {
         // Lexicon-defined errors arrive as HTTP 400 (the generated wrapper drops
         // the error body); for a group the current user owns, the 400 here is
         // `OwnerCannotLeave` — the owner must lock the group before leaving.
         if responseCode == 400, await isCurrentUserGroupOwner(convoId: convoId) {
+          guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return .failure }
           logger.info("Leave blocked for owned group \(convoId); lock required before leaving")
           errorState = .ownerCannotLeave
           return .ownerMustLockFirst
         }
+        guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return .failure }
         setInteractiveNetworkError(
           code: responseCode,
           context: "leaveConversation(\(convoId))",
@@ -545,6 +731,7 @@ final class ChatManager: StateInvalidationSubscriber {
       return .success
 
     } catch {
+      guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return .failure }
       logger.error("Error leaving conversation \(convoId): \(error.localizedDescription)")
       setInteractiveThrownError(
         error,
@@ -570,6 +757,9 @@ final class ChatManager: StateInvalidationSubscriber {
   @MainActor
   @discardableResult
   func lockConversation(convoId: String) async -> LockConversationResult {
+    guard let ticket = pollingBarrier.begin(accountDID: pollingAccountDID) else { return .failure }
+    defer { pollingBarrier.finish(ticket) }
+
     guard let client = client else {
       logger.error("Cannot lock conversation \(convoId): client is nil")
       errorState = .noClient
@@ -579,6 +769,7 @@ final class ChatManager: StateInvalidationSubscriber {
     let lockInput = ChatBskyConvoLockConvo.Input(convoId: convoId)
      do {
       let (responseCode, response) = try await client.chat.bsky.convo.lockConvo(input: lockInput)
+      guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return .failure }
 
       guard responseCode >= 200 && responseCode < 300 else {
         // `ConvoLocked` (already locked) also arrives as HTTP 400; treat an
@@ -610,6 +801,7 @@ final class ChatManager: StateInvalidationSubscriber {
       return .locked
 
     } catch {
+      guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return .failure }
       logger.error("Error locking conversation \(convoId): \(error.localizedDescription)")
       setInteractiveThrownError(
         error,
@@ -628,12 +820,19 @@ final class ChatManager: StateInvalidationSubscriber {
   @MainActor
   @discardableResult
   func lockAndLeaveConversation(convoId: String) async -> Bool {
+    guard let ticket = pollingBarrier.begin(accountDID: pollingAccountDID) else { return false }
+    defer { pollingBarrier.finish(ticket) }
+
     guard await lockConversation(convoId: convoId) != .failure else { return false }
+    guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return false }
     return await leaveConversation(convoId: convoId) == .success
   }
 
   @MainActor
   func muteConversation(convoId: String) async {
+    guard let ticket = pollingBarrier.begin(accountDID: pollingAccountDID) else { return }
+    defer { pollingBarrier.finish(ticket) }
+
     guard let client = client else {
       logger.error("Cannot mute conversation: client is nil")
       errorState = .noClient
@@ -648,6 +847,7 @@ final class ChatManager: StateInvalidationSubscriber {
     let muteInput = ChatBskyConvoMuteConvo.Input(convoId: convoId)
      do {
       let (responseCode, _) = try await client.chat.bsky.convo.muteConvo(input: muteInput)
+      guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return }
  
       guard responseCode >= 200 && responseCode < 300 else {
         setNetworkError(code: responseCode, context: "muteConversation(\(convoId))")
@@ -663,8 +863,10 @@ final class ChatManager: StateInvalidationSubscriber {
 
       // Sync mute status to Nest (non-fatal)
       await syncMuteStatusToServer(convoId: convoId, muted: true)
+      guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return }
 
     } catch {
+      guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return }
       logger.error("Error muting conversation \(convoId): \(error.localizedDescription)")
       setErrorState(error)
     }
@@ -672,6 +874,9 @@ final class ChatManager: StateInvalidationSubscriber {
 
   @MainActor
   func unmuteConversation(convoId: String) async {
+    guard let ticket = pollingBarrier.begin(accountDID: pollingAccountDID) else { return }
+    defer { pollingBarrier.finish(ticket) }
+
     guard let client = client else {
       logger.error("Cannot unmute conversation: client is nil")
       errorState = .noClient
@@ -681,6 +886,7 @@ final class ChatManager: StateInvalidationSubscriber {
     let unmuteInput = ChatBskyConvoUnmuteConvo.Input(convoId: convoId)
      do {
       let (responseCode, _) = try await client.chat.bsky.convo.unmuteConvo(input: unmuteInput)
+      guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return }
  
       guard responseCode >= 200 && responseCode < 300 else {
         setNetworkError(code: responseCode, context: "unmuteConversation(\(convoId))")
@@ -690,13 +896,16 @@ final class ChatManager: StateInvalidationSubscriber {
       // Update local state
       if conversations.firstIndex(where: { $0.id == convoId }) != nil {
         await self.loadMessages(convoId: convoId, refresh: true)
+        guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return }
         logger.debug("Conversation \(convoId) unmuted successfully.")
       }
 
       // Sync mute status to Nest (non-fatal)
       await syncMuteStatusToServer(convoId: convoId, muted: false)
+      guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return }
 
     } catch {
+      guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return }
       logger.error("Error unmuting conversation \(convoId): \(error.localizedDescription)")
       setErrorState(error)
     }
@@ -709,15 +918,21 @@ final class ChatManager: StateInvalidationSubscriber {
 
   /// Syncs the mute status of a conversation to Nest for server-side push filtering.
   /// This is non-fatal: the 15-minute background sync catches any missed updates.
+  @MainActor
   private func syncMuteStatusToServer(convoId: String, muted: Bool) async {
+    guard let ticket = pollingBarrier.begin(accountDID: pollingAccountDID) else { return }
+    defer { pollingBarrier.finish(ticket) }
+
     guard let client = client else { return }
 
     let endpoint = "blue.catbird.bskychat.updateMuteStatus"
     await client.setServiceDID(Self.nestServiceDID, for: endpoint)
+    guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return }
 
     do {
       let input = BlueCatbirdBskychatUpdateMuteStatus.Input(convoId: convoId, muted: muted)
       let (responseCode, _) = try await client.blue.catbird.bskychat.updateMuteStatus(input: input)
+      guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return }
 
       if (200 ... 299).contains(responseCode) {
         logger.debug("Synced mute status to server: convoId=\(convoId), muted=\(muted)")
@@ -725,12 +940,16 @@ final class ChatManager: StateInvalidationSubscriber {
         logger.warning("Mute status sync returned HTTP \(responseCode) for convoId=\(convoId)")
       }
     } catch {
+      guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return }
       logger.warning("Mute status sync failed for convoId=\(convoId): \(error.localizedDescription)")
     }
   }
 
   @MainActor
   func acceptConversation(convoId: String) async -> Bool {
+    guard let ticket = pollingBarrier.begin(accountDID: pollingAccountDID) else { return false }
+    defer { pollingBarrier.finish(ticket) }
+
     guard let client = client else {
       logger.error("Cannot accept conversation: client is nil")
       errorState = .noClient
@@ -740,6 +959,7 @@ final class ChatManager: StateInvalidationSubscriber {
     let acceptInput = ChatBskyConvoAcceptConvo.Input(convoId: convoId)
      do {
       let (responseCode, _) = try await client.chat.bsky.convo.acceptConvo(input: acceptInput)
+      guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return false }
  
       guard responseCode >= 200 && responseCode < 300 else {
         setNetworkError(code: responseCode, context: "acceptConversation((convoId))")
@@ -749,9 +969,11 @@ final class ChatManager: StateInvalidationSubscriber {
       logger.debug("Conversation \(convoId) accepted successfully.")
       // Refresh conversation list to reflect acceptance
       await loadConversations(refresh: true)
+      guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return false }
       return true
 
     } catch {
+      guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return false }
       logger.error("Error accepting conversation \(convoId): \(error.localizedDescription)")
       setErrorState(error)
       return false
@@ -760,6 +982,9 @@ final class ChatManager: StateInvalidationSubscriber {
 
   @MainActor
   func getConversation(convoId: String) async -> ChatBskyConvoDefs.ConvoView? {
+    guard let ticket = pollingBarrier.begin(accountDID: pollingAccountDID) else { return nil }
+    defer { pollingBarrier.finish(ticket) }
+
     guard let client = client else {
       logger.error("Cannot get conversation: client is nil")
       errorState = .noClient
@@ -769,6 +994,7 @@ final class ChatManager: StateInvalidationSubscriber {
     let params = ChatBskyConvoGetConvo.Parameters(convoId: convoId)
      do {
       let (responseCode, response) = try await client.chat.bsky.convo.getConvo(input: params)
+      guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return nil }
  
       guard responseCode >= 200 && responseCode < 300 else {
         setNetworkError(code: responseCode, context: "getConversation((convoId))")
@@ -785,6 +1011,7 @@ final class ChatManager: StateInvalidationSubscriber {
       return convoData.convo
 
     } catch {
+      guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return nil }
       logger.error("Error getting conversation \(convoId): \(error.localizedDescription)")
       setErrorState(error)
       return nil
@@ -798,6 +1025,9 @@ final class ChatManager: StateInvalidationSubscriber {
 
   @MainActor
   func checkConversationAvailability(members: [String]) async -> (canChat: Bool, existingConvo: ChatBskyConvoDefs.ConvoView?) {
+    guard let ticket = pollingBarrier.begin(accountDID: pollingAccountDID) else { return (false, nil) }
+    defer { pollingBarrier.finish(ticket) }
+
     guard let client = client else {
       logger.error("Cannot check conversation availability: client is nil")
       errorState = .noClient
@@ -809,6 +1039,7 @@ final class ChatManager: StateInvalidationSubscriber {
       let params = ChatBskyConvoGetConvoAvailability.Parameters(members: memberDIDs)
          
       let (responseCode, response) = try await client.chat.bsky.convo.getConvoAvailability(input: params)
+      guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return (false, nil) }
  
       guard responseCode >= 200 && responseCode < 300 else {
         setNetworkError(code: responseCode, context: "checkConversationAvailability")
@@ -825,6 +1056,7 @@ final class ChatManager: StateInvalidationSubscriber {
       return (availability.canChat, availability.convo)
 
     } catch {
+      guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return (false, nil) }
       logger.error("Error checking conversation availability: \(error.localizedDescription)")
       setErrorState(error)
       return (false, nil)
@@ -846,6 +1078,9 @@ final class ChatManager: StateInvalidationSubscriber {
     embed: ChatBskyConvoDefs.MessageInputEmbedUnion? = nil,
     replyTo: ChatBskyConvoDefs.ReplyRef? = nil
   ) async -> Bool {
+    guard let ticket = pollingBarrier.begin(accountDID: pollingAccountDID) else { return false }
+    defer { pollingBarrier.finish(ticket) }
+
     guard let client = client else {
       logger.error("Cannot send message to \(convoId): client or session is nil")
       errorState = .noClient
@@ -865,6 +1100,7 @@ final class ChatManager: StateInvalidationSubscriber {
     do {
       // Build mention facets for @handles in chat (skip if text is empty)
       let facets = trimmedText.isEmpty ? [] : await buildChatFacets(for: trimmedText)
+      guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return false }
       let messageInput = ChatBskyConvoDefs.MessageInput(
         text: trimmedText,
         facets: facets.isEmpty ? nil : facets,
@@ -880,6 +1116,7 @@ final class ChatManager: StateInvalidationSubscriber {
       logger.debug("Sending message to conversation \(convoId)\(embed != nil ? " with embed" : "")")
    
       let (responseCode, response) = try await client.chat.bsky.convo.sendMessage(input: input)
+      guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return false }
 
       guard responseCode >= 200 && responseCode < 300 else {
         // `ConvoLocked` / `ConvoLockedByModeration` are the lexicon 400s for group
@@ -911,11 +1148,13 @@ final class ChatManager: StateInvalidationSubscriber {
 
       // Update conversation list's last message preview
       await updateConversationLastMessage(convoId: convoId, messageView: messageView)
+      guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return false }
 
       logger.debug("Message sent successfully to conversation \(convoId)")
       return true
 
     } catch {
+      guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return false }
       logger.error("Error sending message to \(convoId): \(error.localizedDescription)")
       setInteractiveThrownError(
         error,
@@ -927,7 +1166,11 @@ final class ChatManager: StateInvalidationSubscriber {
   }
 
   // MARK: - Chat Facets (Mentions, Links, Hashtags)
+  @MainActor
   private func buildChatFacets(for text: String) async -> [AppBskyRichtextFacet] {
+    guard let ticket = pollingBarrier.begin(accountDID: pollingAccountDID) else { return [] }
+    defer { pollingBarrier.finish(ticket) }
+
     var facets: [AppBskyRichtextFacet] = []
 
     // --- Link facets (via NSDataDetector) ---
@@ -967,6 +1210,7 @@ final class ChatManager: StateInvalidationSubscriber {
           do {
             let params = AppBskyActorSearchActors.Parameters(q: handle, limit: 1)
             let (code, response) = try await client.app.bsky.actor.searchActors(input: params)
+            guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return [] }
             if code >= 200 && code < 300, let profile = response?.actors.first,
                profile.handle.description.lowercased() == handle.lowercased() {
               let byteStart = text[text.startIndex..<fullSwiftRange.lowerBound].utf8.count
@@ -977,6 +1221,7 @@ final class ChatManager: StateInvalidationSubscriber {
               facets.append(AppBskyRichtextFacet(index: slice, features: [feature]))
             }
           } catch {
+            guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return [] }
             logger.debug("Failed to resolve mention @\(handle): \(error.localizedDescription)")
           }
         }
@@ -1014,6 +1259,9 @@ final class ChatManager: StateInvalidationSubscriber {
 
   @MainActor
   func markConversationAsRead(convoId: String) async {
+    guard let ticket = pollingBarrier.begin(accountDID: pollingAccountDID) else { return }
+    defer { pollingBarrier.finish(ticket) }
+
     guard let client = client else {
       logger.debug("Cannot mark conversation \(convoId) as read: client is nil")
       return
@@ -1032,6 +1280,7 @@ final class ChatManager: StateInvalidationSubscriber {
       logger.debug("Marking conversation \(convoId) as read")
    
       let (responseCode, response) = try await client.chat.bsky.convo.updateRead(input: input)
+      guard isCurrentPollingOperation(ticket, client: client) else { return }
  
       guard responseCode >= 200 && responseCode < 300 else {
         logger.error("Error marking conversation \(convoId) as read: HTTP \(responseCode)")
@@ -1062,6 +1311,7 @@ final class ChatManager: StateInvalidationSubscriber {
       }
 
     } catch {
+      guard isCurrentPollingOperation(ticket, client: client) else { return }
       logger.error("Error marking conversation \(convoId) as read: \(error.localizedDescription)")
       // Optionally set an error state specific to this action
     }
@@ -1069,6 +1319,9 @@ final class ChatManager: StateInvalidationSubscriber {
 
   @MainActor
   func deleteMessageForSelf(convoId: String, messageId: String) async -> Bool {
+    guard let ticket = pollingBarrier.begin(accountDID: pollingAccountDID) else { return false }
+    defer { pollingBarrier.finish(ticket) }
+
     guard let client = client else {
       logger.error("Cannot delete message: client is nil")
       errorState = .noClient
@@ -1078,6 +1331,7 @@ final class ChatManager: StateInvalidationSubscriber {
     let input = ChatBskyConvoDeleteMessageForSelf.Input(convoId: convoId, messageId: messageId)
      do {
       let (responseCode, _) = try await client.chat.bsky.convo.deleteMessageForSelf(input: input)
+      guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return false }
 
       guard responseCode >= 200 && responseCode < 300 else {
         // `MessageDeleteNotAllowed` is the lexicon 400 for this endpoint
@@ -1101,6 +1355,7 @@ final class ChatManager: StateInvalidationSubscriber {
       return true
 
     } catch {
+      guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return false }
       logger.error("Error deleting message \(messageId): \(error.localizedDescription)")
       setInteractiveThrownError(
         error,
@@ -1113,6 +1368,9 @@ final class ChatManager: StateInvalidationSubscriber {
 
   @MainActor
   func markAllConversationsAsRead() async -> Bool {
+    guard let ticket = pollingBarrier.begin(accountDID: pollingAccountDID) else { return false }
+    defer { pollingBarrier.finish(ticket) }
+
     guard let client = client else {
       logger.error("Cannot mark all conversations as read: client is nil")
       errorState = .noClient
@@ -1121,6 +1379,7 @@ final class ChatManager: StateInvalidationSubscriber {
 
      do {
         let (responseCode, _) = try await client.chat.bsky.convo.updateAllRead(input: .init())
+        guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return false }
  
       guard responseCode >= 200 && responseCode < 300 else {
         setNetworkError(code: responseCode, context: "markAllConversationsAsRead")
@@ -1134,10 +1393,12 @@ final class ChatManager: StateInvalidationSubscriber {
       }
       
       await loadConversations(refresh: true)
+      guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return false }
       logger.debug("All conversations marked as read successfully")
       return true
 
     } catch {
+      guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return false }
       logger.error("Error marking all conversations as read: \(error.localizedDescription)")
       setErrorState(error)
       return false
@@ -1146,6 +1407,9 @@ final class ChatManager: StateInvalidationSubscriber {
 
   @MainActor
   func getConversationLog(cursor: String? = nil) async -> (logs: [Any]?, cursor: String?) {
+    guard let ticket = pollingBarrier.begin(accountDID: pollingAccountDID) else { return (nil, nil) }
+    defer { pollingBarrier.finish(ticket) }
+
     guard let client = client else {
       logger.error("Cannot get conversation log: client is nil")
       errorState = .noClient
@@ -1155,6 +1419,7 @@ final class ChatManager: StateInvalidationSubscriber {
     let params = ChatBskyConvoGetLog.Parameters(cursor: cursor)
      do {
       let (responseCode, response) = try await client.chat.bsky.convo.getLog(input: params)
+      guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return (nil, nil) }
  
       guard responseCode >= 200 && responseCode < 300 else {
         setNetworkError(code: responseCode, context: "getConversationLog")
@@ -1171,6 +1436,7 @@ final class ChatManager: StateInvalidationSubscriber {
       return (logData.logs, logData.cursor)
 
     } catch {
+      guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return (nil, nil) }
       logger.error("Error getting conversation log: \(error.localizedDescription)")
       setErrorState(error)
       return (nil, nil)
@@ -1180,6 +1446,9 @@ final class ChatManager: StateInvalidationSubscriber {
   // MARK: - Reaction Actions (Live)
   @MainActor
   func toggleReaction(convoId: String, messageId: String, emoji: String) async throws {
+    guard let ticket = pollingBarrier.begin(accountDID: pollingAccountDID) else { throw CancellationError() }
+    defer { pollingBarrier.finish(ticket) }
+
     do {
       // Validate input parameters to prevent crashes
       guard !convoId.isEmpty, !messageId.isEmpty, !emoji.isEmpty else {
@@ -1196,6 +1465,7 @@ final class ChatManager: StateInvalidationSubscriber {
 
       // Get the current user's DID first
       let currentUserDid = try await client?.getDid()
+      guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { throw CancellationError() }
 
       // Then use it in the contains check
       let hasReacted =
@@ -1205,10 +1475,13 @@ final class ChatManager: StateInvalidationSubscriber {
 
       if hasReacted {
         _ = await removeReaction(convoId: convoId, messageId: messageId, emoji: emoji)
+        guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { throw CancellationError() }
       } else {
         _ = await addReaction(convoId: convoId, messageId: messageId, emoji: emoji)
+        guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { throw CancellationError() }
       }
     } catch {
+      guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { throw CancellationError() }
       logger.error("Error in toggleReaction: \(error.localizedDescription)")
       
       // Only set error state for non-cancellation errors to prevent alert loops
@@ -1226,16 +1499,22 @@ final class ChatManager: StateInvalidationSubscriber {
 
   @MainActor
   private func addReaction(convoId: String, messageId: String, emoji: String) async -> Bool {
+    guard let ticket = pollingBarrier.begin(accountDID: pollingAccountDID) else { return false }
+    defer { pollingBarrier.finish(ticket) }
+
     guard let client = client else { return false }
     do {
       let input = ChatBskyConvoAddReaction.Input(
         convoId: convoId, messageId: messageId, value: emoji)
          let (responseCode, response) = try await client.chat.bsky.convo.addReaction(input: input)
+         guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return false }
        guard responseCode >= 200 && responseCode < 300 else {
+        let typedError = await addReactionTypedError(convoId: convoId, messageId: messageId)
+        guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return false }
         setInteractiveNetworkError(
           code: responseCode,
           context: "addReaction(\(messageId))",
-          typedError: await addReactionTypedError(convoId: convoId, messageId: messageId),
+          typedError: typedError,
           operation: "add this reaction"
         )
         return false
@@ -1244,8 +1523,10 @@ final class ChatManager: StateInvalidationSubscriber {
         return false
       }
       await updateMessageInLocalState(updated)
+      guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return false }
       return true
     } catch {
+      guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return false }
       logger.error("Failed to add reaction: \(error.localizedDescription)")
       setInteractiveThrownError(
         error,
@@ -1258,11 +1539,15 @@ final class ChatManager: StateInvalidationSubscriber {
 
   @MainActor
   private func removeReaction(convoId: String, messageId: String, emoji: String) async -> Bool {
+    guard let ticket = pollingBarrier.begin(accountDID: pollingAccountDID) else { return false }
+    defer { pollingBarrier.finish(ticket) }
+
     guard let client = client else { return false }
     do {
       let input = ChatBskyConvoRemoveReaction.Input(
         convoId: convoId, messageId: messageId, value: emoji)
          let (responseCode, response) = try await client.chat.bsky.convo.removeReaction(input: input)
+         guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return false }
        guard responseCode >= 200 && responseCode < 300 else {
         // Locked convos block reaction changes; otherwise `ReactionNotAllowed`
         // is the lexicon 400 for removeReaction.
@@ -1281,8 +1566,10 @@ final class ChatManager: StateInvalidationSubscriber {
         return false
       }
       await updateMessageInLocalState(updated)
+      guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return false }
       return true
     } catch {
+      guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return false }
       logger.error("Failed to remove reaction: \(error.localizedDescription)")
       setInteractiveThrownError(
         error,
@@ -1298,6 +1585,7 @@ final class ChatManager: StateInvalidationSubscriber {
   /// Search for conversations locally and fetch remote actor suggestions for starting new chats
   @MainActor
   func searchLocal(searchTerm: String, currentUserDID: String?) {
+    guard !pollingBarrier.isSuspended else { return }
     logger.debug("Performing chat search for: \(searchTerm)")
 
     actorSearchTask?.cancel()
@@ -1377,10 +1665,14 @@ final class ChatManager: StateInvalidationSubscriber {
       logger.debug("Chat search matched \(self.filteredConversations.count) conversations locally; awaiting remote contacts")
   }
 
+  @MainActor
   private func performRemoteActorSearch(query: String, currentUserDID: String?) async {
+    guard let ticket = pollingBarrier.begin(accountDID: pollingAccountDID) else { return }
+    defer { pollingBarrier.finish(ticket) }
+
     guard let client else {
       await MainActor.run { [self, query] in
-        if self.pendingActorSearchQuery == query {
+        if self.pollingBarrier.isCurrent(ticket, accountDID: self.pollingAccountDID), self.pendingActorSearchQuery == query {
           self.filteredProfiles = []
         }
       }
@@ -1390,11 +1682,12 @@ final class ChatManager: StateInvalidationSubscriber {
     do {
       let params = AppBskyActorSearchActorsTypeahead.Parameters(q: query, limit: 25)
       let (responseCode, response) = try await client.app.bsky.actor.searchActorsTypeahead(input: params)
+      guard isCurrentPollingOperation(ticket, client: client) else { return }
 
       guard (200..<300).contains(responseCode) else {
         logger.error("Typeahead search failed with HTTP \(responseCode)")
         await MainActor.run { [query] in
-          if self.pendingActorSearchQuery == query {
+          if self.pollingBarrier.isCurrent(ticket, accountDID: self.pollingAccountDID), self.pendingActorSearchQuery == query {
             self.filteredProfiles = []
           }
         }
@@ -1409,7 +1702,7 @@ final class ChatManager: StateInvalidationSubscriber {
       }
 
       await MainActor.run { [self, query, filteredResults] in
-        guard self.pendingActorSearchQuery == query else { return }
+        guard self.isCurrentPollingOperation(ticket, client: client), self.pendingActorSearchQuery == query else { return }
           self.filteredProfiles = filteredResults.map { profile in
               ChatBskyActorDefs.ProfileViewBasic(
                     did: profile.did,
@@ -1429,10 +1722,11 @@ final class ChatManager: StateInvalidationSubscriber {
         self.logger.debug("Typeahead search returned \(filteredResults.count) contacts for query: \(query)")
       }
     } catch {
+      guard isCurrentPollingOperation(ticket, client: client) else { return }
       guard !(error is CancellationError) else { return }
       logger.error("Typeahead search error: \(error.localizedDescription)")
       await MainActor.run { [self, query] in
-        if self.pendingActorSearchQuery == query {
+        if self.pollingBarrier.isCurrent(ticket, accountDID: self.pollingAccountDID), self.pendingActorSearchQuery == query {
           self.filteredProfiles = []
         }
       }
@@ -1444,6 +1738,9 @@ final class ChatManager: StateInvalidationSubscriber {
   /// Batch fetch profiles for multiple DIDs to populate cache (more efficient than individual calls)
   @MainActor
   private func batchFetchProfiles(dids: [String]) async {
+    guard let ticket = pollingBarrier.begin(accountDID: pollingAccountDID) else { return }
+    defer { pollingBarrier.finish(ticket) }
+
     guard let client = client else { return }
     guard !dids.isEmpty else { return }
     
@@ -1464,9 +1761,11 @@ final class ChatManager: StateInvalidationSubscriber {
       }
       
       for batch in batches {
+        guard isCurrentPollingOperation(ticket, client: client) else { return }
         let actors = try batch.map { try ATIdentifier(string: $0) }
         let params = AppBskyActorGetProfiles.Parameters(actors: actors)
         let (responseCode, response) = try await client.app.bsky.actor.getProfiles(input: params)
+        guard isCurrentPollingOperation(ticket, client: client) else { return }
         
         guard responseCode >= 200 && responseCode < 300 else {
           logger.error("Batch profile fetch failed: HTTP \(responseCode)")
@@ -1480,6 +1779,7 @@ final class ChatManager: StateInvalidationSubscriber {
           }
 
           for profile in response.profiles {
+            guard isCurrentPollingOperation(ticket, client: client) else { return }
             await ProfileCacheDatabase.shared.write(
               did: profile.did.didString(),
               handle: profile.handle.description,
@@ -1495,6 +1795,7 @@ final class ChatManager: StateInvalidationSubscriber {
       logger.info("Batch fetch complete: \(self.profileCache.count) total cached profiles")
       
     } catch {
+      guard isCurrentPollingOperation(ticket, client: client) else { return }
       logger.error("Error batch fetching profiles: \(error.localizedDescription)")
     }
   }
@@ -1579,6 +1880,9 @@ final class ChatManager: StateInvalidationSubscriber {
 
   @MainActor
   func exportChatAccountData() async -> Data? {
+    guard let ticket = pollingBarrier.begin(accountDID: pollingAccountDID) else { return nil }
+    defer { pollingBarrier.finish(ticket) }
+
     guard let client = client else {
       logger.error("Cannot export chat account data: client is nil")
       errorState = .noClient
@@ -1587,6 +1891,7 @@ final class ChatManager: StateInvalidationSubscriber {
 
      do {
       let (responseCode, output) = try await client.chat.bsky.actor.exportAccountData()
+      guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return nil }
  
       guard responseCode >= 200 && responseCode < 300 else {
         setNetworkError(code: responseCode, context: "exportChatAccountData")
@@ -1601,6 +1906,7 @@ final class ChatManager: StateInvalidationSubscriber {
       return nil
 
     } catch {
+      guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return nil }
       logger.error("Error exporting chat account data: \(error.localizedDescription)")
       setErrorState(error)
       return nil
@@ -1609,6 +1915,9 @@ final class ChatManager: StateInvalidationSubscriber {
 
   @MainActor
   func deleteChatAccount() async -> (success: Bool, exportData: Data?) {
+    guard let ticket = pollingBarrier.begin(accountDID: pollingAccountDID) else { return (false, nil) }
+    defer { pollingBarrier.finish(ticket) }
+
     guard let client = client else {
       logger.error("Cannot delete chat account: client is nil")
       errorState = .noClient
@@ -1617,6 +1926,7 @@ final class ChatManager: StateInvalidationSubscriber {
 
      do {
       let (responseCode, output) = try await client.chat.bsky.actor.deleteAccount()
+      guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return (false, nil) }
  
       guard responseCode >= 200 && responseCode < 300 else {
         setNetworkError(code: responseCode, context: "deleteChatAccount")
@@ -1647,6 +1957,7 @@ final class ChatManager: StateInvalidationSubscriber {
       return (true, exportData)
 
     } catch {
+      guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return (false, nil) }
       logger.error("Error deleting chat account: \(error.localizedDescription)")
       setErrorState(error)
       return (false, nil)
@@ -1657,6 +1968,9 @@ final class ChatManager: StateInvalidationSubscriber {
 
   @MainActor
   func getActorMetadata(actor: String) async -> ChatBskyModerationGetActorMetadata.Output? {
+    guard let ticket = pollingBarrier.begin(accountDID: pollingAccountDID) else { return nil }
+    defer { pollingBarrier.finish(ticket) }
+
     guard let client = client else {
       logger.error("Cannot get actor metadata: client is nil")
       errorState = .noClient
@@ -1669,6 +1983,7 @@ final class ChatManager: StateInvalidationSubscriber {
       )
          
       let (responseCode, response) = try await client.chat.bsky.moderation.getActorMetadata(input: params)
+      guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return nil }
  
       guard responseCode >= 200 && responseCode < 300 else {
         setNetworkError(code: responseCode, context: "getActorMetadata((actor))")
@@ -1679,6 +1994,7 @@ final class ChatManager: StateInvalidationSubscriber {
       return response
 
     } catch {
+      guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return nil }
       logger.error("Error getting actor metadata for \(actor): \(error.localizedDescription)")
       setErrorState(error)
       return nil
@@ -1687,6 +2003,9 @@ final class ChatManager: StateInvalidationSubscriber {
 
   @MainActor
   func getMessageContext(convoId: String, messageId: String, before: Int? = nil, after: Int? = nil) async -> ChatBskyModerationGetMessageContext.Output? {
+    guard let ticket = pollingBarrier.begin(accountDID: pollingAccountDID) else { return nil }
+    defer { pollingBarrier.finish(ticket) }
+
     guard let client = client else {
       logger.error("Cannot get message context: client is nil")
       errorState = .noClient
@@ -1701,6 +2020,7 @@ final class ChatManager: StateInvalidationSubscriber {
     )
      do {
       let (responseCode, response) = try await client.chat.bsky.moderation.getMessageContext(input: params)
+      guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return nil }
  
       guard responseCode >= 200 && responseCode < 300 else {
         setNetworkError(code: responseCode, context: "getMessageContext((messageId))")
@@ -1711,6 +2031,7 @@ final class ChatManager: StateInvalidationSubscriber {
       return response
 
     } catch {
+      guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return nil }
       logger.error("Error getting message context for \(messageId): \(error.localizedDescription)")
       setErrorState(error)
       return nil
@@ -1719,6 +2040,9 @@ final class ChatManager: StateInvalidationSubscriber {
 
   @MainActor
   func updateActorAccess(actor: String, allowAccess: Bool, ref: String? = nil) async -> Bool {
+    guard let ticket = pollingBarrier.begin(accountDID: pollingAccountDID) else { return false }
+    defer { pollingBarrier.finish(ticket) }
+
     guard let client = client else {
       logger.error("Cannot update actor access: client is nil")
       errorState = .noClient
@@ -1733,6 +2057,7 @@ final class ChatManager: StateInvalidationSubscriber {
       )
          
       let responseCode = try await client.chat.bsky.moderation.updateActorAccess(input: input)
+      guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return false }
  
       guard responseCode >= 200 && responseCode < 300 else {
         setNetworkError(code: responseCode, context: "updateActorAccess((actor))")
@@ -1743,6 +2068,7 @@ final class ChatManager: StateInvalidationSubscriber {
       return true
 
     } catch {
+      guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return false }
       logger.error("Error updating actor access for \(actor): \(error.localizedDescription)")
       setErrorState(error)
       return false
@@ -1763,14 +2089,25 @@ final class ChatManager: StateInvalidationSubscriber {
   /// Loads conversations with a specific status filter
   @MainActor
   func loadMessageRequests(refresh: Bool = false) async {
+    guard let ticket = pollingBarrier.begin(accountDID: pollingAccountDID) else { return }
+    defer { pollingBarrier.finish(ticket) }
+
     guard let client = client else {
       logger.error("Cannot load message requests: client is nil")
       errorState = .noClient
       return
     }
 
+    guard !loadingConversations else { return }
     do {
       loadingConversations = true
+      conversationLoadID = ticket.id
+      defer {
+        if conversationLoadID == ticket.id {
+          loadingConversations = false
+          conversationLoadID = nil
+        }
+      }
       errorState = nil
 
       let cursorToUse = refresh ? nil : conversationsCursor
@@ -1784,6 +2121,7 @@ final class ChatManager: StateInvalidationSubscriber {
 
       logger.debug("Loading message requests with cursor: \(cursorToUse ?? "nil")")
          let (responseCode, response) = try await client.chat.bsky.convo.listConvos(input: params)
+      guard isCurrentPollingOperation(ticket, client: client) else { return }
  
       guard responseCode >= 200 && responseCode < 300 else {
         setNetworkError(code: responseCode, context: "loadMessageRequests")
@@ -1810,6 +2148,7 @@ final class ChatManager: StateInvalidationSubscriber {
       logger.debug("Loaded \(convosData.convos.count) message requests")
 
     } catch {
+      guard isCurrentPollingOperation(ticket, client: client) else { return }
       logger.error("Error loading message requests: \(error.localizedDescription)")
       setErrorState(error)
     }
@@ -1820,7 +2159,11 @@ final class ChatManager: StateInvalidationSubscriber {
   /// Accepts a message request and moves it to accepted conversations
   @MainActor
   func acceptMessageRequest(convoId: String) async -> Bool {
+    guard let ticket = pollingBarrier.begin(accountDID: pollingAccountDID) else { return false }
+    defer { pollingBarrier.finish(ticket) }
+
     let success = await acceptConversation(convoId: convoId)
+    guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return false }
     if success {
       // Move conversation from requests to accepted
       if let requestIndex = messageRequests.firstIndex(where: { $0.id == convoId }) {
@@ -1842,7 +2185,11 @@ final class ChatManager: StateInvalidationSubscriber {
   /// Declines a message request
   @MainActor
   func declineMessageRequest(convoId: String) async -> Bool {
+    guard let ticket = pollingBarrier.begin(accountDID: pollingAccountDID) else { return false }
+    defer { pollingBarrier.finish(ticket) }
+
     await leaveConversation(convoId: convoId)
+    guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return false }
       // Remove from message requests
       messageRequests.removeAll { $0.id == convoId }
     // Note: leaveConversation already removes from main conversations list
@@ -1868,6 +2215,7 @@ final class ChatManager: StateInvalidationSubscriber {
   
   /// Starts polling for conversation updates
   func startConversationsPolling() {
+    guard !pollingBarrier.isSuspended else { return }
     stopConversationsPolling()
     
     conversationsPollingTask = Task { [weak self] in
@@ -1892,6 +2240,7 @@ final class ChatManager: StateInvalidationSubscriber {
         if !Task.isCancelled {
           await self.loadConversations(refresh: true)
           await MainActor.run {
+            guard !Task.isCancelled, !self.pollingBarrier.isSuspended else { return }
             self.onConversationsPolled?()
           }
         }
@@ -1903,6 +2252,7 @@ final class ChatManager: StateInvalidationSubscriber {
   
   /// Stops polling for conversation updates
   func stopConversationsPolling() {
+    resumeConversationPolling = false
     conversationsPollingTask?.cancel()
     conversationsPollingTask = nil
     logger.debug("Stopped conversations polling")
@@ -1910,6 +2260,7 @@ final class ChatManager: StateInvalidationSubscriber {
   
   /// Starts polling for messages in a specific conversation
   func startMessagePolling(for convoId: String) {
+    guard !pollingBarrier.isSuspended else { return }
     stopMessagePolling(for: convoId)
     activeConversationId = convoId
 
@@ -1943,6 +2294,7 @@ final class ChatManager: StateInvalidationSubscriber {
   
   /// Stops polling for messages in a specific conversation
   func stopMessagePolling(for convoId: String) {
+    resumeMessagePolling.remove(convoId)
     messagePollingTasks[convoId]?.cancel()
     messagePollingTasks[convoId] = nil
     messagePollBackoffs[convoId] = nil
@@ -1955,6 +2307,7 @@ final class ChatManager: StateInvalidationSubscriber {
   /// Stops all polling tasks
   func stopAllPolling() {
     stopConversationsPolling()
+    resumeMessagePolling.removeAll()
     
     for convoId in messagePollingTasks.keys {
       stopMessagePolling(for: convoId)
