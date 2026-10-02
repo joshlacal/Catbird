@@ -3,6 +3,16 @@ import SwiftUI
 struct AccessibilitySettingsView: View {
   @Environment(AppState.self) private var appState
 
+  private static let maximumTextSizeOptions: [(value: String, title: String)] = [
+    ("xxLarge", "Extra Extra Large"),
+    ("xxxLarge", "Extra Extra Extra Large"),
+    ("accessibility1", "Accessibility Medium"),
+    ("accessibility2", "Accessibility Large"),
+    ("accessibility3", "Accessibility Extra Large"),
+    ("accessibility4", "Accessibility Extra Extra Large"),
+    ("accessibility5", "Accessibility Extra Extra Extra Large")
+  ]
+
   var body: some View {
     Form {
       SettingsPersistenceStatusSection(settings: appState.appSettings)
@@ -97,19 +107,7 @@ struct AccessibilitySettingsView: View {
           .disabled(!appState.appSettings.canEditPersistedSettings)
 
           if appState.appSettings.dynamicTypeEnabled {
-            Picker("Maximum Text Size", selection: Binding(
-              get: { appState.appSettings.maxDynamicTypeSize },
-              set: { appState.appSettings.maxDynamicTypeSize = $0 }
-            )) {
-              Text("Extra Extra Large").tag("xxLarge")
-              Text("Extra Extra Extra Large").tag("xxxLarge")
-              Text("Accessibility Medium").tag("accessibility1")
-              Text("Accessibility Large").tag("accessibility2")
-              Text("Accessibility Extra Large").tag("accessibility3")
-              Text("Accessibility Extra Extra Large").tag("accessibility4")
-              Text("Accessibility Extra Extra Extra Large").tag("accessibility5")
-            }
-            .disabled(!appState.appSettings.canEditPersistedSettings)
+            maximumTextSizePicker
           }
 
         #endif
@@ -208,6 +206,50 @@ struct AccessibilitySettingsView: View {
     #if os(iOS)
       .toolbarTitleDisplayMode(.inline)
     #endif
+  }
+
+  private var maximumTextSizeTitle: String {
+    Self.maximumTextSizeOptions.first {
+      $0.value == appState.appSettings.maxDynamicTypeSize
+    }?.title ?? appState.appSettings.maxDynamicTypeSize
+  }
+
+  private var maximumTextSizePicker: some View {
+    Menu {
+      Picker("Maximum Text Size", selection: Binding(
+        get: { appState.appSettings.maxDynamicTypeSize },
+        set: { appState.appSettings.maxDynamicTypeSize = $0 }
+      )) {
+        ForEach(Self.maximumTextSizeOptions, id: \.value) { option in
+          Text(LocalizedStringKey(option.title)).tag(option.value)
+        }
+      }
+    } label: {
+      HStack(spacing: 12) {
+        VStack(alignment: .leading, spacing: 4) {
+          Text("Maximum Text Size")
+            .appFont(AppTextRole.body)
+            .foregroundStyle(.primary)
+          Text(LocalizedStringKey(maximumTextSizeTitle))
+            .appFont(AppTextRole.body)
+            .foregroundStyle(.secondary)
+        }
+        .lineLimit(nil)
+        .multilineTextAlignment(.leading)
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(maxWidth: .infinity, alignment: .leading)
+
+        Image(systemName: "chevron.up.chevron.down")
+          .appFont(AppTextRole.caption)
+          .foregroundStyle(.secondary)
+          .accessibilityHidden(true)
+      }
+    }
+    .menuIndicator(.hidden)
+    .accessibilityLabel("Maximum Text Size")
+    .accessibilityValue(Text(LocalizedStringKey(maximumTextSizeTitle)))
+    .accessibilityIdentifier("MaximumTextSizePicker")
+    .disabled(!appState.appSettings.canEditPersistedSettings)
   }
 }
 
