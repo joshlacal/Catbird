@@ -150,9 +150,7 @@ struct FeedCollectionViewWrapper: View {
             if stateManager.posts.isEmpty && stateManager.isLoading {
                 // Initial loading state
                 LoadingStateView(
-                    message: stateManager.currentFeedType == .timeline ?
-                        "Loading your timeline..." :
-                        "Loading \(stateManager.currentFeedType.displayName.lowercased())..."
+                    message: "Loading feed…"
                 )
             } else if stateManager.posts.isEmpty && !stateManager.isLoading {
                 // Empty state
