@@ -5,6 +5,8 @@ struct AccessibilitySettingsView: View {
 
   var body: some View {
     Form {
+      SettingsPersistenceStatusSection(settings: appState.appSettings)
+
       // Alt Text Section
       Section("Alt Text") {
         Toggle("Require Alt Text Before Posting", isOn: Binding(
@@ -12,12 +14,14 @@ struct AccessibilitySettingsView: View {
           set: { appState.appSettings.requireAltText = $0 }
         ))
         .tint(.blue)
+        .disabled(!appState.appSettings.canEditPersistedSettings)
 
         Toggle("Display Larger Alt Text Badges", isOn: Binding(
           get: { appState.appSettings.largerAltTextBadges },
           set: { appState.appSettings.largerAltTextBadges = $0 }
         ))
         .tint(.blue)
+        .disabled(!appState.appSettings.canEditPersistedSettings)
       }
       .listRowBackground(Color.systemGroupedBackground)
 
@@ -28,6 +32,7 @@ struct AccessibilitySettingsView: View {
           set: { appState.appSettings.reduceMotion = $0 }
         ))
         .tint(.blue)
+        .disabled(!appState.appSettings.canEditPersistedSettings)
 
         NavigationLink("Video Autoplay") {
           ContentMediaSettingsView()
@@ -38,7 +43,7 @@ struct AccessibilitySettingsView: View {
           set: { appState.appSettings.prefersCrossfade = $0 }
         ))
         .tint(.blue)
-        .disabled(!appState.appSettings.reduceMotion)
+        .disabled(!appState.appSettings.canEditPersistedSettings || !appState.appSettings.reduceMotion)
       } header: {
         Text("Motion Settings")
       } footer: {
@@ -54,12 +59,14 @@ struct AccessibilitySettingsView: View {
           set: { appState.appSettings.increaseContrast = $0 }
         ))
         .tint(.blue)
+        .disabled(!appState.appSettings.canEditPersistedSettings)
 
         Toggle("Bold Text", isOn: Binding(
           get: { appState.appSettings.boldText },
           set: { appState.appSettings.boldText = $0 }
         ))
         .tint(.blue)
+        .disabled(!appState.appSettings.canEditPersistedSettings)
 
         // Preview component
         DisplayPreviewView(
@@ -87,6 +94,7 @@ struct AccessibilitySettingsView: View {
             set: { appState.appSettings.dynamicTypeEnabled = $0 }
           ))
           .tint(.blue)
+          .disabled(!appState.appSettings.canEditPersistedSettings)
 
           if appState.appSettings.dynamicTypeEnabled {
             Picker("Maximum Text Size", selection: Binding(
@@ -101,6 +109,7 @@ struct AccessibilitySettingsView: View {
               Text("Accessibility Extra Extra Large").tag("accessibility4")
               Text("Accessibility Extra Extra Extra Large").tag("accessibility5")
             }
+            .disabled(!appState.appSettings.canEditPersistedSettings)
           }
 
         #endif
@@ -119,12 +128,14 @@ struct AccessibilitySettingsView: View {
           set: { appState.appSettings.showReadingTimeEstimates = $0 }
         ))
         .tint(.blue)
+        .disabled(!appState.appSettings.canEditPersistedSettings)
 
         Toggle("Highlight Links", isOn: Binding(
           get: { appState.appSettings.highlightLinks },
           set: { appState.appSettings.highlightLinks = $0 }
         ))
         .tint(.blue)
+        .disabled(!appState.appSettings.canEditPersistedSettings)
 
         Picker("Link Style", selection: Binding(
           get: { appState.appSettings.linkStyle },
@@ -134,7 +145,7 @@ struct AccessibilitySettingsView: View {
           Text("Underline Only").tag("underline")
           Text("Color & Underline").tag("both")
         }
-        .disabled(!appState.appSettings.highlightLinks)
+        .disabled(!appState.appSettings.canEditPersistedSettings || !appState.appSettings.highlightLinks)
 
         // Link preview
         LinkPreviewView(
@@ -157,6 +168,7 @@ struct AccessibilitySettingsView: View {
           set: { appState.appSettings.confirmBeforeActions = $0 }
         ))
         .tint(.blue)
+        .disabled(!appState.appSettings.canEditPersistedSettings)
 
       } header: {
         Text("Interaction Settings")
@@ -173,6 +185,7 @@ struct AccessibilitySettingsView: View {
           set: { appState.appSettings.disableHaptics = $0 }
         ))
         .tint(.blue)
+        .disabled(!appState.appSettings.canEditPersistedSettings)
       }
 
       // Info Section
@@ -331,4 +344,3 @@ private struct LinkPreviewView: View {
     }
   }
 }
-

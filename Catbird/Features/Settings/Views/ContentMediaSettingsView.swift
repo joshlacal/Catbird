@@ -26,6 +26,8 @@ struct ContentMediaSettingsView: View {
 
   var body: some View {
     Form {
+      SettingsPersistenceStatusSection(settings: appState.appSettings)
+
       // Media Playback Settings
       Section {
         Toggle("Autoplay Videos", isOn: Binding(
@@ -44,6 +46,7 @@ struct ContentMediaSettingsView: View {
       } footer: {
         Text("Videos can play automatically in feeds. Animated GIFs always play automatically.")
       }
+      .disabled(!appState.appSettings.canEditPersistedSettings)
 
       // Feed Content Settings
       Section {
@@ -52,12 +55,14 @@ struct ContentMediaSettingsView: View {
           set: { appState.appSettings.showTrendingTopics = $0 }
         ))
         .tint(.blue)
+        .disabled(!appState.appSettings.canEditPersistedSettings)
 
         Toggle("Show Trending Videos", isOn: Binding(
           get: { appState.appSettings.showTrendingVideos },
           set: { appState.appSettings.showTrendingVideos = $0 }
         ))
         .tint(.blue)
+        .disabled(!appState.appSettings.canEditPersistedSettings)
 
         NavigationLink {
           InterestsSettingsView()
@@ -175,12 +180,14 @@ struct ContentMediaSettingsView: View {
           set: { appState.appSettings.hideNonPreferredLanguages = $0 }
         ))
         .tint(.blue)
+        .disabled(!appState.appSettings.canEditPersistedSettings)
 
         Toggle("Show language indicators on posts", isOn: Binding(
           get: { appState.appSettings.showLanguageIndicators },
           set: { appState.appSettings.showLanguageIndicators = $0 }
         ))
         .tint(.blue)
+        .disabled(!appState.appSettings.canEditPersistedSettings)
 
         NavigationLink("Manage Languages") {
           LanguageSettingsView()
@@ -224,6 +231,7 @@ struct ContentMediaSettingsView: View {
           .font(.caption)
           .foregroundColor(.secondary)
       }
+      .disabled(!appState.appSettings.canEditPersistedSettings)
 
       // External Media Embeds
       Section {
@@ -232,6 +240,7 @@ struct ContentMediaSettingsView: View {
           set: { appState.appSettings.useWebViewEmbeds = $0 }
         ))
         .tint(.blue)
+        .disabled(!appState.appSettings.canEditPersistedSettings)
 
         NavigationLink(destination: ExternalMediaPreferencesView()) {
           HStack {

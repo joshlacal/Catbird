@@ -5,6 +5,8 @@ struct ExternalMediaPreferencesView: View {
     
     var body: some View {
         Form {
+            SettingsPersistenceStatusSection(settings: appState.appSettings)
+
             Section {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 8) {
@@ -38,12 +40,14 @@ struct ExternalMediaPreferencesView: View {
                 }
                 .foregroundStyle(.red)
             }
+            .disabled(!appState.appSettings.canEditPersistedSettings)
             
             Section("Providers") {
                 ForEach(ExternalMediaProvider.allCases) { provider in
                     providerRow(for: provider)
                 }
             }
+            .disabled(!appState.appSettings.canEditPersistedSettings)
         }
         .navigationTitle("External Media")
         #if os(iOS)

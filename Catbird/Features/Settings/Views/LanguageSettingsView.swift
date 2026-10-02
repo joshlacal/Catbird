@@ -183,6 +183,8 @@ struct LanguageSettingsView: View {
     
     var body: some View {
         Form {
+            SettingsPersistenceStatusSection(settings: appState.appSettings)
+
             // Header Section
             Section {
                 VStack(alignment: .leading, spacing: 8) {
@@ -237,18 +239,9 @@ struct LanguageSettingsView: View {
                         selectedLanguage: Binding(
                             get: { appState.appSettings.appLanguage },
                             set: { newValue in
+                                guard appState.appSettings.canEditPersistedSettings else { return }
                                 appState.appSettings.appLanguage = newValue
-                                
-                                // Apply the language change immediately
-                                Task { @MainActor in
-                                    AppLanguageManager.shared.applyLanguage(newValue)
-                                    
-                                    await languageManager?.syncLanguagePreferences(
-                                        appLanguage: newValue,
-                                        primaryLanguage: appState.appSettings.primaryLanguage,
-                                        contentLanguages: appState.appSettings.contentLanguages
-                                    )
-                                }
+                                applyLanguagesAfterSaving()
                             }
                         ),
                         allowSystemDefault: true,
@@ -283,18 +276,13 @@ struct LanguageSettingsView: View {
                         selectedLanguage: Binding(
                             get: { appState.appSettings.primaryLanguage },
                             set: { newValue in
+                                guard appState.appSettings.canEditPersistedSettings else { return }
                                 appState.appSettings.primaryLanguage = newValue
                                 // Ensure primary language is in content languages
                                 if !appState.appSettings.contentLanguages.contains(newValue) {
                                     appState.appSettings.contentLanguages.append(newValue)
                                 }
-                                Task {
-                                    await languageManager?.syncLanguagePreferences(
-                                        appLanguage: appState.appSettings.appLanguage,
-                                        primaryLanguage: newValue,
-                                        contentLanguages: appState.appSettings.contentLanguages
-                                    )
-                                }
+                                applyLanguagesAfterSaving()
                             }
                         ),
                         allowSystemDefault: false,
@@ -325,14 +313,9 @@ struct LanguageSettingsView: View {
                         selectedLanguages: Binding(
                             get: { appState.appSettings.contentLanguages },
                             set: { newValue in
+                                guard appState.appSettings.canEditPersistedSettings else { return }
                                 appState.appSettings.contentLanguages = newValue
-                                Task {
-                                    await languageManager?.syncLanguagePreferences(
-                                        appLanguage: appState.appSettings.appLanguage,
-                                        primaryLanguage: appState.appSettings.primaryLanguage,
-                                        contentLanguages: newValue
-                                    )
-                                }
+                                applyLanguagesAfterSaving()
                             }
                         ),
                         primaryLanguage: appState.appSettings.primaryLanguage,
@@ -378,6 +361,28 @@ struct LanguageSettingsView: View {
         }
     }
     
+    private func applyLanguagesAfterSaving() {
+        let capturedAppState = appState
+        let capturedDID = appState.userDID
+        let languageManager = languageManager
+
+        appState.appSettings.afterPendingSave(key: "language") { @MainActor in
+            guard AppStateManager.shared.lifecycle.appState === capturedAppState,
+                  AppStateManager.shared.lifecycle.userDID == capturedDID else { return }
+            let appLanguage = capturedAppState.appSettings.appLanguage
+            let primaryLanguage = capturedAppState.appSettings.primaryLanguage
+            let contentLanguages = capturedAppState.appSettings.contentLanguages
+            if Bundle.currentLanguage != appLanguage {
+                AppLanguageManager.shared.applyLanguage(appLanguage)
+            }
+            await languageManager?.syncLanguagePreferences(
+                appLanguage: appLanguage,
+                primaryLanguage: primaryLanguage,
+                contentLanguages: contentLanguages
+            )
+        }
+    }
+
     private func languageDisplayName(forCode code: String) -> String {
         if code == "system" {
             if let detected = Language.detectSystemLanguage() {
@@ -397,6 +402,7 @@ struct LanguageSettingsView: View {
 // MARK: - Enhanced Language Selection View
 
 struct EnhancedLanguageSelectionView: View {
+    @Environment(AppState.self) private var appState
     let title: String
     @Binding var selectedLanguage: String
     let allowSystemDefault: Bool
@@ -442,6 +448,8 @@ struct EnhancedLanguageSelectionView: View {
     
     var body: some View {
         List {
+            SettingsPersistenceStatusSection(settings: appState.appSettings)
+
             // System Default Option
             if let system = systemOption {
                 Section {
@@ -459,6 +467,7 @@ struct EnhancedLanguageSelectionView: View {
                             }
                         }
                     }
+                    .disabled(!appState.appSettings.canEditPersistedSettings)
                 }
             }
             
@@ -471,6 +480,7 @@ struct EnhancedLanguageSelectionView: View {
                             isSelected: selectedLanguage == language.id,
                             onSelect: { selectedLanguage = language.id }
                         )
+                        .disabled(!appState.appSettings.canEditPersistedSettings)
                     }
                 }
             }
@@ -484,6 +494,7 @@ struct EnhancedLanguageSelectionView: View {
                             isSelected: selectedLanguage == language.id,
                             onSelect: { selectedLanguage = language.id }
                         )
+                        .disabled(!appState.appSettings.canEditPersistedSettings)
                     }
                     
                     Button {
@@ -507,6 +518,7 @@ struct EnhancedLanguageSelectionView: View {
                             isSelected: selectedLanguage == language.id,
                             onSelect: { selectedLanguage = language.id }
                         )
+                        .disabled(!appState.appSettings.canEditPersistedSettings)
                     }
                 }
             }
@@ -556,6 +568,7 @@ struct LanguageRow: View {
 // MARK: - Enhanced Content Languages View
 
 struct EnhancedContentLanguagesView: View {
+    @Environment(AppState.self) private var appState
     @Binding var selectedLanguages: [String]
     let primaryLanguage: String
     let recentLanguages: [String]
@@ -606,6 +619,8 @@ struct EnhancedContentLanguagesView: View {
     var body: some View {
         NavigationStack {
             List {
+                SettingsPersistenceStatusSection(settings: appState.appSettings)
+
                 // Selected Languages Summary
                 if !selectedLanguageObjects.isEmpty && searchText.isEmpty {
                     Section {
@@ -642,6 +657,7 @@ struct EnhancedContentLanguagesView: View {
                                 isPrimary: language.id == primaryLanguage,
                                 onToggle: { toggleLanguage(language.id) }
                             )
+                            .disabled(!appState.appSettings.canEditPersistedSettings)
                         }
                     }
                 }
@@ -655,6 +671,7 @@ struct EnhancedContentLanguagesView: View {
                             isPrimary: language.id == primaryLanguage,
                             onToggle: { toggleLanguage(language.id) }
                         )
+                        .disabled(!appState.appSettings.canEditPersistedSettings)
                     }
                 }
             }
@@ -682,8 +699,10 @@ struct EnhancedContentLanguagesView: View {
         }
         .alert("Select All Languages?", isPresented: $showingSelectAll) {
             Button("Select All", role: .destructive) {
+                guard appState.appSettings.canEditPersistedSettings else { return }
                 selectedLanguages = Language.allLanguages.map { $0.id }
             }
+            .disabled(!appState.appSettings.canEditPersistedSettings)
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("This will show content in all \(Language.allLanguages.count) languages. This may include content you don't understand.")
@@ -691,6 +710,7 @@ struct EnhancedContentLanguagesView: View {
     }
     
     private func toggleLanguage(_ code: String) {
+        guard appState.appSettings.canEditPersistedSettings else { return }
         if selectedLanguages.contains(code) {
             // Don't allow removing the primary language or last language
             if code == primaryLanguage {
@@ -756,4 +776,3 @@ struct ContentLanguageRow: View {
         }
   }
 }
-
