@@ -33,6 +33,9 @@
 		21DDE5F02DF4EDAF009E9825 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 21196F122DC1115900662CC3 /* SwiftUI.framework */; };
 		21E1082A2D70BE6F0030A71C /* OrderedCollections in Frameworks */ = {isa = PBXBuildFile; productRef = 21E108292D70BE6F0030A71C /* OrderedCollections */; };
 		21FFA23B2EBB8450009825BD /* SQLCipher in Frameworks */ = {isa = PBXBuildFile; productRef = 21FFA23A2EBB8450009825BD /* SQLCipher */; };
+		B1A7E000000000000000000B /* CatbirdNotificationWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 21EBFE0A2EB53D9300E707B6 /* CatbirdNotificationWidgetExtension.appex */; platformFilter = ios; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		B1A7E000000000000000000C /* CatbirdFeedWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 21EBFE0B2EB53D9300E707B6 /* CatbirdFeedWidgetExtension.appex */; platformFilter = ios; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		B1A7E000000000000000000D /* SharedDraftImporter.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 21EBFE0C2EB53D9300E707B6 /* SharedDraftImporter.appex */; platformFilter = ios; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -88,6 +91,9 @@
 			dstSubfolderSpec = 13;
 			files = (
 				212D4B462ED1FE740036E016 /* NotificationServiceExtension.appex in Embed Foundation Extensions */,
+				B1A7E000000000000000000D /* SharedDraftImporter.appex in Embed Foundation Extensions */,
+				B1A7E000000000000000000C /* CatbirdFeedWidgetExtension.appex in Embed Foundation Extensions */,
+				B1A7E000000000000000000B /* CatbirdNotificationWidgetExtension.appex in Embed Foundation Extensions */,
 			);
 			name = "Embed Foundation Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -134,21 +140,7 @@
 		21292B322F71F40C00DE8633 /* Exceptions for "CatbirdFeedWidget" folder in "CatbirdFeedWidgetExtension" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
-				AppIntent.swift,
-				Assets.xcassets,
-				CatbirdFeedWidget.swift,
-				CatbirdFeedWidgetBundle.swift,
-				Compose/ComposeWidget.swift,
-				FeedWidgetModels.swift,
-				LockScreen/LockScreenWidgets.swift,
-				Shared/AccountEntity.swift,
-				Shared/RefreshWidgetIntent.swift,
-				Shared/WidgetDataReader.swift,
-				Shared/WidgetDesignSystem.swift,
-				WidgetAvatarView.swift,
-				WidgetPostCard.swift,
-				WidgetThemeProvider.swift,
-				WidgetTypography.swift,
+				Info.plist,
 			);
 			target = 21DDE5ED2DF4EDAD009E9825 /* CatbirdFeedWidgetExtension */;
 		};
@@ -592,6 +584,9 @@
 			buildRules = (
 			);
 			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				21292B272F71F40C00DE8633 /* CatbirdFeedWidget */,
 			);
 			name = CatbirdFeedWidgetExtension;
 			productName = CatbirdFeedWidgetExtension;

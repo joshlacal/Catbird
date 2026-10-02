@@ -86,10 +86,6 @@
             argument = "--mls-authority-mode=fullRust"
             isEnabled = "YES">
          </CommandLineArgument>
-         <CommandLineArgument
-            argument = "--encrypted-request-ui-fixture"
-            isEnabled = "YES">
-         </CommandLineArgument>
       </CommandLineArguments>
    </LaunchAction>
    <ProfileAction

@@ -11,7 +11,6 @@ import WidgetKit
 @main
 struct CatbirdNotificationWidgetBundle: WidgetBundle {
   var body: some Widget {
-    SimpleTestWidget()
     CatbirdNotificationWidget()
   }
 }
