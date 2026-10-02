@@ -62,14 +62,15 @@ final class FeedLoadPerformanceTests: XCTestCase {
     let geometry: Geometry?
   }
 
+  @MainActor
   private final class FrameProbe: NSObject {
     var frames: [Frame] = []
     var phase = "warmup"
     private var previousCallback: CFTimeInterval?
     private var link: CADisplayLink?
-    private let geometry: () -> Geometry?
+    private let geometry: @MainActor () -> Geometry?
 
-    init(geometry: @escaping () -> Geometry?) { self.geometry = geometry }
+    init(geometry: @escaping @MainActor () -> Geometry?) { self.geometry = geometry }
 
     func start() {
       let link = CADisplayLink(target: self, selector: #selector(tick(_:)))
@@ -94,6 +95,7 @@ final class FeedLoadPerformanceTests: XCTestCase {
     }
   }
 
+  @MainActor
   private final class Fixture {
     let appState: AppState
     let model: FeedModel
@@ -148,10 +150,18 @@ final class FeedLoadPerformanceTests: XCTestCase {
           text: text ?? "Fixture post \(number). This stable paragraph exercises the production text row while new posts load.",
           entities: nil, facets: nil, reply: nil, embed: nil, langs: nil, labels: nil,
           tags: nil, createdAt: ATProtocolDate(date: epoch))
-        var post = PublicPostTestFixtures.makePostView(
+        let author = AppBskyActorDefs.ProfileViewBasic(
+          did: try DID(didString: "did:plc:fixtureauthor"),
+          handle: try Handle(handleString: "author.test"), displayName: "Author",
+          pronouns: nil, avatar: nil, associated: nil, viewer: nil, labels: nil,
+          createdAt: nil, verification: nil, status: nil, debug: nil)
+        let post = AppBskyFeedDefs.PostView(
           uri: try ATProtocolURI(uriString: "at://did:plc:fixtureauthor/app.bsky.feed.post/p\(number)"),
-          authorDID: try DID(didString: "did:plc:fixtureauthor"), record: .knownType(record))
-        post.indexedAt = ATProtocolDate(date: epoch)
+          cid: CID.fromDAGCBOR(Data("cid-test".utf8)), author: author,
+          record: .knownType(record), embed: nil, bookmarkCount: nil,
+          replyCount: 0, repostCount: 0, likeCount: 0, quoteCount: nil,
+          indexedAt: ATProtocolDate(date: epoch), viewer: nil, labels: nil,
+          threadgate: nil, debug: nil)
         return AppBskyFeedDefs.FeedViewPost(post: post, reply: nil, reason: nil,
           feedContext: nil, reqId: nil)
       }
