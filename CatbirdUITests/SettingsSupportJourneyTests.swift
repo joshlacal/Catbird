@@ -81,6 +81,10 @@ final class SettingsSupportJourneyTests: XCTestCase {
   private func launch(screen: String, extra: [String] = []) -> XCUIApplication {
     let app = XCUIApplication()
     app.launchArguments = ["--settings-ui-fixture", "--settings-screen=\(screen)"] + extra
+    app.launchArguments += [
+      "-UIPreferredContentSizeCategoryName",
+      extra.contains("--settings-large-text") ? "UICTContentSizeCategoryAccessibilityXL" : "UICTContentSizeCategoryL"
+    ]
     app.launch()
     return app
   }

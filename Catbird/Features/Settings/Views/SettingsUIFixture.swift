@@ -2,6 +2,9 @@
 import Petrel
 import SwiftData
 import SwiftUI
+#if os(iOS)
+import UIKit
+#endif
 
 /// Production Settings views with an in-memory settings store and no authenticated client.
 /// Only launched explicitly by `--settings-ui-fixture` on the lane's isolated simulator.
@@ -22,8 +25,12 @@ struct SettingsUIFixture: View {
   var body: some View {
     Group {
       if let appState, let container {
-        NavigationStack {
-          destination
+        Group {
+          if screen == "root" {
+            SettingsView()
+          } else {
+            NavigationStack { destination }
+          }
         }
         .environment(appState)
         .environment(\.fontManager, appState.fontManager)
@@ -61,6 +68,9 @@ struct SettingsUIFixture: View {
       )
       // Inserting first prevents migration from any unrelated preference row.
       let settings = AppSettingsModel(accountDID: accountDID)
+      if arguments.contains("--settings-large-text") {
+        settings.maxDynamicTypeSize = "accessibility5"
+      }
       container.mainContext.insert(settings)
       try container.mainContext.save()
       let client = await ATProtoClient(baseURL: URL(string: "http://127.0.0.1:1")!)
@@ -74,6 +84,9 @@ struct SettingsUIFixture: View {
       // Account/server controls intentionally exercise their unavailable state.
       self.container = container
       self.appState = state
+      #if os(iOS)
+      logger.info("[SettingsFixture] preferredContentSizeCategory=\(UIApplication.shared.preferredContentSizeCategory.rawValue, privacy: .public)")
+      #endif
     } catch {
       failure = error.localizedDescription
     }
