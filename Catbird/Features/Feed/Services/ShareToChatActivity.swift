@@ -42,7 +42,14 @@
     }
 
     override func canPerform(withActivityItems activityItems: [Any]) -> Bool {
-      return appState.isAuthenticated && !sceneContext.isInvalidated && sceneContext.accountDID == appState.userDID
+      // UIActivity's synchronous availability callback is not actor-isolated.
+      // Reject unexpected background queries before reading live scene state.
+      guard Thread.isMainThread else { return false }
+      return MainActor.assumeIsolated {
+        self.appState.isAuthenticated
+          && !self.sceneContext.isInvalidated
+          && self.sceneContext.accountDID == self.appState.userDID
+      }
     }
 
     override func perform() {
