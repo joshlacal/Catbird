@@ -157,10 +157,10 @@ struct ContentMediaSettingsView: View {
 
           Toggle("Hide Quote Posts", isOn: feedBinding($hideQuotePosts))
         } header: {
-          Text("Following Feed · Syncs with Bluesky")
+          Text("Feed Filtering · Syncs with Bluesky")
         } footer: {
           if hasLoadedAccountPreferences {
-            Text("These settings sync with your Bluesky account and apply across all your devices")
+            Text("These choices apply to Catbird feeds and sync with your Bluesky account’s Following feed preferences.")
               .font(.caption)
               .foregroundColor(.secondary)
           }
