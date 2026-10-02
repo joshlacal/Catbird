@@ -259,8 +259,11 @@ final class SettingsLayoutRenderingTests: XCTestCase {
       // Restore only the documented mirroring keys touched by AppSettings.initialize.
       // Fixture-scoped keys had no previous value; no account or draft is removed.
       for (defaults, key, value) in savedDefaults {
-        if let value { defaults.set(value, forKey: key) }
-        else { defaults.removeObject(forKey: key) }
+        if let value {
+          defaults.set(value, forKey: key)
+        } else {
+          defaults.removeObject(forKey: key)
+        }
       }
     }
   }

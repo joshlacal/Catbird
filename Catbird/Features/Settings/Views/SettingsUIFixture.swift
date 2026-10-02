@@ -75,21 +75,62 @@ struct SettingsUIFixture: View {
       try container.mainContext.save()
       let client = await ATProtoClient(baseURL: URL(string: "http://127.0.0.1:1")!)
       let state = AppState(userDID: accountDID, client: client)
+      let persistenceFixture = SettingsPersistenceFixture(
+        failFirstFetch: arguments.contains("--settings-storage-unavailable")
+      )
+      state.appSettings.persistence = persistenceFixture.persistence
       if arguments.contains("--settings-server-unavailable") {
         state.appSettings.initialize(with: container.mainContext, accountDID: accountDID)
       } else {
         state.initializePreferencesManager(with: container.mainContext)
       }
+      // Initialization uses a real, pre-seeded in-memory row. Only the first user edit fails.
+      persistenceFixture.failNextSave = arguments.contains("--settings-save-failure")
       // Do not initialize AppState networking or attach a PreferencesManager client.
       // Account/server controls intentionally exercise their unavailable state.
       self.container = container
       self.appState = state
       #if os(iOS)
       logger.info("[SettingsFixture] preferredContentSizeCategory=\(UIApplication.shared.preferredContentSizeCategory.rawValue, privacy: .public)")
+      print("SETTINGS_FIXTURE_CATEGORY \(UIApplication.shared.preferredContentSizeCategory.rawValue)")
       #endif
     } catch {
       failure = error.localizedDescription
     }
+  }
+}
+
+@MainActor
+private final class SettingsPersistenceFixture {
+  private var failNextFetch: Bool
+  var failNextSave = false
+
+  init(failFirstFetch: Bool) {
+    self.failNextFetch = failFirstFetch
+  }
+
+  var persistence: AppSettings.Persistence {
+    let live = AppSettings.Persistence.live
+    return AppSettings.Persistence(
+      fetch: { context, accountDID in
+        if self.failNextFetch {
+          self.failNextFetch = false
+          throw FixtureFailure()
+        }
+        return try live.fetch(context, accountDID)
+      },
+      save: { context in
+        if self.failNextSave {
+          self.failNextSave = false
+          throw FixtureFailure()
+        }
+        try live.save(context)
+      }
+    )
+  }
+
+  private struct FixtureFailure: LocalizedError {
+    var errorDescription: String? { "The isolated Settings test store is temporarily unavailable." }
   }
 }
 

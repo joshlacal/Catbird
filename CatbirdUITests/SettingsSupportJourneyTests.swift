@@ -104,6 +104,56 @@ final class SettingsSupportJourneyTests: XCTestCase {
     capture(app, "Support products loaded after retry")
   }
 
+  func testUnavailableLocalSettingsRetryEnablesControls() {
+    let app = launch(screen: "accessibility", extra: ["--settings-storage-unavailable"])
+    let retry = app.buttons["SettingsPersistenceRetry"].firstMatch
+    XCTAssertTrue(retry.waitForExistence(timeout: 10))
+    let altText = app.switches["Require Alt Text Before Posting"].firstMatch
+    XCTAssertTrue(altText.exists)
+    XCTAssertFalse(altText.isEnabled)
+    capture(app, "Local settings unavailable and dependent controls disabled")
+    retry.tap()
+    waitUntilEnabled(altText)
+    XCTAssertEqual(altText.value as? String, "0")
+    capture(app, "Local settings recovered without resetting saved values")
+  }
+
+  func testUnavailableLocalSettingsKeepsSupportNavigation() {
+    let app = launch(screen: "root", extra: ["--settings-storage-unavailable"])
+    XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 10))
+    let about = app.buttons["About & Support"].firstMatch
+    reveal(about, in: app)
+    XCTAssertTrue(about.isEnabled)
+    about.tap()
+    XCTAssertTrue(app.navigationBars["About"].waitForExistence(timeout: 5))
+    // Navigation is independent of local preference storage; no tip action is selected.
+    capture(app, "Support remains accessible when local settings cannot load")
+  }
+
+  func testFailedLocalSaveCanRetryTheAttemptedValue() {
+    let app = launch(screen: "accessibility", extra: ["--settings-save-failure"])
+    let altText = app.switches["Require Alt Text Before Posting"].firstMatch
+    XCTAssertTrue(altText.waitForExistence(timeout: 10))
+    waitUntilEnabled(altText)
+    altText.tap()
+    let retry = app.buttons["SettingsPersistenceRetry"].firstMatch
+    XCTAssertTrue(retry.waitForExistence(timeout: 5))
+    XCTAssertEqual(altText.value as? String, "0")
+    XCTAssertFalse(altText.isEnabled)
+    let pending = app.staticTexts["SettingsPersistenceStatus"].firstMatch
+    XCTAssertTrue(pending.exists)
+    capture(app, "Local settings save failed with saved value active and attempted value retained")
+    retry.tap()
+    waitUntilEnabled(altText)
+    XCTAssertEqual(altText.value as? String, "1")
+    capture(app, "Local settings retry saved the attempted value")
+  }
+
+  private func waitUntilEnabled(_ element: XCUIElement) {
+    let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: element)
+    XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 5), .completed)
+  }
+
   private func launch(screen: String, extra: [String] = []) -> XCUIApplication {
     let app = XCUIApplication()
     app.launchArguments = ["--settings-ui-fixture", "--settings-screen=\(screen)"] + extra
