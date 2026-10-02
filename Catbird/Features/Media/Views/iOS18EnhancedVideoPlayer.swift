@@ -732,68 +732,93 @@ struct VideoBitrateIndicator: View {
 }
 
 struct VideoProgressBar: View {
-    let currentTime: Double
-    let duration: Double
-    let bufferedTime: Double
-    let onSeek: (Double) -> Void
-    
-    @State private var isDragging: Bool = false
-    @State private var dragTime: Double = 0
-    
-    var displayTime: Double {
-        isDragging ? dragTime : currentTime
+  let currentTime: Double
+  let duration: Double
+  let bufferedTime: Double
+  var isEnabled = true
+  let onSeek: (Double) -> Void
+
+  @Environment(\.isEnabled) private var environmentIsEnabled
+  @GestureState private var isDragging = false
+  @State private var dragTime: Double = 0
+
+  private var canSeek: Bool {
+    isEnabled && environmentIsEnabled && VideoPlaybackTimeline.duration(duration) > 0
+  }
+
+  var displayTime: Double {
+    VideoPlaybackTimeline.time(isDragging ? dragTime : currentTime, duration: duration)
+  }
+
+  var progress: Double {
+    VideoPlaybackTimeline.progress(displayTime, duration: duration)
+  }
+
+  var bufferedProgress: Double {
+    VideoPlaybackTimeline.progress(bufferedTime, duration: duration)
+  }
+
+  var body: some View {
+    GeometryReader { geometry in
+      // Reserve half a thumb at each end so it never draws outside the control.
+      let inset = min(6, max(0, geometry.size.width / 2))
+      let trackWidth = max(0, geometry.size.width - inset * 2)
+      ZStack(alignment: .leading) {
+        Capsule()
+          .fill(.white.opacity(0.25))
+          .frame(width: trackWidth, height: 4)
+        Capsule()
+          .fill(.white.opacity(0.45))
+          .frame(width: trackWidth * bufferedProgress, height: 4)
+        Capsule()
+          .fill(.white)
+          .frame(width: trackWidth * progress, height: 4)
+        Circle()
+          .fill(.white)
+          .frame(width: 12, height: 12)
+          .offset(x: trackWidth * progress - 6)
+      }
+      .offset(x: inset)
+      .frame(width: geometry.size.width, height: 44, alignment: .leading)
+      .contentShape(Rectangle())
+      .gesture(
+        DragGesture(minimumDistance: 0)
+          .updating($isDragging) { _, dragging, _ in
+            dragging = canSeek && trackWidth > 0
+          }
+          .onChanged { value in
+            guard canSeek, trackWidth > 0 else { return }
+            let fraction = min(1, max(0, (value.location.x - inset) / trackWidth))
+            dragTime = fraction * VideoPlaybackTimeline.duration(duration)
+          }
+          .onEnded { value in
+            guard canSeek, trackWidth > 0 else { return }
+            let fraction = min(1, max(0, (value.location.x - inset) / trackWidth))
+            onSeek(fraction * VideoPlaybackTimeline.duration(duration))
+          }
+      )
     }
-    
-    var progress: Double {
-        guard duration > 0 else { return 0 }
-        return displayTime / duration
+    .frame(height: 44)
+    .opacity(canSeek ? 1 : 0.5)
+    .accessibilityElement(children: .ignore)
+    .accessibilityLabel("Video progress")
+    .accessibilityValue("\(timeDescription(displayTime)) of \(timeDescription(duration))")
+    .accessibilityAdjustableAction { direction in
+      guard canSeek else { return }
+      let delta: Double
+      switch direction {
+      case .increment: delta = 5
+      case .decrement: delta = -5
+      @unknown default: return
+      }
+      onSeek(VideoPlaybackTimeline.time(currentTime + delta, duration: duration))
     }
-    
-    var bufferedProgress: Double {
-        guard duration > 0 else { return 0 }
-        return bufferedTime / duration
-    }
-    
-    var body: some View {
-        GeometryReader { geometry in
-            ZStack(alignment: .leading) {
-                // Background
-                Rectangle()
-                    .fill(Color.white.opacity(0.2))
-                    .frame(height: 4)
-                
-                // Buffered progress
-                Rectangle()
-                    .fill(Color.white.opacity(0.4))
-                    .frame(width: geometry.size.width * bufferedProgress, height: 4)
-                
-                // Current progress
-                Rectangle()
-                    .fill(Color.white)
-                    .frame(width: geometry.size.width * progress, height: 4)
-                
-                // Scrubber
-                Circle()
-                    .fill(Color.white)
-                    .frame(width: 12, height: 12)
-                    .position(x: geometry.size.width * progress, y: 2)
-            }
-            .frame(height: 4)
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { value in
-                        isDragging = true
-                        let progress = max(0, min(1, value.location.x / geometry.size.width))
-                        dragTime = progress * duration
-                    }
-                    .onEnded { _ in
-                        onSeek(dragTime)
-                        isDragging = false
-                    }
-            )
-        }
-        .frame(height: 20)
-    }
+  }
+
+  private func timeDescription(_ value: Double) -> String {
+    let seconds = Int(min(Double(Int.max / 2), VideoPlaybackTimeline.duration(value)))
+    return "\(seconds / 60):" + String(format: "%02d", seconds % 60)
+  }
 }
 
 #if os(iOS)

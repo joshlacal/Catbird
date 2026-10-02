@@ -7,6 +7,7 @@
 
 import AVFoundation
 import Petrel
+import Observation
 import SwiftUI
 
 /// Dedicated edge-to-edge vertical video feed presenting full-screen playable video posts from the canonical 'thevids' generator.
@@ -19,15 +20,18 @@ public struct VideoFeedView: View {
 
   @Environment(AppState.self) private var appState
   @Environment(\.dismiss) private var dismiss
+  @Environment(\.scenePhase) private var scenePhase
 
   @State private var playerPool = VideoFeedPlayerPool()
   @State private var items: [VideoFeedItem] = []
-  @State private var activeIndex: Int = 0
-  @State private var cursor: String? = nil
-  @State private var isLoading: Bool = false
+  @State private var activeItemID: String?
+  @State private var isVisible = false
+  @State private var resumePlaybackWhenActive = false
+  @State private var cursor: String?
+  @State private var pagination = VideoFeedPaginationCoordinator()
   @State private var isInitialLoading: Bool = true
   @State private var hasMore: Bool = true
-  @State private var errorMessage: String? = nil
+  @State private var errorMessage: String?
   @State private var revealedItemIDs: Set<String> = []
 
   public init(feedURI: String = VideoFeedView.thevidsURI, path: Binding<NavigationPath>? = nil) {
@@ -38,134 +42,52 @@ public struct VideoFeedView: View {
     ZStack {
       Color.black.ignoresSafeArea()
 
-      if isInitialLoading {
-        VStack(spacing: 16) {
-          ProgressView()
-            .tint(.white)
-          Text("Loading Video Feed…")
-            .font(.subheadline)
-            .foregroundStyle(.white.opacity(0.8))
-        }
-      } else if let error = errorMessage, items.isEmpty {
-        VStack(spacing: 16) {
-          Image(systemName: "exclamationmark.triangle")
-            .font(.largeTitle)
-            .foregroundStyle(.white.opacity(0.8))
-
-          Text(error)
-            .font(.subheadline)
-            .foregroundStyle(.white.opacity(0.8))
-            .multilineTextAlignment(.center)
-            .padding(.horizontal, 32)
-
-          Button {
-            Task {
-              await loadInitialFeed()
-            }
-          } label: {
-            Text("Retry")
-              .fontWeight(.semibold)
-              .padding(.horizontal, 24)
-              .padding(.vertical, 10)
-              .background(.white.opacity(0.2))
-              .clipShape(Capsule())
-          }
-          .tint(.white)
-        }
-      } else if items.isEmpty {
-        VStack(spacing: 12) {
-          Image(systemName: "video.slash")
-            .font(.largeTitle)
-            .foregroundStyle(.white.opacity(0.6))
-          Text("No videos found")
-            .font(.subheadline)
-            .foregroundStyle(.white.opacity(0.8))
+      if isInitialLoading || items.isEmpty {
+        VideoFeedEmptyState(isLoading: isInitialLoading, errorMessage: errorMessage) {
+          Task { await loadInitialFeed() }
         }
       } else {
-        // Vertical paging feed
-        GeometryReader { proxy in
-          TabView(selection: $activeIndex) {
-            ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-              VideoFeedItemView(
-                item: item,
-                index: index,
-                isActive: index == activeIndex,
-                isRevealed: revealedItemIDs.contains(item.id),
-                playerPool: playerPool,
-                onReveal: {
-                  revealItem(at: index)
-                },
-                onProfileTap: { did in
-                  path.append(NavigationDestination.profile(did))
-                },
-                onPostTap: { uri in
-                  path.append(NavigationDestination.post(uri))
-                }
-              )
-              .frame(width: proxy.size.width, height: proxy.size.height)
-              .rotationEffect(.degrees(-90))
-              .tag(index)
-            }
+        VideoFeedPager(items: items, selection: $activeItemID) { item, size in
+          if let index = items.firstIndex(where: { $0.id == item.id }) {
+            VideoFeedItemView(
+              item: item,
+              index: index,
+              pageSize: size,
+              isActive: item.id == activeItemID,
+              attachesPlayer: abs(index - activeIndex) <= 1,
+              playerPool: playerPool,
+              onReveal: { revealItem(at: index) },
+              onConceal: { concealItem(at: index) },
+              onProfileTap: { did in
+                path.append(NavigationDestination.profile(did))
+              },
+              onPostTap: { uri in
+                path.append(NavigationDestination.post(uri))
+              }
+            )
           }
-          .frame(width: proxy.size.height, height: proxy.size.width)
-          .rotationEffect(.degrees(90), anchor: .topLeading)
-          .offset(x: proxy.size.width)
-          #if os(iOS)
-          .tabViewStyle(.page(indexDisplayMode: .never))
-          #endif
         }
-        .ignoresSafeArea()
-      }
-
-      // Top floating navigation overlay
-      VStack {
-        HStack(alignment: .center) {
-          Button {
-            dismiss()
-          } label: {
-            Image(systemName: "chevron.left")
-              .font(.system(size: 18, weight: .bold))
-              .foregroundStyle(.white)
-              .padding(10)
-              .background(.black.opacity(0.4))
-              .clipShape(Circle())
-          }
-          .accessibilityLabel("Back")
-
-          Spacer()
-
-          Text("The Vids")
-            .font(.headline)
-            .fontWeight(.bold)
-            .foregroundStyle(.white)
-            .shadow(radius: 4)
-
-          Spacer()
-
-          Button {
-            playerPool.toggleMute()
-          } label: {
-            Image(systemName: playerPool.isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
-              .font(.system(size: 16, weight: .semibold))
-              .foregroundStyle(.white)
-              .padding(10)
-              .background(.black.opacity(0.4))
-              .clipShape(Circle())
-          }
-          .accessibilityLabel(playerPool.isMuted ? "Unmute" : "Mute")
-        }
-        .padding(.horizontal, 16)
-        .padding(.top, 8)
-
-        Spacer()
       }
     }
-    #if os(iOS)
-    .navigationBarBackButtonHidden(true)
-    .toolbar(.hidden, for: .navigationBar)
-    #else
-    .toolbar(.hidden, for: .windowToolbar)
-    #endif
+    .safeAreaInset(edge: .top, spacing: 0) {
+      navigationControls
+    }
+    .safeAreaInset(edge: .bottom, spacing: 0) {
+      if let error = pagination.errorMessage {
+        HStack(spacing: 12) {
+          Text(error)
+            .font(.footnote)
+            .frame(maxWidth: .infinity, alignment: .leading)
+          Button("Retry") { requestNextPageIfNeeded(retrying: true) }
+            .frame(minWidth: 44, minHeight: 44)
+            .accessibilityIdentifier("videoLoadMoreRetry")
+        }
+        .foregroundStyle(.white)
+        .padding(.horizontal, 16)
+        .background(.black)
+      }
+    }
+    .modifier(VideoFeedNavigationModifier())
     .task {
       if items.isEmpty {
         await loadInitialFeed()
@@ -174,16 +96,43 @@ public struct VideoFeedView: View {
       }
     }
     .onAppear {
+      isVisible = true
       if !items.isEmpty {
         updatePlaybackForActiveIndex(activeIndex)
+        requestNextPageIfNeeded()
       }
     }
-    .onChange(of: activeIndex) { _, newIndex in
-      handleActiveIndexChange(newIndex)
+    .onChange(of: activeItemID) { _, _ in
+      updatePlaybackForActiveIndex(activeIndex)
+      requestNextPageIfNeeded()
+    }
+    .onChange(of: scenePhase) { previous, phase in
+      if phase == .active {
+        if isVisible, resumePlaybackWhenActive {
+          updatePlaybackForActiveIndex(activeIndex)
+        }
+      } else if previous == .active {
+        resumePlaybackWhenActive = playerPool.wantsPlayback
+        playerPool.pauseAll()
+      }
     }
     .onDisappear {
+      isVisible = false
+      pagination.cancel()
       playerPool.cleanup()
     }
+  }
+
+  private var activeIndex: Int {
+    items.firstIndex(where: { $0.id == activeItemID }) ?? 0
+  }
+
+  private var navigationControls: some View {
+    VideoFeedNavigationControls(
+      isMuted: playerPool.isMuted,
+      onBack: { dismiss() },
+      onMute: { playerPool.toggleMute() }
+    )
   }
 
   private func loadInitialFeed() async {
@@ -211,58 +160,57 @@ public struct VideoFeedView: View {
       )
 
       let parsedItems = extractVideoItems(from: feedPosts)
+      try Task.checkCancellation()
       self.items = parsedItems
       self.cursor = nextCursor
       self.hasMore = nextCursor != nil && !feedPosts.isEmpty
       self.isInitialLoading = false
 
       if !parsedItems.isEmpty {
-        self.activeIndex = 0
+        self.activeItemID = parsedItems.first?.id
         updatePlaybackForActiveIndex(0)
       }
+      requestNextPageIfNeeded()
+    } catch is CancellationError {
+      self.isInitialLoading = false
     } catch {
       self.errorMessage = error.localizedDescription
       self.isInitialLoading = false
     }
   }
 
-  private func loadNextPage() async {
-    guard !isLoading, hasMore, let currentCursor = cursor else { return }
-    isLoading = true
+  private func requestNextPageIfNeeded(retrying: Bool = false) {
+    guard isVisible, !isInitialLoading, hasMore,
+          retrying || activeIndex >= items.count - 3,
+          let currentCursor = cursor else { return }
+    pagination.request(retrying: retrying, operation: {
+      try await self.loadNextPage(cursor: currentCursor)
+    }, onSuccess: {
+      // A filtered or overlapping page can contain no new videos. Continue only
+      // after a successful request with a new cursor, never after a failure.
+      self.requestNextPageIfNeeded()
+    })
+  }
 
-    guard let client = appState.atProtoClient else {
-      isLoading = false
-      return
-    }
-
+  private func loadNextPage(cursor currentCursor: String) async throws {
+    guard let client = appState.atProtoClient else { throw PostViewModelError.missingClient }
+    let uri = try ATProtocolURI(uriString: feedURI)
     let feedManager = FeedManager(client: client)
+    let (feedPosts, nextCursor) = try await feedManager.fetchFeed(
+      fetchType: .feed(uri), cursor: currentCursor
+    )
+    let newItems = extractVideoItems(from: feedPosts)
+    var seenIDs = Set(items.map(\.id))
+    let uniqueNewItems = newItems.filter { seenIDs.insert($0.id).inserted }
 
-    do {
-      guard let uri = try? ATProtocolURI(uriString: feedURI) else {
-        isLoading = false
-        return
-      }
-
-      let (feedPosts, nextCursor) = try await feedManager.fetchFeed(
-        fetchType: .feed(uri),
-        cursor: currentCursor
-      )
-
-      let newItems = extractVideoItems(from: feedPosts)
-      // Append only items not already in the feed
-      let existingIDs = Set(items.map(\.id))
-      let uniqueNewItems = newItems.filter { !existingIDs.contains($0.id) }
-
-      self.items.append(contentsOf: uniqueNewItems)
-      self.cursor = nextCursor
-      self.hasMore = nextCursor != nil && !feedPosts.isEmpty
-      self.isLoading = false
-
-      // Update prewarming with newly appended items
-      updatePrewarming(for: activeIndex)
-    } catch {
-      self.isLoading = false
-    }
+    // Even a transport that finishes after cancellation cannot publish an old
+    // page over the new visible screen's request.
+    try Task.checkCancellation()
+    self.items.append(contentsOf: uniqueNewItems)
+    if activeItemID == nil { activeItemID = items.first?.id }
+    self.cursor = nextCursor
+    self.hasMore = nextCursor != nil && nextCursor != currentCursor && !feedPosts.isEmpty
+    updatePrewarming(for: activeIndex)
   }
 
   private func extractVideoItems(from feedPosts: [AppBskyFeedDefs.FeedViewPost]) -> [VideoFeedItem] {
@@ -280,18 +228,6 @@ public struct VideoFeedView: View {
         )
       }
       return nil
-    }
-  }
-
-  private func handleActiveIndexChange(_ newIndex: Int) {
-    guard items.indices.contains(newIndex) else { return }
-    updatePlaybackForActiveIndex(newIndex)
-
-    // Load next page when reaching near the end
-    if newIndex >= items.count - 3 {
-      Task {
-        await loadNextPage()
-      }
     }
   }
 
@@ -325,8 +261,16 @@ public struct VideoFeedView: View {
     }
   }
 
-  private func updatePlaybackForActiveIndex(_ index: Int) {
+  private func concealItem(at index: Int) {
     guard items.indices.contains(index) else { return }
+    revealedItemIDs.remove(items[index].id)
+    if index == activeIndex, !isItemEligibleForPlayback(items[index]) {
+      playerPool.pauseAll()
+    }
+  }
+
+  private func updatePlaybackForActiveIndex(_ index: Int) {
+    guard isVisible, scenePhase == .active, items.indices.contains(index) else { return }
     updatePrewarming(for: index)
     if isItemEligibleForPlayback(items[index]) {
       playerPool.play(feedIndex: index)
@@ -336,11 +280,61 @@ public struct VideoFeedView: View {
   }
 
   private func updatePrewarming(for index: Int) {
+    guard isVisible, scenePhase == .active else { return }
     let prewarmTargets = items.enumerated().compactMap { (offset, element) -> (index: Int, url: URL)? in
       guard isItemEligibleForPlayback(element) else { return nil }
       return (index: offset, url: element.playlistURL)
     }
     playerPool.prewarm(activeIndex: index, items: prewarmTargets)
+  }
+}
+
+private struct VideoFeedEmptyState: View {
+  let isLoading: Bool
+  let errorMessage: String?
+  let onRetry: () -> Void
+
+  var body: some View {
+    if isLoading {
+      VStack(spacing: 16) {
+        ProgressView()
+          .tint(.white)
+        Text("Loading Video Feed…")
+          .font(.subheadline)
+          .foregroundStyle(.white.opacity(0.8))
+      }
+    } else if let error = errorMessage {
+      VStack(spacing: 16) {
+        Image(systemName: "exclamationmark.triangle")
+          .font(.largeTitle)
+          .foregroundStyle(.white.opacity(0.8))
+
+        Text(error)
+          .font(.subheadline)
+          .foregroundStyle(.white.opacity(0.8))
+          .multilineTextAlignment(.center)
+          .padding(.horizontal, 32)
+
+        Button(action: onRetry) {
+          Text("Retry")
+            .fontWeight(.semibold)
+            .padding(.horizontal, 24)
+            .padding(.vertical, 10)
+            .background(.white.opacity(0.2))
+            .clipShape(Capsule())
+        }
+        .tint(.white)
+      }
+    } else {
+      VStack(spacing: 12) {
+        Image(systemName: "video.slash")
+          .font(.largeTitle)
+          .foregroundStyle(.white.opacity(0.6))
+        Text("No videos found")
+          .font(.subheadline)
+          .foregroundStyle(.white.opacity(0.8))
+      }
+    }
   }
 }
 
@@ -361,18 +355,75 @@ public struct VideoFeedItem: Identifiable, Hashable, Sendable {
   }
 }
 
+// MARK: - Paging geometry
+
+/// The page and the scroll snap use the same safe container. Only the black
+/// backdrop extends behind system bars; video controls never borrow their space.
+struct VideoFeedPager<Item: Identifiable, Page: View>: View {
+  let items: [Item]
+  @Binding var selection: Item.ID?
+  @ViewBuilder let page: (Item, CGSize) -> Page
+
+  var body: some View {
+    GeometryReader { geometry in
+      ScrollView(.vertical) {
+        LazyVStack(spacing: 0) {
+          ForEach(items) { item in
+            page(item, geometry.size)
+              .frame(width: geometry.size.width, height: geometry.size.height)
+              .clipped()
+              .id(item.id)
+          }
+        }
+        .scrollTargetLayout()
+      }
+      .scrollTargetBehavior(.paging)
+      .scrollPosition(id: $selection, anchor: .top)
+      .scrollIndicators(.hidden)
+      .modifier(VideoFeedScrollEdges())
+      .frame(width: geometry.size.width, height: geometry.size.height)
+      .clipped()
+    }
+  }
+}
+
+private struct VideoFeedScrollEdges: ViewModifier {
+  func body(content: Content) -> some View {
+    if #available(iOS 26.0, macOS 26.0, *) {
+      content.scrollEdgeEffectHidden(true, for: .all)
+    } else {
+      content
+    }
+  }
+}
+
+struct VideoFeedNavigationModifier: ViewModifier {
+  func body(content: Content) -> some View {
+    #if os(iOS)
+    content
+      .navigationBarBackButtonHidden(true)
+      .toolbar(.hidden, for: .navigationBar)
+    #else
+    content.toolbar(.hidden, for: .windowToolbar)
+    #endif
+  }
+}
+
 // MARK: - Single Video Item View
 
 private struct VideoFeedItemView: View {
   let item: VideoFeedItem
   let index: Int
+  let pageSize: CGSize
   let isActive: Bool
-  let isRevealed: Bool
+  let attachesPlayer: Bool
   let playerPool: VideoFeedPlayerPool
   let onReveal: () -> Void
+  let onConceal: () -> Void
   let onProfileTap: (String) -> Void
   let onPostTap: (ATProtocolURI) -> Void
   @Environment(AppState.self) private var appState
+  @State private var actions: VideoFeedPostActions?
 
   private var postText: String {
     if case .knownType(let record) = item.post.record,
@@ -381,12 +432,11 @@ private struct VideoFeedItemView: View {
     }
     return ""
   }
+
   private var selfLabelValues: [String]? {
     guard case .knownType(let record) = item.post.record,
           let postRecord = record as? AppBskyFeedPost,
-          let postLabels = postRecord.labels else {
-      return nil
-    }
+          let postLabels = postRecord.labels else { return nil }
     switch postLabels {
     case .comAtprotoLabelDefsSelfLabels(let selfLabels):
       return selfLabels.values.map { $0.val.lowercased() }
@@ -395,171 +445,482 @@ private struct VideoFeedItemView: View {
     }
   }
 
-
   var body: some View {
     ZStack(alignment: .bottom) {
-      // Background Player Layer wrapped in ContentLabelManager
+      Color.black
       ContentLabelManager(
-        labels: isRevealed ? nil : item.post.labels,
-        selfLabelValues: isRevealed ? nil : selfLabelValues,
+        labels: item.post.labels,
+        selfLabelValues: selfLabelValues,
         contentType: "video"
       ) {
         ZStack {
-          PlayerLayerView(
-            player: playerPool.player(for: index),
-            gravity: .resizeAspectFill,
-            shouldLoop: true
-          )
-          .ignoresSafeArea()
-          .onAppear {
-            onReveal()
+          if attachesPlayer {
+            PlayerLayerView(
+              player: playerPool.player(for: index),
+              gravity: .resizeAspect,
+              shouldLoop: false,
+              pausesOnDismantle: false
+            )
+            .onAppear(perform: onReveal)
+            .onDisappear(perform: onConceal)
           }
-          // Play/Pause tap overlay
-          Color.clear
-            .contentShape(Rectangle())
-            .onTapGesture {
-              playerPool.togglePlayPause()
-            }
 
-          // Center paused icon indicator
-          if isActive && !playerPool.isPlaying {
-            Image(systemName: "play.fill")
-              .font(.system(size: 54))
-              .foregroundStyle(.white.opacity(0.85))
-              .shadow(radius: 8)
-              .allowsHitTesting(false)
+          Button { playerPool.togglePlayPause() } label: {
+            Color.clear.contentShape(Rectangle())
+          }
+          .buttonStyle(.plain)
+          .disabled(!isActive)
+          .accessibilityLabel(playerPool.wantsPlayback ? "Pause video" : "Play video")
+
+          if isActive {
+            playbackStatus
           }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
       }
-      .ignoresSafeArea()
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-      // Gradient shadow overlay for legibility
       LinearGradient(
-        colors: [.clear, .black.opacity(0.3), .black.opacity(0.75)],
+        colors: [.clear, .black.opacity(0.25), .black.opacity(0.85)],
         startPoint: .center,
         endPoint: .bottom
       )
-      .ignoresSafeArea()
       .allowsHitTesting(false)
 
-      // Post details & Scrubber
-      VStack(alignment: .leading, spacing: 10) {
-        HStack(alignment: .bottom, spacing: 12) {
-          // Bottom-left: Author and post content
-          VStack(alignment: .leading, spacing: 8) {
-            // Author info
-            Button {
-              onProfileTap(item.post.author.did.didString())
-            } label: {
-              HStack(spacing: 8) {
-                AvatarView(
-                  did: item.post.author.did.didString(),
-                  client: appState.atProtoClient,
-                  size: 38
-                )
+      footer
+    }
+    .clipped()
+    .task(id: appState.userDID) {
+      let model = VideoFeedPostActions(post: item.post, appState: appState)
+      actions = model
+      defer { model.invalidate() }
+      await model.observe()
+    }
+    .onChange(of: isActive) { _, active in
+      if !active { actions?.cancel() }
+    }
+    .onDisappear { actions?.cancel() }
+    .alert("Action unsuccessful", isPresented: Binding(
+      get: { actions?.errorMessage != nil },
+      set: { if !$0 { actions?.errorMessage = nil } }
+    )) {
+      Button("OK", role: .cancel) { actions?.errorMessage = nil }
+    } message: {
+      Text(actions?.errorMessage ?? "")
+    }
+  }
 
-                VStack(alignment: .leading, spacing: 1) {
-                  Text(item.post.author.displayName ?? item.post.author.handle.description)
-                    .font(.subheadline)
-                    .fontWeight(.bold)
-                    .foregroundStyle(.white)
-                    .lineLimit(1)
+  @ViewBuilder private var playbackStatus: some View {
+    switch playerPool.playbackState {
+    case .loading:
+      ProgressView("Loading video")
+        .tint(.white)
+        .foregroundStyle(.white)
+        .padding(16)
+        .background(.black.opacity(0.6), in: RoundedRectangle(cornerRadius: 12))
+        .allowsHitTesting(false)
+    case .failed:
+      VStack(spacing: 12) {
+        Text("Unable to play this video")
+          .font(.subheadline)
+          .multilineTextAlignment(.center)
+        Button("Retry") { playerPool.retry(feedIndex: index) }
+          .buttonStyle(.borderedProminent)
+          .frame(minHeight: 44)
+      }
+      .foregroundStyle(.white)
+      .padding(16)
+      .background(.black.opacity(0.7), in: RoundedRectangle(cornerRadius: 12))
+    case .paused:
+      Image(systemName: "play.fill")
+        .font(.system(size: 48))
+        .foregroundStyle(.white.opacity(0.9))
+        .shadow(radius: 8)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    case .idle, .playing:
+      EmptyView()
+    }
+  }
 
-                  Text("@\(item.post.author.handle)")
-                    .font(.caption2)
-                    .foregroundStyle(.white.opacity(0.7))
-                    .lineLimit(1)
-                }
-              }
-            }
-            .buttonStyle(.plain)
+  private var footer: some View {
+    VideoFeedOverlayControls(
+      pageSize: pageSize,
+      hasCaption: !postText.isEmpty,
+      author: { author(compact: $0) },
+      caption: { postCaption(lines: $0) },
+      actions: { actionControls(horizontal: $0) },
+      progress: {
+        VideoProgressBar(
+          currentTime: isActive ? playerPool.currentTime : 0,
+          duration: isActive ? playerPool.duration : 0,
+          bufferedTime: isActive ? playerPool.bufferedTime : 0,
+          onSeek: { seconds in playerPool.seek(to: seconds, at: index) }
+        )
+        .disabled(!isActive || !playerPool.canSeek)
+        .accessibilityIdentifier("videoProgress")
+      }
+    )
+  }
 
-            // Post text
-            if !postText.isEmpty {
-              Button {
-                onPostTap(item.post.uri)
-              } label: {
-                Text(postText)
-                  .font(.subheadline)
-                  .foregroundStyle(.white)
-                  .lineLimit(3)
-                  .multilineTextAlignment(.leading)
-              }
-              .buttonStyle(.plain)
-            }
+  private func author(compact: Bool) -> some View {
+    Button { onProfileTap(item.post.author.did.didString()) } label: {
+      HStack(spacing: 8) {
+        AvatarView(did: item.post.author.did.didString(), client: appState.atProtoClient, size: 38)
+        VStack(alignment: .leading, spacing: 1) {
+          Text(item.post.author.displayName ?? item.post.author.handle.description)
+            .font(.subheadline.bold())
+            .lineLimit(1)
+          if !compact {
+            Text("@\(item.post.author.handle)")
+              .font(.caption2)
+              .foregroundStyle(.white.opacity(0.8))
+              .lineLimit(1)
           }
-
-          Spacer()
-
-          // Bottom-right: Actions (Thread, Likes, Reposts)
-          VStack(spacing: 16) {
-            // Open Thread
-            Button {
-              onPostTap(item.post.uri)
-            } label: {
-              VStack(spacing: 4) {
-                Image(systemName: "bubble.right.fill")
-                  .font(.system(size: 22))
-                  .foregroundStyle(.white)
-                if let count = item.post.replyCount, count > 0 {
-                  Text("\(count)")
-                    .font(.caption2)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(.white)
-                }
-              }
-            }
-            .buttonStyle(.plain)
-
-            // Likes
-            VStack(spacing: 4) {
-              Image(systemName: "heart.fill")
-                .font(.system(size: 22))
-                .foregroundStyle(item.post.viewer?.like != nil ? .red : .white)
-              if let count = item.post.likeCount, count > 0 {
-                Text("\(count)")
-                  .font(.caption2)
-                  .fontWeight(.semibold)
-                  .foregroundStyle(.white)
-              }
-            }
-
-            // Reposts
-            VStack(spacing: 4) {
-              Image(systemName: "arrow.2.squarepath")
-                .font(.system(size: 22))
-                .foregroundStyle(item.post.viewer?.repost != nil ? .green : .white)
-              if let count = item.post.repostCount, count > 0 {
-                Text("\(count)")
-                  .font(.caption2)
-                  .fontWeight(.semibold)
-                  .foregroundStyle(.white)
-              }
-            }
-          }
-          .padding(.bottom, 6)
         }
-        .padding(.horizontal, 16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+      }
+      .frame(minHeight: 44)
+      .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+  }
 
-        // Progress Scrubber Bar
-        if isActive {
-          VideoProgressBar(
-            currentTime: playerPool.currentTime,
-            duration: playerPool.duration,
-            bufferedTime: playerPool.bufferedTime,
-            onSeek: { seconds in
-              playerPool.seek(to: seconds, at: index)
-            }
-          )
-          .padding(.horizontal, 16)
-          .padding(.bottom, 24)
-        } else {
-          Rectangle()
-            .fill(Color.clear)
-            .frame(height: 20)
-            .padding(.bottom, 24)
+  private func postCaption(lines: Int) -> some View {
+    Button { onPostTap(item.post.uri) } label: {
+      Text(postText)
+        .font(.subheadline)
+        .lineLimit(lines)
+        .multilineTextAlignment(.leading)
+        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+        .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .accessibilityHint("Opens the thread")
+  }
+
+  private func actionControls(horizontal: Bool) -> some View {
+    VideoFeedReactionControls(
+      horizontal: horizontal,
+      isLiked: actions?.state.isLiked ?? (item.post.viewer?.like != nil),
+      isReposted: actions?.state.isReposted ?? (item.post.viewer?.repost != nil),
+      replyCount: actions?.state.replyCount ?? item.post.replyCount ?? 0,
+      likeCount: actions?.state.likeCount ?? item.post.likeCount ?? 0,
+      repostCount: actions?.state.repostCount ?? item.post.repostCount ?? 0,
+      canAct: isActive && actions?.accountDID == appState.userDID && actions?.canAct == true,
+      onComments: { onPostTap(item.post.uri) },
+      onLike: { actions?.toggle(.like) },
+      onRepost: { actions?.toggle(.repost) }
+    )
+  }
+}
+
+// MARK: - Video controls presentation
+
+struct VideoFeedNavigationControls: View {
+  let isMuted: Bool
+  let onBack: () -> Void
+  let onMute: () -> Void
+
+  var body: some View {
+    HStack(spacing: 12) {
+      Button(action: onBack) {
+        Image(systemName: "chevron.left")
+          .font(.system(size: 18, weight: .bold))
+          .frame(width: 44, height: 44)
+          .background(.white.opacity(0.12), in: Circle())
+      }
+      .accessibilityLabel("Back")
+
+      Spacer(minLength: 0)
+      Text("The Vids")
+        .font(.headline.bold())
+        .lineLimit(1)
+      Spacer(minLength: 0)
+
+      Button(action: onMute) {
+        Image(systemName: isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
+          .font(.system(size: 18, weight: .semibold))
+          .frame(width: 44, height: 44)
+          .background(.white.opacity(0.12), in: Circle())
+      }
+      .accessibilityLabel(isMuted ? "Unmute" : "Mute")
+    }
+    .buttonStyle(.plain)
+    .foregroundStyle(.white)
+    .padding(.horizontal, 16)
+    .padding(.vertical, 6)
+    .background(.black)
+  }
+}
+
+struct VideoFeedOverlayControls<Author: View, Caption: View, Actions: View, Progress: View>: View {
+  let pageSize: CGSize
+  let hasCaption: Bool
+  @ViewBuilder let author: (Bool) -> Author
+  @ViewBuilder let caption: (Int) -> Caption
+  @ViewBuilder let actions: (Bool) -> Actions
+  @ViewBuilder let progress: () -> Progress
+  @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+  private var compact: Bool {
+    pageSize.height < 420 || pageSize.width < 300 || dynamicTypeSize.isAccessibilitySize
+  }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      if compact {
+        author(true)
+        if hasCaption, pageSize.height >= 320 { caption(1) }
+        actions(true)
+      } else {
+        HStack(alignment: .bottom, spacing: 12) {
+          VStack(alignment: .leading, spacing: 8) {
+            author(false)
+            if hasCaption { caption(3) }
+          }
+          .frame(maxWidth: .infinity, alignment: .leading)
+          actions(false)
+        }
+      }
+      progress()
+    }
+    .padding(.horizontal, 16)
+    .padding(.bottom, 8)
+    .foregroundStyle(.white)
+  }
+}
+
+struct VideoFeedReactionControls: View {
+  let horizontal: Bool
+  let isLiked: Bool
+  let isReposted: Bool
+  let replyCount: Int
+  let likeCount: Int
+  let repostCount: Int
+  let canAct: Bool
+  let onComments: () -> Void
+  let onLike: () -> Void
+  let onRepost: () -> Void
+
+  var body: some View {
+    let layout = horizontal ? AnyLayout(HStackLayout(spacing: 12)) : AnyLayout(VStackLayout(spacing: 8))
+    layout {
+      VideoFeedReactionButton(
+        icon: "bubble.right.fill", count: replyCount, label: "Comments",
+        color: .white, identifier: "videoComments", action: onComments
+      )
+      .accessibilityHint("Opens the thread")
+
+      VideoFeedReactionButton(
+        icon: isLiked ? "heart.fill" : "heart", count: likeCount,
+        label: isLiked ? "Unlike" : "Like", color: isLiked ? .red : .white,
+        identifier: "videoLike", action: onLike
+      )
+      .disabled(!canAct)
+      .opacity(canAct ? 1 : 0.45)
+
+      VideoFeedReactionButton(
+        icon: "arrow.2.squarepath", count: repostCount,
+        label: isReposted ? "Undo repost" : "Repost", color: isReposted ? .green : .white,
+        identifier: "videoRepost", action: onRepost
+      )
+      .disabled(!canAct)
+      .opacity(canAct ? 1 : 0.45)
+    }
+    .frame(maxWidth: horizontal ? .infinity : nil)
+  }
+}
+
+private struct VideoFeedReactionButton: View {
+  let icon: String
+  let count: Int
+  let label: String
+  let color: Color
+  let identifier: String
+  let action: () -> Void
+
+  var body: some View {
+    Button(action: action) {
+      VStack(spacing: 2) {
+        Image(systemName: icon)
+          .font(.system(size: 22, weight: .semibold))
+          .foregroundStyle(color)
+        Text(max(0, count), format: .number.notation(.compactName))
+          .font(.caption2.bold())
+          .foregroundStyle(.white)
+          .lineLimit(1)
+      }
+      .frame(minWidth: 44, minHeight: 52)
+      .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .accessibilityLabel("\(label). Count: \(max(0, count))")
+    .accessibilityIdentifier(identifier)
+  }
+}
+
+// MARK: - Shared post actions
+
+/// Keeps Vids on the same optimistic/shadow-state path as ordinary feed rows.
+@MainActor @Observable
+private final class VideoFeedPostActions {
+  enum Action { case like, repost }
+
+  let state: PostInteractionState
+  let accountDID: String
+  private let operation = VideoFeedActionCoordinator()
+  var errorMessage: String? {
+    get { operation.errorMessage }
+    set { operation.errorMessage = newValue }
+  }
+  private(set) var isReady = false
+  private let post: AppBskyFeedDefs.PostView
+  private let appState: AppState
+  private let postViewModel: PostViewModel
+  private let actions: ActionButtonViewModel
+
+  var canAct: Bool { isReady && !operation.isBusy && appState.atProtoClient != nil }
+
+  init(post: AppBskyFeedDefs.PostView, appState: AppState) {
+    self.post = post
+    self.appState = appState
+    self.accountDID = appState.userDID
+    self.state = PostInteractionState(post: post)
+    self.postViewModel = PostViewModel(post: post, appState: appState)
+    self.actions = ActionButtonViewModel(
+      postId: post.uri.uriString(), postViewModel: postViewModel, appState: appState
+    )
+  }
+
+  func observe() async {
+    await postViewModel.start(post: post)
+    guard !Task.isCancelled else { return }
+    await refresh()
+    guard !Task.isCancelled else { return }
+    isReady = true
+    for await _ in await appState.postShadowManager.shadowUpdates(forUri: post.uri.uriString()) {
+      guard !Task.isCancelled else { return }
+      await refresh()
+    }
+  }
+
+  func toggle(_ action: Action) {
+    guard canAct else { return }
+    operation.perform {
+      do {
+        guard let client = self.appState.atProtoClient,
+              try await client.getDid() == self.accountDID else {
+          throw PostViewModelError.missingClient
+        }
+        try Task.checkCancellation()
+        switch action {
+        case .like: try await self.actions.toggleLike()
+        case .repost: try await self.actions.toggleRepost()
+        }
+      } catch {
+        await self.refresh()
+        throw error
+      }
+      await self.refresh()
+    }
+  }
+
+  func cancel() { operation.cancel() }
+
+  func invalidate() {
+    isReady = false
+    operation.cancel()
+  }
+
+  private func refresh() async {
+    let merged = await appState.postShadowManager.mergeShadow(post: post)
+    state.update(from: merged)
+    await postViewModel.checkInteractionState()
+    postViewModel.updateCounts(from: merged)
+  }
+}
+
+/// Serializes a page's interaction requests and owns their visible failure state.
+/// The injected operation stays on the ordinary post-action path in production.
+@MainActor @Observable
+final class VideoFeedActionCoordinator {
+  private(set) var isBusy = false
+  var errorMessage: String?
+  private var actionTask: Task<Void, Never>?
+
+  func perform(_ operation: @escaping @MainActor () async throws -> Void) {
+    guard !isBusy else { return }
+    isBusy = true
+    errorMessage = nil
+    actionTask = Task {
+      defer {
+        self.isBusy = false
+        self.actionTask = nil
+      }
+      do {
+        try Task.checkCancellation()
+        try await operation()
+      } catch {
+        if !Task.isCancelled {
+          self.errorMessage = "Your action could not be completed. Please try again."
         }
       }
     }
+  }
+
+  func cancel() {
+    actionTask?.cancel()
+    errorMessage = nil
+  }
+}
+
+/// Owns next-page requests independently of the selected video, so moving among
+/// the last few videos cannot cancel/restart the same cursor task accidentally.
+@MainActor @Observable
+final class VideoFeedPaginationCoordinator {
+  private(set) var isLoading = false
+  private(set) var errorMessage: String?
+  private var requestID: UUID?
+  private var requestTask: Task<Void, Never>?
+
+  func request(
+    retrying: Bool = false,
+    operation: @escaping @MainActor () async throws -> Void,
+    onSuccess: @escaping @MainActor () -> Void
+  ) {
+    guard !isLoading, retrying || errorMessage == nil else { return }
+    let id = UUID()
+    requestID = id
+    isLoading = true
+    errorMessage = nil
+    requestTask = Task {
+      var succeeded = false
+      defer {
+        if self.requestID == id {
+          self.requestID = nil
+          self.requestTask = nil
+          self.isLoading = false
+          if succeeded { onSuccess() }
+        }
+      }
+      do {
+        try Task.checkCancellation()
+        try await operation()
+        try Task.checkCancellation()
+        succeeded = true
+      } catch {
+        if self.requestID == id, !Task.isCancelled {
+          self.errorMessage = "More videos couldn’t load."
+        }
+      }
+    }
+  }
+
+  func cancel() {
+    requestID = nil
+    requestTask?.cancel()
+    requestTask = nil
+    isLoading = false
   }
 }

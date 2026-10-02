@@ -34,9 +34,17 @@ private var isMessageRequestsUIFixture: Bool {
   #endif
 }
 
+private var isVideoFeedUIFixture: Bool {
+  #if DEBUG
+  ProcessInfo.processInfo.arguments.contains("--video-feed-ui-fixture")
+  #else
+  false
+  #endif
+}
+
 /// Any presentation fixture: skips account bootstrap and URL handling.
 private var isPresentationUIFixture: Bool {
-  isMessageRequestsUIFixture
+  isMessageRequestsUIFixture || isVideoFeedUIFixture
 }
 
 // App-wide logger
@@ -935,6 +943,8 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
         #if DEBUG
         if isMessageRequestsUIFixture {
           MessageRequestsUIFixture()
+        } else if isVideoFeedUIFixture {
+          VideoFeedUIFixture()
         } else {
           applicationContent
         }
