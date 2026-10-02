@@ -66,7 +66,7 @@ struct ExternalMediaPreferencesView: View {
             
             Spacer()
             
-            Picker("", selection: Binding(
+            Picker("\(provider.displayName) playback", selection: Binding(
                 get: { currentConsent },
                 set: { appState.appSettings.setExternalMediaConsent($0, for: provider) }
             )) {

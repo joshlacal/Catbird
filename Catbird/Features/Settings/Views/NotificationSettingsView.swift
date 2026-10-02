@@ -95,7 +95,7 @@ struct NotificationSettingsView: View {
                             .foregroundStyle(.secondary)
                             .appFont(AppTextRole.caption)
 
-                        Button("Try Again Later") {
+                        Button("Turn Off Notifications") {
                             Task {
                                 await disableAllNotifications()
                             }

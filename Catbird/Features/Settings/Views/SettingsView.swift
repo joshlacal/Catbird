@@ -22,261 +22,137 @@ struct SettingsView: View {
   var body: some View {
     NavigationStack {
       ResponsiveContentView {
-        List {
-        Section {
-          AccountHeaderView(
-            isShowingAccountSwitcher: $isShowingAccountSwitcher,
-            availableAccounts: availableAccounts,
-            appState: appState,
-            profile: profile,
-            isLoadingProfile: isLoadingProfile,
-            profileError: profileError,
-            isAuthenticationError: isAuthenticationError
-          )
-        }
+        Form {
+          Section {
+            AccountHeaderView(
+              isShowingAccountSwitcher: $isShowingAccountSwitcher,
+              availableAccounts: availableAccounts,
+              appState: appState,
+              profile: profile,
+              isLoadingProfile: isLoadingProfile,
+              profileError: profileError,
+              isAuthenticationError: isAuthenticationError
+            )
+          }
 
-        // Main settings categories
-        Section("Settings") {
+          Section("Your Account") {
             NavigationLink(destination: AccountSettingsView()) {
-                Label {
-                    Text("Account")
-                } icon: {
-                    Image(systemName: "person.fill")
-                        .foregroundStyle(.blue)
-                }
+              Label("Account", systemImage: "person.fill")
             }
-
             NavigationLink(destination: PrivacySecuritySettingsView()) {
-                Label {
-                    Text("Privacy & Security")
-                } icon: {
-                    Image(systemName: "lock.fill")
-                        .foregroundStyle(.green)
-                }
-            }
-
-            NavigationLink(destination: ModerationSettingsView()) {
-                Label {
-                    Text("Moderation")
-                } icon: {
-                    Image(systemName: "shield.fill")
-                        .foregroundStyle(.orange)
-                }
-            }
-
-            NavigationLink(destination: ContentMediaSettingsView()) {
-                Label {
-                    Text("Content & Media")
-                } icon: {
-                    Image(systemName: "photo.on.rectangle.angled")
-                        .foregroundStyle(.purple)
-                }
-            }
-        }
-
-        Section {
-            NavigationLink(destination: AppearanceSettingsView()) {
-                Label {
-                    Text("Appearance")
-                } icon: {
-                    Image(systemName: "paintbrush.fill")
-                        .foregroundStyle(.pink)
-                }
-            }
-
-            NavigationLink(destination: AccessibilitySettingsView()) {
-                Label {
-                    Text("Accessibility")
-                } icon: {
-                    Image(systemName: "accessibility")
-                        .foregroundStyle(.indigo)
-                }
-            }
-
-            // NavigationLink(destination: LanguageSettingsView()) {
-            //     Label {
-            //         Text("Languages")
-            //     } icon: {
-            //         Image(systemName: "globe")
-            //             .foregroundStyle(.teal)
-            //     }
-            // }
-        }
-
-        // Notifications and feeds section
-        Section("App & Notifications") {
-            NavigationLink {
-                NotificationSettingsView()
-            } label: {
-                HStack {
-                    Label {
-                        Text("Notifications")
-                    } icon: {
-                        Image(systemName: "bell.fill")
-                            .foregroundStyle(.blue)
-                    }
-
-                    if appState.notificationManager.notificationsEnabled {
-                        Spacer()
-                        Text("On")
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-
-            NavigationLink {
-                FeedFilterSettingsView()
-            } label: {
-                HStack {
-                    Label {
-                        Text("Feed Filters")
-                    } icon: {
-                        Image(systemName: "line.3.horizontal.decrease.circle.fill")
-                            .foregroundStyle(.indigo)
-                    }
-
-                    Spacer()
-                    Text("\(appState.feedFilterSettings.activeFilterIds.count) active")
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            NavigationLink {
-                MuteWordsSettingsView()
-            } label: {
-                Label {
-                    Text("Muted Words")
-                } icon: {
-                    Image(systemName: "speaker.slash.fill")
-                        .foregroundStyle(.orange)
-                }
-            }
-
-            Button {
-                appState.onboardingManager.resetAllOnboarding()
-            } label: {
-                Label {
-                    Text("Show Tips Again")
-                } icon: {
-                    Image(systemName: "lightbulb.fill")
-                        .foregroundStyle(.yellow)
-                }
-            }
-
-            #if DEBUG
-            // NavigationLink {
-            //     WidgetDebugView()
-            // } label: {
-            //     Label {
-            //         Text("Widget Debugger")
-            //     } icon: {
-            //         Image(systemName: "hammer.fill")
-            //             .foregroundStyle(.gray)
-            //     }
-            // }
-            
-            NavigationLink {
-                SystemLogView()
-            } label: {
-                Label {
-                    Text("System Logs")
-                } icon: {
-                    Image(systemName: "doc.text.fill")
-                        .foregroundStyle(.gray)
-                }
-            }
-            #endif
-        }
-
-        Section("Support & Information") {
-            NavigationLink(destination: HelpSettingsView()) {
-                Label {
-                    Text("Help")
-                } icon: {
-                    Image(systemName: "questionmark.circle.fill")
-                        .foregroundStyle(.blue)
-                }
-            }
-
-            NavigationLink(destination: AboutSettingsView()) {
-                Label {
-                    Text("About")
-                } icon: {
-                    Image(systemName: "info.circle.fill")
-                        .foregroundStyle(.gray)
-                }
-            }
-
-            NavigationLink(destination: OpenSourceLicensesView()) {
-                Label {
-                    Text("Open Source Licenses")
-                } icon: {
-                    Image(systemName: "doc.text")
-                        .foregroundStyle(.purple)
-                }
-            }
-        }
-
-        Section("Advanced") {
-          NavigationLink(destination: AdvancedSettingsView()) {
-            Label {
-              Text("Advanced")
-            } icon: {
-              Image(systemName: "gearshape.2.fill")
-                  .foregroundStyle(.gray)
+              Label("Privacy & Security", systemImage: "lock.fill")
             }
           }
 
-          #if DEBUG
-          VersionRow()
-          #endif
-        }
-        
-        Section {
+          Section("Reading & Content") {
+            NavigationLink(destination: ContentMediaSettingsView()) {
+              Label("Content & Media", systemImage: "photo.on.rectangle.angled")
+            }
+            NavigationLink(destination: ModerationSettingsView()) {
+              Label("Moderation", systemImage: "shield.fill")
+            }
+            NavigationLink(destination: FeedFilterSettingsView()) {
+              LabeledContent {
+                Text("\(appState.feedFilterSettings.activeFilterIds.count) active")
+              } label: {
+                Label("Feed Filters", systemImage: "line.3.horizontal.decrease.circle.fill")
+              }
+            }
+          }
+
+          Section("Display & Accessibility") {
+            NavigationLink(destination: AppearanceSettingsView()) {
+              Label("Appearance", systemImage: "paintbrush.fill")
+            }
+            NavigationLink(destination: AccessibilitySettingsView()) {
+              Label("Accessibility", systemImage: "accessibility")
+            }
+          }
+
+          Section("Notifications") {
+            NavigationLink(destination: NotificationSettingsView()) {
+              LabeledContent {
+                Text(appState.notificationManager.notificationsEnabled ? "On" : "Off")
+              } label: {
+                Label("Notifications", systemImage: "bell.fill")
+              }
+            }
+          }
+
+          Section("Help & Support") {
+            NavigationLink(destination: HelpSettingsView()) {
+              Label("Help", systemImage: "questionmark.circle.fill")
+            }
+            Button {
+              appState.onboardingManager.resetAllOnboarding()
+            } label: {
+              Label("Show Tips Again", systemImage: "lightbulb.fill")
+            }
+            NavigationLink(destination: AboutSettingsView()) {
+              Label("About & Support", systemImage: "info.circle.fill")
+            }
+            NavigationLink(destination: OpenSourceLicensesView()) {
+              Label("Open Source Licenses", systemImage: "doc.text")
+            }
+          }
+
+          Section("Advanced") {
+            NavigationLink(destination: AdvancedSettingsView()) {
+              Label("Service Providers", systemImage: "gearshape.2.fill")
+            }
+            #if DEBUG
+              NavigationLink(destination: SystemLogView()) {
+                Label("System Logs", systemImage: "doc.text.fill")
+              }
+              VersionRow()
+            #endif
+          }
+
+          Section {
             LogoutButton(isLoggingOut: $isLoggingOut, handleLogout: handleLogout)
+          }
         }
-      }
       }
       .navigationTitle("Settings")
       #if os(iOS)
-      .navigationBarTitleDisplayMode(.inline)
+        .navigationBarTitleDisplayMode(.inline)
       #endif
-      .toolbar {
-        ToolbarItem(placement: .cancellationAction) {
-          Button {
-            dismiss()
-          } label: {
-            Image(systemName: "xmark")
-              
+        .toolbar {
+          ToolbarItem(placement: .cancellationAction) {
+            Button {
+              dismiss()
+            } label: {
+              Image(systemName: "xmark")
+
+            }
           }
         }
-      }
-      .sheet(isPresented: $isShowingAccountSwitcher) {
-        AccountSwitcherView()
-          .environment(AppStateManager.shared)
-      }
-      .alert(isPresented: .constant(error != nil)) {
-        Alert(
-          title: Text("Error"),
-          message: Text(error?.localizedDescription ?? "Unknown error"),
-          dismissButton: .default(Text("OK")) {
-            error = nil
-          }
-        )
-      }
-      .onAppear {
-        Task {
-          await updateAvailableAccountsCount()
+        .sheet(isPresented: $isShowingAccountSwitcher) {
+          AccountSwitcherView()
+            .environment(AppStateManager.shared)
         }
-        loadOrRefreshProfile()
-      }
-      .onChange(of: appState.userDID) { _, _ in
-        loadOrRefreshProfile()
-      }
-      .id(appState.userDID)
+        .alert(isPresented: .constant(error != nil)) {
+          Alert(
+            title: Text("Error"),
+            message: Text(error?.localizedDescription ?? "Unknown error"),
+            dismissButton: .default(Text("OK")) {
+              error = nil
+            }
+          )
+        }
+        .onAppear {
+          Task {
+            await updateAvailableAccountsCount()
+          }
+          loadOrRefreshProfile()
+        }
+        .onChange(of: appState.userDID) { _, _ in
+          loadOrRefreshProfile()
+        }
+        .id(appState.userDID)
     }
   }
-  
+
   // MARK: - Profile Loading
 
   private func loadOrRefreshProfile() {
@@ -334,13 +210,13 @@ struct SettingsView: View {
   }
 
   // MARK: - Account Management
-  
+
   private func updateAvailableAccountsCount() async {
     await MainActor.run {
       availableAccounts = AppStateManager.shared.authentication.availableAccounts.count
     }
   }
-  
+
   // MARK: - Authentication Helpers
 
   private func isAuthenticationError(_ error: Error) -> Bool {
@@ -358,7 +234,7 @@ struct SettingsView: View {
     // Use AppStateManager.logout() to ensure lifecycle transitions to .unauthenticated
     // This will also call AuthManager.logout() internally which handles the gateway logout
     await AppStateManager.shared.logout()
-    
+
     await MainActor.run {
       isLoggingOut = false
       // Dismiss the settings sheet - the app will show LoginView due to lifecycle change
@@ -373,12 +249,12 @@ struct AccountHeaderView: View {
   @Binding var isShowingAccountSwitcher: Bool
   let availableAccounts: Int
   let appState: AppState
-  
+
   // Profile-related properties
   let profile: AppBskyActorDefs.ProfileViewDetailed?
   let isLoadingProfile: Bool
   let profileError: Error?
-  
+
   // Auth handling closures
   let isAuthenticationError: (Error) -> Bool
 
@@ -420,64 +296,64 @@ struct AccountHeaderView: View {
 
 struct AccountSwitchButton: View {
   let availableAccounts: Int
-  
+
   // Profile-related properties
   let profile: AppBskyActorDefs.ProfileViewDetailed?
   let isLoadingProfile: Bool
 
   var body: some View {
-      HStack(spacing: 12) {
-        // Avatar image
-        ProfileAvatarView(
-          url: profile?.finalAvatarURL(),
-          fallbackText: profile?.handle.description.prefix(1).uppercased() ?? "?",
-          size: 44
-        )
+    HStack(spacing: 12) {
+      // Avatar image
+      ProfileAvatarView(
+        url: profile?.finalAvatarURL(),
+        fallbackText: profile?.handle.description.prefix(1).uppercased() ?? "?",
+        size: 44
+      )
 
-        VStack(alignment: .leading, spacing: 4) {
-          Group {
-            if isLoadingProfile {
-              Text("Loading...")
-                .appHeadline()
-                .foregroundStyle(.secondary)
-            } else if let displayName = profile?.displayName {
-              Text(displayName)
-                .appHeadline()
-                .foregroundStyle(.primary)
-                .lineLimit(1)
-            } else if let handle = profile?.handle.description {
-              Text("@\(handle)")
-                .appHeadline()
-                .foregroundStyle(.primary)
-                .lineLimit(1)
-            } else {
-              Text("Unknown profile")
-                .appBody()
-                .fontWeight(.medium)
-            }
-          }
-
-          if let handle = profile?.handle.description {
-            Text("@\(handle)")
-              .appSubheadline()
+      VStack(alignment: .leading, spacing: 4) {
+        Group {
+          if isLoadingProfile {
+            Text("Loading...")
+              .appHeadline()
               .foregroundStyle(.secondary)
+          } else if let displayName = profile?.displayName {
+            Text(displayName)
+              .appHeadline()
+              .foregroundStyle(.primary)
               .lineLimit(1)
-          }
-          
-          if availableAccounts > 1 {
-            Text("\(availableAccounts) accounts available")
-              .appCaption()
-              .foregroundStyle(.secondary)
+          } else if let handle = profile?.handle.description {
+            Text("@\(handle)")
+              .appHeadline()
+              .foregroundStyle(.primary)
+              .lineLimit(1)
+          } else {
+            Text("Unknown profile")
+              .appBody()
+              .fontWeight(.medium)
           }
         }
 
-        Spacer()
+        if let handle = profile?.handle.description {
+          Text("@\(handle)")
+            .appSubheadline()
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+        }
 
-        Image(systemName: "chevron.right")
-          .foregroundColor(.gray)
-          .appFont(AppTextRole.footnote)
+        if availableAccounts > 1 {
+          Text("\(availableAccounts) accounts available")
+            .appCaption()
+            .foregroundStyle(.secondary)
+        }
       }
-      // Use the default list row metrics for a more native feel
+
+      Spacer()
+
+      Image(systemName: "chevron.right")
+        .foregroundColor(.gray)
+        .appFont(AppTextRole.footnote)
+    }
+    // Use the default list row metrics for a more native feel
   }
 }
 

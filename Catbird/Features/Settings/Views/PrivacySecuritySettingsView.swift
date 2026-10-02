@@ -180,7 +180,7 @@ struct PrivacySecuritySettingsView: View {
                     }
                 }
                 
-                Toggle("Attribution Tracking", isOn: Binding(
+                Toggle("Credit Repost Discovery", isOn: Binding(
                     get: { appState.appSettings.enableViaAttribution },
                     set: { appState.appSettings.enableViaAttribution = $0 }
                 ))
@@ -196,71 +196,16 @@ struct PrivacySecuritySettingsView: View {
                     .foregroundStyle(.secondary)
                     .padding(.bottom, 4)
                 
-                Text("Attribution tracking credits users when you like or repost content you discovered through their reposts.")
+                Text("Credits the person whose repost led you to a post when you like or repost it.")
                     .appFont(AppTextRole.caption)
                     .foregroundStyle(.secondary)
             }
-            Section("Social Graph Management") {
-                NavigationLink {
-                    BlockedAccountsView()
-                } label: {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Blocked Accounts")
-                                .fontWeight(.medium)
-                            
-                            Text("Manage accounts you've blocked")
-                                .appFont(AppTextRole.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        
-                        Spacer()
-                        
-                        if isLoadingBlocks {
-                            ProgressView()
-                                .controlSize(.small)
-                        } else {
-                            Text("\(blockedProfiles.count)")
-                                .foregroundStyle(.secondary)
-                        }
-                    }
+            Section {
+                NavigationLink("Blocked & Muted Accounts") {
+                    ModerationSettingsView()
                 }
-                
-                NavigationLink {
-                    MutedAccountsView()
-                } label: {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Muted Accounts")
-                                .fontWeight(.medium)
-                            
-                            Text("Manage accounts you've muted")
-                                .appFont(AppTextRole.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        
-                        Spacer()
-                        
-                        if isLoadingMutes {
-                            ProgressView()
-                                .controlSize(.small)
-                        } else {
-                            Text("\(mutedProfiles.count)")
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                }
-            }
-            
-            Section("About Privacy Controls") {
-                Text("Blocking prevents an account from interacting with you, including following you or seeing your content in their feeds.")
-                    .appFont(AppTextRole.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(.bottom, 4)
-                
-                Text("Muting hides content from an account without them knowing. They can still interact with your posts, but you won't see their content.")
-                    .appFont(AppTextRole.caption)
-                    .foregroundStyle(.secondary)
+            } footer: {
+                Text("Manage blocked accounts, muted accounts, words, and content labels in Moderation.")
             }
         }
         .navigationTitle("Privacy & Security")
@@ -364,9 +309,6 @@ struct PrivacySecuritySettingsView: View {
         await loadLoggedOutVisibility()
         await loadAlgorithmicVisibility()
         await load2FAStatus()
-        // Load blocks and mutes counts
-        await loadBlocksCount()
-        await loadMutesCount()
     }
 
     // MARK: - Progressive Permission & 2FA
