@@ -199,7 +199,7 @@ public struct VideoFeedView: View {
   }
 
   private func loadNextPage(cursor currentCursor: String) async throws {
-    guard let client = appState.atProtoClient else { throw PostViewModelError.missingClient }
+    guard let client = appState.atProtoClient else { throw PostViewModel.PostViewModelError.missingClient }
     let uri = try ATProtocolURI(uriString: feedURI)
     let feedManager = FeedManager(client: client)
     let (feedPosts, nextCursor) = try await feedManager.fetchFeed(
@@ -920,7 +920,7 @@ private final class VideoFeedPostActions {
       do {
         guard let client = self.appState.atProtoClient,
               try await client.getDid() == self.accountDID else {
-          throw PostViewModelError.missingClient
+          throw PostViewModel.PostViewModelError.missingClient
         }
         try Task.checkCancellation()
         switch action {
