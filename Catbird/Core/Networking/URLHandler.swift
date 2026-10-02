@@ -40,11 +40,6 @@ final class URLHandler {
         logger.debug("URLHandler initialized")
     }
     
-    /// Compatibility entry point while account-owned handlers are migrated.
-    func configure(with appState: AppState) {
-        configure(with: appState, navigationManager: appState.navigationManager)
-    }
-
     /// Bind URL delivery to the navigation manager owned by the receiving scene.
     func configure(with appState: AppState, navigationManager: AppNavigationManager) {
         resetPresentationState()

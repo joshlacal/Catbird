@@ -10,6 +10,7 @@ import UIKit
 /// Only launched explicitly by `--settings-ui-fixture` on the lane's isolated simulator.
 struct SettingsUIFixture: View {
   @State private var appState: AppState?
+  @State private var sceneContext: SceneNavigationContext?
   @State private var container: ModelContainer?
   @State private var failure: String?
   @State private var supportStore = SupportTipStore(client: SettingsTipFixtureClient())
@@ -24,7 +25,7 @@ struct SettingsUIFixture: View {
 
   var body: some View {
     Group {
-      if let appState, let container {
+      if let appState, let container, let sceneContext {
         Group {
           if screen == "root" {
             SettingsView()
@@ -33,6 +34,8 @@ struct SettingsUIFixture: View {
           }
         }
         .environment(appState)
+        .environment(sceneContext)
+        .environment(AppStateManager.shared)
         .environment(\.fontManager, appState.fontManager)
         .modelContainer(container)
         .environment(\.dynamicTypeSize, arguments.contains("--settings-large-text") ? .accessibility3 : .large)
@@ -64,7 +67,7 @@ struct SettingsUIFixture: View {
       let accountDID = "did:plc:settingsuifixture"
       let container = try ModelContainer(
         for: AppSettingsModel.self, Preferences.self,
-        configurations: ModelConfiguration(isStoredInMemoryOnly: true)
+        configurations: ModelConfiguration(isStoredInMemoryOnly: true, cloudKitDatabase: .none)
       )
       // Inserting first prevents migration from any unrelated preference row.
       let settings = AppSettingsModel(accountDID: accountDID)
@@ -89,6 +92,7 @@ struct SettingsUIFixture: View {
       // Do not initialize AppState networking or attach a PreferencesManager client.
       // Account/server controls intentionally exercise their unavailable state.
       self.container = container
+      self.sceneContext = SceneNavigationContext(appState: state, sceneID: UUID())
       self.appState = state
       #if os(iOS)
       logger.info("[SettingsFixture] preferredContentSizeCategory=\(UIApplication.shared.preferredContentSizeCategory.rawValue, privacy: .public)")
