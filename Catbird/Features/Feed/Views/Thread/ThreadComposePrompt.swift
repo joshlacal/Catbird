@@ -43,7 +43,7 @@ struct ThreadComposePrompt: View {
       .padding(.horizontal, 14)
       .padding(.vertical, 8)
       .frame(minHeight: 44)
-      .frame(maxWidth: 520, alignment: .leading)
+      .frame(maxWidth: 400, alignment: .leading)
       .contentShape(Capsule())
     }
     .buttonStyle(.plain)
