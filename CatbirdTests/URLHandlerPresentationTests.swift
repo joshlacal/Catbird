@@ -23,24 +23,72 @@ struct URLHandlerPresentationTests {
     return nil
   }
 
-  @Test func retiredFeedControllerPreservesOriginWindow() {
+  @MainActor
+  private final class RetirementProbe {
+    weak var object: AnyObject?
+    let identity: ObjectIdentifier
+
+    init(_ object: AnyObject) {
+      self.object = object
+      self.identity = ObjectIdentifier(object)
+    }
+
+    var isReleased: Bool { autoreleasepool { self.object == nil } }
+  }
+
+  private func retireFeed(in root: UIViewController,
+                          anchor: SceneBrowserPresentationAnchor? = nil) -> RetirementProbe {
+    autoreleasepool {
+      let feed = UIViewController()
+      let probe = RetirementProbe(feed)
+      root.addChild(feed)
+      root.view.addSubview(feed.view)
+      feed.didMove(toParent: root)
+      anchor?.register(controller: feed)
+      feed.willMove(toParent: nil)
+      feed.view.removeFromSuperview()
+      feed.removeFromParent()
+      return probe
+    }
+  }
+
+  private func retireWindow(root: UIViewController,
+                            anchor: SceneBrowserPresentationAnchor? = nil) -> RetirementProbe {
+    autoreleasepool {
+      let window = self.makeWindow(root: root)
+      let probe = RetirementProbe(window)
+      anchor?.register(controller: root)
+      window.isHidden = true
+      window.rootViewController = nil
+      return probe
+    }
+  }
+
+  private func settleRetirement(_ probes: RetirementProbe...) async {
+    // UIKit may enqueue containment/window cleanup and autoreleased objects.
+    // Cross main-queue turns, checking only inside a drained local pool; do not
+    // carry a strong reference obtained from a weak probe across suspension.
+    for _ in 0..<20 {
+      await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+        DispatchQueue.main.async { continuation.resume() }
+      }
+      if probes.allSatisfy({ $0.isReleased }) { return }
+    }
+  }
+
+  @Test func retiredFeedControllerPreservesOriginWindow() async {
     let root = UIViewController()
     let window = makeWindow(root: root)
-    defer { window.isHidden = true }
+    let controlRoot = UIViewController()
+    let controlWindow = makeWindow(root: controlRoot)
+    defer { window.isHidden = true; controlWindow.isHidden = true }
     let anchor = SceneBrowserPresentationAnchor()
-    var feed: UIViewController? = UIViewController()
-    weak var retiredFeed = feed
-    root.addChild(feed!)
-    root.view.addSubview(feed!.view)
-    feed!.didMove(toParent: root)
-    anchor.register(controller: feed!)
+    let control = retireFeed(in: controlRoot)
+    let retiredFeed = retireFeed(in: root, anchor: anchor)
 
-    feed!.willMove(toParent: nil)
-    feed!.view.removeFromSuperview()
-    feed!.removeFromParent()
-    feed = nil
-
-    #expect(retiredFeed == nil)
+    await settleRetirement(control, retiredFeed)
+    #expect(control.isReleased, "UIKit control feed still retained: \(control.identity)")
+    #expect(retiredFeed.isReleased, "Anchored feed still retained: \(retiredFeed.identity)")
     #expect(anchor.attachedWindow === window)
     #expect(resolvedController(in: window) === root)
   }
@@ -106,18 +154,22 @@ struct URLHandlerPresentationTests {
     #expect(anchor.attachedWindow !== second)
   }
 
-  @Test func anchorDoesNotRetainWindowOrFollowRetiredOrigin() {
+  @Test func anchorDoesNotRetainWindowOrFollowRetiredOrigin() async {
     let root = UIViewController()
+    let controlRoot = UIViewController()
     let anchor = SceneBrowserPresentationAnchor()
-    var window: UIWindow? = makeWindow(root: root)
-    weak var retiredWindow = window
-    anchor.register(controller: root)
-    window!.isHidden = true
-    window!.rootViewController = nil
-    window = nil
+    let control = retireWindow(root: controlRoot)
+    let retiredWindow = retireWindow(root: root, anchor: anchor)
     let replacement = makeWindow(root: root)
-    defer { replacement.isHidden = true }
-    #expect(retiredWindow == nil)
+    let controlReplacement = makeWindow(root: controlRoot)
+    defer { replacement.isHidden = true; controlReplacement.isHidden = true }
+
+    // Reject following the reused controller even while UIKit may retain the
+    // old window; eventual deallocation is a separate lifetime contract.
+    #expect(anchor.attachedWindow == nil)
+    await settleRetirement(control, retiredWindow)
+    #expect(control.isReleased, "UIKit control window still retained: \(control.identity)")
+    #expect(retiredWindow.isReleased, "Anchored window still retained: \(retiredWindow.identity)")
     #expect(anchor.attachedWindow == nil)
   }
 

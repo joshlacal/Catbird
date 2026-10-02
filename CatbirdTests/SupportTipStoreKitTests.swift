@@ -4,12 +4,21 @@ import StoreKitTest
 import Testing
 @testable import Catbird
 
+#if DEBUG && os(iOS) && targetEnvironment(simulator)
 /// Run on the dedicated local simulator. SKTestSession never changes the App Store Connect catalog.
 @MainActor
 @Suite(.serialized)
 struct SupportTipStoreKitTests {
   @Test(.timeLimit(.minutes(1)))
   func localCatalogAndPurchaseLifecycle() async throws {
+    try #require(
+      ProcessInfo.processInfo.arguments.contains("--support-tip-storekit-test"),
+      "Launch with --support-tip-storekit-test to configure local StoreKit before starting its listener."
+    )
+    try #require(
+      ProcessInfo.processInfo.arguments.contains("--scene-runtime-ui-fixture"),
+      "Use the offline scene fixture so About cannot load products before the local session is ready."
+    )
     let session = try SKTestSession(configurationFileNamed: "SupportCatbird")
     session.resetToDefaultState()
     session.clearTransactions()
@@ -21,11 +30,12 @@ struct SupportTipStoreKitTests {
       session.clearTransactions()
     }
 
-    // The app-start hook already owns the listener. Reuse it so tests don't race a second observer.
+    // The dedicated launch flag defers only startup; keep the same app-owned singleton and listener.
     let store = SupportTipStore.shared
 
     // Verify that the local session intercepts StoreKit before exercising any purchase.
     try await session.setSimulatedError(.generic(.networkError(URLError(.notConnectedToInternet))), forAPI: .loadProducts)
+    store.start()
     await store.loadProducts(forceReload: true)
     try #require(store.loadState == .failed)
     try await session.setSimulatedError(nil, forAPI: .loadProducts)
@@ -90,3 +100,4 @@ struct SupportTipStoreKitTests {
     #expect(store.purchaseMessage == "Thanks for your support!")
   }
 }
+#endif

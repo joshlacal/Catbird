@@ -12,7 +12,7 @@ final class SettingsSupportJourneyTests: XCTestCase {
   }
 
   func testSettingsHierarchyAndAppearanceResetConfirmation() {
-    let app = launch(screen: "root")
+    let app = launch(screen: "root", extra: ["--settings-appearance-custom"])
     XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 10))
     capture(app, "Settings grouped by intent")
     let appearance = app.buttons["Appearance"].firstMatch
@@ -22,11 +22,25 @@ final class SettingsSupportJourneyTests: XCTestCase {
     capture(app, "Appearance controls")
     let reset = app.buttons["Reset Appearance…"].firstMatch
     reveal(reset, in: app)
+    XCTAssertTrue(app.staticTexts["Current Theme: Dark (Dim)"].exists)
     reset.tap()
     XCTAssertTrue(app.buttons["Reset Appearance"].waitForExistence(timeout: 3))
     capture(app, "Appearance reset confirmation and scope")
-    app.buttons["Cancel"].tap()
-    XCTAssertFalse(app.buttons["Reset Appearance"].exists)
+    let cancel = app.buttons["Cancel"].firstMatch
+    if cancel.waitForExistence(timeout: 1) {
+      cancel.tap()
+    } else {
+      // iOS 27 presents a popover which omits Cancel and dismisses outside its bounds.
+      // The right screen edge is outside the captured popover and the Form controls.
+      app.coordinate(withNormalizedOffset: CGVector(dx: 0.98, dy: 0.5)).tap()
+    }
+    let dismissed = XCTNSPredicateExpectation(
+      predicate: NSPredicate(format: "exists == false"), object: app.buttons["Reset Appearance"].firstMatch
+    )
+    XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 3), .completed)
+    XCTAssertTrue(app.staticTexts["Current Theme: Dark (Dim)"].exists,
+      "Dismissing the confirmation must preserve the selected theme")
+    capture(app, "Appearance reset dismissed without changing the theme")
   }
 
   func testAccessibilityLargeTextAndLandscape() {
@@ -35,13 +49,35 @@ final class SettingsSupportJourneyTests: XCTestCase {
     capture(app, "Accessibility large text dark")
     let dynamicType = app.switches["Dynamic Type"].firstMatch
     reveal(dynamicType, in: app)
+    let maximum = app.buttons["MaximumTextSizePicker"].firstMatch
+    reveal(maximum, in: app)
+    XCTAssertEqual(maximum.value as? String, "Accessibility Extra Extra Extra Large")
     capture(app, "Accessibility Dynamic Type large text")
+    selectMaximumTextSize("Accessibility Large", picker: maximum, in: app)
+    capture(app, "Maximum Text Size selection updates its full value")
+    selectMaximumTextSize("Accessibility Extra Extra Extra Large", picker: maximum, in: app)
     XCUIDevice.shared.orientation = .landscapeLeft
+    var previousFrames: [CGRect] = []
+    var stableReadings = 0
     let landscape = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-      let frame = app.windows.firstMatch.frame
-      return frame.width > frame.height
+      let window = app.windows.firstMatch.frame
+      let form = app.collectionViews.firstMatch.frame
+      let navigation = app.navigationBars["Accessibility"].frame
+      let frames = [window, form, navigation]
+      let laidOut = window.width > window.height && form.width > form.height
+        && frames.dropFirst().allSatisfy {
+          $0.minX >= window.minX - 1 && $0.maxX <= window.maxX + 1
+            && $0.minY >= window.minY - 1 && $0.maxY <= window.maxY + 1
+        }
+      stableReadings = laidOut && frames == previousFrames ? stableReadings + 1 : 0
+      previousFrames = frames
+      return stableReadings >= 2
     }, object: app)
-    XCTAssertEqual(XCTWaiter.wait(for: [landscape], timeout: 5), .completed)
+    XCTAssertEqual(XCTWaiter.wait(for: [landscape], timeout: 10), .completed)
+    let geometry = XCTAttachment(string: "window=\(app.windows.firstMatch.frame); form=\(app.collectionViews.firstMatch.frame); navigation=\(app.navigationBars["Accessibility"].frame)")
+    geometry.name = "Accessibility receiving geometry after settled rotation"
+    geometry.lifetime = .keepAlways
+    add(geometry)
     capture(app, "Accessibility large text landscape")
   }
 
@@ -65,6 +101,21 @@ final class SettingsSupportJourneyTests: XCTestCase {
     )).firstMatch
     reveal(copy, in: app)
     capture(app, "Support Catbird large text")
+    let tips = [
+      ("small", "Small Support", "$4.99"),
+      ("medium", "Medium Support", "$9.99"),
+      ("large", "Large Support", "$19.99"),
+      ("extralarge", "Extra Large Support", "$49.99")
+    ]
+    for (identifier, name, price) in tips {
+      let tip = app.buttons["SupportTip.blue.catbird.support.onetime.\(identifier)"].firstMatch
+      reveal(tip, in: app)
+      XCTAssertTrue(tip.label.contains(name) && tip.label.contains(price))
+      let window = app.windows.firstMatch.frame
+      XCTAssertGreaterThanOrEqual(tip.frame.minX, window.minX - 1)
+      XCTAssertLessThanOrEqual(tip.frame.maxX, window.maxX + 1)
+      capture(app, "Support \(identifier) label and price at large text")
+    }
   }
 
   func testRemovedControlsAreAbsentThroughoutForms() {
@@ -141,7 +192,11 @@ final class SettingsSupportJourneyTests: XCTestCase {
     let altText = app.switches["Require Alt Text Before Posting"].firstMatch
     XCTAssertTrue(altText.waitForExistence(timeout: 10))
     waitUntilEnabled(altText)
-    altText.tap()
+    // SwiftUI exposes a labeled row-sized switch containing the native UISwitch.
+    // The row's center is over its label; tap the native child to exercise the edit.
+    let control = altText.descendants(matching: .switch).firstMatch
+    XCTAssertTrue(control.exists && control.isHittable)
+    control.tap()
     let retry = app.buttons["SettingsPersistenceRetry"].firstMatch
     XCTAssertTrue(retry.waitForExistence(timeout: 5))
     XCTAssertEqual(altText.value as? String, "0")
@@ -159,6 +214,17 @@ final class SettingsSupportJourneyTests: XCTestCase {
   private func waitUntilEnabled(_ element: XCUIElement) {
     let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: element)
     XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 5), .completed)
+  }
+
+  private func selectMaximumTextSize(_ name: String, picker: XCUIElement, in app: XCUIApplication) {
+    picker.tap()
+    let choice = app.buttons[name].firstMatch
+    XCTAssertTrue(choice.waitForExistence(timeout: 3))
+    choice.tap()
+    let changed = XCTNSPredicateExpectation(
+      predicate: NSPredicate(format: "value == %@", name), object: picker
+    )
+    XCTAssertEqual(XCTWaiter.wait(for: [changed], timeout: 5), .completed)
   }
 
   private func launch(screen: String, extra: [String] = []) -> XCUIApplication {
