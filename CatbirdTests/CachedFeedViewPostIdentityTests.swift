@@ -825,7 +825,7 @@ struct CachedFeedViewPostIdentityTests {
     let enhanced = EnhancedFeedPost(feedViewPost: rawPost, path: .constant(NavigationPath()))
     let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
     let appState = AppState(userDID: "did:plc:testuser", client: client)
-    let renderer = ImageRenderer(content: enhanced.environment(appState).frame(width: 402))
+    let renderer = ImageRenderer(content: enhanced.environment(appState).environment(SceneNavigationContext(appState: appState, sceneID: UUID())).frame(width: 402))
 
     #expect(enhanced.id == rawPost.id)
     #expect(enhanced.feedViewPost == rawPost)
@@ -848,7 +848,7 @@ struct CachedFeedViewPostIdentityTests {
       #expect(slice.items.count == count)
       let cached = try #require(CachedFeedViewPost(from: slice, feedType: "timeline"))
       let content = EnhancedFeedPost(cachedPost: cached, path: .constant(NavigationPath()))
-        .applyAppStateEnvironment(appState)
+        .applyAppStateEnvironment(appState).environment(SceneNavigationContext(appState: appState, sceneID: UUID()))
         .environment(\.fontManager, appState.fontManager)
         .environment(\.horizontalSizeClass, .compact)
         .environment(\.dynamicTypeSize, .medium)

@@ -107,7 +107,7 @@ struct ThreadRowRenderingTests {
         }
       }
     }
-    .applyAppStateEnvironment(appState)
+    .applyAppStateEnvironment(appState).environment(SceneNavigationContext(appState: appState, sceneID: UUID()))
     .background(Color(uiColor: .systemBackground))
 
     let width: CGFloat = 402

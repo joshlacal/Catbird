@@ -284,7 +284,7 @@ struct FeedsSearchPresentationTests {
     let previousScheme = appState.themeManager.colorSchemeOverride
     appState.themeManager.colorSchemeOverride = scheme
     defer { appState.themeManager.colorSchemeOverride = previousScheme }
-    let host = try PresentationHost(content: content.environment(appState).fontManager(appState.fontManager).environment(\.colorScheme, scheme)
+    let host = try PresentationHost(content: content.environment(appState).environment(SceneNavigationContext(appState: appState, sceneID: UUID())).fontManager(appState.fontManager).environment(\.colorScheme, scheme)
       .environment(\.dynamicTypeSize, typeSize).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
       .background(scheme == .light ? Color.white : Color.black)
       .ignoresSafeArea(.container, edges: additionalSafeAreaInsets == nil ? .all : []), size: size, scheme: scheme)

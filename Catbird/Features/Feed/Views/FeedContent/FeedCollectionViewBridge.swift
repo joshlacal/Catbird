@@ -124,7 +124,6 @@ struct FeedCollectionViewWrapper: View {
     var body: some View {
         FeedCollectionViewIntegrated(
             stateManager: stateManager,
-            sceneContext: sceneContext,
             navigationPath: $navigationPath,
             onScrollOffsetChanged: onScrollOffsetChanged,
             headerView: headerView,

@@ -27,6 +27,8 @@ struct ScenePostComposerRequest: Identifiable {
 final class SceneNavigationContext {
   let accountDID: String
   let sceneID: UUID
+  /// Distinguishes replacement account contexts for asynchronous service lifecycle updates.
+  let activityRegistrationID = UUID()
   let navigationManager: AppNavigationManager
   let urlHandler: URLHandler
 
