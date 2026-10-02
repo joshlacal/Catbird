@@ -57,7 +57,7 @@ final class SocialActionsUITests: XCTestCase {
     XCTAssertTrue(app.staticTexts["Issued by Community Labels (@labels.test)"].exists)
     attach(app, name: "own-label-details")
     app.buttons["Appeal Label"].tap()
-    let reason = app.textViews.firstMatch
+    let reason = app.textFields["Explain why this label was applied in error"]
     XCTAssertTrue(reason.waitForExistence(timeout: 5))
     reason.tap()
     reason.typeText("This fixture label was applied in error.")
@@ -110,7 +110,13 @@ final class SocialActionsUITests: XCTestCase {
     app.staticTexts["A draft with a photo saved in another app."].tap()
     XCTAssertTrue(app.buttons["Open Without Media"].waitForExistence(timeout: 5))
     attach(app, name: "draft-media-limit")
-    app.buttons["Cancel"].tap()
+    if app.buttons["Cancel"].exists {
+      app.buttons["Cancel"].tap()
+    } else {
+      // The iOS 27 compact popover dismisses by tapping outside its menu.
+      app.navigationBars["Drafts"].tap()
+    }
+    XCTAssertFalse(app.buttons["Open Without Media"].exists)
     XCTAssertTrue(app.staticTexts["A draft with a photo saved in another app."].exists)
     app.buttons["Close"].tap()
     XCTAssertTrue(app.buttons["fixtureSavedDrafts"].exists)

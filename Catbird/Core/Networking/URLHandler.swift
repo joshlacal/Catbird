@@ -24,7 +24,8 @@ final class URLHandler {
     @ObservationIgnored private var settingsObservation: URLHandlerSettingsObservation?
     
     #if os(iOS)
-    private weak var topViewController: UIViewController?
+    @ObservationIgnored private let presentationAnchor = SceneBrowserPresentationAnchor()
+    private var browserPresentationID = UUID()
     #endif
     
     var navigateAction: ((NavigationDestination, Int?) -> Void)?
@@ -89,14 +90,22 @@ final class URLHandler {
         externalIntentPresenter.pendingIntent = nil
         externalIntentPresenter.lastDeliveredURL = nil
         #if os(iOS)
-        topViewController = nil
+        presentationAnchor.clear()
+        browserPresentationID = UUID()
         #endif
     }
 
     #if os(iOS)
     func registerTopViewController(_ controller: UIViewController) {
-        self.topViewController = controller
-        logger.debug("URLHandler registered top view controller: \(type(of: controller))")
+        guard !isInvalidated else { return }
+        presentationAnchor.register(controller: controller)
+        logger.debug("URLHandler registered local presentation controller: \(type(of: controller))")
+    }
+
+    /// The scene host registers its exact window after attaching to UIKit.
+    func registerPresentationWindow(_ window: UIWindow) {
+        guard !isInvalidated else { return }
+        presentationAnchor.register(window: window)
     }
     #endif
     
@@ -619,25 +628,63 @@ final class URLHandler {
     @MainActor
     private func openInAppBrowser(_ url: URL) -> Bool {
         #if os(iOS)
-        guard let topVC = self.topViewController else {
-            logger.warning("⚠️ Cannot open in-app browser - no top view controller registered")
+        guard let window = presentationAnchor.attachedWindow else {
+            logger.warning("Cannot open in-app browser without an attached originating window")
             return false
         }
-        
-        let configuration = SFSafariViewController.Configuration()
-        configuration.entersReaderIfAvailable = false
-        
-        let safariVC = SFSafariViewController(url: url, configuration: configuration)
-        safariVC.preferredControlTintColor = UIColor(named: "AccentColor")
-        safariVC.dismissButtonStyle = .close
-        safariVC.modalPresentationStyle = .fullScreen
-        topVC.present(safariVC, animated: true)
+        let requestID = UUID()
+        browserPresentationID = requestID
+        presentBrowser(
+            url, in: window, requestID: requestID,
+            configurationID: configurationID, remainingTransitions: 2
+        )
+        // An attached scene owns this request even while its presenter is busy.
+        // Do not redirect a local presentation race into another application.
         return true
         #else
         NSWorkspace.shared.open(url)
         return true
         #endif
     }
+
+    #if os(iOS)
+    private func presentBrowser(
+        _ url: URL, in window: UIWindow, requestID: UUID,
+        configurationID: UUID, remainingTransitions: Int
+    ) {
+        guard !isInvalidated, self.configurationID == configurationID,
+              browserPresentationID == requestID,
+              presentationAnchor.attachedWindow === window else { return }
+        switch SceneBrowserPresentationAnchor.resolvePresenter(in: window) {
+        case .ready(let controller):
+            let configuration = SFSafariViewController.Configuration()
+            configuration.entersReaderIfAvailable = false
+            let safariVC = SFSafariViewController(url: url, configuration: configuration)
+            safariVC.preferredControlTintColor = UIColor(named: "AccentColor")
+            safariVC.dismissButtonStyle = .close
+            safariVC.modalPresentationStyle = .fullScreen
+            controller.present(safariVC, animated: true)
+        case .transitioning(let coordinator):
+            guard remainingTransitions > 0, let coordinator else {
+                logger.warning("Originating window has no stable browser presenter")
+                return
+            }
+            coordinator.animate(alongsideTransition: nil) { [weak self, weak window] _ in
+                Task { @MainActor [weak self, weak window] in
+                    guard let self, let window else { return }
+                    self.presentBrowser(
+                        url, in: window, requestID: requestID,
+                        configurationID: configurationID,
+                        remainingTransitions: remainingTransitions - 1
+                    )
+                }
+            }
+        case .unavailable:
+            logger.warning("Originating window cannot currently present a browser")
+        }
+    }
+    #endif
+
 }
 
 /// The immutable notification token may be released on any thread; the
@@ -653,3 +700,91 @@ private final class URLHandlerSettingsObservation: @unchecked Sendable {
         NotificationCenter.default.removeObserver(token)
     }
 }
+
+#if os(iOS)
+/// Keeps a scene's browser origin alive by identity, without retaining UIKit.
+@MainActor
+final class SceneBrowserPresentationAnchor {
+    enum PresenterResolution {
+        case ready(UIViewController)
+        case transitioning(UIViewControllerTransitionCoordinator?)
+        case unavailable
+    }
+
+    private weak var window: UIWindow?
+    private weak var controller: UIViewController?
+    private var capturedWindow = false
+
+    func register(controller: UIViewController) {
+        self.controller = controller
+        if let window = controller.viewIfLoaded?.window {
+            register(window: window)
+        }
+    }
+
+    func register(window: UIWindow) {
+        self.window = window
+        capturedWindow = true
+    }
+
+    func clear() {
+        window = nil
+        controller = nil
+        capturedWindow = false
+    }
+
+    var attachedWindow: UIWindow? {
+        // A controller may register during viewDidLoad, before window attachment.
+        // Once an origin was captured, never follow that controller to a new scene.
+        if !capturedWindow, let attached = controller?.viewIfLoaded?.window {
+            register(window: attached)
+        }
+        guard let window else { return nil }
+        var visible = window.rootViewController
+        while let controller = visible {
+            if controller.viewIfLoaded?.window === window { return window }
+            visible = controller.presentedViewController
+        }
+        return nil
+    }
+
+    static func resolvePresenter(in window: UIWindow) -> PresenterResolution {
+        guard !window.isHidden, let root = window.rootViewController else { return .unavailable }
+        var current = root
+        var visited = Set<ObjectIdentifier>()
+        while visited.insert(ObjectIdentifier(current)).inserted {
+            if current.isBeingPresented || current.isBeingDismissed {
+                return .transitioning(current.transitionCoordinator)
+            }
+            if let presented = current.presentedViewController {
+                guard !presented.isBeingDismissed,
+                      presented.viewIfLoaded?.window === window else {
+                    return .transitioning(presented.transitionCoordinator ?? current.transitionCoordinator)
+                }
+                current = presented
+                continue
+            }
+            let visibleChild: UIViewController?
+            if let navigation = current as? UINavigationController {
+                visibleChild = navigation.visibleViewController
+            } else if let tabs = current as? UITabBarController {
+                visibleChild = tabs.selectedViewController
+            } else if let split = current as? UISplitViewController {
+                visibleChild = split.viewControllers.last {
+                    $0.viewIfLoaded?.window === window && $0.viewIfLoaded?.isHidden == false
+                }
+            } else {
+                visibleChild = nil
+            }
+            if let child = visibleChild, child.viewIfLoaded?.window === window {
+                current = child
+                continue
+            }
+            guard let view = current.viewIfLoaded, view.window === window,
+                  !view.isHidden, view.alpha > 0 else { return .unavailable }
+            return .ready(current)
+        }
+        return .unavailable
+    }
+}
+#endif

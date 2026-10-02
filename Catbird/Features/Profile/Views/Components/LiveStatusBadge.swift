@@ -71,5 +71,5 @@ struct LiveStatusBadge: View {
     LiveStatusBadge(embedURL: URL(string: "https://example.com/live"))
   }
   .padding()
-  .previewWithMockEnvironment()
+  .previewWithAuthenticatedState()
 }

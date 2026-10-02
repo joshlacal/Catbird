@@ -929,6 +929,7 @@ final class AppState {
         var hasher = Hasher()
         hasher.combine(appSettings.theme)
         hasher.combine(appSettings.darkThemeMode)
+        hasher.combine(appSettings.accentColor)
         hasher.combine(appSettings.fontStyle)
         hasher.combine(appSettings.fontSize)
         hasher.combine(appSettings.lineSpacing)

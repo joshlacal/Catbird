@@ -259,6 +259,9 @@ struct FeedCollectionViewLegacy: UIViewControllerRepresentable {
         // Use integrated controller as the only implementation
         FeedCollectionViewControllerIntegrated(
             stateManager: stateManager,
+            viewportState: sceneContext.feedViewportStore.state(
+                accountDID: sceneContext.accountDID,
+                feedIdentifier: stateManager.currentFeedType.identifier),
             sceneContext: sceneContext,
             navigationPath: $navigationPath,
             onScrollOffsetChanged: onScrollOffsetChanged
@@ -267,9 +270,9 @@ struct FeedCollectionViewLegacy: UIViewControllerRepresentable {
     
     func updateUIViewController(_ controller: FeedCollectionViewControllerIntegrated, context: Context) {
         controller.updateSceneContext(sceneContext)
-        if controller.stateManager !== stateManager {
-            controller.updateStateManager(stateManager)
-        }
+        controller.updateStateManager(stateManager, viewportState: sceneContext.feedViewportStore.state(
+            accountDID: sceneContext.accountDID,
+            feedIdentifier: stateManager.currentFeedType.identifier))
     }
 }
 #else

@@ -70,7 +70,7 @@ final class SocialComponentLayoutTests: XCTestCase {
 
   func testSavedDraftsResizeWithoutChangingDrafts() async throws {
     try await withFixture { state, _ in
-      let container = try ModelContainer(for: DraftPost.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+      let container = try ModelContainer(for: DraftPost.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true, cloudKitDatabase: .none))
       let local = try DraftPost.create(from: SocialActionsFixtureData.draft("A draft saved on this device."), accountDID: state.userDID)
       let recovery = try DraftPost.create(from: SocialActionsFixtureData.draft("My earlier wording, preserved after another device edited the draft."), accountDID: state.userDID)
       var syncState = DraftSyncState()
@@ -173,8 +173,10 @@ final class SocialComponentLayoutTests: XCTestCase {
     window.makeKeyAndVisible()
     defer { window.isHidden = true; previousKeyWindow?.makeKey() }
     let probe = ComponentLayoutProbe()
+    let sceneContext = SceneNavigationContext(appState: state, sceneID: UUID())
     let host = UIHostingController(rootView: ObservedLayoutContent(content: content, probe: probe)
       .environment(state)
+      .environment(sceneContext)
       .dynamicTypeSize(.accessibility2))
     // Deliberately asymmetric; do not derive one side from the opposite side.
     let extraInsets = UIEdgeInsets(top: 17, left: 23, bottom: 11, right: 5)

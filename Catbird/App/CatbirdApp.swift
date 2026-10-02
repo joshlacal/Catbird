@@ -52,7 +52,15 @@ private var isSocialActionsUIFixture: Bool {
 
 /// Any presentation fixture: skips account bootstrap and URL handling.
 private var isPresentationUIFixture: Bool {
-  isMessageRequestsUIFixture || isVideoFeedUIFixture || isSocialActionsUIFixture
+  isMessageRequestsUIFixture || isVideoFeedUIFixture || isSocialActionsUIFixture || isSettingsUIFixture
+}
+
+private var isSettingsUIFixture: Bool {
+  #if DEBUG
+  ProcessInfo.processInfo.arguments.contains("--settings-ui-fixture")
+  #else
+  false
+  #endif
 }
 
 // App-wide logger
@@ -283,6 +291,7 @@ struct CatbirdApp: App {
 
   // MARK: - Initialization
   init() {
+    SupportTipStore.shared.start()
     if isPresentationUIFixture { return }
     // One-time removal of MLS chat data left by TestFlight builds. Nothing in Lite
     // reads those paths, so it runs off the main thread without ordering constraints.
@@ -955,6 +964,8 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
           VideoFeedUIFixture()
         } else if isSocialActionsUIFixture {
           SocialActionsUIFixture()
+        } else if isSettingsUIFixture {
+          SettingsUIFixture()
         } else {
           applicationContent
         }

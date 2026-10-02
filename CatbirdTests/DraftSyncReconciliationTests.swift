@@ -18,7 +18,7 @@ struct DraftSyncReconciliationTests {
   }
 
   private func store() throws -> DraftPersistence {
-    let config = ModelConfiguration(isStoredInMemoryOnly: true)
+    let config = ModelConfiguration(isStoredInMemoryOnly: true, cloudKitDatabase: .none)
     return DraftPersistence(modelContainer: try ModelContainer(for: DraftPost.self, configurations: config))
   }
 

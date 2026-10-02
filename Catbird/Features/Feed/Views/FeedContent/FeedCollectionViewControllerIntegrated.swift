@@ -89,6 +89,8 @@ import os
     /// State management
     var stateManager: FeedStateManager
     private var sceneContext: SceneNavigationContext
+    private(set) var viewportState: FeedViewportState
+    private let viewportOwnerID = UUID()
 
     /// Navigation
     private let navigationPath: Binding<NavigationPath>
@@ -169,15 +171,17 @@ import os
 
     init(
       stateManager: FeedStateManager,
+      viewportState: FeedViewportState,
       sceneContext: SceneNavigationContext,
       navigationPath: Binding<NavigationPath>,
       onScrollOffsetChanged: ((CGFloat) -> Void)? = nil
     ) {
       self.stateManager = stateManager
       self.sceneContext = sceneContext
+      self.viewportState = viewportState
       self.navigationPath = navigationPath
       self.onScrollOffsetChanged = onScrollOffsetChanged
-      self.scrollRestoration = FeedViewportRestoration(anchor: stateManager.getScrollAnchor()?.viewportAnchor)
+      self.scrollRestoration = FeedViewportRestoration(anchor: viewportState.getScrollAnchor()?.viewportAnchor)
 
       super.init(nibName: nil, bundle: nil)
     }
@@ -326,6 +330,7 @@ import os
 
     override func viewWillAppear(_ animated: Bool) {
       super.viewWillAppear(animated)
+      setupScrollToTopCallback()
 
       // Update theme colors when view appears to catch any missed theme changes
       updateThemeColors()
@@ -345,6 +350,7 @@ import os
     override func viewWillDisappear(_ animated: Bool) {
       // Capture before navigation changes the outgoing view's effective insets.
       captureCurrentScrollPosition()
+      viewportState.unregisterScrollToTopHandler(ownerID: viewportOwnerID)
       super.viewWillDisappear(animated)
     }
 
@@ -370,7 +376,8 @@ import os
     }
 
 
-    deinit {
+    isolated deinit {
+      viewportState.unregisterScrollToTopHandler(ownerID: viewportOwnerID)
       cancelPendingLoadMoreRequest()
       updateScheduler.cancel()
       initialLoadTask?.cancel()
@@ -880,8 +887,8 @@ import os
     }
 
     private func setupScrollToTopCallback() {
-      // Register the callback so FeedStateManager can trigger scroll-to-top
-      stateManager.scrollToTopCallback = { [weak self] in
+      // Commands belong to this scene's viewport, even when feed data is shared.
+      viewportState.registerScrollToTopHandler(ownerID: viewportOwnerID) { [weak self] in
         self?.scrollToTopAnimated()
       }
     }
@@ -945,11 +952,11 @@ import os
 
     // MARK: - Scroll Position Management
 
-    /// Captures the current scroll position and saves it to the state manager
+    /// Captures this scene's position without mutating the shared feed manager.
     private func captureCurrentScrollPosition() {
       guard let collectionView = collectionView else { return }
       #if os(iOS)
-        stateManager.captureScrollAnchor(from: collectionView, postIDAt: postIDAt)
+        viewportState.captureScrollAnchor(from: collectionView, postIDAt: postIDAt)
       #endif
     }
 
@@ -1089,8 +1096,9 @@ import os
 
     // MARK: - State Manager Updates
 
-    func updateStateManager(_ newStateManager: FeedStateManager) {
-      guard newStateManager !== stateManager else { return }
+    func updateStateManager(_ newStateManager: FeedStateManager, viewportState newViewportState: FeedViewportState) {
+      let dataManagerChanged = newStateManager !== stateManager
+      guard dataManagerChanged || newViewportState !== viewportState else { return }
 
       controllerLogger.info(
         "🔄 Fast switching state manager: \\(self.stateManager.currentFeedType.identifier) → \\(newStateManager.currentFeedType.identifier)"
@@ -1098,6 +1106,7 @@ import os
 
       // Capture scroll position for the current feed before switching
       captureCurrentScrollPosition()
+      viewportState.unregisterScrollToTopHandler(ownerID: viewportOwnerID)
 
       // Cancel ongoing operations and invalidate completions from the old feed.
       feedGeneration += 1
@@ -1112,7 +1121,8 @@ import os
 
       // Update the state manager
       stateManager = newStateManager
-      scrollRestoration.reset(to: newStateManager.getScrollAnchor()?.viewportAnchor)
+      viewportState = newViewportState
+      scrollRestoration.reset(to: newViewportState.getScrollAnchor()?.viewportAnchor)
       resetTriggerDedupState()
 
       // Restart observations
@@ -1128,7 +1138,11 @@ import os
       let generation = feedGeneration
       Task { @MainActor [weak self] in
         guard let self, self.feedGeneration == generation else { return }
-        await self.loadInitialData()
+        if dataManagerChanged {
+          await self.loadInitialData()
+        } else {
+          await self.performUpdate()
+        }
       }
     }
   }

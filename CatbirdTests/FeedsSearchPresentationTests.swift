@@ -1,6 +1,6 @@
 #if os(iOS)
 import Foundation
-import Petrel
+@testable import Petrel
 import SwiftUI
 import Testing
 import UIKit
@@ -9,6 +9,7 @@ import Vision
 @testable import Catbird
 
 /// UIKit-hosted production components, with local data and no discovery lifecycle loads.
+/// The opt-in transport fixture exercises individual discovery fetch failures through Petrel.
 /// These receipts qualify presentation; they do not qualify authenticated actions or the
 /// FeedsStartPage preference-loading lifecycle, account switching, or a physical device.
 @Suite("Feeds and Search presentation", .serialized)
@@ -152,14 +153,68 @@ struct FeedsSearchPresentationTests {
         )
       }
     }
-    // An initial failure may leave empty arrays; a failed refresh can retain data.
-    // These fixtures render the empty state without injecting a transport failure.
+    // This case covers empty presentation independently of the opt-in transport fixture.
     try await withHost(
       TrendingTopicsSection(topics: [], onSelect: { _ in }, onSeeAll: {}),
       appState: appState, size: CGSize(width: 320, height: 480), typeSize: .accessibility1
     ) { host in
       let receipt = try await host.capture("discovery-topics-empty", requiring: ["No trending topics", "Pull to refresh"])
       #expect(!receipt.contains("Loading"))
+    }
+  }
+
+  // Petrel's protocol hook is process-global; .serialized coordinates only this suite.
+  // Enable only in a focused run containing this suite and tests that do not use network
+  // hooks: CATBIRD_PRESENTATION_TRANSPORT_FIXTURE=1. Broad test runs skip this case.
+  @Test("Discovery transport failures show recovery and preserve same-category refresh content",
+    .enabled(if: ProcessInfo.processInfo.environment["CATBIRD_PRESENTATION_TRANSPORT_FIXTURE"] == "1"))
+  func discoveryTransportFailurePresentation() async throws {
+    DiscoveryFailureURLProtocol.reset()
+    defer { DiscoveryFailureURLProtocol.reset() }
+    let appState = try await makeTransportFailureAppState()
+    let previousShowVideos = appState.appSettings.showTrendingVideos
+    appState.appSettings.showTrendingVideos = true
+    defer { appState.appSettings.showTrendingVideos = previousShowVideos }
+    try #require(appState.appSettings.showTrendingVideos)
+    let model = RefinedSearchViewModel(appState: appState)
+    let topic = makeTopic()
+    let video = try makeVideo()
+    let profile = try makeSuggestedProfile()
+
+    for isRefresh in [false, true] {
+      if isRefresh {
+        model.trendingTopics = [topic]
+        model.trendingVideos = [video]
+        model.suggestedProfiles = [profile]
+      }
+      await model.fetchTrendingTopics(client: appState.client)
+      await model.fetchSuggestedUsers(category: nil, client: appState.client)
+      await model.fetchTrendingVideos(client: appState.client)
+
+      let urls = DiscoveryFailureURLProtocol.urls
+      for endpoint in ["app.bsky.unspecced.getTrends", "app.bsky.unspecced.getSuggestedUsers", "app.bsky.feed.getFeed"] {
+        #expect(urls.filter { $0.path == "/xrpc/\(endpoint)" }.count == (isRefresh ? 2 : 1),
+          "Each fetch must reach the injected failure once, without retries; a second topics request also proves its loading guard reset")
+      }
+      #expect(urls.allSatisfy { $0.host == "127.0.0.1" })
+      #expect(!model.isSuggestedProfilesLoading)
+      #expect(!model.isTrendingVideosLoading)
+      #expect(model.selectedSuggestedCategory == nil)
+      #expect(model.trendingTopics == (isRefresh ? [topic] : []))
+      #expect(model.trendingVideos == (isRefresh ? [video] : []))
+      #expect(model.suggestedProfiles == (isRefresh ? [profile] : []))
+      let phase = isRefresh ? "refresh-retained" : "first-load-empty"
+      Attachment.record(Array(urls.map(\.absoluteString).joined(separator: "\n").utf8),
+        named: "discovery-transport-\(phase)-requests.txt")
+      try await withHost(
+        discoveryFailurePresentation(model), appState: appState,
+        size: CGSize(width: 320, height: 1400), scheme: .dark
+      ) { host in
+        let receipt = try await host.capture("discovery-transport-\(phase)", requiring: isRefresh
+          ? ["Moon Garden", "River Films", "Garden Society", "Open The Vids"]
+          : ["No trending topics", "Pull to refresh", "No video previews", "No suggestions right now", "Try Again", "Open The Vids"])
+        #expect(!receipt.contains("Loading"))
+      }
     }
   }
 
@@ -241,9 +296,29 @@ struct FeedsSearchPresentationTests {
     )
   }
 
-  private func makeAppState() async throws -> AppState {
-    let client = await ATProtoClient(baseURL: try #require(URL(string: "https://example.invalid")))
+  private func makeAppState(baseURL: String = "https://example.invalid") async throws -> AppState {
+    let client = await ATProtoClient(baseURL: try #require(URL(string: baseURL)))
     return AppState(userDID: "did:plc:feedssearchpresentationfixture", client: client, regulatoryChecker: PresentationAgeChecker())
+  }
+
+  private func makeTransportFailureAppState() async throws -> AppState {
+    let previousProtocols = NetworkService.getNetworkTestProtocolClasses()
+    try #require(previousProtocols == nil, "The focused transport fixture requires exclusive use of Petrel's network hook")
+    NetworkService.setNetworkTestProtocolClasses([DiscoveryFailureURLProtocol.self])
+    defer { NetworkService.setNetworkTestProtocolClasses(previousProtocols) }
+    // A loopback literal passes URL validation without DNS. Petrel copies the protocol
+    // into its sessions during construction, so restore the global hook before fetching.
+    return try await makeAppState(baseURL: "https://127.0.0.1")
+  }
+
+  private func discoveryFailurePresentation(_ model: RefinedSearchViewModel) -> some View {
+    VStack(spacing: 28) {
+      TrendingTopicsSection(topics: model.trendingTopics, onSelect: { _ in }, onSeeAll: {})
+      TrendingVideosSection(videos: model.trendingVideos, isLoading: model.isTrendingVideosLoading,
+        onSelectPost: { _ in }, onSeeAll: {})
+      SuggestedProfilesSection(profiles: model.suggestedProfiles, isLoading: model.isSuggestedProfilesLoading,
+        onSelectCategory: { _ in }, onSelectProfile: { _ in }, onRefresh: {})
+    }
   }
 
   private func makeTopic() -> AppBskyUnspeccedDefs.TrendView {
@@ -294,6 +369,30 @@ struct FeedsSearchPresentationTests {
     }
     try await body(host)
   }
+}
+
+/// Intercepts every request on the fixture client's sessions; no request is dispatched.
+private final class DiscoveryFailureURLProtocol: URLProtocol, @unchecked Sendable {
+  private nonisolated(unsafe) static var requestURLs: [URL] = []
+  private static let lock = NSLock()
+
+  static var urls: [URL] { lock.withLock { requestURLs } }
+
+  static func reset() { lock.withLock { requestURLs = [] } }
+
+  override static func canInit(with request: URLRequest) -> Bool { true }
+
+  override static func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+  override func startLoading() {
+    Self.lock.withLock {
+      if let url = request.url { Self.requestURLs.append(url) }
+    }
+    // This error bypasses Petrel's timeout/connection retry policy and fails immediately.
+    client?.urlProtocol(self, didFailWithError: URLError(.cannotParseResponse))
+  }
+
+  override func stopLoading() {}
 }
 
 private struct PresentationAgeChecker: AgeRegulatoryChecking {

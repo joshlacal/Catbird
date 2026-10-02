@@ -62,14 +62,15 @@ final class FeedLoadPerformanceTests: XCTestCase {
     let geometry: Geometry?
   }
 
+  @MainActor
   private final class FrameProbe: NSObject {
     var frames: [Frame] = []
     var phase = "warmup"
     private var previousCallback: CFTimeInterval?
     private var link: CADisplayLink?
-    private let geometry: () -> Geometry?
+    private let geometry: @MainActor () -> Geometry?
 
-    init(geometry: @escaping () -> Geometry?) { self.geometry = geometry }
+    init(geometry: @escaping @MainActor () -> Geometry?) { self.geometry = geometry }
 
     func start() {
       let link = CADisplayLink(target: self, selector: #selector(tick(_:)))
@@ -94,10 +95,12 @@ final class FeedLoadPerformanceTests: XCTestCase {
     }
   }
 
+  @MainActor
   private final class Fixture {
     let appState: AppState
     let model: FeedModel
     let state: FeedStateManager
+    let viewportState = FeedViewportState()
     let controller: FeedCollectionViewControllerIntegrated
     let window: UIWindow
     var posts: [CachedFeedViewPost]
@@ -119,7 +122,9 @@ final class FeedLoadPerformanceTests: XCTestCase {
       state = FeedStateManager(appState: appState, feedModel: model, feedType: .timeline)
       state.hasReachedEnd = true
       controller = FeedCollectionViewControllerIntegrated(
-        stateManager: state, sceneContext: SceneNavigationContext(appState: appState, sceneID: UUID()), navigationPath: .constant(NavigationPath()))
+        stateManager: state, viewportState: viewportState,
+        sceneContext: SceneNavigationContext(appState: appState, sceneID: UUID()),
+        navigationPath: .constant(NavigationPath()))
       controller.enableUpdateDiagnostics()
       let topic = AppBskyUnspeccedDefs.TrendView(
         topic: "fixture", displayName: "Fixture Trending", description: "Local layout fixture",
@@ -130,6 +135,7 @@ final class FeedLoadPerformanceTests: XCTestCase {
       let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
       window = UIWindow(windowScene: scene)
       window.frame = CGRect(x: 0, y: 0, width: 402, height: 800)
+      window.backgroundColor = .systemBackground
       window.rootViewController = controller
       window.isHidden = false
       await controller.performUpdate()
@@ -148,10 +154,18 @@ final class FeedLoadPerformanceTests: XCTestCase {
           text: text ?? "Fixture post \(number). This stable paragraph exercises the production text row while new posts load.",
           entities: nil, facets: nil, reply: nil, embed: nil, langs: nil, labels: nil,
           tags: nil, createdAt: ATProtocolDate(date: epoch))
-        var post = PublicPostTestFixtures.makePostView(
+        let author = AppBskyActorDefs.ProfileViewBasic(
+          did: try DID(didString: "did:plc:fixtureauthor"),
+          handle: try Handle(handleString: "author.test"), displayName: "Author",
+          pronouns: nil, avatar: nil, associated: nil, viewer: nil, labels: nil,
+          createdAt: nil, verification: nil, status: nil, debug: nil)
+        let post = AppBskyFeedDefs.PostView(
           uri: try ATProtocolURI(uriString: "at://did:plc:fixtureauthor/app.bsky.feed.post/p\(number)"),
-          authorDID: try DID(didString: "did:plc:fixtureauthor"), record: .knownType(record))
-        post.indexedAt = ATProtocolDate(date: epoch)
+          cid: CID.fromDAGCBOR(Data("cid-test".utf8)), author: author,
+          record: .knownType(record), embed: nil, bookmarkCount: nil,
+          replyCount: 0, repostCount: 0, likeCount: 0, quoteCount: nil,
+          indexedAt: ATProtocolDate(date: epoch), viewer: nil, labels: nil,
+          threadgate: nil, debug: nil)
         return AppBskyFeedDefs.FeedViewPost(post: post, reply: nil, reason: nil,
           feedContext: nil, reqId: nil)
       }
@@ -201,6 +215,101 @@ final class FeedLoadPerformanceTests: XCTestCase {
     }
   }
 
+  /// Two hosted windows share data but each receives its own scene viewport.
+  /// They use one existing UIWindowScene; this does not exercise OS scene creation.
+  @MainActor
+  private final class HostedViewport {
+    let window: UIWindow
+    let state: FeedStateManager
+    let viewportState: FeedViewportState
+    let sceneContext: SceneNavigationContext
+    private(set) var controller: FeedCollectionViewControllerIntegrated
+
+    init(scene: UIWindowScene, state: FeedStateManager, viewportState: FeedViewportState) async throws {
+      self.state = state
+      self.viewportState = viewportState
+      self.sceneContext = SceneNavigationContext(appState: state.appState, sceneID: UUID())
+      controller = FeedCollectionViewControllerIntegrated(stateManager: state,
+        viewportState: viewportState, sceneContext: sceneContext,
+        navigationPath: .constant(NavigationPath()))
+      window = UIWindow(windowScene: scene)
+      window.frame = CGRect(x: 0, y: 0, width: 402, height: 800)
+      window.backgroundColor = .systemBackground
+      window.rootViewController = controller
+      window.isHidden = false
+      await controller.performUpdate()
+      try await settle()
+      XCTAssertEqual(controller.collectionView.numberOfItems(inSection: 0), state.posts.count,
+        "This fixture has only post rows, so its index mapping must be exact")
+    }
+
+    func settle() async throws {
+      for _ in 0..<6 {
+        try await Task.sleep(for: .milliseconds(20))
+        window.layoutIfNeeded()
+        controller.view.layoutIfNeeded()
+        controller.collectionView.layoutIfNeeded()
+      }
+    }
+
+    func readPost(at index: Int, croppedPoints: CGFloat) async throws {
+      let collection = try XCTUnwrap(controller.collectionView)
+      controller.scrollViewWillBeginDragging(collection)
+      collection.scrollToItem(at: IndexPath(item: index, section: 0), at: .top, animated: false)
+      try await settle()
+      collection.contentOffset.y += croppedPoints
+      try await settle()
+      controller.scrollViewDidEndDragging(collection, willDecelerate: false)
+      XCTAssertEqual(try XCTUnwrap(viewportState.getScrollAnchor()).postID, state.posts[index].id)
+    }
+
+    func viewportY(for postID: String) throws -> CGFloat {
+      let index = try XCTUnwrap(state.posts.firstIndex { $0.id == postID })
+      let collection = try XCTUnwrap(controller.collectionView)
+      let attributes = try XCTUnwrap(collection.layoutAttributesForItem(
+        at: IndexPath(item: index, section: 0)))
+      return attributes.frame.minY - collection.contentOffset.y - collection.adjustedContentInset.top
+    }
+
+    func recreateController() async throws -> FeedCollectionViewControllerIntegrated {
+      let outgoing = controller
+      // Capture while the outgoing window still has its real effective insets.
+      outgoing.viewWillDisappear(false)
+      let replacement = FeedCollectionViewControllerIntegrated(stateManager: state,
+        viewportState: viewportState, sceneContext: sceneContext,
+        navigationPath: .constant(NavigationPath()))
+      controller = replacement
+      window.rootViewController = replacement
+      await replacement.performUpdate()
+      try await settle()
+      return outgoing
+    }
+
+    func waitUntilAtTop() async throws {
+      let deadline = ContinuousClock.now + .seconds(2)
+      let collection = try XCTUnwrap(controller.collectionView)
+      while abs(collection.contentOffset.y + collection.adjustedContentInset.top) > 1,
+        ContinuousClock.now < deadline {
+        try await Task.sleep(for: .milliseconds(20))
+        collection.layoutIfNeeded()
+      }
+      XCTAssertEqual(collection.contentOffset.y, -collection.adjustedContentInset.top, accuracy: 1)
+    }
+
+    func close() {
+      window.isHidden = true
+      window.rootViewController = nil
+    }
+  }
+
+  private struct ViewportReceipt: Codable {
+    let phase: String
+    let firstOffsetY: Double
+    let secondOffsetY: Double
+    let firstAnchorViewportY: Double
+    let secondAnchorViewportY: Double
+  }
+
   /// This receipt-only scenario can be transplanted unchanged onto the baseline
   /// with the behavior-neutral diagnostics patch. It intentionally permits old
   /// churn/anchor behavior so both builds produce comparable observations.
@@ -209,7 +318,8 @@ final class FeedLoadPerformanceTests: XCTestCase {
       let fixture = try await Fixture(videoCards: videoCards)
       defer { fixture.close() }
       let variant = videoCards ? "topics-and-video-cards" : "topics"
-      try attachScreenshot(fixture, named: "\(variant)-before", requireTrending: true)
+      try attachScreenshot(fixture, named: "\(variant)-before", requireTrending: true,
+        requiredText: "fixture post 5")
       let probe = FrameProbe { [weak fixture] in try? fixture?.geometry() }
       probe.start()
       defer { probe.stop() }
@@ -307,7 +417,9 @@ final class FeedLoadPerformanceTests: XCTestCase {
     let model = FeedModel(feedManager: FeedManager(client: nil, fetchType: feed), appState: appState)
     let state = FeedStateManager(appState: appState, feedModel: model, feedType: feed)
     let controller = FeedCollectionViewControllerIntegrated(
-      stateManager: state, sceneContext: SceneNavigationContext(appState: appState, sceneID: UUID()), navigationPath: .constant(NavigationPath()))
+      stateManager: state, viewportState: FeedViewportState(),
+      sceneContext: SceneNavigationContext(appState: appState, sceneID: UUID()),
+      navigationPath: .constant(NavigationPath()))
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
     let window = UIWindow(windowScene: scene)
     window.frame = CGRect(x: 0, y: 0, width: 402, height: 800)
@@ -369,6 +481,97 @@ final class FeedLoadPerformanceTests: XCTestCase {
     if let captureError { throw captureError }
   }
 
+  func testSharedFeedDataKeepsWindowPositionsAndReplacementCommandsIndependent() async throws {
+    let client = await ATProtoClient(baseURL: URL(string: "https://feed-windows.invalid")!)
+    let appState = AppState(userDID: "did:plc:feedwindowsfixture", client: client,
+      regulatoryChecker: NoAgePrompt())
+    appState.appSettings.showTrendingTopics = false
+    appState.appSettings.showTrendingVideos = false
+    let model = FeedModel(feedManager: FeedManager(client: nil, fetchType: .timeline), appState: appState)
+    model.posts = try Fixture.makePosts(0..<40)
+    let state = FeedStateManager(appState: appState, feedModel: model, feedType: .timeline)
+    state.hasReachedEnd = true
+    defer {
+      state.cleanup()
+      appState.cleanup()
+    }
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+    let firstStore = FeedViewportStore()
+    let secondStore = FeedViewportStore()
+    let firstState = firstStore.state(accountDID: "did:plc:feedwindowsfixture", feedIdentifier: "timeline")
+    let secondState = secondStore.state(accountDID: "did:plc:feedwindowsfixture", feedIdentifier: "timeline")
+    let first = try await HostedViewport(scene: scene, state: state, viewportState: firstState)
+    defer { first.close() }
+    let second = try await HostedViewport(scene: scene, state: state, viewportState: secondState)
+    defer { second.close() }
+    XCTAssertTrue(first.controller.stateManager === second.controller.stateManager)
+    XCTAssertFalse(first.controller.viewportState === second.controller.viewportState)
+
+    try await first.readPost(at: 5, croppedPoints: 13)
+    try await second.readPost(at: 20, croppedPoints: 27)
+    let firstAnchor = try XCTUnwrap(firstState.getScrollAnchor())
+    let secondAnchor = try XCTUnwrap(secondState.getScrollAnchor())
+    XCTAssertNotEqual(firstAnchor.postID, secondAnchor.postID)
+    let firstY = try first.viewportY(for: firstAnchor.postID)
+    let secondY = try second.viewportY(for: secondAnchor.postID)
+    XCTAssertEqual(firstY, firstAnchor.viewportAnchor.viewportY, accuracy: 1)
+    XCTAssertEqual(secondY, secondAnchor.viewportAnchor.viewportY, accuracy: 1)
+    var receipts: [ViewportReceipt] = []
+    func record(_ phase: String) throws {
+      receipts.append(ViewportReceipt(phase: phase,
+        firstOffsetY: first.controller.collectionView.contentOffset.y,
+        secondOffsetY: second.controller.collectionView.contentOffset.y,
+        firstAnchorViewportY: try first.viewportY(for: firstAnchor.postID),
+        secondAnchorViewportY: try second.viewportY(for: secondAnchor.postID)))
+    }
+    try record("independent-reading-positions")
+    try attachScreenshot(first.window, named: "first-window-reading", requireTrending: false,
+      requiredText: "fixture post 5")
+    try attachScreenshot(second.window, named: "second-window-reading", requireTrending: false,
+      requiredText: "fixture post 20")
+
+    // One publication reaches both production controllers without unifying their viewports.
+    model.posts += try Fixture.makePosts(40..<50)
+    await state.reapplyFilters()
+    await first.controller.performUpdate()
+    await second.controller.performUpdate()
+    try await first.settle()
+    try await second.settle()
+    XCTAssertEqual(first.controller.collectionView.numberOfItems(inSection: 0), 50)
+    XCTAssertEqual(second.controller.collectionView.numberOfItems(inSection: 0), 50)
+    XCTAssertEqual(try first.viewportY(for: firstAnchor.postID), firstY, accuracy: 1)
+    XCTAssertEqual(try second.viewportY(for: secondAnchor.postID), secondY, accuracy: 1)
+    try record("shared-publication")
+
+    let secondOffsetBeforeReplacement = second.controller.collectionView.contentOffset.y
+    let oldController = try await first.recreateController()
+    XCTAssertTrue(first.controller.viewportState === firstStore.state(
+      accountDID: "did:plc:feedwindowsfixture", feedIdentifier: "timeline"))
+    XCTAssertEqual(try first.viewportY(for: firstAnchor.postID), firstY, accuracy: 1)
+    XCTAssertEqual(second.controller.collectionView.contentOffset.y, secondOffsetBeforeReplacement, accuracy: 1)
+    XCTAssertEqual(try XCTUnwrap(secondState.getScrollAnchor()).postID, secondAnchor.postID)
+    try record("first-controller-recreated")
+    try attachScreenshot(first.window, named: "first-window-restored", requireTrending: false,
+      requiredText: "fixture post 5")
+
+    // Delay the outgoing controller's teardown until its replacement owns the handler.
+    // This must not remove the new registration or send the command to another window.
+    let oldOffset = oldController.collectionView.contentOffset.y
+    oldController.viewWillDisappear(false)
+    firstState.scrollToTop()
+    try await first.waitUntilAtTop()
+    try await second.settle()
+    XCTAssertEqual(oldController.collectionView.contentOffset.y, oldOffset, accuracy: 1)
+    XCTAssertEqual(second.controller.collectionView.contentOffset.y, secondOffsetBeforeReplacement, accuracy: 1)
+    XCTAssertEqual(try second.viewportY(for: secondAnchor.postID), secondY, accuracy: 1)
+    try record("first-command-after-stale-owner-teardown")
+    try attachScreenshot(first.window, named: "first-window-command-at-top", requireTrending: false,
+      requiredText: "fixture post 0")
+    try attachScreenshot(second.window, named: "second-window-unmoved", requireTrending: false,
+      requiredText: "fixture post 20")
+    try attachJSON(receipts, named: "shared-feed-window-viewport-receipts.json")
+  }
+
   private func measure(_ name: String, fixture: Fixture, probe: FrameProbe,
     operation: () async throws -> Void) async throws -> Phase {
     let before = try fixture.geometry()
@@ -399,10 +602,16 @@ final class FeedLoadPerformanceTests: XCTestCase {
 
   private func attachScreenshot(_ fixture: Fixture, named name: String, requireTrending: Bool,
     requiredText: String? = nil) throws {
-    let renderer = UIGraphicsImageRenderer(bounds: fixture.window.bounds)
+    try attachScreenshot(fixture.window, named: name, requireTrending: requireTrending,
+      requiredText: requiredText)
+  }
+
+  private func attachScreenshot(_ window: UIWindow, named name: String, requireTrending: Bool,
+    requiredText: String? = nil) throws {
+    let renderer = UIGraphicsImageRenderer(bounds: window.bounds)
     var drewHierarchy = false
     let image = renderer.image { _ in
-      drewHierarchy = fixture.window.drawHierarchy(in: fixture.window.bounds, afterScreenUpdates: true)
+      drewHierarchy = window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
     }
     let attachment = XCTAttachment(image: image)
     attachment.name = name
