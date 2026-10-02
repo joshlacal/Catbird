@@ -222,18 +222,23 @@ struct ContentLabelManager<Content: View>: View {
         self.contentType = contentType
         self.content = content()
         // Use a more conservative initial visibility that will be updated by async task
-        let initialVisibility = ContentLabelManager.getInitialContentVisibility(labels: labels)
+        let initialVisibility = ContentLabelManager.getInitialContentVisibility(
+            labels: labels, selfLabelValues: selfLabelValues
+        )
         self._contentVisibility = State(initialValue: initialVisibility)
         self._isBlurred = State(initialValue: initialVisibility == .warn)
     }
     
     /// Conservative initial visibility determination without user preferences
     /// This is used before async preference loading completes
-    static func getInitialContentVisibility(labels: [ComAtprotoLabelDefs.Label]?) -> ContentVisibility {
-        guard let labels = labels, !labels.isEmpty else { return .show }
-
-        // Check for the most restrictive content type first
-        let labelValues = labels.map { $0.val.lowercased() }.filter { ContentLabels.contentWarningLabels.contains($0) }
+    static func getInitialContentVisibility(
+        labels: [ComAtprotoLabelDefs.Label]?, selfLabelValues: [String]? = nil
+    ) -> ContentVisibility {
+        // Apply the same conservative policy to record self-labels before async
+        // preferences resolve, so media cannot appear briefly without its warning.
+        let labelValues = ((labels ?? []).map(\.val) + (selfLabelValues ?? []))
+            .map { $0.lowercased() }
+            .filter { ContentLabels.contentWarningLabels.contains($0) }
 
         // Ignore labels that are not content warnings
         guard !labelValues.isEmpty else { return .show }
