@@ -31,3 +31,18 @@ For a DEBUG fixture, `AboutSettingsView(supportStore:)` accepts an isolated serv
 - PENDING: combined Lite/full compilation, running About with ordinary/accessibility text, unavailable/retry screenshots, and authenticated device behavior. Fixture evidence is not physical-device qualification.
 
 Raw fixture test output: [test.log](/Users/joshlacalamito/Developer/.workspaces/catbird-live-feedback-20261002/artifacts/storekit-unit-harness/test.log). The isolated harness and standalone typecheck outputs are outside iCloud under `/Users/joshlacalamito/Developer/.workspaces/catbird-live-feedback-20261002/artifacts/`. No production action, live purchase, App Store Connect mutation, or user-preference reset was performed.
+
+## Local StoreKit startup ordering
+
+The first hosted lifecycle run stopped at the required error-interception check before any purchase. Its archived logs show the app's startup transaction listener opening a Sandbox client before `SKTestSession` saved the local configuration. The session then accepted the injected product-loading error, while product requests still used Sandbox. This establishes an environment mismatch; a fresh run must determine whether the startup ordering change resolves it.
+
+The dedicated DEBUG iOS simulator launch argument `--support-tip-storekit-test` defers only the `SupportTipStore.shared.start()` call in `CatbirdApp.init()`. All other launches, Release builds, devices, and macOS retain normal startup. The test requires both this argument and `--scene-runtime-ui-fixture` before creating a session, prepares and retains `SKTestSession`, then explicitly starts the same app-owned singleton. No StoreKitTest framework is imported into the app, and the service, product catalog, signed-transaction handling, and purchase assertions are unchanged.
+
+The product-error interception requirement remains the first purchase gate. This test now verifies the singleton listener after explicit test-session setup; it does not independently qualify the ordinary app-launch hook. Keep the separate normal-startup evidence boundary visible when reporting results.
+
+- Previous failed run: `/Users/joshlacalamito/Developer/_settings-feedback-builds/combined-r4/08/Tests.xcresult` and `raw.log` in the same directory.
+- Exported runtime evidence: `/Users/joshlacalamito/Developer/.workspaces/catbird-live-feedback-20261002/artifacts/storekit-selector8-runtime.log`; startup Sandbox requests at lines 26–45, saved local configuration at lines 66–108, injected error plus Sandbox product request at lines 312–341, and subsequent Sandbox Media API request at lines 473–480.
+- Focused validation: `/Users/joshlacalamito/Developer/.workspaces/catbird-live-feedback-20261002/artifacts/storekit-ordering-typecheck/validation.log`; the exact service module and updated lifecycle test type-check in Swift 6 against the iOS simulator SDK, and both app startup files parse. This is not a simulator execution or a full app build.
+- Next runtime gate: rebuild the affected app/test products and run only `CatbirdTests/SupportTipStoreKitTests/localCatalogAndPurchaseLifecycle` on the dedicated local simulator, serially, with both arguments above. Retain the fail-closed check and inspect XcodeTest versus Sandbox request context if it fails again. Frozen prior inputs and products are unchanged.
+
+Governing plan: [parallel feedback execution](/Users/joshlacalamito/Developer/Catbird+Petrel/docs/execution-plans/2026-10-02-live-feedback-parallel-execution.md). The integration owner controls the next combined build and runtime slot.
