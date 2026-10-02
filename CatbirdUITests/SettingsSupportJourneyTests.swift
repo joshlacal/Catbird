@@ -36,8 +36,6 @@ final class SettingsSupportJourneyTests: XCTestCase {
     let dynamicType = app.switches["Dynamic Type"].firstMatch
     reveal(dynamicType, in: app)
     capture(app, "Accessibility Dynamic Type large text")
-    XCTAssertFalse(app.sliders["Long Press Duration"].exists)
-    XCTAssertFalse(app.switches["Shake to Undo"].exists)
     XCUIDevice.shared.orientation = .landscapeLeft
     capture(app, "Accessibility large text landscape")
   }
@@ -51,7 +49,6 @@ final class SettingsSupportJourneyTests: XCTestCase {
     capture(app, "Content server preferences unavailable")
     retry.tap()
     XCTAssertTrue(retry.waitForExistence(timeout: 5))
-    XCTAssertFalse(app.switches["Scan Sensitive Content"].exists)
   }
 
   func testSupportCopyAndLargeText() {
@@ -62,8 +59,28 @@ final class SettingsSupportJourneyTests: XCTestCase {
     )).firstMatch
     reveal(copy, in: app)
     capture(app, "Support Catbird large text")
-    XCTAssertFalse(app.buttons["Manage Subscriptions"].exists)
-    XCTAssertFalse(app.staticTexts["These do not unlock features"].exists)
+  }
+
+  func testRemovedControlsAreAbsentThroughoutForms() {
+    for screen in ["accessibility", "content", "about"] {
+      let app = launch(screen: screen)
+      let title = ["accessibility": "Accessibility", "content": "Content & Media", "about": "About"][screen]!
+      XCTAssertTrue(app.navigationBars[title].waitForExistence(timeout: 10))
+      // Native Form rows are lazy. Check each viewport while traversing the complete form,
+      // instead of treating a missing offscreen accessibility node as evidence of removal.
+      for _ in 0..<16 {
+        XCTAssertFalse(app.sliders["Long Press Duration"].exists)
+        XCTAssertFalse(app.switches["Shake to Undo"].exists)
+        XCTAssertFalse(app.switches["Scan for Sensitive Content"].exists)
+        XCTAssertFalse(app.buttons["Manage Subscription"].exists)
+        XCTAssertFalse(app.staticTexts.matching(NSPredicate(
+          format: "label CONTAINS %@", "These do not unlock features"
+        )).firstMatch.exists)
+        app.swipeUp()
+      }
+      capture(app, "\(title) end of removed-control traversal")
+      app.terminate()
+    }
   }
 
   func testSupportUnavailableCanRetry() {
