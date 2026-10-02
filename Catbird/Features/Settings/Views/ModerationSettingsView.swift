@@ -236,7 +236,7 @@ struct ModerationSettingsView: View {
                     if isLoadingLabelers {
                         ProgressView()
                     } else if labelers.isEmpty {
-                        Text("No labelers available")
+                        Text("No labeler subscriptions to show")
                             .foregroundStyle(.secondary)
                     } else {
                         ForEach(labelers) { labeler in
@@ -269,9 +269,9 @@ struct ModerationSettingsView: View {
                                 }
                             }
                         }
-                        
-                        NavigationLink("Add Labeler", destination: AddLabelerView())
                     }
+
+                    NavigationLink("Add Labeler", destination: AddLabelerView())
                 }
                 
                 // Unavailable Labelers Warning & Cleanup

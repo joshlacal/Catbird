@@ -53,7 +53,7 @@ struct SettingsView: View {
             }
             NavigationLink(destination: FeedFilterSettingsView()) {
               LabeledContent {
-                Text("\(appState.feedFilterSettings.activeFilterIds.count) active")
+                Text("\(appState.feedFilterSettings.filters.filter { $0.isEnabled }.count) active")
               } label: {
                 Label("Feed Filters", systemImage: "line.3.horizontal.decrease.circle.fill")
               }
