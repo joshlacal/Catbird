@@ -51,3 +51,15 @@ SHA-256 values:
 | `LabelAppealSubmission.swift` (unchanged) | `16c56d32c1707817929f8f36f02bcad33b2c888d503a3456253cd8da41d28e2b` | Identical |
 | `SocialComponentLayoutTests.swift` | `ae2da194aa0d91479d8c5dc9aeb5c465e82e3d46c21aec89a362c54f60b5cd0f` | `9c7a8e994f8bfbdadb8401cfa399fcbd2228fc31ca7bbc622b7c0e77704f1fa9` |
 | `SocialActionsUITests.swift` | `5f18b1e09e5aeeafe06aa1b376dd8e413736d0ae6babc54ea349901582d08a52` | Identical |
+
+## Runtime follow-up and revised appeal focus ownership
+
+The coordinator's first runtime run, `lite-run-r1`, passed six profile-layout cases but failed the appeal visibility journey: the software keyboard and text caret remained active and covered the retry control. The coordinator inspected `E2D1281F-D431-49F1-A420-B4A16629B0D8.png`. This result overrides any expectation that the initial focus change had already corrected the rendered appeal form; the earlier clearance was source-only. This reviewer did not execute that run or independently inspect its screenshot.
+
+The repair changes only `LabelsOnMeView.swift`. Its private presented `AppealLabelSheet` now owns the `FocusState` used by its own reason field. The inspector retains the existing reason state and the same `LabelAppealSubmission` instance, passing them as a binding and a reference. There is no new copy, reset or replacement of the appeal reason or attempt model when the form recomputes. Submit clears local focus before invoking the parent's action; cancellation also clears local focus. Failure handling retains the stable section anchor and checks the current presentation before changing focus or scrolling.
+
+The presentation predicate combines the current-viewer check with the exact presented label. Parent submission rechecks both conditions; parent cancellation checks the exact label before cancelling the attempt or dismissing it. Existing attempt ownership, stale completion and cancellation behavior is retained, and failure or retry does not clear the reason. The extraction introduces no new delayed submission or scrolling task. The focused UI test is unchanged and remains the runtime oracle; it has not been relaxed to accept an obscured error or retry control.
+
+Two bounded source passes found no remaining P1/P2 in this revised focus ownership, lifetime or authority delta. It is clear for paired source sealing and the next build. **The observed appeal rendering failure is still awaiting validation by a second runtime run**: source review does not establish keyboard dismissal, error/retry visibility or preserved text in the running form.
+
+The revised `LabelsOnMeView.swift` SHA-256 is `2b92283c0578db3b5d943b80603ccfd4a845c3050228ac6fa34d4ef8e3796a00`, identical in Lite and Full; this supersedes its hash in the initial table. All other files were frozen for this bounded pass. The reviewer again ran no build, parser, test, simulator or VCS command and modified only this paired review report.
