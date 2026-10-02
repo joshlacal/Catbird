@@ -107,7 +107,7 @@ struct CatbirdGatewayConfigurationTests {
       "Catbird/Features/Chat/Services/ChatHeartbeatManager.swift":
         "CatbirdGatewayConfiguration.current.serviceDID",
       "Catbird/Features/Notifications/Services/NotificationManager.swift":
-        "gatewayURL: CatbirdGatewayConfiguration.current.origin",
+        "notificationServiceDIDString: String = CatbirdGatewayConfiguration.current.serviceDID",
       "Catbird/AppIntents/Support/IntentClientProvider.swift":
         "gatewayURL: CatbirdGatewayConfiguration.current.origin",
     ]
