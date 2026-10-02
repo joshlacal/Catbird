@@ -62,7 +62,11 @@ struct TypographyHarness: App {
       try data.write(to: directory.appendingPathComponent("typography-measurements.json"))
       return "Production text metrics saved. \(receipt["passed"] as? Int ?? 0) checks passed."
     } catch {
-      return "Measurement failed: \(error.localizedDescription)"
+      let failure = ["failure": String(describing: error)]
+      if let data = try? JSONSerialization.data(withJSONObject: failure, options: [.prettyPrinted]) {
+        try? data.write(to: URL.documentsDirectory.appendingPathComponent("typography-measurements.json"))
+      }
+      return "Measurement failed: \(String(describing: error))"
     }
   }
 }

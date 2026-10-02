@@ -2,12 +2,13 @@
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 OUTPUT=${1:?Pass an absolute artifact directory outside iCloud}
+TOKEN_SOURCE=${2:-"$ROOT/Catbird/Core/UI/DesignTokens.swift"}
 SDK=$(xcrun --sdk iphonesimulator --show-sdk-path)
 APP="$OUTPUT/SettingsTypographyHarness.app"
 mkdir -p "$APP"
-xcrun swiftc -parse-as-library -swift-version 5 -sdk "$SDK" \
+xcrun swiftc -j 2 -parse-as-library -swift-version 5 -sdk "$SDK" \
   -target arm64-apple-ios18.0-simulator -module-name SettingsTypographyHarness \
-  "$ROOT/Catbird/Core/UI/DesignTokens.swift" \
+  "$TOKEN_SOURCE" \
   "$ROOT/Catbird/Core/State/FontManager.swift" \
   "$ROOT/Catbird/Core/Extensions/Typography.swift" \
   "$ROOT/tools/settings-visual-harness/FixtureSupport.swift" \
@@ -31,3 +32,9 @@ cat > "$APP/Info.plist" <<'PLIST'
 </dict></plist>
 PLIST
 codesign --force --sign - "$APP"
+shasum -a 256 "$TOKEN_SOURCE" "$ROOT/Catbird/Core/State/FontManager.swift" \
+  "$ROOT/Catbird/Core/Extensions/Typography.swift" \
+  "$ROOT/tools/settings-visual-harness/FixtureSupport.swift" \
+  "$ROOT/tools/settings-visual-harness/TypographyHarness.swift" \
+  "$APP/SettingsTypographyHarness" > "$OUTPUT/source-and-binary.sha256"
+xcrun swiftc --version > "$OUTPUT/compiler.txt"
