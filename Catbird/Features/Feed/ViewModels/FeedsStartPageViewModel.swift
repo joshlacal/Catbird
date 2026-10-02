@@ -170,7 +170,7 @@ final class FeedsStartPageViewModel {
   }
 
   func loadFeedsIfNeeded(forceRefresh: Bool = false) async {
-    guard !isLoading else { return }
+    guard !isLoading, !Task.isCancelled else { return }
 
     isLoading = true
     logger.info("📊 Loading feeds with forceRefresh=\(forceRefresh)")
@@ -182,13 +182,16 @@ final class FeedsStartPageViewModel {
 
       // Try to load preferences using PreferencesManager with force refresh option
       try await appState.preferencesManager.fetchPreferences(forceRefresh: forceRefresh)
+      try Task.checkCancellation()
 
       // Update caches
       await updateCaches()
 
       // Fetch feed generators and list details based on the preferences
       await self.fetchFeedGenerators()
+      try Task.checkCancellation()
       await self.fetchListDetails()
+      try Task.checkCancellation()
 
       errorMessage = nil
 
@@ -197,6 +200,10 @@ final class FeedsStartPageViewModel {
       logger.debug(
         "Successfully loaded feeds, hasLoadedFeedsAtLeastOnce=\(self.hasLoadedFeedsAtLeastOnce)")
     } catch {
+      if Task.isCancelled || error.isCancellation {
+        isLoading = false
+        return
+      }
       if let prefError = error as? PreferencesManagerError {
         switch prefError {
         case .clientNotInitialized, .modelContextNotInitialized:
@@ -221,8 +228,10 @@ final class FeedsStartPageViewModel {
   }
 
   func fetchFeedGenerators(attempt: Int = 0) async {
+    guard !Task.isCancelled else { return }
     do {
       let preferences = try await appState.preferencesManager.getPreferences()
+      try Task.checkCancellation()
       
       // Start with all unique feeds
       let allUniqueFeeds = Array(Set(preferences.pinnedFeeds + preferences.savedFeeds))
@@ -257,7 +266,7 @@ final class FeedsStartPageViewModel {
         if attempt < maxGeneratorRetryAttempts {
           let delay = generatorRetryDelayBase * UInt64(1 << attempt) // Exponential backoff
           logger.info("ATProto client not ready, retrying in \(Double(delay) / 1_000_000_000)s (attempt \(attempt + 1)/\(self.maxGeneratorRetryAttempts))")
-          try? await Task.sleep(nanoseconds: delay)
+          try await Task.sleep(nanoseconds: delay)
           await fetchFeedGenerators(attempt: attempt + 1)
         } else {
           logger.error("ATProto client not available after \(self.maxGeneratorRetryAttempts) attempts")
@@ -268,6 +277,7 @@ final class FeedsStartPageViewModel {
       logger.info("Attempting to fetch \(feedURIs.count) feed generators (attempt \(attempt + 1))")
       let input = AppBskyFeedGetFeedGenerators.Parameters(feeds: feedURIs)
       let (responseCode, output) = try await client.app.bsky.feed.getFeedGenerators(input: input)
+      try Task.checkCancellation()
       
       if responseCode == 200, let generators = output?.feeds {
         logger.info("✅ Successfully fetched \(generators.count) feed generators")
@@ -280,7 +290,7 @@ final class FeedsStartPageViewModel {
         logger.warning("Unauthorized when fetching feed generators (attempt \(attempt + 1)); scheduling retry")
         if attempt < maxGeneratorRetryAttempts {
           let delay = generatorRetryDelayBase * UInt64(1 << attempt) // Exponential backoff: 0.5s, 1s, 2s, 4s
-          try? await Task.sleep(nanoseconds: delay)
+          try await Task.sleep(nanoseconds: delay)
           await fetchFeedGenerators(attempt: attempt + 1)
         } else {
           logger.error("Feed generator fetch unauthorized after \(self.maxGeneratorRetryAttempts) attempts")
@@ -291,14 +301,12 @@ final class FeedsStartPageViewModel {
         // Retry on other failures too
         if attempt < maxGeneratorRetryAttempts {
           let delay = generatorRetryDelayBase * UInt64(1 << attempt)
-          try? await Task.sleep(nanoseconds: delay)
+          try await Task.sleep(nanoseconds: delay)
           await fetchFeedGenerators(attempt: attempt + 1)
         }
       }
     } catch {
-      // Check if it's a cancellation error
-      let nsError = error as NSError
-      if nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled {
+      if Task.isCancelled || error.isCancellation {
         // This is a cancellation error, don't update UI or show alerts
         logger.debug("Feed generator fetch cancelled")
         return
@@ -307,7 +315,11 @@ final class FeedsStartPageViewModel {
       if attempt < maxGeneratorRetryAttempts {
         let delay = generatorRetryDelayBase * UInt64(1 << attempt) // Exponential backoff
         logger.info("Transient error fetching feed generators (\(error.localizedDescription)); retrying in \(Double(delay) / 1_000_000_000)s (attempt \(attempt + 1)/\(self.maxGeneratorRetryAttempts))")
-        try? await Task.sleep(nanoseconds: delay)
+        do {
+          try await Task.sleep(nanoseconds: delay)
+        } catch {
+          return
+        }
         await fetchFeedGenerators(attempt: attempt + 1)
         return
       }
@@ -317,8 +329,10 @@ final class FeedsStartPageViewModel {
   }
 
   func fetchListDetails() async {
+    guard !Task.isCancelled else { return }
     do {
       let preferences = try await appState.preferencesManager.getPreferences()
+      try Task.checkCancellation()
       let allUniqueFeeds = Array(Set(preferences.pinnedFeeds + preferences.savedFeeds))
       let listURIs = allUniqueFeeds
         .filter { $0.contains("/app.bsky.graph.list/") }
@@ -338,15 +352,22 @@ final class FeedsStartPageViewModel {
             let uriString = uri.uriString()
             do {
               let details = try await self.appState.listManager.getListDetails(uriString)
+              try Task.checkCancellation()
               return (uri, details)
             } catch {
-              self.logger.error("Failed to fetch list details for \(uriString): \(error.localizedDescription)")
+              if !Task.isCancelled, !error.isCancellation {
+                self.logger.error("Failed to fetch list details for \(uriString): \(error.localizedDescription)")
+              }
               return (uri, nil)
             }
           }
         }
 
         for await (uri, details) in group {
+          guard !Task.isCancelled else {
+            group.cancelAll()
+            break
+          }
           if let details = details {
             self.listDetails[uri] = details
             successCount += 1
@@ -357,10 +378,12 @@ final class FeedsStartPageViewModel {
       }
 
       PerformanceSignposts.endBatchOperation(id: signpostId, successCount: successCount, failureCount: failureCount)
+      try Task.checkCancellation()
 
       // After fetching, update widget mapping
       await updateWidgetFeedPreferences()
     } catch {
+      guard !Task.isCancelled, !error.isCancellation else { return }
       logger.error("Error fetching list details: \(error.localizedDescription)")
     }
   }

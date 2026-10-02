@@ -845,6 +845,7 @@ final class FeedModel: StateInvalidationSubscriber {
     do {
       // Fetch posts
       let (fetchedPosts, newCursor) = try await feedManager.fetchFeed(fetchType: fetch, cursor: nil)
+      try Task.checkCancellation()
 
       // Store in prefetch cache
         await appState.storePrefetchedFeed(fetchedPosts, cursor: newCursor, for: fetch)
@@ -856,6 +857,7 @@ final class FeedModel: StateInvalidationSubscriber {
         filterSettings: filterSettings,
         feedType: fetch
       )
+      try Task.checkCancellation()
 
       // Update posts list
       updatePosts(filteredPosts, strategy: strategy, forceRefresh: forceRefresh)
@@ -868,8 +870,9 @@ final class FeedModel: StateInvalidationSubscriber {
       // Update shadows
       await refreshPostShadows(fetchedPosts)
     } catch {
-      // Handle errors
-      self.error = error
+      if !Task.isCancelled, !error.isCancellation {
+        self.error = error
+      }
     }
 
     // Reset loading state
@@ -909,6 +912,7 @@ final class FeedModel: StateInvalidationSubscriber {
         fetchType: fetchType,
         cursor: currentCursor
       )
+      try Task.checkCancellation()
 
       // Process and filter posts (this now includes deduplication logic)
       let filteredNewPosts = await processAndFilterPosts(
@@ -917,6 +921,7 @@ final class FeedModel: StateInvalidationSubscriber {
         filterSettings: filterSettings,
         feedType: fetchType
       )
+      try Task.checkCancellation()
 
       // Filter out duplicates based on ID before appending
       let existingIds = Set(posts.map { $0.id })
@@ -932,8 +937,9 @@ final class FeedModel: StateInvalidationSubscriber {
       // Update shadows
       await refreshPostShadows(fetchedPosts)
     } catch {
-      // Handle errors
-      self.error = error
+      if !Task.isCancelled, !error.isCancellation {
+        self.error = error
+      }
     }
 
     // Reset loading state

@@ -126,9 +126,9 @@ final class ThreadManager: StateInvalidationSubscriber {
     uri: ATProtocolURI,
     visibilityContext: PostVisibilityContext = .public
   ) async {
+    guard !Task.isCancelled else { return }
     isLoading = true
     error = nil
-    blockedAnchor = nil
     currentThreadURI = uri
 
     logger.debug("Loading thread: \(uri.uriString()) (context: \(visibilityContext))")
@@ -159,6 +159,7 @@ final class ThreadManager: StateInvalidationSubscriber {
         sort: ThreadSortAPIMapper.apiValue(for: appState.appSettings.threadSortOrder)
       )
       let (responseCode, output) = try await client.app.bsky.unspecced.getPostThreadV2(input: params)
+      try Task.checkCancellation()
 
       if responseCode == 200, let output = output {
         // Log the number of items in the thread response
@@ -198,8 +199,10 @@ final class ThreadManager: StateInvalidationSubscriber {
         }
       }
     } catch {
-      self.error = error
-      logger.error("Error loading thread: \(error.localizedDescription)")
+      if !Task.isCancelled, !error.isCancellation {
+        self.error = error
+        logger.error("Error loading thread: \(error.localizedDescription)")
+      }
     }
 
     isLoading = false

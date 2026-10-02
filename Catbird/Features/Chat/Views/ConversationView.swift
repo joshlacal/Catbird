@@ -19,9 +19,6 @@ struct ConversationView: View {
   }
   @State private var unifiedDataSource: BlueskyConversationDataSource?
   @State private var isInitialized = false
-  @State private var attachedEmbed: ChatSharedPostPreview?
-  @State private var pendingPostRef: ComAtprotoRepoStrongRef?
-  @State private var stagedReplyTarget: BlueskyMessageAdapter?
   private var chatNavigationPath: Binding<NavigationPath> {
     appState.navigationManager.pathBinding(for: 4)
   }
@@ -56,8 +53,9 @@ struct ConversationView: View {
   private func consumePendingShareIfNeeded() {
     guard let pending = appState.navigationManager.pendingChatShare,
           pending.convoId == convoId else { return }
-    attachedEmbed = pending.previewEmbed
-    pendingPostRef = pending.postRef
+    guard let draft = unifiedDataSource?.draft else { return }
+    draft.value.attachedEmbed = pending.previewEmbed
+    draft.value.postRef = pending.postRef
     appState.navigationManager.pendingChatShare = nil
   }
 
@@ -163,7 +161,7 @@ struct ConversationView: View {
         },
         onReply: { message in
           guard !message.isSystemMessage else { return }
-          stagedReplyTarget = message
+          dataSource.draft.value.replyTarget = message
         }
       )
       .onChange(of: selectedEmoji) { _, newEmoji in
@@ -223,7 +221,7 @@ struct ConversationView: View {
   @ViewBuilder
   private func blueskyInputBar(dataSource: BlueskyConversationDataSource) -> some View {
     VStack(spacing: 0) {
-      if let staged = stagedReplyTarget {
+      if let staged = dataSource.draft.value.replyTarget {
         HStack(alignment: .center, spacing: 8) {
           Image(systemName: "arrowshape.turn.up.left.fill")
             .font(.caption2)
@@ -245,7 +243,7 @@ struct ConversationView: View {
           Spacer(minLength: 0)
 
           Button {
-            stagedReplyTarget = nil
+            dataSource.draft.value.replyTarget = nil
           } label: {
             Image(systemName: "xmark.circle.fill")
               .font(.caption)
@@ -267,32 +265,19 @@ struct ConversationView: View {
           get: { dataSource.draftText },
           set: { dataSource.draftText = $0 }
         ),
-        attachedPost: $attachedEmbed,
+        attachedPost: Binding(
+          get: { dataSource.draft.value.attachedEmbed },
+          set: {
+            dataSource.draft.value.attachedEmbed = $0
+            if $0 == nil { dataSource.draft.value.postRef = nil }
+          }
+        ),
         conversationId: convoId,
-        onSend: { text, stagedEmbed in
-          let embedUnion: ChatBskyConvoDefs.MessageInputEmbedUnion?
-          if stagedEmbed != nil, let postRef = pendingPostRef {
-            embedUnion = .appBskyEmbedRecord(AppBskyEmbedRecord(record: postRef))
-          } else {
-            embedUnion = nil
-          }
-          let replyRef = stagedReplyTarget.map { ChatBskyConvoDefs.ReplyRef(messageId: $0.id) }
-
-          Task {
-            let success = await dataSource.sendMessage(
-              text: text,
-              embed: embedUnion,
-              replyTo: replyRef
-            )
-            if success {
-              await MainActor.run {
-                stagedReplyTarget = nil
-                attachedEmbed = nil
-                pendingPostRef = nil
-              }
-            }
-          }
+        onSend: { _, _ in
+          guard let submission = dataSource.draft.beginSend() else { return }
+          Task { await dataSource.sendDraft(submission) }
         },
+        clearsDraftOnSend: false,
         dismissKeyboardOnSend: false
       )
     }

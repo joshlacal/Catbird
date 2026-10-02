@@ -17,6 +17,7 @@ struct ChatMessageComposerView: View {
 
   let conversationId: String
   let onSend: (String, ChatSharedPostPreview?) -> Void
+  var clearsDraftOnSend: Bool = true
   var onTypingChanged: ((Bool) -> Void)? = nil
   var dismissKeyboardOnSend: Bool = false
   var placeholderText: String = "Message"
@@ -196,12 +197,14 @@ struct ChatMessageComposerView: View {
   private func sendMessage() {
     guard canSend else { return }
 
-    // Capture values before resetting state to avoid a race with the caller.
+    // The draft owner can retain these values until its matching send succeeds.
     let messageText = text
     let messagePost = attachedPost
 
-    text = ""
-    attachedPost = nil
+    if clearsDraftOnSend {
+      text = ""
+      attachedPost = nil
+    }
     onTypingChanged?(false)
     if dismissKeyboardOnSend {
       isTextFieldFocused = false
