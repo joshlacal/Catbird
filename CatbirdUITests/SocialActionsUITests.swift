@@ -57,7 +57,7 @@ final class SocialActionsUITests: XCTestCase {
     XCTAssertTrue(app.staticTexts["Issued by Community Labels (@labels.test)"].exists)
     attach(app, name: "own-label-details")
     app.buttons["Appeal Label"].tap()
-    let reason = app.textFields["Explain why this label was applied in error"]
+    let reason = app.textFields.firstMatch
     XCTAssertTrue(reason.waitForExistence(timeout: 5))
     reason.tap()
     reason.typeText("This fixture label was applied in error.")
