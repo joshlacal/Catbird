@@ -5,6 +5,7 @@ import Petrel
 import SwiftUI
 
 struct NotificationsView: View {
+  @Environment(SceneNavigationContext.self) private var sceneContext
   @Environment(AppState.self) private var appState: AppState
   @Environment(\.horizontalSizeClass) private var hSizeClass
   @State private var viewModel: NotificationsViewModel
@@ -22,11 +23,14 @@ struct NotificationsView: View {
   init(appState: AppState, selectedTab: Binding<Int>, lastTappedTab: Binding<Int?>) {
     self._selectedTab = selectedTab
     self._lastTappedTab = lastTappedTab
-    _viewModel = State(wrappedValue: NotificationsViewModel(client: appState.atProtoClient))
+    _viewModel = State(wrappedValue: NotificationsViewModel(
+      client: appState.atProtoClient,
+      notificationManager: appState.notificationManager
+    ))
   }
 
   var body: some View {
-    let navigationPathBinding = appState.navigationManager.pathBinding(for: 2)
+    let navigationPathBinding = sceneContext.navigationManager.pathBinding(for: 2)
 
     return navigationStack(using: navigationPathBinding)
     .onChange(of: lastTappedTab) { _, newValue in
@@ -198,6 +202,10 @@ struct NotificationsView: View {
         .enhancedAppSubheadline()
         .foregroundColor(.secondary)
 
+      if viewModel.hasMoreNotifications {
+        loadMoreFilteredNotificationsButton
+      }
+
       Button(action: {
         Task {
           await viewModel.refreshNotifications()
@@ -215,9 +223,24 @@ struct NotificationsView: View {
     .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
 
+  private var loadMoreFilteredNotificationsButton: some View {
+    Button {
+      Task { await viewModel.loadMoreNotifications() }
+    } label: {
+      if viewModel.isLoadingMore {
+        ProgressView()
+      } else {
+        Text("Load more")
+      }
+    }
+    .buttonStyle(.bordered)
+    .disabled(viewModel.isLoadingMore)
+    .accessibilityIdentifier("notifications.loadMoreFiltered")
+  }
+
   @ViewBuilder
   private var notificationsList: some View {
-    let navigationPath = appState.navigationManager.pathBinding(for: 2)
+    let navigationPath = sceneContext.navigationManager.pathBinding(for: 2)
     let indexedGroups = Array(viewModel.groupedNotifications.enumerated())
 
     ScrollViewReader { _ in
@@ -986,11 +1009,12 @@ struct NotificationMediaThumbnail: View {
 }
 
 struct AvatarStack: View {
+  @Environment(SceneNavigationContext.self) private var sceneContext
   let notifications: [AppBskyNotificationListNotifications.Notification]
   @Environment(AppState.self) private var appState: AppState
 
   var body: some View {
-    let navigationPath = appState.navigationManager.pathBinding(for: 2)
+    let navigationPath = sceneContext.navigationManager.pathBinding(for: 2)
 
     HStack(spacing: 3) {
       ForEach(0..<min(3, notifications.count), id: \.self) { index in
