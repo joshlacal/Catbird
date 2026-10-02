@@ -17,7 +17,9 @@ final class CachedFeedViewPost: Identifiable {
     var feedType: String
     
     /// Serialized FeedViewPost data
-    var serializedPost: Data
+    var serializedPost: Data {
+        didSet { _cachedFeedViewPost = nil }
+    }
     
     /// Cursor value for pagination
     var cursor: String?
@@ -43,7 +45,12 @@ final class CachedFeedViewPost: Identifiable {
     var repostIndexedAt: Date?
     
     /// Serialized slice items for thread display (stores all posts in the thread)
-    var serializedSliceItems: Data?
+    var serializedSliceItems: Data? {
+        didSet {
+            _cachedSliceItems = nil
+            _hasDecodedSliceItems = false
+        }
+    }
     
     /// Indicates if this is a temporary/optimistic post that hasn't been confirmed by the server
     @Transient var isTemporary: Bool = false
@@ -59,6 +66,8 @@ final class CachedFeedViewPost: Identifiable {
 
     /// Cached decoded FeedViewPost to avoid repeated JSON decoding
     @Transient private var _cachedFeedViewPost: AppBskyFeedDefs.FeedViewPost?
+    @Transient private var _cachedSliceItems: [FeedSliceItem]?
+    @Transient private var _hasDecodedSliceItems: Bool = false
 
     private static let idDateFormatter: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
@@ -129,6 +138,7 @@ final class CachedFeedViewPost: Identifiable {
             self.isRepost = false
             self.repostIndexedAt = nil
         }
+        self._cachedFeedViewPost = feedViewPost
     }
     
     /// Full initializer with all parameters
@@ -169,6 +179,7 @@ final class CachedFeedViewPost: Identifiable {
             self.isRepost = false
             self.repostIndexedAt = nil
         }
+        self._cachedFeedViewPost = feedViewPost
     }
     
     /// Initializer with thread metadata
@@ -229,41 +240,31 @@ final class CachedFeedViewPost: Identifiable {
             self.isRepost = false
             self.repostIndexedAt = nil
         }
+        self._cachedFeedViewPost = feedViewPost
     }
 
-    /// Initializer from FeedSlice (following React Native pattern)
-    init?(from slice: FeedSlice, feedType: String = "timeline") {
-        // Use the main post (last item in slice, which is the actual feed post)
-        guard let mainItem = slice.items.last else {
-            cachedPostLogger.warning("FeedSlice has no items, cannot create CachedFeedViewPost")
-            return nil
-        }
+    /// Compatibility path for individual callers. Feed page preparation uses
+    /// `PreparedFeedSlice.prepare` so serialization finishes before publication.
+    convenience init?(from slice: FeedSlice, feedType: String = "timeline") {
+        guard let prepared = PreparedFeedSlice(slice: slice) else { return nil }
+        self.init(prepared: prepared, feedType: feedType)
+    }
 
-        // Create a FeedViewPost from the slice data
-        let feedViewPost = AppBskyFeedDefs.FeedViewPost(
-            post: mainItem.post,
-            reply: slice.originalReply ?? Self.createReplyRefFromSlice(slice),
-            reason: slice.reason,
-            feedContext: slice.feedContext,
-            reqId: nil
-        )
-
+    /// Creates only the SwiftData model; all JSON work belongs to the prepared value.
+    init(prepared: PreparedFeedSlice, feedType: String) {
+        let slice = prepared.slice
+        let feedViewPost = prepared.feedViewPost
         self.feedType = feedType
         self.id = Self.computeId(for: feedViewPost, feedType: feedType)
-        do {
-            self.serializedPost = try JSONEncoder().encode(feedViewPost)
-        } catch {
-            cachedPostLogger.error("Failed to encode feedViewPost: \(error)")
-            return nil
-        }
+        self.serializedPost = prepared.serializedPost
         self.cursor = nil
         self.cachedAt = Date()
 
         // Extract creation date for sorting
-        self.createdAt = mainItem.record.createdAt.date
+        self.createdAt = prepared.createdAt
 
         // Store slice items for thread rendering
-        self.serializedSliceItems = try? JSONEncoder().encode(slice.items)
+        self.serializedSliceItems = prepared.serializedSliceItems
 
         // Set thread metadata from slice
         self.isPartOfThread = slice.shouldShowAsThread
@@ -299,31 +300,11 @@ final class CachedFeedViewPost: Identifiable {
             self.isRepost = false
             self.repostIndexedAt = nil
         }
+        self._cachedFeedViewPost = feedViewPost
+        self._cachedSliceItems = slice.items
+        self._hasDecodedSliceItems = true
     }
 
-    /// Creates ReplyRef from slice items (reconstructing the thread structure)
-    private static func createReplyRefFromSlice(_ slice: FeedSlice) -> AppBskyFeedDefs.ReplyRef? {
-        guard slice.items.count > 1 else { return nil }
-        
-        // Find parent (second to last item) and root (first item)
-        let parentItem = slice.items.count > 1 ? slice.items[slice.items.count - 2] : nil
-        let rootItem = slice.items.first
-        
-        guard let parentItem = parentItem, let rootItem = rootItem else { return nil }
-        
-        let parent = AppBskyFeedDefs.ReplyRefParentUnion.appBskyFeedDefsPostView(parentItem.post)
-        let root = AppBskyFeedDefs.ReplyRefRootUnion.appBskyFeedDefsPostView(rootItem.post)
-        
-        // Use grandparent author if available
-        let grandparentAuthor = slice.items.count > 2 ? slice.items[slice.items.count - 3].post.author : nil
-        
-        return AppBskyFeedDefs.ReplyRef(
-            root: root,
-            parent: parent,
-            grandparentAuthor: grandparentAuthor
-        )
-    }
-    
     /// Reconstructs the original FeedViewPost, caching the result to avoid repeated JSON decoding
     var feedViewPost: AppBskyFeedDefs.FeedViewPost {
         get throws {
@@ -373,13 +354,17 @@ final class CachedFeedViewPost: Identifiable {
     
     /// Reconstructs the slice items for thread rendering
     var sliceItems: [FeedSliceItem]? {
-        guard let data = serializedSliceItems else { return nil }
-        return try? JSONDecoder().decode([FeedSliceItem].self, from: data)
+        if _hasDecodedSliceItems { return _cachedSliceItems }
+        _cachedSliceItems = serializedSliceItems.flatMap {
+            try? JSONDecoder().decode([FeedSliceItem].self, from: $0)
+        }
+        _hasDecodedSliceItems = true
+        return _cachedSliceItems
     }
     
     /// Computed property to check if this cached post represents a thread slice
     var isThreadSlice: Bool {
-        return sliceItems != nil && (sliceItems?.count ?? 0) > 1
+        return (sliceItems?.count ?? 0) > 1
     }
     
     /// Computed property to get the thread slice representation
@@ -468,6 +453,9 @@ extension CachedFeedViewPost {
     ///
     /// - Parameter source: The source post to copy values from
     func update(from source: CachedFeedViewPost) {
+        // SwiftData may return the same registered object during persistence of
+        // retained rows. Reassigning its bytes would invalidate its own caches.
+        guard source !== self else { return }
         guard feedType == source.feedType else {
             cachedPostLogger.error(
                 "Refusing cross-feed cache update from \(source.feedType, privacy: .public) to \(self.feedType, privacy: .public)"
@@ -475,7 +463,7 @@ extension CachedFeedViewPost {
             return
         }
         self.serializedPost = source.serializedPost
-        self._cachedFeedViewPost = nil  // Invalidate cache when data changes
+        self._cachedFeedViewPost = source._cachedFeedViewPost
         self.cursor = source.cursor
         self.cachedAt = source.cachedAt
         self.createdAt = source.createdAt
@@ -488,7 +476,78 @@ extension CachedFeedViewPost {
         self.isRepost = source.isRepost
         self.repostIndexedAt = source.repostIndexedAt
         self.serializedSliceItems = source.serializedSliceItems
+        self._cachedSliceItems = source._cachedSliceItems
+        self._hasDecodedSliceItems = source._hasDecodedSliceItems
         // Note: id is not updated as it's the unique key
         // Note: isTemporary is @Transient and not persisted
+    }
+}
+
+/// Immutable page-preparation output. Only Sendable protocol values and bytes
+/// cross from the concurrent executor to the main actor's SwiftData models.
+struct PreparedFeedSlice: Sendable {
+    let slice: FeedSlice
+    let feedViewPost: AppBskyFeedDefs.FeedViewPost
+    let serializedPost: Data
+    let serializedSliceItems: Data?
+    let createdAt: Date
+
+    init?(slice: FeedSlice) {
+        guard let mainItem = slice.items.last else { return nil }
+        let feedViewPost = AppBskyFeedDefs.FeedViewPost(
+            post: mainItem.post,
+            reply: slice.originalReply ?? Self.createReplyRefFromSlice(slice),
+            reason: slice.reason,
+            feedContext: slice.feedContext,
+            reqId: nil
+        )
+        do {
+            self.serializedPost = try JSONEncoder().encode(feedViewPost)
+        } catch {
+            cachedPostLogger.error("Failed to encode feedViewPost: \(error)")
+            return nil
+        }
+        self.slice = slice
+        self.feedViewPost = feedViewPost
+        self.serializedSliceItems = try? JSONEncoder().encode(slice.items)
+        self.createdAt = mainItem.record.createdAt.date
+    }
+
+    @concurrent
+    static func prepare(_ slices: [FeedSlice]) async throws -> [PreparedFeedSlice] {
+        let signpostID = PerformanceSignposts.beginFeedPreparation(itemCount: slices.count)
+        defer { PerformanceSignposts.endFeedPreparation(id: signpostID, itemCount: slices.count) }
+        try Task.checkCancellation()
+        var prepared: [PreparedFeedSlice] = []
+        prepared.reserveCapacity(slices.count)
+        for slice in slices {
+            try Task.checkCancellation()
+            if let value = PreparedFeedSlice(slice: slice) { prepared.append(value) }
+        }
+        try Task.checkCancellation()
+        return prepared
+    }
+
+    /// Creates ReplyRef from slice items (reconstructing the thread structure)
+    private static func createReplyRefFromSlice(_ slice: FeedSlice) -> AppBskyFeedDefs.ReplyRef? {
+        guard slice.items.count > 1 else { return nil }
+        
+        // Find parent (second to last item) and root (first item)
+        let parentItem = slice.items.count > 1 ? slice.items[slice.items.count - 2] : nil
+        let rootItem = slice.items.first
+        
+        guard let parentItem = parentItem, let rootItem = rootItem else { return nil }
+        
+        let parent = AppBskyFeedDefs.ReplyRefParentUnion.appBskyFeedDefsPostView(parentItem.post)
+        let root = AppBskyFeedDefs.ReplyRefRootUnion.appBskyFeedDefsPostView(rootItem.post)
+        
+        // Use grandparent author if available
+        let grandparentAuthor = slice.items.count > 2 ? slice.items[slice.items.count - 3].post.author : nil
+        
+        return AppBskyFeedDefs.ReplyRef(
+            root: root,
+            parent: parent,
+            grandparentAuthor: grandparentAuthor
+        )
     }
 }

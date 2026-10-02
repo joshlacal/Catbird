@@ -301,11 +301,11 @@ final class FeedStateManager: StateInvalidationSubscriber {
             viewModelCache.removeValue(forKey: postID)
         }
         
-        // Clear cached properties for memory management
+        // Retained rows keep their decoded and presentation caches. Their
+        // content signature invalidates only the rows whose data actually changed.
         for viewModel in viewModelCache.values {
-            viewModel.clearCache()
+            viewModel.invalidateRelativeTime()
         }
-        
         if !toRemove.isEmpty {
             logger.debug("Cleaned up \(toRemove.count) ViewModels")
         }
