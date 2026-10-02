@@ -356,7 +356,7 @@ import os
     }
 
 
-    deinit {
+    isolated deinit {
       cancelPendingLoadMoreRequest()
       updateScheduler.cancel()
       initialLoadTask?.cancel()
