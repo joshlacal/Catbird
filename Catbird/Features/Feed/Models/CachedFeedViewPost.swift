@@ -17,9 +17,7 @@ final class CachedFeedViewPost: Identifiable {
     var feedType: String
     
     /// Serialized FeedViewPost data
-    var serializedPost: Data {
-        didSet { _cachedFeedViewPost = nil }
-    }
+    var serializedPost: Data
     
     /// Cursor value for pagination
     var cursor: String?
@@ -45,12 +43,7 @@ final class CachedFeedViewPost: Identifiable {
     var repostIndexedAt: Date?
     
     /// Serialized slice items for thread display (stores all posts in the thread)
-    var serializedSliceItems: Data? {
-        didSet {
-            _cachedSliceItems = nil
-            _hasDecodedSliceItems = false
-        }
-    }
+    var serializedSliceItems: Data?
     
     /// Indicates if this is a temporary/optimistic post that hasn't been confirmed by the server
     @Transient var isTemporary: Bool = false
@@ -66,7 +59,12 @@ final class CachedFeedViewPost: Identifiable {
 
     /// Cached decoded FeedViewPost to avoid repeated JSON decoding
     @Transient private var _cachedFeedViewPost: AppBskyFeedDefs.FeedViewPost?
+    // SwiftData replaces persisted-property setters, so didSet is not a cache
+    // invalidation boundary. Validate against the bytes that produced each cache.
+    // Data's copy-on-write storage lets primed values retain those bytes cheaply.
+    @Transient private var _cachedFeedViewPostData: Data?
     @Transient private var _cachedSliceItems: [FeedSliceItem]?
+    @Transient private var _cachedSliceItemsData: Data?
     @Transient private var _hasDecodedSliceItems: Bool = false
 
     private static let idDateFormatter: ISO8601DateFormatter = {
@@ -139,6 +137,7 @@ final class CachedFeedViewPost: Identifiable {
             self.repostIndexedAt = nil
         }
         self._cachedFeedViewPost = feedViewPost
+        self._cachedFeedViewPostData = self.serializedPost
     }
     
     /// Full initializer with all parameters
@@ -180,6 +179,7 @@ final class CachedFeedViewPost: Identifiable {
             self.repostIndexedAt = nil
         }
         self._cachedFeedViewPost = feedViewPost
+        self._cachedFeedViewPostData = self.serializedPost
     }
     
     /// Initializer with thread metadata
@@ -241,6 +241,7 @@ final class CachedFeedViewPost: Identifiable {
             self.repostIndexedAt = nil
         }
         self._cachedFeedViewPost = feedViewPost
+        self._cachedFeedViewPostData = self.serializedPost
     }
 
     /// Compatibility path for individual callers. Feed page preparation uses
@@ -301,14 +302,17 @@ final class CachedFeedViewPost: Identifiable {
             self.repostIndexedAt = nil
         }
         self._cachedFeedViewPost = feedViewPost
+        self._cachedFeedViewPostData = prepared.serializedPost
         self._cachedSliceItems = slice.items
+        self._cachedSliceItemsData = prepared.serializedSliceItems
         self._hasDecodedSliceItems = true
     }
 
     /// Reconstructs the original FeedViewPost, caching the result to avoid repeated JSON decoding
     var feedViewPost: AppBskyFeedDefs.FeedViewPost {
         get throws {
-            if let cached = _cachedFeedViewPost {
+            let data = serializedPost
+            if let cached = _cachedFeedViewPost, _cachedFeedViewPostData == data {
                 return cached
             }
 
@@ -316,8 +320,9 @@ final class CachedFeedViewPost: Identifiable {
             
             // First, try standard decoding
             do {
-                let result = try decoder.decode(AppBskyFeedDefs.FeedViewPost.self, from: serializedPost)
+                let result = try decoder.decode(AppBskyFeedDefs.FeedViewPost.self, from: data)
                 _cachedFeedViewPost = result
+                _cachedFeedViewPostData = data
                 return result
             } catch let DecodingError.keyNotFound(key, context) {
                 // Check if this is a deeply nested embed issue
@@ -354,10 +359,12 @@ final class CachedFeedViewPost: Identifiable {
     
     /// Reconstructs the slice items for thread rendering
     var sliceItems: [FeedSliceItem]? {
-        if _hasDecodedSliceItems { return _cachedSliceItems }
-        _cachedSliceItems = serializedSliceItems.flatMap {
+        let data = serializedSliceItems
+        if _hasDecodedSliceItems, _cachedSliceItemsData == data { return _cachedSliceItems }
+        _cachedSliceItems = data.flatMap {
             try? JSONDecoder().decode([FeedSliceItem].self, from: $0)
         }
+        _cachedSliceItemsData = data
         _hasDecodedSliceItems = true
         return _cachedSliceItems
     }
@@ -464,6 +471,7 @@ extension CachedFeedViewPost {
         }
         self.serializedPost = source.serializedPost
         self._cachedFeedViewPost = source._cachedFeedViewPost
+        self._cachedFeedViewPostData = source._cachedFeedViewPostData
         self.cursor = source.cursor
         self.cachedAt = source.cachedAt
         self.createdAt = source.createdAt
@@ -477,6 +485,7 @@ extension CachedFeedViewPost {
         self.repostIndexedAt = source.repostIndexedAt
         self.serializedSliceItems = source.serializedSliceItems
         self._cachedSliceItems = source._cachedSliceItems
+        self._cachedSliceItemsData = source._cachedSliceItemsData
         self._hasDecodedSliceItems = source._hasDecodedSliceItems
         // Note: id is not updated as it's the unique key
         // Note: isTemporary is @Transient and not persisted

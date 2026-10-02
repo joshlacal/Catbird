@@ -1258,7 +1258,11 @@ import os
         backgroundHostingController = nil
       } else {
         // Show appropriate background view
-        let backgroundView = AnyView(backgroundViewForState(currentState))
+        let backgroundView = AnyView(
+          backgroundViewForState(currentState)
+            .environment(stateManager.appState)
+            .environment(\.fontManager, stateManager.appState.fontManager)
+        )
 
         // Create or update hosting controller
         if let host = backgroundHostingController {

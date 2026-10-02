@@ -45,11 +45,7 @@ enum PostAvatarScale: Equatable, Sendable {
 }
 
 /// A view that displays a single post with its content, avatar, and actions
-struct PostView: View, Equatable, Identifiable {
-    static func == (lhs: PostView, rhs: PostView) -> Bool {
-        lhs.post.uri == rhs.post.uri && lhs.post.cid == rhs.post.cid
-    }
-        
+struct PostView: View, Identifiable {
   // MARK: - Environment & Properties
   @Environment(AppState.self) private var appState
     @Environment(\.colorScheme) private var colorScheme
