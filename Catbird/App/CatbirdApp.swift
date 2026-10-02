@@ -71,6 +71,15 @@ private var isSettingsUIFixture: Bool {
   #endif
 }
 
+/// Hosted local StoreKit tests configure their session before opening the app's StoreKit connection.
+private var shouldDeferSupportTipStartupForLocalTesting: Bool {
+  #if DEBUG && os(iOS) && targetEnvironment(simulator)
+  ProcessInfo.processInfo.arguments.contains("--support-tip-storekit-test")
+  #else
+  false
+  #endif
+}
+
 // App-wide logger
 let logger = Logger(subsystem: "blue.catbird", category: "AppLifecycle")
 
@@ -296,7 +305,9 @@ struct CatbirdApp: App {
 
   // MARK: - Initialization
   init() {
-    SupportTipStore.shared.start()
+    if !shouldDeferSupportTipStartupForLocalTesting {
+      SupportTipStore.shared.start()
+    }
     if isPresentationUIFixture { return }
     // One-time removal of MLS chat data left by TestFlight builds. Nothing in Lite
     // reads those paths, so it runs off the main thread without ordering constraints.
