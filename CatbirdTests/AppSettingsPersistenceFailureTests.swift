@@ -493,7 +493,7 @@ private final class SettingsPersistenceFixture {
   private let savedHaptics = PlatformHaptics.isEnabled
 
   init() throws {
-    let configuration = ModelConfiguration(isStoredInMemoryOnly: true)
+    let configuration = ModelConfiguration(isStoredInMemoryOnly: true, cloudKitDatabase: .none)
     self.container = try ModelContainer(for: AppSettingsModel.self, configurations: configuration)
     self.context = ModelContext(self.container)
     self.context.autosaveEnabled = false
