@@ -209,7 +209,9 @@ struct DiscoveryToolsSection: View {
             .padding(.vertical, DesignTokens.Spacing.base)
             .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
             .contentShape(Rectangle())
-            .overlay(alignment: .bottom) { Divider() }
+            .overlay(alignment: .bottom) {
+                VStack(spacing: 0) { Divider() }
+            }
         }
         .buttonStyle(.plain)
     }

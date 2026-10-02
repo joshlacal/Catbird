@@ -310,6 +310,50 @@ struct FeedsSearchPresentationTests {
     }
   }
 
+  @Test("Saved searches and interests keep their content and actions reachable across widths")
+  func savedSearchesAndInterestsAcrossSizes() async throws {
+    let appState = try await makeAppState()
+    let searches = [
+      SavedSearch(name: "Garden Journal", query: "gardening", filters: SearchFilterState(hasMedia: true)),
+      SavedSearch(name: "Night Sky", query: "astronomy", filters: SearchFilterState()),
+      SavedSearch(name: "River Walks", query: "rivers", filters: SearchFilterState()),
+      SavedSearch(name: "Local Trails", query: "trails", filters: SearchFilterState())
+    ]
+    for (name, width) in [("narrow", CGFloat(320)), ("wide", CGFloat(768))] {
+      try await withHost(
+        ScrollView {
+          VStack(alignment: .leading, spacing: 28) {
+            SavedSearchesSection(savedSearches: searches,
+              onSelect: { _ in }, onDelete: { _ in }, onShowAll: {})
+            ExploreInterestsCard(userInterests: ["Science", "Gardening"], onEditInterests: {}, onDismiss: {})
+          }
+          .padding(.vertical, 16)
+        }, appState: appState, size: CGSize(width: width, height: 800), scheme: .dark
+      ) { host in
+        let top = try await host.capture("saved-interests-\(name)-top",
+          requiring: ["Saved Searches", "All Saved", "Garden Journal"])
+        var collected = top.transcript
+        if let scroll = host.verticalScrollView {
+          let maximumOffset = max(0, scroll.contentSize.height - scroll.bounds.height + scroll.adjustedContentInset.bottom)
+          var offset: CGFloat = 0
+          var page = 0
+          while offset < maximumOffset {
+            offset = min(offset + max(100, scroll.bounds.height * 0.7), maximumOffset)
+            scroll.setContentOffset(CGPoint(x: 0, y: offset), animated: false)
+            let receipt = try await host.capture("saved-interests-\(name)-scroll-\(page)")
+            collected += "\n" + receipt.transcript
+            page += 1
+          }
+        }
+        for label in ["Garden Journal", "gardening", "Night Sky", "astronomy", "River Walks", "rivers",
+          "Your Interests", "Choose the topics you love", "Science", "Gardening", "Edit Interests"] {
+          #expect(PresentationHost.normalized(collected).contains(PresentationHost.normalized(label)),
+            "Missing reachable saved-search or interest content: \(label); see scroll receipts")
+        }
+      }
+    }
+  }
+
 }
 
 extension FeedsSearchPresentationTests {
