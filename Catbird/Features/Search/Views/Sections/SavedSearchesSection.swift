@@ -26,7 +26,7 @@ struct SavedSearchesSection: View {
                     if savedSearches.count > 3 {
                         Button(action: onShowAll) {
                             Label("All Saved", systemImage: "chevron.right")
-                                .appFont(AppTextRole.subheadline.weight(.medium))
+                                .appFont(size: Typography.Size.subheadline, weight: .medium, relativeTo: .subheadline)
                                 .frame(minHeight: 44)
                         }
                     }

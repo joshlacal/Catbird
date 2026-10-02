@@ -48,10 +48,11 @@ struct FeedsSearchPresentationTests {
     let appState = try await makeAppState()
     appState.fontManager.fontSize = "extraLarge"
     appState.fontManager.lineSpacing = "relaxed"
+    let video = try makeVideo(authorName: "River Garden Films")
     for typeSize in [DynamicTypeSize.large, .accessibility1] {
       try await withHost(
         VStack(alignment: .leading, spacing: 0) {
-          TrendingVideosSection(videos: [try makeVideo(authorName: "River Garden Films")], presentation: .timeline,
+          TrendingVideosSection(videos: [video], presentation: .timeline,
             onSelectPost: { _ in }, onSeeAll: {})
           Text("NEXT POST").padding(16)
         }, appState: appState, size: CGSize(width: 320, height: 760), typeSize: typeSize

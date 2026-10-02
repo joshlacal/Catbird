@@ -45,7 +45,7 @@ public struct TrendingVideosSection: View {
   private var cardWidth: CGFloat { dynamicTypeSize.isAccessibilitySize ? 208 : presentation.width }
   private var authorHeight: CGFloat {
     let lineHeight = (fontManager.dynamicTypeEnabled ? authorLineHeight : 18) * fontManager.sizeScale
-    let lineSpacing = fontManager.getLineSpacing(for: Typography.Size.body) * fontManager.lineSpacingMultiplier
+    let lineSpacing = fontManager.getLineSpacing(for: Typography.Size.caption)
     return max(36, lineHeight * 2 + max(0, lineSpacing))
   }
 
@@ -58,7 +58,7 @@ public struct TrendingVideosSection: View {
         Button(action: onSeeAll) {
           Label("Open The Vids", systemImage: "chevron.right")
             .labelStyle(.titleAndIcon)
-            .appFont(AppTextRole.subheadline.weight(.medium))
+            .appFont(size: Typography.Size.subheadline, weight: .medium, relativeTo: .subheadline)
             .fixedSize(horizontal: false, vertical: true)
             .frame(minHeight: 44)
         }
@@ -131,7 +131,7 @@ public struct TrendingVideosSection: View {
         .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Size.radiusMD))
 
         Text(author)
-          .appFont(AppTextRole.caption.weight(.medium))
+          .appFont(size: Typography.Size.caption, weight: .medium, relativeTo: .caption)
           .lineLimit(2)
           .multilineTextAlignment(.leading)
           .foregroundStyle(.primary)

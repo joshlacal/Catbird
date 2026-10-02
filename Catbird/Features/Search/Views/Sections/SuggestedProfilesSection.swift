@@ -159,7 +159,7 @@ public struct SuggestedProfilesSection: View {
           .appFont(AppTextRole.subheadline)
           .foregroundColor(.secondary)
         Button("Try Again", action: onRefresh)
-          .appFont(AppTextRole.subheadline.weight(.medium))
+          .appFont(size: Typography.Size.subheadline, weight: .medium, relativeTo: .subheadline)
           .frame(minHeight: 44)
       }
       .frame(maxWidth: .infinity)
@@ -189,7 +189,7 @@ public struct SuggestedProfilesSection: View {
           VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
             HStack(alignment: .firstTextBaseline, spacing: 4) {
               Text(profile.displayName ?? profile.handle.description)
-                .appFont(AppTextRole.body.weight(.semibold))
+                .appFont(size: Typography.Size.body, weight: .semibold, relativeTo: .body)
                 .foregroundStyle(.primary)
                 .lineLimit(2)
               if let badgeKind = VerificationBadge.kind(for: profile.verification, did: profile.did) {

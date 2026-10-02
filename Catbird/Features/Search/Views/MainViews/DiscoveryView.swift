@@ -192,7 +192,7 @@ struct DiscoveryToolsSection: View {
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
                     Text(title)
-                        .appFont(AppTextRole.body.weight(.medium))
+                        .appFont(size: Typography.Size.body, weight: .medium, relativeTo: .body)
                         .foregroundStyle(.primary)
                     Text(detail)
                         .appFont(AppTextRole.subheadline)

@@ -40,7 +40,7 @@ struct TrendingTopicsSection: View {
                     if topics.count > maxItems {
                         Button(action: onSeeAll) {
                             Label("All Topics", systemImage: "chevron.right")
-                                .appFont(AppTextRole.subheadline.weight(.medium))
+                                .appFont(size: Typography.Size.subheadline, weight: .medium, relativeTo: .subheadline)
                                 .frame(minHeight: 44)
                         }
                     }

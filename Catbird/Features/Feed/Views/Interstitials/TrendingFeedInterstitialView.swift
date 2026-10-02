@@ -89,7 +89,7 @@ struct TrendingFeedPresentation: View {
                 Button { onSelectTopic(trend) } label: {
                   VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
                     Text(trend.displayName)
-                      .appFont(AppTextRole.subheadline.weight(.semibold))
+                      .appFont(size: Typography.Size.subheadline, weight: .semibold, relativeTo: .subheadline)
                       .foregroundStyle(.primary)
                       .lineLimit(2)
                       .fixedSize(horizontal: false, vertical: true)
