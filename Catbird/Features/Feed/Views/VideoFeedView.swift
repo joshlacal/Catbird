@@ -54,6 +54,7 @@ public struct VideoFeedView: View {
               index: index,
               pageSize: size,
               isActive: item.id == activeItemID,
+              isRevealed: revealedItemIDs.contains(item.id),
               attachesPlayer: abs(index - activeIndex) <= 1,
               playerPool: playerPool,
               onReveal: { revealItem(at: index) },
@@ -416,6 +417,7 @@ private struct VideoFeedItemView: View {
   let index: Int
   let pageSize: CGSize
   let isActive: Bool
+  let isRevealed: Bool
   let attachesPlayer: Bool
   let playerPool: VideoFeedPlayerPool
   let onReveal: () -> Void
@@ -472,9 +474,6 @@ private struct VideoFeedItemView: View {
           .disabled(!isActive)
           .accessibilityLabel(playerPool.wantsPlayback ? "Pause video" : "Play video")
 
-          if isActive {
-            playbackStatus
-          }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
       }
@@ -487,7 +486,16 @@ private struct VideoFeedItemView: View {
       )
       .allowsHitTesting(false)
 
-      footer
+      VideoFeedPageOverlays(
+        status: {
+          if isActive && isRevealed {
+            VideoFeedPlaybackStatus(state: playerPool.playbackState) {
+              playerPool.retry(feedIndex: index)
+            }
+          }
+        },
+        footer: { footer }
+      )
     }
     .clipped()
     .task(id: appState.userDID) {
@@ -507,39 +515,6 @@ private struct VideoFeedItemView: View {
       Button("OK", role: .cancel) { actions?.errorMessage = nil }
     } message: {
       Text(actions?.errorMessage ?? "")
-    }
-  }
-
-  @ViewBuilder private var playbackStatus: some View {
-    switch playerPool.playbackState {
-    case .loading:
-      ProgressView("Loading video")
-        .tint(.white)
-        .foregroundStyle(.white)
-        .padding(16)
-        .background(.black.opacity(0.6), in: RoundedRectangle(cornerRadius: 12))
-        .allowsHitTesting(false)
-    case .failed:
-      VStack(spacing: 12) {
-        Text("Unable to play this video")
-          .font(.subheadline)
-          .multilineTextAlignment(.center)
-        Button("Retry") { playerPool.retry(feedIndex: index) }
-          .buttonStyle(.borderedProminent)
-          .frame(minHeight: 44)
-      }
-      .foregroundStyle(.white)
-      .padding(16)
-      .background(.black.opacity(0.7), in: RoundedRectangle(cornerRadius: 12))
-    case .paused:
-      Image(systemName: "play.fill")
-        .font(.system(size: 48))
-        .foregroundStyle(.white.opacity(0.9))
-        .shadow(radius: 8)
-        .allowsHitTesting(false)
-        .accessibilityHidden(true)
-    case .idle, .playing:
-      EmptyView()
     }
   }
 
@@ -612,6 +587,128 @@ private struct VideoFeedItemView: View {
       onLike: { actions?.toggle(.like) },
       onRepost: { actions?.toggle(.repost) }
     )
+  }
+}
+
+// MARK: - Playback status placement
+
+/// The video remains behind the footer, but playback status controls get the
+/// measured space above it. No fixed footer-height estimate is involved.
+struct VideoFeedPageOverlays<Status: View, Footer: View>: View {
+  @ViewBuilder let status: () -> Status
+  @ViewBuilder let footer: () -> Footer
+
+  var body: some View {
+    ViewThatFits(in: .vertical) {
+      VideoFeedOverlayLayout {
+        status()
+        footer()
+      }
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+      // If even the minimum status control and footer cannot fit, keep all
+      // controls reachable by scrolling instead of clipping the Retry target.
+      ScrollView(.vertical) {
+        VStack(spacing: 8) {
+          status()
+          footer()
+        }
+      }
+      .scrollIndicators(.hidden)
+      .scrollBounceBehavior(.basedOnSize)
+      .modifier(VideoFeedScrollEdges())
+      .accessibilityIdentifier("videoControlsScroll")
+    }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+  }
+}
+
+private struct VideoFeedOverlayLayout: Layout {
+  func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+    guard subviews.count == 2 else { return .zero }
+    let width = proposal.replacingUnspecifiedDimensions().width
+    let footerSize = subviews[1].sizeThatFits(ProposedViewSize(width: width, height: nil))
+    let minimumStatus = subviews[0].sizeThatFits(ProposedViewSize(width: width, height: 0))
+    let minimumHeight = footerSize.height + minimumStatus.height + 8
+    return CGSize(width: width, height: max(proposal.height ?? minimumHeight, minimumHeight))
+  }
+
+  func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+    guard subviews.count == 2 else { return }
+    let footerSize = subviews[1].sizeThatFits(ProposedViewSize(width: bounds.width, height: nil))
+    let statusHeight = max(0, bounds.height - footerSize.height - 8)
+    subviews[0].place(
+      at: CGPoint(x: bounds.midX, y: bounds.minY + statusHeight / 2),
+      anchor: .center,
+      proposal: ProposedViewSize(width: bounds.width, height: statusHeight)
+    )
+    subviews[1].place(
+      at: CGPoint(x: bounds.minX, y: bounds.maxY),
+      anchor: .bottomLeading,
+      proposal: ProposedViewSize(width: bounds.width, height: footerSize.height)
+    )
+  }
+}
+
+struct VideoFeedPlaybackStatus: View {
+  let state: VideoFeedPlayerPool.PlaybackState
+  let onRetry: () -> Void
+
+  @ViewBuilder var body: some View {
+    switch state {
+    case .loading:
+      ViewThatFits(in: .vertical) {
+        ProgressView("Loading video")
+          .padding(16)
+          .background(.black.opacity(0.6), in: RoundedRectangle(cornerRadius: 12))
+        ProgressView().accessibilityLabel("Loading video")
+      }
+      .tint(.white)
+      .foregroundStyle(.white)
+      .allowsHitTesting(false)
+    case .failed:
+      ViewThatFits(in: .vertical) {
+        VStack(spacing: 12) {
+          failureText
+          retryButton
+        }
+        .padding(16)
+        .background(.black.opacity(0.7), in: RoundedRectangle(cornerRadius: 12))
+
+        HStack(spacing: 12) {
+          failureText.lineLimit(1)
+          retryButton
+        }
+        .padding(8)
+        .background(.black.opacity(0.7), in: RoundedRectangle(cornerRadius: 12))
+
+        retryButton
+      }
+      .foregroundStyle(.white)
+    case .paused:
+      Image(systemName: "play.fill")
+        .font(.system(size: 48))
+        .foregroundStyle(.white.opacity(0.9))
+        .shadow(radius: 8)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    case .idle, .playing:
+      EmptyView()
+    }
+  }
+
+  private var failureText: some View {
+    Text("Unable to play this video")
+      .font(.subheadline)
+      .multilineTextAlignment(.center)
+  }
+
+  private var retryButton: some View {
+    Button("Retry", action: onRetry)
+      .buttonStyle(.borderedProminent)
+      .frame(minWidth: 44, minHeight: 44)
+      .accessibilityLabel("Unable to play video. Retry")
+      .accessibilityIdentifier("videoPlaybackRetry")
   }
 }
 

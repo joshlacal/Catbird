@@ -58,6 +58,30 @@ final class VideoFeedFixtureUITests: XCTestCase {
     capture("Vids large text landscape", app: app)
   }
 
+  func testPlaybackRetryRemainsSeparateFromShortLandscapeFooter() {
+    let app = launchFixture(["--video-fixture-fail-playback", "--video-fixture-accessibility"])
+    let retry = app.buttons["videoPlaybackRetry"].firstMatch
+    XCTAssertTrue(retry.waitForExistence(timeout: 8))
+    XCUIDevice.shared.orientation = .landscapeLeft
+    let landscape = XCTNSPredicateExpectation(
+      predicate: NSPredicate { _, _ in app.frame.width > app.frame.height }, object: nil
+    )
+    XCTAssertEqual(XCTWaiter.wait(for: [landscape], timeout: 4), .completed)
+    assertControlsFit(app)
+    XCTAssertTrue(retry.isHittable)
+    XCTAssertGreaterThanOrEqual(retry.frame.height, 44)
+    XCTAssertTrue(app.frame.contains(retry.frame))
+    for identifier in ["videoFixtureAuthor", "videoLike", "videoRepost", "videoComments", "videoProgress"] {
+      let footerControl = app.descendants(matching: .any)[identifier].firstMatch
+      XCTAssertTrue(footerControl.exists, identifier)
+      XCTAssertFalse(retry.frame.intersects(footerControl.frame), identifier)
+    }
+    capture("Playback retry above the large-text landscape footer", app: app)
+    retry.tap()
+    XCTAssertTrue(retry.wait(for: \.exists, toEqual: false, timeout: 4))
+    XCTAssertTrue(app.buttons["videoLike"].firstMatch.isHittable)
+  }
+
   private func launchFixture(_ extra: [String] = []) -> XCUIApplication {
     let app = XCUIApplication()
     app.launchArguments = ["--video-feed-ui-fixture"] + extra
