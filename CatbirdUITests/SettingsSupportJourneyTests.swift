@@ -49,13 +49,32 @@ final class SettingsSupportJourneyTests: XCTestCase {
     capture(app, "Accessibility large text dark")
     let dynamicType = app.switches["Dynamic Type"].firstMatch
     reveal(dynamicType, in: app)
+    let maximum = app.buttons["MaximumTextSizePicker"].firstMatch
+    reveal(maximum, in: app)
+    XCTAssertEqual(maximum.value as? String, "Accessibility Extra Extra Extra Large")
     capture(app, "Accessibility Dynamic Type large text")
     XCUIDevice.shared.orientation = .landscapeLeft
+    var previousFrames: [CGRect] = []
+    var stableReadings = 0
     let landscape = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-      let frame = app.windows.firstMatch.frame
-      return frame.width > frame.height
+      let window = app.windows.firstMatch.frame
+      let form = app.collectionViews.firstMatch.frame
+      let navigation = app.navigationBars["Accessibility"].frame
+      let frames = [window, form, navigation]
+      let laidOut = window.width > window.height && form.width > form.height
+        && frames.dropFirst().allSatisfy {
+          $0.minX >= window.minX - 1 && $0.maxX <= window.maxX + 1
+            && $0.minY >= window.minY - 1 && $0.maxY <= window.maxY + 1
+        }
+      stableReadings = laidOut && frames == previousFrames ? stableReadings + 1 : 0
+      previousFrames = frames
+      return stableReadings >= 2
     }, object: app)
-    XCTAssertEqual(XCTWaiter.wait(for: [landscape], timeout: 5), .completed)
+    XCTAssertEqual(XCTWaiter.wait(for: [landscape], timeout: 10), .completed)
+    let geometry = XCTAttachment(string: "window=\(app.windows.firstMatch.frame); form=\(app.collectionViews.firstMatch.frame); navigation=\(app.navigationBars["Accessibility"].frame)")
+    geometry.name = "Accessibility receiving geometry after settled rotation"
+    geometry.lifetime = .keepAlways
+    add(geometry)
     capture(app, "Accessibility large text landscape")
   }
 
@@ -79,6 +98,21 @@ final class SettingsSupportJourneyTests: XCTestCase {
     )).firstMatch
     reveal(copy, in: app)
     capture(app, "Support Catbird large text")
+    let tips = [
+      ("small", "Small Support", "$4.99"),
+      ("medium", "Medium Support", "$9.99"),
+      ("large", "Large Support", "$19.99"),
+      ("extralarge", "Extra Large Support", "$49.99")
+    ]
+    for (identifier, name, price) in tips {
+      let tip = app.buttons["SupportTip.blue.catbird.support.onetime.\(identifier)"].firstMatch
+      reveal(tip, in: app)
+      XCTAssertTrue(tip.label.contains(name) && tip.label.contains(price))
+      let window = app.windows.firstMatch.frame
+      XCTAssertGreaterThanOrEqual(tip.frame.minX, window.minX - 1)
+      XCTAssertLessThanOrEqual(tip.frame.maxX, window.maxX + 1)
+      capture(app, "Support \(identifier) label and price at large text")
+    }
   }
 
   func testRemovedControlsAreAbsentThroughoutForms() {
