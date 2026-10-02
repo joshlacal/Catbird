@@ -8,6 +8,9 @@ import XCTest
 
 /// Hosted production forms, not a resized phone scene or authenticated-account test.
 /// Optional SETTINGS_LAYOUT_SNAPSHOT_DIR exports the same images kept in xcresult.
+/// Run the two methods separately after setting the simulator to Large and
+/// Accessibility Extra Large respectively, so production UIFontMetrics uses the
+/// same system category as the hosted hierarchy. Each method needs a fresh host.
 @MainActor
 final class SettingsLayoutRenderingTests: XCTestCase {
   private struct Viewport {
@@ -71,6 +74,11 @@ final class SettingsLayoutRenderingTests: XCTestCase {
                        largeText: Bool = false) async throws {
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
     let category: UIContentSizeCategory = largeText ? .accessibilityExtraLarge : .large
+    guard UIApplication.shared.preferredContentSizeCategory == category,
+      fixture.appState.fontManager.currentContentSizeCategory.uiContentSizeCategory == category else {
+      XCTFail("Set the simulator to \(category.rawValue) and launch a fresh test host; a host trait override alone does not qualify production font scaling")
+      return
+    }
     let safeArea = largeText ? UIEdgeInsets(top: 13, left: 31, bottom: 47, right: 7) : .zero
     let content = self.screen(screen, fixture: fixture)
       .environment(fixture.appState)
@@ -139,7 +147,7 @@ final class SettingsLayoutRenderingTests: XCTestCase {
     Last row: \(last); rendered frame: \(attributes.frame)
     UIKit host category: \(effectiveCategory)
     UIApplication category: \(globalCategory)
-    Category evidence: \(globalCategory == effectiveCategory ? "system preference and host match" : "host trait override only; system preference differs")
+    Category evidence: system, FontManager cache category, and host must match before rendering.
     Evidence boundary: production hosted forms with fixture account/catalog; no scene-resize continuity, authenticated behavior or purchase claim.
     """
     let attachment = XCTAttachment(string: receipt)
@@ -238,7 +246,7 @@ final class SettingsLayoutRenderingTests: XCTestCase {
           (AppSettingsModel.sharedDefaults(), $0, AppSettingsModel.sharedDefaults().object(forKey: $0))
         }
       container = try ModelContainer(for: AppSettingsModel.self, Preferences.self,
-        configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        configurations: ModelConfiguration(isStoredInMemoryOnly: true, cloudKitDatabase: .none))
       let settings = AppSettingsModel(accountDID: did)
       settings.maxDynamicTypeSize = "accessibility5"
       container.mainContext.insert(settings)
