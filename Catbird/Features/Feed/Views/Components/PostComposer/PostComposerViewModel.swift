@@ -615,7 +615,7 @@ func saveDraftIfNeeded() {
     }
   }
 
-  deinit {
+  isolated deinit {
     parentRestorationTask?.cancel()
     quoteRestorationTasks.values.forEach { $0.cancel() }
     interactionDefaultsTask?.cancel()

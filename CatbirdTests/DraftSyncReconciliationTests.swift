@@ -190,7 +190,7 @@ struct DraftSyncReconciliationTests {
     network.loseCreateResponse = true
     let first = service(store, transport: network, account: { account })
     await first.syncDrafts(accountDID: account)
-    let local = try #require(store.fetchDraftModel(id: id))
+    let local = try #require(try store.fetchDraftModel(id: id))
     #expect(try store.syncState(for: local).pendingCreate != nil)
     #expect(local.remoteId == nil)
     let restarted = service(store, transport: network, account: { account })
@@ -318,7 +318,7 @@ struct DraftSyncReconciliationTests {
     network.createRejection = 400
     let service = service(store, transport: network, account: { account })
     await service.syncDrafts(accountDID: account)
-    let local = try #require(store.fetchDraftModel(id: id))
+    let local = try #require(try store.fetchDraftModel(id: id))
     #expect(try store.syncState(for: local).pendingCreate == nil)
     network.createRejection = nil
     await service.syncDrafts(accountDID: account)
@@ -413,7 +413,7 @@ struct DraftSyncReconciliationTests {
     network.failCreate = true
     let first = service(store, transport: network, account: { account })
     await first.syncDrafts(accountDID: account)
-    let local = try #require(store.fetchDraftModel(id: id))
+    let local = try #require(try store.fetchDraftModel(id: id))
     let payload = try #require(store.syncState(for: local).pendingCreate)
     network.records = ["candidate-1", "candidate-2"].map {
       .init(id: $0, payload: payload, createdAt: Date(), updatedAt: Date())

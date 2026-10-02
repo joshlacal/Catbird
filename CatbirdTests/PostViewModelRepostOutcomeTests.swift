@@ -3,12 +3,12 @@ import Petrel
 import Testing
 @testable import Catbird
 
-@Suite("Post repost outcomes")
+@Suite("Post repost outcomes", .serialized)
 @MainActor
 struct PostViewModelRepostOutcomeTests {
   @Test("A missing repost record key throws and restores the previous state")
   func missingRecordKeyThrows() async throws {
-    let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
+    let client = await ATProtoClient(baseURL: URL(string: "http://127.0.0.1:9")!)
     let appState = AppState(userDID: "did:plc:viewer", client: client)
     let post = PostViewModelTestFixtures.testPost
     let incompleteURI = try ATProtocolURI(uriString: "at://did:plc:viewer/app.bsky.feed.repost")
@@ -33,7 +33,7 @@ struct PostViewModelRepostOutcomeTests {
 
   @Test("A failed removal restores the real repost URI and keeps unrelated shadow state")
   func failedRemovalRestoresRecordURI() async throws {
-    let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
+    let client = await ATProtoClient(baseURL: URL(string: "http://127.0.0.1:9")!)
     let appState = AppState(userDID: "did:plc:viewer", client: client)
     let post = PostViewModelTestFixtures.testPostWithLikeAndRepost
     let viewModel = PostViewModel(post: post, appState: appState)
@@ -47,7 +47,7 @@ struct PostViewModelRepostOutcomeTests {
       _ = try await viewModel.toggleRepost()
       Issue.record("Removing a repost with an unauthenticated client must fail.")
     } catch {
-      #expect(error is APIError)
+      #expect(String(describing: error).contains("unauthenticatedClient"))
     }
 
     #expect(viewModel.isReposted)
@@ -64,7 +64,7 @@ struct PostViewModelRepostOutcomeTests {
 
   @Test("A failed creation clears the optimistic repost placeholder")
   func failedCreationClearsOptimisticState() async throws {
-    let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
+    let client = await ATProtoClient(baseURL: URL(string: "http://127.0.0.1:9")!)
     let appState = AppState(userDID: "did:plc:viewer", client: client)
     let post = PostViewModelTestFixtures.testPost
     let viewModel = PostViewModel(post: post, appState: appState)
@@ -73,7 +73,7 @@ struct PostViewModelRepostOutcomeTests {
       _ = try await viewModel.toggleRepost()
       Issue.record("Creating a repost with an unauthenticated client must fail.")
     } catch {
-      #expect(error is APIError)
+      #expect(String(describing: error).contains("unauthenticatedClient"))
     }
 
     #expect(!viewModel.isReposted)
@@ -87,7 +87,7 @@ struct PostViewModelRepostOutcomeTests {
 
   @Test("A failed removal preserves a usable shadow URI when the local URI has no key")
   func failedRemovalPreservesShadowFallback() async throws {
-    let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
+    let client = await ATProtoClient(baseURL: URL(string: "http://127.0.0.1:9")!)
     let appState = AppState(userDID: "did:plc:viewer", client: client)
     let post = PostViewModelTestFixtures.testPost
     let incompleteURI = try ATProtocolURI(uriString: "at://did:plc:viewer/app.bsky.feed.repost")
@@ -106,7 +106,7 @@ struct PostViewModelRepostOutcomeTests {
       Issue.record("Removing a repost with an unauthenticated client must fail.")
     } catch {
       // Reaching getDid proves that the fallback survived the optimistic shadow clear.
-      #expect(error is APIError)
+      #expect(String(describing: error).contains("unauthenticatedClient"))
     }
 
     #expect(viewModel.isReposted)
