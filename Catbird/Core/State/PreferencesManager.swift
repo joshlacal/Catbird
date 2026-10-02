@@ -970,32 +970,39 @@ final class PreferencesManager {
     hideRepliesByUnfollowed: Bool? = nil,
     hideRepliesByLikeCount: Int? = nil,
     hideReposts: Bool? = nil,
-    hideQuotePosts: Bool? = nil
+    hideQuotePosts: Bool? = nil,
+    clearReplyLikeThreshold: Bool = false
   ) async throws {
     let preferences = try await getPreferences()
-
-    // Get existing or create new
-    var feedPref =
-      preferences.feedViewPref
-      ?? FeedViewPreference(
-        hideReplies: nil,
-        hideRepliesByUnfollowed: nil,
-        hideRepliesByLikeCount: nil,
-        hideReposts: nil,
-        hideQuotePosts: nil
-      )
-
-    // Only update provided values
-    feedPref = FeedViewPreference(
-      hideReplies: hideReplies ?? feedPref.hideReplies,
-      hideRepliesByUnfollowed: hideRepliesByUnfollowed ?? feedPref.hideRepliesByUnfollowed,
-      hideRepliesByLikeCount: hideRepliesByLikeCount ?? feedPref.hideRepliesByLikeCount,
-      hideReposts: hideReposts ?? feedPref.hideReposts,
-      hideQuotePosts: hideQuotePosts ?? feedPref.hideQuotePosts
+    preferences.feedViewPref = Self.applyingFeedViewChanges(
+      to: preferences.feedViewPref,
+      hideReplies: hideReplies,
+      hideRepliesByUnfollowed: hideRepliesByUnfollowed,
+      hideRepliesByLikeCount: hideRepliesByLikeCount,
+      hideReposts: hideReposts,
+      hideQuotePosts: hideQuotePosts,
+      clearReplyLikeThreshold: clearReplyLikeThreshold
     )
-
-    preferences.feedViewPref = feedPref
     try await saveAndSyncPreferences(preferences)
+  }
+
+  /// Omitted fields retain the existing value; clearing the optional threshold is explicit.
+  static func applyingFeedViewChanges(
+    to existing: FeedViewPreference?,
+    hideReplies: Bool? = nil,
+    hideRepliesByUnfollowed: Bool? = nil,
+    hideRepliesByLikeCount: Int? = nil,
+    hideReposts: Bool? = nil,
+    hideQuotePosts: Bool? = nil,
+    clearReplyLikeThreshold: Bool = false
+  ) -> FeedViewPreference {
+    FeedViewPreference(
+      hideReplies: hideReplies ?? existing?.hideReplies,
+      hideRepliesByUnfollowed: hideRepliesByUnfollowed ?? existing?.hideRepliesByUnfollowed,
+      hideRepliesByLikeCount: clearReplyLikeThreshold ? nil : (hideRepliesByLikeCount ?? existing?.hideRepliesByLikeCount),
+      hideReposts: hideReposts ?? existing?.hideReposts,
+      hideQuotePosts: hideQuotePosts ?? existing?.hideQuotePosts
+    )
   }
 
   @MainActor

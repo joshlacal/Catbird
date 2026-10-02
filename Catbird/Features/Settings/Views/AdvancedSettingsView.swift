@@ -210,7 +210,7 @@ struct AdvancedSettingsView: View {
       } label: {
         HStack {
           Image(systemName: "arrow.counterclockwise")
-          Text("Reset to Defaults")
+          Text("Use Default Providers")
         }
       }
       .disabled(isSaving)

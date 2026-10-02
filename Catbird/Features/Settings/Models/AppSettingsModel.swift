@@ -437,6 +437,17 @@ final class AppSettingsModel {
         
     }
     
+    /// Reset visual customization only. Accessibility and account preferences are preserved.
+    func resetAppearanceToDefaults() {
+        theme = "system"
+        darkThemeMode = "dim"
+        accentColor = "default"
+        fontStyle = "system"
+        fontSize = "default"
+        lineSpacing = "normal"
+        letterSpacing = "normal"
+    }
+
     /// Reset all settings to defaults
     func resetToDefaults() {
         // Appearance

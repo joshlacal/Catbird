@@ -719,6 +719,12 @@ import OSLog
     
     // MARK: - Public Methods
     
+    /// Reset only the visual choices managed by Appearance, preserving accessibility and account data.
+    func resetAppearanceToDefaults() {
+        settingsModel?.resetAppearanceToDefaults()
+        saveChanges()
+    }
+
     /// Reset all settings to defaults
     func resetToDefaults() {
         settingsModel?.resetToDefaults()
