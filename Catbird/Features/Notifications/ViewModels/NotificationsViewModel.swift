@@ -210,7 +210,7 @@ private actor FollowRecordCreatedAtCacheActor {
 
   /// Loads initial notifications
   func loadNotifications() async {
-    guard !isLoading else { return }
+    guard !isLoading, !Task.isCancelled else { return }
 
     isLoading = true
     error = nil
@@ -223,7 +223,7 @@ private actor FollowRecordCreatedAtCacheActor {
 
   /// Refreshes the notification list
   func refreshNotifications() async {
-    guard !isRefreshing else { return }
+    guard !isRefreshing, !Task.isCancelled else { return }
 
     isRefreshing = true
     error = nil
@@ -239,7 +239,7 @@ private actor FollowRecordCreatedAtCacheActor {
 
   /// Loads more notifications (pagination)
   func loadMoreNotifications() async {
-    guard !isLoadingMore, hasMoreNotifications, cursor != nil else { return }
+    guard !isLoadingMore, hasMoreNotifications, cursor != nil, !Task.isCancelled else { return }
 
     isLoadingMore = true
 
@@ -253,7 +253,7 @@ private actor FollowRecordCreatedAtCacheActor {
     // Empty/filtered pages must not keep the loading state alive indefinitely.
     var remainingPages = 3
     while groupedNotifications.count < 5, hasMoreNotifications,
-      !isLoadingMore, error == nil, remainingPages > 0 {
+      !isLoadingMore, error == nil, remainingPages > 0, !Task.isCancelled {
       let previousCursor = cursor
       guard previousCursor != nil else { break }
       await loadMoreNotifications()
@@ -317,6 +317,7 @@ private actor FollowRecordCreatedAtCacheActor {
 
   /// Fetches notifications from the API
   private func fetchNotifications(resetCursor: Bool) async {
+    guard !Task.isCancelled else { return }
     guard let client = client else {
       logger.error("Client is nil in fetchNotifications")
       return
@@ -334,6 +335,7 @@ private actor FollowRecordCreatedAtCacheActor {
       let (responseCode, output) = try await client.app.bsky.notification.listNotifications(
         input: params
       )
+      try Task.checkCancellation()
 
       guard responseCode == 200, let output = output else {
         let errorMessage = "Failed to load notifications (HTTP \(responseCode))"
@@ -347,20 +349,18 @@ private actor FollowRecordCreatedAtCacheActor {
       logger.info("Notification API completed in \(String(describing: requestStarted.duration(to: .now)), privacy: .public)")
       let groupingStarted = ContinuousClock.now
 
-      // Reset page counter when doing a full refresh
-      if resetCursor {
-        currentPage = 0
-      } else {
-        currentPage += 1
-      }
+      let nextPage = resetCursor ? 0 : currentPage + 1
 
       
       // Process the fetched notifications
       let newGroupedNotifications = await groupNotifications(
-        output.notifications, pageNumber: currentPage)
+        output.notifications, pageNumber: nextPage)
+      try Task.checkCancellation()
 
       logger.info("Notification hydration/grouping completed in \(String(describing: groupingStarted.duration(to: .now)), privacy: .public)")
       await MainActor.run {
+        guard !Task.isCancelled else { return }
+        self.currentPage = nextPage
         if resetCursor {
           if self.groupedNotifications.isEmpty {
             // Initial load, just set the notifications
@@ -386,6 +386,7 @@ private actor FollowRecordCreatedAtCacheActor {
       }
 
     } catch {
+      guard !Task.isCancelled, !error.isCancellation else { return }
       logger.error("Error fetching notifications: \(error.localizedDescription)")
       await MainActor.run {
         self.error = error

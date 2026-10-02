@@ -101,15 +101,19 @@ final class URLHandler {
             return .handled
         }
 
-        if url.scheme == "http" || url.scheme == "https" {
+        if URLSchemePolicy.isWeb(url) {
             if useInAppBrowser && openInAppBrowser(url) {
                 return .handled
             }
             return .systemAction
         }
 
-        logger.warning("❓ URL not recognized: \(url.absoluteString, privacy: .private)")
-        return .systemAction
+        if URLSchemePolicy.allowsSystemOpen(url) {
+            return .systemAction
+        }
+
+        logger.warning("❓ Unsupported URL scheme: \(url.scheme ?? "", privacy: .public)")
+        return .discarded
     }
 
     @MainActor
@@ -150,13 +154,13 @@ final class URLHandler {
                 navigateAction?(destination, targetTabIndex)
                 return true
             }
-            if useInAppBrowser && (url.scheme == "http" || url.scheme == "https") {
+            if useInAppBrowser && URLSchemePolicy.isWeb(url) {
                 return openInAppBrowser(url)
             }
             return false
         }
 
-        if url.scheme == "http" || url.scheme == "https" {
+        if URLSchemePolicy.isWeb(url) {
             if useInAppBrowser {
                 return openInAppBrowser(url)
             }
@@ -167,9 +171,7 @@ final class URLHandler {
     }
 
     private func isBlueskyOrBskyAppURL(_ url: URL) -> Bool {
-        let scheme = (url.scheme ?? "").lowercased()
-        let host = (url.host ?? "").lowercased()
-        return scheme == "bluesky" || host == "bsky.app" || host == "main.bsky.dev" || host == "staging.bsky.app" || host == "go.bsky.app"
+        URLSchemePolicy.isBluesky(url)
     }
     
     // MARK: - URL Parsing
