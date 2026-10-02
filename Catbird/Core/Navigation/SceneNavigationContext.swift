@@ -7,17 +7,20 @@ struct ScenePostComposerRequest: Identifiable {
   let initialText: String?
   let parentPost: AppBskyFeedDefs.PostView?
   let quotedPost: AppBskyFeedDefs.PostView?
+  let editingClaim: ComposerDraftClaim?
 
   init(
     id: UUID = UUID(),
     initialText: String? = nil,
     parentPost: AppBskyFeedDefs.PostView? = nil,
-    quotedPost: AppBskyFeedDefs.PostView? = nil
+    quotedPost: AppBskyFeedDefs.PostView? = nil,
+    editingClaim: ComposerDraftClaim? = nil
   ) {
     self.id = id
     self.initialText = initialText
     self.parentPost = parentPost
     self.quotedPost = quotedPost
+    self.editingClaim = editingClaim
   }
 }
 
@@ -31,6 +34,8 @@ final class SceneNavigationContext {
   let activityRegistrationID = UUID()
   let navigationManager: AppNavigationManager
   let urlHandler: URLHandler
+  let composerEditingSession: SceneComposerEditingSession
+  let feedViewportStore = FeedViewportStore()
 
   var pendingSearchRequest: AppState.SearchRequest?
   var tabTappedAgain: Int?
@@ -43,6 +48,7 @@ final class SceneNavigationContext {
     self.appState = appState
     self.accountDID = appState.userDID
     self.sceneID = sceneID
+    self.composerEditingSession = SceneComposerEditingSession(appState: appState, sceneID: sceneID)
     self.navigationManager = AppNavigationManager()
     self.urlHandler = URLHandler()
     self.urlHandler.configure(with: appState, navigationManager: self.navigationManager)
@@ -68,6 +74,9 @@ final class SceneNavigationContext {
   func invalidate() {
     guard !isInvalidated else { return }
     isInvalidated = true
+    composerEditingSession.invalidate()
+    PendingChatShareStore.shared.discard(sceneID: sceneID, accountDID: accountDID)
+    ChatDraftHandoff.shared.invalidate(sceneID: sceneID, accountDID: accountDID)
     urlHandler.invalidate()
     navigationManager.tabSelection = nil
     pendingSearchRequest = nil

@@ -15,7 +15,6 @@ struct FeedView: View {
   // MARK: - Properties
   @Environment(AppState.self) private var appState
   @Environment(\.modelContext) private var modelContext
-  @Environment(\.scenePhase) private var scenePhase
   @Binding var path: NavigationPath
   @Binding var selectedTab: Int
 
@@ -141,13 +140,6 @@ struct FeedView: View {
             await manager.loadInitialData()
           }
         }
-      }
-    }
-    .onChange(of: scenePhase) { oldPhase, newPhase in
-      logger.debug("Scene phase changed: \(String(describing: oldPhase)) -> \(String(describing: newPhase))")
-
-      Task { @MainActor in
-        await feedStateStore.handleScenePhaseChange(newPhase)
       }
     }
     .id((appState.userDID ?? "") + fetch.identifier) // Reset view when user or feed changes

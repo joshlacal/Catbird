@@ -37,6 +37,9 @@ struct FeedCollectionViewIntegrated: UIViewControllerRepresentable {
         
         let controller = FeedCollectionViewControllerIntegrated(
             stateManager: stateManager,
+            viewportState: sceneContext.feedViewportStore.state(
+                accountDID: sceneContext.accountDID,
+                feedIdentifier: stateManager.currentFeedType.identifier),
             sceneContext: sceneContext,
             navigationPath: $navigationPath,
             onScrollOffsetChanged: onScrollOffsetChanged
@@ -48,11 +51,12 @@ struct FeedCollectionViewIntegrated: UIViewControllerRepresentable {
     
     func updateUIViewController(_ controller: FeedCollectionViewControllerIntegrated, context: Context) {
         controller.updateSceneContext(sceneContext)
-        // Only update if state manager has changed
-        if controller.stateManager !== stateManager {
-            logger.debug("🔄 Updating controller with new state manager")
-            controller.updateStateManager(stateManager)
-        }
+        // Account data and scene viewport must be rebound together so outgoing
+        // geometry is never saved into a different window or feed.
+        let viewport = sceneContext.feedViewportStore.state(
+            accountDID: sceneContext.accountDID,
+            feedIdentifier: stateManager.currentFeedType.identifier)
+        controller.updateStateManager(stateManager, viewportState: viewport)
         // Update header only when presence changes
         let present = (headerView != nil)
         if present != context.coordinator.lastHeaderPresent {
