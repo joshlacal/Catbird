@@ -209,14 +209,19 @@ struct TrendingTopicsSection: View {
 //                            )
                     }
                     
-                    HStack(spacing: 8) {
+                    HStack(alignment: .top, spacing: 8) {
                         Text(topic.displayName)
                             .appFont(.customSystemFont(size: 23, weight: .medium, width: 120, relativeTo: .title3))
+                            .lineLimit(nil)
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .layoutPriority(1)
                             .padding(.bottom, 3)
                             .foregroundColor(Color.dynamicText(appState.themeManager, style: .primary, currentScheme: colorScheme))
                         
                         if let status = topic.status, status == "hot" {
                             trendingBadge(status: status)
+                                .fixedSize()
                         }
                     }
                     
@@ -239,8 +244,7 @@ struct TrendingTopicsSection: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
-                
-                Spacer()
+                .frame(maxWidth: .infinity, alignment: .leading)
                 
                 Image(systemName: "arrow.up.right")
                     .appFont(AppTextRole.footnote)

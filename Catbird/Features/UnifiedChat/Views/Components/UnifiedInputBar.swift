@@ -12,6 +12,7 @@ struct UnifiedInputBar: View {
   var placeholder: String = "Message"
   var isDisabled: Bool = false
   var showsInputBackground: Bool = true
+  var clearsDraftOnSend: Bool = true
 
   @Environment(AppState.self) private var appState
   @Environment(\.colorScheme) private var colorScheme
@@ -200,7 +201,7 @@ struct UnifiedInputBar: View {
     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard canSend else { return }
     onSend(trimmed)
-    text = ""
+    if clearsDraftOnSend { text = "" }
   }
 }
 

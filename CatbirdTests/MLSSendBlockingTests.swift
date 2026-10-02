@@ -33,8 +33,13 @@ struct MLSSendBlockingTests {
 
     // Pending consent starts without an input view; Accept installs it.
     controller.updateComposer(config: nil)
+    let transcript = try #require(controller.view.subviews.compactMap { $0 as? UICollectionView }.first)
+    #expect(transcript.contentInsetAdjustmentBehavior == .never)
+    #expect(transcript.contentInset.bottom == 0)
     #expect(controller.view.subviews.compactMap { $0 as? UIKitMLSComposerView }.isEmpty)
     controller.updateComposer(config: config)
+    #expect(transcript.contentInsetAdjustmentBehavior == .automatic)
+    #expect(transcript.contentInset.bottom >= 60)
     let first = try #require(controller.view.subviews.compactMap { $0 as? UIKitMLSComposerView }.first)
     first.text = "Unsent draft"
     controller.updateComposer(config: config)
@@ -43,6 +48,8 @@ struct MLSSendBlockingTests {
 
     // Completion removes all actions, including callbacks already queued by UIKit.
     controller.updateComposer(config: nil)
+    #expect(transcript.contentInsetAdjustmentBehavior == .never)
+    #expect(transcript.contentInset.bottom == 0)
     #expect(first.superview == nil)
     #expect(first.delegate == nil)
     controller.composerDidTapSend(first, text: "stale")

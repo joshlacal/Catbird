@@ -504,7 +504,8 @@ private struct InlineTopicSummaryLine: View {
                             .appFont(AppTextRole.title2.weight(.semibold))
                             .foregroundColor(Color.dynamicText(appState.themeManager, style: .primary, currentScheme: colorScheme))
                             .multilineTextAlignment(.leading)
-                            .lineLimit(2)
+                            .lineLimit(nil)
+                            .fixedSize(horizontal: false, vertical: true)
                         // Topic summary
                         InlineTopicSummaryLine(topic: topic)
                         
@@ -589,7 +590,8 @@ private struct InlineTopicSummaryLine: View {
                     .appFont(AppTextRole.headline.weight(.semibold))
                     .foregroundColor(Color.dynamicText(appState.themeManager, style: .primary, currentScheme: colorScheme))
                     .multilineTextAlignment(.leading)
-                    .lineLimit(2)
+                    .lineLimit(nil)
+                    .fixedSize(horizontal: false, vertical: true)
                 InlineTopicSummaryLine(topic: topic)
                 
                 VStack(alignment: .leading, spacing: 4) {
@@ -606,7 +608,7 @@ private struct InlineTopicSummaryLine: View {
             }
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .frame(height: 120)
+            .frame(minHeight: 120)
             .background(Color.elevatedBackground(appState.themeManager, elevation: .low, currentScheme: colorScheme))
             .cornerRadius(12)
             .shadow(color: Color.dynamicShadow(appState.themeManager, currentScheme: colorScheme), radius: 4, y: 2)

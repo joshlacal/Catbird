@@ -122,7 +122,8 @@ struct ChatListView<DataSource: UnifiedChatDataSource>: View {
             Task {
               await dataSource.sendMessage(text: text)
             }
-          }
+          },
+          clearsDraftOnSend: false
         )
         .padding(.horizontal, 16)
         .padding(.bottom, 8)

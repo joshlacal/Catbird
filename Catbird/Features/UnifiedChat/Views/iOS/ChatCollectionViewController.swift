@@ -96,7 +96,7 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
   private var hasPerformedInitialScroll = false
   private var lastScrollToBottomTrigger: Int = 0
   /// Extra bottom inset to keep content above the floating composer.
-  private var composerInset: CGFloat = 100
+  private var composerInset: CGFloat = 0
   /// Current keyboard overlap with this view (0 when keyboard is hidden).
   private var keyboardOverlap: CGFloat = 0
 
@@ -220,7 +220,6 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
     collectionView.keyboardDismissMode = .interactive
     collectionView.alwaysBounceVertical = true
     collectionView.showsVerticalScrollIndicator = true
-    collectionView.contentInsetAdjustmentBehavior = .automatic
     #if compiler(>=6.2)
     if #available(iOS 26.0, *) {
       collectionView.topEdgeEffect.style = .soft
@@ -245,7 +244,7 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
     view.addSubview(newMessagesPillButton)
     newMessagesPillButton.addTarget(self, action: #selector(didTapNewMessagesPill), for: .touchUpInside)
 
-    let bottomAnchor = composerView?.topAnchor ?? view.safeAreaLayoutGuide.bottomAnchor
+    let bottomAnchor = composerView?.topAnchor ?? view.bottomAnchor
     let constraint = newMessagesPillButton.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12)
     pillBottomConstraint = constraint
 
@@ -282,6 +281,7 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
   }
 
   @objc private func keyboardWillChangeFrame(_ note: Notification) {
+    guard composerView != nil else { return }
     guard
       let endFrame = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect,
       let duration = note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double,
@@ -301,14 +301,17 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
   }
 
   @objc private func keyboardWillShow(_ note: Notification) {
+    guard composerView != nil else { return }
     let duration = (note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
     // Scroll to bottom after the keyboard + inset animation settles
     DispatchQueue.main.asyncAfter(deadline: .now() + duration) { [weak self] in
-      self?.scrollToBottom(animated: true)
+      guard let self, self.composerView != nil else { return }
+      self.scrollToBottom(animated: true)
     }
   }
 
   @objc private func keyboardWillHide(_ note: Notification) {
+    guard composerView != nil else { return }
     let duration = (note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
     let curveRaw = (note.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? UInt) ?? 7
     keyboardOverlap = 0
@@ -699,6 +702,10 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
       return
     }
 
+    // Only the inline MLS composer owns UIKit insets; ordinary DMs reserve
+    // their footer and keyboard through the surrounding SwiftUI viewport.
+    loadViewIfNeeded()
+    collectionView.contentInsetAdjustmentBehavior = .automatic
     let composer = UIKitMLSComposerView()
     composer.delegate = self
     composer.placeholderText = config.placeholderText
@@ -781,7 +788,7 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
     composerBottomConstraint = nil
     pillBottomConstraint?.isActive = false
     let pillConstraint = newMessagesPillButton.bottomAnchor.constraint(
-      equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -12)
+      equalTo: view.bottomAnchor, constant: -12)
     pillBottomConstraint = pillConstraint
     pillConstraint.isActive = true
     composer.removeFromSuperview()
@@ -801,8 +808,10 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
     onComposerVoicePreviewDiscard = nil
     onComposerCancelEdit = nil
     composerInset = 0
-    collectionView.contentInset.bottom = keyboardOverlap
-    collectionView.verticalScrollIndicatorInsets.bottom = keyboardOverlap
+    keyboardOverlap = 0
+    collectionView.contentInsetAdjustmentBehavior = .never
+    collectionView.contentInset.bottom = 0
+    collectionView.verticalScrollIndicatorInsets.bottom = 0
   }
 
   func updateComposerVoiceMode(config: InlineComposerConfig) {

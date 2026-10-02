@@ -13,6 +13,7 @@ import SwiftUI
     let conversationId: String
     let onSend: (String, MLSEmbedData?) -> Void
     var onAsyncSend: ((String, MLSEmbedData?) async -> Bool)? = nil
+    var clearsDraftOnSend: Bool = true
     var onTypingChanged: ((Bool) -> Void)? = nil
     var supportsEmbeds: Bool = true
     var showsAttachmentMenu: Bool = true
@@ -25,6 +26,7 @@ import SwiftUI
       conversationId: String,
       onSend: @escaping (String, MLSEmbedData?) -> Void = { _, _ in },
       onAsyncSend: ((String, MLSEmbedData?) async -> Bool)? = nil,
+      clearsDraftOnSend: Bool = true,
       onTypingChanged: ((Bool) -> Void)? = nil,
       supportsEmbeds: Bool = true,
       showsAttachmentMenu: Bool = true,
@@ -39,6 +41,7 @@ import SwiftUI
       self.conversationId = conversationId
       self.onSend = onSend
       self.onAsyncSend = onAsyncSend
+      self.clearsDraftOnSend = clearsDraftOnSend
       self.onTypingChanged = onTypingChanged
       self.supportsEmbeds = supportsEmbeds
       self.showsAttachmentMenu = showsAttachmentMenu
@@ -591,10 +594,12 @@ import SwiftUI
       let messageEmbed = attachedEmbed
 
       // Reset state immediately for better UX
-      text = ""
-      attachedEmbed = nil
-      detectedLinkEmbed = nil
-      imagePreviewUIImage = nil
+      if clearsDraftOnSend {
+        text = ""
+        attachedEmbed = nil
+        detectedLinkEmbed = nil
+        imagePreviewUIImage = nil
+      }
       onTypingChanged?(false)
       if dismissKeyboardOnSend {
         isTextFieldFocused = false
@@ -603,7 +608,7 @@ import SwiftUI
       if let onAsyncSend {
         Task {
           let success = await onAsyncSend(messageText, messageEmbed)
-          if !success {
+          if !success && clearsDraftOnSend {
             await MainActor.run {
               if self.text.isEmpty {
                 self.text = messageText

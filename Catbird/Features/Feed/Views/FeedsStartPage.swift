@@ -67,6 +67,7 @@ struct FeedsStartPage: View {
   // UI State
   @State private var searchText = ""
   @State private var isSearchBarVisible = false
+  @FocusState private var isFeedSearchFocused: Bool
   @State private var isLoaded = false
   @State private var isInitialized = false
   @State private var currentUserDID: String?  // Track current account for change detection
@@ -350,25 +351,15 @@ struct FeedsStartPage: View {
       discoveryInitialQuery = ""
       showAddFeedSheet = true
     } label: {
-      HStack(spacing: 8) {
-        Image(systemName: "plus.circle.fill")
-        Text("Add Feed")
-      }
-      .foregroundStyle(drawerPrimaryTextColor)
-      .padding(.vertical, 12)
-      .padding(.horizontal, 16)
-      .frame(maxWidth: .infinity)
-      .background {
-        if !inSideDrawer {
-          RoundedRectangle(cornerRadius: cardCornerRadius)
-            .fill(.ultraThinMaterial)
-        }
-      }
-      .modifier(LaunchpadGlassChip(cornerRadius: cardCornerRadius, isEnabled: inSideDrawer))
+      hitTarget44(
+        Image(systemName: "plus")
+          .appFont(size: 16)
+          .foregroundStyle(Color.accentColor)
+      )
+      .modifier(LaunchpadGlassCircle(isEnabled: inSideDrawer))
     }
-    .interactiveGlass()
-    .padding(.vertical, 8)
-    .accessibilityAddTraits(.isButton)
+    .accessibilityLabel("Add Feed")
+    .accessibilityHint("Discover and add a feed")
   }
 
   @ViewBuilder
@@ -1121,10 +1112,36 @@ struct FeedsStartPage: View {
     }
   }
 
+  private var feedSearchToolbarPlacement: ToolbarItemPlacement {
+    #if os(iOS)
+    .bottomBar
+    #else
+    .automatic
+    #endif
+  }
+
   // MARK: - Body
   var body: some View {
     mainContent
-    .modifier(FeedSearchPlacementModifier(text: $searchText, isPresented: $isSearchBarVisible))
+    .toolbar {
+      ToolbarItem(placement: feedSearchToolbarPlacement) {
+        Button {
+          if isSearchBarVisible {
+            searchText = ""
+            isSearchBarVisible = false
+            isFeedSearchFocused = false
+          } else {
+            isSearchBarVisible = true
+          }
+        } label: {
+          Label("Search your feeds", systemImage: "magnifyingglass")
+        }
+        .opacity(inSideDrawer && !isDrawerOpen ? 0 : 1)
+        .allowsHitTesting(!inSideDrawer || isDrawerOpen)
+        .accessibilityHidden(inSideDrawer && !isDrawerOpen)
+        .accessibilityIdentifier("feeds.search.toggle")
+      }
+    }
     .task(id: searchText) {
       await updateFilteredFeeds()
     }
@@ -1369,6 +1386,8 @@ struct FeedsStartPage: View {
         Spacer()
 
         HStack(spacing: 12) {
+            addFeedButton()
+
             // Layout-mode toggle (grid <-> list). Persisted via @AppStorage.
             Button {
                 #if os(iOS)
@@ -1451,7 +1470,29 @@ struct FeedsStartPage: View {
               .padding(.bottom, DesignTokens.Spacing.section)  // 24
 
           VStack(spacing: gridSpacing) {
-              addFeedButton()
+              if isSearchBarVisible {
+                HStack(spacing: 8) {
+                  Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.secondary)
+                  TextField("Search your feeds", text: $searchText)
+                    .modifier(FeedSearchTextInputModifier())
+                    .focused($isFeedSearchFocused)
+                    .submitLabel(.search)
+                    .accessibilityIdentifier("feeds.search.field")
+                  Button {
+                    searchText = ""
+                    isSearchBarVisible = false
+                    isFeedSearchFocused = false
+                  } label: {
+                    Image(systemName: "xmark.circle.fill")
+                      .foregroundStyle(.secondary)
+                  }
+                  .accessibilityLabel("Close feed search")
+                }
+                .padding(12)
+                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: cardCornerRadius))
+                .task { isFeedSearchFocused = true }
+              }
 
               if !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                  filteredPinnedFeeds.isEmpty, filteredSavedFeeds.isEmpty {
@@ -1874,32 +1915,12 @@ private extension View {
   }
 }
 
-/// Places feed search in the drawer's bottom toolbar on iOS 26+, collapsed to a
-/// glass magnifier beside the other toolbar items until tapped. Earlier iOS keeps
-/// an always-visible field under the navigation bar.
-private struct FeedSearchPlacementModifier: ViewModifier {
-  @Binding var text: String
-  @Binding var isPresented: Bool
-
-  private let prompt: LocalizedStringKey = "Search your feeds"
-
+private struct FeedSearchTextInputModifier: ViewModifier {
   func body(content: Content) -> some View {
     #if os(iOS)
-    if #available(iOS 26.0, *) {
-      content
-        .searchable(text: $text, isPresented: $isPresented, placement: .toolbar, prompt: prompt)
-        .searchToolbarBehavior(.minimize)
-    } else {
-      content
-        .searchable(
-          text: $text,
-          isPresented: $isPresented,
-          placement: .navigationBarDrawer(displayMode: .always),
-          prompt: prompt
-        )
-    }
+    content.textInputAutocapitalization(.never).autocorrectionDisabled()
     #else
-    content.searchable(text: $text, isPresented: $isPresented, placement: .automatic, prompt: prompt)
+    content.autocorrectionDisabled()
     #endif
   }
 }

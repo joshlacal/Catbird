@@ -23,7 +23,11 @@ final class BlueskyConversationDataSource: UnifiedChatDataSource {
   private(set) var expandedSystemGroupIDs: Set<String> = []
   private var hasReceivedInitialMessages: Bool = false
 
-  var draftText: String = ""
+  let draft = MessageDraft(BlueskyConversationDraft())
+  var draftText: String {
+    get { draft.value.text }
+    set { draft.value.text = newValue }
+  }
   // MARK: - Init
 
   init(chatManager: ChatManager, convoID: String, currentUserDID: String) {
@@ -74,7 +78,34 @@ final class BlueskyConversationDataSource: UnifiedChatDataSource {
   ) async -> Bool {
     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty || embed != nil else { return false }
+    let ownsDraft = draftText.trimmingCharacters(in: .whitespacesAndNewlines) == trimmed
+    let submission = ownsDraft ? draft.beginSend() : nil
+    if ownsDraft, submission == nil { return false }
+    let success = await transmitMessage(text: text, embed: embed, replyTo: replyTo)
+    if let submission { draft.finishSend(submission, succeeded: success) }
+    return success
+  }
 
+  func sendDraft(_ submission: MessageDraft<BlueskyConversationDraft>.Submission) async {
+    let value = submission.value
+    let embed: ChatBskyConvoDefs.MessageInputEmbedUnion?
+    if value.attachedEmbed != nil, let postRef = value.postRef {
+      embed = .appBskyEmbedRecord(AppBskyEmbedRecord(record: postRef))
+    } else {
+      embed = nil
+    }
+    let reply = value.replyTarget.map { ChatBskyConvoDefs.ReplyRef(messageId: $0.id) }
+    let success = await transmitMessage(text: value.text, embed: embed, replyTo: reply)
+    draft.finishSend(submission, succeeded: success)
+  }
+
+  private func transmitMessage(
+    text: String,
+    embed: ChatBskyConvoDefs.MessageInputEmbedUnion?,
+    replyTo: ChatBskyConvoDefs.ReplyRef?
+  ) async -> Bool {
+    guard !Task.isCancelled else { return false }
+    error = nil
     let success = await chatManager.sendMessage(
       convoId: convoID,
       text: text,
@@ -82,14 +113,11 @@ final class BlueskyConversationDataSource: UnifiedChatDataSource {
       replyTo: replyTo
     )
     if success {
-      draftText = ""
-      // Refresh to get the sent message
       await loadMessages()
-      return true
-    } else {
+    } else if !Task.isCancelled {
       self.error = NSError(domain: "ChatError", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to send message"])
-      return false
     }
+    return success
   }
 
   func toggleSystemGroup(groupID: String) {

@@ -43,7 +43,25 @@ final class FeedStateManager: StateInvalidationSubscriber {
         let postID: String
         let offsetFromTop: CGFloat
         let timestamp: Date
-        
+        let capturedTopInset: CGFloat
+        let isAtTop: Bool
+
+        init(postID: String, offsetFromTop: CGFloat, timestamp: Date,
+             capturedTopInset: CGFloat = 0, isAtTop: Bool = false) {
+            self.postID = postID
+            self.offsetFromTop = offsetFromTop
+            self.timestamp = timestamp
+            self.capturedTopInset = capturedTopInset
+            self.isAtTop = isAtTop
+        }
+
+        #if os(iOS)
+        @MainActor var viewportAnchor: FeedViewportAnchor {
+            FeedViewportAnchor(postID: postID,
+                viewportY: -offsetFromTop - capturedTopInset, isAtTop: isAtTop)
+        }
+        #endif
+
         var isStale: Bool {
             let maxAge: TimeInterval = FeedConstants.maxScrollAnchorAge
             return Date().timeIntervalSince(timestamp) > maxAge
@@ -697,27 +715,22 @@ final class FeedStateManager: StateInvalidationSubscriber {
     
     /// Captures scroll position from UICollectionView (called by controller)
     #if os(iOS)
-    func captureScrollAnchor(from collectionView: UICollectionView) {
-        guard !posts.isEmpty else { return }
-        
-        let visibleIndexPaths = collectionView.indexPathsForVisibleItems.sorted()
-        guard let firstVisibleIndexPath = visibleIndexPaths.first,
-              firstVisibleIndexPath.item < posts.count else { return }
-        
-        let post = posts[firstVisibleIndexPath.item]
-        
-        // Calculate offset from the top of the visible cell
-        let cellFrame = collectionView.cellForItem(at: firstVisibleIndexPath)?.frame ?? .zero
-        let contentOffsetY = collectionView.contentOffset.y
-        let offsetFromTop = contentOffsetY - cellFrame.minY
-        
+    func captureScrollAnchor(from collectionView: UICollectionView,
+                             postIDAt: (IndexPath) -> String?) {
+        guard let anchor = FeedViewportAnchor.capture(in: collectionView, postIDAt: postIDAt) else {
+            if collectionView.contentOffset.y + collectionView.adjustedContentInset.top <= 1 {
+                scrollAnchor = nil
+            }
+            return
+        }
+        let topInset = collectionView.adjustedContentInset.top
         scrollAnchor = ScrollAnchor(
-            postID: post.id,
-            offsetFromTop: offsetFromTop,
-            timestamp: Date()
+            postID: anchor.postID,
+            offsetFromTop: -anchor.viewportY - topInset,
+            timestamp: Date(),
+            capturedTopInset: topInset,
+            isAtTop: anchor.isAtTop
         )
-        
-        logger.debug("📍 Captured scroll anchor for post: \(post.id), offset: \(offsetFromTop)")
     }
     #endif
     
@@ -1367,7 +1380,9 @@ final class FeedStateManager: StateInvalidationSubscriber {
             self.scrollAnchor = ScrollAnchor(
                 postID: anchor.postID,
                 offsetFromTop: anchor.offsetFromTop,
-                timestamp: Date()
+                timestamp: Date(),
+                capturedTopInset: anchor.capturedTopInset,
+                isAtTop: anchor.isAtTop
             )
             
             logger.debug("Restored scroll position to post \(anchor.postID) at index \(matchingPostIndex)")
