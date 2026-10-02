@@ -10,6 +10,7 @@ import os
 
 #if os(iOS)
 /// Calculates consistent post heights before rendering to improve scroll stability
+@MainActor
 class PostHeightCalculator {
     // Configuration for the calculator with default values
     struct Config {
@@ -48,38 +49,46 @@ class PostHeightCalculator {
         let galleryCarouselHeight: CGFloat
 
         @MainActor
-        static let standard = Config(
-            maxWidth: min(600, PlatformScreenInfo.width) - 9,
-            textFont: UIFont.preferredFont(forTextStyle: UIFont.TextStyle.body),
-            lineSpacing: 1.2,
-            letterSpacing: 0.2,
-            verticalPadding: 12,
-            contentSpacing: 8,
-            
-            imageGridAspectRatio: 1.667,
-            maxSingleImageHeight: 800,
-            imageGridSpacing: 3,
-            
-            externalEmbedHeight: 120,
-            externalEmbedThumbHeight: 80,
-            
-            recordEmbedHeight: 150,
-            recordWithMediaSpacing: 8,
-            
-            avatarSize: 48,
-            avatarContainerWidth: 54,
-            
-            actionButtonsHeight: 36,
+        @available(*, deprecated, message: "Use standard(containerWidth:traitCollection:) for view-relative estimates")
+        static var standard: Config {
+            standard(containerWidth: PlatformScreenInfo.width, traitCollection: .current)
+        }
 
-            videoControlsHeight: 40,
+        @MainActor
+        static func standard(containerWidth: CGFloat, traitCollection: UITraitCollection) -> Config {
+            Config(
+                maxWidth: max(1, min(600, containerWidth) - 9),
+                textFont: UIFont.preferredFont(forTextStyle: .body, compatibleWith: traitCollection),
+                lineSpacing: 1.2,
+                letterSpacing: 0.2,
+                verticalPadding: 12,
+                contentSpacing: 8,
+            
+                imageGridAspectRatio: 1.667,
+                maxSingleImageHeight: 800,
+                imageGridSpacing: 3,
+            
+                externalEmbedHeight: 120,
+                externalEmbedThumbHeight: 80,
+            
+                recordEmbedHeight: 150,
+                recordWithMediaSpacing: 8,
+            
+                avatarSize: 48,
+                avatarContainerWidth: 54,
+            
+                actionButtonsHeight: 36,
 
-            galleryCarouselHeight: PlatformScreenInfo.isRegularWidth
-                ? GalleryEmbedView.regularCarouselHeight
-                : GalleryEmbedView.compactCarouselHeight
-        )
+                videoControlsHeight: 40,
+
+                galleryCarouselHeight: traitCollection.horizontalSizeClass == .regular
+                    ? GalleryEmbedView.regularCarouselHeight
+                    : GalleryEmbedView.compactCarouselHeight
+            )
+        }
     }
-    
-    private let config: Config
+
+    private var config: Config
     private let logger = Logger(subsystem: "blue.catbird", category: "PostHeightCalculator")
     
     // Enhanced height cache with better memory management
@@ -88,9 +97,14 @@ class PostHeightCalculator {
     // Cache for text size calculations to avoid repeated expensive operations
     private var textSizeCache = NSCache<NSString, NSValue>()
     
-    init(config: Config = .standard) {
+    init(config: Config) {
         self.config = config
         setupCacheConfiguration()
+    }
+
+    @available(*, deprecated, message: "Pass a view-relative Config for adaptive estimates")
+    convenience init() {
+        self.init(config: .standard)
     }
     
     /// Configure cache settings for optimal memory usage
@@ -183,6 +197,20 @@ class PostHeightCalculator {
         }
     }
     
+    /// Refresh estimates when the collection view's available space or text traits change.
+    @MainActor
+    @discardableResult
+    func updateLayout(containerWidth: CGFloat, traitCollection: UITraitCollection) -> Bool {
+        guard containerWidth.isFinite, containerWidth > 0 else { return false }
+        let updated = Config.standard(containerWidth: containerWidth, traitCollection: traitCollection)
+        guard updated.maxWidth != config.maxWidth
+            || updated.textFont != config.textFont
+            || updated.galleryCarouselHeight != config.galleryCarouselHeight else { return false }
+        config = updated
+        invalidateCache()
+        return true
+    }
+
     /// Invalidate all caches
     func invalidateCache() {
         heightCache.removeAllObjects()
