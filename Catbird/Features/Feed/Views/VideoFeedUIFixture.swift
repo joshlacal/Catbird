@@ -83,7 +83,8 @@ private struct VideoFeedFixturePage: View {
   @State private var isLiked = false
   @State private var isReposted = false
   @State private var currentTime = 15.0
-  @State private var isPaused = true
+  @State private var playbackState: VideoFeedPlayerPool.PlaybackState =
+    ProcessInfo.processInfo.arguments.contains("--video-fixture-fail-playback") ? .failed : .paused
 
   var body: some View {
     ZStack(alignment: .bottom) {
@@ -91,66 +92,31 @@ private struct VideoFeedFixturePage: View {
       Rectangle()
         .fill(item.color.gradient)
         .aspectRatio(item.aspectRatio, contentMode: .fit)
-        .overlay {
-          VStack(spacing: 12) {
-            Text("\(item.title) fixture \(item.id + 1)")
-              .font(.title2.bold())
-              .accessibilityIdentifier("videoFixturePage\(item.id)")
-            Text("Local media · no account actions")
-              .font(.caption)
-            Button(isPaused ? "Play video" : "Pause video") { isPaused.toggle() }
-              .frame(minWidth: 44, minHeight: 44)
-          }
-          .foregroundStyle(.white)
+        .overlay(alignment: .top) {
+          Text("\(item.title) fixture \(item.id + 1)")
+            .font(.caption.bold())
+            .foregroundStyle(.white)
+            .padding(8)
+            .accessibilityIdentifier("videoFixturePage\(item.id)")
         }
         .frame(maxHeight: .infinity)
+      Button {
+        playbackState = playbackState == .playing ? .paused : .playing
+      } label: {
+        Color.clear.contentShape(Rectangle())
+      }
+      .buttonStyle(.plain)
+      .disabled(playbackState == .failed || playbackState == .loading)
+      .accessibilityLabel(playbackState == .playing ? "Pause video" : "Play video")
       LinearGradient(colors: [.clear, .black.opacity(0.85)], startPoint: .center, endPoint: .bottom)
         .allowsHitTesting(false)
-      VideoFeedOverlayControls(
-        pageSize: pageSize,
-        hasCaption: true,
-        author: { compact in
-          Button(action: onProfile) {
-            HStack(spacing: 8) {
-              Circle().fill(.white.opacity(0.6)).frame(width: 38, height: 38)
-              VStack(alignment: .leading) {
-                Text("An author with a long display name").font(.subheadline.bold()).lineLimit(1)
-                if !compact { Text("@local.fixture").font(.caption2).lineLimit(1) }
-              }
-              .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .frame(minHeight: 44)
+      VideoFeedPageOverlays(
+        status: {
+          if isActive {
+            VideoFeedPlaybackStatus(state: playbackState) { playbackState = .playing }
           }
-          .buttonStyle(.plain)
         },
-        caption: { lines in
-          Button(action: onComments) {
-            Text("A long caption checks wrapping, larger text, and narrow or resized video pages.")
-              .font(.subheadline)
-              .lineLimit(lines)
-              .multilineTextAlignment(.leading)
-              .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-          }
-          .buttonStyle(.plain)
-        },
-        actions: { horizontal in
-          VideoFeedReactionControls(
-            horizontal: horizontal,
-            isLiked: isLiked,
-            isReposted: isReposted,
-            replyCount: 12,
-            likeCount: isLiked ? 124 : 123,
-            repostCount: isReposted ? 5 : 4,
-            canAct: isActive && !coordinator.isBusy,
-            onComments: onComments,
-            onLike: { performFixtureAction { isLiked.toggle() } },
-            onRepost: { performFixtureAction { isReposted.toggle() } }
-          )
-        },
-        progress: {
-          VideoProgressBar(currentTime: currentTime, duration: 60, bufferedTime: 45) { currentTime = $0 }
-            .accessibilityIdentifier("videoProgress")
-        }
+        footer: { footer }
       )
     }
     .clipped()
@@ -164,6 +130,56 @@ private struct VideoFeedFixturePage: View {
     } message: {
       Text(coordinator.errorMessage ?? "")
     }
+  }
+
+  private var footer: some View {
+    VideoFeedOverlayControls(
+      pageSize: pageSize,
+      hasCaption: true,
+      author: { compact in
+        Button(action: onProfile) {
+          HStack(spacing: 8) {
+            Circle().fill(.white.opacity(0.6)).frame(width: 38, height: 38)
+            VStack(alignment: .leading) {
+              Text("An author with a long display name").font(.subheadline.bold()).lineLimit(1)
+              if !compact { Text("@local.fixture").font(.caption2).lineLimit(1) }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+          }
+          .frame(minHeight: 44)
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("videoFixtureAuthor")
+      },
+      caption: { lines in
+        Button(action: onComments) {
+          Text("A long caption checks wrapping, larger text, and narrow or resized video pages.")
+            .font(.subheadline)
+            .lineLimit(lines)
+            .multilineTextAlignment(.leading)
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+        }
+        .buttonStyle(.plain)
+      },
+      actions: { horizontal in
+        VideoFeedReactionControls(
+          horizontal: horizontal,
+          isLiked: isLiked,
+          isReposted: isReposted,
+          replyCount: 12,
+          likeCount: isLiked ? 124 : 123,
+          repostCount: isReposted ? 5 : 4,
+          canAct: isActive && !coordinator.isBusy,
+          onComments: onComments,
+          onLike: { performFixtureAction { isLiked.toggle() } },
+          onRepost: { performFixtureAction { isReposted.toggle() } }
+        )
+      },
+      progress: {
+        VideoProgressBar(currentTime: currentTime, duration: 60, bufferedTime: 45) { currentTime = $0 }
+          .accessibilityIdentifier("videoProgress")
+      }
+    )
   }
 
   private func performFixtureAction(_ action: @escaping @MainActor () -> Void) {
