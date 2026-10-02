@@ -106,11 +106,10 @@ struct PostComposerViewUIKit: View {
   var body: some View {
     Group {
       if let vm = viewModel {
-        GeometryReader { proxy in
+        GeometryReader { _ in
           navigationContainer(vm: vm)
             .onAppear {
               pcUIKitLogger.info("PostComposerViewUIKit: View appeared")
-              updateMentionOverlay(vm: vm, proxy: proxy)
             }
         }
       } else {
