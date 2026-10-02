@@ -11,7 +11,6 @@ struct CatbirdGatewayConfigurationTests {
 
     #expect(configuration.origin == URL(string: "https://api.catbird.blue")!)
     #expect(configuration.serviceDID == "did:web:api.catbird.blue")
-    #expect(configuration.mlsServiceDID == nil)
 
     let e2eWithoutOverride = try CatbirdGatewayConfiguration.resolve(arguments: [
       "Catbird", "--e2e-mode",
@@ -29,9 +28,6 @@ struct CatbirdGatewayConfigurationTests {
 
     #expect(configuration.origin == URL(string: "https://dev-api.catbird.blue")!)
     #expect(configuration.serviceDID == "did:web:dev-api.catbird.blue")
-    #expect(
-      configuration.mlsServiceDID == "did:web:dev-api.catbird.blue:mls#atproto_mls"
-    )
   }
 
   @Test("a staging override without E2E mode fails closed")

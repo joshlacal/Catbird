@@ -5,7 +5,8 @@ enum PublicPostTestFixtures {
   static func makePostView(
     uri: ATProtocolURI,
     authorDID: DID,
-    text: String = "Hello"
+    text: String = "Hello",
+    record: ATProtocolValueContainer? = nil
   ) -> AppBskyFeedDefs.PostView {
     let author = AppBskyActorDefs.ProfileViewBasic(
       did: authorDID,
@@ -25,7 +26,7 @@ enum PublicPostTestFixtures {
       uri: uri,
       cid: CID.fromDAGCBOR(Data("cid-test".utf8)),
       author: author,
-      record: .knownType(
+      record: record ?? .knownType(
         AppBskyFeedPost(
           text: text,
           entities: nil,

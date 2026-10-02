@@ -20,11 +20,11 @@ struct PendingChatShareTests {
 
   @Test("An unavailable record preserves the author without inventing preview text")
   func unknownRecordHasNoPreviewText() throws {
-    var post = PublicPostTestFixtures.makePostView(
+    let post = PublicPostTestFixtures.makePostView(
       uri: try ATProtocolURI(uriString: "at://did:plc:author/app.bsky.feed.post/3kabc"),
-      authorDID: try DID(didString: "did:plc:author")
+      authorDID: try DID(didString: "did:plc:author"),
+      record: .object([:])
     )
-    post.record = .object([:])
 
     let preview = PendingChatShare.makePreviewEmbed(from: post)
 
