@@ -180,7 +180,8 @@ public struct VideoFeedView: View {
   }
 
   private func requestNextPageIfNeeded(retrying: Bool = false) {
-    guard isVisible, !isInitialLoading, hasMore, activeIndex >= items.count - 3,
+    guard isVisible, !isInitialLoading, hasMore,
+          retrying || activeIndex >= items.count - 3,
           let currentCursor = cursor else { return }
     pagination.request(retrying: retrying, operation: {
       try await self.loadNextPage(cursor: currentCursor)
@@ -796,6 +797,7 @@ private final class VideoFeedPostActions {
     await postViewModel.start(post: post)
     guard !Task.isCancelled else { return }
     await refresh()
+    guard !Task.isCancelled else { return }
     isReady = true
     for await _ in await appState.postShadowManager.shadowUpdates(forUri: post.uri.uriString()) {
       guard !Task.isCancelled else { return }
