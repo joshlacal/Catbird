@@ -41,8 +41,40 @@ struct SupportTipStoreKitTests {
     try await session.setSimulatedError(nil, forAPI: .loadProducts)
     await store.loadProducts(forceReload: true)
     try #require(store.loadState == .loaded)
-    #expect(Set(store.products.map(\.id)) == SupportTipStore.productIDs)
-    #expect(store.products.map(\.price) == [Decimal(string: "4.99")!, Decimal(string: "9.99")!, Decimal(string: "19.99")!, Decimal(string: "49.99")!])
+
+    // Independent catalog expectations must pass before any simulated purchase is allowed.
+    let expectedIDs: Set<String> = [
+      "blue.catbird.support.onetime.small",
+      "blue.catbird.support.onetime.medium",
+      "blue.catbird.support.onetime.large",
+      "blue.catbird.support.onetime.extralarge"
+    ]
+    let expectedPricesByID: [String: Decimal] = [
+      "blue.catbird.support.onetime.small": Decimal(string: "4.99")!,
+      "blue.catbird.support.onetime.medium": Decimal(string: "9.99")!,
+      "blue.catbird.support.onetime.large": Decimal(string: "19.99")!,
+      "blue.catbird.support.onetime.extralarge": Decimal(string: "49.99")!
+    ]
+    let displayedProducts = store.products
+    let displayedCountMatches = displayedProducts.count == expectedIDs.count
+    let displayedIDsMatch = Set(displayedProducts.map(\.id)) == expectedIDs
+    try #require(displayedCountMatches)
+    try #require(displayedIDsMatch)
+    let displayedPricesByID = Dictionary(uniqueKeysWithValues: displayedProducts.map { ($0.id, $0.price) })
+    let displayedPricesMatch = displayedPricesByID == expectedPricesByID
+    try #require(displayedPricesMatch)
+
+    // Inspect StoreKit's unfiltered products; the app adapter hides non-consumable types.
+    let rawProducts = try await Product.products(for: expectedIDs)
+    let rawCountMatches = rawProducts.count == expectedIDs.count
+    let rawIDsMatch = Set(rawProducts.map(\.id)) == expectedIDs
+    let rawTypesMatch = rawProducts.allSatisfy { $0.type == .consumable }
+    try #require(rawCountMatches)
+    try #require(rawIDsMatch)
+    try #require(rawTypesMatch)
+    let rawPricesByID = Dictionary(uniqueKeysWithValues: rawProducts.map { ($0.id, $0.price) })
+    let rawPricesMatch = rawPricesByID == expectedPricesByID
+    try #require(rawPricesMatch)
     let tip = try #require(store.products.first)
 
     await store.purchase(tip)
