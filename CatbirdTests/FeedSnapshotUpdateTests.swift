@@ -143,11 +143,18 @@ struct FeedSnapshotUpdateTests {
     let record = AppBskyFeedPost(
       text: "Feed fixture", entities: nil, facets: nil, reply: nil, embed: nil,
       langs: nil, labels: nil, tags: nil, createdAt: ATProtocolDate(date: Date(timeIntervalSince1970: 0)))
-    var post = PublicPostTestFixtures.makePostView(
+    let author = AppBskyActorDefs.ProfileViewBasic(
+      did: try DID(didString: "did:plc:fixture"),
+      handle: try Handle(handleString: "author.test"), displayName: displayName,
+      pronouns: nil, avatar: nil, associated: nil, viewer: nil, labels: nil,
+      createdAt: nil, verification: nil, status: nil, debug: nil)
+    let post = AppBskyFeedDefs.PostView(
       uri: try ATProtocolURI(uriString: "at://did:plc:fixture/app.bsky.feed.post/one"),
-      authorDID: try DID(didString: "did:plc:fixture"), record: .knownType(record))
-    post.author.displayName = displayName
-    post.likeCount = likeCount
+      cid: CID.fromDAGCBOR(Data("cid-test".utf8)), author: author,
+      record: .knownType(record), embed: nil, bookmarkCount: nil,
+      replyCount: 0, repostCount: 0, likeCount: likeCount, quoteCount: nil,
+      indexedAt: ATProtocolDate(date: Date(timeIntervalSince1970: 0)),
+      viewer: nil, labels: nil, threadgate: nil, debug: nil)
     let decoded = AppBskyFeedDefs.FeedViewPost(post: post, reply: nil, reason: nil,
       feedContext: nil, reqId: nil)
     return try #require(CachedFeedViewPost(from: decoded, feedType: "timeline"))
