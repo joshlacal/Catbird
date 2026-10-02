@@ -275,9 +275,6 @@ struct CatbirdApp: App {
   @State private var showBiometricPrompt = false
   @State private var hasBiometricCheck = false
   
-  // Pending launch URL received before authentication
-  @State private var pendingLaunchURL: URL?
-  @State private var unauthenticatedStarterPackItem: StarterPackLandingItem?
   // MARK: - State Restoration
   @State private var restorationIdentifier = "CatbirdMainApp"
 
@@ -883,20 +880,41 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
   @SceneBuilder
   private var macOSWindowScenes: some Scene {
     WindowGroup(id: "compose") {
-      if case .authenticated(let appState) = appStateManager.lifecycle {
-        PostComposerViewUIKit(appState: appState)
-          .frame(minWidth: 500, minHeight: 400)
-          .applyAppStateEnvironment(appState)
-          .environment(appStateManager)
+      CatbirdWindowRoot(
+        appStateManager: appStateManager,
+        onOpenURL: { url, scene in handleSceneURL(url, in: scene) },
+        onAccountReady: { scene in routePendingLaunchURLIfNeeded(in: scene) }
+      ) { scene in
+        if case .authenticated(let appState) = appStateManager.lifecycle,
+           let context = scene.context, !context.isInvalidated,
+           context.accountDID == appState.userDID {
+          SceneNavigationHost(appState: appState, appStateManager: appStateManager, context: context) {
+            PostComposerViewUIKit(
+              appState: appState,
+              editingSession: context.composerEditingSession
+            )
+              .frame(minWidth: 500, minHeight: 400)
+          }
+          .id(context.activityRegistrationID)
+        }
       }
     }
     .defaultSize(width: 600, height: 500)
 
     Window("Settings", id: "settings") {
-      if case .authenticated(let appState) = appStateManager.lifecycle {
-        SettingsView()
-          .applyAppStateEnvironment(appState)
-          .environment(appStateManager)
+      CatbirdWindowRoot(
+        appStateManager: appStateManager,
+        onOpenURL: { url, scene in handleSceneURL(url, in: scene) },
+        onAccountReady: { scene in routePendingLaunchURLIfNeeded(in: scene) }
+      ) { scene in
+        if case .authenticated(let appState) = appStateManager.lifecycle,
+           let context = scene.context, !context.isInvalidated,
+           context.accountDID == appState.userDID {
+          SceneNavigationHost(appState: appState, appStateManager: appStateManager, context: context) {
+            SettingsView()
+          }
+          .id(context.activityRegistrationID)
+        }
       }
     }
     .defaultSize(width: 700, height: 500)
@@ -904,7 +922,7 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
   #endif
 
   @ViewBuilder
-  private var applicationContent: some View {
+  private func applicationContent(in scene: SceneWindowState) -> some View {
     switch appStateManager.modelContainerState {
         case .loading:
           LoadingView()
@@ -913,7 +931,7 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
             }
 
         case .ready(let container):
-          sceneRoot()
+          sceneRoot(in: scene)
             .onAppear {
               handleSceneAppear(container: container)
             }
@@ -928,7 +946,7 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
           // Running in safe mode with in-memory database
           VStack(spacing: 0) {
             DegradedModeBanner(reason: reason)
-            sceneRoot()
+            sceneRoot(in: scene)
               .onAppear {
                 handleSceneAppear(container: container)
               }
@@ -956,133 +974,42 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
     // ("(unknown context at $…)"). Saved state then never matches the next launch, AppKit
     // restores nothing, and the relaunched app has no window.
     WindowGroup(id: "main") {
-      Group {
-        #if DEBUG
-        if isMessageRequestsUIFixture {
-          MessageRequestsUIFixture()
-        } else if isVideoFeedUIFixture {
-          VideoFeedUIFixture()
-        } else if isSocialActionsUIFixture {
-          SocialActionsUIFixture()
-        } else if isSettingsUIFixture {
-          SettingsUIFixture()
-        } else {
-          applicationContent
+      CatbirdWindowRoot(
+        appStateManager: appStateManager,
+        onOpenURL: { url, scene in handleSceneURL(url, in: scene) },
+        onAccountReady: { scene in routePendingLaunchURLIfNeeded(in: scene) }
+      ) { scene in
+        Group {
+          #if DEBUG
+          if isMessageRequestsUIFixture {
+            MessageRequestsUIFixture()
+          } else if isVideoFeedUIFixture {
+            VideoFeedUIFixture()
+          } else if isSocialActionsUIFixture {
+            SocialActionsUIFixture()
+          } else if isSettingsUIFixture {
+            SettingsUIFixture()
+          } else {
+            applicationContent(in: scene)
+          }
+          #else
+          applicationContent(in: scene)
+          #endif
         }
-        #else
-        applicationContent
+        .catalystPlainButtons()
+        #if DEBUG && os(iOS)
+        .overlay {
+          if ProcessInfo.processInfo.arguments.contains("--bluemoji-visual-test") {
+            BluemojiVisualTestView()
+          }
+        }
         #endif
       }
-      .onChange(of: scenePhase, initial: true) { oldPhase, newPhase in
-        handleScenePhaseChange(from: oldPhase, to: newPhase)
-      }
-      .catalystPlainButtons()
-      #if DEBUG && os(iOS)
-      .overlay {
-        if ProcessInfo.processInfo.arguments.contains("--bluemoji-visual-test") {
-          BluemojiVisualTestView()
-        }
-      }
-      #endif
-      .onOpenURL { url in
-          guard !isPresentationUIFixture else { return }
-          logger.info(
-            "Received URL for scheme=\(url.scheme ?? "none", privacy: .public) host=\(url.host ?? "none", privacy: .public) path=\(url.path, privacy: .public)"
-          )
-
-          guard let components = URLComponents(url: url, resolvingAgainstBaseURL: true) else {
-            return
-          }
-          let scheme = (components.scheme ?? "").lowercased()
-          let host = (components.host ?? "").lowercased()
-          let path = components.path.lowercased()
-
-          // Check for gateway BFF callback (Universal Link from catbird.blue)
-          // Gateway redirects with a one-time exchange code in the query.
-          if scheme == "https" && host == "catbird.blue" && path == "/oauth/callback" {
-            logger.info("Gateway OAuth callback detected")
-            Task {
-              do {
-                try await appStateManager.authentication.handleGatewayCallback(url)
-                logger.info("Gateway OAuth callback handled successfully")
-              } catch {
-                logger.error("Error handling gateway callback: \(error)")
-              }
-            }
-          } else if (scheme == "catbird" || scheme == "blue.catbird") && ((host == "oauth" && path == "/callback") || (host.isEmpty && path == "/oauth/callback") || (host == "oauth/callback" && path.isEmpty)) {
-            // Legacy public OAuth callback (direct ATProto OAuth)
-            Task {
-              do {
-                try await appStateManager.authentication.handleCallback(url)
-                logger.info("OAuth callback handled successfully")
-              } catch {
-                logger.error("Error handling OAuth callback: \(error)")
-              }
-            }
-          } else if url.scheme == "blue.catbird" && url.host == "notifications" {
-            logger.info("Widget notification deep link received")
-
-            // Instead of using the navigation system, directly set the selected tab
-            Task { @MainActor in
-              guard let appState = self.appState else { return }
-              // Access the tab selection mechanism directly
-              if let tabSelection = appState.navigationManager.tabSelection {
-                tabSelection(2)  // Switch to notifications tab (index 2)
-              } else {
-                // Fallback if no tab selection mechanism is available
-                appState.navigationManager.updateCurrentTab(2)
-              }
-            }
-          } else if (url.scheme == "blue.catbird" || url.scheme == "catbird") && (url.host == "e2e" || url.host == "test") {
-            // Handle E2E testing commands (DEBUG builds, E2E mode only)
-            #if DEBUG
-            logger.error("[E2E-URL] Received E2E URL: \(url.absoluteString), isE2EMode: \(appStateManager.isE2EMode)")
-            if appStateManager.isE2EMode {
-              Task { @MainActor in
-                logger.error("[E2E-URL] Calling handleE2ECommand")
-                await self.handleE2ECommand(url: url)
-              }
-            } else {
-              logger.error("[E2E-URL] E2E URL received but not in E2E mode: \(url.absoluteString)")
-            }
-            #else
-            logger.info("Ignoring test-harness URL in a release build")
-            #endif
-          } else if let intent = ExternalURLIntent.parse(from: url) {
-            // Route bluesky://intent/* (compose prefill, verify-email) and group-chat join links through ExternalURLIntentPresenter
-            logger.info("External URL intent parsed from URL: \(url.absoluteString, privacy: .private)")
-            if let appState = self.appState {
-              appState.urlHandler.externalIntentPresenter.handleIntent(intent, from: url, appState: appState)
-            } else {
-              logger.info("AppState unavailable; retaining pending intent launch URL")
-              pendingLaunchURL = url
-            }
-          } else {
-            // Handle all other URLs through the URLHandler
-            if let appState = self.appState {
-              _ = appState.urlHandler.handle(url)
-            } else {
-              logger.info("AppState unavailable; retaining pending launch URL")
-              pendingLaunchURL = url
-            }
-          }
-        }
-        .onChange(of: appStateManager.lifecycle) { _, newLifecycle in
-          if case .authenticated(let appState) = newLifecycle {
-            unauthenticatedStarterPackItem = nil
-            routePendingLaunchURLIfNeeded(with: appState)
-          }
-        }
-        .onChange(of: pendingLaunchURL) { _, newURL in
-          if appState == nil, let url = newURL {
-            Task { @MainActor in
-              let handler = URLHandler()
-              if let uri = await handler.resolveStarterPackURI(from: url) {
-                self.unauthenticatedStarterPackItem = StarterPackLandingItem(flowID: UUID(), uri: uri)
-              }
-            }
-          }
-        }
+    }
+    .onChange(of: scenePhase, initial: true) { oldPhase, newPhase in
+      guard !isPresentationUIFixture,
+            SceneApplicationPhaseObservation.shared.accept(newPhase) else { return }
+      handleScenePhaseChange(from: oldPhase, to: newPhase)
     }
     #if os(macOS)
     .windowStyle(.automatic)
@@ -1098,8 +1025,92 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
 }
 
 private extension CatbirdApp {
+  func handleSceneURL(_ url: URL, in scene: SceneWindowState) {
+  guard !isPresentationUIFixture else { return }
+  logger.info(
+    "Received URL for scheme=\(url.scheme ?? "none", privacy: .public) host=\(url.host ?? "none", privacy: .public) path=\(url.path, privacy: .public)"
+  )
+
+  guard let components = URLComponents(url: url, resolvingAgainstBaseURL: true) else {
+    return
+  }
+  let scheme = (components.scheme ?? "").lowercased()
+  let host = (components.host ?? "").lowercased()
+  let path = components.path.lowercased()
+
+  // Check for gateway BFF callback (Universal Link from catbird.blue)
+  // Gateway redirects with a one-time exchange code in the query.
+  if scheme == "https" && host == "catbird.blue" && path == "/oauth/callback" {
+    logger.info("Gateway OAuth callback detected")
+    Task {
+      do {
+        try await appStateManager.authentication.handleGatewayCallback(url)
+        logger.info("Gateway OAuth callback handled successfully")
+      } catch {
+        logger.error("Error handling gateway callback: \(error)")
+      }
+    }
+  } else if (scheme == "catbird" || scheme == "blue.catbird") && ((host == "oauth" && path == "/callback") || (host.isEmpty && path == "/oauth/callback") || (host == "oauth/callback" && path.isEmpty)) {
+    // Legacy public OAuth callback (direct ATProto OAuth)
+    Task {
+      do {
+        try await appStateManager.authentication.handleCallback(url)
+        logger.info("OAuth callback handled successfully")
+      } catch {
+        logger.error("Error handling OAuth callback: \(error)")
+      }
+    }
+  } else if url.scheme == "blue.catbird" && url.host == "notifications" {
+    logger.info("Widget notification deep link received")
+
+    guard let context = scene.context, !context.isInvalidated,
+          context.accountDID == self.appState?.userDID else {
+      scene.retainLaunchURL(url)
+      return
+    }
+    context.navigationManager.updateCurrentTab(2)
+    context.navigationManager.tabSelection?(2)
+  } else if (url.scheme == "blue.catbird" || url.scheme == "catbird") && (url.host == "e2e" || url.host == "test") {
+    // Handle E2E testing commands (DEBUG builds, E2E mode only)
+    #if DEBUG
+    logger.error("[E2E-URL] Received E2E URL: \(url.absoluteString), isE2EMode: \(appStateManager.isE2EMode)")
+    if appStateManager.isE2EMode {
+      let receivingContext = scene.context
+      Task { @MainActor in
+        logger.error("[E2E-URL] Calling handleE2ECommand")
+        await self.handleE2ECommand(url: url, sceneContext: receivingContext)
+      }
+    } else {
+      logger.error("[E2E-URL] E2E URL received but not in E2E mode: \(url.absoluteString)")
+    }
+    #else
+    logger.info("Ignoring test-harness URL in a release build")
+    #endif
+  } else if let intent = ExternalURLIntent.parse(from: url) {
+    // Route bluesky://intent/* (compose prefill, verify-email) and group-chat join links through ExternalURLIntentPresenter
+    logger.info("External URL intent parsed from URL: \(url.absoluteString, privacy: .private)")
+    if let appState = self.appState, let context = scene.context,
+         !context.isInvalidated, context.accountDID == appState.userDID {
+      context.urlHandler.externalIntentPresenter.handleIntent(intent, from: url, appState: appState)
+    } else {
+      logger.info("AppState unavailable; retaining pending intent launch URL")
+      scene.retainLaunchURL(url)
+    }
+  } else {
+    // Handle all other URLs through the URLHandler
+    if let appState = self.appState, let context = scene.context,
+         !context.isInvalidated, context.accountDID == appState.userDID {
+      _ = context.urlHandler.handle(url)
+    } else {
+      logger.info("AppState unavailable; retaining pending launch URL")
+      scene.retainLaunchURL(url)
+    }
+  }
+  }
+
   @ViewBuilder
-  func sceneRoot() -> some View {
+  func sceneRoot(in scene: SceneWindowState) -> some View {
+    @Bindable var scene = scene
     Group {
       switch appStateManager.lifecycle {
       case .launching:
@@ -1108,57 +1119,57 @@ private extension CatbirdApp {
       case .unauthenticated:
         LoginView()
           .environment(appStateManager)
-          .sheet(item: $unauthenticatedStarterPackItem, onDismiss: {
+          .sheet(item: $scene.unauthenticatedStarterPackItem, onDismiss: {
             if !appStateManager.lifecycle.isAuthenticated {
-              StarterPackOnboardingManager.shared.clearPendingContext()
-              pendingLaunchURL = nil
+              scene.dismissStarterPackIfOwned()
             }
-            unauthenticatedStarterPackItem = nil
+            scene.unauthenticatedStarterPackItem = nil
           }) { item in
             StarterPackLandingView(flowID: item.flowID, starterPackURI: item.uri) {
               if !appStateManager.lifecycle.isAuthenticated {
-                StarterPackOnboardingManager.shared.clearPendingContext()
-                pendingLaunchURL = nil
+                scene.dismissStarterPackIfOwned()
               }
-              unauthenticatedStarterPackItem = nil
+              scene.unauthenticatedStarterPackItem = nil
             }
             .environment(appStateManager)
           }
       case .authenticated(let appState):
-        if shouldShowContentForAuthenticatedState {
-          ContentView()
-            .id(appState.userDID)
-            .applyAppStateEnvironment(appState)
+        if shouldShowContentForAuthenticatedState,
+           let context = scene.context, !context.isInvalidated,
+           context.accountDID == appState.userDID {
+          SceneNavigationHost(appState: appState, appStateManager: appStateManager, context: context) {
+            ContentView()
+          }
+          .id(context.activityRegistrationID)
         } else {
           LoadingView()  // For biometric check
         }
 
       case .deactivated(let appState):
-        AccountDeactivatedView(appState: appState)
-          .id(appState.userDID)
-          .applyAppStateEnvironment(appState)
-          .environment(appStateManager)
+        if let context = scene.context, !context.isInvalidated,
+           context.accountDID == appState.userDID {
+          SceneNavigationHost(appState: appState, appStateManager: appStateManager, context: context) {
+            AccountDeactivatedView(appState: appState)
+          }
+          .id(context.activityRegistrationID)
+        } else {
+          LoadingView()
+        }
 
       case .takendown(let appState):
-        AccountTakedownView(appState: appState)
-          .id(appState.userDID)
-          .applyAppStateEnvironment(appState)
-          .environment(appStateManager)
+        if let context = scene.context, !context.isInvalidated,
+           context.accountDID == appState.userDID {
+          SceneNavigationHost(appState: appState, appStateManager: appStateManager, context: context) {
+            AccountTakedownView(appState: appState)
+          }
+          .id(context.activityRegistrationID)
+        } else {
+          LoadingView()
+        }
       }
     }
     .overlay {
       biometricOverlay()
-    }
-  }
-
-  private struct StarterPackLandingItem: Identifiable {
-    let flowID: UUID
-    let uri: ATProtocolURI
-    var id: String { "\(flowID.uuidString)-\(uri.uriString())" }
-
-    init(flowID: UUID = UUID(), uri: ATProtocolURI) {
-      self.flowID = flowID
-      self.uri = uri
     }
   }
 
@@ -1182,24 +1193,9 @@ private extension CatbirdApp {
     appStateManager.hasHandledSceneAppear = true
     logger.debug("✅ handleSceneAppear called for first time")
 
-#if os(iOS)
-    if let appState,
-       let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-       let window = windowScene.windows.first,
-       let rootVC = window.rootViewController {
-      appState.urlHandler.registerTopViewController(rootVC)
-      window.restorationIdentifier = "MainWindow"
-      window.shouldGroupAccessibilityChildren = true
-
-      Task {
-        await restoreApplicationState()
-      }
-    }
-#elseif os(macOS)
     Task {
       await restoreApplicationState()
     }
-#endif
 
 #if os(iOS)
     setupBackgroundNotification()
@@ -1286,7 +1282,6 @@ private extension CatbirdApp {
       }
       #endif
 
-      await FeedStateStore.shared.handleScenePhaseChange(newPhase)
 
       if newPhase == .background {
         saveApplicationState()
@@ -1358,7 +1353,6 @@ private extension CatbirdApp {
         }
       }
 
-      routePendingLaunchURLIfNeeded(with: appState)
     }
 
     await performInitialBiometricCheck()
@@ -1374,23 +1368,19 @@ private extension CatbirdApp {
     logger.info("🎉 initializeApplicationIfNeeded completed - hasBiometricCheck: \(hasBiometricCheck)")
   }
 
-  private func routePendingLaunchURLIfNeeded(with appState: AppState) {
-    guard let url = pendingLaunchURL else {
-      StarterPackOnboardingManager.shared.clearPendingContext()
-      return
-    }
-    logger.info("Routing pending launch URL after authentication: \(url.absoluteString, privacy: .private)")
-    pendingLaunchURL = nil
-    if let intent = ExternalURLIntent.parse(from: url) {
-      appState.urlHandler.externalIntentPresenter.handleIntent(intent, from: url, appState: appState)
-    } else {
-      _ = appState.urlHandler.handle(url)
-    }
-    // If welcome onboarding is required for this account (e.g. brand new account signup),
-    // WelcomeOnboardingView owns the starter pack finalization presentation.
-    // Otherwise (e.g. existing account login with starter pack link), finalize here.
+  private func routePendingLaunchURLIfNeeded(in scene: SceneWindowState) {
+    guard case .authenticated(let appState) = appStateManager.lifecycle,
+          let context = scene.context, !context.isInvalidated,
+          context.accountDID == appState.userDID,
+          let url = scene.pendingLaunchURL else { return }
+    logger.info("Routing receiving-window launch URL after authentication: \(url.absoluteString, privacy: .private)")
+    let starterPackFlowID = scene.starterPackFlowID
+    scene.clearPendingLaunchURL()
+    handleSceneURL(url, in: scene)
+    // Only the window that owns this onboarding flow may finalize its pending context.
     if appState.onboardingManager.hasCompletedWelcome(for: appState.userDID),
        let pending = StarterPackOnboardingManager.shared.pendingContext,
+       pending.flowID == starterPackFlowID,
        let client = appState.atProtoClient {
       Task {
         _ = try? await StarterPackOnboardingManager.shared.finalizeStarterPackOnboarding(
@@ -1755,7 +1745,7 @@ private extension CatbirdApp {
   /// - login?handle=...&password=... - Password login for a test account
   /// - login-fixture - Password login from the sandboxed fixture file
   /// - request-notification-permission - Request push notification authorization
-  func handleE2ECommand(url: URL) async {
+  func handleE2ECommand(url: URL, sceneContext: SceneNavigationContext?) async {
     let e2eLogger = Logger(subsystem: "blue.catbird.e2e", category: "Commands")
 
     guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
