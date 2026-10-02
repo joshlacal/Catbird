@@ -53,6 +53,9 @@ final class SettingsSupportJourneyTests: XCTestCase {
     reveal(maximum, in: app)
     XCTAssertEqual(maximum.value as? String, "Accessibility Extra Extra Extra Large")
     capture(app, "Accessibility Dynamic Type large text")
+    selectMaximumTextSize("Accessibility Large", picker: maximum, in: app)
+    capture(app, "Maximum Text Size selection updates its full value")
+    selectMaximumTextSize("Accessibility Extra Extra Extra Large", picker: maximum, in: app)
     XCUIDevice.shared.orientation = .landscapeLeft
     var previousFrames: [CGRect] = []
     var stableReadings = 0
@@ -211,6 +214,17 @@ final class SettingsSupportJourneyTests: XCTestCase {
   private func waitUntilEnabled(_ element: XCUIElement) {
     let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: element)
     XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 5), .completed)
+  }
+
+  private func selectMaximumTextSize(_ name: String, picker: XCUIElement, in app: XCUIApplication) {
+    picker.tap()
+    let choice = app.buttons[name].firstMatch
+    XCTAssertTrue(choice.waitForExistence(timeout: 3))
+    choice.tap()
+    let changed = XCTNSPredicateExpectation(
+      predicate: NSPredicate(format: "value == %@", name), object: picker
+    )
+    XCTAssertEqual(XCTWaiter.wait(for: [changed], timeout: 5), .completed)
   }
 
   private func launch(screen: String, extra: [String] = []) -> XCUIApplication {
