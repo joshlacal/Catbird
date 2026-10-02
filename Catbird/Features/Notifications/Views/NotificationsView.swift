@@ -5,6 +5,7 @@ import Petrel
 import SwiftUI
 
 struct NotificationsView: View {
+  @Environment(SceneNavigationContext.self) private var sceneContext
   @Environment(AppState.self) private var appState: AppState
   @Environment(\.horizontalSizeClass) private var hSizeClass
   @State private var viewModel: NotificationsViewModel
@@ -29,7 +30,7 @@ struct NotificationsView: View {
   }
 
   var body: some View {
-    let navigationPathBinding = appState.navigationManager.pathBinding(for: 2)
+    let navigationPathBinding = sceneContext.navigationManager.pathBinding(for: 2)
 
     return navigationStack(using: navigationPathBinding)
     .onChange(of: lastTappedTab) { _, newValue in
@@ -239,7 +240,7 @@ struct NotificationsView: View {
 
   @ViewBuilder
   private var notificationsList: some View {
-    let navigationPath = appState.navigationManager.pathBinding(for: 2)
+    let navigationPath = sceneContext.navigationManager.pathBinding(for: 2)
     let indexedGroups = Array(viewModel.groupedNotifications.enumerated())
 
     ScrollViewReader { _ in
@@ -1008,11 +1009,12 @@ struct NotificationMediaThumbnail: View {
 }
 
 struct AvatarStack: View {
+  @Environment(SceneNavigationContext.self) private var sceneContext
   let notifications: [AppBskyNotificationListNotifications.Notification]
   @Environment(AppState.self) private var appState: AppState
 
   var body: some View {
-    let navigationPath = appState.navigationManager.pathBinding(for: 2)
+    let navigationPath = sceneContext.navigationManager.pathBinding(for: 2)
 
     HStack(spacing: 3) {
       ForEach(0..<min(3, notifications.count), id: \.self) { index in
