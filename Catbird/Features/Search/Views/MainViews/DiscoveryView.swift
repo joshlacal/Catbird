@@ -24,7 +24,7 @@ struct DiscoveryView: View {
     @State private var showInviteScanner = false
     var body: some View {
         ScrollView {
-            VStack(spacing: DesignTokens.Spacing.section) {
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.sectionLarge) {
                 // SRCH-015: Saved Searches Section
                 if !viewModel.savedSearches.isEmpty {
                     SavedSearchesSection(
@@ -61,8 +61,7 @@ struct DiscoveryView: View {
                     )
                 }
                 // Trending topics (G06)
-                if !viewModel.trendingTopics.isEmpty, 
-                   let client = appState.atProtoClient,
+                if let client = appState.atProtoClient,
                    appState.appSettings.showTrendingTopics {
                     TrendingTopicsSection(
                         topics: viewModel.trendingTopics,
@@ -78,11 +77,11 @@ struct DiscoveryView: View {
                 }
                 
                 // Trending videos (G03)
-                if !viewModel.trendingVideos.isEmpty,
-                   appState.atProtoClient != nil,
+                if appState.atProtoClient != nil,
                    appState.appSettings.showTrendingVideos {
                     TrendingVideosSection(
                         videos: viewModel.trendingVideos,
+                        isLoading: viewModel.isTrendingVideosLoading,
                         onSelectPost: { post in
                             path.append(NavigationDestination.post(post.uri))
                         },
@@ -122,7 +121,7 @@ struct DiscoveryView: View {
             .padding(.top, DesignTokens.Spacing.lg)
             .padding(.bottom, DesignTokens.Spacing.section)
         }
-        .background(Color.dynamicGroupedBackground(appState.themeManager, currentScheme: colorScheme))
+        .background(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))
         .scrollDismissesKeyboard(.immediately)
         .refreshable {
             guard let client = appState.atProtoClient else { return }
@@ -146,111 +145,71 @@ struct DiscoveryView: View {
         }
     }
     
-    // SRCH-007: Quick Actions for common searches
-    @ViewBuilder
     private var quickActionsSection: some View {
+        DiscoveryToolsSection(
+            onFindFriends: { showSuggestedProfiles = true },
+            onInviteFriends: { showInviteFriends = true },
+            onScanQR: { showInviteScanner = true },
+            onExploreFeeds: { showAddFeedSheet = true },
+            onOpenTopics: { showAllTrendingTopics = true }
+        )
+    }
+}
+
+/// The tools are navigation shortcuts rather than search queries.
+struct DiscoveryToolsSection: View {
+    let onFindFriends: () -> Void
+    let onInviteFriends: () -> Void
+    let onScanQR: () -> Void
+    let onExploreFeeds: () -> Void
+    let onOpenTopics: () -> Void
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    var body: some View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.base) {
-            HStack(spacing: 6) {
-                Image(systemName: "sparkles")
-                    .appFont(AppTextRole.subheadline)
-                    .foregroundColor(.accentColor)
-                
-                Text("Quick Searches")
-                    .appFont(.customSystemFont(size: 17, weight: .bold, width: 120, relativeTo: .headline))
+            DiscoverySectionHeader("Explore More", subtitle: "People, feeds, and ways to connect.") {}
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: dynamicTypeSize.isAccessibilitySize ? 280 : 250), spacing: DesignTokens.Spacing.base)],
+                alignment: .leading,
+                spacing: 0
+            ) {
+                tool("Find Friends", detail: "Discover people to follow", icon: "person.2", action: onFindFriends)
+                tool("Invite Friends", detail: "Share your invite card", icon: "person.badge.plus", action: onInviteFriends)
+                tool("Scan QR", detail: "Open a profile from its code", icon: "qrcode.viewfinder", action: onScanQR)
+                tool("Custom Feeds", detail: "Explore curated feeds", icon: "rectangle.on.rectangle.angled", action: onExploreFeeds)
+                tool("All Trending Topics", detail: "Browse the latest conversations", icon: "chart.line.uptrend.xyaxis", action: onOpenTopics)
             }
-            .padding(.horizontal)
-            
-            LazyVGrid(columns: [
-                GridItem(.flexible(), spacing: 12),
-                GridItem(.flexible(), spacing: 12)
-            ], spacing: 12) {
-                quickActionButton(
-                    icon: "person.2.fill",
-                    title: "Find Friends",
-                    description: "Discover people to follow",
-                    color: .blue
-                ) {
-                    showSuggestedProfiles = true
-                }
-                
-                quickActionButton(
-                    icon: "person.badge.plus",
-                    title: "Invite Friends",
-                    description: "Share your invite card",
-                    color: .green
-                ) {
-                    showInviteFriends = true
-                }
-                
-                quickActionButton(
-                    icon: "qrcode.viewfinder",
-                    title: "Scan QR",
-                    description: "Scan profile QR codes",
-                    color: .teal
-                ) {
-                    showInviteScanner = true
-                }
-                
-                quickActionButton(
-                    icon: "rectangle.on.rectangle.angled",
-                    title: "Custom Feeds",
-                    description: "Explore curated feeds",
-                    color: .purple
-                ) {
-                    showAddFeedSheet = true
-                }
-                
-                quickActionButton(
-                    icon: "chart.line.uptrend.xyaxis",
-                    title: "What's Trending",
-                    description: "See popular topics",
-                    color: .orange
-                ) {
-                    showAllTrendingTopics = true
-                }
-            }
-            .padding(.horizontal)
         }
     }
-    
-    @ViewBuilder
-    private func quickActionButton(
-        icon: String,
-        title: String,
-        description: String,
-        color: Color,
-        action: @escaping () -> Void
-    ) -> some View {
+
+    private func tool(_ title: String, detail: String, icon: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Image(systemName: icon)
-                        .appFont(AppTextRole.title3)
-                        .foregroundColor(color)
-                        .frame(width: 40, height: 40)
-                        .background(
-                            Circle()
-                                .fill(color.opacity(0.15))
-                        )
-                    
-                    Spacer()
+            HStack(alignment: .center, spacing: DesignTokens.Spacing.base) {
+                Image(systemName: icon)
+                    .appFont(AppTextRole.title3)
+                    .foregroundStyle(Color.accentColor)
+                    .frame(width: 32)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+                    Text(title)
+                        .appFont(AppTextRole.body.weight(.medium))
+                        .foregroundStyle(.primary)
+                    Text(detail)
+                        .appFont(AppTextRole.subheadline)
+                        .foregroundStyle(.secondary)
                 }
-                
-                Text(title)
-                    .appFont(AppTextRole.subheadline.weight(.semibold))
-                    .foregroundColor(Color.dynamicText(appState.themeManager, style: .primary, currentScheme: colorScheme))
-                    .lineLimit(1)
-                
-                Text(description)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                Image(systemName: "chevron.right")
                     .appFont(AppTextRole.caption)
-                    .foregroundColor(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
-                    .lineLimit(2)
+                    .foregroundStyle(.tertiary)
             }
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.elevatedBackground(appState.themeManager, elevation: .low, currentScheme: colorScheme))
-            .cornerRadius(12)
-            .shadow(color: Color.dynamicShadow(appState.themeManager, currentScheme: colorScheme), radius: 4, y: 2)
+            .multilineTextAlignment(.leading)
+            .padding(.horizontal, 16)
+            .padding(.vertical, DesignTokens.Spacing.base)
+            .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
+            .contentShape(Rectangle())
+            .overlay(alignment: .bottom) { Divider() }
         }
         .buttonStyle(.plain)
     }
