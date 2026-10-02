@@ -607,7 +607,10 @@ struct VideoFeedPageOverlays<Status: View, Footer: View>: View {
   var body: some View {
     ViewThatFits(in: .vertical) {
       VideoFeedOverlayLayout {
-        status()
+        // LayoutSubviews omits EmptyView and false conditional branches. Keep
+        // the status slot structurally present after playback starts or when
+        // moderation hides it, without adding a hit-test surface.
+        ZStack { status() }
         footer()
       }
       .frame(maxWidth: .infinity, maxHeight: .infinity)

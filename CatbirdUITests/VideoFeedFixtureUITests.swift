@@ -89,7 +89,10 @@ final class VideoFeedFixtureUITests: XCTestCase {
     capture("Playback retry above landscape footer, accessibility: \(accessibility)", app: app)
     retry.tap()
     XCTAssertTrue(retry.wait(for: \.exists, toEqual: false, timeout: 4))
-    XCTAssertTrue(app.buttons["videoLike"].firstMatch.isHittable)
+    assertControlsFit(app)
+    let author = app.descendants(matching: .any)["videoFixtureAuthor"].firstMatch
+    XCTAssertTrue(app.frame.contains(author.frame))
+    capture("Playback recovered with contained footer, accessibility: \(accessibility)", app: app)
     app.terminate()
   }
 
