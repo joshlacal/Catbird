@@ -26,3 +26,17 @@ python3 scripts/notifications/negative_controls.py --output /tmp/catbird-notific
 ```
 
 This copies only the production source into two external fixtures, records the deliberate mutations, and requires the selected tests to fail with assertions after a successful build. One control removes master-setting guards; the other removes snapshot and rollback mirror synchronization. `results.json` records whether both controls were detected. Production sources are never modified.
+
+## Notification list policy, cache and pagination
+
+The separate policy harness preserves the first harness and its receipts:
+
+```sh
+python3 scripts/notifications/prepare_policy_tests.py --output scripts/notifications/_harness-policy
+```
+
+It adds the current `NotificationListVisibilityPolicy.swift`, the actual twelve `NotificationListVisibilityPolicyTests.swift` tests, and fifteen exact spans from `NotificationsViewModel.swift`. The only edits to the policy and its app test file are import substitutions for the generated test module. The manifest records and verifies equal hashes of the original and generated test bodies after removing imports.
+
+The additional view-model tests exercise the real computed projection, raw group cache, load/fetch/refresh methods, grouping, and via-repost subject helper. They check Observation invalidation after live preference changes and rollback, restoration of hidden cached rows without refetch, raw cursor progression through fully filtered pages, bounded automatic filling, repeated-cursor termination, replacing the old cursor chain on refresh, and grouping via-repost events by their original post rather than a shared repost reference.
+
+This package retains the original eighteen preference tests. The generated fake DTO/API surface is extended locally for notification rows and list requests; the original fake file and first-harness outputs stay unchanged. Only external post hydration and follow-record lookup are inert in the extracted view model. SwiftUI rendering, real Petrel decoding, navigation, device notification delivery, and MLS behavior still require their respective app and integration checks.

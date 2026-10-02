@@ -131,7 +131,14 @@ private actor FollowRecordCreatedAtCacheActor {
 @Observable final class NotificationsViewModel {
   // MARK: - Properties
 
-  private(set) var groupedNotifications: [GroupedNotification] = []
+  // Retain every fetched member so preference edits and rollback can restore hidden rows.
+  private var unfilteredGroupedNotifications: [GroupedNotification] = []
+  var groupedNotifications: [GroupedNotification] {
+    NotificationListVisibilityPolicy.visibleGroups(
+      unfilteredGroupedNotifications,
+      preferences: notificationManager?.preferences ?? NotificationPreferences()
+    )
+  }
   private(set) var isLoading = false
   private(set) var isRefreshing = false
   private(set) var isLoadingMore = false
@@ -180,6 +187,7 @@ private actor FollowRecordCreatedAtCacheActor {
   private let followRecordCreatedAtCache = FollowRecordCreatedAtCacheActor()
 
   private let client: ATProtoClient?
+  @ObservationIgnored private let notificationManager: NotificationManager?
   private let logger = Logger(subsystem: "blue.catbird", category: "NotificationsViewModel")
 
   // Add a new enum for filter types
@@ -202,8 +210,9 @@ private actor FollowRecordCreatedAtCacheActor {
 
   // MARK: - Initialization
 
-  init(client: ATProtoClient?) {
+  init(client: ATProtoClient?, notificationManager: NotificationManager? = nil) {
     self.client = client
+    self.notificationManager = notificationManager
   }
 
   // MARK: - Public Methods
@@ -297,8 +306,8 @@ private actor FollowRecordCreatedAtCacheActor {
     guard filter != currentFilter else { return }
 
     currentFilter = filter
-    // Clear notifications to show filtered view immediately
-    groupedNotifications = []
+    // Cached groups belong to the prior reason filter and cursor chain.
+    unfilteredGroupedNotifications = []
     await refreshNotifications()
   }
   
@@ -362,23 +371,10 @@ private actor FollowRecordCreatedAtCacheActor {
         guard !Task.isCancelled else { return }
         self.currentPage = nextPage
         if resetCursor {
-          if self.groupedNotifications.isEmpty {
-            // Initial load, just set the notifications
-            self.groupedNotifications = newGroupedNotifications
-          } else {
-            // Refresh - merge with existing notifications
-            // Take the first page of new notifications
-            let newFirstPage = newGroupedNotifications
-
-            // Keep all notifications beyond the first page
-            let existingLaterPages = self.groupedNotifications.filter { $0.pageNumber > 0 }
-
-            // Combine new first page with existing later pages
-            self.groupedNotifications = newFirstPage + existingLaterPages
-          }
+          // A refresh starts a new cursor chain; old later pages must not be appended again.
+          self.unfilteredGroupedNotifications = newGroupedNotifications
         } else {
-          // Simply append the new notifications for pagination
-          self.groupedNotifications.append(contentsOf: newGroupedNotifications)
+          self.unfilteredGroupedNotifications.append(contentsOf: newGroupedNotifications)
         }
 
         self.cursor = output.cursor
@@ -492,8 +488,10 @@ private actor FollowRecordCreatedAtCacheActor {
         let key: String
 
         switch type {
-        case .like, .repost, .likeViaRepost, .repostViaRepost, .feedgenLike:
+        case .like, .repost, .feedgenLike:
           key = "\(type.rawValue)_\(notification.reasonSubject?.uriString() ?? "")"
+        case .likeViaRepost, .repostViaRepost:
+          key = "\(type.rawValue)_\(Self.viaRepostGroupingSubject(for: notification))"
         case .starterpackJoined:
           key = "\(type.rawValue)_\(notification.reasonSubject?.uriString() ?? "")"
         case .follow:
@@ -596,6 +594,22 @@ private actor FollowRecordCreatedAtCacheActor {
     return groupedNotifications.sorted {
       $0.latestNotification.indexedAt.date > $1.latestNotification.indexedAt.date
     }
+  }
+
+  /// Match the hydrated original post, even when the server omits reasonSubject.
+  static func viaRepostGroupingSubject(
+    for notification: AppBskyNotificationListNotifications.Notification
+  ) -> String {
+    if case .knownType(let record) = notification.record {
+      if let like = record as? AppBskyFeedLike {
+        return like.subject.uri.uriString()
+      }
+      if let repost = record as? AppBskyFeedRepost {
+        return repost.subject.uri.uriString()
+      }
+    }
+    return notification.reasonSubject?.uriString()
+      ?? "\(notification.uri.uriString())_\(notification.cid)"
   }
 
   static func classifyFollowNotification(

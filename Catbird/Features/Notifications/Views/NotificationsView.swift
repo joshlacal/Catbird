@@ -22,7 +22,10 @@ struct NotificationsView: View {
   init(appState: AppState, selectedTab: Binding<Int>, lastTappedTab: Binding<Int?>) {
     self._selectedTab = selectedTab
     self._lastTappedTab = lastTappedTab
-    _viewModel = State(wrappedValue: NotificationsViewModel(client: appState.atProtoClient))
+    _viewModel = State(wrappedValue: NotificationsViewModel(
+      client: appState.atProtoClient,
+      notificationManager: appState.notificationManager
+    ))
   }
 
   var body: some View {
@@ -198,6 +201,10 @@ struct NotificationsView: View {
         .enhancedAppSubheadline()
         .foregroundColor(.secondary)
 
+      if viewModel.hasMoreNotifications {
+        loadMoreFilteredNotificationsButton
+      }
+
       Button(action: {
         Task {
           await viewModel.refreshNotifications()
@@ -213,6 +220,21 @@ struct NotificationsView: View {
       .padding(.top, 8)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
+  }
+
+  private var loadMoreFilteredNotificationsButton: some View {
+    Button {
+      Task { await viewModel.loadMoreNotifications() }
+    } label: {
+      if viewModel.isLoadingMore {
+        ProgressView()
+      } else {
+        Text("Load more")
+      }
+    }
+    .buttonStyle(.bordered)
+    .disabled(viewModel.isLoadingMore)
+    .accessibilityIdentifier("notifications.loadMoreFiltered")
   }
 
   @ViewBuilder
