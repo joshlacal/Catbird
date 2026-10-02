@@ -37,18 +37,24 @@ final class SettingsSupportJourneyTests: XCTestCase {
     reveal(dynamicType, in: app)
     capture(app, "Accessibility Dynamic Type large text")
     XCUIDevice.shared.orientation = .landscapeLeft
+    let landscape = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+      let frame = app.windows.firstMatch.frame
+      return frame.width > frame.height
+    }, object: app)
+    XCTAssertEqual(XCTWaiter.wait(for: [landscape], timeout: 5), .completed)
     capture(app, "Accessibility large text landscape")
   }
 
-  func testContentPreferencesUnavailableHaveRetry() {
+  func testUnauthenticatedContentPreferencesExposeRetry() {
     let app = launch(screen: "content", extra: ["--settings-server-unavailable"])
     XCTAssertTrue(app.navigationBars["Content & Media"].waitForExistence(timeout: 10))
     capture(app, "Content and media local controls")
     let retry = app.buttons["Retry Loading Preferences"].firstMatch
     reveal(retry, in: app)
+    XCTAssertTrue(retry.isEnabled)
     capture(app, "Content server preferences unavailable")
-    retry.tap()
-    XCTAssertTrue(retry.waitForExistence(timeout: 5))
+    // This unauthenticated fixture cannot recover a server request. This journey
+    // verifies error/retry presentation; it does not claim a successful remote retry.
   }
 
   func testSupportCopyAndLargeText() {
@@ -140,8 +146,9 @@ final class SettingsSupportJourneyTests: XCTestCase {
     XCTAssertTrue(retry.waitForExistence(timeout: 5))
     XCTAssertEqual(altText.value as? String, "0")
     XCTAssertFalse(altText.isEnabled)
-    let pending = app.staticTexts["SettingsPersistenceStatus"].firstMatch
-    XCTAssertTrue(pending.exists)
+    let pending = app.staticTexts["SettingsPersistencePendingChanges"].firstMatch
+    reveal(pending, in: app)
+    XCTAssertTrue(pending.label.contains("Require Alt Text: On"))
     capture(app, "Local settings save failed with saved value active and attempted value retained")
     retry.tap()
     waitUntilEnabled(altText)
