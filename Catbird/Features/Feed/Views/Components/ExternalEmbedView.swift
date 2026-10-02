@@ -33,6 +33,8 @@ struct ExternalEmbedView: View {
     @Environment(\.appSettings) private var appSettings
     @ObservationIgnored @Environment(AppState.self) private var appState
     @Environment(\.openURL) private var openURL
+    @Environment(\.containerViewportSize) private var containerViewportSize
+    @State private var hostingWindowSize = CGSize.zero
     @State private var videoModel: VideoModel?
     @State private var gifError: String?
     @State private var isLoadingGif: Bool = false
@@ -140,6 +142,22 @@ struct ExternalEmbedView: View {
         external.uri.url ?? URL(string: external.uri.uriString())
     }
     
+    private var mediaMaximumHeight: CGFloat {
+        #if os(iOS)
+        ContainerLayoutMetrics.externalMediaHeight(viewportHeight: containerViewportSize?.height ?? hostingWindowSize.height)
+        #else
+        min(PlatformScreenInfo.height * 0.6, 500)
+        #endif
+    }
+
+    private var viewportReader: some View {
+        #if os(iOS)
+        WindowViewportReader { hostingWindowSize = $0 }
+        #else
+        EmptyView()
+        #endif
+    }
+
     var body: some View {
         Group {
             if shouldShowExternalEmbed(for: external.uri) {
@@ -162,6 +180,7 @@ struct ExternalEmbedView: View {
                 blockedExternalMediaView
             }
         }
+        .background(viewportReader)
         .confirmationDialog(
             "Enable \(pendingConsentProvider?.displayName ?? "External Media")?",
             isPresented: $showingConsentDialog,
@@ -230,7 +249,7 @@ struct ExternalEmbedView: View {
         }
         .aspectRatio(gifAspectRatio, contentMode: .fit)
         .frame(maxWidth: .infinity)
-        .frame(maxHeight: min(PlatformScreenInfo.height * 0.6, 500))
+        .frame(maxHeight: mediaMaximumHeight)
         .clipShape(RoundedRectangle(cornerRadius: 3))
     }
 
@@ -258,7 +277,7 @@ struct ExternalEmbedView: View {
         }
         .aspectRatio(gifAspectRatio, contentMode: .fit)
         .frame(maxWidth: .infinity)
-        .frame(maxHeight: min(PlatformScreenInfo.height * 0.6, 500))
+        .frame(maxHeight: mediaMaximumHeight)
         .clipShape(RoundedRectangle(cornerRadius: 3))
     }
     
@@ -271,7 +290,7 @@ struct ExternalEmbedView: View {
         )
         .aspectRatio(videoModel.aspectRatio, contentMode: .fit)
         .frame(maxWidth: .infinity)
-        .frame(maxHeight: min(PlatformScreenInfo.height * 0.6, 500))
+        .frame(maxHeight: mediaMaximumHeight)
         .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)
         .clipShape(RoundedRectangle(cornerRadius: 3))
     }

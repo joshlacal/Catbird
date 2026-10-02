@@ -135,7 +135,7 @@ struct DrawerPanGesture: UIGestureRecognizerRepresentable {
 struct SideDrawer<Content: View, DrawerContent: View>: View {
   let content: Content
   let drawer: DrawerContent
-  let drawerWidth: CGFloat
+  let drawerWidth: CGFloat?
   @Binding private var selectedTab: Int
   @Binding private var isDrawerOpen: Bool
   @Binding private var isRootView: Bool
@@ -162,9 +162,8 @@ struct SideDrawer<Content: View, DrawerContent: View>: View {
     self._isRootView = isRootView
     self._isDrawerOpen = isDrawerOpen
 
-    // Single source of truth for drawer width — full-bleed on phones, a fixed
-    // panel on wider displays (see PlatformScreenInfo.responsiveDrawerWidth).
-    self.drawerWidth = drawerWidth ?? PlatformScreenInfo.responsiveDrawerWidth
+    // Resolve the default width from the receiving container during layout.
+    self.drawerWidth = drawerWidth
 
     self.content = content()
     self.drawer = drawer()
@@ -181,6 +180,7 @@ struct SideDrawer<Content: View, DrawerContent: View>: View {
   /// Progress of the drawer from closed (0) to fully open (1), accounting for
   /// the live drag translation.
   private func drawerProgress(width: CGFloat) -> CGFloat {
+    guard width > 0 else { return 0 }
     let base: CGFloat = isOpen ? width : 0
     let raw = base + dragOffset
     return min(max(raw / width, 0), 1)
@@ -188,7 +188,8 @@ struct SideDrawer<Content: View, DrawerContent: View>: View {
 
   var body: some View {
     GeometryReader { geometry in
-      let adaptiveDrawerWidth = min(self.drawerWidth, geometry.size.width)
+      let preferredWidth = drawerWidth ?? ContainerLayoutMetrics.drawerWidth(availableWidth: geometry.size.width)
+      let adaptiveDrawerWidth = max(0, min(preferredWidth, geometry.size.width))
       let progress = drawerProgress(width: adaptiveDrawerWidth)
       let drawerOffset = -adaptiveDrawerWidth * (1 - progress)
 
@@ -197,6 +198,7 @@ struct SideDrawer<Content: View, DrawerContent: View>: View {
         // the backdrop below applies a real UIKit backdrop blur over it instead
         // of a SwiftUI .blur, which re-rasterizes the whole feed every frame.
         content
+          .environment(\.containerViewportSize, geometry.size)
 
         DrawerDismissBackdrop(
           progress: progress,
@@ -211,6 +213,7 @@ struct SideDrawer<Content: View, DrawerContent: View>: View {
         // owns the separate concentric glass panels inside that frame.
         ConcentricLiquidGlassDrawer(surfaceStyle: .clear) {
           drawer
+            .environment(\.containerViewportSize, CGSize(width: adaptiveDrawerWidth, height: geometry.size.height))
             .environment(\.inSideDrawer, true)
             .background(Color.clear)
         }

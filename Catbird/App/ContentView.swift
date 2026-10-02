@@ -344,7 +344,7 @@ struct MainContentView: View {
   var body: some View {
     ZStack(alignment: .top) {
       #if os(iOS)
-      SideDrawer(selectedTab: $selectedTab, isRootView: $isRootView, isDrawerOpen: $isDrawerOpen, drawerWidth: PlatformScreenInfo.responsiveDrawerWidth) {
+      SideDrawer(selectedTab: $selectedTab, isRootView: $isRootView, isDrawerOpen: $isDrawerOpen) {
         ZStack(alignment: .bottomTrailing) {
           TabView(
             selection: Binding(

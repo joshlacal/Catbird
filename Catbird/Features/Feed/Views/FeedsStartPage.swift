@@ -44,6 +44,8 @@ struct FeedsStartPage: View {
   @Environment(\.modelContext) private var modelContext
   @Environment(\.horizontalSizeClass) private var sizeClass
   @Environment(\.colorScheme) private var colorScheme
+  @Environment(\.containerViewportSize) private var parentViewportSize
+  @State private var measuredContainerSize = CGSize.zero
   #if os(iOS)
   @Environment(\.inSideDrawer) private var inSideDrawer
   #else
@@ -115,25 +117,6 @@ struct FeedsStartPage: View {
   }
 
   // MARK: - Layout Calculations
-  private var safeAreaTop: CGFloat {
-#if os(iOS)
-    let window = UIApplication.shared.connectedScenes
-      .filter { $0.activationState == .foregroundActive }
-      .first(where: { $0 is UIWindowScene })
-      .flatMap { $0 as? UIWindowScene }?.windows
-      .first(where: { $0.isKeyWindow })
-
-    return window?.safeAreaInsets.top ?? 44
-#elseif os(macOS)
-    return 44  // Standard navigation bar height for macOS
-#endif
-  }
-  
-  private var navigationBarHeight: CGFloat {
-    // Standard navigation bar height + safe area top
-    return 44 + safeAreaTop
-  }
-  
   // Responsive banner height based on screen size and drawer width
   private var bannerHeight: CGFloat {
     // Container-driven banner height. Wide drawers (large iPad / Mac, where
@@ -145,7 +128,7 @@ struct FeedsStartPage: View {
     case ..<480: baseHeight = 190
     default: baseHeight = 220
     }
-    return min(baseHeight, screenHeight * 0.25)
+    return ContainerLayoutMetrics.bannerHeight(viewportHeight: viewportSize.height, preferredHeight: baseHeight)
   }
 
   // Interior insets for the profile row inside the banner. In the drawer the
@@ -166,10 +149,10 @@ struct FeedsStartPage: View {
   }
 
   // Sizing properties
-  private let screenHeight = PlatformScreenInfo.height
+  private var viewportSize: CGSize { parentViewportSize ?? measuredContainerSize }
   private let isIPad = PlatformDeviceInfo.isIPad
   private var drawerWidth: CGFloat {
-    PlatformScreenInfo.responsiveDrawerWidth
+    viewportSize.width
   }
   // Single threshold for the narrow (phone-width) vs. wide (iPad/Mac) drawer.
   private var isNarrowDrawer: Bool { drawerWidth < 360 }
@@ -1125,11 +1108,16 @@ struct FeedsStartPage: View {
   private var mainContent: some View {
     GeometryReader { geometry in
       let availableWidth = geometry.size.width
-      let contentWidth = min(availableWidth, drawerWidth)
+      let contentWidth = availableWidth
 
-      standardContent(contentWidth: contentWidth, topInset: min(geometry.safeAreaInsets.top, navigationBarHeight))
+      standardContent(contentWidth: contentWidth, topInset: max(0, geometry.safeAreaInsets.top))
     }
-    .frame(maxWidth: drawerWidth)
+    .onGeometryChange(for: CGSize.self) { geometry in
+      geometry.size
+    } action: { size in
+      measuredContainerSize = size
+    }
+    .frame(maxWidth: .infinity)
     .overlay {
       // Full-screen loading/initialization overlays
       loadingOverlay()
@@ -1145,7 +1133,7 @@ struct FeedsStartPage: View {
           // the mask stretches and stays pinned with the image.
           bannerHeaderView(topInset: topInset)
             .modifier(DrawerBannerInset())
-            .flexibleHeaderContent(height: 200 + topInset)
+            .flexibleHeaderContent(height: ContainerLayoutMetrics.bannerHeight(viewportHeight: viewportSize.height) + topInset)
             .background(inSideDrawer ? Color.clear : Color.accentColor.opacity(0.05))
 
           // Main content below the banner
