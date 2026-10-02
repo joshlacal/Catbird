@@ -472,7 +472,7 @@ struct ThreadReplyLayoutTests {
 
     let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
     let appState = AppState(userDID: "did:plc:testuser", client: client)
-    let postView = CircleTestFixtures.makePostView(
+    let postView = PublicPostTestFixtures.makePostView(
       uri: try ATProtocolURI(uriString: "at://did:plc:testuser/app.bsky.feed.post/reply1"),
       authorDID: try DID(didString: "did:plc:testuser"),
       text: "Optimistic reply"

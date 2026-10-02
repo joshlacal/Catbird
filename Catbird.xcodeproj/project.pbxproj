@@ -31,6 +31,9 @@
 		21DDE5EF2DF4EDAF009E9825 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 21196F102DC1115900662CC3 /* WidgetKit.framework */; platformFilters = (ios, macos, ); };
 		21DDE5F02DF4EDAF009E9825 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 21196F122DC1115900662CC3 /* SwiftUI.framework */; };
 		21E1082A2D70BE6F0030A71C /* OrderedCollections in Frameworks */ = {isa = PBXBuildFile; productRef = 21E108292D70BE6F0030A71C /* OrderedCollections */; };
+		B1A7E000000000000000000B /* CatbirdNotificationWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 21EBFE0A2EB53D9300E707B6 /* CatbirdNotificationWidgetExtension.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		B1A7E000000000000000000C /* CatbirdFeedWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 21EBFE0B2EB53D9300E707B6 /* CatbirdFeedWidgetExtension.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		B1A7E000000000000000000D /* SharedDraftImporter.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 21EBFE0C2EB53D9300E707B6 /* SharedDraftImporter.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -86,6 +89,9 @@
 			dstSubfolderSpec = 13;
 			files = (
 				212D4B462ED1FE740036E016 /* NotificationServiceExtension.appex in Embed Foundation Extensions */,
+				B1A7E000000000000000000D /* SharedDraftImporter.appex in Embed Foundation Extensions */,
+				B1A7E000000000000000000C /* CatbirdFeedWidgetExtension.appex in Embed Foundation Extensions */,
+				B1A7E000000000000000000B /* CatbirdNotificationWidgetExtension.appex in Embed Foundation Extensions */,
 			);
 			name = "Embed Foundation Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -132,21 +138,7 @@
 		21292B322F71F40C00DE8633 /* Exceptions for "CatbirdFeedWidget" folder in "CatbirdFeedWidgetExtension" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
-				AppIntent.swift,
-				Assets.xcassets,
-				CatbirdFeedWidget.swift,
-				CatbirdFeedWidgetBundle.swift,
-				Compose/ComposeWidget.swift,
-				FeedWidgetModels.swift,
-				LockScreen/LockScreenWidgets.swift,
-				Shared/AccountEntity.swift,
-				Shared/RefreshWidgetIntent.swift,
-				Shared/WidgetDataReader.swift,
-				Shared/WidgetDesignSystem.swift,
-				WidgetAvatarView.swift,
-				WidgetPostCard.swift,
-				WidgetThemeProvider.swift,
-				WidgetTypography.swift,
+				Info.plist,
 			);
 			target = 21DDE5ED2DF4EDAD009E9825 /* CatbirdFeedWidgetExtension */;
 		};
@@ -190,35 +182,74 @@
 		21A1B3C42F800000DEADBEEF /* Exceptions for "CatbirdTests" folder in "CatbirdTests" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				AppStateAuthorityModeParsingTests.swift,
 				AttributedStringBridgeTests.swift,
 				AuthenticationManagerActualTests.swift,
 				CatbirdTests.swift,
+				CircleDestinationTests.swift,
+				CircleFeedCacheIsolationTests.swift,
+				CircleFeedModelTests.swift,
+				CircleManagementViewModelTests.swift,
+				CircleMediaLoaderTests.swift,
+				CircleModerationTests.swift,
+				CircleNotificationTests.swift,
+				CircleServiceTests.swift,
+				CircleTestSupport.swift,
+				CleanChatAPIContractTests.swift,
+				ConversationPipelineGateTests.swift,
+				EncryptedRequestConcurrentOwnershipTests.swift,
+				EncryptedRequestDraftEntrypointTests.swift,
+				EncryptedRequestProtectedStorageTests.swift,
 				FeedCollectionUIUpdateLinkTests.swift,
 				FeedManagerActualTests.swift,
 				FeedManagerTests.swift,
 				FeedScrollIntegrationSimpleTests.swift,
 				LinkCreationTests.swift,
 				LinkCreationUITests.swift,
+				LiveEventServiceTests.swift,
+				LiveStatusValidationTests.swift,
 				MLSAPIClientTests.swift,
+				MLSBlockCoordinatorTests.swift,
+				MLSConversationCreationRetryTests.swift,
 				MLSConversationDetailViewModelTests.swift,
+				MLSConversationIdentityBoundaryTests.swift,
 				MLSConversationInitializationTests.swift,
 				MLSConversationManagerTests.swift,
 				MLSCryptoTests.swift,
+				MLSGroupAvatarImageTests.swift,
+				MLSImageCacheIsolationTests.swift,
+				MLSImageCacheTests.swift,
+				MLSInitialLifecycleCoordinatorTests.swift,
+				MLSInitializationWaiterTests.swift,
 				MLSKeyCleanupTests.swift,
+				MLSKeychainManagerTests.swift,
+				MLSMessageDisplayOrderTests.swift,
+				MLSMessageObservationTests.swift,
 				MLSMessageOrderingTests.swift,
 				MLSModerationAPITests.swift,
 				MLSModerationIntegrationTests.swift,
+				MLSNewConversationViewModelTests.swift,
+				MLSPendingSendTests.swift,
+				MLSProjectionPoolRebindTests.swift,
 				MLSRecoveryTests.swift,
+				MLSSendBlockingTests.swift,
 				MLSStorageTests.swift,
+				MLSSuspensionCloseCoordinatorTests.swift,
+				MLSSystemMessageAdapterTests.swift,
+				MacOSMessageRequestsTests.swift,
+				MacOSSceneDeactivationTests.swift,
+				MessageDeliveryStateTests.swift,
+				NotificationServiceRequestPreviewTests.swift,
 				NotificationThumbnailTests.swift,
 				PostComposerAccessibilityTests.swift,
 				PostComposerFixesTests.swift,
 				PostComposerIntegrationTests.swift,
+				RejoinStatusPresentationTests.swift,
 				ThreadScrollPositionTrackerTests.swift,
 				TopicSummaryServiceTests.swift,
-				UnifiedScrollPreservationTests.swift,
 				URLHandlerActualTests.swift,
 				URLHandlerTests.swift,
+				UnifiedScrollPreservationTests.swift,
 			);
 			target = 212E94102D60132A00D3E1DD /* CatbirdTests */;
 		};
@@ -244,6 +275,15 @@
 				Services/MLS/IMPLEMENTATION_COMPLETE.md,
 			);
 			target = 212E93FC2D60132700D3E1DD /* Catbird */;
+		};
+		B1A7E0000000000000000010 /* Exceptions for "CatbirdUITests" folder in "CatbirdUITests" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				CirclesUITests.swift,
+				MLSChatModerationUITests.swift,
+				MLSEncryptedRequestUITests.swift,
+			);
+			target = 212E941A2D60132A00D3E1DD /* CatbirdUITests */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
@@ -292,6 +332,9 @@
 		};
 		212E941E2D60132A00D3E1DD /* CatbirdUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				B1A7E0000000000000000010 /* Exceptions for "CatbirdUITests" folder in "CatbirdUITests" target */,
+			);
 			path = CatbirdUITests;
 			sourceTree = "<group>";
 		};
@@ -578,6 +621,9 @@
 			buildRules = (
 			);
 			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				21292B272F71F40C00DE8633 /* CatbirdFeedWidget */,
 			);
 			name = CatbirdFeedWidgetExtension;
 			productName = CatbirdFeedWidgetExtension;

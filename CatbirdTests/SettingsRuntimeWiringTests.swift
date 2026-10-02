@@ -128,85 +128,6 @@ struct SettingsRuntimeWiringTests {
     #expect(!taskBody.contains("loggedOutVisibility = appState.appSettings.loggedOutVisibility"))
   }
 
-  @Test("Retention cleanup scans every conversation and keeps one replaceable worker")
-  func retentionCoordinatorLifecycle() async {
-    let probe = RetentionCoordinatorProbe()
-    let coordinator = MLSEpochRetentionCleanupCoordinator()
-    let scan: MLSEpochRetentionCleanupCoordinator.Scan = {
-      await probe.recordScan()
-      return [
-        .init(conversationID: "one", currentEpoch: 3),
-        .init(conversationID: "two", currentEpoch: 7),
-      ]
-    }
-    let cleanup: MLSEpochRetentionCleanupCoordinator.Cleanup = { conversationID, epoch in
-      await probe.recordCleanup(conversationID: conversationID, epoch: epoch)
-    }
-    let wait: MLSEpochRetentionCleanupCoordinator.Wait = { _ in
-      try await Task.sleep(for: .seconds(3_600))
-    }
-
-    await coordinator.restart(interval: .seconds(60), scan: scan, cleanup: cleanup, wait: wait)
-    await probe.waitForCleanupCount(2)
-    await coordinator.restart(interval: .seconds(60), scan: scan, cleanup: cleanup, wait: wait)
-    await probe.waitForCleanupCount(4)
-
-    let running = await coordinator.status()
-    #expect(running.activeWorkerCount == 1)
-    #expect(running.startedWorkerCount == 2)
-    #expect(running.cancelledWorkerCount == 1)
-    #expect(await probe.cleanups == ["one:3", "two:7", "one:3", "two:7"])
-
-    await coordinator.stop()
-    let stopped = await coordinator.status()
-    #expect(stopped.activeWorkerCount == 0)
-    #expect(stopped.cancelledWorkerCount == 2)
-  }
-
-  @Test("Account switch and logout use the retention-stopping MLS teardown")
-  func retentionStopsForSwitchAndLogout() throws {
-    let appState = try coreStateSource(named: "AppState.swift")
-    let resetBody = try sourceSlice(
-      appState,
-      from: "func prepareMLSStorageReset() async {",
-      through: "func stopMLSStreams()"
-    )
-    #expect(resetBody.contains("await mlsEpochRetentionCleanupCoordinator.stop()"))
-
-    let manager = try coreStateSource(named: "AppStateManager.swift")
-    let transitionBody = try sourceSlice(
-      manager,
-      from: "func transitionToAuthenticated(userDID: String, previousUserDID: String? = nil)",
-      through: "func logout(isManual: Bool = true) async"
-    )
-    #expect(transitionBody.contains("await previousAppState.prepareMLSStorageReset()"))
-
-    let switchBody = try sourceSlice(
-      manager,
-      from: "private func performSwitchAccount(",
-      through: "func removeAccount("
-    )
-    #expect(
-      switchBody.contains(
-        "transitionToAuthenticated(userDID: userDID, previousUserDID: previousUserDID)"
-      )
-    )
-
-    let logoutBody = try sourceSlice(
-      manager,
-      from: "func logout(isManual: Bool = true) async {",
-      through: "// MARK: - Account Management"
-    )
-    #expect(logoutBody.contains("await currentState.prepareMLSStorageReset()"))
-    let shutdownRange = try #require(
-      logoutBody.range(of: "await currentState.prepareMLSStorageReset()")
-    )
-    let authRange = try #require(
-      logoutBody.range(of: "await authManager.logout(isManual: isManual)")
-    )
-    #expect(shutdownRange.lowerBound < authRange.lowerBound)
-  }
-
   @Test("Display-only settings expose deterministic predicates")
   func displayPredicates() {
     #expect(PostLanguageIndicators.shouldShow(isEnabled: true, languageCount: 1))
@@ -236,73 +157,6 @@ struct SettingsRuntimeWiringTests {
         == ["porn", "graphic-media", "!no-unauthenticated"]
     )
   }
-
-  @Test("Circles is shipped and the feed entry has no private local rollout gate")
-  func circlesEntryIsAlwaysDiscoverable() throws {
-    let flags = try repositorySource(
-      components: ["Catbird", "Core", "Settings", "CircleFeatureFlags.swift"]
-    )
-    let feeds = try repositorySource(
-      components: ["Catbird", "Features", "Feed", "Views", "FeedsStartPage.swift"]
-    )
-    #expect(!flags.contains("feature.circles.enabled"))
-    #expect(!flags.contains("localFlag"))
-    #expect(!feeds.contains("if CircleFeatureFlags.localFlag"))
-  }
-
-  @Test("Circle capability check goes directly to the public standalone AppView")
-  func circleCapabilityCheckBypassesGatewayAndPDSProxy() throws {
-    let service = try repositorySource(
-      components: [
-        "Catbird", "Features", "Circles", "Services", "CircleService.swift",
-      ]
-    )
-    let capabilityBody = try sourceSlice(
-      service,
-      from: "func capabilities() async throws -> CircleCapability {",
-      through: "func listCircles(cursor:"
-    )
-    #expect(capabilityBody.contains("CircleConfiguration.appViewBaseURL"))
-    #expect(!capabilityBody.contains("client.blue.catbird.circle.getCapabilities"))
-  }
-
-  @Test("Opening Circles automatically starts separate AppView authorization when required")
-  func circlesFirstOpenStartsAppViewAuthorization() throws {
-    let view = try repositorySource(
-      components: [
-        "Catbird", "Features", "Circles", "Views", "CirclesFeedView.swift",
-      ]
-    )
-    #expect(view.contains("await authorizeCircles(model: newModel)"))
-    #expect(view.contains("guard newModel.accessState == .needsAuthorization"))
-  }
-
-  @Test("AuthManager purges the Circle cache on logout, switch, and removal")
-  func authManagerPurgesCircleCache() throws {
-    let manager = try coreStateSource(named: "AuthManager.swift")
-
-    let logoutBody = try sourceSlice(
-      manager,
-      from: "func logout(isManual: Bool = false) async {",
-      through: "// Note: AppStateManager calls this method"
-    )
-    #expect(logoutBody.contains("CircleFeedCache.shared.purge(accountDID:"))
-
-    let switchBody = try sourceSlice(
-      manager,
-      from: "func switchToAccount(did: String) async throws {",
-      through: "/// Add a new account"
-    )
-    #expect(switchBody.contains("CircleFeedCache.shared.purge(accountDID:"))
-
-    let removeBody = try sourceSlice(
-      manager,
-      from: "func removeAccount(did: String) async {",
-      through: "/// Get list of all available accounts"
-    )
-    #expect(removeBody.contains("CircleFeedCache.shared.purge(accountDID:"))
-  }
-
 
   @Test("Change handle wires to progressive JIT identity:handle and supports service and custom domains")
   func changeHandleWiring() throws {
@@ -511,19 +365,3 @@ private enum SettingsRuntimeSourceError: Error {
   case missingBoundary
 }
 
-private actor RetentionCoordinatorProbe {
-  private(set) var cleanups: [String] = []
-  private var scanCount = 0
-
-  func recordScan() { scanCount += 1 }
-
-  func recordCleanup(conversationID: String, epoch: Int64) {
-    cleanups.append("\(conversationID):\(epoch)")
-  }
-
-  func waitForCleanupCount(_ count: Int) async {
-    while cleanups.count < count {
-      await Task.yield()
-    }
-  }
-}

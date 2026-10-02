@@ -79,29 +79,19 @@ struct MessageRequestPresentationTests {
     #expect(format(400 * 24 * 60 * 60).contains("2025"))
   }
 
-  @Test("MLS receivedAt timestamps parse with and without fractional seconds")
-  func parsesTimestamps() {
-    #expect(MessageRequestPresentation.parseTimestamp("2026-09-27T12:00:00Z") != nil)
-    #expect(MessageRequestPresentation.parseTimestamp("2026-09-27T12:00:00.123Z") != nil)
-    #expect(MessageRequestPresentation.parseTimestamp("yesterday") == nil)
-  }
-
   // MARK: - Sections
 
-  @Test("Sections keep provider order and hide empty providers")
+  @Test("Sections show Bluesky requests and hide the empty section")
   func sectionsHideEmpty() {
     let bluesky = item(id: "bsky:1", origin: .bluesky(convoID: "1"))
-    let encrypted = item(id: "mls:2", origin: .encryptedDirect(conversationID: "2"))
-    #expect(MessageRequestPresentation.sections(bluesky: [bluesky], encrypted: [encrypted]).map(\.source)
-      == [.bluesky, .encrypted])
-    #expect(MessageRequestPresentation.sections(bluesky: [], encrypted: [encrypted]).map(\.source) == [.encrypted])
-    #expect(MessageRequestPresentation.sections(bluesky: [], encrypted: []).isEmpty)
+    #expect(MessageRequestPresentation.sections(bluesky: [bluesky]).map(\.source) == [.bluesky])
+    #expect(MessageRequestPresentation.sections(bluesky: []).isEmpty)
   }
 
   @Test("Rows without a real sender never show a DID and cannot be moderated")
   func unknownSenderTitle() {
-    let anonymous = item(id: "mls:3", origin: .encryptedLegacy(conversationID: "3"))
-    #expect(anonymous.title == "Encrypted chat request")
+    let anonymous = item(id: "bsky:3", origin: .bluesky(convoID: "3"))
+    #expect(anonymous.title == "Chat request")
     #expect(!anonymous.canModerateSender)
     let deleted = RequestParticipant(did: "did:plc:gone", handle: "missing.invalid", displayName: nil, avatarURL: nil, isDeletedAccount: true)
     #expect(deleted.name == "Deleted Account")
@@ -182,49 +172,35 @@ struct MessageRequestPresentationTests {
 
 // MARK: - Sheet content and routing
 
-/// Replaces the provider-picker tests removed with the Bluesky|Catbird picker:
-/// the sheet must show both providers at once, and opening it on a specific
-/// pending request must land on that request.
+/// The Lite request sheet retains Bluesky request routing and decisions.
 @MainActor
 @Suite("Message requests sheet content")
 struct MessageRequestsSheetContentTests {
-  @Test("The sheet lists Bluesky and encrypted requests together, Bluesky first")
-  func bothProvidersVisible() {
+  @Test("The sheet lists every pending Bluesky request")
+  func blueskyRequestsVisible() {
     let store = FixtureMessageRequestsStore(empty: false)
-    let sections = MessageRequestPresentation.sections(
-      bluesky: store.blueskyRequests, encrypted: store.encryptedRequests)
-    #expect(sections.map(\.source) == [.bluesky, .encrypted])
-    #expect(sections[0].items.allSatisfy { $0.source == .bluesky })
-    #expect(sections[1].items.allSatisfy { $0.source == .encrypted })
-    #expect(sections[1].items.map(\.id).contains("mls:priya"))
+    let sections = MessageRequestPresentation.sections(bluesky: store.blueskyRequests)
+    #expect(sections.map(\.source) == [.bluesky])
+    #expect(sections[0].items.map(\.id) == ["bsky:maya", "bsky:newcomer", "bsky:swiftnyc"])
     #expect(!store.isEmpty)
-  }
-
-  @Test("A pending verified encrypted request opens through the verified gate")
-  func pendingEncryptedRequestRoutesToGate() {
-    let store = FixtureMessageRequestsStore(empty: false, usesVerifiedEncryptedDetail: true)
-    #expect(MessageRequestRoute.detail("mls:priya").destination(in: store)
-      == .verifiedEncrypted(conversationID: "priya"))
   }
 
   @Test("Other requests open the request detail, and handled ones say so")
   func otherRoutes() throws {
-    let store = FixtureMessageRequestsStore(empty: false, usesVerifiedEncryptedDetail: true)
-    let legacy = try #require(store.item(withID: "mls:designcrit"))
-    #expect(MessageRequestRoute.detail("mls:designcrit").destination(in: store) == .detail(legacy))
+    let store = FixtureMessageRequestsStore(empty: false)
     let bluesky = try #require(store.item(withID: "bsky:maya"))
     #expect(MessageRequestRoute.detail("bsky:maya").destination(in: store) == .detail(bluesky))
-    #expect(MessageRequestRoute.detail("mls:gone").destination(in: store) == .handled)
+    #expect(MessageRequestRoute.detail("bsky:gone").destination(in: store) == .handled)
   }
 
   @Test("Declining keeps the other requests and resolves the declined route as handled")
   func declineRemovesOnlyThatRequest() async throws {
     let store = FixtureMessageRequestsStore(empty: false)
-    let item = try #require(store.item(withID: "mls:priya"))
+    let item = try #require(store.item(withID: "bsky:newcomer"))
     #expect(await store.decline(item))
-    #expect(store.item(withID: "mls:priya") == nil)
-    #expect(store.blueskyRequests.count == 3)
-    #expect(MessageRequestRoute.detail("mls:priya").destination(in: store) == .handled)
+    #expect(store.item(withID: "bsky:newcomer") == nil)
+    #expect(store.blueskyRequests.count == 2)
+    #expect(MessageRequestRoute.detail("bsky:newcomer").destination(in: store) == .handled)
   }
 
   #if os(iOS)

@@ -5,29 +5,6 @@ import Foundation
 @Suite("CAR Parser Tests")
 struct CARParserTests {
 
-  // MARK: - CARParsingError Tests
-
-  @Test("CARParsingError.invalidCARFormat provides descriptive message")
-  func testInvalidCARFormatError() {
-    let error = CARParsingError.invalidCARFormat("Missing header")
-    #expect(error.errorDescription?.contains("Invalid CAR format") == true)
-    #expect(error.errorDescription?.contains("Missing header") == true)
-  }
-
-  @Test("CARParsingError.invalidCBORData provides descriptive message")
-  func testInvalidCBORDataError() {
-    let error = CARParsingError.invalidCBORData("Truncated data")
-    #expect(error.errorDescription?.contains("Invalid CBOR data") == true)
-    #expect(error.errorDescription?.contains("Truncated data") == true)
-  }
-
-  @Test("CARParsingError.unsupportedRecordType provides descriptive message")
-  func testUnsupportedRecordTypeError() {
-    let error = CARParsingError.unsupportedRecordType("app.bsky.unknown.type")
-    #expect(error.errorDescription?.contains("Unsupported record type") == true)
-    #expect(error.errorDescription?.contains("app.bsky.unknown.type") == true)
-  }
-
   // MARK: - BackupStatus Codable Round-trip
 
   @Test("BackupStatus encodes and decodes correctly", arguments: BackupStatus.allCases)

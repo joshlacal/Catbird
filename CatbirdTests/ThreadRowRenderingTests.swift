@@ -57,7 +57,7 @@ struct ThreadRowRenderingTests {
 
   private func threadItems() throws -> [AppBskyUnspeccedGetPostThreadV2.ThreadItem] {
     try Self.fixture.map { name, depth, moreReplies, opThread in
-      let post = CircleTestFixtures.makePostView(
+      let post = PublicPostTestFixtures.makePostView(
         uri: try ATProtocolURI(uriString: "at://\(Self.did)/app.bsky.feed.post/\(name)"),
         authorDID: try DID(didString: Self.did),
         text: Self.texts[name] ?? name

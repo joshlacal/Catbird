@@ -98,7 +98,7 @@ struct CatbirdGatewayConfigurationTests {
     }
   }
 
-  @Test("foreground gateway and MLS call sites use the centralized decision")
+  @Test("foreground gateway call sites use the centralized decision")
   func foregroundWiring() throws {
     let repositoryURL = URL(fileURLWithPath: #filePath)
       .deletingLastPathComponent()
@@ -114,8 +114,6 @@ struct CatbirdGatewayConfigurationTests {
         "gatewayURL: CatbirdGatewayConfiguration.current.origin",
       "Catbird/AppIntents/Support/IntentClientProvider.swift":
         "gatewayURL: CatbirdGatewayConfiguration.current.origin",
-      "Catbird/Core/State/AppState.swift":
-        "CatbirdGatewayConfiguration.current.mlsServiceDID",
     ]
 
     for (path, fragment) in expectedFragments {
@@ -126,34 +124,5 @@ struct CatbirdGatewayConfigurationTests {
       #expect(source.contains(fragment), "Missing centralized routing in \(path)")
     }
 
-    let appState = try String(
-      contentsOf: repositoryURL.appendingPathComponent("Catbird/Core/State/AppState.swift"),
-      encoding: .utf8
-    )
-    #expect(appState.contains(".custom(serviceDID: mlsServiceDID)"))
-    #expect(appState.contains("environment: environment"))
-    #expect(appState.contains("return await MLSAPIClient("))
-
-    let notificationManager = try String(
-      contentsOf: repositoryURL.appendingPathComponent(
-        "Catbird/Features/Notifications/Services/NotificationManager.swift"
-      ),
-      encoding: .utf8
-    )
-    let inactiveAccountStart = try #require(
-      notificationManager.range(of: "private func getOrCreateAPIClient(for userDid: String)")
-    )
-    let inactiveAccountEnd = try #require(
-      notificationManager.range(
-        of: "private func checkGroupExists",
-        range: inactiveAccountStart.upperBound..<notificationManager.endIndex
-      )
-    )
-    let inactiveAccountSource = notificationManager[
-      inactiveAccountStart.lowerBound..<inactiveAccountEnd.lowerBound
-    ]
-    #expect(inactiveAccountSource.contains("CatbirdGatewayConfiguration.current.mlsServiceDID"))
-    #expect(inactiveAccountSource.contains(".custom(serviceDID: mlsServiceDID)"))
-    #expect(!inactiveAccountSource.contains("environment: .production"))
   }
 }

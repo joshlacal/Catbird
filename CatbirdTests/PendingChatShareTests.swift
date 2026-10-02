@@ -1,5 +1,4 @@
 @testable import Catbird
-import CatbirdMLSCore
 import Foundation
 import Petrel
 import Testing

@@ -14,7 +14,7 @@
 //
 
 import AppIntents
-import CatbirdMLSCore
+import Petrel
 import Foundation
 import Testing
 
@@ -30,24 +30,17 @@ private enum Fixtures {
 
   static func member(
     _ did: String, convo: String, displayName: String? = nil, handle: String? = nil
-  ) -> MLSMemberModel {
-    MLSMemberModel(
-      memberID: "\(convo)-\(did)",
-      conversationID: convo,
-      currentUserDID: selfDID,
-      did: did,
-      handle: handle,
-      displayName: displayName,
-      leafIndex: 0
-    )
+  ) -> MessagesSchemaRuntime.Member {
+    MessagesSchemaRuntime.Member(did: did, displayName: displayName, handle: handle)
   }
 
-  static func conversation(_ id: String, title: String? = nil) -> MLSConversationModel {
-    MLSConversationModel(
-      conversationID: id, currentUserDID: selfDID, groupID: Data([0x01]), title: title)
+  static func conversation(_ id: String, title: String? = nil) -> ChatBskyConvoDefs.ConvoView {
+    ChatBskyConvoDefs.ConvoView(
+      id: id, rev: "fixture", members: [], lastMessage: nil, lastReaction: nil,
+      muted: false, status: .accepted, unreadCount: 0, kind: nil)
   }
 
-  /// Two real v4 identities: the first is a 1:1 with Alex, the second is a
+  /// Two stable conversation identities: the first is a 1:1 with Alex, the second is a
   /// titled group with Alex + Sam.
   static func directory() -> MessagesSchemaRuntime.ChatDirectory {
     MessagesSchemaRuntime.ChatDirectory(
