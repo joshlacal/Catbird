@@ -63,6 +63,24 @@ struct AccountServiceWorkTests {
     }
 
     @Test
+    func timedOutServiceReceiptRetainsItsEventualCompletion() async throws {
+        var continuation: CheckedContinuation<Void, Never>?
+        let receipt = AccountServiceDrainReceipt {
+            await withCheckedContinuation { continuation = $0 }
+        }
+        while continuation == nil { await Task.yield() }
+        do {
+            try await receipt.wait(timeout: .milliseconds(1))
+            Issue.record("An outstanding service request was reported complete")
+        } catch AccountServiceWork.BarrierError.drainTimedOut {
+            #expect(!receipt.isComplete)
+        }
+        continuation?.resume()
+        try await receipt.wait()
+        #expect(receipt.isComplete)
+    }
+
+    @Test
     func cancellationBeforeTaskStartsCannotRunAfterResume() async throws {
         let work = AccountServiceWork()
         var executions = 0

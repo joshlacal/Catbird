@@ -12,7 +12,7 @@ struct AppStateAccentChangeTests {
     let accountDID = "did:plc:accentsettingstest"
     let container = try ModelContainer(
       for: AppSettingsModel.self, Preferences.self,
-      configurations: ModelConfiguration(isStoredInMemoryOnly: true)
+      configurations: ModelConfiguration(isStoredInMemoryOnly: true, cloudKitDatabase: .none)
     )
     let model = AppSettingsModel(accountDID: accountDID)
     container.mainContext.insert(model)
@@ -44,7 +44,7 @@ struct AppStateAccentChangeTests {
     let accountDID = "did:plc:settingsfontrecovery"
     let container = try ModelContainer(
       for: AppSettingsModel.self, Preferences.self,
-      configurations: ModelConfiguration(isStoredInMemoryOnly: true)
+      configurations: ModelConfiguration(isStoredInMemoryOnly: true, cloudKitDatabase: .none)
     )
     let model = AppSettingsModel(accountDID: accountDID)
     container.mainContext.insert(model)

@@ -71,7 +71,7 @@ struct SettingsRuntimeWiringTests {
   @Test("Appearance reset persists only to its account's SwiftData row")
   @MainActor
   func appearanceResetAccountPersistence() throws {
-    let configuration = ModelConfiguration(isStoredInMemoryOnly: true)
+    let configuration = ModelConfiguration(isStoredInMemoryOnly: true, cloudKitDatabase: .none)
     let container = try ModelContainer(for: AppSettingsModel.self, configurations: configuration)
     let context = ModelContext(container)
     let first = AppSettingsModel(accountDID: "did:plc:first-reset-fixture")
@@ -216,7 +216,7 @@ struct SettingsRuntimeWiringTests {
   private func makeInterestsManager(
     transport: SettingsInterestsTransportFixture, localTags: [String]
   ) throws -> (PreferencesManager, ModelContext, Preferences) {
-    let configuration = ModelConfiguration(isStoredInMemoryOnly: true)
+    let configuration = ModelConfiguration(isStoredInMemoryOnly: true, cloudKitDatabase: .none)
     let container = try ModelContainer(for: Preferences.self, configurations: configuration)
     let context = ModelContext(container)
     let did = "did:plc:settings-interests-fixture"

@@ -78,6 +78,32 @@ final class AccountServiceWork {
     func resume() { isSuspended = false }
 }
 
+/// Retains the real completion task independently of the caller's deadline.
+/// Timing out never cancels away the evidence that services are still draining.
+@MainActor
+final class AccountServiceDrainReceipt {
+    private(set) var isComplete = false
+    private var task: Task<Void, Never>?
+
+    init(operation: @escaping @MainActor () async -> Void) {
+        task = Task { @MainActor [weak self] in
+            await operation()
+            self?.isComplete = true
+        }
+    }
+
+    func wait(timeout: Duration = .seconds(2)) async throws {
+        let deadline = ContinuousClock.now.advanced(by: timeout)
+        while !isComplete {
+            try Task.checkCancellation()
+            guard ContinuousClock.now < deadline else {
+                throw AccountServiceWork.BarrierError.drainTimedOut
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+    }
+}
+
 // MARK: - AppState
 
 /// Central state container for the Catbird app
@@ -299,6 +325,7 @@ final class AppState {
     @MainActor @ObservationIgnored private let accountServiceWork = AccountServiceWork()
     @MainActor var isAccountSwitchSuspended: Bool { accountServiceWork.isSuspended }
     @MainActor @ObservationIgnored private var accountRetirementTask: Task<Void, Error>?
+    @MainActor @ObservationIgnored private var accountPollerSuspension: AccountServiceDrainReceipt?
 
     // MARK: - Initialization
 
@@ -432,9 +459,26 @@ final class AppState {
         settingsUpdateDebounceTimer = nil
         backgroundPollingTask?.cancel()
         backgroundPollingTask = nil
-        await notificationManager.suspendForAccountSwitch()
-        await chatManager.suspendForAccountSwitch()
+        try await suspendAccountPollers()
         try await accountServiceWork.drain()
+    }
+
+    @MainActor
+    private func suspendAccountPollers() async throws {
+        let receipt: AccountServiceDrainReceipt
+        if let pending = accountPollerSuspension, !pending.isComplete {
+            receipt = pending
+        } else {
+            let notifications = notificationManager
+            let chat = chatManager
+            receipt = AccountServiceDrainReceipt {
+                async let notificationDrain: Void = notifications.suspendForAccountSwitch()
+                async let chatDrain: Void = chat.suspendForAccountSwitch()
+                _ = await (notificationDrain, chatDrain)
+            }
+            accountPollerSuspension = receipt
+        }
+        try await receipt.wait()
     }
 
     /// Reopen only the same retained account after authentication has been restored.
@@ -443,6 +487,7 @@ final class AppState {
     func resumeAfterInterruptedAccountSwitch() async throws {
         guard accountRetirementTask == nil else { throw AccountServiceWork.BarrierError.retirementFailed }
         guard accountServiceWork.isSuspended else { return }
+        try await accountPollerSuspension?.wait()
         try await accountServiceWork.drain()
         let originalClient = client
         let authenticatedDID = try await originalClient.getDid()
@@ -457,10 +502,10 @@ final class AppState {
                 throw AccountServiceWork.BarrierError.serviceResumeFailed
             }
         } catch {
-            await notificationManager.suspendForAccountSwitch()
-            await chatManager.suspendForAccountSwitch()
+            try? await suspendAccountPollers()
             throw error
         }
+        accountPollerSuspension = nil
         accountServiceWork.resume()
         startBackgroundPolling()
     }

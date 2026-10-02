@@ -86,6 +86,67 @@ struct CachedFeedViewPostIdentityTests {
     #expect(counter.value == 0)
   }
 
+  @Test("Upserting a source with unread storage changes cannot transfer stale decoded values")
+  @MainActor
+  func upsertFromMutatedSourceValidatesCacheBytes() throws {
+    let counter = DecodeCounter()
+    let first = try makeFeedViewPost(rkey: "upsert-first")
+    let second = try makeFeedViewPost(rkey: "upsert-second", debug: countingDebugValue(counter))
+    let firstItem = try sliceItem(first)
+    let secondItem = try sliceItem(second)
+    let source = try #require(CachedFeedViewPost(
+      from: FeedSlice(items: [firstItem], rootUri: firstItem.id, feedPostUri: firstItem.id),
+      feedType: "timeline"
+    ))
+    let target = try #require(CachedFeedViewPost(from: first, feedType: "timeline"))
+    source.serializedPost = try JSONEncoder().encode(second)
+    source.serializedSliceItems = try JSONEncoder().encode([secondItem])
+
+    target.update(from: source)
+    #expect(try target.feedViewPost == second)
+    #expect(target.sliceItems?.map(\.id) == [secondItem.id])
+    #expect(counter.value == 2)
+    #expect(try target.feedViewPost == second)
+    #expect(target.sliceItems?.map(\.id) == [secondItem.id])
+    #expect(counter.value == 2)
+  }
+
+  @Test("Fetched storage decodes once and validates replacements after materialization")
+  @MainActor
+  func fetchedCacheValidatesStoredBytes() throws {
+    let counter = DecodeCounter()
+    let first = try makeFeedViewPost(rkey: "fetched-first", debug: countingDebugValue(counter))
+    let second = try makeFeedViewPost(rkey: "fetched-second", debug: countingDebugValue(counter))
+    let firstItem = try sliceItem(first)
+    let secondItem = try sliceItem(second)
+    let container = try makeInMemoryContainer()
+    let writer = ModelContext(container)
+    let saved = try #require(CachedFeedViewPost(
+      from: FeedSlice(items: [firstItem], rootUri: firstItem.id, feedPostUri: firstItem.id),
+      feedType: "timeline"
+    ))
+    writer.insert(saved)
+    try writer.save()
+
+    let reader = ModelContext(container)
+    let fetched = try #require(reader.fetch(FetchDescriptor<CachedFeedViewPost>()).first)
+    #expect(fetched !== saved)
+    counter.reset()
+    #expect(try fetched.feedViewPost.post.uri == first.post.uri)
+    #expect(fetched.sliceItems?.map(\.id) == [firstItem.id])
+    #expect(try fetched.feedViewPost.post.uri == first.post.uri)
+    #expect(fetched.sliceItems?.map(\.id) == [firstItem.id])
+    #expect(counter.value == 2)
+
+    fetched.serializedPost = try JSONEncoder().encode(second)
+    fetched.serializedSliceItems = try JSONEncoder().encode([secondItem])
+    #expect(try fetched.feedViewPost == second)
+    #expect(fetched.sliceItems?.map(\.id) == [secondItem.id])
+    #expect(try fetched.feedViewPost == second)
+    #expect(fetched.sliceItems?.map(\.id) == [secondItem.id])
+    #expect(counter.value == 4)
+  }
+
   @Test("Persisting the same model instance preserves decoded post and slice caches")
   @MainActor
   func sameInstanceUpsertPreservesCaches() throws {
