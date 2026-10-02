@@ -142,6 +142,20 @@ struct SettingsRuntimeWiringTests {
     #expect(PreferencesManager.applyingFeedViewChanges(to: nil).hideRepliesByLikeCount == nil)
   }
 
+  @Test("Settings refresh rejects a missing client instead of accepting cached defaults")
+  @MainActor
+  func settingsRefreshRequiresClient() async {
+    let manager = PreferencesManager()
+    do {
+      _ = try await manager.refreshSettingsPreferences()
+      Issue.record("A settings refresh must require a client")
+    } catch PreferencesManagerError.clientNotInitialized {
+      // No storage or network is consulted when the account client is unavailable.
+    } catch {
+      Issue.record("Unexpected refresh failure: \(error)")
+    }
+  }
+
   @Test("Required alt text exposes an actionable composer reason")
   func missingAltTextReason() {
     let state = PostComposerSubmitValidationState(canSubmit: false, reason: .missingAltText)

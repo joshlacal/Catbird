@@ -190,8 +190,10 @@ struct ContentMediaSettingsView: View {
       // Thread sort is server-synced; layout choices remain local.
       if hasLoadedAccountPreferences {
         Section {
-          Picker("Thread Sort Order", selection: threadBinding($threadSortOrder)) {
-            Text("Hot").tag("hot")
+          Picker("Thread Sort Order", selection: threadBinding(Binding(
+            get: { threadSortOrder == "hot" ? "top" : threadSortOrder },
+            set: { threadSortOrder = $0 }
+          ))) {
             Text("Top").tag("top")
             Text("Latest").tag("newest")
             Text("Oldest").tag("oldest")
@@ -295,6 +297,8 @@ struct ContentMediaSettingsView: View {
   }
 
   private func loadAccountPreferences() async {
+    // A return from a child page must not replace an unacknowledged edit with fetched state.
+    guard pendingPreferenceSave == nil, !isSavingServerPreferences else { return }
     isLoadingAccountPreferences = true
     errorMessage = nil
     defer { isLoadingAccountPreferences = false }
@@ -303,8 +307,7 @@ struct ContentMediaSettingsView: View {
       guard appState.isAuthenticated, appState.atProtoClient != nil else {
         throw PreferencesManagerError.clientNotInitialized
       }
-      try await appState.preferencesManager.fetchPreferences(forceRefresh: true)
-      let preferences = try await appState.preferencesManager.getPreferences()
+      let preferences = try await appState.preferencesManager.refreshSettingsPreferences()
 
       threadSortOrder = preferences.threadViewPref?.sort ?? "hot"
       hideReplies = preferences.feedViewPref?.hideReplies ?? false
