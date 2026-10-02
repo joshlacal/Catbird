@@ -16,8 +16,6 @@ import Observation
 final class URLHandler {
     // MARK: - Properties
     
-    var targetTabIndex: Int?
-
     private let logger = Logger(subsystem: "blue.catbird", category: "URLHandler")
     private weak var appState: AppState?
     
@@ -66,7 +64,8 @@ final class URLHandler {
     /// Returns an OpenURLAction.Result to indicate if the URL was handled
     @MainActor
     func handle(_ url: URL, tabIndex: Int? = nil) -> OpenURLAction.Result {
-        targetTabIndex = tabIndex ?? appState?.navigationManager.currentTabIndex
+        // Keep this request's tab stable across asynchronous resolution.
+        let effectiveTabIndex = tabIndex ?? appState?.navigationManager.currentTabIndex
         logger.info("📲 URLHandler processing URL: \(url.absoluteString, privacy: .private)")
 
         // OAuth callbacks, external intents, and custom schemes are handled
@@ -85,15 +84,15 @@ final class URLHandler {
 
         let urlString = url.absoluteString
         if urlString.starts(with: "mention://") {
-            return handleMention(urlString)
+            return handleMention(urlString, tabIndex: effectiveTabIndex)
         }
         if urlString.starts(with: "tag://") {
-            return handleHashtag(urlString)
+            return handleHashtag(urlString, tabIndex: effectiveTabIndex)
         }
 
         if isBlueskyOrBskyAppURL(url) {
             Task {
-                let handled = await routeResolvedURL(url)
+                let handled = await routeResolvedURL(url, tabIndex: effectiveTabIndex)
                 if !handled {
                     logger.warning("❓ URL not recognized: \(url.absoluteString, privacy: .private)")
                 }
@@ -118,7 +117,8 @@ final class URLHandler {
 
     @MainActor
     func handleURL(_ url: URL, tabIndex: Int? = nil) async -> Bool {
-        targetTabIndex = tabIndex ?? appState?.navigationManager.currentTabIndex
+        // Keep this request's tab stable across asynchronous resolution.
+        let effectiveTabIndex = tabIndex ?? appState?.navigationManager.currentTabIndex
         logger.info("📲 URLHandler handleURL: \(url.absoluteString, privacy: .private)")
 
         if isOAuthCallbackURL(url) {
@@ -133,25 +133,25 @@ final class URLHandler {
 
         let urlString = url.absoluteString
         if urlString.starts(with: "mention://") {
-            _ = handleMention(urlString)
+            _ = handleMention(urlString, tabIndex: effectiveTabIndex)
             return true
         }
         if urlString.starts(with: "tag://") {
-            _ = handleHashtag(urlString)
+            _ = handleHashtag(urlString, tabIndex: effectiveTabIndex)
             return true
         }
 
-        return await routeResolvedURL(url)
+        return await routeResolvedURL(url, tabIndex: effectiveTabIndex)
     }
 
     /// Routes a non-callback, non-intent URL to a navigation destination or the
     /// in-app browser. Returns whether the URL was handled.
     @MainActor
-    private func routeResolvedURL(_ url: URL) async -> Bool {
+    private func routeResolvedURL(_ url: URL, tabIndex: Int?) async -> Bool {
         if isBlueskyOrBskyAppURL(url) {
             if let destination = await parseDestination(from: url) {
                 logger.info("🔗 Parsed URL to navigation destination: \(String(describing: destination))")
-                navigateAction?(destination, targetTabIndex)
+                navigateAction?(destination, tabIndex)
                 return true
             }
             if useInAppBrowser && URLSchemePolicy.isWeb(url) {
@@ -509,17 +509,17 @@ final class URLHandler {
     
     // MARK: - URL Type Handlers
     
-    private func handleMention(_ urlString: String) -> OpenURLAction.Result {
+    private func handleMention(_ urlString: String, tabIndex: Int?) -> OpenURLAction.Result {
         let encodedDID = String(urlString.dropFirst("mention://".count))
         let did = encodedDID.removingPercentEncoding ?? encodedDID
-        navigateAction?(.profile(did), targetTabIndex)
+        navigateAction?(.profile(did), tabIndex)
         return .handled
     }
     
-    private func handleHashtag(_ urlString: String) -> OpenURLAction.Result {
+    private func handleHashtag(_ urlString: String, tabIndex: Int?) -> OpenURLAction.Result {
         let tag = String(urlString.dropFirst("tag://".count))
         let decodedTag = tag.removingPercentEncoding ?? tag
-        navigateAction?(.hashtag(decodedTag), targetTabIndex)
+        navigateAction?(.hashtag(decodedTag), tabIndex)
         return .handled
     }
     

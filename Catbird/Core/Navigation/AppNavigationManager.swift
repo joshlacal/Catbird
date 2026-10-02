@@ -39,7 +39,10 @@ import SwiftUI
 
     // Add a method to register the tab selection callback
     func registerTabSelectionCallback(_ callback: @escaping (Int) -> Void) {
-        self.tabSelection = callback
+        self.tabSelection = { [weak self] index in
+            self?.updateCurrentTab(index)
+            callback(index)
+        }
     }
     
     // Navigate to a destination in the current tab or a specified tab
