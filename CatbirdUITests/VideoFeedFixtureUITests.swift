@@ -59,7 +59,16 @@ final class VideoFeedFixtureUITests: XCTestCase {
   }
 
   func testPlaybackRetryRemainsSeparateFromShortLandscapeFooter() {
-    let app = launchFixture(["--video-fixture-fail-playback", "--video-fixture-accessibility"])
+    for accessibility in [false, true] {
+      XCUIDevice.shared.orientation = .portrait
+      assertPlaybackRetryLayout(accessibility: accessibility)
+    }
+  }
+
+  private func assertPlaybackRetryLayout(accessibility: Bool) {
+    let arguments = ["--video-fixture-fail-playback"]
+      + (accessibility ? ["--video-fixture-accessibility"] : [])
+    let app = launchFixture(arguments)
     let retry = app.buttons["videoPlaybackRetry"].firstMatch
     XCTAssertTrue(retry.waitForExistence(timeout: 8))
     XCUIDevice.shared.orientation = .landscapeLeft
@@ -69,6 +78,7 @@ final class VideoFeedFixtureUITests: XCTestCase {
     XCTAssertEqual(XCTWaiter.wait(for: [landscape], timeout: 4), .completed)
     assertControlsFit(app)
     XCTAssertTrue(retry.isHittable)
+    XCTAssertGreaterThanOrEqual(retry.frame.width, 44)
     XCTAssertGreaterThanOrEqual(retry.frame.height, 44)
     XCTAssertTrue(app.frame.contains(retry.frame))
     for identifier in ["videoFixtureAuthor", "videoLike", "videoRepost", "videoComments", "videoProgress"] {
@@ -76,10 +86,11 @@ final class VideoFeedFixtureUITests: XCTestCase {
       XCTAssertTrue(footerControl.exists, identifier)
       XCTAssertFalse(retry.frame.intersects(footerControl.frame), identifier)
     }
-    capture("Playback retry above the large-text landscape footer", app: app)
+    capture("Playback retry above landscape footer, accessibility: \(accessibility)", app: app)
     retry.tap()
     XCTAssertTrue(retry.wait(for: \.exists, toEqual: false, timeout: 4))
     XCTAssertTrue(app.buttons["videoLike"].firstMatch.isHittable)
+    app.terminate()
   }
 
   private func launchFixture(_ extra: [String] = []) -> XCUIApplication {

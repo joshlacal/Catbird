@@ -147,6 +147,7 @@ private struct VideoFeedFixturePage: View {
             .frame(maxWidth: .infinity, alignment: .leading)
           }
           .frame(minHeight: 44)
+          .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("videoFixtureAuthor")
@@ -158,6 +159,7 @@ private struct VideoFeedFixturePage: View {
             .lineLimit(lines)
             .multilineTextAlignment(.leading)
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
       },
