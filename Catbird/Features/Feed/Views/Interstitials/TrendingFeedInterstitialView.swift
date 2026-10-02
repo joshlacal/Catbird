@@ -2,6 +2,7 @@ import SwiftUI
 import Petrel
 
 public struct TrendingFeedInterstitialView: View {
+  @Environment(SceneNavigationContext.self) private var sceneContext
   @Environment(AppState.self) private var appState
   @Environment(\.colorScheme) private var colorScheme
 
@@ -18,13 +19,13 @@ public struct TrendingFeedInterstitialView: View {
       showVideos: appState.appSettings.showTrendingVideos,
       onSelectTopic: { trend in
         guard let url = URL(string: trend.link, relativeTo: URL(string: "https://bsky.app")) else { return }
-        _ = appState.urlHandler.handle(url.absoluteURL)
+        _ = sceneContext.urlHandler.handle(url.absoluteURL)
       },
       onSelectPost: { post in
-        appState.navigationManager.navigate(to: .post(post.uri))
+        sceneContext.navigationManager.navigate(to: .post(post.uri))
       },
       onOpenVideos: {
-        appState.navigationManager.navigate(to: .videoFeed)
+        sceneContext.navigationManager.navigate(to: .videoFeed)
       },
       onHideTopics: { appState.appSettings.showTrendingTopics = false },
       onHideVideos: { appState.appSettings.showTrendingVideos = false }

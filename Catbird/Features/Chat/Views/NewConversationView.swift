@@ -4,6 +4,7 @@ import SwiftUI
 
 /// New conversation view with a segmented picker for Bluesky DM and Bluesky group modes.
 struct NewConversationView: View {
+  @Environment(SceneNavigationContext.self) private var sceneContext
   @Environment(AppState.self) private var appState
   @Environment(\.dismiss) private var dismiss
 
@@ -296,9 +297,9 @@ struct NewConversationView: View {
       isCreating = false
       dismiss()
       #if os(iOS)
-      appState.navigationManager.navigate(to: .conversation(convoId), in: 4)
+      sceneContext.navigationManager.navigate(to: .conversation(convoId), in: 4)
       #else
-      appState.navigationManager.targetConversationId = convoId
+      sceneContext.navigationManager.targetConversationId = convoId
       #endif
     } else {
       logger.error("Failed to create Bluesky group conversation")
@@ -320,9 +321,9 @@ struct NewConversationView: View {
         await MainActor.run {
           dismiss()
           #if os(iOS)
-          appState.navigationManager.navigate(to: .conversation(convoId), in: 4)
+          sceneContext.navigationManager.navigate(to: .conversation(convoId), in: 4)
           #else
-          appState.navigationManager.targetConversationId = convoId
+          sceneContext.navigationManager.targetConversationId = convoId
           #endif
         }
       } else {

@@ -2,6 +2,7 @@ import Petrel
 import SwiftUI
 
 struct AddFeedSheet: View {
+  @Environment(SceneNavigationContext.self) private var sceneContext
   @Environment(AppState.self) private var appState
   @Environment(\.dismiss) private var dismiss
   @State private var model: FeedDiscoveryViewModel?
@@ -155,7 +156,7 @@ struct AddFeedSheet: View {
 
   private func open(_ feed: AppBskyFeedDefs.GeneratorView) {
     if let onOpen { onOpen(feed) }
-    else { appState.navigationManager.navigate(to: .feed(feed.uri)) }
+    else { sceneContext.navigationManager.navigate(to: .feed(feed.uri)) }
     dismiss()
   }
 }

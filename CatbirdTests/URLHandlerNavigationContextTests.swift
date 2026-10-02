@@ -52,9 +52,9 @@ final class URLHandlerNavigationContextTests: XCTestCase {
   func testTabSelectionUpdatesContextBeforeTheNextImplicitURL() async {
     let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
     let appState = AppState(userDID: "did:plc:routingcontext12345678", client: client)
-    let manager = appState.navigationManager
-    let handler = URLHandler()
-    handler.configure(with: appState)
+    let context = SceneNavigationContext(appState: appState, sceneID: UUID())
+    let manager = context.navigationManager
+    let handler = context.urlHandler
     var visibleTab = 0
     var currentTabDuringCallback: Int?
     var deliveredTab: Int?

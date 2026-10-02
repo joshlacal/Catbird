@@ -79,9 +79,14 @@ public struct VideoFeedView: View {
           Text(error)
             .font(.footnote)
             .frame(maxWidth: .infinity, alignment: .leading)
-          Button("Retry") { requestNextPageIfNeeded(retrying: true) }
-            .frame(minWidth: 44, minHeight: 44)
-            .accessibilityIdentifier("videoLoadMoreRetry")
+          Button {
+            requestNextPageIfNeeded(retrying: true)
+          } label: {
+            Text("Retry")
+              .frame(minWidth: 44, minHeight: 44)
+              .contentShape(Rectangle())
+          }
+          .accessibilityIdentifier("videoLoadMoreRetry")
         }
         .foregroundStyle(.white)
         .padding(.horizontal, 16)
@@ -321,6 +326,7 @@ private struct VideoFeedEmptyState: View {
             .fontWeight(.semibold)
             .padding(.horizontal, 24)
             .padding(.vertical, 10)
+            .frame(minWidth: 44, minHeight: 44)
             .background(.white.opacity(0.2))
             .clipShape(Capsule())
         }
@@ -601,7 +607,10 @@ struct VideoFeedPageOverlays<Status: View, Footer: View>: View {
   var body: some View {
     ViewThatFits(in: .vertical) {
       VideoFeedOverlayLayout {
-        status()
+        // LayoutSubviews omits EmptyView and false conditional branches. Keep
+        // the status slot structurally present after playback starts or when
+        // moderation hides it, without adding a hit-test surface.
+        ZStack { status() }
         footer()
       }
       .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -704,11 +713,14 @@ struct VideoFeedPlaybackStatus: View {
   }
 
   private var retryButton: some View {
-    Button("Retry", action: onRetry)
-      .buttonStyle(.borderedProminent)
-      .frame(minWidth: 44, minHeight: 44)
-      .accessibilityLabel("Unable to play video. Retry")
-      .accessibilityIdentifier("videoPlaybackRetry")
+    Button(action: onRetry) {
+      Text("Retry")
+        .frame(minWidth: 44, minHeight: 44)
+        .contentShape(Rectangle())
+    }
+    .buttonStyle(.borderedProminent)
+    .accessibilityLabel("Unable to play video. Retry")
+    .accessibilityIdentifier("videoPlaybackRetry")
   }
 }
 

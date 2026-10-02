@@ -23,6 +23,7 @@ private final class DerivedMP4ValidationCache: @unchecked Sendable {
 }
 
 struct ExternalEmbedView: View {
+  @Environment(SceneNavigationContext.self) private var sceneContext
     let external: AppBskyEmbedExternal.ViewExternal
     let shouldBlur: Bool
     let postID: String
@@ -168,7 +169,7 @@ struct ExternalEmbedView: View {
                 .environment(
                     \.openURL,
                      OpenURLAction { url in
-                         let result = appState.urlHandler.handle(url)
+                         let result = sceneContext.urlHandler.handle(url)
                          return result
                      })
                 .task(id: ValidationIdentity(url: destinationURL, isAllowed: isGifProviderAllowed, attempt: retryAttempt)) {
@@ -931,7 +932,7 @@ struct ExternalEmbedView: View {
             }
         } else if let url = destinationURL {
             // Handle URL tap when content is visible
-            _ = appState.urlHandler.handle(url)
+            _ = sceneContext.urlHandler.handle(url)
         }
     }
 
@@ -955,16 +956,16 @@ struct ExternalEmbedView: View {
                         userTappedToShowEmbed = true
                     }
                 } else {
-                    _ = appState.urlHandler.handle(url)
+                    _ = sceneContext.urlHandler.handle(url)
                 }
             case .undecided:
                 pendingConsentProvider = provider
                 showingConsentDialog = true
             case .hide:
-                _ = appState.urlHandler.handle(url)
+                _ = sceneContext.urlHandler.handle(url)
             }
         } else {
-            _ = appState.urlHandler.handle(url)
+            _ = sceneContext.urlHandler.handle(url)
         }
     }
     
@@ -1019,7 +1020,7 @@ struct ExternalEmbedView: View {
                 
                 Button("Open Link") {
                     if let url = destinationURL {
-                        _ = appState.urlHandler.handle(url)
+                        _ = sceneContext.urlHandler.handle(url)
                     }
                 }
                 .appFont(AppTextRole.caption)
@@ -1088,7 +1089,7 @@ struct ExternalEmbedView: View {
     private var blockedMediaButtons: some View {
         HStack(spacing: 12) {
             Button("Settings") {
-                appState.navigationManager.navigate(to: .settings(.contentAndMedia))
+                sceneContext.navigationManager.navigate(to: .settings(.contentAndMedia))
             }
             .appFont(AppTextRole.caption)
             .foregroundStyle(.blue)
@@ -1097,7 +1098,7 @@ struct ExternalEmbedView: View {
             
             Button("Open Link") {
                 if let url = destinationURL {
-                    _ = appState.urlHandler.handle(url)
+                    _ = sceneContext.urlHandler.handle(url)
                 }
             }
             .appFont(AppTextRole.caption)

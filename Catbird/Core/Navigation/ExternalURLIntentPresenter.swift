@@ -199,6 +199,7 @@ struct VerifyEmailIntentView: View {
 struct GroupChatJoinIntentView: View {
     let code: String
     @Environment(AppState.self) private var appState
+    @Environment(SceneNavigationContext.self) private var sceneNavigation
     @Environment(\.dismiss) private var dismiss
 
     @State private var preview: ChatBskyGroupDefs.JoinLinkPreviewView?
@@ -239,9 +240,10 @@ struct GroupChatJoinIntentView: View {
                     Text("Joined Group!")
                         .font(.title2.bold())
                     Button("Open Chat") {
+                        guard isCurrentScene(sceneNavigation) else { return }
                         dismiss()
                         #if os(iOS)
-                        appState.navigationManager.navigate(to: .conversation(joinedConvoId))
+                        sceneNavigation.navigationManager.navigate(to: .conversation(joinedConvoId))
                         #endif
                     }
                     .buttonStyle(.borderedProminent)
@@ -340,6 +342,8 @@ struct GroupChatJoinIntentView: View {
     }
 
     private func loadPreview() async {
+        weak var operationScene = sceneNavigation
+        guard isCurrentScene(operationScene) else { return }
         isLoading = true
         errorMessage = nil
         isInvalid = false
@@ -354,6 +358,7 @@ struct GroupChatJoinIntentView: View {
 
         do {
             let (statusCode, output) = try await client.chat.bsky.group.getJoinLinkPreviews(input: .init(codes: [code]))
+            guard isCurrentScene(operationScene) else { return }
             guard (200 ... 299).contains(statusCode) else {
                 errorMessage = "Failed to load group preview (HTTP \(statusCode))."
                 isLoading = false
@@ -375,22 +380,30 @@ struct GroupChatJoinIntentView: View {
                 self.isInvalid = true
             }
         } catch {
+            guard isCurrentScene(operationScene) else { return }
             errorMessage = "Failed to load group preview: \(error.localizedDescription)"
         }
         isLoading = false
     }
 
     private func joinGroup() async {
+        weak var operationScene = sceneNavigation
+        guard isCurrentScene(operationScene) else { return }
         guard let client = appState.atProtoClient else {
             errorMessage = "Not authenticated"
             return
         }
         isJoining = true
         errorMessage = nil
-        defer { isJoining = false }
+        defer {
+            if isCurrentScene(operationScene) {
+                isJoining = false
+            }
+        }
 
         do {
             let (statusCode, output) = try await client.chat.bsky.group.requestJoin(input: .init(code: code))
+            guard isCurrentScene(operationScene) else { return }
             guard (200 ... 299).contains(statusCode) else {
                 errorMessage = "Failed to join group (HTTP \(statusCode))."
                 return
@@ -414,7 +427,17 @@ struct GroupChatJoinIntentView: View {
                 errorMessage = "Unexpected join response status: \(output.status)"
             }
         } catch {
+            guard isCurrentScene(operationScene) else { return }
             errorMessage = "Error joining group: \(error.localizedDescription)"
         }
+    }
+
+    private func isCurrentScene(_ context: SceneNavigationContext?) -> Bool {
+        guard let context else { return false }
+        return context === sceneNavigation
+            && !context.isInvalidated
+            && context.accountDID == appState.userDID
+            && appState.isAuthenticated
+            && !Task.isCancelled
     }
 }

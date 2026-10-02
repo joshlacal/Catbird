@@ -373,6 +373,7 @@ public struct StarterPackShortResolverView: View {
   let code: String
   @Binding var path: NavigationPath
   @Environment(AppState.self) private var appState
+  @Environment(SceneNavigationContext.self) private var sceneNavigation
   @State private var resolvedURI: ATProtocolURI?
   @State private var errorMessage: String?
   @State private var isLoading = true
@@ -407,6 +408,8 @@ public struct StarterPackShortResolverView: View {
   }
 
   private func resolveCode() async {
+    weak var operationScene = sceneNavigation
+    guard isCurrentScene(operationScene) else { return }
     isLoading = true
     errorMessage = nil
     
@@ -422,6 +425,7 @@ public struct StarterPackShortResolverView: View {
 
     do {
       let (data, response) = try await URLSession.shared.data(for: request)
+      guard isCurrentScene(operationScene) else { return }
       guard let httpResponse = response as? HTTPURLResponse, (200...399).contains(httpResponse.statusCode) else {
         errorMessage = "Starter pack not found or link has expired."
         isLoading = false
@@ -433,11 +437,14 @@ public struct StarterPackShortResolverView: View {
         if let candidateString {
           if candidateString.starts(with: "at://"), let uri = try? ATProtocolURI(uriString: candidateString) {
             self.resolvedURI = uri
-          } else if let dest = await appState.urlHandler.parseDestination(from: candidateString),
-                    case .starterPack(let uri) = dest {
-            self.resolvedURI = uri
           } else {
-            errorMessage = "Could not resolve starter pack destination."
+            let destination = await operationScene?.urlHandler.parseDestination(from: candidateString)
+            guard isCurrentScene(operationScene) else { return }
+            if case .starterPack(let uri)? = destination {
+              self.resolvedURI = uri
+            } else {
+              errorMessage = "Could not resolve starter pack destination."
+            }
           }
         } else {
           errorMessage = "Starter pack not found or link has expired."
@@ -445,18 +452,31 @@ public struct StarterPackShortResolverView: View {
       } else if let location = httpResponse.value(forHTTPHeaderField: "Location") {
         if location.starts(with: "at://"), let uri = try? ATProtocolURI(uriString: location) {
           self.resolvedURI = uri
-        } else if let dest = await appState.urlHandler.parseDestination(from: location),
-                  case .starterPack(let uri) = dest {
-          self.resolvedURI = uri
         } else {
-          errorMessage = "Could not resolve starter pack destination."
+          let destination = await operationScene?.urlHandler.parseDestination(from: location)
+          guard isCurrentScene(operationScene) else { return }
+          if case .starterPack(let uri)? = destination {
+            self.resolvedURI = uri
+          } else {
+            errorMessage = "Could not resolve starter pack destination."
+          }
         }
       } else {
         errorMessage = "Starter pack not found or link has expired."
       }
     } catch {
+      guard isCurrentScene(operationScene) else { return }
       errorMessage = "Network error resolving starter pack: \(error.localizedDescription)"
     }
     isLoading = false
+  }
+
+  private func isCurrentScene(_ context: SceneNavigationContext?) -> Bool {
+    guard let context else { return false }
+    return context === sceneNavigation
+      && !context.isInvalidated
+      && context.accountDID == appState.userDID
+      && appState.isAuthenticated
+      && !Task.isCancelled
   }
 }

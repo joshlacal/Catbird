@@ -128,7 +128,9 @@ final class URLHandlerRoutingTests: XCTestCase {
     @MainActor
     func testConfigureAssignsAppState() async {
         let appState = await makeAppState()
-        urlHandler.configure(with: appState)
+        let scene = SceneNavigationContext(appState: appState, sceneID: UUID())
+        defer { withExtendedLifetime(scene) {} }
+        urlHandler = scene.urlHandler
 
         var capturedDestination: NavigationDestination?
         urlHandler.navigateAction = { destination, _ in
@@ -247,7 +249,9 @@ final class URLHandlerRoutingTests: XCTestCase {
     @MainActor
     func testOAuthCallbackMatching() async {
         let appState = await makeAppState()
-        urlHandler.configure(with: appState)
+        let scene = SceneNavigationContext(appState: appState, sceneID: UUID())
+        defer { withExtendedLifetime(scene) {} }
+        urlHandler = scene.urlHandler
         urlHandler.useInAppBrowser = false
 
         var capturedDestination: NavigationDestination?

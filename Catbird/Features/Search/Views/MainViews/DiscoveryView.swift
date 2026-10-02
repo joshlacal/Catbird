@@ -217,6 +217,7 @@ struct DiscoveryToolsSection: View {
 
 /// Full screen trending topics view
 struct AllTrendingTopicsView: View {
+  @Environment(SceneNavigationContext.self) private var sceneContext
     @Environment(\.dismiss) private var dismiss
     @Environment(AppState.self) private var appState
     @Environment(\.colorScheme) private var colorScheme
@@ -583,7 +584,7 @@ private struct InlineTopicSummaryLine: View {
     private func contributorView(actor: AppBskyActorDefs.ProfileViewBasic) -> some View {
         Button {
             dismiss()
-            appState.navigationManager.navigate(to: .profile(actor.did.didString()))
+            sceneContext.navigationManager.navigate(to: .profile(actor.did.didString()))
         } label: {
             HStack(spacing: 8) {
                 AsyncProfileImage(url: actor.finalAvatarURL(), size: 32)

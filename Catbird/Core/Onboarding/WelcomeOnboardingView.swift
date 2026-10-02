@@ -5,6 +5,7 @@ import SwiftUI
 
 /// Interactive multi-step onboarding flow (Avatar, Interests, Suggested Accounts, Finish)
 public struct WelcomeOnboardingView: View {
+  @Environment(SceneNavigationContext.self) private var sceneContext
     @Environment(AppState.self) private var appState
     @Environment(\.dismiss) private var dismiss
     
@@ -266,7 +267,7 @@ public struct WelcomeOnboardingView: View {
         .sheet(isPresented: $isShowingFeedDiscovery) {
             AddFeedSheet(onOpen: { feed in
                 finishOnboarding()
-                appState.navigationManager.navigate(to: .feed(feed.uri))
+                sceneContext.navigationManager.navigate(to: .feed(feed.uri))
             })
         }
         .task {

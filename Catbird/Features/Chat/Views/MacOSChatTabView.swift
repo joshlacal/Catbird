@@ -31,6 +31,7 @@ private final class MacOSMLSListChangeObserver: StateInvalidationSubscriber {
 /// conversations into a unified sidebar + detail NavigationSplitView.
 @available(macOS 13.0, *)
 struct MacOSChatContentView: View {
+  @Environment(SceneNavigationContext.self) private var sceneContext
   @Environment(AppState.self) private var appState
 
   @State private var selectedConvoId: String?
@@ -82,24 +83,24 @@ struct MacOSChatContentView: View {
     .onChange(of: appState.userDID) { _, _ in
       handleAccountContextChanged()
     }
-    .onChange(of: appState.navigationManager.targetConversationId) { _, newValue in
+    .onChange(of: sceneContext.navigationManager.targetConversationId) { _, newValue in
       if let convoId = newValue, convoId != selectedConvoId {
         selectedConvoId = convoId
-        appState.navigationManager.targetConversationId = nil
+        sceneContext.navigationManager.targetConversationId = nil
       }
     }
-    .onChange(of: appState.navigationManager.targetMLSConversationId) { _, newValue in
+    .onChange(of: sceneContext.navigationManager.targetMLSConversationId) { _, newValue in
       guard let requestedID = newValue else { return }
       Task { @MainActor in
         guard let canonicalID = await canonicalMLSRoute(for: requestedID) else {
           logger.warning("Refusing unresolved macOS MLS route")
-          appState.navigationManager.targetMLSConversationId = nil
+          sceneContext.navigationManager.targetMLSConversationId = nil
           return
         }
         if canonicalID != selectedConvoId {
           selectedConvoId = canonicalID
         }
-        appState.navigationManager.targetMLSConversationId = nil
+        sceneContext.navigationManager.targetMLSConversationId = nil
       }
     }
     .onChange(of: appState.chatManager.errorState) { oldError, newError in
@@ -157,14 +158,14 @@ struct MacOSChatContentView: View {
       startMLSPolling()
     }
 
-    if let requestedID = appState.navigationManager.targetMLSConversationId {
+    if let requestedID = sceneContext.navigationManager.targetMLSConversationId {
       Task { @MainActor in
         guard let canonicalID = await canonicalMLSRoute(for: requestedID) else {
-          appState.navigationManager.targetMLSConversationId = nil
+          sceneContext.navigationManager.targetMLSConversationId = nil
           return
         }
         selectedConvoId = canonicalID
-        appState.navigationManager.targetMLSConversationId = nil
+        sceneContext.navigationManager.targetMLSConversationId = nil
       }
     }
   }

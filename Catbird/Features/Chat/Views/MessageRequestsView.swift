@@ -22,6 +22,7 @@ struct MessageRequestSheet<SheetContent: View>: ViewModifier {
 /// requests. Accepting routes to the new conversation
 /// and closes the sheet; declining keeps the sheet open.
 struct UnifiedMessageRequestsView: View {
+  @Environment(SceneNavigationContext.self) private var sceneContext
   @Environment(AppState.self) private var appState
   @Environment(\.dismiss) private var dismiss
   @State private var store: LiveMessageRequestsStore?
@@ -54,7 +55,7 @@ struct UnifiedMessageRequestsView: View {
     guard appState.userDID == accountDID else { return }
     switch acceptance {
     case .bluesky(let convoID):
-      appState.navigationManager.targetConversationId = convoID
+      sceneContext.navigationManager.targetConversationId = convoID
       selectChatTabOnMac()
     }
     dismiss()
@@ -62,7 +63,7 @@ struct UnifiedMessageRequestsView: View {
 
   private func selectChatTabOnMac() {
     #if os(macOS)
-    appState.navigationManager.updateCurrentTab(AppNavigationManager.chatTabIndex)
+    sceneContext.navigationManager.updateCurrentTab(AppNavigationManager.chatTabIndex)
     #endif
   }
 }

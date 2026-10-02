@@ -20,6 +20,7 @@ struct FeedsSearchPresentationTests {
     let cases: [(String, CGSize, ColorScheme, DynamicTypeSize)] = [
       ("narrow-light", CGSize(width: 320, height: 600), .light, .large),
       ("wide-dark", CGSize(width: 680, height: 500), .dark, .large),
+      ("square-light", CGSize(width: 500, height: 500), .light, .large),
       ("short-light", CGSize(width: 430, height: 320), .light, .xxLarge),
       ("narrow-larger-text", CGSize(width: 320, height: 760), .dark, .accessibility1),
     ]
@@ -151,8 +152,8 @@ struct FeedsSearchPresentationTests {
         )
       }
     }
-    // The current model resolves failed discovery loads to empty arrays; it exposes
-    // no separate error state. The empty receipt above is also its failure rendering.
+    // An initial failure may leave empty arrays; a failed refresh can retain data.
+    // These fixtures render the empty state without injecting a transport failure.
     try await withHost(
       TrendingTopicsSection(topics: [], onSelect: { _ in }, onSeeAll: {}),
       appState: appState, size: CGSize(width: 320, height: 480), typeSize: .accessibility1
@@ -178,13 +179,27 @@ struct FeedsSearchPresentationTests {
       showAllTrendingTopics: .constant(false), showAllSavedSearches: .constant(false),
       showSuggestedProfiles: .constant(false), showAddFeedSheet: .constant(false), onQueryLoaded: { _ in }
     )
-    for (name, size, scheme) in [
-      ("narrow-light", CGSize(width: 320, height: 800), ColorScheme.light),
-      ("wide-dark", CGSize(width: 768, height: 650), ColorScheme.dark),
-      ("short-light", CGSize(width: 600, height: 340), ColorScheme.light),
-    ] {
-      try await withHost(discovery, appState: appState, size: size, scheme: scheme) { host in
-        _ = try await host.capture("search-\(name)-top", requiring: ["Trending", "Moon Garden"])
+    // Insets are synthetic additions to this test window's measured UIKit safe area.
+    // Swapping each edge checks asymmetry without claiming a natural device pose.
+    let cases: [(String, CGSize, ColorScheme, UIEdgeInsets?)] = [
+      ("narrow-light", CGSize(width: 320, height: 800), .light, nil),
+      ("wide-dark", CGSize(width: 768, height: 650), .dark, nil),
+      ("short-light", CGSize(width: 600, height: 340), .light, nil),
+      ("square-light", CGSize(width: 500, height: 500), .light, nil),
+      ("square-insets-leading", CGSize(width: 500, height: 500), .light,
+        UIEdgeInsets(top: 11, left: 37, bottom: 23, right: 7)),
+      ("square-insets-trailing", CGSize(width: 500, height: 500), .dark,
+        UIEdgeInsets(top: 23, left: 7, bottom: 11, right: 37))
+    ]
+    for (name, size, scheme, additionalInsets) in cases {
+      try await withHost(discovery, appState: appState, size: size, scheme: scheme,
+        additionalSafeAreaInsets: additionalInsets
+      ) { host in
+        let topReceipt = try await host.capture("search-\(name)-top", requiring: ["Trending", "Moon Garden"])
+        if additionalInsets != nil {
+          let topic = try #require(topReceipt.lines.first { $0.text.contains("Moon Garden") })
+          #expect(host.actualSafeAreaFrame.contains(topic.rect), "Topic text must remain inside the actual asymmetric safe area")
+        }
         let scrollView = try #require(host.verticalScrollView)
         let maximumOffset = max(-scrollView.adjustedContentInset.top,
           scrollView.contentSize.height - scrollView.bounds.height + scrollView.adjustedContentInset.bottom)
@@ -263,15 +278,20 @@ struct FeedsSearchPresentationTests {
 
   private func withHost<Content: View>(
     _ content: Content, appState: AppState, size: CGSize, scheme: ColorScheme = .light,
-    typeSize: DynamicTypeSize = .large, body: (PresentationHost) async throws -> Void
+    typeSize: DynamicTypeSize = .large, additionalSafeAreaInsets: UIEdgeInsets? = nil,
+    body: (PresentationHost) async throws -> Void
   ) async throws {
     let previousScheme = appState.themeManager.colorSchemeOverride
     appState.themeManager.colorSchemeOverride = scheme
     defer { appState.themeManager.colorSchemeOverride = previousScheme }
     let host = try PresentationHost(content: content.environment(appState).fontManager(appState.fontManager).environment(\.colorScheme, scheme)
       .environment(\.dynamicTypeSize, typeSize).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-      .background(scheme == .light ? Color.white : Color.black).ignoresSafeArea(), size: size, scheme: scheme)
+      .background(scheme == .light ? Color.white : Color.black)
+      .ignoresSafeArea(.container, edges: additionalSafeAreaInsets == nil ? .all : []), size: size, scheme: scheme)
     defer { host.close() }
+    if let additionalSafeAreaInsets {
+      try await host.applySyntheticSafeAreaInsets(additionalSafeAreaInsets)
+    }
     try await body(host)
   }
 }
@@ -350,6 +370,8 @@ private final class PresentationHost {
   let window: UIWindow
   let controller: UIViewController
   private let requestedSize: CGSize
+  private var requestedAdditionalSafeAreaInsets: UIEdgeInsets?
+  private var baselineSafeAreaInsets = UIEdgeInsets.zero
   private weak var previousKeyWindow: UIWindow?
 
   init<Content: View>(content: Content, size: CGSize, scheme: ColorScheme) throws {
@@ -369,6 +391,18 @@ private final class PresentationHost {
     allViews(controller.view).compactMap { $0 as? UIScrollView }
       .filter { $0.contentSize.height > $0.bounds.height }
       .max { $0.bounds.height < $1.bounds.height }
+  }
+
+  var actualSafeAreaFrame: CGRect { controller.view.safeAreaLayoutGuide.layoutFrame }
+
+  func applySyntheticSafeAreaInsets(_ insets: UIEdgeInsets) async throws {
+    try await Task.sleep(for: .milliseconds(80))
+    window.layoutIfNeeded()
+    controller.view.layoutIfNeeded()
+    baselineSafeAreaInsets = controller.view.safeAreaInsets
+    requestedAdditionalSafeAreaInsets = insets
+    controller.additionalSafeAreaInsets = insets
+    controller.view.setNeedsLayout()
   }
 
   func close() {
@@ -415,11 +449,28 @@ private final class PresentationHost {
 
     Attachment.record(Array(png), named: "\(name).png")
     let details = "requestedSize=\(requestedSize), actualWindow=\(window.bounds), renderedView=\(controller.view.bounds), scale=3, drawHierarchy=\(didDraw)\n"
+      + "syntheticAdditionalInsets=\(String(describing: requestedAdditionalSafeAreaInsets)), baselineInsets=\(baselineSafeAreaInsets), actualInsets=\(controller.view.safeAreaInsets), actualSafeAreaFrame=\(actualSafeAreaFrame)\n"
       + "error=\(errorText)\n" + receipt.lines.map { "\($0.rect): \($0.text)" }.joined(separator: "\n")
     Attachment.record(Array(details.utf8), named: "\(name)-geometry-ocr.txt")
     #expect(!png.isEmpty && didDraw, "UIKit must produce a real rendered image")
     #expect(abs(requestedSize.width - controller.view.bounds.width) < 1, "The receiving width must equal the requested fixture width")
     #expect(abs(requestedSize.height - controller.view.bounds.height) < 1, "The receiving height must equal the requested fixture height")
+    if let requested = requestedAdditionalSafeAreaInsets {
+      let actual = controller.view.safeAreaInsets
+      for (edge, delta, expected) in [
+        ("top", actual.top - baselineSafeAreaInsets.top, requested.top),
+        ("left", actual.left - baselineSafeAreaInsets.left, requested.left),
+        ("bottom", actual.bottom - baselineSafeAreaInsets.bottom, requested.bottom),
+        ("right", actual.right - baselineSafeAreaInsets.right, requested.right)
+      ] {
+        #expect(abs(delta - expected) < 1, "The host must apply the requested additional \(edge) inset independently")
+      }
+      let expectedFrame = controller.view.bounds.inset(by: actual)
+      #expect(abs(actualSafeAreaFrame.width - expectedFrame.width) < 1)
+      #expect(abs(actualSafeAreaFrame.height - expectedFrame.height) < 1)
+      #expect(abs(actualSafeAreaFrame.minX - expectedFrame.minX) < 1)
+      #expect(abs(actualSafeAreaFrame.minY - expectedFrame.minY) < 1)
+    }
     for text in expected {
       #expect(receipt.contains(text), "Expected complete visible text '\(text)'; see \(name) receipts")
     }
