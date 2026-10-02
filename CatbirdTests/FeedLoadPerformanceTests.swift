@@ -132,6 +132,7 @@ final class FeedLoadPerformanceTests: XCTestCase {
       let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
       window = UIWindow(windowScene: scene)
       window.frame = CGRect(x: 0, y: 0, width: 402, height: 800)
+      window.backgroundColor = .systemBackground
       window.rootViewController = controller
       window.isHidden = false
       await controller.performUpdate()
@@ -219,7 +220,8 @@ final class FeedLoadPerformanceTests: XCTestCase {
       let fixture = try await Fixture(videoCards: videoCards)
       defer { fixture.close() }
       let variant = videoCards ? "topics-and-video-cards" : "topics"
-      try attachScreenshot(fixture, named: "\(variant)-before", requireTrending: true)
+      try attachScreenshot(fixture, named: "\(variant)-before", requireTrending: true,
+        requiredText: "fixture post 5")
       let probe = FrameProbe { [weak fixture] in try? fixture?.geometry() }
       probe.start()
       defer { probe.stop() }
