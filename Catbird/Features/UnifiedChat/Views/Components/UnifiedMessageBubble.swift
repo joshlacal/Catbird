@@ -720,4 +720,5 @@ private extension View {
     )
   }
   .padding()
+  .previewWithAuthenticatedState()
 }

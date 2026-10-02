@@ -173,8 +173,10 @@ final class SocialComponentLayoutTests: XCTestCase {
     window.makeKeyAndVisible()
     defer { window.isHidden = true; previousKeyWindow?.makeKey() }
     let probe = ComponentLayoutProbe()
+    let sceneContext = SceneNavigationContext(appState: state, sceneID: UUID())
     let host = UIHostingController(rootView: ObservedLayoutContent(content: content, probe: probe)
       .environment(state)
+      .environment(sceneContext)
       .dynamicTypeSize(.accessibility2))
     // Deliberately asymmetric; do not derive one side from the opposite side.
     let extraInsets = UIEdgeInsets(top: 17, left: 23, bottom: 11, right: 5)
