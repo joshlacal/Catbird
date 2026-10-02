@@ -440,10 +440,17 @@ extension PostComposerViewModel {
 
     // MARK: - Thread Creation
 
-    func createThread() async throws {
+    @discardableResult
+    func createThread() async throws -> Bool {
+        guard !isSubmissionActive else { throw editingOwnershipError() }
         try ensureDraftReferencesReadyForPosting()
-        // Update current thread entry before posting
+        // Update current thread entry before capturing submission ownership.
         updateCurrentThreadEntry()
+        let submissionSnapshot = captureEditingSnapshot()
+        let submittedContent = editingContent()
+        if editingSession != nil && submissionSnapshot == nil { throw editingOwnershipError() }
+        beginSubmission()
+        defer { endSubmission() }
 
         isPosting = true
         defer { isPosting = false }
@@ -494,14 +501,12 @@ extension PostComposerViewModel {
                        let media = Self.recordWithMediaUnion(from: imagesEmbed) {
                         embed = .appBskyEmbedRecordWithMedia(AppBskyEmbedRecordWithMedia(record: record, media: media))
                     }
-                } else if let videoItem = entry.videoItem {
-                    self.videoItem = videoItem
-                    if let videoEmbed = try await createVideoEmbed(),
+                } else if entry.videoItem != nil {
+                    if let videoEmbed = try await createVideoEmbedForEntry(entry),
                        case .appBskyEmbedVideo(let video) = videoEmbed {
                         let media = AppBskyEmbedRecordWithMedia.AppBskyEmbedRecordWithMediaMediaUnion.appBskyEmbedVideo(video)
                         embed = .appBskyEmbedRecordWithMedia(AppBskyEmbedRecordWithMedia(record: record, media: media))
                     }
-                    self.videoItem = nil
                 } else {
                     // Quote-only embed
                     embed = .appBskyEmbedRecord(record)
@@ -511,11 +516,8 @@ extension PostComposerViewModel {
             } else if !entry.mediaItems.isEmpty {
                 // Create images embed from the entry's media items
                 embed = try await createImagesEmbedForEntry(entry)
-            } else if let videoItem = entry.videoItem {
-                // Use the entry's video item
-                self.videoItem = videoItem // Temporarily set for createVideoEmbed
-                embed = try await createVideoEmbed()
-                self.videoItem = nil // Clear it
+            } else if entry.videoItem != nil {
+                embed = try await createVideoEmbedForEntry(entry)
             } else if !entry.urlCards.isEmpty {
                 // Use the first URL card from the entry for the embed
                 // In thread mode, each entry tracks its own URL cards
@@ -558,15 +560,13 @@ extension PostComposerViewModel {
             let nsErr = error as NSError
             if nsErr.domain == NSURLErrorDomain && (nsErr.code == NSURLErrorNotConnectedToInternet || nsErr.code == NSURLErrorTimedOut) {
                 ComposerOutbox.shared.enqueueThread(texts: postTexts, languages: selectedLanguages, labels: selectedLabels, hashtags: outlineTags)
-                appState.composerDraftManager.clearDraft()
                 logger.info("Thread queued offline")
-                return
+                return completeEditingSubmission(submissionSnapshot, content: submittedContent)
             }
             throw error
         }
 
-        // Clear draft on successful post creation
-        appState.composerDraftManager.clearDraft()
+        return completeEditingSubmission(submissionSnapshot, content: submittedContent)
     }
 
     private func processFacetsForText(_ text: String) async -> [AppBskyRichtextFacet] {
@@ -586,9 +586,15 @@ extension PostComposerViewModel {
         // Temporarily set mediaItems for image upload
         let originalItems = mediaItems
         mediaItems = entry.mediaItems
-        let embed = try await createImagesEmbed()
-        mediaItems = originalItems
-        return embed
+        defer { mediaItems = originalItems }
+        return try await createImagesEmbed()
+    }
+
+    func createVideoEmbedForEntry(_ entry: ThreadEntry) async throws -> AppBskyFeedPost.AppBskyFeedPostEmbedUnion? {
+        let originalVideo = videoItem
+        videoItem = entry.videoItem
+        defer { videoItem = originalVideo }
+        return try await createVideoEmbed()
     }
 
     /// Maps the embed produced by createImagesEmbed (images for <=4 photos,
@@ -608,7 +614,12 @@ extension PostComposerViewModel {
 
     // MARK: - Post Creation
 
-    func createPost() async throws {
+    @discardableResult
+    func createPost() async throws -> Bool {
+        guard !isSubmissionActive else { throw editingOwnershipError() }
+        let submissionSnapshot = captureEditingSnapshot()
+        let submittedContent = editingContent()
+        if editingSession != nil && submissionSnapshot == nil { throw editingOwnershipError() }
         try ensureDraftReferencesReadyForPosting()
         // Create single post
         isPosting = true
@@ -720,7 +731,6 @@ extension PostComposerViewModel {
                     labels: selectedLabels,
                     hashtags: outlineTags
                 )
-                appState.composerDraftManager.clearDraft()
                 logger.info("Post queued offline")
                 if #available(iOS 26, macOS 26, *) {
                     await MetricKitSignposts.endPostComposition(
@@ -729,7 +739,7 @@ extension PostComposerViewModel {
                         characterCount: postText.count
                     )
                 }
-                return
+                return completeEditingSubmission(submissionSnapshot, content: submittedContent)
             }
             if #available(iOS 26, macOS 26, *) {
                 await MetricKitSignposts.endPostComposition(
@@ -741,15 +751,13 @@ extension PostComposerViewModel {
             throw error
         }
 
-        // Clear draft on successful post creation
-        appState.composerDraftManager.clearDraft()
-
         // End MetricKit tracking for successful post
         if #available(iOS 26, macOS 26, *) {
           await MetricKitSignposts.endPostComposition(posted: true, mediaCount: mediaItems.count, characterCount: postText.count)
         }
 
         logger.info("Post created successfully")
+        return completeEditingSubmission(submissionSnapshot, content: submittedContent)
     }
 
     // MARK: - Thumbnail Management

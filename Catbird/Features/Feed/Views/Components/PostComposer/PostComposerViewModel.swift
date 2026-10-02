@@ -162,6 +162,12 @@ final class PostComposerViewModel {
   // MARK: - Private Properties
   
   let appState: AppState
+  let editingSession: SceneComposerEditingSession?
+  private(set) var editingClaim: ComposerDraftClaim?
+  private let editingPresentationID = UUID()
+  private var serializedEditingContent: EditingContent?
+  private var serializedEditingDraft: PostComposerDraft?
+  private var submissionRecoveryDraft: PostComposerDraft?
 
   private var draftRestorationGeneration = UUID()
   private var pendingParentPostURI: String?
@@ -245,11 +251,13 @@ final class PostComposerViewModel {
   private(set) var isSubmissionActive = false
 
   func beginSubmission() {
+    submissionRecoveryDraft = ownsEditingDraft ? serializedDraftForCurrentContent() : nil
     self.isSubmissionActive = true
   }
 
   func endSubmission() {
     self.isSubmissionActive = false
+    submissionRecoveryDraft = nil
   }
 
   // MARK: - Initialization
@@ -257,12 +265,14 @@ final class PostComposerViewModel {
   init(
     parentPost: AppBskyFeedDefs.PostView? = nil,
     quotedPost: AppBskyFeedDefs.PostView? = nil,
-    appState: AppState
+    appState: AppState,
+    editingSession: SceneComposerEditingSession? = nil
   ) {
     logger.info("PostComposerViewModel: Initializing - parentPost: \(parentPost != nil), quotedPost: \(quotedPost != nil)")
     self.parentPost = parentPost
     self.quotedPost = quotedPost
     self.appState = appState
+    self.editingSession = editingSession
 
     loadDefaultInteractionSettings()
     if let client = appState.atProtoClient {
@@ -288,33 +298,197 @@ final class PostComposerViewModel {
   
   // MARK: - Auto-save Management
   
-func saveDraftIfNeeded() {
-    // Don't save if there's no content
-    let hasText = !postText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    let hasMedia = !mediaItems.isEmpty
-    let hasVideo = videoItem != nil
-    let hasGif = selectedGif != nil
-    
-    let hasQuote = quotedPost != nil || threadEntries.contains { $0.draftQuotedPostURI != nil || $0.quotedPost != nil }
-    let hasThreadContent = isThreadMode && threadEntries.contains {
-      !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !$0.mediaItems.isEmpty
-        || $0.videoItem != nil || $0.selectedGif != nil
+  /// Starts only the request explicitly supplied by the originating scene.
+  /// A missing claim means a new editor, never an implicit resume.
+  func startEditing(restoring draft: PostComposerDraft? = nil, claim: ComposerDraftClaim? = nil) throws {
+    guard !Task.isCancelled, let editingSession, editingSession.accountDID == appState.userDID else {
+      throw editingOwnershipError()
     }
-    guard hasText || hasMedia || hasVideo || hasGif || hasQuote || hasThreadContent else {
-      logger.trace("PostComposerViewModel: saveDraftIfNeeded - no content to save")
-      return
+    if let claim {
+      guard claim.sceneID == editingSession.sceneID,
+            claim.accountDID == editingSession.accountDID,
+            editingSession.resume(claim: claim),
+            editingSession.claimEditor(editingPresentationID, claim: claim),
+            let snapshot = editingSession.snapshot(), snapshot.claim == claim else {
+        throw editingOwnershipError()
+      }
+      // Lease takeover flushes the previous live editor before this read.
+      editingClaim = claim
+      restoreDraftState(snapshot.draft)
+      cacheSerializedDraft(snapshot.draft)
+    } else {
+      if let draft { restoreDraftState(draft) }
+      let body = serializedDraftForCurrentContent()
+      let claim = try editingSession.beginNew(draft: body)
+      guard editingSession.claimEditor(editingPresentationID, claim: claim) else { throw editingOwnershipError() }
+      editingClaim = claim
+      cacheSerializedDraft(body)
     }
-    
-    logger.info("PostComposerViewModel: Saving draft - text: \(hasText), media: \(hasMedia), video: \(hasVideo), gif: \(hasGif)")
-    
-    // Save draft
-    let draft = saveDraftState()
-    appState.composerDraftManager.storeDraft(draft)
-    // Keep the AppView copy fresh while editing a restored saved draft
-    // (debounced; no-op unless draft sync is enabled)
-    appState.composerDraftManager.scheduleWorkingDraftSync(draft)
+    try registerLiveDraftProvider()
+  }
 
-    logger.debug("PostComposerViewModel: Draft saved - text preview: \(self.postText.prefix(50))...")
+  func restoreSavedDraft(_ draft: DraftPostViewModel) throws {
+    guard let editingSession else { throw editingOwnershipError() }
+    let claim = try editingSession.restoreSaved(draft)
+    guard editingSession.claimEditor(editingPresentationID, claim: claim) else { throw editingOwnershipError() }
+    editingClaim = claim
+    guard let snapshot = editingSession.snapshot(), snapshot.claim == editingClaim else {
+      throw editingOwnershipError()
+    }
+    restoreDraftState(snapshot.draft)
+    cacheSerializedDraft(snapshot.draft)
+    try registerLiveDraftProvider()
+  }
+
+  func replacementForSavedDraft(_ draft: DraftPostViewModel) throws -> PostComposerViewModel {
+    guard captureEditingSnapshot() != nil else { throw editingOwnershipError() }
+    let replacement = PostComposerViewModel(appState: appState, editingSession: editingSession)
+    try replacement.restoreSavedDraft(draft)
+    return replacement
+  }
+
+  @discardableResult
+  func detachEditingDraftForTransfer(_ snapshot: ComposerEditingSnapshot) -> Bool {
+    guard ownsEditingDraft, let editingSession, snapshot.claim == editingClaim else { return false }
+    return editingSession.detachForTransfer(snapshot)
+  }
+
+  var ownsEditingDraft: Bool {
+    guard let editingSession, let editingClaim else { return false }
+    return editingSession.ownsEditor(editingPresentationID, claim: editingClaim)
+      && editingClaim.accountDID == appState.userDID
+  }
+
+  /// Flushes the body and captures its ownership before any asynchronous work.
+  func captureEditingSnapshot() -> ComposerEditingSnapshot? {
+    guard !Task.isCancelled, let editingSession, let editingClaim, ownsEditingDraft,
+          editingSession.update(serializedDraftForCurrentContent(), claim: editingClaim) else { return nil }
+    return editingSession.snapshot()
+  }
+
+  private func cacheSerializedDraft(_ draft: PostComposerDraft) {
+    serializedEditingContent = editingContent()
+    serializedEditingDraft = draft
+  }
+
+  /// Keep identical media references when the editor body has not changed.
+  private func serializedDraftForCurrentContent() -> PostComposerDraft {
+    let content = editingContent()
+    if content == serializedEditingContent, let draft = serializedEditingDraft { return draft }
+    let draft = saveDraftState()
+    serializedEditingContent = content
+    serializedEditingDraft = draft
+    return draft
+  }
+
+  private func registerLiveDraftProvider() throws {
+    guard let editingSession, let claim = editingClaim,
+          editingSession.registerLiveDraftProvider(
+            editorID: editingPresentationID, claim: claim,
+            provider: { [weak self] in
+              // The session validates the exact lease before and after this
+              // callback, including teardown from a cancelled lifecycle task.
+              guard let self, self.editingClaim == claim else { return nil }
+              if self.isSubmissionActive, let frozen = self.submissionRecoveryDraft {
+                return frozen
+              }
+              return self.serializedDraftForCurrentContent()
+            }
+          ) else { throw editingOwnershipError() }
+  }
+
+  @discardableResult
+  func unregisterLiveDraftProvider() -> Bool {
+    guard let editingSession, let editingClaim else { return false }
+    return editingSession.unregisterLiveDraftProvider(editorID: editingPresentationID, claim: editingClaim)
+  }
+
+  func saveDraftIfNeeded(claim expectedClaim: ComposerDraftClaim? = nil) {
+    guard !Task.isCancelled, !isSubmissionActive,
+          expectedClaim == nil || expectedClaim == editingClaim,
+          ownsEditingDraft else { return }
+    _ = captureEditingSnapshot()
+  }
+
+  @discardableResult
+  func discardEditingDraft() -> Bool {
+    guard ownsEditingDraft, let editingSession, let editingClaim,
+          editingSession.discard(claim: editingClaim) else { return false }
+    clearAll()
+    return true
+  }
+
+  /// This comparison has no file writes, unlike the persisted media wrappers.
+  struct EditingContent: Equatable {
+    struct Media: Equatable {
+      let id: UUID
+      let data: Data?
+      let videoData: Data?
+      let videoURL: URL?
+      let altText: String
+      let aspectRatio: CGSize?
+      let isLoading: Bool
+      let isAudioVisualizerVideo: Bool
+      let isGifConversion: Bool
+      let caption: VideoCaption?
+
+      init(_ item: MediaItem) {
+        id = item.id
+        data = item.rawData
+        videoData = item.videoData
+        videoURL = item.rawVideoURL
+        altText = item.altText
+        aspectRatio = item.aspectRatio
+        isLoading = item.isLoading
+        isAudioVisualizerVideo = item.isAudioVisualizerVideo
+        isGifConversion = item.isGifConversion
+        caption = item.caption
+      }
+    }
+
+    let text: String
+    let media: [Media]
+    let video: Media?
+    let gif: TenorGif?
+    let languages: [LanguageCodeContainer]
+    let labels: Set<ComAtprotoLabelDefs.LabelValue>
+    let tags: [String]
+    let threadEntries: [ThreadEntry]
+    let threadMedia: [[Media]]
+    let threadVideos: [Media?]
+    let isThreadMode: Bool
+    let currentThreadIndex: Int
+    let parentURI: String?
+    let quotedURI: String?
+    let interactionSettings: PostInteractionSettingsState
+  }
+
+  func editingContent() -> EditingContent {
+    EditingContent(
+      text: postText, media: mediaItems.map(EditingContent.Media.init),
+      video: videoItem.map(EditingContent.Media.init), gif: selectedGif,
+      languages: selectedLanguages, labels: selectedLabels, tags: outlineTags,
+      threadEntries: threadEntries,
+      threadMedia: threadEntries.map { $0.mediaItems.map(EditingContent.Media.init) },
+      threadVideos: threadEntries.map { $0.videoItem.map(EditingContent.Media.init) },
+      isThreadMode: isThreadMode, currentThreadIndex: currentThreadIndex,
+      parentURI: parentPost?.uri.uriString() ?? pendingParentPostURI,
+      quotedURI: quotedPost?.uri.uriString(), interactionSettings: interactionSettings
+    )
+  }
+
+  @discardableResult
+  func completeEditingSubmission(_ snapshot: ComposerEditingSnapshot?, content: EditingContent) -> Bool {
+    guard let editingSession else { return true }
+    guard ownsEditingDraft, let snapshot, snapshot.claim == editingClaim,
+          content == editingContent() else { return false }
+    return editingSession.completeSubmission(snapshot)
+  }
+
+  func editingOwnershipError() -> NSError {
+    NSError(domain: "ComposerEditingSession", code: 1, userInfo: [
+      NSLocalizedDescriptionKey: "This draft is no longer open in this window."
+    ])
   }
 
   // MARK: - Video Upload Eligibility
@@ -616,6 +790,10 @@ func saveDraftIfNeeded() {
   }
 
   isolated deinit {
+    if let editingClaim {
+      _ = editingSession?.unregisterLiveDraftProvider(editorID: editingPresentationID, claim: editingClaim)
+      _ = editingSession?.releaseEditor(editingPresentationID, claim: editingClaim)
+    }
     parentRestorationTask?.cancel()
     quoteRestorationTasks.values.forEach { $0.cancel() }
     interactionDefaultsTask?.cancel()

@@ -51,6 +51,7 @@ import AppKit
 struct ActionButtonsView: View {
   // MARK: - Environment & Properties
   @Environment(AppState.self) private var appState
+  @Environment(SceneNavigationContext.self) private var sceneContext
 
   // Post to display actions for
   let post: AppBskyFeedDefs.PostView
@@ -59,9 +60,6 @@ struct ActionButtonsView: View {
 
   // View model for handling actions
   @State private var viewModel: ActionButtonViewModel
-  @State private var showingPostComposer: Bool = false
-  // Per-post matched transition namespace for reply → composer zoom
-  @Namespace private var replyTransition
 
   // Consolidated interaction state
   @State private var interactionState: PostInteractionState
@@ -77,8 +75,6 @@ struct ActionButtonsView: View {
 
   // Using multiples of 3 for spacing
   private static let baseUnit: CGFloat = 3
-  // Unique zoom source id per post to ensure correct return target
-  private var replySourceID: String { "reply-\(post.uri.uriString())" }
 
   // MARK: - Initialization
   init(
@@ -126,9 +122,6 @@ struct ActionButtonsView: View {
       // Subtle glass and mark as the matched transition source for this post
       .padding(.vertical, isBig ? 3 : 2)
       .padding(.horizontal, isBig ? 6 : 5)
-      #if os(iOS)
-      .modifier(ReplyZoomSource(id: replySourceID, namespace: replyTransition))
-      #endif
       Spacer()
 
       repostMenu
@@ -212,22 +205,6 @@ struct ActionButtonsView: View {
       }
       _ = await markInitialLoad
     }
-    .sheet(isPresented: $showingPostComposer) {
-      Group {
-        PostComposerViewUIKit(
-          parentPost: post,
-          appState: appState
-        )
-        .applyAppStateEnvironment(appState)
-        #if os(iOS)
-        .presentationDetents({
-          if #available(iOS 26.0, *) { return [.large] } else { return [PresentationDetent.large] }
-        }())
-        .presentationDragIndicator({
-          if #available(iOS 26.0, *) { return .visible } else { return .hidden }
-        }())
-        #endif
-      }
     .onChange(of: post) { _, newPost in
       if viewModel.postId != newPost.uri.uriString() {
         viewModel = ActionButtonViewModel(
@@ -236,14 +213,7 @@ struct ActionButtonsView: View {
           appState: postViewModel.appState
         )
       }
-      // Re-seed through the shadow so a stale payload cannot overwrite an
-      // optimistic decision; the shadow is the single source of truth.
       Task { await refreshState() }
-    }
-      #if os(iOS)
-      // Link the composer sheet to this reply button's transition namespace
-      .modifier(ReplyZoomDestination(id: replySourceID, namespace: replyTransition))
-      #endif
     }
     .id(appState.userDID)
   }
@@ -313,19 +283,9 @@ struct ActionButtonsView: View {
   // MARK: - Reply Handling
   
   private func handleReplyTap() {
-    let parentPostURI = post.uri.uriString()
-    
-    // Check for conflicting draft
-    if appState.composerDraftManager.hasConflictingDraft(parentPostURI: parentPostURI, quotedPostURI: nil) {
-      // Show alert asking user what to do with existing draft
-      // For now, just clear the existing draft and proceed
-      appState.composerDraftManager.clearDraft()
-    }
-    
-    // Track reply interaction for feed feedback
+    guard !sceneContext.isInvalidated, sceneContext.accountDID == appState.userDID else { return }
     appState.feedFeedbackManager.trackReply(postURI: post.uri)
-    
-    showingPostComposer = true
+    sceneContext.presentPostComposer(initialText: nil, parentPost: post, quotedPost: nil)
   }
 
   private func handleRepostToggle() {
@@ -341,7 +301,8 @@ struct ActionButtonsView: View {
   }
 
   private func handleQuotePost() {
-    appState.presentPostComposer(quotedPost: post)
+    guard !sceneContext.isInvalidated, sceneContext.accountDID == appState.userDID else { return }
+    sceneContext.presentPostComposer(initialText: nil, parentPost: nil, quotedPost: post)
   }
   
   // MARK: - State Management
@@ -427,37 +388,6 @@ struct InteractionButton: View {
   }
 }
 
-#if os(iOS)
-// MARK: - Matched transition helpers (iOS 26+ safe wrappers)
-private struct ReplyZoomSource: ViewModifier {
-  let id: String
-  let namespace: Namespace.ID
-  @ViewBuilder
-  func body(content: Content) -> some View {
-    if #available(iOS 26.0, *) {
-      content.matchedTransitionSource(id: id, in: namespace) { source in
-        source
-      }
-    } else {
-      content
-    }
-  }
-}
-
-private struct ReplyZoomDestination: ViewModifier {
-  let id: String
-  let namespace: Namespace.ID
-  @ViewBuilder
-  func body(content: Content) -> some View {
-    if #available(iOS 26.0, *) {
-      content.navigationTransition(.zoom(sourceID: id, in: namespace))
-    } else {
-      content
-    }
-  }
-}
-#endif
-
 #Preview("ActionButtonsView") {
   AsyncPreviewDataContent { appState in
     await PreviewData.firstPostView(from: appState)
@@ -473,6 +403,8 @@ private struct ReplyZoomDestination: ViewModifier {
 /// Shared feed, thread and video entry point. Sheets belong to the originating
 /// view rather than whichever application window happens to be first.
 struct PostShareMenu: View {
+  @Environment(SceneNavigationContext.self) private var sceneContext
+
   let post: AppBskyFeedDefs.PostView
   let appState: AppState
   var isBig = false
@@ -482,16 +414,25 @@ struct PostShareMenu: View {
 
   @State private var destination: Destination?
 
-  private enum Destination: String, Identifiable {
-    case chat, native
-    var id: String { rawValue }
+  private struct Destination: Identifiable {
+    enum Kind { case chat, native }
+    let id = UUID()
+    let kind: Kind
+    let sceneContext: SceneNavigationContext
+  }
+
+  private var isValidOrigin: Bool {
+    !sceneContext.isInvalidated && sceneContext.accountDID == appState.userDID
   }
 
   var body: some View {
     Menu {
       #if os(iOS)
       Button {
-        if let onChooseChat { onChooseChat() } else { destination = .chat }
+        guard isValidOrigin else { return }
+        if let onChooseChat { onChooseChat() } else {
+          destination = Destination(kind: .chat, sceneContext: sceneContext)
+        }
       } label: {
         Label("Send to Bluesky chat", systemImage: "bubble.left.and.bubble.right")
       }
@@ -501,7 +442,7 @@ struct PostShareMenu: View {
       #endif
 
       Button {
-        guard let url = ActionButtonViewModel.shareURL(for: post) else { return }
+        guard isValidOrigin, let url = ActionButtonViewModel.shareURL(for: post) else { return }
         if let onCopyLink {
           onCopyLink(url)
         } else {
@@ -515,7 +456,10 @@ struct PostShareMenu: View {
 
       #if os(iOS)
       Button {
-        if let onChooseMore { onChooseMore() } else { destination = .native }
+        guard isValidOrigin else { return }
+        if let onChooseMore { onChooseMore() } else {
+          destination = Destination(kind: .native, sceneContext: sceneContext)
+        }
       } label: {
         Label("More…", systemImage: "square.and.arrow.up")
       }
@@ -537,12 +481,19 @@ struct PostShareMenu: View {
         .frame(minWidth: isBig ? 48 : 36, minHeight: isBig ? 40 : 32, alignment: .leading)
         .contentShape(Rectangle())
     }
+    .disabled(!isValidOrigin)
     .accessibilityIdentifier("shareButton")
     .accessibilityLabel("Share post")
     .sheet(item: $destination) { destination in
       shareDestination(destination)
     }
-    .onChange(of: AppStateManager.shared.lifecycle.userDID) { _, _ in
+    .onChange(of: destination?.sceneContext.isInvalidated) { _, isInvalidated in
+      if isInvalidated == true { destination = nil }
+    }
+    .onChange(of: sceneContext.accountDID) { _, _ in
+      destination = nil
+    }
+    .onChange(of: sceneContext.sceneID) { _, _ in
       destination = nil
     }
   }
@@ -550,14 +501,18 @@ struct PostShareMenu: View {
   @ViewBuilder
   private func shareDestination(_ destination: Destination) -> some View {
     #if os(iOS)
-    switch destination {
-    case .chat:
-      ModernChatSelectionView(post: post, appState: appState) {
-        self.destination = nil
+    if !destination.sceneContext.isInvalidated,
+       destination.sceneContext.accountDID == appState.userDID {
+      switch destination.kind {
+      case .chat:
+        ModernChatSelectionView(post: post, appState: appState, sceneContext: destination.sceneContext) {
+          self.destination = nil
+        }
+        .applyAppStateEnvironment(appState)
+        .environment(destination.sceneContext)
+      case .native:
+        NativePostShareSheet(post: post, appState: appState, sceneContext: destination.sceneContext)
       }
-      .applyAppStateEnvironment(appState)
-    case .native:
-      NativePostShareSheet(post: post, appState: appState)
     }
     #else
     if let url = ActionButtonViewModel.shareURL(for: post) {

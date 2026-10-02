@@ -42,15 +42,15 @@ extension PostComposerViewUIKit {
         )
       }
       .sheet(isPresented: $showingAccountSwitcher) {
-        // Pass current draft when switching accounts from composer
-        // NOTE: Do NOT inject appState here — AccountSwitcherView only needs AppStateManager,
-        // and a captured appState becomes stale after account switch, causing EXC_BREAKPOINT
-        // in EnvironmentValues.subscript.getter during sheet dismissal transitions.
-        AccountSwitcherView(showsDismissButton: true, draftToTransfer: vm.saveDraftState())
-          .environment(AppStateManager.shared)
-          .onDisappear {
-            handleAccountSwitchComplete(vm: vm)
+        let transfer = accountSwitchSnapshot
+        AccountSwitcherView(
+          showsDismissButton: true,
+          composerTransfer: transfer,
+          onSwitchCompleted: { outcome in
+            handleAccountSwitchComplete(outcome, vm: vm, snapshot: transfer)
           }
+        )
+        .environment(AppStateManager.shared)
       }
     
     let otherSheetsContent = audioSheetContent
@@ -103,15 +103,22 @@ extension PostComposerViewUIKit {
       .sheet(isPresented: $showingDrafts) {
         DraftsListView(appState: appState) { draftVM in
           pcSheetsLogger.info("PostComposerSheets: Draft selected from drafts list")
-          if let draft = appState.composerDraftManager.loadSavedDraft(draftVM) {
-            pcSheetsLogger.debug("PostComposerSheets: Loading draft - text length: \(draft.postText.count)")
-            // Apply draft to current composer
-            vm.enterDraftMode()
-            vm.restoreDraftState(draft)
-            // Move focus to editor after loading
+          if editingSession.savedDraftID == draftVM.id, vm.ownsEditingDraft {
+            showingDrafts = false
+            return
+          }
+          do {
+            // Flush live typing before the session archives the old editor.
+            // The replacement claims a new presentation lease, rejecting late callbacks.
+            let replacement = try vm.replacementForSavedDraft(draftVM)
+            autoSaveTask?.cancel()
+            viewModel = replacement
             activeEditorFocusID = UUID()
-          } else {
-            pcSheetsLogger.warning("PostComposerSheets: Failed to load draft")
+            startAutoSave()
+          } catch {
+            appState.toastManager.show(ToastItem(
+              message: error.localizedDescription, icon: "exclamationmark.triangle.fill"
+            ))
           }
           showingDrafts = false
         }
@@ -215,7 +222,7 @@ extension PostComposerViewUIKit {
         Button("Discard", role: .destructive) {
           pcSheetsLogger.info("PostComposerSheets: User chose to discard draft")
           dismissReason = .discard
-          appState.composerDraftManager.clearDraft()
+          guard vm.discardEditingDraft() else { return }
           dismiss()
         }
         Button("Keep Editing", role: .cancel) { 

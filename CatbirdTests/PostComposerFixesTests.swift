@@ -204,9 +204,13 @@ func testThreadEntryManagement() async throws {
 }
 
 @Test("UIKit composer submit validation matches shared validation")
+@MainActor
 func testUIKitComposerSubmitValidationMatchesSharedValidation() async throws {
     let appState = AppState()
-    let view = PostComposerViewUIKit(appState: appState)
+    let view = PostComposerViewUIKit(
+      appState: appState,
+      editingSession: SceneComposerEditingSession(appState: appState, sceneID: UUID())
+    )
     let viewModel = PostComposerViewModel(appState: appState)
 
     await MainActor.run {

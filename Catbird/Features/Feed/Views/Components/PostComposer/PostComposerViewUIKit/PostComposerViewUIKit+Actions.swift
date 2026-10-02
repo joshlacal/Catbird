@@ -20,7 +20,7 @@ extension PostComposerViewUIKit {
     } else {
       pcActionsLogger.info("PostComposerActions: Discarding empty composer")
       dismissReason = .discard
-      appState.composerDraftManager.clearDraft()
+      guard vm.discardEditingDraft() else { return }
       dismiss()
     }
   }
@@ -34,27 +34,28 @@ extension PostComposerViewUIKit {
     pcActionsLogger.info("PostComposerActions: Submit initiated - isThreadMode: \(vm.isThreadMode), text length: \(vm.postText.count), media: \(vm.mediaItems.count), video: \(vm.videoItem != nil), gif: \(vm.selectedGif != nil)")
     isSubmitting = true
     
-    Task {
+    Task { @MainActor in
       do {
+        let completed: Bool
         if vm.isThreadMode {
-          pcActionsLogger.info("PostComposerActions: Creating thread with \(vm.threadEntries.count) entries")
-          try await vm.createThread()
+          completed = try await vm.createThread()
         } else {
-          pcActionsLogger.info("PostComposerActions: Creating single post")
-          try await vm.createPost()
+          completed = try await vm.createPost()
         }
-        pcActionsLogger.info("PostComposerActions: Post/thread created successfully")
-        await MainActor.run {
-          appState.composerDraftManager.clearDraft()
-          vm.clearAll()
-          dismissReason = .submit
-          dismiss()
-        }
-      } catch {
-        await MainActor.run {
+        guard completed else {
           isSubmitting = false
-          pcActionsLogger.error("PostComposerActions: Submit failed - error: \(error.localizedDescription)")
+          vm.saveDraftIfNeeded()
+          appState.toastManager.show(ToastItem(
+            message: "Your newer draft changes have been kept.", icon: "doc.text"
+          ))
+          return
         }
+        vm.clearAll()
+        dismissReason = .submit
+        dismiss()
+      } catch {
+        isSubmitting = false
+        pcActionsLogger.error("PostComposerActions: Submit failed - error: \(error.localizedDescription)")
       }
     }
   }

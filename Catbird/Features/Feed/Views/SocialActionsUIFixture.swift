@@ -7,6 +7,7 @@ import SwiftUI
 /// transport is available; individual action destinations are injected below.
 struct SocialActionsUIFixture: View {
   @State private var appState: AppState?
+  @State private var sceneContext: SceneNavigationContext?
   @State private var result = "No action selected"
   @State private var showingRecipients = false
   @State private var inspectingOwnLabels: Bool?
@@ -18,7 +19,7 @@ struct SocialActionsUIFixture: View {
 
   var body: some View {
     NavigationStack {
-      if let appState {
+      if let appState, let sceneContext {
         ScrollView {
           VStack(alignment: .leading, spacing: 20) {
             Text("Post actions")
@@ -68,6 +69,7 @@ struct SocialActionsUIFixture: View {
           .padding()
         }
         .environment(appState)
+        .environment(sceneContext)
         .navigationTitle("Social actions")
         .sheet(isPresented: $showingDrafts) {
           DraftsListView(appState: appState) { draft in
@@ -79,9 +81,11 @@ struct SocialActionsUIFixture: View {
           ModernChatSelectionView(
             post: SocialActionsFixtureData.post,
             appState: appState,
+            sceneContext: sceneContext,
             model: ShareRecipientSelectionModel(
               accountDID: SocialActionsFixtureData.viewerDID,
-              activeAccount: { SocialActionsFixtureData.viewerDID },
+              originSceneID: sceneContext.sceneID,
+              isOriginValid: { !sceneContext.isInvalidated },
               search: { query in
                 if query.lowercased().contains("fail") { throw URLError(.notConnectedToInternet) }
                 return [SocialActionsFixtureData.post.author]
@@ -142,6 +146,7 @@ struct SocialActionsUIFixture: View {
       } catch {
         result = "Fixture storage error: \(error.localizedDescription)"
       }
+      sceneContext = SceneNavigationContext(appState: state, sceneID: UUID())
       appState = state
     }
   }

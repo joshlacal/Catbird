@@ -9,6 +9,7 @@ import Petrel
 
 struct ConversationView: View {
   @Environment(AppState.self) private var appState
+  @Environment(SceneNavigationContext.self) private var sceneContext
   @Environment(\.colorScheme) private var colorScheme
   @Environment(\.horizontalSizeClass) private var hSizeClass
   @Environment(\.dismiss) private var dismiss
@@ -20,10 +21,11 @@ struct ConversationView: View {
   @State private var unifiedDataSource: BlueskyConversationDataSource?
   @State private var isInitialized = false
   @State private var draftAccountDID: String?
+  @State private var draftSceneID: UUID?
   @State private var shareAwaitingReplacement: PendingChatShare?
   @State private var showShareReplacement = false
   private var chatNavigationPath: Binding<NavigationPath> {
-    appState.navigationManager.pathBinding(for: 4)
+    sceneContext.navigationManager.pathBinding(for: AppNavigationManager.chatTabIndex)
   }
 
   @State private var showingReportSheet = false
@@ -40,12 +42,17 @@ struct ConversationView: View {
 
   private let logger = Logger(subsystem: "blue.catbird", category: "ConversationView")
 
+  private var isCurrentScene: Bool {
+    !sceneContext.isInvalidated && sceneContext.accountDID == appState.userDID
+  }
+
   // MARK: - Data Source Management
 
   @MainActor
   private func ensureUnifiedDataSource() {
-    guard unifiedDataSource == nil else { return }
-    draftAccountDID = appState.userDID
+    guard isCurrentScene, unifiedDataSource == nil else { return }
+    draftAccountDID = sceneContext.accountDID
+    draftSceneID = sceneContext.sceneID
     unifiedDataSource = BlueskyConversationDataSource(
       chatManager: chatManager,
       convoID: convoId,
@@ -55,10 +62,12 @@ struct ConversationView: View {
 
   @MainActor
   private func consumePendingShareIfNeeded() {
-    guard AppStateManager.shared.lifecycle.userDID == appState.userDID,
-          !AppStateManager.shared.isTransitioning,
-          draftAccountDID == appState.userDID,
-          let pending = PendingChatShareStore.shared.peek(accountDID: appState.userDID, convoId: convoId),
+    guard isCurrentScene,
+          draftAccountDID == sceneContext.accountDID,
+          draftSceneID == sceneContext.sceneID,
+          let pending = PendingChatShareStore.shared.peek(
+            sceneID: sceneContext.sceneID, accountDID: sceneContext.accountDID, convoId: convoId
+          ),
           let draft = unifiedDataSource?.draft else { return }
     if let existing = draft.value.postRef, existing != pending.postRef {
       shareAwaitingReplacement = pending
@@ -70,12 +79,13 @@ struct ConversationView: View {
 
   @MainActor
   private func applyPendingShare(_ pending: PendingChatShare) {
-    guard AppStateManager.shared.lifecycle.userDID == appState.userDID,
-          !AppStateManager.shared.isTransitioning,
-          draftAccountDID == appState.userDID,
+    guard isCurrentScene,
+          draftAccountDID == sceneContext.accountDID,
+          draftSceneID == sceneContext.sceneID,
           let draft = unifiedDataSource?.draft,
           let owned = PendingChatShareStore.shared.consume(
-            accountDID: appState.userDID, convoId: convoId, expectedID: pending.id
+            sceneID: sceneContext.sceneID, accountDID: sceneContext.accountDID,
+            convoId: convoId, expectedID: pending.id
           ) else { return }
     owned.apply(to: &draft.value)
   }
@@ -84,10 +94,20 @@ struct ConversationView: View {
   /// conversation, only when the composer is empty so typed text is never lost.
   @MainActor
   private func consumePendingDraftIfNeeded() {
-    guard let dataSource = unifiedDataSource,
+    guard isCurrentScene,
+          draftAccountDID == sceneContext.accountDID,
+          draftSceneID == sceneContext.sceneID,
+          let dataSource = unifiedDataSource,
           dataSource.draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-          let text = ChatDraftHandoff.shared.consume(for: convoId) else { return }
-    dataSource.draftText = text
+          let pending = ChatDraftHandoff.shared.peek(
+            sceneID: sceneContext.sceneID, accountDID: sceneContext.accountDID,
+            conversationID: convoId
+          ),
+          let owned = ChatDraftHandoff.shared.consume(
+            sceneID: sceneContext.sceneID, accountDID: sceneContext.accountDID,
+            conversationID: convoId, expectedID: pending.id
+          ) else { return }
+    dataSource.draftText = owned.text
   }
 
   var body: some View {
@@ -136,11 +156,18 @@ struct ConversationView: View {
     .onChange(of: PendingChatShareStore.shared.revision) { _, _ in
       consumePendingShareIfNeeded()
     }
+    .onChange(of: sceneContext.isInvalidated) { _, isInvalidated in
+      if isInvalidated {
+        shareAwaitingReplacement = nil
+        showShareReplacement = false
+      }
+    }
     .alert("Replace shared post?", isPresented: $showShareReplacement) {
       Button("Keep Current", role: .cancel) {
-        if let pending = shareAwaitingReplacement {
+        if isCurrentScene, let pending = shareAwaitingReplacement {
           PendingChatShareStore.shared.consume(
-            accountDID: appState.userDID, convoId: convoId, expectedID: pending.id
+            sceneID: sceneContext.sceneID, accountDID: sceneContext.accountDID,
+            convoId: convoId, expectedID: pending.id
           )
         }
         shareAwaitingReplacement = nil
@@ -154,6 +181,11 @@ struct ConversationView: View {
     }
     .onReceive(NotificationCenter.default.publisher(for: ChatDraftHandoff.didStoreDraft)) { _ in
       consumePendingDraftIfNeeded()
+    }
+    .onChange(of: unifiedDataSource?.draftText) { _, text in
+      if text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true {
+        consumePendingDraftIfNeeded()
+      }
     }
     .onDisappear {
       chatManager.stopMessagePolling(for: convoId)

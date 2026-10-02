@@ -25,7 +25,9 @@ struct PostComposerViewUIKit: View {
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   
   // Store AppState reference locally to avoid global observation
- let appState: AppState
+  let appState: AppState
+  let editingSession: SceneComposerEditingSession
+  private let initialEditingClaim: ComposerDraftClaim?
   
   @State var viewModel: PostComposerViewModel?
   private let initialParentPost: AppBskyFeedDefs.PostView?
@@ -55,6 +57,8 @@ struct PostComposerViewUIKit: View {
   @State var isGeneratingVisualizerVideo = false
   @State var visualizerService: AudioVisualizerService? = nil
   @State var showingAccountSwitcher = false
+  @State var accountSwitchSnapshot: ComposerEditingSnapshot?
+  @State private var initializationError: String?
   @State var showingLanguagePicker = false
   @State var showingDismissAlert = false
   @State var showingDrafts = false
@@ -74,8 +78,12 @@ struct PostComposerViewUIKit: View {
   init(parentPost: AppBskyFeedDefs.PostView? = nil,
        quotedPost: AppBskyFeedDefs.PostView? = nil,
        initialText: String? = nil,
-       appState: AppState) {
+       appState: AppState,
+       editingSession: SceneComposerEditingSession,
+       editingClaim: ComposerDraftClaim? = nil) {
     self.appState = appState
+    self.editingSession = editingSession
+    self.initialEditingClaim = editingClaim
     self.initialParentPost = parentPost
     self.initialQuotedPost = quotedPost
     self.initialTextParam = initialText
@@ -84,8 +92,12 @@ struct PostComposerViewUIKit: View {
   }
   
   init(restoringFromDraft draft: PostComposerDraft,
-       appState: AppState) {
+       appState: AppState,
+       editingSession: SceneComposerEditingSession,
+       editingClaim: ComposerDraftClaim? = nil) {
     self.appState = appState
+    self.editingSession = editingSession
+    self.initialEditingClaim = editingClaim
     self.initialParentPost = nil
     self.initialQuotedPost = nil
     self.initialTextParam = nil
@@ -94,8 +106,12 @@ struct PostComposerViewUIKit: View {
   }
 
   init(initialCapturedMedia: CapturedMedia,
-       appState: AppState) {
+       appState: AppState,
+       editingSession: SceneComposerEditingSession,
+       editingClaim: ComposerDraftClaim? = nil) {
     self.appState = appState
+    self.editingSession = editingSession
+    self.initialEditingClaim = editingClaim
     self.initialParentPost = nil
     self.initialQuotedPost = nil
     self.initialTextParam = nil
@@ -108,11 +124,14 @@ struct PostComposerViewUIKit: View {
       if let vm = viewModel {
         GeometryReader { proxy in
           navigationContainer(vm: vm)
+            .disabled(isSubmitting)
             .onAppear {
               pcUIKitLogger.info("PostComposerViewUIKit: View appeared")
               updateMentionOverlay(vm: vm, proxy: proxy)
             }
         }
+      } else if let initializationError {
+        ContentUnavailableView("Draft Unavailable", systemImage: "doc.text", description: Text(initializationError))
       } else {
           ProgressView().progressViewStyle(.circular)
               .onAppear {
@@ -120,33 +139,29 @@ struct PostComposerViewUIKit: View {
       }
       }
     }
-    // Root-level stable identity: recreate composer only on account switch
-    .id(appState.userDID ?? "composer-unknown-user")
+    // Identity belongs to the injected origin scene.
+    .id(editingSession.sceneID)
     .task {
       guard viewModel == nil else { 
         pcUIKitLogger.debug("PostComposerViewUIKit: Task skipped, viewModel already exists")
         return 
       }
-      pcUIKitLogger.info("PostComposerViewUIKit: Initializing composer - parentPost: \(initialParentPost != nil), quotedPost: \(initialQuotedPost != nil), initialText: \(initialTextParam != nil), draft: \(restoringDraftParam != nil), currentDraft: \(appState.composerDraftManager.currentDraft != nil)")
       let vm = PostComposerViewModel(
         parentPost: initialParentPost,
         quotedPost: initialQuotedPost,
-        appState: appState
+        appState: appState,
+        editingSession: editingSession
       )
-      
-      // If initial text was passed (e.g. from Copilot proposal), prefill it;
-      // otherwise check for a restored or current draft.
       if let initialText = initialTextParam, !initialText.isEmpty {
         vm.postText = initialText
-      } else if let draft = restoringDraftParam {
-        pcUIKitLogger.info("PostComposerViewUIKit: Restoring draft from parameter")
-        vm.restoreDraftState(draft)
-      } else if initialCapturedMediaParam == nil,
-                let currentDraft = appState.composerDraftManager.currentDraft {
-        pcUIKitLogger.info("PostComposerViewUIKit: Restoring current draft (likely from account switch)")
-        vm.restoreDraftState(currentDraft)
       }
-      
+      do {
+        try vm.startEditing(restoring: restoringDraftParam, claim: initialEditingClaim)
+      } catch {
+        initializationError = error.localizedDescription
+        return
+      }
+
       viewModel = vm
 
       if let capturedMedia = initialCapturedMediaParam {
@@ -158,7 +173,9 @@ struct PostComposerViewUIKit: View {
         }
       }
       
+      guard !Task.isCancelled, vm.ownsEditingDraft else { return }
       await vm.loadUserLanguagePreference()
+      guard !Task.isCancelled, vm.ownsEditingDraft else { return }
       
       if !didSetInitialFocusID {
         activeEditorFocusID = UUID()
@@ -173,12 +190,9 @@ struct PostComposerViewUIKit: View {
       if let vm = viewModel,
          dismissReason != .submit && dismissReason != .discard,
          !suppressAutoSaveOnDismiss,
-         hasContent(vm: vm),
-         appState.composerDraftManager.currentDraft != nil {
-        pcUIKitLogger.info("PostComposerViewUIKit: Auto-saving draft on disappear")
-        Task { await MainActor.run { vm.saveDraftIfNeeded() } }
-      } else {
-        pcUIKitLogger.debug("PostComposerViewUIKit: Skipping auto-save - submit/discard, no content, or draft was cleared")
+         hasContent(vm: vm), vm.ownsEditingDraft, let claim = vm.editingClaim {
+        vm.saveDraftIfNeeded(claim: claim)
+        _ = editingSession.minimize(claim: claim)
       }
     }
   }
@@ -199,8 +213,7 @@ struct PostComposerViewUIKit: View {
                 showingDismissAlert = true
               } else {
                 dismissReason = .discard
-                appState.composerDraftManager.clearDraft()
-                vm.clearAll()
+                guard vm.discardEditingDraft() else { return }
                 dismiss()
               }
             }) {
@@ -213,30 +226,23 @@ struct PostComposerViewUIKit: View {
               titleVisibility: .visible
             ) {
               Button("Save Draft") {
-                guard let vm = viewModel else { return }
-                let draft = vm.saveDraftState()
-                
-                Task { @MainActor in
-                  guard await appState.composerDraftManager.createSavedDraftAndWait(draft) else {
-                    appState.toastManager.show(
-                      ToastItem(message: "Could not save your draft", icon: "exclamationmark.triangle.fill")
-                    )
-                    return
-                  }
+                guard let snapshot = vm.captureEditingSnapshot() else { return }
+                do {
+                  _ = try editingSession.stash(snapshot)
                   suppressAutoSaveOnDismiss = true
-                  appState.composerDraftManager.clearWorkingDraftAfterStash()
                   vm.clearAll()
                   dismissReason = .discard
                   dismiss()
+                } catch {
+                  appState.toastManager.show(
+                    ToastItem(message: error.localizedDescription, icon: "exclamationmark.triangle.fill")
+                  )
                 }
               }
               Button("Discard", role: .destructive) {
+                guard vm.discardEditingDraft() else { return }
                 suppressAutoSaveOnDismiss = true
                 dismissReason = .discard
-                appState.composerDraftManager.clearDraft()
-                if let vm = viewModel {
-                  vm.clearAll()
-                }
                 dismiss()
               }
               Button("Keep Editing", role: .cancel) { }
@@ -339,8 +345,7 @@ struct PostComposerViewUIKit: View {
                 showingDismissAlert = true
               } else {
                 dismissReason = .discard
-                appState.composerDraftManager.clearDraft()
-                vm.clearAll()
+                guard vm.discardEditingDraft() else { return }
                 dismiss()
               }
             }
@@ -352,8 +357,7 @@ struct PostComposerViewUIKit: View {
               Button("Discard", role: .destructive) {
                 suppressAutoSaveOnDismiss = true
                 dismissReason = .discard
-                appState.composerDraftManager.clearDraft()
-                vm.clearAll()
+                guard vm.discardEditingDraft() else { return }
                 dismiss()
               }
               Button("Keep Editing", role: .cancel) { }
@@ -530,9 +534,10 @@ struct PostComposerViewUIKit: View {
       Button(action: {
         pcUIKitLogger.info("PostComposerViewUIKit: Avatar tapped - opening account switcher")
         if hasContent(vm: vm) {
-          appState.composerDraftManager.storeDraft(from: vm)
+          vm.saveDraftIfNeeded()
         }
-        showingAccountSwitcher = true
+        accountSwitchSnapshot = vm.captureEditingSnapshot()
+        showingAccountSwitcher = accountSwitchSnapshot != nil
       }) {
         #if os(iOS)
         UIKitAvatarView(
@@ -661,23 +666,22 @@ struct PostComposerViewUIKit: View {
     }
   }
   
-  private func startAutoSave() {
-    pcUIKitLogger.info("PostComposerViewUIKit: Starting auto-save task (30s interval)")
+  func startAutoSave() {
     autoSaveTask?.cancel()
-    autoSaveTask = Task {
+    guard let vm = viewModel, let claim = vm.editingClaim else { return }
+    autoSaveTask = Task { @MainActor in
       while !Task.isCancelled {
-        try? await Task.sleep(nanoseconds: 30_000_000_000)
-        guard let vm = viewModel else { continue }
-        if hasContent(vm: vm) {
-          pcUIKitLogger.debug("PostComposerViewUIKit: Auto-save triggered - saving draft")
-          await MainActor.run { vm.saveDraftIfNeeded() }
-        } else {
-          pcUIKitLogger.trace("PostComposerViewUIKit: Auto-save skipped - no content")
+        do {
+          try await Task.sleep(nanoseconds: 30_000_000_000)
+        } catch {
+          return
         }
+        guard !Task.isCancelled, vm.ownsEditingDraft, vm.editingClaim == claim else { return }
+        vm.saveDraftIfNeeded(claim: claim)
       }
     }
   }
-  
+
   func hasContent(vm: PostComposerViewModel) -> Bool {
     return vm.hasContent
   }

@@ -14,7 +14,7 @@ struct ThreadComposePrompt: View {
   let appState: AppState
   var onOpenComposer: (() -> Void)?
 
-  @State private var showingComposer = false
+  @Environment(SceneNavigationContext.self) private var sceneContext
 
   private var isReplyDisabled: Bool {
     guard let post else { return true }
@@ -55,7 +55,7 @@ struct ThreadComposePrompt: View {
       if let onOpenComposer {
         onOpenComposer()
       } else {
-        showingComposer = true
+        sceneContext.presentPostComposer(initialText: nil, parentPost: post, quotedPost: nil)
       }
     }
     .disabled(isReplyDisabled || post == nil)
@@ -63,20 +63,5 @@ struct ThreadComposePrompt: View {
     .accessibilityLabel("Compose reply")
     .accessibilityHint("Opens composer")
     .accessibilityAddTraits(.isButton)
-    .sheet(isPresented: $showingComposer) {
-      if let post {
-        PostComposerViewUIKit(
-          parentPost: post,
-          appState: appState
-        )
-        .applyAppStateEnvironment(appState)
-        #if os(iOS)
-        .presentationDetents([.large])
-        .presentationDragIndicator({
-          if #available(iOS 26.0, *) { return .visible } else { return .hidden }
-        }())
-        #endif
-      }
-    }
   }
 }
