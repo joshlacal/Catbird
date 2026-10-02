@@ -23,6 +23,19 @@ import UIKit
 class LinkEditableTextView: UITextView {
     weak var linkCreationDelegate: LinkCreationDelegate?
     var requestFocusOnAttach: Bool = false
+    var onLayoutWidthChange: ((UITextView) -> Void)?
+    private var lastLayoutWidth: CGFloat = 0
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let width = bounds.width
+        guard width.isFinite, width > 0, abs(width - lastLayoutWidth) > 0.5 else { return }
+        lastLayoutWidth = width
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.onLayoutWidthChange?(self)
+        }
+    }
     
     override func buildMenu(with builder: UIMenuBuilder) {
         super.buildMenu(with: builder)
@@ -153,6 +166,9 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
   func makeUIView(context: Context) -> UITextView {
     let textView = LinkEditableTextView()
     textView.delegate = context.coordinator
+    textView.onLayoutWidthChange = { [weak coordinator = context.coordinator] textView in
+      coordinator?.updateHeight(for: textView)
+    }
     textView.linkCreationDelegate = context.coordinator
     textView.requestFocusOnAttach = focusOnAppear
     textView.font = getAppropriateFont()
@@ -356,7 +372,8 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
     var lastAppliedSource: NSAttributedString?
 
     func updateHeight(for textView: UITextView, force: Bool = false) {
-      let width = textView.bounds.width > 0 ? textView.bounds.width : (textView.superview?.bounds.width ?? (UIScreen.main.bounds.width - 84))
+      let width = textView.bounds.width > 0 ? textView.bounds.width : (textView.superview?.bounds.width ?? 0)
+      guard width.isFinite, width > 0 else { return }
       let widthChanged = abs(width - lastMeasuredWidth) > 0.5
 
       if !force && !widthChanged {
@@ -383,10 +400,9 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
   #if targetEnvironment(macCatalyst)
   fileprivate func installCatalystBottomToolbar(for textView: UITextView) {
     if catalystToolbarContainer != nil { return }
-    guard let accessory = makeCatalystAccessoryView() else { return }
-
-    // Prefer attaching to the window to avoid adding subviews to UIHostingController.view
-    guard let hostWindow = textView.window else { return }
+    // Prefer attaching to the receiving window rather than a global screen.
+    guard let hostWindow = textView.window,
+      let accessory = makeCatalystAccessoryView(containerWidth: hostWindow.safeAreaLayoutGuide.layoutFrame.width) else { return }
 
     accessory.translatesAutoresizingMaskIntoConstraints = false
     let container = UIView()
@@ -418,8 +434,8 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
     catalystToolbarContainer = container
   }
 
-  private func makeCatalystAccessoryView() -> UIView? {
-    createKeyboardAccessoryView()
+  private func makeCatalystAccessoryView(containerWidth: CGFloat) -> UIView? {
+    createKeyboardAccessoryView(containerWidth: containerWidth)
   }
   #endif
 
@@ -432,7 +448,8 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
       super.init()
     }
     
-    func createKeyboardAccessoryView() -> UIView? {
+    func createKeyboardAccessoryView(containerWidth: CGFloat) -> UIView? {
+      guard containerWidth.isFinite, containerWidth > 0 else { return nil }
       let toolbarView = KeyboardToolbarView(
         onPhotos: parent.onPhotosAction,
         onVideo: parent.onVideoAction,
@@ -451,7 +468,7 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
       
       // Set intrinsic content size for the accessory view
       let targetSize = hostingController.view.systemLayoutSizeFitting(
-        CGSize(width: UIScreen.main.bounds.width, height: UIView.layoutFittingCompressedSize.height),
+        CGSize(width: containerWidth, height: UIView.layoutFittingCompressedSize.height),
         withHorizontalFittingPriority: .required,
         verticalFittingPriority: .defaultLow
     
