@@ -609,60 +609,66 @@ struct ProfileHeader: View {
                 .buttonStyle(.plain)
             }
             
-            // Stats
-            HStack(spacing: 24) {
-
-                // Following
-                Button(action: {
-                    
-                    path.append(ProfileNavigationDestination.following(profile.did.didString()))
-                    
-                }) {
-                    HStack(spacing: 6) {
-                        
-                        Text("\(profile.followsCount?.formatted ?? "0")")
-                            .appFont(AppTextRole.subheadline)
-                            .fontWeight(.semibold)
-                        
-                        Text("Following")
-                            .appFont(AppTextRole.subheadline)
-                            .foregroundStyle(.secondary)
-                    }
+            // Keep each count and caption intact; use rows when the group cannot fit.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 24) {
+                    profileStatistics
                 }
-                .buttonStyle(.plain)
-                
-                // Followers
-                Button(action: {
-                    path.append(ProfileNavigationDestination.followers(profile.did.didString()))
-                }) {
-                    HStack(spacing: 6) {
-                        Text("\(profile.followersCount?.formatted ?? "0")")
-                            .appFont(AppTextRole.subheadline)
-                            .fontWeight(.semibold)
-                        
-                        Text("Followers")
-                            .appFont(AppTextRole.subheadline)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .buttonStyle(.plain)
-                
-                // Posts
-                if let postsCount = profile.postsCount {
-                    HStack(spacing: 6) {
-                        Text("\(postsCount.formatted)")
-                            .appFont(AppTextRole.subheadline)
-                            .fontWeight(.semibold)
+                .fixedSize(horizontal: true, vertical: false)
 
-                        Text("Posts")
-                            .appFont(AppTextRole.subheadline)
-                            .foregroundStyle(.secondary)
-                    }
+                VStack(alignment: .leading, spacing: 12) {
+                    profileStatistics
                 }
-
-                Spacer()
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
         }
+    }
+
+    @ViewBuilder
+    private var profileStatistics: some View {
+        Button {
+            path.append(ProfileNavigationDestination.following(profile.did.didString()))
+        } label: {
+            profileStatistic(count: profile.followsCount?.formatted ?? "0", title: "Following")
+        }
+        .buttonStyle(.plain)
+
+        Button {
+            path.append(ProfileNavigationDestination.followers(profile.did.didString()))
+        } label: {
+            profileStatistic(count: profile.followersCount?.formatted ?? "0", title: "Followers")
+        }
+        .buttonStyle(.plain)
+
+        if let postsCount = profile.postsCount {
+            profileStatistic(count: postsCount.formatted, title: "Posts")
+        }
+    }
+
+    private func profileStatistic(count: String, title: LocalizedStringKey) -> some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 6) {
+                profileStatisticText(count: count, title: title)
+            }
+            .fixedSize(horizontal: true, vertical: true)
+
+            VStack(alignment: .leading, spacing: 4) {
+                profileStatisticText(count: count, title: title)
+            }
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    @ViewBuilder
+    private func profileStatisticText(count: String, title: LocalizedStringKey) -> some View {
+        Text(count)
+            .appFont(AppTextRole.subheadline)
+            .fontWeight(.semibold)
+        Text(title)
+            .appFont(AppTextRole.subheadline)
+            .foregroundStyle(.secondary)
     }
 
     private var isActiveProfileViewer: Bool {

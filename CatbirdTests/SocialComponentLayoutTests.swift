@@ -48,7 +48,9 @@ final class SocialComponentLayoutTests: XCTestCase {
       let profile = ProfileLayoutContent(state: state, model: model, navigation: navigation)
       try await self.captureSizes(
         component: "profile-germ", state: state, content: profile,
-        expectedText: { name in name == "short" ? ["River"] : ["account label", "Germ DM"] }
+        expectedText: { name in
+          name == "short" ? ["River"] : ["account label", "Germ DM", "Following", "Followers", "Posts"]
+        }
       ) { _ in
         XCTAssertEqual(model.selectedProfileTab, .media)
         XCTAssertEqual(navigation.path.count, 1)

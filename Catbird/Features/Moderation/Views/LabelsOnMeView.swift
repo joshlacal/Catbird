@@ -19,6 +19,7 @@ struct LabelsOnMeView: View {
   @State private var appealDetails = ""
   @State private var submission = LabelAppealSubmission()
   @State private var showingSuccessAlert = false
+  @FocusState private var isAppealReasonFocused: Bool
 
   private var isCurrentViewer: Bool {
     AppStateManager.shared.lifecycle.appState === appState && appState.userDID == viewerDID
@@ -112,32 +113,45 @@ struct LabelsOnMeView: View {
   private func appealSheet(for label: ComAtprotoLabelDefs.Label) -> some View {
     let info = presentation(for: label)
     return NavigationStack {
-      Form {
-        Section("Label Details") {
-          Text(info.name).font(.headline)
-          Text("Issued by \(info.issuer)").font(.subheadline)
-          Text("Subject: \(label.uri.uriString())").font(.caption).textSelection(.enabled)
-        }
-        Section {
-          TextField("Explain why this label was applied in error", text: $appealDetails, axis: .vertical)
-            .lineLimit(4...8)
-          Text("\(appealDetails.count)/300 characters").font(.caption).foregroundStyle(.secondary)
-        } header: { Text("Reason for Appeal") } footer: {
-          Text("Your appeal will be sent to the service that issued this label.")
-        }
-        if let errorMessage = submission.errorMessage {
-          Section { Text(errorMessage).foregroundStyle(.red) }
-        }
-        Section {
-          Button(action: { startSubmission(label) }) {
-            HStack {
-              if submission.isSubmitting { ProgressView() }
-              Text(submission.isSubmitting ? "Submitting…" : "Submit Appeal")
-            }
-            .frame(maxWidth: .infinity)
+      ScrollViewReader { scroll in
+        Form {
+          Section("Label Details") {
+            Text(info.name).font(.headline)
+            Text("Issued by \(info.issuer)").font(.subheadline)
+            Text("Subject: \(label.uri.uriString())").font(.caption).textSelection(.enabled)
           }
-          .disabled(submission.isSubmitting || appealDetails.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            || appealDetails.count > 300 || !isCurrentViewer)
+          Section {
+            TextField("Explain why this label was applied in error", text: $appealDetails, axis: .vertical)
+              .lineLimit(4...8)
+              .focused($isAppealReasonFocused)
+              .accessibilityIdentifier("appealReason")
+            Text("\(appealDetails.count)/300 characters").font(.caption).foregroundStyle(.secondary)
+          } header: { Text("Reason for Appeal") } footer: {
+            Text("Your appeal will be sent to the service that issued this label.")
+          }
+          Section {
+            if let errorMessage = submission.errorMessage {
+              Text(errorMessage).foregroundStyle(.red)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("appealSubmissionError")
+            }
+            Button(action: { startSubmission(label) }) {
+              HStack {
+                if submission.isSubmitting { ProgressView() }
+                Text(appealSubmissionTitle)
+              }
+              .frame(maxWidth: .infinity)
+            }
+            .accessibilityIdentifier("appealSubmit")
+            .disabled(submission.isSubmitting || appealDetails.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+              || appealDetails.count > 300 || !isCurrentViewer)
+          }
+          .id("appealSubmission")
+        }
+        .onChange(of: submission.errorMessage) { _, errorMessage in
+          guard errorMessage != nil, isCurrentViewer, appealingLabel?.id == label.id else { return }
+          isAppealReasonFocused = false
+          withAnimation { scroll.scrollTo("appealSubmission", anchor: .bottom) }
         }
       }
       .navigationTitle("Appeal Label")
@@ -147,6 +161,11 @@ struct LabelsOnMeView: View {
         }
       }
     }
+  }
+
+  private var appealSubmissionTitle: LocalizedStringKey {
+    if submission.isSubmitting { return "Submitting…" }
+    return submission.errorMessage == nil ? "Submit Appeal" : "Retry Appeal"
   }
 
   private func beginAppeal(_ label: ComAtprotoLabelDefs.Label) {
@@ -160,6 +179,7 @@ struct LabelsOnMeView: View {
 
   private func startSubmission(_ label: ComAtprotoLabelDefs.Label) {
     guard isCurrentViewer else { return }
+    isAppealReasonFocused = false
     let reason = appealDetails
     submission.submit {
       guard isCurrentViewer else { throw LabelAppealError.accountChanged }
