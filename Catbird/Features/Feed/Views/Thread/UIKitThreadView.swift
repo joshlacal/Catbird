@@ -9,6 +9,7 @@ import os
 final class ThreadViewController: UIViewController, StateInvalidationSubscriber {
   // MARK: - Properties
   private var appState: AppState
+  private var sceneContext: SceneNavigationContext
   private let postURI: ATProtocolURI
   private var path: Binding<NavigationPath>
   let visibilityContext: PostVisibilityContext
@@ -201,17 +202,27 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   // MARK: - Initialization
   init(
     appState: AppState,
+    sceneContext: SceneNavigationContext,
     postURI: ATProtocolURI,
     path: Binding<NavigationPath>,
     visibilityContext: PostVisibilityContext = .public
   ) {
     self.appState = appState
+    self.sceneContext = sceneContext
     self.postURI = postURI
     self.path = path
     self.visibilityContext = visibilityContext
     super.init(nibName: nil, bundle: nil)
     // Subscribe to state invalidation events for reply updates
     appState.stateInvalidationBus.subscribe(self)
+  }
+
+  func updateSceneContext(_ context: SceneNavigationContext) {
+    guard sceneContext !== context else { return }
+    sceneContext = context
+    guard isViewLoaded else { return }
+    collectionView.reloadData()
+    if let mainPost { setupComposePrompt(with: mainPost) }
   }
 
   required init?(coder: NSCoder) {
@@ -676,6 +687,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
           cell.configure(
             post: mainPost,
             appState: self.appState,
+            sceneContext: self.sceneContext,
             path: self.path,
             opThreadPostIndex: self.mainPostIndex,
             opThreadPostCount: self.mainPostCount,
@@ -693,6 +705,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
             blocked: blocked,
             anchorURI: self.postURI,
             appState: self.appState,
+            sceneContext: self.sceneContext,
             path: self.path
           )
         }
@@ -722,6 +735,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       threadItem: threadItemsByID[row.id],
       parentAuthor: parentAuthor,
       appState: appState,
+      sceneContext: sceneContext,
       path: path,
       visibilityContext: visibilityContext,
       isActionLoading: row.kind == .showOtherReplies && isLoadingHiddenReplies,
@@ -1023,6 +1037,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   private func setupComposePrompt(with post: AppBskyFeedDefs.PostView) {
     let promptView = ThreadComposePrompt(post: post, appState: appState)
       .applyAppStateEnvironment(appState)
+      .environment(sceneContext)
 
     if let existingHC = composePromptHostingController {
       existingHC.rootView = AnyView(promptView.fixedSize(horizontal: false, vertical: true))

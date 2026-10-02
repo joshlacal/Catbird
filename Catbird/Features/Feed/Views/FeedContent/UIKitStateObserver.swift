@@ -49,8 +49,10 @@ final class UIKitStateObserver<T: Observable> {
             } else if let feedback = self.observedObject as? FeedFeedbackManager {
                 _ = feedback.isEnabled
                 _ = feedback.currentFeedType?.identifier
+            } else if let sceneContext = self.observedObject as? SceneNavigationContext {
+                _ = sceneContext.tabTappedAgain
+                _ = sceneContext.isInvalidated
             } else if let appState = self.observedObject as? AppState {
-                _ = appState.tabTappedAgain
                 _ = appState.isTransitioningAccounts
             } else {
                 // Fallback for types without an explicit branch above. Reading the object

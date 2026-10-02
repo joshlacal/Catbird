@@ -682,12 +682,13 @@ struct CircleDestinationTests {
 
     if #available(iOS 18.0, *) {
       // Default initialization is public
-      let defaultController = ThreadViewController(appState: appState, postURI: circlePost.uri, path: binding)
+      let defaultController = ThreadViewController(appState: appState, sceneContext: SceneNavigationContext(appState: appState, sceneID: UUID()), postURI: circlePost.uri, path: binding)
       #expect(defaultController.visibilityContext == .public)
 
       // Explicit circle initialization retains circle visibility context
       let circleController = ThreadViewController(
         appState: appState,
+        sceneContext: SceneNavigationContext(appState: appState, sceneID: UUID()),
         postURI: circlePost.uri,
         path: binding,
         visibilityContext: .circle(family)

@@ -24,6 +24,26 @@ struct UIKitStateObserverTests {
         }
     }
 
+    @Test("tab retap observation belongs only to its scene")
+    func sceneRetapIsolation() async {
+        let appState = await makeAppState()
+        let first = SceneNavigationContext(appState: appState, sceneID: UUID())
+        let second = SceneNavigationContext(appState: appState, sceneID: UUID())
+        var firstCount = 0
+        var secondCount = 0
+        let firstObserver = UIKitStateObserver(observing: first) { _ in firstCount += 1 }
+        let secondObserver = UIKitStateObserver(observing: second) { _ in secondCount += 1 }
+        first.tabTappedAgain = 0
+        await drainCallbacks()
+        #expect(firstCount == 1)
+        #expect(secondCount == 0)
+        second.tabTappedAgain = 1
+        await drainCallbacks()
+        #expect(firstCount == 1)
+        #expect(secondCount == 1)
+        withExtendedLifetime((firstObserver, secondObserver)) {}
+    }
+
     @Test("singleRelevantMutationDeliversOneCallback delivers exactly one callback per mutation")
     func singleRelevantMutationDeliversOneCallback() async {
         let appState = await makeAppState()
@@ -99,7 +119,7 @@ struct UIKitStateObserverTests {
         #expect(callbackCount == 1)
 
         // Subsequent mutation still delivers no callbacks and does not rearm
-        appState.tabTappedAgain = 1
+        appState.isTransitioningAccounts = true
         await drainCallbacks()
         #expect(callbackCount == 1)
         withExtendedLifetime(observer) {}

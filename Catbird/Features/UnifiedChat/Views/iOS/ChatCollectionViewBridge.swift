@@ -4,6 +4,7 @@ import UIKit
 
 @available(iOS 16.0, *)
 struct ChatCollectionViewBridge<DataSource: UnifiedChatDataSource>: UIViewControllerRepresentable {
+  @Environment(SceneNavigationContext.self) private var sceneContext
   @Environment(AppState.self) private var appState
 
   let dataSource: DataSource
@@ -19,7 +20,8 @@ struct ChatCollectionViewBridge<DataSource: UnifiedChatDataSource>: UIViewContro
     let controller = ChatCollectionViewController(
       dataSource: dataSource,
       navigationPath: $navigationPath,
-      appState: appState
+      appState: appState,
+      sceneContext: sceneContext
     )
     controller.onMessageLongPress = onMessageLongPress
     controller.onRequestEmojiPicker = onRequestEmojiPicker
@@ -36,6 +38,7 @@ struct ChatCollectionViewBridge<DataSource: UnifiedChatDataSource>: UIViewContro
   ) {
     controller.updateNavigationBinding($navigationPath)
     controller.updateAppState(appState)
+    controller.updateSceneContext(sceneContext)
     controller.onMessageLongPress = onMessageLongPress
     controller.onRequestEmojiPicker = onRequestEmojiPicker
     controller.onRetryMessage = onRetryMessage

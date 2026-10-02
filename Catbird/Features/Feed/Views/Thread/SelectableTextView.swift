@@ -104,6 +104,7 @@ class SelectableSelfSizingTextView: UITextView {
 
 struct SelectableTextView: UIViewRepresentable {
   let attributedString: AttributedString
+  @Environment(SceneNavigationContext.self) private var sceneContext
   @Environment(AppState.self) private var appState
   @Environment(\.colorScheme) private var colorScheme
   @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -236,11 +237,13 @@ struct SelectableTextView: UIViewRepresentable {
     uiView.linkTextAttributes = [.foregroundColor: UIColor(Color("AccentTextColor"))]
     
     // Update coordinator with current environment values
-    context.coordinator.appState = appState
+    context.coordinator.sceneContext = sceneContext
   }
   
   func makeCoordinator() -> Coordinator {
-    Coordinator()
+    let coordinator = Coordinator()
+    coordinator.sceneContext = sceneContext
+    return coordinator
   }
 
   func sizeThatFits(
@@ -256,14 +259,15 @@ struct SelectableTextView: UIViewRepresentable {
   }
   
   class Coordinator: NSObject, UITextViewDelegate {
-    var appState: AppState?
+    weak var sceneContext: SceneNavigationContext?
     
     func textView(_ textView: UITextView, shouldInteractWith URL: URL, in characterRange: NSRange) -> Bool {
-      guard let appState = appState else { return true }
+      guard let sceneContext, !sceneContext.isInvalidated else { return false }
       
       // Handle URL through the app's URL handler on the main thread
       DispatchQueue.main.async {
-        _ = appState.urlHandler.handle(URL)
+        guard !sceneContext.isInvalidated else { return }
+        _ = sceneContext.urlHandler.handle(URL)
       }
       
       // Return false to prevent default system handling since we're handling it ourselves

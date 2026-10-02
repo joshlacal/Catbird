@@ -7,6 +7,7 @@ import UIKit
 @available(iOS 18.0, *)
 struct ThreadViewControllerRepresentable: UIViewControllerRepresentable {
   @Environment(AppState.self) private var appState: AppState
+  @Environment(SceneNavigationContext.self) private var sceneContext
   let postURI: ATProtocolURI
   @Binding var path: NavigationPath
   let visibilityContext: PostVisibilityContext
@@ -24,6 +25,7 @@ struct ThreadViewControllerRepresentable: UIViewControllerRepresentable {
   func makeUIViewController(context: Context) -> ThreadViewController {
     let controller = ThreadViewController(
       appState: appState,
+      sceneContext: sceneContext,
       postURI: postURI,
       path: $path,
       visibilityContext: visibilityContext
@@ -33,6 +35,7 @@ struct ThreadViewControllerRepresentable: UIViewControllerRepresentable {
     return controller
   }
   func updateUIViewController(_ uiViewController: ThreadViewController, context: Context) {
+    uiViewController.updateSceneContext(sceneContext)
     let currentSort = appState.appSettings.threadSortOrder
     let currentThreaded = appState.appSettings.threadedReplies
 

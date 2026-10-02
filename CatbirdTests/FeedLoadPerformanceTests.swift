@@ -119,7 +119,7 @@ final class FeedLoadPerformanceTests: XCTestCase {
       state = FeedStateManager(appState: appState, feedModel: model, feedType: .timeline)
       state.hasReachedEnd = true
       controller = FeedCollectionViewControllerIntegrated(
-        stateManager: state, navigationPath: .constant(NavigationPath()))
+        stateManager: state, sceneContext: SceneNavigationContext(appState: appState, sceneID: UUID()), navigationPath: .constant(NavigationPath()))
       controller.enableUpdateDiagnostics()
       let topic = AppBskyUnspeccedDefs.TrendView(
         topic: "fixture", displayName: "Fixture Trending", description: "Local layout fixture",
@@ -307,7 +307,7 @@ final class FeedLoadPerformanceTests: XCTestCase {
     let model = FeedModel(feedManager: FeedManager(client: nil, fetchType: feed), appState: appState)
     let state = FeedStateManager(appState: appState, feedModel: model, feedType: feed)
     let controller = FeedCollectionViewControllerIntegrated(
-      stateManager: state, navigationPath: .constant(NavigationPath()))
+      stateManager: state, sceneContext: SceneNavigationContext(appState: appState, sceneID: UUID()), navigationPath: .constant(NavigationPath()))
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
     let window = UIWindow(windowScene: scene)
     window.frame = CGRect(x: 0, y: 0, width: 402, height: 800)

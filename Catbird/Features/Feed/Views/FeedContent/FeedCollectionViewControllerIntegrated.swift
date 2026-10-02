@@ -88,6 +88,7 @@ import os
 
     /// State management
     var stateManager: FeedStateManager
+    private var sceneContext: SceneNavigationContext
 
     /// Navigation
     private let navigationPath: Binding<NavigationPath>
@@ -118,7 +119,7 @@ import os
     var appStateObserver: UIKitStateObserver<AppState>?
     var feedbackObserver: UIKitStateObserver<FeedFeedbackManager>?
     /// Observer for tab tap to scroll to top
-    var tabTapObserver: UIKitStateObserver<AppState>?
+    var tabTapObserver: UIKitStateObserver<SceneNavigationContext>?
 
     /// Callbacks
     private let onScrollOffsetChanged: ((CGFloat) -> Void)?
@@ -168,10 +169,12 @@ import os
 
     init(
       stateManager: FeedStateManager,
+      sceneContext: SceneNavigationContext,
       navigationPath: Binding<NavigationPath>,
       onScrollOffsetChanged: ((CGFloat) -> Void)? = nil
     ) {
       self.stateManager = stateManager
+      self.sceneContext = sceneContext
       self.navigationPath = navigationPath
       self.onScrollOffsetChanged = onScrollOffsetChanged
       self.scrollRestoration = FeedViewportRestoration(anchor: stateManager.getScrollAnchor()?.viewportAnchor)
@@ -181,6 +184,17 @@ import os
 
     required init?(coder: NSCoder) {
       fatalError("init(coder:) has not been implemented")
+    }
+
+    /// Rebind hosted roots and observation if SwiftUI retains the controller.
+    func updateSceneContext(_ context: SceneNavigationContext) {
+      guard sceneContext !== context else { return }
+      tabTapObserver?.stopObserving()
+      sceneContext = context
+      guard isViewLoaded else { return }
+      setupTabTapObserver()
+      reloadAllCells()
+      updateBackgroundState()
     }
 
     // MARK: - Theme Support
@@ -279,11 +293,11 @@ import os
     
     // Observe tab tap to scroll to top and refresh
     private func setupTabTapObserver() {
-      tabTapObserver = UIKitStateObserver(observing: stateManager.appState) { [weak self] _ in
+      tabTapObserver = UIKitStateObserver(observing: sceneContext) { [weak self] _ in
         guard let self else { return }
-        if self.stateManager.appState.tabTappedAgain == 0 {
+        if self.sceneContext.tabTappedAgain == 0 {
           self.controllerLogger.debug("🏠 Home tab tapped again - scrolling to top and refreshing")
-          self.stateManager.appState.tabTappedAgain = nil
+          self.sceneContext.tabTappedAgain = nil
           self.scrollToTopAndRefresh()
         }
       }
@@ -315,7 +329,7 @@ import os
 
       // Update theme colors when view appears to catch any missed theme changes
       updateThemeColors()
-      stateManager.appState.urlHandler.registerTopViewController(self)
+      sceneContext.urlHandler.registerTopViewController(self)
 
       Task { @MainActor in
         if stateManager.posts.isEmpty {
@@ -561,6 +575,7 @@ import os
             tracksVisibilityForFeedback: false
           )
           .applyAppStateEnvironment(appState)
+          .environment(self.sceneContext)
           .environment(\.fontManager, appState.fontManager)
           .id(hostingIdentity)
           .padding(0)
@@ -598,7 +613,7 @@ import os
         cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
         cell.selectedBackgroundView = nil
 
-        cell.contentConfiguration = UIHostingConfiguration { header }
+        cell.contentConfiguration = UIHostingConfiguration { header.environment(self.sceneContext) }
           .margins(.all, 0)
       }
       // Registration for trending interstitial cell
@@ -618,6 +633,7 @@ import os
         cell.contentConfiguration = UIHostingConfiguration {
           TrendingFeedInterstitialView(content: self.trendingContent)
             .applyAppStateEnvironment(appState)
+          .environment(self.sceneContext)
         }
         .margins(.all, 0)
       }
@@ -1215,7 +1231,7 @@ import os
         switch stateManager.currentFeedType {
         case .timeline:
           return .emptyTimeline { [weak self] in
-            self?.stateManager.appState.navigationManager.tabSelection?(1)
+            self?.sceneContext.navigationManager.tabSelection?(1)
           }
         default:
           return .emptyFeed(feedName: stateManager.currentFeedType.displayName) { [weak self] in
@@ -1283,15 +1299,18 @@ import os
   @available(macOS 13.0, *)
   final class FeedCollectionViewControllerIntegrated: NSViewController {
     var stateManager: FeedStateManager
+    private var sceneContext: SceneNavigationContext
     private let navigationPath: Binding<NavigationPath>
     private let onScrollOffsetChanged: ((CGFloat) -> Void)?
 
     init(
       stateManager: FeedStateManager,
+      sceneContext: SceneNavigationContext,
       navigationPath: Binding<NavigationPath>,
       onScrollOffsetChanged: ((CGFloat) -> Void)? = nil
     ) {
       self.stateManager = stateManager
+      self.sceneContext = sceneContext
       self.navigationPath = navigationPath
       self.onScrollOffsetChanged = onScrollOffsetChanged
       super.init(nibName: nil, bundle: nil)

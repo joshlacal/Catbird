@@ -68,6 +68,7 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
   private var navigationPath: Binding<NavigationPath>
   let dataSource: DataSource
   private weak var appState: AppState?
+  private var sceneContext: SceneNavigationContext
 
   private var observationTask: Task<Void, Never>?
   private var lastMessageSignaturesByID: [String: String] = [:]
@@ -131,11 +132,13 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
   init(
     dataSource: DataSource,
     navigationPath: Binding<NavigationPath>,
-    appState: AppState
+    appState: AppState,
+    sceneContext: SceneNavigationContext
   ) {
     self.dataSource = dataSource
     self.navigationPath = navigationPath
     self.appState = appState
+    self.sceneContext = sceneContext
     super.init(nibName: nil, bundle: nil)
   }
 
@@ -290,6 +293,7 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
             groupPosition: UnifiedMessageGrouping.groupPosition(for: messageID, in: self.dataSource.messages)
           )
           .environment(appState)
+          .environment(self.sceneContext)
         }
       }
       .margins(.all, 0)
@@ -550,6 +554,14 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
 
   func updateNavigationBinding(_ binding: Binding<NavigationPath>) {
     navigationPath = binding
+  }
+
+  func updateSceneContext(_ context: SceneNavigationContext) {
+    guard sceneContext !== context else { return }
+    reactionDetailsController?.dismiss(animated: false)
+    dismissReactionOverlay()
+    sceneContext = context
+    collectionView?.reloadData()
   }
 
   func updateAppState(_ newAppState: AppState) {

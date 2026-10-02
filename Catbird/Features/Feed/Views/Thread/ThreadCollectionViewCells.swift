@@ -32,6 +32,7 @@ final class ThreadRowCell: UICollectionViewCell {
     threadItem: AppBskyUnspeccedGetPostThreadV2.ThreadItem?,
     parentAuthor: AppBskyActorDefs.ProfileViewBasic?,
     appState: AppState,
+    sceneContext: SceneNavigationContext,
     path: Binding<NavigationPath>,
     visibilityContext: PostVisibilityContext = .public,
     isActionLoading: Bool = false,
@@ -71,6 +72,7 @@ final class ThreadRowCell: UICollectionViewCell {
     contentConfiguration = UIHostingConfiguration {
       content
         .applyAppStateEnvironment(appState)
+          .environment(sceneContext)
         .transaction { txn in txn.animation = nil }
         .fixedSize(horizontal: false, vertical: true)
     }
@@ -121,6 +123,7 @@ final class MainPostCell: UICollectionViewCell {
   func configure(
     post: AppBskyFeedDefs.PostView,
     appState: AppState,
+    sceneContext: SceneNavigationContext,
     path: Binding<NavigationPath>,
     opThreadPostIndex: Int? = nil,
     opThreadPostCount: Int? = nil,
@@ -128,7 +131,7 @@ final class MainPostCell: UICollectionViewCell {
     showsLineFromParent: Bool = false
   ) {
     let postIdentity = post.uri.uriString()
-    let configurationIdentity = postIdentity + (showsLineFromParent ? "|line-in" : "")
+    let configurationIdentity = postIdentity + (showsLineFromParent ? "|line-in" : "") + "|\(ObjectIdentifier(sceneContext))"
 
 #if compiler(>=6.4)
     if #available(anyAppleOS 26.0, *),
@@ -168,6 +171,7 @@ final class MainPostCell: UICollectionViewCell {
       contentConfiguration = UIHostingConfiguration {
         content
           .applyAppStateEnvironment(appState)
+          .environment(sceneContext)
           .transaction { txn in txn.animation = nil }
           .fixedSize(horizontal: false, vertical: true)
       }
@@ -219,13 +223,14 @@ final class BlockedAnchorCell: UICollectionViewCell {
     blocked: AppBskyUnspeccedDefs.ThreadItemBlocked,
     anchorURI: ATProtocolURI,
     appState: AppState,
+    sceneContext: SceneNavigationContext,
     path: Binding<NavigationPath>
   ) {
     contentView.backgroundColor = UIColor(
       Color.dynamicBackground(appState.themeManager, currentScheme: contentView.getCurrentColorScheme())
     )
 
-    let identity = anchorURI.uriString() + "|" + blocked.author.did.didString()
+    let identity = anchorURI.uriString() + "|" + blocked.author.did.didString() + "|\(ObjectIdentifier(sceneContext))"
     guard contentConfiguration == nil || identity != configuredIdentity else { return }
     configuredIdentity = identity
 
@@ -239,6 +244,7 @@ final class BlockedAnchorCell: UICollectionViewCell {
           path: path
         )
         .applyAppStateEnvironment(appState)
+          .environment(sceneContext)
         .padding(.horizontal, ThreadReplyGeometry.rowInset)
         .padding(.vertical, ThreadReplyGeometry.connectedTopSpacing)
       }
