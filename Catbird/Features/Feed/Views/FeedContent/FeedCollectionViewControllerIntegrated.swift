@@ -620,7 +620,12 @@ import os
         cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
         cell.selectedBackgroundView = nil
 
-        cell.contentConfiguration = UIHostingConfiguration { header.environment(self.sceneContext) }
+        cell.contentConfiguration = UIHostingConfiguration {
+          header
+            .applyAppStateEnvironment(self.stateManager.appState)
+            .environment(\.fontManager, self.stateManager.appState.fontManager)
+            .environment(self.sceneContext)
+        }
           .margins(.all, 0)
       }
       // Registration for trending interstitial cell
