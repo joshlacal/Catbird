@@ -18,6 +18,9 @@ import SwiftUI
 }
 
 extension Color {
+  static var systemBackground: Color { Color(uiColor: .systemBackground) }
+  static var systemGroupedBackground: Color { Color(uiColor: .systemGroupedBackground) }
+
   static func adaptiveForeground(appState: AppState?, defaultColor: Color) -> Color {
     defaultColor
   }
