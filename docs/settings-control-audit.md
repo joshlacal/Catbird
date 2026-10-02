@@ -230,15 +230,15 @@ Sources: [Language](../Catbird/Features/Settings/Views/LanguageSettingsView.swif
 | Contact Bluesky Support | Zendesk link | External support page, no message sent; S |
 | DEBUG System Logs search/filter/refresh/share/clear UI | Diagnostic local state/log access | DEBUG-only surface, excluded from release preference qualification; no logs exported or cleared by this worker |
 
-## Remaining evidence limits and source risks
+## Open blocking behavior and remaining evidence limits
 
-- AppSettings' existing fallback after failed SwiftData initialization does not provide a write target for most setters. This lane does not claim recovery from an unavailable local settings store; that requires an explicit durable fallback and tests.
-- The inspected In-App notification category/audience controls do not reach the visible list consumer; the concrete integration gap is detailed below. Direct-message local/server preference reconciliation remains with the integration/push owners; no live delivery claim is made.
+- **OPEN BLOCKING — local persistence initialization failure:** AppSettings' existing fallback after failed SwiftData initialization leaves its data model nil, so visible controls backed by most setters can silently do nothing. A durable fallback or explicit unavailable state, plus failure-path tests, is required before those controls can be considered fully wired. Integration owns assignment and remediation; this worker has not broadened the implementation into local-store recovery.
+- **OPEN BLOCKING — In-App notification policy:** the inspected category/audience controls do not reach the visible list consumer; the concrete integration gap is detailed below. Integration owns assignment and remediation. Direct-message local/server preference reconciliation remains with the integration/push owners; no live delivery claim is made.
 - Typography modifiers cover supported SwiftUI and UIKit surfaces, but main-post SelectableTextView bypasses some app typography choices. That consumer belongs to the relevant screen owner; this audit does not claim universal font/contrast coverage.
 - Default Duplicate filtering can be active before FeedFilterActiveFilters is populated. Settings home now counts the actual enabled filter values, including that default, rather than stale stored IDs.
 - App Icon is installation-wide, and app language is device-global. Most AppSettings values are per-account. These differences are intentional scope disclosures rather than a migration of user values.
 
-## In-App notification consumer gap for integration
+## Open blocker: In-App notification consumer gap for integration
 
 The label **In-App** promises to include or exclude that activity category from Catbird's visible notifications. **Show from: People I follow** promises to restrict that category to followed authors. The master switch's own description is push-only; it must not be repurposed as an in-app master.
 
