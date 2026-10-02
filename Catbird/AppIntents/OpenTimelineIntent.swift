@@ -8,11 +8,11 @@ struct OpenTimelineIntent: AppIntent {
 
   @MainActor
   func perform() async throws -> some IntentResult {
-    if let appState = AppStateManager.shared.lifecycle.appState,
-      let nav = appState.navigationManager as? AppNavigationManager
-    {
-      nav.tabSelection?(0)
-      nav.clearPath(for: 0)
+    let coordinator = SceneRouteCoordinator.shared
+    let preferredSceneID = coordinator.preferredSceneIDForExternalEvent()
+    if let accountDID = AppStateManager.shared.lifecycle.userDID {
+      coordinator.submit(SceneRouteRequest(accountDID: accountDID,
+        command: .showTab(0, resetPath: true), preferredSceneID: preferredSceneID))
     }
     return .result()
   }

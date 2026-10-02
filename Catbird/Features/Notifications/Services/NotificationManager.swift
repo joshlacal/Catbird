@@ -23,6 +23,19 @@ struct NotificationWidgetData: Codable {
 /// Manages push notifications registration and handling for the Catbird app
 @Observable
 final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
+  /// Captured before account switching or network resolution can suspend.
+  private struct NavigationTarget: Sendable {
+    let accountDID: String
+    let preferredSceneID: UUID?
+  }
+
+  @MainActor
+  private func captureNavigationTarget(accountDID: String?) -> NavigationTarget? {
+    guard let accountDID = accountDID ?? AppStateManager.shared.lifecycle.userDID else { return nil }
+    return NavigationTarget(accountDID: accountDID,
+      preferredSceneID: SceneRouteCoordinator.shared.preferredSceneIDForExternalEvent())
+  }
+
   // MARK: - Properties
 
   /// Logger for notification-related events
@@ -1718,16 +1731,17 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
       let recipientDid =
         (userInfo["recipientDid"] as? String) ?? resolveRecipientDID(from: userInfo)
 
-      Task {
-        // Switch to correct account if needed
-        if let did = recipientDid {
-          await ensureActiveAccount(for: did)
+      Task { @MainActor in
+        guard let target = captureNavigationTarget(accountDID: recipientDid) else {
+          completionHandler()
+          return
         }
+        await ensureActiveAccount(for: target.accountDID)
 
         notificationLogger.info(
           "Chat notification tapped - navigating to conversation: \(convoId)")
         #if os(iOS)
-        await handleChatNotificationNavigation(convoId)
+        await handleChatNotificationNavigation(convoId, target: target)
         #endif
 
         await MainActor.run {
@@ -1738,15 +1752,15 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     }
 
     if targetDid != nil || (uriString != nil && typeString != nil) {
-      Task {
-        if let did = targetDid {
-          await ensureActiveAccount(for: did)
-        }
+      Task { @MainActor in
+        guard let target = captureNavigationTarget(accountDID: targetDid) else { return }
+        await ensureActiveAccount(for: target.accountDID)
+        guard AppStateManager.shared.lifecycle.userDID == target.accountDID else { return }
 
         if let uri = uriString, let type = typeString {
           notificationLogger.info("Notification contains URI: \(uri) of type: \(type)")
           await prefetchNotificationContent(uri: uri, type: type)
-          await handleNotificationNavigation(uriString: uri, type: type)
+          await handleNotificationNavigation(uriString: uri, type: type, target: target)
         }
       }
     }
@@ -1981,7 +1995,11 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
     // Use AppStateManager to switch accounts - it manages multiple AppState instances
     _ = await appStateManager.switchAccount(to: did)
-    notificationLogger.info("✅ Switched to account \(did) for notification navigation")
+    guard appStateManager.lifecycle.userDID == did else {
+      notificationLogger.warning("Notification account switch did not reach the requested account")
+      return
+    }
+    notificationLogger.info("Switched to the requested account for notification navigation")
   }
 
   // MARK: - Privacy-Preserving Account Matching
@@ -2018,11 +2036,11 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   }
 
   /// Handle navigation from a notification tap
-  private func handleNotificationNavigation(uriString: String, type: String) async {
+  private func handleNotificationNavigation(uriString: String, type: String, target: NavigationTarget) async {
     #if os(iOS)
     // Handle chat notifications differently
     if type == "chat" {
-      await handleChatNotificationNavigation(uriString)
+      await handleChatNotificationNavigation(uriString, target: target)
       return
     }
     #endif
@@ -2031,7 +2049,8 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     // After account switch, self.appState may point to the OLD account's AppState
     guard
       let currentAppState = await MainActor.run(body: {
-        if case .authenticated(let state) = AppStateManager.shared.lifecycle {
+        if case .authenticated(let state) = AppStateManager.shared.lifecycle,
+           state.userDID == target.accountDID {
           return state
         }
         return nil
@@ -2048,7 +2067,9 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
       // Use main actor to update UI
       await MainActor.run {
         // Navigate to destination in home tab (index 0)
-        currentAppState.navigationManager.navigate(to: destination, in: 0)
+        guard AppStateManager.shared.lifecycle.userDID == target.accountDID else { return }
+        SceneRouteCoordinator.shared.submit(SceneRouteRequest(accountDID: target.accountDID,
+          command: .navigate(destination, tabIndex: 0), preferredSceneID: target.preferredSceneID))
         notificationLogger.info("Successfully navigated to destination from notification")
       }
     } catch {
@@ -2059,12 +2080,13 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
   /// Handle navigation from a chat notification tap
   #if os(iOS)
-  private func handleChatNotificationNavigation(_ uriString: String) async {
+  private func handleChatNotificationNavigation(_ uriString: String, target: NavigationTarget) async {
     // CRITICAL FIX: Get the CURRENT AppState from AppStateManager, not the cached reference
     // After account switch, self.appState may point to the OLD account's AppState
     guard
       let currentAppState = await MainActor.run(body: {
-        if case .authenticated(let state) = AppStateManager.shared.lifecycle {
+        if case .authenticated(let state) = AppStateManager.shared.lifecycle,
+           state.userDID == target.accountDID {
           return state
         }
         return nil
@@ -2078,14 +2100,10 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     let conversationID = uriString
 
     await MainActor.run {
-      // Switch to chat tab using the tab selection callback (this actually changes the tab)
-      if let tabSelection = currentAppState.navigationManager.tabSelection {
-        tabSelection(4)  // Switch to chat tab
-      }
-      currentAppState.navigationManager.updateCurrentTab(4)
-
-      // Navigate to the specific conversation
-      currentAppState.navigationManager.navigate(to: .conversation(conversationID))
+      guard AppStateManager.shared.lifecycle.userDID == target.accountDID else { return }
+      SceneRouteCoordinator.shared.submit(SceneRouteRequest(accountDID: target.accountDID,
+        command: .navigate(.conversation(conversationID), tabIndex: 4),
+        preferredSceneID: target.preferredSceneID))
     }
   }
   #endif
