@@ -103,10 +103,10 @@ struct CachedFeedViewPostIdentityTests {
     source.serializedSliceItems = try JSONEncoder().encode([secondItem])
 
     target.update(from: source)
-    #expect(try target.feedViewPost == second)
+    #expect(try withoutDecodeCounter(target.feedViewPost) == withoutDecodeCounter(second))
     #expect(target.sliceItems?.map(\.id) == [secondItem.id])
     #expect(counter.value == 2)
-    #expect(try target.feedViewPost == second)
+    #expect(try withoutDecodeCounter(target.feedViewPost) == withoutDecodeCounter(second))
     #expect(target.sliceItems?.map(\.id) == [secondItem.id])
     #expect(counter.value == 2)
   }
@@ -140,11 +140,30 @@ struct CachedFeedViewPostIdentityTests {
 
     fetched.serializedPost = try JSONEncoder().encode(second)
     fetched.serializedSliceItems = try JSONEncoder().encode([secondItem])
-    #expect(try fetched.feedViewPost == second)
+    #expect(try withoutDecodeCounter(fetched.feedViewPost) == withoutDecodeCounter(second))
     #expect(fetched.sliceItems?.map(\.id) == [secondItem.id])
-    #expect(try fetched.feedViewPost == second)
+    #expect(try withoutDecodeCounter(fetched.feedViewPost) == withoutDecodeCounter(second))
     #expect(fetched.sliceItems?.map(\.id) == [secondItem.id])
     #expect(counter.value == 4)
+  }
+
+  private func withoutDecodeCounter(
+    _ entry: AppBskyFeedDefs.FeedViewPost
+  ) -> AppBskyFeedDefs.FeedViewPost {
+    // The counting decoder returns .object rather than .knownType, so Petrel
+    // preserves its synthetic $type as .unknownType after decoding. Exclude only
+    // that instrumentation field; compare every production payload field.
+    let post = entry.post
+    return AppBskyFeedDefs.FeedViewPost(
+      post: AppBskyFeedDefs.PostView(
+        uri: post.uri, cid: post.cid, author: post.author, record: post.record,
+        embed: post.embed, bookmarkCount: post.bookmarkCount, replyCount: post.replyCount,
+        repostCount: post.repostCount, likeCount: post.likeCount, quoteCount: post.quoteCount,
+        indexedAt: post.indexedAt, viewer: post.viewer, labels: post.labels,
+        threadgate: post.threadgate, debug: nil
+      ),
+      reply: entry.reply, reason: entry.reason, feedContext: entry.feedContext, reqId: entry.reqId
+    )
   }
 
   @Test("Persisting the same model instance preserves decoded post and slice caches")
