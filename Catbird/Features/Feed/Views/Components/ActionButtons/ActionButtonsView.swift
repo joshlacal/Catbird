@@ -10,6 +10,8 @@ import Petrel
 import SwiftUI
 #if os(iOS)
 import UIKit
+#elseif os(macOS)
+import AppKit
 #endif
 
 /// Observable class to hold interaction state for a post
@@ -164,21 +166,8 @@ struct ActionButtonsView: View {
 
       Spacer()
 
-      // Share Button (system share sheet only)
-      InteractionButton(
-        iconName: "square.and.arrow.up",
-        count: nil,  // Share doesn't have a count
-        isActive: false,
-        isFirstAppear: isFirstAppear,
-        color: .secondary,
-        isBig: isBig
-      ) {
-        Task {
-          await viewModel.share(post: post)
-        }
-      }
-      .accessibilityIdentifier("shareButton")
-      .accessibilityLabel("Share")
+      PostShareMenu(post: post, appState: appState, isBig: isBig)
+
     }
     .font(isBig ? .title3 : .callout)
     .frame(height: isBig ? 54 : 45)
@@ -478,5 +467,112 @@ private struct ReplyZoomDestination: ViewModifier {
       postViewModel: PostViewModel(post: postView, appState: appState),
       path: .constant(NavigationPath())
     )
+  }
+}
+
+/// Shared feed, thread and video entry point. Sheets belong to the originating
+/// view rather than whichever application window happens to be first.
+struct PostShareMenu: View {
+  let post: AppBskyFeedDefs.PostView
+  let appState: AppState
+  var isBig = false
+  var onChooseChat: (() -> Void)?
+  var onCopyLink: ((URL) -> Void)?
+  var onChooseMore: (() -> Void)?
+
+  @State private var destination: Destination?
+
+  private enum Destination: String, Identifiable {
+    case chat, native
+    var id: String { rawValue }
+  }
+
+  var body: some View {
+    Menu {
+      #if os(iOS)
+      Button {
+        if let onChooseChat { onChooseChat() } else { destination = .chat }
+      } label: {
+        Label("Send to Bluesky chat", systemImage: "bubble.left.and.bubble.right")
+      }
+      .disabled(!appState.isAuthenticated && onChooseChat == nil)
+      .accessibilityIdentifier("shareToBlueskyChat")
+
+      #endif
+
+      Button {
+        guard let url = ActionButtonViewModel.shareURL(for: post) else { return }
+        if let onCopyLink {
+          onCopyLink(url)
+        } else {
+          copyLink(url)
+        }
+      } label: {
+        Label("Copy Link", systemImage: "link")
+      }
+      .accessibilityIdentifier("copyPostLink")
+      .disabled(ActionButtonViewModel.shareURL(for: post) == nil)
+
+      #if os(iOS)
+      Button {
+        if let onChooseMore { onChooseMore() } else { destination = .native }
+      } label: {
+        Label("More…", systemImage: "square.and.arrow.up")
+      }
+      .accessibilityIdentifier("morePostSharing")
+      #else
+      if let url = ActionButtonViewModel.shareURL(for: post) {
+        ShareLink(item: url) {
+          Label("More…", systemImage: "square.and.arrow.up")
+        }
+        .accessibilityIdentifier("morePostSharing")
+      }
+      #endif
+    } label: {
+      Image(systemName: "square.and.arrow.up")
+        .appFont(Font.TextStyle.callout)
+        .fontWeight(isBig ? .medium : .semibold)
+        .imageScale(isBig ? .large : .medium)
+        .foregroundStyle(.secondary)
+        .frame(minWidth: isBig ? 48 : 36, minHeight: isBig ? 40 : 32, alignment: .leading)
+        .contentShape(Rectangle())
+    }
+    .accessibilityIdentifier("shareButton")
+    .accessibilityLabel("Share post")
+    .sheet(item: $destination) { destination in
+      shareDestination(destination)
+    }
+    .onChange(of: AppStateManager.shared.lifecycle.userDID) { _, _ in
+      destination = nil
+    }
+  }
+
+  @ViewBuilder
+  private func shareDestination(_ destination: Destination) -> some View {
+    #if os(iOS)
+    switch destination {
+    case .chat:
+      ModernChatSelectionView(post: post, appState: appState) {
+        self.destination = nil
+      }
+      .applyAppStateEnvironment(appState)
+    case .native:
+      NativePostShareSheet(post: post, appState: appState)
+    }
+    #else
+    if let url = ActionButtonViewModel.shareURL(for: post) {
+      ShareLink(item: url)
+    }
+    #endif
+  }
+
+  private func copyLink(_ url: URL) {
+    #if os(iOS)
+    UIPasteboard.general.url = url
+    #elseif os(macOS)
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.writeObjects([url as NSURL])
+    #endif
+    PlatformHaptics.light()
   }
 }

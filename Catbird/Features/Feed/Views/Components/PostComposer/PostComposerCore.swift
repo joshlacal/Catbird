@@ -108,12 +108,17 @@ extension PostComposerViewModel {
         return !postText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
                !mediaItems.isEmpty ||
                videoItem != nil ||
-               selectedGif != nil
+               selectedGif != nil ||
+               postingQuoteReference() != nil
     }
 
     var submitValidationState: PostComposerSubmitValidationState {
         if isPosting {
             return PostComposerSubmitValidationState(canSubmit: false, reason: .posting)
+        }
+
+        if let reason = draftReferenceLoadingReason {
+            return PostComposerSubmitValidationState(canSubmit: false, reason: reason)
         }
 
         if let videoUploadBlockedReason {
@@ -436,6 +441,7 @@ extension PostComposerViewModel {
     // MARK: - Thread Creation
 
     func createThread() async throws {
+        try ensureDraftReferencesReadyForPosting()
         // Update current thread entry before posting
         updateCurrentThreadEntry()
 
@@ -449,7 +455,8 @@ extension PostComposerViewModel {
             !entry.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
             !entry.mediaItems.isEmpty ||
             entry.videoItem != nil ||
-            entry.selectedGif != nil
+            entry.selectedGif != nil ||
+            postingQuoteReference(for: entry) != nil
         }
 
         guard !validEntries.isEmpty else {
@@ -472,11 +479,7 @@ extension PostComposerViewModel {
             var embed: AppBskyFeedPost.AppBskyFeedPostEmbedUnion?
 
             // Each entry can have its own quote post
-            if let entryQuote = entry.quotedPost {
-                let strongRef = ComAtprotoRepoStrongRef(
-                    uri: entryQuote.uri,
-                    cid: entryQuote.cid
-                )
+            if let strongRef = postingQuoteReference(for: entry) {
                 let record = AppBskyEmbedRecord(record: strongRef)
 
                 // Quote + media → recordWithMedia
@@ -535,8 +538,8 @@ extension PostComposerViewModel {
         let selfLabels = ComAtprotoLabelDefs.SelfLabels(values: filteredLabels.map { ComAtprotoLabelDefs.SelfLabel(val: $0.rawValue) })
 
         // Set up threadgate and postgate for the first post
-        let threadgateRules = interactionSettings.toThreadgateAllowRules()
-        let postgateRules = interactionSettings.toPostgateEmbeddingRules()
+        let threadgateRules = postingThreadgateRules()
+        let postgateRules = postingPostgateRules()
 
         // Create the entire thread in one batch operation
         do {
@@ -606,6 +609,7 @@ extension PostComposerViewModel {
     // MARK: - Post Creation
 
     func createPost() async throws {
+        try ensureDraftReferencesReadyForPosting()
         // Create single post
         isPosting = true
         defer {
@@ -630,11 +634,7 @@ extension PostComposerViewModel {
         var embed: AppBskyFeedPost.AppBskyFeedPostEmbedUnion?
 
         // Check if we have both a quoted post AND media - this requires recordWithMedia
-        if let quotedPost = quotedPost {
-            let strongRef = ComAtprotoRepoStrongRef(
-                uri: quotedPost.uri,
-                cid: quotedPost.cid
-            )
+        if let strongRef = postingQuoteReference() {
             let record = AppBskyEmbedRecord(record: strongRef)
 
             if let gif = selectedGif {
@@ -688,8 +688,8 @@ extension PostComposerViewModel {
         }
         let selfLabels = ComAtprotoLabelDefs.SelfLabels(values: filteredLabels.map { ComAtprotoLabelDefs.SelfLabel(val: $0.rawValue) })
 
-        let threadgateRules = interactionSettings.toThreadgateAllowRules()
-        let postgateRules = interactionSettings.toPostgateEmbeddingRules()
+        let threadgateRules = postingThreadgateRules()
+        let postgateRules = postingPostgateRules()
 
         let postManager = appState.postManager
 

@@ -82,7 +82,7 @@ import AppKit
   // Dependencies
   private let client: ATProtoClient?
   let userDID: String  // This is the DID of the profile we're viewing (made public for stable view ID)
-  private let currentUserDID: String?  // This is the logged-in user's DID
+  let currentUserDID: String?  // This is the logged-in user's DID
   private let logger = Logger(subsystem: "blue.catbird", category: "ProfileViewModel")
   private weak var stateInvalidationBus: StateInvalidationBus?
   

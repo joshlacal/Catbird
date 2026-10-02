@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import NukeUI
 import OSLog
@@ -28,6 +29,9 @@ struct ProfileHeader: View {
     @State private var verificationInfoKind: VerificationBadgeKind?
     @State private var showUnfollowConfirmation = false
     @State private var showingSuggestedFollows = false
+    @State private var showingAccountLabels = false
+    @State private var pendingGermAction: GermProfileAction?
+    @State private var germLaunchError = false
     @Namespace private var imageTransition
     private let verticalSpacing: CGFloat = 12
     private let avatarSize: CGFloat = 80
@@ -69,6 +73,46 @@ struct ProfileHeader: View {
                 displayName: profile.displayName ?? profile.handle.description,
                 verifications: profile.verification?.verifications ?? []
             )
+        }
+        .sheet(isPresented: $showingAccountLabels) {
+            if let client = appState.atProtoClient {
+                LabelsOnMeView(
+                    labels: visibleAccountLabels,
+                    targetDescription: "Account @\(profile.handle)",
+                    viewerDID: appState.userDID,
+                    reportingService: ReportingService(client: client)
+                )
+            }
+        }
+        .alert("Open Germ DM?", isPresented: Binding(
+            get: { pendingGermAction != nil },
+            set: { if !$0 { pendingGermAction = nil } }
+        ), presenting: pendingGermAction) { action in
+            Button("Cancel", role: .cancel) { pendingGermAction = nil }
+            Button("Open Germ DM") { openGerm(action) }
+        } message: { action in
+            Text("Continue to \(action.url.host() ?? "Germ") to message @\(profile.handle) using your current account. No message is sent by Catbird.")
+        }
+        .alert("Could Not Open Germ", isPresented: $germLaunchError) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text("Please try again. The Germ link opens the app when installed, or its website otherwise.")
+        }
+        .onReceive(NotificationCenter.default.publisher(for: ProfileLabelRefresh.notificationName).receive(on: DispatchQueue.main)) { notification in
+            guard ProfileLabelRefresh.matches(
+                notification, preferencesManager: appState.preferencesManager,
+                viewerDID: appState.userDID, isActiveViewer: isActiveProfileViewer
+            ) else { return }
+            Task { @MainActor in
+                guard isActiveProfileViewer else { return }
+                await viewModel.loadProfile()
+            }
+        }
+        .onChange(of: isActiveProfileViewer) { _, isActive in
+            if !isActive {
+                pendingGermAction = nil
+                showingAccountLabels = false
+            }
         }
         .onAppear {
             localIsFollowing = profile.viewer?.following != nil
@@ -504,6 +548,32 @@ struct ProfileHeader: View {
                 }
             }
             
+            if !visibleAccountLabels.isEmpty {
+                Button { showingAccountLabels = true } label: {
+                    Label(visibleAccountLabels.count == 1 ? "1 account label" : "\(visibleAccountLabels.count) account labels", systemImage: "tag")
+                        .font(.subheadline)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Color.accentColor)
+                .padding(.vertical, 4)
+                .accessibilityHint("Opens label names, issuing services, and eligible appeals")
+            }
+
+            if let action = germAction {
+                Button { pendingGermAction = action } label: {
+                    HStack(spacing: 6) {
+                        Image("GermLogo").resizable().scaledToFit().frame(width: 24, height: 24).clipShape(.circle)
+                        Text("Germ DM")
+                        Image(systemName: "arrow.up.right").accessibilityHidden(true)
+                    }
+                    .font(.subheadline)
+                }
+                .buttonStyle(.bordered)
+                .accessibilityLabel("Open Germ DM")
+                .accessibilityHint("Opens an external app or website to compose a message")
+            }
+
             // Bio
             if let attributedBio = bioAttributedString(for: profile) {
                 TappableTextView(attributedString: attributedBio)
@@ -593,6 +663,51 @@ struct ProfileHeader: View {
                 Spacer()
             }
         }
+    }
+
+    private var isActiveProfileViewer: Bool {
+        viewModel.currentUserDID == appState.userDID
+            && AppStateManager.shared.lifecycle.appState === appState
+            && !AppStateManager.shared.authentication.isSwitchingAccount
+    }
+
+    private var visibleAccountLabels: [ComAtprotoLabelDefs.Label] {
+        guard isActiveProfileViewer else { return [] }
+        return AccountLabelPresentation.accountLabels(profile.labels ?? [], subjectDID: profile.did.didString(), subscribedIssuers: Set(subscribedLabelerDIDs))
+    }
+
+    private var subscribedLabelerDIDs: [String] {
+        let preferences = try? appState.preferencesManager.getLocalPreferences()
+        return ((preferences?.labelers.map { $0.did.didString() } ?? []) + [ReportingService.officialBlueskyDID]).sorted()
+    }
+
+    private var germAction: GermProfileAction? {
+        guard isActiveProfileViewer else { return nil }
+        #if os(iOS)
+        let platform = "iOS"
+        #else
+        let platform = "web"
+        #endif
+        return GermProfileAction.make(
+            metadata: profile.associated?.germ,
+            profileDID: profile.did.didString(), viewerDID: appState.userDID,
+            loadedForViewerDID: viewModel.currentUserDID,
+            profileFollowsViewer: profile.viewer?.followedBy != nil,
+            isBlocked: profile.viewer?.blocking != nil || profile.viewer?.blockedBy == true || profile.viewer?.blockingByList != nil,
+            platform: platform
+        )
+    }
+
+    private func openGerm(_ action: GermProfileAction) {
+        pendingGermAction = nil
+        guard action == germAction, appState.userDID == action.viewerDID else { return }
+        #if os(iOS)
+        UIApplication.shared.open(action.url, options: [:]) { success in
+            if !success { Task { @MainActor in germLaunchError = true } }
+        }
+        #elseif os(macOS)
+        if !NSWorkspace.shared.open(action.url) { germLaunchError = true }
+        #endif
     }
 
     // MARK: - Bio Helpers

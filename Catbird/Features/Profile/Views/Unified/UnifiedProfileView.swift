@@ -757,7 +757,10 @@ struct UnifiedProfileView: View {
            let client = appState.atProtoClient {
           let reportingService = ReportingService(client: client)
           LabelsOnMeView(
-            labels: profile.labels ?? [],
+            labels: AccountLabelPresentation.accountLabels(
+              profile.labels ?? [], subjectDID: profile.did.didString(),
+              subscribedIssuers: Set(((try? appState.preferencesManager.getLocalPreferences())?.labelers.map { $0.did.didString() } ?? []) + [ReportingService.officialBlueskyDID])
+            ),
             targetDescription: "Account @\(profile.handle.description)",
             viewerDID: appState.userDID,
             reportingService: reportingService

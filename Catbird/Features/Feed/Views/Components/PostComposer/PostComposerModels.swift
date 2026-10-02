@@ -47,7 +47,7 @@ struct TenorMediaItem: Codable, Hashable {
 // MARK: - Thread Models
 
 struct ThreadEntry: Identifiable, Hashable {
-    let id = UUID()
+    var id = UUID()
     var text: String = ""
     var mediaItems: [PostComposerViewModel.MediaItem] = []
     var videoItem: PostComposerViewModel.MediaItem?
@@ -61,6 +61,9 @@ struct ThreadEntry: Identifiable, Hashable {
     var selectedLanguages: [LanguageCodeContainer] = []
     var outlineTags: [String] = []
     var quotedPost: AppBskyFeedDefs.PostView?
+    // Keep the strong reference while its display metadata is loading.
+    var draftQuotedPostURI: String?
+    var draftQuotedPostCID: String?
 }
 
 // MARK: - Submit Validation
@@ -86,6 +89,8 @@ struct PostComposerSubmitValidationState: Equatable {
         case videoPreparing
         case videoBlocked(String)
         case missingAltText
+        case replyLoading
+        case quoteLoading
     }
 
     let canSubmit: Bool
@@ -105,6 +110,10 @@ struct PostComposerSubmitValidationState: Equatable {
             return reason
         case .missingAltText:
             return "Add alt text to every media attachment before posting."
+        case .replyLoading:
+            return "The original post must load before this reply can be posted."
+        case .quoteLoading:
+            return "The quoted post must load before this draft can be posted."
         case nil:
             return nil
         }
@@ -112,7 +121,7 @@ struct PostComposerSubmitValidationState: Equatable {
 
     var shouldShowInlineMessage: Bool {
         switch reason {
-        case .overCharacterLimit, .videoPreparing, .videoBlocked, .missingAltText:
+        case .overCharacterLimit, .videoPreparing, .videoBlocked, .missingAltText, .replyLoading, .quoteLoading:
             return true
         case .emptyContent, .posting, nil:
             return false
@@ -156,6 +165,11 @@ struct PostComposerDraft: Codable, Hashable {
   let currentThreadIndex: Int
   let parentPostURI: String?
   let quotedPostURI: String?
+  var quotedPostCID: String? = nil
+  var draftPostgateEmbeddingRules: [AppBskyDraftDefs.DraftPostgateEmbeddingRulesUnion]? = nil
+  var draftThreadgateAllow: [AppBskyDraftDefs.DraftThreadgateAllowUnion]? = nil
+  // Distinguishes an explicitly unrestricted draft from a legacy draft with no settings.
+  var hasDraftInteractionSettings: Bool? = nil
 }
 
 // MARK: - Codable Wrappers for Draft State
@@ -266,8 +280,11 @@ struct CodableThreadEntry: Codable, Hashable {
   let hashtags: [String]
   let parentPostURI: String?
   let quotedPostURI: String?
+  var quotedPostCID: String? = nil
+  var draftEntryID: UUID? = nil
   
-  init(from threadEntry: ThreadEntry, parentPost: AppBskyFeedDefs.PostView?, quotedPost: AppBskyFeedDefs.PostView?) {
+  init(from threadEntry: ThreadEntry, parentPost: AppBskyFeedDefs.PostView?, quotedPost: AppBskyFeedDefs.PostView?, parentPostURI: String? = nil) {
+    self.draftEntryID = threadEntry.id
     self.text = threadEntry.text
     self.mediaItems = threadEntry.mediaItems.map(CodableMediaItem.init)
     self.videoItem = threadEntry.videoItem.map(CodableMediaItem.init)
@@ -277,12 +294,15 @@ struct CodableThreadEntry: Codable, Hashable {
     self.selectedEmbedURL = threadEntry.selectedEmbedURL
     self.urlsKeptForEmbed = threadEntry.urlsKeptForEmbed
     self.hashtags = threadEntry.hashtags
-    self.parentPostURI = parentPost?.uri.uriString()
-    self.quotedPostURI = quotedPost?.uri.uriString()
+    self.parentPostURI = parentPost?.uri.uriString() ?? parentPostURI
+    let quote = threadEntry.quotedPost ?? quotedPost
+    self.quotedPostURI = threadEntry.draftQuotedPostURI ?? quote?.uri.uriString()
+    self.quotedPostCID = threadEntry.draftQuotedPostCID ?? quote?.cid.string
   }
   
   func toThreadEntry() -> ThreadEntry {
     var entry = ThreadEntry()
+    entry.id = draftEntryID ?? UUID()
     entry.text = text
     entry.mediaItems = mediaItems.map { $0.toMediaItem() }
     entry.videoItem = videoItem?.toMediaItem()
@@ -292,6 +312,8 @@ struct CodableThreadEntry: Codable, Hashable {
     entry.selectedEmbedURL = selectedEmbedURL
     entry.urlsKeptForEmbed = urlsKeptForEmbed
     entry.hashtags = hashtags
+    entry.draftQuotedPostURI = quotedPostURI
+    entry.draftQuotedPostCID = quotedPostCID
     return entry
   }
 }

@@ -19,6 +19,9 @@ struct ConversationView: View {
   }
   @State private var unifiedDataSource: BlueskyConversationDataSource?
   @State private var isInitialized = false
+  @State private var draftAccountDID: String?
+  @State private var shareAwaitingReplacement: PendingChatShare?
+  @State private var showShareReplacement = false
   private var chatNavigationPath: Binding<NavigationPath> {
     appState.navigationManager.pathBinding(for: 4)
   }
@@ -42,6 +45,7 @@ struct ConversationView: View {
   @MainActor
   private func ensureUnifiedDataSource() {
     guard unifiedDataSource == nil else { return }
+    draftAccountDID = appState.userDID
     unifiedDataSource = BlueskyConversationDataSource(
       chatManager: chatManager,
       convoID: convoId,
@@ -51,12 +55,29 @@ struct ConversationView: View {
 
   @MainActor
   private func consumePendingShareIfNeeded() {
-    guard let pending = appState.navigationManager.pendingChatShare,
-          pending.convoId == convoId else { return }
-    guard let draft = unifiedDataSource?.draft else { return }
-    draft.value.attachedEmbed = pending.previewEmbed
-    draft.value.postRef = pending.postRef
-    appState.navigationManager.pendingChatShare = nil
+    guard AppStateManager.shared.lifecycle.userDID == appState.userDID,
+          !AppStateManager.shared.isTransitioning,
+          draftAccountDID == appState.userDID,
+          let pending = PendingChatShareStore.shared.peek(accountDID: appState.userDID, convoId: convoId),
+          let draft = unifiedDataSource?.draft else { return }
+    if let existing = draft.value.postRef, existing != pending.postRef {
+      shareAwaitingReplacement = pending
+      showShareReplacement = true
+      return
+    }
+    applyPendingShare(pending)
+  }
+
+  @MainActor
+  private func applyPendingShare(_ pending: PendingChatShare) {
+    guard AppStateManager.shared.lifecycle.userDID == appState.userDID,
+          !AppStateManager.shared.isTransitioning,
+          draftAccountDID == appState.userDID,
+          let draft = unifiedDataSource?.draft,
+          let owned = PendingChatShareStore.shared.consume(
+            accountDID: appState.userDID, convoId: convoId, expectedID: pending.id
+          ) else { return }
+    owned.apply(to: &draft.value)
   }
 
   /// Applies a Siri/Shortcuts draft (Messages-schema intents) targeting this
@@ -111,6 +132,25 @@ struct ConversationView: View {
       }
       chatManager.startMessagePolling(for: convoId)
       appState.chatHeartbeatManager.viewAppeared()
+    }
+    .onChange(of: PendingChatShareStore.shared.revision) { _, _ in
+      consumePendingShareIfNeeded()
+    }
+    .alert("Replace shared post?", isPresented: $showShareReplacement) {
+      Button("Keep Current", role: .cancel) {
+        if let pending = shareAwaitingReplacement {
+          PendingChatShareStore.shared.consume(
+            accountDID: appState.userDID, convoId: convoId, expectedID: pending.id
+          )
+        }
+        shareAwaitingReplacement = nil
+      }
+      Button("Replace Post") {
+        if let pending = shareAwaitingReplacement { applyPendingShare(pending) }
+        shareAwaitingReplacement = nil
+      }
+    } message: {
+      Text("Your message already has a post attached. Your text and reply will be kept.")
     }
     .onReceive(NotificationCenter.default.publisher(for: ChatDraftHandoff.didStoreDraft)) { _ in
       consumePendingDraftIfNeeded()
