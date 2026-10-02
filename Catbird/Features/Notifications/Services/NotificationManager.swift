@@ -245,7 +245,8 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     generation: UInt64,
     accountDID: String
   ) -> Bool {
-    self.client === client && clientGeneration == generation && currentAccountDID == accountDID
+    !pollingBarrier.isSuspended && self.client === client
+      && clientGeneration == generation && currentAccountDID == accountDID
   }
 
   /// Checks if push notifications are enabled by the user for the current account
@@ -398,6 +399,61 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
   /// Timer for checking unread notifications
   private var unreadCheckTimer: Timer?
+  @ObservationIgnored private let pollingBarrier = AccountPollingBarrier()
+  @ObservationIgnored private var unreadCheckTask: Task<Void, Never>?
+  @ObservationIgnored private var foregroundCheckTask: Task<Void, Never>?
+  @ObservationIgnored private var resumeUnreadChecking = false
+
+  @MainActor
+  func suspendForAccountSwitch() async {
+    if !pollingBarrier.isSuspended { resumeUnreadChecking = unreadCheckTimer != nil }
+    pollingBarrier.suspend(accountDID: currentAccountDID)
+    clientGeneration &+= 1
+    unreadCheckTimer?.invalidate()
+    unreadCheckTimer = nil
+    let tasks = [unreadCheckTask, foregroundCheckTask].compactMap { $0 }
+    for task in tasks { task.cancel() }
+    let mutation = activePreferenceMutationTask
+    mutation?.cancel()
+    for task in tasks { await task.value }
+    _ = try? await mutation?.value
+    await pollingBarrier.drain()
+    unreadCheckTask = nil
+    foregroundCheckTask = nil
+    activePreferenceMutationTask = nil
+    // Canceled optimistic edits retain their last confirmed server/local snapshot.
+    if let confirmed = priorConfirmedPreferences {
+      preferences = confirmed
+      serverPreferencesSnapshot = priorConfirmedServerSnapshot
+      syncChatNotificationPreferenceFromPreferences()
+    }
+    priorConfirmedPreferences = nil
+    priorConfirmedServerSnapshot = nil
+  }
+
+  @MainActor
+  func resumeAfterInterruptedAccountSwitch(accountDID: String) async -> Bool {
+    guard let generation = pollingBarrier.suspensionGeneration,
+      currentAccountDID == accountDID, let client
+    else { return false }
+    let authenticatedDID = try? await client.getDid()
+    guard self.client === client, currentAccountDID == accountDID,
+      authenticatedDID == accountDID, pollingBarrier.resume(accountDID: accountDID, generation: generation)
+    else { return false }
+    if resumeUnreadChecking { startUnreadNotificationChecking() }
+    resumeUnreadChecking = false
+    return true
+  }
+
+  @MainActor
+  private func scheduleUnreadCheck() {
+    guard !pollingBarrier.isSuspended, unreadCheckTask == nil else { return }
+    unreadCheckTask = Task { [weak self] in
+      guard let self else { return }
+      defer { self.unreadCheckTask = nil }
+      await self.checkUnreadNotifications()
+    }
+  }
 
   // MARK: - Initialization
 
@@ -435,6 +491,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
   /// Configure with app state reference for navigation
   func configure(with appState: AppState) {
+    guard !pollingBarrier.isSuspended else { return }
     self.appState = appState
     notificationLogger.debug("NotificationManager configured with AppState reference")
 
@@ -454,7 +511,10 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   // MARK: - Public API
 
   /// Update the client reference when authentication changes
+  @MainActor
   func updateClient(_ newClient: ATProtoClient?) async {
+    guard let ticket = pollingBarrier.begin(accountDID: currentAccountDID) else { return }
+    defer { pollingBarrier.finish(ticket) }
     let previousClient = client
     clientGeneration &+= 1
     preferenceMutationGeneration &+= 1
@@ -536,8 +596,12 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   }
 
   @discardableResult
+  @MainActor
   func fetchNotificationPreferences(using client: ATProtoClient) async
     -> AppBskyNotificationDefs.Preferences? {
+    guard let pollingTicket = pollingBarrier.begin(accountDID: currentAccountDID) else { return nil }
+    defer { pollingBarrier.finish(pollingTicket) }
+
     guard let did = currentAccountDID, self.client === client, !Task.isCancelled,
       activePreferenceMutationTask == nil
     else { return nil }
@@ -581,8 +645,12 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     syncChatNotificationPreferenceFromPreferences()
   }
 
+  @MainActor
   func currentNotificationPreferencesSnapshot(using client: ATProtoClient) async
     -> AppBskyNotificationDefs.Preferences? {
+    guard let pollingTicket = pollingBarrier.begin(accountDID: currentAccountDID) else { return nil }
+    defer { pollingBarrier.finish(pollingTicket) }
+
     guard self.client === client, !Task.isCancelled else { return nil }
     if let serverPreferencesSnapshot {
       return serverPreferencesSnapshot
@@ -594,24 +662,34 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   /// Enable all notifications
   @MainActor
   func enableNotifications() async {
+    guard let pollingTicket = pollingBarrier.begin(accountDID: currentAccountDID) else { return }
+    defer { pollingBarrier.finish(pollingTicket) }
+
     setMasterPushEnabled(true)
     notificationsEnabled = true
     if deviceToken == nil {
       await requestNotificationPermission()
+      guard !Task.isCancelled, pollingBarrier.isCurrent(pollingTicket, accountDID: currentAccountDID) else { return }
     } else if let token = deviceToken {
       await registerDeviceToken(token)
+      guard !Task.isCancelled, pollingBarrier.isCurrent(pollingTicket, accountDID: currentAccountDID) else { return }
     }
   }
 
   /// Disable all notifications
   @MainActor
   func disableNotifications() async {
+    guard let pollingTicket = pollingBarrier.begin(accountDID: currentAccountDID) else { return }
+    defer { pollingBarrier.finish(pollingTicket) }
+
     setMasterPushEnabled(false)
     notificationsEnabled = false
     status = .disabled
     if let deviceToken = deviceToken {
       if let did = try? await client?.getDid() {
+        guard !Task.isCancelled, pollingBarrier.isCurrent(pollingTicket, accountDID: currentAccountDID) else { return }
         await unregisterDeviceToken(deviceToken, did: did)
+        guard !Task.isCancelled, pollingBarrier.isCurrent(pollingTicket, accountDID: currentAccountDID) else { return }
       }
     }
   }
@@ -619,6 +697,9 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   /// Request notification permissions from the user
   @MainActor
   func requestNotificationPermission() async {
+    guard let pollingTicket = pollingBarrier.begin(accountDID: currentAccountDID) else { return }
+    defer { pollingBarrier.finish(pollingTicket) }
+
     notificationLogger.info("Requesting notification permission")
     status = .waitingForPermission
 
@@ -627,6 +708,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
       let center = UNUserNotificationCenter.current()
       let options: UNAuthorizationOptions = [.alert, .sound, .badge]
       let granted = try await center.requestAuthorization(options: options)
+      guard !Task.isCancelled, pollingBarrier.isCurrent(pollingTicket, accountDID: currentAccountDID) else { return }
 
       // Update state based on user's choice
       if granted {
@@ -634,6 +716,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         setMasterPushEnabled(true)
         notificationsEnabled = true
         await MainActor.run {
+          guard !Task.isCancelled, pollingBarrier.isCurrent(pollingTicket, accountDID: currentAccountDID) else { return }
           #if os(iOS)
             UIApplication.shared.registerForRemoteNotifications()
             notificationLogger.info(
@@ -647,6 +730,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
         // Check current settings to confirm
         let settings = await center.notificationSettings()
+        guard !Task.isCancelled, pollingBarrier.isCurrent(pollingTicket, accountDID: currentAccountDID) else { return }
         if settings.authorizationStatus == .authorized {
           notificationLogger.info("Notification settings confirmed authorized")
         } else {
@@ -659,6 +743,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         notificationsEnabled = false
       }
     } catch {
+      guard !Task.isCancelled, pollingBarrier.isCurrent(pollingTicket, accountDID: currentAccountDID) else { return }
       notificationLogger.error(
         "Error requesting notification permission: \(error.localizedDescription)")
       status = .registrationFailed(error)
@@ -669,23 +754,34 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   /// Request notifications after successful login
   @MainActor
   func requestNotificationsAfterLogin() async {
+    guard let pollingTicket = pollingBarrier.begin(accountDID: currentAccountDID) else { return }
+    defer { pollingBarrier.finish(pollingTicket) }
+
     // Only request if we haven't already been granted permission
     let center = UNUserNotificationCenter.current()
     let settings = await center.notificationSettings()
+    guard !Task.isCancelled, pollingBarrier.isCurrent(pollingTicket, accountDID: currentAccountDID) else { return }
 
     if settings.authorizationStatus == .notDetermined {
       await requestNotificationPermission()
+      guard !Task.isCancelled, pollingBarrier.isCurrent(pollingTicket, accountDID: currentAccountDID) else { return }
     }
   }
 
   /// Check the current notification permission status
   @MainActor
   func checkNotificationStatus() async {
+    guard let pollingTicket = pollingBarrier.begin(accountDID: currentAccountDID) else { return }
+    defer { pollingBarrier.finish(pollingTicket) }
+
     notificationLogger.debug("Checking notification status")
 
     let center = UNUserNotificationCenter.current()
     let settings = await center.notificationSettings()
 
+    guard !Task.isCancelled,
+      pollingBarrier.isCurrent(pollingTicket, accountDID: currentAccountDID)
+    else { return }
     switch settings.authorizationStatus {
     case .authorized, .provisional, .ephemeral:
       notificationLogger.info("Notifications are authorized")
@@ -744,6 +840,8 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
       "📱 Processing device token from APNS: \(tokenHex.prefix(16))... (length: \(deviceToken.count))"
     )
     self.deviceToken = deviceToken
+    guard let pollingTicket = pollingBarrier.begin(accountDID: currentAccountDID) else { return }
+    defer { pollingBarrier.finish(pollingTicket) }
 
     if status == .registered,
       let previousToken = lastRegisteredDeviceToken,
@@ -773,7 +871,11 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
   /// Update notification preferences with serialized execution and rollback on failure.
   @discardableResult
+  @MainActor
   func updatePreferences(_ newPreferences: NotificationPreferences) async throws -> AppBskyNotificationDefs.Preferences? {
+    guard let pollingTicket = pollingBarrier.begin(accountDID: currentAccountDID) else { throw CancellationError() }
+    defer { pollingBarrier.finish(pollingTicket) }
+
     guard let client = client else {
       notificationLogger.warning("Cannot update preferences - no client available")
       throw NotificationServiceError.clientUnavailable
@@ -858,12 +960,14 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
   /// Mutates notification preferences using a closure, serialized with rollback on failure.
   @discardableResult
+  @MainActor
   func updatePreferences(_ mutate: (inout NotificationPreferences) -> Void) async throws -> AppBskyNotificationDefs.Preferences? {
     var updated = preferences
     mutate(&updated)
     return try await updatePreferences(updated)
   }
 
+  @MainActor
   private func performPreferencesMutation(
     _ newPreferences: NotificationPreferences,
     generation: UInt64,
@@ -915,23 +1019,14 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   }
 
   /// Starts periodic checking of unread notifications
+  @MainActor
   func startUnreadNotificationChecking() {
-    // Stop any existing timer
+    guard !pollingBarrier.isSuspended else { return }
     unreadCheckTimer?.invalidate()
-
-    // Create a new timer (every 60 seconds)
-    unreadCheckTimer = Timer.scheduledTimer(withTimeInterval: 60.0, repeats: true) {
-      [weak self] _ in
-      Task { [weak self] in
-        await self?.checkUnreadNotifications()
-      }
+    unreadCheckTimer = Timer.scheduledTimer(withTimeInterval: 60.0, repeats: true) { [weak self] _ in
+      Task { @MainActor [weak self] in self?.scheduleUnreadCheck() }
     }
-
-    // Initial check
-    Task {
-      await checkUnreadNotifications()
-    }
-
+    scheduleUnreadCheck()
     notificationLogger.info("Started background notification checking")
   }
 
@@ -1016,6 +1111,9 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   /// Checks for unread notifications and updates count
   @MainActor
   func checkUnreadNotifications() async {
+    guard let pollingTicket = pollingBarrier.begin(accountDID: currentAccountDID) else { return }
+    defer { pollingBarrier.finish(pollingTicket) }
+
     // Only check when notifications are enabled and we are registered
     guard notificationsEnabled, status == .registered, let client = client else {
       notificationLogger.warning("Cannot check unread notifications - not properly configured")
@@ -1023,11 +1121,20 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     }
 
     do {
+      let generation = clientGeneration
+      guard let did = currentAccountDID else { return }
       await configureNotificationServiceRouting(on: client)
+      let authenticatedDID = try await client.getDid()
+      guard !Task.isCancelled, authenticatedDID == did,
+        isCurrentNotificationClient(client, generation: generation, accountDID: did)
+      else { return }
       let (responseCode, output) = try await client.app.bsky.notification.getUnreadCount(
         input: .init()
       )
 
+      guard !Task.isCancelled,
+        isCurrentNotificationClient(client, generation: generation, accountDID: did)
+      else { return }
       guard responseCode == 200, let output = output else {
         notificationLogger.error("Failed to get unread notification count: \(responseCode)")
         return
@@ -1082,7 +1189,10 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
   /// Update unread count after notifications are marked as seen
   func updateUnreadCountAfterSeen() {
+    let generation = clientGeneration
+    let accountDID = currentAccountDID
     Task { @MainActor in
+      guard !pollingBarrier.isSuspended, clientGeneration == generation, currentAccountDID == accountDID else { return }
       unreadCount = 0
 
       // Update app badge
@@ -1128,18 +1238,27 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   // MARK: - Relationship Sync Methods
 
   /// Synchronizes muted and blocked users with the notification server
+  @MainActor
   func syncRelationships() async {
+    guard let pollingTicket = pollingBarrier.begin(accountDID: currentAccountDID) else { return }
+    defer { pollingBarrier.finish(pollingTicket) }
+
     guard notificationsEnabled else {
       notificationLogger.info("Not syncing relationships - notifications are disabled")
       return
     }
 
     await gatherRelationships()
+    guard !Task.isCancelled, pollingBarrier.isCurrent(pollingTicket, accountDID: currentAccountDID) else { return }
     lastRelationshipSync = Date()
   }
 
   /// Gathers current relationships from the graph manager
+  @MainActor
   private func gatherRelationships() async {
+    guard let pollingTicket = pollingBarrier.begin(accountDID: currentAccountDID) else { return }
+    defer { pollingBarrier.finish(pollingTicket) }
+
     guard let appState = appState else {
       notificationLogger.warning("Cannot gather relationships - no AppState reference")
       return
@@ -1148,10 +1267,12 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     do {
       // Use existing graph manager to refresh caches
       try await appState.graphManager.refreshMuteCache()
+      guard !Task.isCancelled, pollingBarrier.isCurrent(pollingTicket, accountDID: currentAccountDID) else { return }
       try await appState.graphManager.refreshBlockCache()
 
       // Get muted and blocked users
       await MainActor.run {
+        guard !Task.isCancelled, pollingBarrier.isCurrent(pollingTicket, accountDID: currentAccountDID) else { return }
         // Access GraphManager's cached values
         mutedUsers = appState.graphManager.muteCache
         blockedUsers = appState.graphManager.blockCache
@@ -1188,7 +1309,11 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   }
 
   /// Syncs all user data (preferences and relationships) with the notification server
+  @MainActor
   func syncAllUserData() async {
+    guard let pollingTicket = pollingBarrier.begin(accountDID: currentAccountDID) else { return }
+    defer { pollingBarrier.finish(pollingTicket) }
+
     guard notificationsEnabled else {
       notificationLogger.info("Not syncing user data - notifications are disabled")
       return
@@ -1200,9 +1325,11 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     }
 
     await refreshNotificationPreferences()
+    guard !Task.isCancelled, pollingBarrier.isCurrent(pollingTicket, accountDID: currentAccountDID) else { return }
     await syncRelationships()
     if let appState {
       let service = await MainActor.run { appState.activitySubscriptionService }
+      guard !Task.isCancelled, pollingBarrier.isCurrent(pollingTicket, accountDID: currentAccountDID) else { return }
       await service.refreshSubscriptions()
     }
 
@@ -1218,10 +1345,14 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   }
 
   /// Fetches moderation lists from AT Protocol
+  @MainActor
   private func fetchModerationLists(
     client: ATProtoClient,
     type: String
   ) async throws -> [(uri: String, purpose: String, name: String?)] {
+    guard let pollingTicket = pollingBarrier.begin(accountDID: currentAccountDID) else { throw CancellationError() }
+    defer { pollingBarrier.finish(pollingTicket) }
+
     var allLists: [(uri: String, purpose: String, name: String?)] = []
     var cursor: String?
 
@@ -1234,6 +1365,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         params = AppBskyGraphGetListBlocks.Parameters(limit: 100, cursor: cursor)
         result = try await client.app.bsky.graph.getListBlocks(
           input: params as! AppBskyGraphGetListBlocks.Parameters)
+        guard !Task.isCancelled, pollingBarrier.isCurrent(pollingTicket, accountDID: currentAccountDID) else { throw CancellationError() }
 
         if result.responseCode == 200, let output = result.data as? AppBskyGraphGetListBlocks.Output {
           for list in output.lists {
@@ -1252,6 +1384,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         params = AppBskyGraphGetListMutes.Parameters(limit: 100, cursor: cursor)
         result = try await client.app.bsky.graph.getListMutes(
           input: params as! AppBskyGraphGetListMutes.Parameters)
+        guard !Task.isCancelled, pollingBarrier.isCurrent(pollingTicket, accountDID: currentAccountDID) else { throw CancellationError() }
 
         if result.responseCode == 200, let output = result.data as? AppBskyGraphGetListMutes.Output {
           for list in output.lists {
@@ -1276,26 +1409,36 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   }
 
   /// Mutes a thread for push notifications
+  @MainActor
   func muteThreadNotifications(threadRootURI: String) async throws {
+    guard let pollingTicket = pollingBarrier.begin(accountDID: currentAccountDID) else { throw CancellationError() }
+    defer { pollingBarrier.finish(pollingTicket) }
+
     guard let client = client else {
       throw NotificationServiceError.clientNotConfigured
     }
 
     let input = AppBskyGraphMuteThread.Input(root: try ATProtocolURI(uriString: threadRootURI))
     let responseCode = try await client.app.bsky.graph.muteThread(input: input)
+    guard !Task.isCancelled, pollingBarrier.isCurrent(pollingTicket, accountDID: currentAccountDID) else { throw CancellationError() }
     guard responseCode == 200 else {
       throw NotificationServiceError.serverError("HTTP \(responseCode)")
     }
   }
 
   /// Unmutes a thread for push notifications
+  @MainActor
   func unmuteThreadNotifications(threadRootURI: String) async throws {
+    guard let pollingTicket = pollingBarrier.begin(accountDID: currentAccountDID) else { throw CancellationError() }
+    defer { pollingBarrier.finish(pollingTicket) }
+
     guard let client = client else {
       throw NotificationServiceError.clientNotConfigured
     }
 
     let input = AppBskyGraphUnmuteThread.Input(root: try ATProtocolURI(uriString: threadRootURI))
     let responseCode = try await client.app.bsky.graph.unmuteThread(input: input)
+    guard !Task.isCancelled, pollingBarrier.isCurrent(pollingTicket, accountDID: currentAccountDID) else { throw CancellationError() }
     guard responseCode == 200 else {
       throw NotificationServiceError.serverError("HTTP \(responseCode)")
     }
@@ -1308,7 +1451,11 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   }
 
   /// Fetch the current set of activity subscriptions from the notification server.
+  @MainActor
   func fetchActivitySubscriptionsFromServer() async -> [ActivitySubscriptionServerRecord]? {
+    guard let pollingTicket = pollingBarrier.begin(accountDID: currentAccountDID) else { return nil }
+    defer { pollingBarrier.finish(pollingTicket) }
+
     guard notificationsEnabled else {
       notificationLogger.debug("Skipping activity subscription fetch - notifications disabled")
       return nil
@@ -1327,9 +1474,11 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
     do {
       await configureNotificationServiceRouting(on: client)
+      guard !Task.isCancelled, pollingBarrier.isCurrent(pollingTicket, accountDID: currentAccountDID) else { return nil }
       let (responseCode, output) = try await client.app.bsky.notification.listActivitySubscriptions(
         input: .init(limit: 100)
       )
+      guard !Task.isCancelled, pollingBarrier.isCurrent(pollingTicket, accountDID: currentAccountDID) else { return nil }
 
       guard responseCode == 200, let output else {
         notificationLogger.error(
@@ -1350,6 +1499,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         )
       }
     } catch {
+      guard !Task.isCancelled, pollingBarrier.isCurrent(pollingTicket, accountDID: currentAccountDID) else { return nil }
       notificationLogger.error(
         "Error fetching activity subscriptions via XRPC: \(error.localizedDescription)")
     }
@@ -1358,15 +1508,20 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   }
 
   /// Create or update an activity subscription on the notification server.
+  @MainActor
   func updateActivitySubscriptionOnServer(
     subjectDid: String,
     includePosts: Bool,
     includeReplies: Bool
   ) async {
+    guard let pollingTicket = pollingBarrier.begin(accountDID: currentAccountDID) else { return }
+    defer { pollingBarrier.finish(pollingTicket) }
+
     guard includePosts || includeReplies else {
       await removeActivitySubscriptionFromServer(
         subjectDid: subjectDid
       )
+      guard !Task.isCancelled, pollingBarrier.isCurrent(pollingTicket, accountDID: currentAccountDID) else { return }
       return
     }
 
@@ -1388,6 +1543,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
     do {
       await configureNotificationServiceRouting(on: client)
+      guard !Task.isCancelled, pollingBarrier.isCurrent(pollingTicket, accountDID: currentAccountDID) else { return }
       let input = AppBskyNotificationPutActivitySubscription.Input(
         subject: try DID(didString: subjectDid),
         activitySubscription: AppBskyNotificationDefs.ActivitySubscription(
@@ -1398,6 +1554,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
       let (responseCode, _) = try await client.app.bsky.notification.putActivitySubscription(
         input: input
       )
+      guard !Task.isCancelled, pollingBarrier.isCurrent(pollingTicket, accountDID: currentAccountDID) else { return }
 
       switch responseCode {
       case 200 ... 299:
@@ -1409,6 +1566,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         )
       }
     } catch {
+      guard !Task.isCancelled, pollingBarrier.isCurrent(pollingTicket, accountDID: currentAccountDID) else { return }
       notificationLogger.error(
         "Error syncing activity subscription for \(subjectDid) via XRPC: \(error.localizedDescription)"
       )
@@ -1416,9 +1574,13 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   }
 
   /// Remove an activity subscription from the notification server.
+  @MainActor
   func removeActivitySubscriptionFromServer(
     subjectDid: String
   ) async {
+    guard let pollingTicket = pollingBarrier.begin(accountDID: currentAccountDID) else { return }
+    defer { pollingBarrier.finish(pollingTicket) }
+
     guard notificationsEnabled else {
       notificationLogger.debug("Skipping activity subscription removal - notifications disabled")
       return
@@ -1437,6 +1599,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
     do {
       await configureNotificationServiceRouting(on: client)
+      guard !Task.isCancelled, pollingBarrier.isCurrent(pollingTicket, accountDID: currentAccountDID) else { return }
       let input = AppBskyNotificationPutActivitySubscription.Input(
         subject: try DID(didString: subjectDid),
         activitySubscription: AppBskyNotificationDefs.ActivitySubscription(
@@ -1447,6 +1610,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
       let (responseCode, _) = try await client.app.bsky.notification.putActivitySubscription(
         input: input
       )
+      guard !Task.isCancelled, pollingBarrier.isCurrent(pollingTicket, accountDID: currentAccountDID) else { return }
 
       switch responseCode {
       case 200 ... 299:
@@ -1458,6 +1622,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         )
       }
     } catch {
+      guard !Task.isCancelled, pollingBarrier.isCurrent(pollingTicket, accountDID: currentAccountDID) else { return }
       notificationLogger.error(
         "Error removing activity subscription for \(subjectDid) via XRPC: \(error.localizedDescription)"
       )
@@ -1503,7 +1668,11 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   }
 
   /// Register the device token with our notification service
+  @MainActor
   private func registerDeviceToken(_ token: Data) async {
+    guard let pollingTicket = pollingBarrier.begin(accountDID: currentAccountDID) else { return }
+    defer { pollingBarrier.finish(pollingTicket) }
+
     guard !Task.isCancelled, isMasterPushEnabled() else { return }
     guard let client, let did = currentAccountDID else { return }
     let generation = clientGeneration
@@ -1597,22 +1766,26 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
   // MARK: - App Lifecycle
 
+  @MainActor
   @objc private func appDidBecomeActive() {
-    // Check notification status when app becomes active
-    Task {
-      await checkNotificationStatus()
-
-      // Also check for unread notifications
-      await checkUnreadNotifications()
-
-      // Sync relationships if we haven't in a while
-      if let lastSync = lastRelationshipSync,
-        Date().timeIntervalSince(lastSync) > 3600 {  // If it's been over an hour
-        await syncRelationships()
+    guard !pollingBarrier.isSuspended, foregroundCheckTask == nil else { return }
+    foregroundCheckTask = Task { [weak self] in
+      guard let self,
+        let ticket = self.pollingBarrier.begin(accountDID: self.currentAccountDID)
+      else { return }
+      defer {
+        self.pollingBarrier.finish(ticket)
+        self.foregroundCheckTask = nil
       }
-
-      // Force update widget with current count to ensure it has data
-      updateWidgetUnreadCount(unreadCount)
+      await self.checkNotificationStatus()
+      guard !Task.isCancelled, self.pollingBarrier.isCurrent(ticket, accountDID: self.currentAccountDID) else { return }
+      await self.checkUnreadNotifications()
+      guard !Task.isCancelled, self.pollingBarrier.isCurrent(ticket, accountDID: self.currentAccountDID) else { return }
+      if let lastSync = self.lastRelationshipSync, Date().timeIntervalSince(lastSync) > 3600 {
+        await self.syncRelationships()
+      }
+      guard !Task.isCancelled, self.pollingBarrier.isCurrent(ticket, accountDID: self.currentAccountDID) else { return }
+      self.updateWidgetUnreadCount(self.unreadCount)
     }
   }
 
