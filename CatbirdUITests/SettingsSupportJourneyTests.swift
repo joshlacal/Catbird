@@ -57,7 +57,9 @@ final class SettingsSupportJourneyTests: XCTestCase {
   func testSupportCopyAndLargeText() {
     let app = launch(screen: "about", extra: ["--settings-large-text"])
     XCTAssertTrue(app.navigationBars["About"].waitForExistence(timeout: 10))
-    let copy = app.staticTexts["Leave an optional tip to support Catbird's development."].firstMatch
+    let copy = app.staticTexts.matching(NSPredicate(
+      format: "label BEGINSWITH %@", "Leave an optional tip to support Catbird's development."
+    )).firstMatch
     reveal(copy, in: app)
     capture(app, "Support Catbird large text")
     XCTAssertFalse(app.buttons["Manage Subscriptions"].exists)
