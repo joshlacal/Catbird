@@ -71,6 +71,9 @@ struct SettingsUIFixture: View {
       )
       // Inserting first prevents migration from any unrelated preference row.
       let settings = AppSettingsModel(accountDID: accountDID)
+      if arguments.contains("--settings-appearance-custom") {
+        settings.theme = "dark"
+      }
       if arguments.contains("--settings-large-text") {
         settings.maxDynamicTypeSize = "accessibility5"
       }

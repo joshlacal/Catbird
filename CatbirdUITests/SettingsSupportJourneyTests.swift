@@ -12,7 +12,7 @@ final class SettingsSupportJourneyTests: XCTestCase {
   }
 
   func testSettingsHierarchyAndAppearanceResetConfirmation() {
-    let app = launch(screen: "root")
+    let app = launch(screen: "root", extra: ["--settings-appearance-custom"])
     XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 10))
     capture(app, "Settings grouped by intent")
     let appearance = app.buttons["Appearance"].firstMatch
@@ -22,11 +22,25 @@ final class SettingsSupportJourneyTests: XCTestCase {
     capture(app, "Appearance controls")
     let reset = app.buttons["Reset Appearance…"].firstMatch
     reveal(reset, in: app)
+    XCTAssertTrue(app.staticTexts["Current Theme: Dark (Dim)"].exists)
     reset.tap()
     XCTAssertTrue(app.buttons["Reset Appearance"].waitForExistence(timeout: 3))
     capture(app, "Appearance reset confirmation and scope")
-    app.buttons["Cancel"].tap()
-    XCTAssertFalse(app.buttons["Reset Appearance"].exists)
+    let cancel = app.buttons["Cancel"].firstMatch
+    if cancel.waitForExistence(timeout: 1) {
+      cancel.tap()
+    } else {
+      // iOS 27 presents a popover which omits Cancel and dismisses outside its bounds.
+      // The right screen edge is outside the captured popover and the Form controls.
+      app.coordinate(withNormalizedOffset: CGVector(dx: 0.98, dy: 0.5)).tap()
+    }
+    let dismissed = XCTNSPredicateExpectation(
+      predicate: NSPredicate(format: "exists == false"), object: app.buttons["Reset Appearance"].firstMatch
+    )
+    XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 3), .completed)
+    XCTAssertTrue(app.staticTexts["Current Theme: Dark (Dim)"].exists,
+      "Dismissing the confirmation must preserve the selected theme")
+    capture(app, "Appearance reset dismissed without changing the theme")
   }
 
   func testAccessibilityLargeTextAndLandscape() {
@@ -141,7 +155,11 @@ final class SettingsSupportJourneyTests: XCTestCase {
     let altText = app.switches["Require Alt Text Before Posting"].firstMatch
     XCTAssertTrue(altText.waitForExistence(timeout: 10))
     waitUntilEnabled(altText)
-    altText.tap()
+    // SwiftUI exposes a labeled row-sized switch containing the native UISwitch.
+    // The row's center is over its label; tap the native child to exercise the edit.
+    let control = altText.descendants(matching: .switch).firstMatch
+    XCTAssertTrue(control.exists && control.isHittable)
+    control.tap()
     let retry = app.buttons["SettingsPersistenceRetry"].firstMatch
     XCTAssertTrue(retry.waitForExistence(timeout: 5))
     XCTAssertEqual(altText.value as? String, "0")
