@@ -13,6 +13,7 @@ import Observation
 
 /// A modernized search view that leverages iOS 18 features for a better search experience
 struct RefinedSearchView: View {
+  @Environment(SceneNavigationContext.self) private var sceneContext
     // MARK: - Properties
     
     @Environment(AppState.self) private var appState
@@ -64,7 +65,7 @@ struct RefinedSearchView: View {
         .onChange(of: searchText) { _, newText in
             updateSearchWithText(newText)
         }
-        .onChange(of: appState.pendingSearchRequest?.id) { _, _ in
+        .onChange(of: sceneContext.pendingSearchRequest?.id) { _, _ in
             applyPendingSearchRequestIfNeeded()
         }
         // selectedContentType handler moved next to the scope binding
@@ -150,7 +151,7 @@ struct RefinedSearchView: View {
     // MARK: - Computed Properties
     
     private var navigationPath: Binding<NavigationPath> {
-        appState.navigationManager.pathBinding(for: 1)
+        sceneContext.navigationManager.pathBinding(for: 1)
     }
 
     /// The sort/filter bar only applies to post results (Top + Latest scopes).
@@ -315,7 +316,7 @@ struct RefinedSearchView: View {
             if wasShowing && !isShowing, let proposal = pendingDedicatedProposal {
                 pendingDedicatedProposal = nil
                 if case .preparePostDraft(let text) = proposal {
-                    appState.presentPostComposer(initialText: text)
+                    sceneContext.presentPostComposer(initialText: text)
                 }
             }
         }
@@ -589,7 +590,7 @@ struct RefinedSearchView: View {
 
     private func applyPendingSearchRequestIfNeeded() {
         guard selectedTab == 1 else { return }
-        guard let request = appState.pendingSearchRequest else { return }
+        guard let request = sceneContext.pendingSearchRequest else { return }
         guard request.id != lastHandledSearchRequestID else { return }
 
         lastHandledSearchRequestID = request.id
@@ -612,7 +613,7 @@ struct RefinedSearchView: View {
             isApplyingPendingSearchRequest = false
         }
 
-        appState.pendingSearchRequest = nil
+        sceneContext.pendingSearchRequest = nil
     }
 
     @MainActor
@@ -702,7 +703,7 @@ struct RefinedSearchView: View {
         // If term looks like a trending topic link, route directly to the feed via URLHandler
         if term.hasPrefix("http://") || term.hasPrefix("https://") {
             if let url = URL(string: term) {
-                _ = appState.urlHandler.handle(url)
+                _ = sceneContext.urlHandler.handle(url)
                 return
             }
         }

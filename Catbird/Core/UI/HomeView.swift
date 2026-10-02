@@ -6,6 +6,7 @@ import SwiftUI
 #if os(iOS)
 /// The main home view that displays feeds and handles sidebar/drawer functionality
 struct HomeView: View {
+  @Environment(SceneNavigationContext.self) private var sceneContext
   @Environment(AppState.self) private var appState
 
   // Navigation and state bindings
@@ -28,7 +29,7 @@ struct HomeView: View {
   var body: some View {
     // Capture appState early to ensure it's available for sheet presentations
     let capturedAppState = appState
-    let navigationPath = capturedAppState.navigationManager.pathBinding(for: 0)
+    let navigationPath = sceneContext.navigationManager.pathBinding(for: 0)
 
     ZStack {
       mainNavigationView(navigationPath: navigationPath)
@@ -44,7 +45,7 @@ struct HomeView: View {
         }
     }
       .onAppear {
-        capturedAppState.navigationManager.updateCurrentTab(0)
+        sceneContext.navigationManager.updateCurrentTab(0)
         // Sync isRootView on appear to recover from any stale state
         let currentPathCount = navigationPath.wrappedValue.count
         if currentPathCount == 0 && !isRootView {
@@ -226,7 +227,7 @@ struct HomeView: View {
 
   private func handleLastTappedTabChange(oldValue: Int?, newValue: Int?) {
     if newValue == 0, selectedTab == 0 {
-      appState.tabTappedAgain = 0
+      sceneContext.tabTappedAgain = 0
       Task { @MainActor in
         lastTappedTab = nil
       }

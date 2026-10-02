@@ -65,6 +65,7 @@ enum FeedsStartPageLayoutMetrics {
 
 // MARK: - FeedsStartPage
 struct FeedsStartPage: View {
+  @Environment(SceneNavigationContext.self) private var sceneContext
   // Environment and State properties
   @Environment(AppState.self) private var appState
   @Environment(\.modelContext) private var modelContext
@@ -1204,7 +1205,7 @@ struct FeedsStartPage: View {
     .contentShape(Rectangle())
     .onTapGesture {
       let userDID = appState.userDID
-      appState.navigationManager.navigate(to: .profile(userDID))
+      sceneContext.navigationManager.navigate(to: .profile(userDID))
       isDrawerOpen = false
     }
     .onLongPressGesture {

@@ -2,6 +2,7 @@ import SwiftUI
 import Petrel
 
 struct NuxAnnouncementView: View {
+  @Environment(SceneNavigationContext.self) private var sceneContext
     let nuxID: NuxID
     let onDismiss: () -> Void
     @Environment(AppState.self) private var appState
@@ -224,16 +225,16 @@ struct NuxAnnouncementView: View {
         switch nuxID {
         case .draftsAnnouncement:
             #if os(iOS)
-            appState.navigationManager.updateCurrentTab(0)
+            sceneContext.navigationManager.updateCurrentTab(0)
             #endif
         case .bookmarksAnnouncement:
-            appState.navigationManager.navigate(to: .bookmarks)
+            sceneContext.navigationManager.navigate(to: .bookmarks)
         case .groupChatsAnnouncement:
             #if os(iOS)
-            appState.navigationManager.navigate(to: .chatTab)
+            sceneContext.navigationManager.navigate(to: .chatTab)
             #endif
         case .activitySubscriptions:
-            appState.navigationManager.navigate(to: .activitySubscriptions)
+            sceneContext.navigationManager.navigate(to: .activitySubscriptions)
         }
     }
 }

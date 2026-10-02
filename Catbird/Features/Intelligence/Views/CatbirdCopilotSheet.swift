@@ -2,6 +2,7 @@ import SwiftUI
 import Petrel
 
 struct CatbirdCopilotSheet: View {
+  @Environment(SceneNavigationContext.self) private var sceneContext
     @Environment(AppState.self) private var appState
     @Environment(\.dismiss) private var dismiss
 
@@ -702,7 +703,7 @@ struct CatbirdCopilotSheet: View {
 
         if uriString.hasPrefix("http://") || uriString.hasPrefix("https://") {
             if let url = URL(string: uriString) {
-                _ = appState.urlHandler.handle(url)
+                _ = sceneContext.urlHandler.handle(url)
             } else {
                 errorMessage = "This source link is invalid."
             }

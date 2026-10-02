@@ -225,6 +225,7 @@ final class ListMemberManagementViewModel {
 }
 
 struct ListMemberManagementView: View {
+  @Environment(SceneNavigationContext.self) private var sceneContext
   @Environment(AppState.self) private var appState
   @Environment(\.dismiss) private var dismiss
   @State private var viewModel: ListMemberManagementViewModel?
@@ -496,7 +497,7 @@ struct ListMemberManagementView: View {
                 }
               } onTap: {
                 // Navigate to profile
-                appState.navigationManager.navigate(to: .profile(member.did.didString()), in: nil)
+                sceneContext.navigationManager.navigate(to: .profile(member.did.didString()), in: nil)
               }
             }
           } header: {

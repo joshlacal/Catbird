@@ -8,6 +8,7 @@ import VisionKit
 
 /// QR code scanner view for scanning Bluesky profile invite codes (G66)
 public struct InviteScannerView: View {
+  @Environment(SceneNavigationContext.self) private var sceneContext
     @Environment(AppState.self) private var appState
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
@@ -319,7 +320,7 @@ public struct InviteScannerView: View {
             dismiss()
             Task { @MainActor in
                 if let url = URL(string: "https://bsky.app/profile/\(handleOrDID)") {
-                    _ = appState.urlHandler.handle(url)
+                    _ = sceneContext.urlHandler.handle(url)
                 }
             }
         }

@@ -6,6 +6,7 @@ import SwiftUI
 
 /// A unified profile view that handles both current user and other user profiles using SwiftUI
 struct UnifiedProfileView: View {
+  @Environment(SceneNavigationContext.self) private var sceneContext
   #if os(macOS)
   private static let maxResponsiveContentWidth: CGFloat = 700
   #else
@@ -399,7 +400,7 @@ struct UnifiedProfileView: View {
       Task {
         await viewModel.loadProfile()
         // Send scroll to top command
-        appState.tabTappedAgain = 3
+        sceneContext.tabTappedAgain = 3
       }
       lastTappedTab = nil
     }
@@ -408,18 +409,18 @@ struct UnifiedProfileView: View {
   private func searchPostsForProfile(_ profile: AppBskyActorDefs.ProfileViewDetailed) {
     let queryHandle = "from:\(profile.handle.description)"
 
-    appState.navigationManager.clearPath(for: 1)
+    sceneContext.navigationManager.clearPath(for: 1)
 
-    if let selectTab = appState.navigationManager.tabSelection {
+    if let selectTab = sceneContext.navigationManager.tabSelection {
       selectTab(1)
     } else {
-      appState.navigationManager.updateCurrentTab(1)
+      sceneContext.navigationManager.updateCurrentTab(1)
     }
 
     selectedTab = 1
     lastTappedTab = nil
 
-    appState.pendingSearchRequest = AppState.SearchRequest(
+    sceneContext.pendingSearchRequest = AppState.SearchRequest(
       query: queryHandle,
       focus: .posts,
       originProfileDID: profile.did.didString()
@@ -511,7 +512,7 @@ struct UnifiedProfileView: View {
       confirmBlockAction(did: did, confirmWhenBlocking: true)
 
     case .preparePostDraft(let text):
-      appState.presentPostComposer(initialText: text)
+      sceneContext.presentPostComposer(initialText: text)
 
     default:
       break

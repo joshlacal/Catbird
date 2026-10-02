@@ -3,6 +3,7 @@ import Petrel
 import OSLog
 
 struct BlockedConversationFooter: View {
+  @Environment(SceneNavigationContext.self) private var sceneContext
   @Environment(AppState.self) private var appState
   let convoId: String
   let isGroup: Bool
@@ -110,7 +111,7 @@ struct BlockedConversationFooter: View {
     .alert("User Blocked by List", isPresented: $showingListBlockDialog) {
       if case .listBlock(_, _, _, let list) = blockState {
         Button("View List") {
-          appState.navigationManager.navigate(to: .list(list.uri), in: 4)
+          sceneContext.navigationManager.navigate(to: .list(list.uri), in: 4)
         }
         Button("Cancel", role: .cancel) { }
       }

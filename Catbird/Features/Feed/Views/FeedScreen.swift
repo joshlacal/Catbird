@@ -6,6 +6,7 @@ import Observation
 /// A screen wrapper for viewing a specific feed URI outside the main feeds interface.
 /// Shows feed details and shared library actions, retaining metadata during refresh.
 struct FeedScreen: View {
+  @Environment(SceneNavigationContext.self) private var sceneContext
   @Environment(AppState.self) private var appState
   @Binding var path: NavigationPath
 
@@ -83,7 +84,7 @@ struct FeedScreen: View {
       if wasShowing && !isShowing, let proposal = pendingDedicatedProposal {
         pendingDedicatedProposal = nil
         if case .preparePostDraft(let text) = proposal {
-          appState.presentPostComposer(initialText: text)
+          sceneContext.presentPostComposer(initialText: text)
         }
       }
     }

@@ -7,6 +7,7 @@ import SwiftUI
 // MARK: - Chat Tab View
 
 struct ChatTabView: View {
+  @Environment(SceneNavigationContext.self) private var sceneContext
   @Environment(AppState.self) private var appState
   @Environment(\.horizontalSizeClass) private var horizontalSizeClass
   @Environment(\.composerTransitionNamespace) private var composerNamespace
@@ -29,7 +30,7 @@ struct ChatTabView: View {
   fileprivate let logger = Logger(subsystem: "blue.catbird", category: "ChatUI")
 
   private var chatNavigationPath: Binding<NavigationPath> {
-    appState.navigationManager.pathBinding(for: 4)
+    sceneContext.navigationManager.pathBinding(for: 4)
   }
 
   private var shouldUseSplitView: Bool {
@@ -64,10 +65,10 @@ struct ChatTabView: View {
     .onChange(of: appState.userDID) { _, _ in
       handleAccountContextChanged()
     }
-    .onChange(of: appState.navigationManager.targetConversationId) { _, newValue in
+    .onChange(of: sceneContext.navigationManager.targetConversationId) { _, newValue in
       if let convoId = newValue, convoId != selectedConvoId {
         selectedConvoId = convoId
-        appState.navigationManager.targetConversationId = nil
+        sceneContext.navigationManager.targetConversationId = nil
       }
     }
     .onChange(of: appState.chatManager.errorState) { oldError, newError in
@@ -302,11 +303,11 @@ struct ChatTabView: View {
     // DEEP-LINK FIX: a share/notification can set the target BEFORE this view
     // mounts, so the .onChange(of: targetConversationId) below never fires
     // (onChange only observes transitions).
-    if let pending = appState.navigationManager.targetConversationId {
+    if let pending = sceneContext.navigationManager.targetConversationId {
       if pending != selectedConvoId {
         selectedConvoId = pending
       }
-      appState.navigationManager.targetConversationId = nil
+      sceneContext.navigationManager.targetConversationId = nil
     }
 
     // Bluesky DMs

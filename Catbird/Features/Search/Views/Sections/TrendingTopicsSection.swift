@@ -10,6 +10,7 @@ import Petrel
 
 /// A section showing trending topics from the Bluesky network
 struct TrendingTopicsSection: View {
+  @Environment(SceneNavigationContext.self) private var sceneContext
     @Environment(AppState.self) private var appState
     @Environment(\.colorScheme) private var colorScheme
     
@@ -84,7 +85,7 @@ struct TrendingTopicsSection: View {
             if wasShowing && !isShowing, let proposal = pendingDedicatedProposal {
                 pendingDedicatedProposal = nil
                 if case .preparePostDraft(let text) = proposal {
-                    appState.presentPostComposer(initialText: text)
+                    sceneContext.presentPostComposer(initialText: text)
                 }
             }
         }
@@ -126,9 +127,9 @@ struct TrendingTopicsSection: View {
         Button {
             // Create a full URL from the relative path
             if topic.link.starts(with: "http"), let fullURL = URL(string: topic.link) {
-                _ = appState.urlHandler.handle(fullURL, tabIndex: 1)
+                _ = sceneContext.urlHandler.handle(fullURL, tabIndex: 1)
             } else if let url = URL(string: "https://bsky.app\(topic.link)") {
-                _ = appState.urlHandler.handle(url, tabIndex: 1)
+                _ = sceneContext.urlHandler.handle(url, tabIndex: 1)
             }
             
         } label: {

@@ -571,6 +571,7 @@ private struct BubbleFramePreferenceKey: PreferenceKey {
 // MARK: - Chat Rich Text
 
 struct ChatRichTextView: View {
+  @Environment(SceneNavigationContext.self) private var sceneContext
   let attributedText: AttributedString
   let isCurrentUser: Bool
 
@@ -581,7 +582,7 @@ struct ChatRichTextView: View {
       .environment(
         \.openURL,
         OpenURLAction { url in
-          appState.urlHandler.handle(url)
+          sceneContext.urlHandler.handle(url)
         }
       )
   }

@@ -296,13 +296,14 @@ struct ListsManagerView: View {
 // MARK: - Supporting Views
 
 struct ListManagerRow: View {
+  @Environment(SceneNavigationContext.self) private var sceneContext
   @Environment(AppState.self) private var appState
   let list: AppBskyGraphDefs.ListView
   let onDelete: () -> Void
   
   var body: some View {
     Button {
-      appState.navigationManager.navigate(to: .listFeed(list.uri))
+      sceneContext.navigationManager.navigate(to: .listFeed(list.uri))
     } label: {
       HStack(spacing: 12) {
         // List Avatar
@@ -348,7 +349,7 @@ struct ListManagerRow: View {
             
             // Manage Members button
             Button(action: {
-              appState.navigationManager.navigate(to: .listMembers(list.uri))
+              sceneContext.navigationManager.navigate(to: .listMembers(list.uri))
             }) {
               Image(systemName: "person.2.badge.gearshape")
                 .font(.caption)
@@ -373,13 +374,13 @@ struct ListManagerRow: View {
     .buttonStyle(.plain)
     .contextMenu {
       Button {
-        appState.navigationManager.navigate(to: .editList(list.uri))
+        sceneContext.navigationManager.navigate(to: .editList(list.uri))
       } label: {
         Label("Edit List", systemImage: "pencil")
       }
       
       Button {
-        appState.navigationManager.navigate(to: .listMembers(list.uri))
+        sceneContext.navigationManager.navigate(to: .listMembers(list.uri))
       } label: {
         Label("Manage Members", systemImage: "person.2.badge.gearshape")
       }

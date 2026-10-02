@@ -46,6 +46,7 @@ enum PostAvatarScale: Equatable, Sendable {
 
 /// A view that displays a single post with its content, avatar, and actions
 struct PostView: View, Equatable, Identifiable {
+  @Environment(SceneNavigationContext.self) private var sceneContext
     static func == (lhs: PostView, rhs: PostView) -> Bool {
         lhs.post.uri == rhs.post.uri && lhs.post.cid == rhs.post.cid
     }
@@ -774,14 +775,14 @@ var id: String {
 
     case .prepareReply(let uri, let cid, let text):
       guard uri == currentURI && cid == currentCID else { return }
-      appState.presentPostComposer(initialText: text, parentPost: postState.currentPost)
+      sceneContext.presentPostComposer(initialText: text, parentPost: postState.currentPost)
 
     case .prepareQuote(let uri, let cid, let text):
       guard uri == currentURI && cid == currentCID else { return }
-      appState.presentPostComposer(initialText: text, quotedPost: postState.currentPost)
+      sceneContext.presentPostComposer(initialText: text, quotedPost: postState.currentPost)
 
     case .preparePostDraft(let text):
-      appState.presentPostComposer(initialText: text)
+      sceneContext.presentPostComposer(initialText: text)
 
     default:
       break
