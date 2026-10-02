@@ -218,13 +218,9 @@ enum SocialActionsFixtureData {
     )
   }()
   static let post: AppBskyFeedDefs.PostView = {
-    let author = AppBskyActorDefs.ProfileViewBasic(
-      did: try! DID(didString: "did:plc:socialfixtureauthor"),
-      handle: try! Handle(handleString: "river.test"),
-      displayName: "River",
-      pronouns: nil, avatar: nil, associated: nil, viewer: nil, labels: nil,
-      createdAt: nil, verification: nil, status: nil, debug: nil
-    )
+    let author = try! JSONDecoder().decode(AppBskyActorDefs.ProfileViewBasic.self, from: Data(
+      #"{"did":"did:plc:socialfixtureauthor","handle":"river.test","displayName":"River","associated":{"chat":{"allowIncoming":"all"}}}"#.utf8
+    ))
     let date = ATProtocolDate(date: Date(timeIntervalSince1970: 1_780_000_000))
     return AppBskyFeedDefs.PostView(
       uri: try! ATProtocolURI(uriString: "at://did:plc:socialfixtureauthor/app.bsky.feed.post/3socialfixture"),
