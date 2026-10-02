@@ -60,6 +60,7 @@ final class SceneRouteCoordinator {
     case sceneUnavailable
     case capacityExceeded
     case accountDiscarded
+    case preparationRejected
   }
 
   enum DeliveryResult: Equatable {
@@ -75,9 +76,12 @@ final class SceneRouteCoordinator {
     var activityOrdinal: UInt64
   }
 
+  typealias BeforeDelivery = @MainActor (SceneNavigationContext) -> Bool
+
   private struct PendingRoute {
     let request: SceneRouteRequest
     let enqueuedAt: TimeInterval
+    let beforeDelivery: BeforeDelivery?
   }
 
   private let logger = Logger(subsystem: "blue.catbird", category: "SceneRouteCoordinator")
@@ -173,7 +177,7 @@ final class SceneRouteCoordinator {
   }
 
   @discardableResult
-  func submit(_ request: SceneRouteRequest) -> DeliveryResult {
+  func submit(_ request: SceneRouteRequest, beforeDelivery: BeforeDelivery? = nil) -> DeliveryResult {
     prune()
     if inFlightRequestIDs.contains(request.id)
         || pending.contains(where: { $0.request.id == request.id }) { return .duplicate }
@@ -182,10 +186,10 @@ final class SceneRouteCoordinator {
       return .dropped(reason: .sceneDisconnected)
     }
     if let context = receivingContext(for: request) {
-      return deliver(request, to: context)
+      return deliver(request, to: context, beforeDelivery: beforeDelivery)
     }
     let evicted = pending.count == Self.maxPendingRequests ? pending.removeFirst() : nil
-    pending.append(PendingRoute(request: request, enqueuedAt: now()))
+    pending.append(PendingRoute(request: request, enqueuedAt: now(), beforeDelivery: beforeDelivery))
     if let evicted { recordDrop(evicted.request, reason: .capacityExceeded) }
     return .queued
   }
@@ -216,17 +220,26 @@ final class SceneRouteCoordinator {
     return candidates.max(by: { $0.1 < $1.1 })?.0
   }
 
-  private func deliver(_ request: SceneRouteRequest, to context: SceneNavigationContext) -> DeliveryResult {
+  private func deliver(
+    _ request: SceneRouteRequest,
+    to context: SceneNavigationContext,
+    beforeDelivery: BeforeDelivery?
+  ) -> DeliveryResult {
     guard inFlightRequestIDs.insert(request.id).inserted else { return .duplicate }
     defer { inFlightRequestIDs.remove(request.id) }
+    if let beforeDelivery, !beforeDelivery(context) {
+      recordDrop(request, reason: .preparationRejected)
+      return .dropped(reason: .preparationRejected)
+    }
+    guard isCurrentReceiver(context, for: request) else {
+      recordDrop(request, reason: .sceneUnavailable)
+      return .dropped(reason: .sceneUnavailable)
+    }
     let manager = context.navigationManager
     manager.updateCurrentTab(request.command.tabIndex)
     manager.tabSelection?(request.command.tabIndex)
     // Selection callbacks can synchronously disconnect or replace their scene.
-    guard !context.isInvalidated,
-          let registration = registrations[context.sceneID], registration.isActive,
-          registration.context === context,
-          context.accountDID == request.accountDID else {
+    guard isCurrentReceiver(context, for: request) else {
       recordDrop(request, reason: .sceneUnavailable)
       return .dropped(reason: .sceneUnavailable)
     }
@@ -239,15 +252,23 @@ final class SceneRouteCoordinator {
     return .delivered(sceneID: context.sceneID)
   }
 
+  private func isCurrentReceiver(_ context: SceneNavigationContext, for request: SceneRouteRequest) -> Bool {
+    guard !context.isInvalidated,
+          let registration = registrations[context.sceneID], registration.isActive,
+          registration.context === context,
+          context.accountDID == request.accountDID else { return false }
+    return true
+  }
+
   private func drainPending() {
     guard !isDraining else { return }
     isDraining = true
     defer { isDraining = false }
     prune()
     while let index = pending.firstIndex(where: { receivingContext(for: $0.request) != nil }) {
-      let request = pending.remove(at: index).request
-      guard let context = receivingContext(for: request) else { continue }
-      _ = deliver(request, to: context)
+      let route = pending.remove(at: index)
+      guard let context = receivingContext(for: route.request) else { continue }
+      _ = deliver(route.request, to: context, beforeDelivery: route.beforeDelivery)
     }
   }
 
