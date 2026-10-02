@@ -29,6 +29,18 @@ final class MessageDraft<Value> {
     return Submission(value: value, revision: revision)
   }
 
+  /// Hand a snapshot to async work without letting scheduling change its owner.
+  @discardableResult
+  func submitSend(
+    using operation: @escaping @MainActor (Value) async -> Bool
+  ) -> Task<Void, Never>? {
+    guard let submission = beginSend() else { return nil }
+    return Task { @MainActor in
+      let succeeded = await operation(submission.value)
+      self.finishSend(submission, succeeded: succeeded)
+    }
+  }
+
   func finishSend(_ submission: Submission, succeeded: Bool) {
     guard pendingRevisions.remove(submission.revision) != nil else { return }
     if succeeded, revision == submission.revision {

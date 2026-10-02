@@ -119,8 +119,12 @@ struct ChatListView<DataSource: UnifiedChatDataSource>: View {
             set: { dataSource.draftText = $0 }
           ),
           onSend: { text in
-            Task {
-              await dataSource.sendMessage(text: text)
+            if let blueskyDataSource = dataSource as? BlueskyConversationDataSource {
+              blueskyDataSource.submitDraft()
+            } else {
+              Task {
+                await dataSource.sendMessage(text: text)
+              }
             }
           },
           clearsDraftOnSend: false

@@ -78,16 +78,22 @@ final class BlueskyConversationDataSource: UnifiedChatDataSource {
   ) async -> Bool {
     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty || embed != nil else { return false }
-    let ownsDraft = draftText.trimmingCharacters(in: .whitespacesAndNewlines) == trimmed
-    let submission = ownsDraft ? draft.beginSend() : nil
-    if ownsDraft, submission == nil { return false }
-    let success = await transmitMessage(text: text, embed: embed, replyTo: replyTo)
-    if let submission { draft.finishSend(submission, succeeded: success) }
-    return success
+    // Explicit payloads do not own the editor draft, even when their text matches.
+    return await transmitMessage(text: text, embed: embed, replyTo: replyTo)
+  }
+
+  func submitDraft() {
+    draft.submitSend { value in
+      await self.transmitDraft(value)
+    }
   }
 
   func sendDraft(_ submission: MessageDraft<BlueskyConversationDraft>.Submission) async {
-    let value = submission.value
+    let success = await transmitDraft(submission.value)
+    draft.finishSend(submission, succeeded: success)
+  }
+
+  private func transmitDraft(_ value: BlueskyConversationDraft) async -> Bool {
     let embed: ChatBskyConvoDefs.MessageInputEmbedUnion?
     if value.attachedEmbed != nil, let postRef = value.postRef {
       embed = .appBskyEmbedRecord(AppBskyEmbedRecord(record: postRef))
@@ -95,8 +101,7 @@ final class BlueskyConversationDataSource: UnifiedChatDataSource {
       embed = nil
     }
     let reply = value.replyTarget.map { ChatBskyConvoDefs.ReplyRef(messageId: $0.id) }
-    let success = await transmitMessage(text: value.text, embed: embed, replyTo: reply)
-    draft.finishSend(submission, succeeded: success)
+    return await transmitMessage(text: value.text, embed: embed, replyTo: reply)
   }
 
   private func transmitMessage(

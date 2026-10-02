@@ -86,4 +86,45 @@ struct MessageDraftTests {
     draft.finishSend(first, succeeded: true)
     #expect(draft.value.text == "Third")
   }
+
+  @Test func asyncHandoffCapturesBeforeAnABAEditAndBeforeTheTaskRuns() async throws {
+    let draft = MessageDraft(Content())
+    let original = Content(text: "Repeat", attachment: "post-A", reply: "message-A")
+    draft.value = original
+    var transmitted: [Content] = []
+    let task = try #require(draft.submitSend { value in
+      transmitted.append(value)
+      return true
+    })
+
+    // This synchronous main-actor turn has not yielded to the send task yet.
+    draft.value.text = "Something else"
+    draft.value = Content(text: "Repeat", attachment: "post-B", reply: "message-B")
+    let next = draft.value
+    #expect(transmitted.isEmpty)
+
+    await task.value
+    #expect(transmitted == [original])
+    #expect(draft.value == next)
+  }
+
+  @Test func failedAsyncHandoffKeepsTheCompleteDraftAndDoesNotDuplicateTheSend() async throws {
+    let draft = MessageDraft(Content())
+    let original = Content(text: "Keep this", attachment: "post-A", reply: "message-A")
+    draft.value = original
+    var calls = 0
+    let task = try #require(draft.submitSend { value in
+      #expect(value == original)
+      calls += 1
+      return false
+    })
+    let duplicate = draft.submitSend { _ in
+      calls += 1
+      return true
+    }
+    #expect(duplicate == nil)
+    await task.value
+    #expect(calls == 1)
+    #expect(draft.value == original)
+  }
 }
