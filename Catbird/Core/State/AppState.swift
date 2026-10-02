@@ -484,12 +484,17 @@ final class AppState {
     /// Reopen only the same retained account after authentication has been restored.
     /// A failed proof or partial service resume leaves admission closed.
     @MainActor
-    func resumeAfterInterruptedAccountSwitch() async throws {
+    func resumeAfterInterruptedAccountSwitch(using expectedClient: ATProtoClient? = nil) async throws {
         guard accountRetirementTask == nil else { throw AccountServiceWork.BarrierError.retirementFailed }
+        // Authentication switches credentials on the shared client in place. Keep
+        // the suspended service graph intact; updateClient would discard it.
+        let originalClient = client
+        if let expectedClient, originalClient !== expectedClient {
+            throw AccountServiceWork.BarrierError.accountChanged
+        }
         guard accountServiceWork.isSuspended else { return }
         try await accountPollerSuspension?.wait()
         try await accountServiceWork.drain()
-        let originalClient = client
         let authenticatedDID = try await originalClient.getDid()
         guard authenticatedDID == userDID, client === originalClient else {
             throw AccountServiceWork.BarrierError.accountChanged
