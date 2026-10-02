@@ -32,10 +32,10 @@ struct SupportTipStoreKitTests {
 
     // The dedicated launch flag defers only startup; keep the same app-owned singleton and listener.
     let store = SupportTipStore.shared
-    store.start()
 
     // Verify that the local session intercepts StoreKit before exercising any purchase.
     try await session.setSimulatedError(.generic(.networkError(URLError(.notConnectedToInternet))), forAPI: .loadProducts)
+    store.start()
     await store.loadProducts(forceReload: true)
     try #require(store.loadState == .failed)
     try await session.setSimulatedError(nil, forAPI: .loadProducts)
