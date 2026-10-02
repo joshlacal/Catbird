@@ -66,9 +66,17 @@ final class SettingsSupportJourneyTests: XCTestCase {
       let app = launch(screen: screen)
       let title = ["accessibility": "Accessibility", "content": "Content & Media", "about": "About"][screen]!
       XCTAssertTrue(app.navigationBars[title].waitForExistence(timeout: 10))
+      let endMarker = [
+        "accessibility": "Adult content and label filtering are managed in Moderation. Video autoplay is managed in Content & Media.",
+        "content": "External Media Preferences",
+        "about": "Build"
+      ][screen]!
+      var reachedFinalSection = false
       // Native Form rows are lazy. Check each viewport while traversing the complete form,
       // instead of treating a missing offscreen accessibility node as evidence of removal.
       for _ in 0..<16 {
+        let marker = app.staticTexts[endMarker].firstMatch
+        reachedFinalSection = reachedFinalSection || (marker.exists && marker.isHittable)
         XCTAssertFalse(app.sliders["Long Press Duration"].exists)
         XCTAssertFalse(app.switches["Shake to Undo"].exists)
         XCTAssertFalse(app.switches["Scan for Sensitive Content"].exists)
@@ -78,6 +86,7 @@ final class SettingsSupportJourneyTests: XCTestCase {
         )).firstMatch.exists)
         app.swipeUp()
       }
+      XCTAssertTrue(reachedFinalSection, "The traversal must reach the final settings section")
       capture(app, "\(title) end of removed-control traversal")
       app.terminate()
     }
