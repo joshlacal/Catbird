@@ -300,9 +300,10 @@ struct SceneComposerEditingSessionTests {
     let editorID = UUID()
     let claim = try scene.beginNew(draft: initial)
     #expect(scene.claimEditor(editorID, claim: claim))
-    #expect(scene.registerLiveDraftProvider(editorID: editorID, claim: claim) { [weak provider] in
+    let providerRegistered = scene.registerLiveDraftProvider(editorID: editorID, claim: claim) { [weak provider] in
       provider?.draft
-    })
+    }
+    #expect(providerRegistered)
     let earlier = try #require(scene.snapshot())
     #expect(earlier.draft == initial)
 
@@ -341,20 +342,23 @@ struct SceneComposerEditingSessionTests {
     var oldCalls = 0
     var newCalls = 0
     #expect(scene.claimEditor(oldEditor, claim: claim))
-    #expect(scene.registerLiveDraftProvider(editorID: oldEditor, claim: claim) { [weak oldProvider] in
+    let oldProviderRegistered = scene.registerLiveDraftProvider(editorID: oldEditor, claim: claim) { [weak oldProvider] in
       oldCalls += 1
       return oldProvider?.draft
-    })
+    }
+    #expect(oldProviderRegistered)
     #expect(scene.claimEditor(newEditor, claim: claim))
     #expect(scene.currentDraft == oldProvider.draft)
-    #expect(scene.registerLiveDraftProvider(editorID: newEditor, claim: claim) { [weak newProvider] in
+    let newProviderRegistered = scene.registerLiveDraftProvider(editorID: newEditor, claim: claim) { [weak newProvider] in
       newCalls += 1
       return newProvider?.draft
-    })
+    }
+    #expect(newProviderRegistered)
     #expect(!scene.unregisterLiveDraftProvider(editorID: oldEditor, claim: claim))
-    #expect(!scene.registerLiveDraftProvider(editorID: oldEditor, claim: claim) { [weak oldProvider] in
+    let staleProviderRegistered = scene.registerLiveDraftProvider(editorID: oldEditor, claim: claim) { [weak oldProvider] in
       oldProvider?.draft
-    })
+    }
+    #expect(!staleProviderRegistered)
     oldProvider.draft = makeDraft("Stale dismissed view model mutation")
     #expect(scene.minimize(claim: claim))
     #expect(scene.currentDraft == newProvider.draft)
@@ -378,9 +382,10 @@ struct SceneComposerEditingSessionTests {
     #expect(scene.claimEditor(editorID, claim: claim))
     var owner: LiveDraftBox? = LiveDraftBox(draft: makeDraft("Released model"))
     weak var weakOwner = owner
-    #expect(scene.registerLiveDraftProvider(editorID: editorID, claim: claim) { [weak owner] in
+    let providerRegistered = scene.registerLiveDraftProvider(editorID: editorID, claim: claim) { [weak owner] in
       owner?.draft
-    })
+    }
+    #expect(providerRegistered)
     owner = nil
     #expect(weakOwner == nil)
     scene.invalidate()
@@ -398,9 +403,10 @@ struct SceneComposerEditingSessionTests {
     let editorID = UUID()
     let owner = LiveDraftBox(draft: makeDraft("Live body during cancelled teardown"))
     #expect(scene.claimEditor(editorID, claim: claim))
-    #expect(scene.registerLiveDraftProvider(editorID: editorID, claim: claim) { [weak owner] in
+    let providerRegistered = scene.registerLiveDraftProvider(editorID: editorID, claim: claim) { [weak owner] in
       owner?.draft
-    })
+    }
+    #expect(providerRegistered)
     let task = Task { @MainActor in scene.invalidate() }
     task.cancel()
     await task.value
