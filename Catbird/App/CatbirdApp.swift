@@ -42,9 +42,17 @@ private var isVideoFeedUIFixture: Bool {
   #endif
 }
 
+private var isSocialActionsUIFixture: Bool {
+  #if DEBUG
+  ProcessInfo.processInfo.arguments.contains("--social-actions-ui-fixture")
+  #else
+  false
+  #endif
+}
+
 /// Any presentation fixture: skips account bootstrap and URL handling.
 private var isPresentationUIFixture: Bool {
-  isMessageRequestsUIFixture || isVideoFeedUIFixture
+  isMessageRequestsUIFixture || isVideoFeedUIFixture || isSocialActionsUIFixture
 }
 
 // App-wide logger
@@ -945,6 +953,8 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
           MessageRequestsUIFixture()
         } else if isVideoFeedUIFixture {
           VideoFeedUIFixture()
+        } else if isSocialActionsUIFixture {
+          SocialActionsUIFixture()
         } else {
           applicationContent
         }
