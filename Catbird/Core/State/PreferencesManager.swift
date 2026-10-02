@@ -8,6 +8,8 @@ import OrderedCollections
 /// Manages user preferences with proper state management and persistence
 @Observable
 final class PreferencesManager {
+  static let acceptLabelersHeaderDidChange = Notification.Name("CatbirdAcceptLabelersHeaderDidChange")
+
   // MARK: - Properties
 
   private let logger = Logger(subsystem: "blue.catbird", category: "PreferencesManager")
@@ -1663,7 +1665,13 @@ final class PreferencesManager {
     let dids = Array(uniqueDIDs.prefix(20))
 
     if let client = client {
+      let appliedAccountDID = accountDID
       await client.setAcceptLabelers(dids: dids)
+      NotificationCenter.default.post(
+        name: Self.acceptLabelersHeaderDidChange,
+        object: self,
+        userInfo: ["accountDID": appliedAccountDID, "labelerDIDs": dids]
+      )
       logger.info("Applied atproto-accept-labelers header for \(dids.count) labeler(s) including default moderation service")
     } else {
       logger.debug("Client not available; deferring accept-labelers header update")
