@@ -22,47 +22,41 @@ struct ThreadComposePrompt: View {
   }
 
   var body: some View {
-    HStack(spacing: 12) {
-      AvatarView(
-        did: appState.userDID,
-        client: appState.atProtoClient,
-        size: 28,
-        avatarURL: appState.currentUserProfile?.finalAvatarURL()
-      )
-      .clipShape(Circle())
-      .fixedSize()
+    Button(action: openComposer) {
+      HStack(spacing: 12) {
+        AvatarView(
+          did: appState.userDID,
+          client: appState.atProtoClient,
+          size: 28,
+          avatarURL: appState.currentUserProfile?.finalAvatarURL()
+        )
+        .clipShape(Circle())
+        .fixedSize()
+        .accessibilityHidden(true)
 
-      Text("Write your reply")
-        .font(.subheadline)
-        .foregroundStyle(.secondary)
-        .multilineTextAlignment(.leading)
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .padding(.horizontal, 14)
-    .padding(.vertical, 8)
-    #if os(iOS)
-    .adaptiveGlassEffect(style: .regular, in: Capsule(), interactive: true)
-    #else
-    .background(.ultraThinMaterial, in: Capsule())
-    #endif
-    .opacity(isReplyDisabled ? 0.6 : 1.0)
-    .padding(.horizontal, 16)
-    .padding(.vertical, 8)
-    .contentShape(Rectangle())
-    .onTapGesture {
-      guard !isReplyDisabled, post != nil else { return }
-      if let onOpenComposer {
-        onOpenComposer()
-      } else {
-        showingComposer = true
+        Text("Write your reply")
+          .font(.subheadline)
+          .foregroundStyle(.secondary)
+          .multilineTextAlignment(.leading)
+          .frame(maxWidth: .infinity, alignment: .leading)
       }
+      .padding(.horizontal, 14)
+      .padding(.vertical, 8)
+      .frame(minHeight: 44)
+      .frame(maxWidth: 520, alignment: .leading)
+      .contentShape(Capsule())
     }
-    .disabled(isReplyDisabled || post == nil)
-    .accessibilityElement(children: .combine)
+    .buttonStyle(.plain)
+    .modifier(ReplyPromptGlass())
+    .opacity(isReplyDisabled ? 0.6 : 1.0)
+    // Keep the glass inside the tab bar's outside margins, including at wider sizes.
+    .padding(.horizontal, 24)
+    .frame(maxWidth: .infinity)
+    .padding(.vertical, 8)
+    .disabled(isReplyDisabled)
     .accessibilityLabel("Compose reply")
     .accessibilityHint("Opens composer")
-    .accessibilityAddTraits(.isButton)
+    .accessibilityIdentifier("thread.composeReply")
     .sheet(isPresented: $showingComposer) {
       if let post {
         PostComposerViewUIKit(
@@ -78,5 +72,24 @@ struct ThreadComposePrompt: View {
         #endif
       }
     }
+  }
+
+  private func openComposer() {
+    guard !isReplyDisabled else { return }
+    if let onOpenComposer {
+      onOpenComposer()
+    } else {
+      showingComposer = true
+    }
+  }
+}
+
+private struct ReplyPromptGlass: ViewModifier {
+  func body(content: Content) -> some View {
+    #if os(iOS)
+    content.adaptiveGlassEffect(style: .regular, in: Capsule(), interactive: true)
+    #else
+    content.background(.ultraThinMaterial, in: Capsule())
+    #endif
   }
 }
