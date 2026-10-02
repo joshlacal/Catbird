@@ -13,6 +13,71 @@ import UserNotifications
     import UIKit
 #endif
 
+/// Owns AppState account tasks and admitted asynchronous service entry points.
+/// Closing admission precedes cancellation; a failed drain keeps the account closed.
+@MainActor
+final class AccountServiceWork {
+    enum BarrierError: LocalizedError {
+        case drainTimedOut, accountChanged, serviceResumeFailed, retirementFailed
+
+        var errorDescription: String? {
+            switch self {
+            case .drainTimedOut: return "The previous account is still finishing a request. Try switching again."
+            case .accountChanged: return "The original account could not be verified after the interrupted switch."
+            case .serviceResumeFailed: return "The original account's services could not be safely resumed."
+            case .retirementFailed: return "The previous account's storage could not be safely closed."
+            }
+        }
+    }
+
+    private(set) var isSuspended = false
+    private var tasks: [UUID: Task<Void, Never>] = [:]
+    private var operations: Set<UUID> = []
+
+    @discardableResult
+    func start(
+        priority: TaskPriority? = nil,
+        operation: @escaping @MainActor () async -> Void
+    ) -> Task<Void, Never>? {
+        guard !isSuspended else { return nil }
+        let id = UUID()
+        let task = Task(priority: priority) { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.tasks.removeValue(forKey: id) }
+            guard !self.isSuspended, !Task.isCancelled else { return }
+            await operation()
+        }
+        tasks[id] = task
+        return task
+    }
+
+    func beginOperation() -> UUID? {
+        guard !isSuspended, !Task.isCancelled else { return nil }
+        let id = UUID()
+        operations.insert(id)
+        return id
+    }
+
+    func endOperation(_ id: UUID) { operations.remove(id) }
+    func isCurrent(_ id: UUID) -> Bool { !isSuspended && operations.contains(id) && !Task.isCancelled }
+
+    func suspend() {
+        isSuspended = true
+        for task in tasks.values { task.cancel() }
+    }
+
+    func drain(timeout: Duration = .seconds(2)) async throws {
+        let deadline = ContinuousClock.now.advanced(by: timeout)
+        while !tasks.isEmpty || !operations.isEmpty {
+            try Task.checkCancellation()
+            guard ContinuousClock.now < deadline else { throw BarrierError.drainTimedOut }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+    }
+
+    func resume() { isSuspended = false }
+}
+
 // MARK: - AppState
 
 /// Central state container for the Catbird app
@@ -75,8 +140,6 @@ final class AppState {
     /// so its cache never straddles two different `ATProtoClient` instances or accounts.
     @ObservationIgnored private(set) var blockedAuthorHydrator: BlockedAuthorHydrator?
 
-    /// URL handling for deep links
-    @ObservationIgnored private(set) var urlHandler: URLHandler
 
 
     /// Current sanitized platform age signal from on-device regulatory checking
@@ -93,9 +156,6 @@ final class AppState {
     /// User preference settings
     var isAdultContentEnabled: Bool = false
 
-    /// Used to track which tab was tapped twice to trigger scroll to top
-    /// NOTE: This needs to be observable so UIKit controllers can react to it
-    var tabTappedAgain: Int?
 
     /// Current user's profile data for optimistic updates
     @ObservationIgnored var currentUserProfile: AppBskyActorDefs.ProfileViewBasic?
@@ -166,11 +226,6 @@ final class AppState {
         _fontManager
     }
 
-    /// Navigation manager for handling navigation
-    @ObservationIgnored let navigationManager = AppNavigationManager()
-
-    /// Pending search request to be handled by the dedicated search tab
-    @ObservationIgnored var pendingSearchRequest: SearchRequest?
 
     /// Pending reauthentication request when account switching fails due to expired tokens
     @ObservationIgnored var pendingReauthenticationRequest: ReauthenticationRequest?
@@ -241,6 +296,9 @@ final class AppState {
 
     // For task cancellation when needed
     @ObservationIgnored private var backgroundPollingTask: Task<Void, Never>?
+    @MainActor @ObservationIgnored private let accountServiceWork = AccountServiceWork()
+    @MainActor var isAccountSwitchSuspended: Bool { accountServiceWork.isSuspended }
+    @MainActor @ObservationIgnored private var accountRetirementTask: Task<Void, Error>?
 
     // MARK: - Initialization
 
@@ -279,7 +337,6 @@ final class AppState {
         logger.info("AppState initializing for account: \(userDID)")
         appSettings.configure(accountDID: userDID)
 
-        urlHandler = URLHandler()
         nuxPresenter = NuxAnnouncementPresenter(appState: nil)
 
         // Create per-account manager instances
@@ -311,8 +368,6 @@ final class AppState {
 
         onboardingManager.configure(accountDID: userDID)
         nuxPresenter.configure(with: self)
-        urlHandler.configure(with: self)
-        urlHandler.externalIntentPresenter.flushPendingIntent(with: self)
         // Load user settings
         if let storedContentSetting = AppSettingsModel.boolValue(
             for: "isAdultContentEnabled",
@@ -368,11 +423,81 @@ final class AppState {
         backgroundPollingTask?.cancel()
     }
 
+    /// Pause account-bound work before the shared client changes its credentials.
+    /// No service, editing session, cached model, or database is retired here.
+    @MainActor
+    func suspendForAccountSwitch() async throws {
+        accountServiceWork.suspend()
+        settingsUpdateDebounceTimer?.invalidate()
+        settingsUpdateDebounceTimer = nil
+        backgroundPollingTask?.cancel()
+        backgroundPollingTask = nil
+        await notificationManager.suspendForAccountSwitch()
+        await chatManager.suspendForAccountSwitch()
+        try await accountServiceWork.drain()
+    }
+
+    /// Reopen only the same retained account after authentication has been restored.
+    /// A failed proof or partial service resume leaves admission closed.
+    @MainActor
+    func resumeAfterInterruptedAccountSwitch() async throws {
+        guard accountRetirementTask == nil else { throw AccountServiceWork.BarrierError.retirementFailed }
+        guard accountServiceWork.isSuspended else { return }
+        try await accountServiceWork.drain()
+        let originalClient = client
+        let authenticatedDID = try await originalClient.getDid()
+        guard authenticatedDID == userDID, client === originalClient else {
+            throw AccountServiceWork.BarrierError.accountChanged
+        }
+        do {
+            guard await notificationManager.resumeAfterInterruptedAccountSwitch(accountDID: userDID),
+                  await chatManager.resumeAfterInterruptedAccountSwitch(accountDID: userDID),
+                  client === originalClient,
+                  try await originalClient.getDid() == userDID else {
+                throw AccountServiceWork.BarrierError.serviceResumeFailed
+            }
+        } catch {
+            await notificationManager.suspendForAccountSwitch()
+            await chatManager.suspendForAccountSwitch()
+            throw error
+        }
+        accountServiceWork.resume()
+        startBackgroundPolling()
+    }
+
+    /// Successful switches permanently retire this container; rollback must use
+    /// resumeAfterInterruptedAccountSwitch before this point instead.
+    @MainActor
+    func retireAfterAccountSwitch() async throws {
+        if let retirement = accountRetirementTask {
+            try await retirement.value
+            return
+        }
+        let retirement = Task { @MainActor [self] in
+            try await suspendForAccountSwitch()
+            platformAgeSignal = .none
+        }
+        accountRetirementTask = retirement
+        try await retirement.value
+    }
+
+    /// Start a task only while this account admits work; suspension cancels and drains it.
+    @MainActor
+    func startAccountTask(
+        priority: TaskPriority? = nil,
+        operation: @escaping @MainActor () async -> Void
+    ) {
+        accountServiceWork.start(priority: priority, operation: operation)
+    }
+
     /// Cleanup method called when this AppState is evicted from cache
     /// This cancels long-running tasks and releases resources without deallocating the object
     @MainActor
     func cleanup() {
         logger.info("🧹 Cleaning up AppState for user: \(self.userDID)")
+        accountServiceWork.suspend()
+        settingsUpdateDebounceTimer?.invalidate()
+        settingsUpdateDebounceTimer = nil
 
         platformAgeSignal = .none
 
@@ -390,8 +515,10 @@ final class AppState {
 
     // MARK: - Background Polling
 
+    @MainActor
     private func startBackgroundPolling() {
-        backgroundPollingTask = Task(priority: .background) {
+        guard !accountServiceWork.isSuspended, backgroundPollingTask == nil else { return }
+        backgroundPollingTask = accountServiceWork.start(priority: .background) { [self] in
             while !Task.isCancelled {
                 await withTaskGroup(of: Void.self) { group in
                     // Prune old feed models
@@ -434,7 +561,6 @@ final class AppState {
         // Configure Nuke image pipeline with GIF support
         configureImagePipeline()
 
-        configureURLHandler()
 
         // NOTE: Auth initialization removed - client is already authenticated and passed in init
         // All managers were initialized with the client in init
@@ -471,7 +597,7 @@ final class AppState {
         )
 
         if isAuthenticated {
-            Task {
+            accountServiceWork.start { [self] in
                 // Load current user profile for optimistic updates
                 await self.loadCurrentUserProfile(did: userDID)
 
@@ -552,7 +678,7 @@ final class AppState {
         listManager.updateAppState(self)
 
         // Run the heavyweight refresh in the background to keep the UI responsive
-        Task(priority: .userInitiated) { [weak self] in
+        accountServiceWork.start(priority: .userInitiated) { [weak self] in
             guard let self else { return }
             await self.runPostSwitchRefreshWork()
         }
@@ -563,18 +689,20 @@ final class AppState {
 
     @MainActor
     private func runPostSwitchRefreshWork() async {
+        guard let operation = accountServiceWork.beginOperation() else { return }
+        defer { accountServiceWork.endOperation(operation) }
         async let preferencesTask: Void = refreshPreferencesAfterAccountSwitch()
         async let profileTask: Void = loadCurrentUserProfile(did: userDID)
 
         // Pre-warm following feed without blocking the main transition
-        Task(priority: .userInitiated) { [weak self] in
+        accountServiceWork.start(priority: .userInitiated) { [weak self] in
             await self?.prewarmFollowingFeed()
         }
 
         // Trigger explicit feed data load for all active feeds
         // This ensures that even if we preserved cache, we check for new content
         // and that the UI has data to show if the cache was empty.
-        Task(priority: .userInitiated) {
+        accountServiceWork.start(priority: .userInitiated) {
             await FeedStateStore.shared.triggerPostAuthenticationFeedLoad()
         }
 
@@ -584,6 +712,8 @@ final class AppState {
 
     @MainActor
     private func refreshPreferencesAfterAccountSwitch() async {
+        guard let operation = accountServiceWork.beginOperation() else { return }
+        defer { accountServiceWork.endOperation(operation) }
         do {
             try await preferencesManager.fetchPreferences(forceRefresh: true)
             logger.info("Successfully refreshed preferences after account switch")
@@ -603,6 +733,8 @@ final class AppState {
     /// Pre-warms the Following feed for the new account to enable smooth crossfade
     @MainActor
     private func prewarmFollowingFeed() async {
+        guard let operation = accountServiceWork.beginOperation() else { return }
+        defer { accountServiceWork.endOperation(operation) }
         // Use this AppState's authenticated client
         let client = self.client
 
@@ -625,6 +757,7 @@ final class AppState {
                 prewarmingFeedData = nil
                 return
             }
+            guard accountServiceWork.isCurrent(operation) else { return }
             // Store for potential crossfade transition
             prewarmingFeedData = output.feed
 
@@ -722,6 +855,8 @@ final class AppState {
     /// Load the current user's profile for optimistic updates
     @MainActor
     private func loadCurrentUserProfile(did: String) async {
+        guard let operation = accountServiceWork.beginOperation() else { return }
+        defer { accountServiceWork.endOperation(operation) }
         guard let client = atProtoClient else {
             logger.error("❌ Cannot load profile - atProtoClient is nil")
             return
@@ -732,6 +867,7 @@ final class AppState {
                 input: .init(actor: ATIdentifier(string: did))
             )
 
+            guard accountServiceWork.isCurrent(operation) else { return }
             if responseCode == 200, let profile = profileData {
                 // Convert ProfileViewDetailed to ProfileViewBasic
                 currentUserProfile = AppBskyActorDefs.ProfileViewBasic(
@@ -757,13 +893,6 @@ final class AppState {
     }
 
     // MARK: Navigation
-
-    @MainActor
-    func configureURLHandler() {
-        urlHandler.navigateAction = { [weak self] destination, tabIndex in
-            self?.navigationManager.navigate(to: destination, in: tabIndex)
-        }
-    }
 
     /// Configure Nuke image pipeline with GIF animation support
     private func configureImagePipeline() {
@@ -909,9 +1038,6 @@ final class AppState {
                 self.themeDidChange += 1
                 self.fontDidChange += 1
 
-                // Update URL handler with new browser preference
-                self.urlHandler.useInAppBrowser = self.appSettings.useInAppBrowser
-
                 // Update VideoCoordinator with new autoplay preference
                 VideoCoordinator.shared.appSettings = self.appSettings
 
@@ -980,14 +1106,15 @@ final class AppState {
     // MARK: - Push Notifications Setup
 
     /// Set up push notifications
+    @MainActor
     private func setupNotifications() {
         // Set the notification manager as the delegate for UNUserNotificationCenter
         UNUserNotificationCenter.current().delegate = notificationManager
 
         // Ensure widget has initial data - force update after a delay to allow app to fully initialize
-        Task { @MainActor [weak self] in
+        accountServiceWork.start { [weak self] in
             try? await Task.sleep(for: .seconds(2))
-            guard let self = self else { return }
+            guard !Task.isCancelled, let self else { return }
             self.notificationManager.updateWidgetUnreadCount(self.notificationManager.unreadCount)
             self.logger.info(
                 "Initializing widget data at app startup with count: \(self.notificationManager.unreadCount)"
@@ -998,7 +1125,7 @@ final class AppState {
         notificationManager.configure(with: self)
 
         // Check current notification status
-        Task {
+        accountServiceWork.start { [self] in
             await notificationManager.checkNotificationStatus()
         }
 
@@ -1020,8 +1147,11 @@ final class AppState {
                 object: nil,
                 queue: .main
             ) { [weak self] _ in
-                Task { [weak self] in
-                    await self?.notificationManager.checkUnreadNotifications()
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    self.accountServiceWork.start { [weak self] in
+                        await self?.notificationManager.checkUnreadNotifications()
+                    }
                 }
             }
         #elseif os(macOS)
@@ -1030,8 +1160,11 @@ final class AppState {
                 object: nil,
                 queue: .main
             ) { [weak self] _ in
-                Task { [weak self] in
-                    await self?.notificationManager.checkUnreadNotifications()
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    self.accountServiceWork.start { [weak self] in
+                        await self?.notificationManager.checkUnreadNotifications()
+                    }
                 }
             }
         #endif
@@ -1048,11 +1181,13 @@ final class AppState {
     }
 
     /// Setup chat observers and background polling for unread messages
+    @MainActor
     private func setupChatObservers() {
         // Set up callback for when chat unread count changes
         chatManager.onUnreadCountChanged = { [weak self] in
             Task { @MainActor [weak self] in
-                self?.updateChatUnreadCount()
+                guard let self, !self.accountServiceWork.isSuspended else { return }
+                self.updateChatUnreadCount()
             }
         }
 
@@ -1061,14 +1196,15 @@ final class AppState {
         // backoff); each tick drives the unread badge here.
         chatManager.onConversationsPolled = { [weak self] in
             Task { @MainActor [weak self] in
-                guard let self = self, case .authenticated = self.authState else { return }
+                guard let self, !self.accountServiceWork.isSuspended,
+                      case .authenticated = self.authState else { return }
                 self.updateChatUnreadCount()
             }
         }
         chatManager.startConversationsPolling()
 
         // Update chat unread count initially
-        Task { @MainActor in
+        accountServiceWork.start { [self] in
             updateChatUnreadCount()
         }
 
@@ -1084,10 +1220,13 @@ final class AppState {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor [weak self] in
-                guard let self = self else { return }
-                self.chatManager.startConversationsPolling()
-                await self.chatManager.loadConversations(refresh: true)
-                self.updateChatUnreadCount()
+                guard let self else { return }
+                self.accountServiceWork.start { [weak self] in
+                    guard let self else { return }
+                    self.chatManager.startConversationsPolling()
+                    await self.chatManager.loadConversations(refresh: true)
+                    self.updateChatUnreadCount()
+                }
             }
         }
     }
@@ -1097,7 +1236,10 @@ final class AppState {
     }
 
     /// Syncs notification-related user data with the server
+    @MainActor
     func syncNotificationData() async {
+        guard let operation = accountServiceWork.beginOperation() else { return }
+        defer { accountServiceWork.endOperation(operation) }
         await notificationManager.syncAllUserData()
     }
 
@@ -1153,12 +1295,12 @@ final class AppState {
         blockedAuthorHydrator = makeBlockedAuthorHydrator()
         listManager.updateClient(newClient)
         // Update notification manager (async operation)
-        Task {
+        accountServiceWork.start { [self] in
             await notificationManager.updateClient(newClient)
         }
 
         // Update chat manager (async operation)
-        Task {
+        accountServiceWork.start { [self] in
             await chatManager.updateClient(newClient)
         }
 
@@ -1205,64 +1347,6 @@ final class AppState {
             parentPost: parentPost,
             threadgateAllowRules: threadgateAllowRules
         )
-    }
-
-    // MARK: - Post Composer Presentation
-
-    /// Present the post composer for creating a new post, reply, or quote post
-    @MainActor
-    func presentPostComposer(
-        parentPost: AppBskyFeedDefs.PostView? = nil,
-        quotedPost: AppBskyFeedDefs.PostView? = nil
-    ) {
-        presentPostComposer(initialText: nil, parentPost: parentPost, quotedPost: quotedPost)
-    }
-
-    /// Present the post composer with optional prefilled initial text, preserving reply or quote context
-    @MainActor
-    func presentPostComposer(
-        initialText: String?,
-        parentPost: AppBskyFeedDefs.PostView? = nil,
-        quotedPost: AppBskyFeedDefs.PostView? = nil
-    ) {
-        // Track quote interaction for feed feedback
-        if let quotedPost = quotedPost {
-            feedFeedbackManager.trackQuote(postURI: quotedPost.uri)
-        }
-
-        // Create the UIKit-backed post composer view with either a parent post (for reply) or quoted post
-        let composerView = PostComposerViewUIKit(
-            parentPost: parentPost,
-            quotedPost: quotedPost,
-            initialText: initialText,
-            appState: self
-        )
-        .applyAppStateEnvironment(self)
-
-        #if os(iOS)
-            // Create a UIHostingController for the SwiftUI view
-            let hostingController = UIHostingController(rootView: composerView)
-
-            // Configure presentation style
-            hostingController.modalPresentationStyle = .formSheet
-            // Allow swipe-to-dismiss to enable draft auto-persist on dismiss
-            hostingController.isModalInPresentation = false
-
-            // Present the composer using the appropriate window system
-            if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-               let rootViewController = windowScene.windows.first?.rootViewController {
-                rootViewController.present(hostingController, animated: true)
-            }
-        #elseif os(macOS)
-            // On macOS, present as a new window
-            let hostingController = NSHostingController(rootView: composerView)
-            let window = NSWindow(contentViewController: hostingController)
-            window.title = "Post"
-            window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
-            window.setContentSize(NSSize(width: 600, height: 400))
-            window.center()
-            window.makeKeyAndOrderFront(nil)
-        #endif
     }
 
     // MARK: - Performance Optimization Methods
