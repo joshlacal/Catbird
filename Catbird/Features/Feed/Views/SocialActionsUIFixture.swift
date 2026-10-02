@@ -69,7 +69,7 @@ struct SocialActionsUIFixture: View {
           .padding()
         }
         .environment(appState)
-          .environment(sceneContext)
+        .environment(sceneContext)
         .navigationTitle("Social actions")
         .sheet(isPresented: $showingDrafts) {
           DraftsListView(appState: appState) { draft in
@@ -82,9 +82,11 @@ struct SocialActionsUIFixture: View {
           ModernChatSelectionView(
             post: SocialActionsFixtureData.post,
             appState: appState,
+            sceneContext: sceneContext,
             model: ShareRecipientSelectionModel(
               accountDID: SocialActionsFixtureData.viewerDID,
-              activeAccount: { SocialActionsFixtureData.viewerDID },
+              originSceneID: sceneContext.sceneID,
+              isOriginValid: { !sceneContext.isInvalidated },
               search: { query in
                 if query.lowercased().contains("fail") { throw URLError(.notConnectedToInternet) }
                 return [SocialActionsFixtureData.post.author]

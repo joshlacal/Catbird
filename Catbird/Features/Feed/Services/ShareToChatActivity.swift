@@ -16,10 +16,12 @@
 
     private let post: AppBskyFeedDefs.PostView
     private let appState: AppState
+    private let sceneContext: SceneNavigationContext
 
-    init(post: AppBskyFeedDefs.PostView, appState: AppState) {
+    init(post: AppBskyFeedDefs.PostView, appState: AppState, sceneContext: SceneNavigationContext) {
       self.post = post
       self.appState = appState
+      self.sceneContext = sceneContext
       super.init()
     }
 
@@ -40,7 +42,7 @@
     }
 
     override func canPerform(withActivityItems activityItems: [Any]) -> Bool {
-      return appState.isAuthenticated
+      return appState.isAuthenticated && !sceneContext.isInvalidated && sceneContext.accountDID == appState.userDID
     }
 
     override func perform() {
@@ -48,11 +50,12 @@
     }
 
     override var activityViewController: UIViewController? {
-      let chatSelectionView = ModernChatSelectionView(post: post, appState: appState) {
+      let chatSelectionView = ModernChatSelectionView(post: post, appState: appState, sceneContext: sceneContext) {
         [weak self] in
         self?.activityDidFinish(true)
       }
       .applyAppStateEnvironment(appState)
+      .environment(sceneContext)
 
       let hostingController = UIHostingController(rootView: chatSelectionView)
       hostingController.modalPresentationStyle = .pageSheet
@@ -92,11 +95,12 @@
   struct NativePostShareSheet: UIViewControllerRepresentable {
     let post: AppBskyFeedDefs.PostView
     let appState: AppState
+    let sceneContext: SceneNavigationContext
 
     func makeUIViewController(context: Context) -> UIActivityViewController {
       UIActivityViewController(
         activityItems: [ShareablePost(post: post)],
-        applicationActivities: [ShareToChatActivity(post: post, appState: appState)]
+        applicationActivities: [ShareToChatActivity(post: post, appState: appState, sceneContext: sceneContext)]
       )
     }
 
@@ -134,7 +138,8 @@
   @Observable
   final class ShareRecipientSelectionModel {
     let accountDID: String
-    private let activeAccount: () -> String?
+    let originSceneID: UUID
+    private let isOriginValid: () -> Bool
     private let search: (String) async throws -> [AppBskyActorDefs.ProfileViewBasic]
     private let resolve: (String) async throws -> String
     private var searchGeneration = 0
@@ -148,17 +153,19 @@
 
     init(
       accountDID: String,
-      activeAccount: @escaping () -> String?,
+      originSceneID: UUID,
+      isOriginValid: @escaping () -> Bool,
       search: @escaping (String) async throws -> [AppBskyActorDefs.ProfileViewBasic],
       resolve: @escaping (String) async throws -> String
     ) {
       self.accountDID = accountDID
-      self.activeAccount = activeAccount
+      self.originSceneID = originSceneID
+      self.isOriginValid = isOriginValid
       self.search = search
       self.resolve = resolve
     }
 
-    var isCurrent: Bool { !cancelled && activeAccount() == accountDID }
+    var isCurrent: Bool { !cancelled && isOriginValid() }
 
     func cancel() {
       cancelled = true
@@ -233,17 +240,19 @@
       manager.updateConversationsByStatus()
     }
 
-    static func live(appState: AppState) -> ShareRecipientSelectionModel {
+    static func live(appState: AppState, sceneContext: SceneNavigationContext) -> ShareRecipientSelectionModel {
       let accountDID = appState.userDID
       let client = appState.atProtoClient
-      let activeAccount: () -> String? = {
-        AppStateManager.shared.isTransitioning ? nil : AppStateManager.shared.lifecycle.userDID
+      // Capture this context, not a proxy for whichever window becomes active.
+      let isOriginValid = {
+        !sceneContext.isInvalidated && sceneContext.accountDID == accountDID
       }
       return ShareRecipientSelectionModel(
         accountDID: accountDID,
-        activeAccount: activeAccount,
+        originSceneID: sceneContext.sceneID,
+        isOriginValid: isOriginValid,
         search: { query in
-          guard let client, activeAccount() == accountDID else { throw ShareRecipientError.accountChanged }
+          guard let client, isOriginValid() else { throw ShareRecipientError.accountChanged }
           let continuity = await client.authContinuitySnapshot()
           guard continuity.did == accountDID else { throw ShareRecipientError.accountChanged }
           let result = try await client.performGeneratedRequestWithExactAuthContinuity(matching: continuity) {
@@ -256,7 +265,7 @@
           return data.actors
         },
         resolve: { recipientDID in
-          guard let client, activeAccount() == accountDID else { throw ShareRecipientError.accountChanged }
+          guard let client, isOriginValid() else { throw ShareRecipientError.accountChanged }
           let continuity = await client.authContinuitySnapshot()
           guard continuity.did == accountDID else { throw ShareRecipientError.accountChanged }
           let members = try [DID(didString: accountDID), DID(didString: recipientDID)]
@@ -264,7 +273,7 @@
             try await client.chat.bsky.convo.getConvoAvailability(input: .init(members: members))
           }
           try Task.checkCancellation()
-          guard activeAccount() == accountDID,
+          guard isOriginValid(),
                 case .performed(let response) = availability else { throw ShareRecipientError.accountChanged }
           guard (200...299).contains(response.responseCode), let data = response.data else {
             throw ShareRecipientError.lookupFailed
@@ -279,7 +288,7 @@
             try await client.chat.bsky.convo.getConvoForMembers(input: .init(members: members))
           }
           try Task.checkCancellation()
-          guard activeAccount() == accountDID,
+          guard isOriginValid(),
                 case .performed(let created) = creation else { throw ShareRecipientError.accountChanged }
           guard (200...299).contains(created.responseCode), let convo = created.data?.convo else {
             throw ShareRecipientError.lookupFailed
@@ -298,6 +307,7 @@
   struct ModernChatSelectionView: View {
     let post: AppBskyFeedDefs.PostView
     let appState: AppState
+    let sceneContext: SceneNavigationContext
     let onDismiss: () -> Void
 
     @State private var searchText = ""
@@ -310,6 +320,7 @@
     init(
       post: AppBskyFeedDefs.PostView,
       appState: AppState,
+      sceneContext: SceneNavigationContext,
       model: ShareRecipientSelectionModel? = nil,
       conversations: [ChatBskyConvoDefs.ConvoView]? = nil,
       onSelectConversation: ((String) -> Void)? = nil,
@@ -317,10 +328,11 @@
     ) {
       self.post = post
       self.appState = appState
+      self.sceneContext = sceneContext
       self.onDismiss = onDismiss
       self.onSelectConversation = onSelectConversation
       self.conversations = conversations
-      self._model = State(initialValue: model ?? .live(appState: appState))
+      self._model = State(initialValue: model ?? .live(appState: appState, sceneContext: sceneContext))
     }
 
     var body: some View {
@@ -389,12 +401,15 @@
         }
       }
       .task(id: searchText) {
+        guard isValidOrigin else { return }
         await model.searchRecipients(searchText)
       }
-      .onChange(of: AppStateManager.shared.lifecycle.userDID) { _, _ in
-        model.cancel()
-        selectionTask?.cancel()
-        onDismiss()
+      .onChange(of: sceneContext.isInvalidated) { _, isInvalidated in
+        if isInvalidated {
+          model.cancel()
+          selectionTask?.cancel()
+          onDismiss()
+        }
       }
       .onDisappear {
         model.cancel()
@@ -593,14 +608,22 @@
       .opacity(conversation.isLockedForSending ? 0.5 : 1.0)
     }
 
+    private var isValidOrigin: Bool {
+      !sceneContext.isInvalidated
+        && sceneContext.accountDID == appState.userDID
+        && model.accountDID == sceneContext.accountDID
+        && model.originSceneID == sceneContext.sceneID
+        && model.isCurrent
+    }
+
     private func shareToConversation(_ conversation: ChatBskyConvoDefs.ConvoView) {
-      guard model.isCurrent, !model.isSelecting, !conversation.isLockedForSending,
+      guard isValidOrigin, !model.isSelecting, !conversation.isLockedForSending,
             conversation.members.contains(where: { $0.did.didString() == model.accountDID }) else { return }
       finishSelection(convoId: conversation.id)
     }
 
     private func shareToNewConversation(with profile: AppBskyActorDefs.ProfileViewBasic) {
-      guard model.isCurrent, !model.isSelecting, ShareRecipientSelectionModel.canMessage(profile) else { return }
+      guard isValidOrigin, !model.isSelecting, ShareRecipientSelectionModel.canMessage(profile) else { return }
       selectionTask?.cancel()
       selectionTask = Task {
         guard let convoId = await model.select(recipientDID: profile.did.didString()) else { return }
@@ -609,18 +632,23 @@
     }
 
     private func finishSelection(convoId: String) {
-      guard model.isCurrent else { return }
+      guard isValidOrigin else { return }
       if let onSelectConversation {
         onSelectConversation(convoId)
       } else {
+        let navigation = sceneContext.navigationManager
+        navigation.updateCurrentTab(AppNavigationManager.chatTabIndex)
+        navigation.tabSelection?(AppNavigationManager.chatTabIndex)
+        // A tab-selection callback can synchronously invalidate its context.
+        guard isValidOrigin else { return }
         PendingChatShareStore.shared.stage(PendingChatShare(
+          originSceneID: sceneContext.sceneID,
           accountDID: model.accountDID,
           convoId: convoId,
           postRef: ComAtprotoRepoStrongRef(uri: post.uri, cid: post.cid),
           previewEmbed: PendingChatShare.makePreviewEmbed(from: post)
         ))
-        appState.navigationManager.navigate(to: .conversation(convoId), in: AppNavigationManager.chatTabIndex)
-        appState.navigationManager.tabSelection?(AppNavigationManager.chatTabIndex)
+        navigation.navigate(to: .conversation(convoId), in: AppNavigationManager.chatTabIndex)
       }
       model.cancel()
       onDismiss()

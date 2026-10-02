@@ -111,14 +111,16 @@ final class SocialComponentLayoutTests: XCTestCase {
       var resolvedRecipients: [String] = []
       var selectedConversations: [String] = []
       var dismissCount = 0
+      let sceneContext = SceneNavigationContext(appState: state, sceneID: UUID())
       let model = ShareRecipientSelectionModel(
         accountDID: state.userDID,
-        activeAccount: { state.userDID },
+        originSceneID: sceneContext.sceneID,
+        isOriginValid: { !sceneContext.isInvalidated && sceneContext.accountDID == state.userDID },
         search: { query in queries.append(query); return [SocialActionsFixtureData.post.author] },
         resolve: { recipient in resolvedRecipients.append(recipient); return "fixtureconversation" }
       )
       let picker = ModernChatSelectionView(
-        post: SocialActionsFixtureData.post, appState: state, model: model,
+        post: SocialActionsFixtureData.post, appState: state, sceneContext: sceneContext, model: model,
         conversations: [], onSelectConversation: { selectedConversations.append($0) },
         onDismiss: { dismissCount += 1 }
       )

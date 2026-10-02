@@ -23,9 +23,10 @@ extension PostComposerViewUIKit {
                 Button(action: {
                   pcThreadLogger.info("PostComposerThread: Avatar tapped in thread entry - opening account switcher")
                   if hasContent(vm: vm) {
-                    appState.composerDraftManager.storeDraft(from: vm)
+                    vm.saveDraftIfNeeded()
                   }
-                  showingAccountSwitcher = true
+                  accountSwitchSnapshot = vm.captureEditingSnapshot()
+                  showingAccountSwitcher = accountSwitchSnapshot != nil
                 }) {
                   #if os(iOS)
                   UIKitAvatarView(

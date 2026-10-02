@@ -6,6 +6,7 @@ import Observation
 /// picker, consumed once by `ConversationView` when the target convo opens.
 struct PendingChatShare: Identifiable {
   let id = UUID()
+  let originSceneID: UUID
   let accountDID: String
   let convoId: String
   /// Strong ref sent as the `app.bsky.embed.record` message embed.
@@ -36,15 +37,15 @@ struct PendingChatShare: Identifiable {
   }
 }
 
-/// Account and conversation ownership are explicit even when a view survives an
-/// account switch. Entries are taken once, and replacing one account's entry
-/// never discards another account's pending attachment.
+/// Scene, account and conversation ownership are explicit. A second window
+/// showing the same chat cannot take the first window's pending attachment.
 @MainActor
 @Observable
 final class PendingChatShareStore {
   static let shared = PendingChatShareStore()
 
   private struct Key: Hashable {
+    let sceneID: UUID
     let accountDID: String
     let convoId: String
   }
@@ -54,20 +55,30 @@ final class PendingChatShareStore {
 
   func stage(_ share: PendingChatShare) {
     guard !share.accountDID.isEmpty, !share.convoId.isEmpty else { return }
-    entries[Key(accountDID: share.accountDID, convoId: share.convoId)] = share
+    entries[Key(sceneID: share.originSceneID, accountDID: share.accountDID, convoId: share.convoId)] = share
     revision += 1
   }
 
-  func peek(accountDID: String, convoId: String) -> PendingChatShare? {
-    entries[Key(accountDID: accountDID, convoId: convoId)]
+  func peek(sceneID: UUID, accountDID: String, convoId: String) -> PendingChatShare? {
+    entries[Key(sceneID: sceneID, accountDID: accountDID, convoId: convoId)]
   }
 
   @discardableResult
-  func consume(accountDID: String, convoId: String, expectedID: UUID) -> PendingChatShare? {
-    let key = Key(accountDID: accountDID, convoId: convoId)
+  func consume(sceneID: UUID, accountDID: String, convoId: String, expectedID: UUID) -> PendingChatShare? {
+    let key = Key(sceneID: sceneID, accountDID: accountDID, convoId: convoId)
     guard entries[key]?.id == expectedID else { return nil }
     let share = entries.removeValue(forKey: key)
     revision += 1
     return share
   }
+
+  /// Called when the owning context is invalidated. Other windows and accounts
+  /// retain their handoffs; stale confirmations cannot claim the discarded IDs.
+  func discard(sceneID: UUID, accountDID: String) {
+    let remaining = entries.filter { $0.key.sceneID != sceneID || $0.key.accountDID != accountDID }
+    guard remaining.count != entries.count else { return }
+    entries = remaining
+    revision += 1
+  }
+
 }
