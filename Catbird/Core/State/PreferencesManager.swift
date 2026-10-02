@@ -456,6 +456,14 @@ final class PreferencesManager {
     return preferences.first
   }
 
+  /// Settings editing must not treat the generic offline fallback as a remote refresh.
+  @MainActor
+  func refreshSettingsPreferences() async throws -> Preferences {
+    guard client != nil else { throw PreferencesManagerError.clientNotInitialized }
+    try await fetchPreferences(forceRefresh: true)
+    return try await getPreferences()
+  }
+
   /// Gets current preferences, creating default if none exist
   /// - Now prioritizes cached server preferences to ensure consistency
   @MainActor
