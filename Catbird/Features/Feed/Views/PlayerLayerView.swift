@@ -21,6 +21,7 @@ struct PlayerLayerView: UIViewRepresentable {
   let player: AVPlayer
   let gravity: AVLayerVideoGravity
   let shouldLoop: Bool
+  let pausesOnDismantle: Bool
   var onLayerReady: ((AVPlayerLayer) -> Void)?
 
   /// Initialize the player view
@@ -33,11 +34,13 @@ struct PlayerLayerView: UIViewRepresentable {
     player: AVPlayer,
     gravity: AVLayerVideoGravity = .resizeAspectFill,
     shouldLoop: Bool = true,
+    pausesOnDismantle: Bool = true,
     onLayerReady: ((AVPlayerLayer) -> Void)? = nil
   ) {
     self.player = player
     self.gravity = gravity
     self.shouldLoop = shouldLoop
+    self.pausesOnDismantle = pausesOnDismantle
     self.onLayerReady = onLayerReady
   }
 
@@ -53,18 +56,17 @@ struct PlayerLayerView: UIViewRepresentable {
     view.playerLayer.isOpaque = true
     view.coordinator = context.coordinator
 
-    // Set player and loop configuration asynchronously to prevent main thread blocking
-    context.coordinator.configurePlayerAsync(for: view, player: player, shouldLoop: shouldLoop)
-
-    // Note: onLayerReady callback is now called AFTER player is configured in configurePlayerAsync
+    // Layer attachment is synchronous; the owner controls asynchronous asset loading.
+    context.coordinator.configurePlayer(for: view, player: player, shouldLoop: shouldLoop)
 
     return view
   }
 
   func updateUIView(_ uiView: PlayerContainer, context: Context) {
-    // Update player if needed without blocking
+    context.coordinator.parent = self
+    uiView.pausesOnDismantle = pausesOnDismantle
     if uiView.player !== player {
-      context.coordinator.configurePlayerAsync(for: uiView, player: player, shouldLoop: shouldLoop)
+      context.coordinator.configurePlayer(for: uiView, player: player, shouldLoop: shouldLoop)
     }
 
     // Update other properties
@@ -77,62 +79,21 @@ struct PlayerLayerView: UIViewRepresentable {
     uiView.cleanup()
   }
 
-  // Coordinator class to handle async operations
+  @MainActor
   class Coordinator {
-    private let logger = Logger(subsystem: "blue.catbird", category: "PlayerLayerView")
-
-    private let parent: PlayerLayerView
+    var parent: PlayerLayerView
 
     init(_ parent: PlayerLayerView) {
       self.parent = parent
     }
 
-    // Configure player asynchronously to avoid main thread blocking
-    func configurePlayerAsync(for view: PlayerContainer, player: AVPlayer, shouldLoop: Bool) {
-      Task {
-        // Lightweight defaults only; skip heavy asset key preloads here
-        await setLightweightDefaults(on: player)
-
-        // Update the view on the main thread
-        await MainActor.run {
-          view.player = player
-          view.shouldLoop = shouldLoop
-          
-          // NOW notify that the layer is ready (after player is assigned)
-          parent.onLayerReady?(view.playerLayer)
-        }
-      }
-    }
-
-    // Pre-load key asset properties to avoid synchronous access later
-    private func preparePlayer(_ player: AVPlayer) async {
-      guard let asset = await player.currentItem?.asset as? AVURLAsset else { return }
-
-      // Pre-load potentially blocking properties asynchronously
-      do {
-        // Load essential properties in parallel for efficiency
-        async let duration = asset.load(.duration)
-        async let transform = asset.load(.preferredTransform)
-        async let tracks = asset.load(.tracks)
-        async let isPlayable = asset.load(.isPlayable)
-
-        // Wait for all to complete
-        _ = try await (duration, transform, tracks, isPlayable)
-
-        // Set reasonable buffer duration
-        player.currentItem?.preferredForwardBufferDuration = 5.0
-      } catch {
-        logger.debug("Error pre-loading asset properties: \(error)")
-      }
-    }
-
-    // Minimal, non-blocking defaults to improve startup without heavy background work
-    private func setLightweightDefaults(on player: AVPlayer) async {
-      await MainActor.run {
-        player.currentItem?.preferredForwardBufferDuration = 2.0
-        // Avoid explicit pause at end; loop handler will decide what to do
-        player.actionAtItemEnd = .none
-      }
+    func configurePlayer(for view: PlayerContainer, player: AVPlayer, shouldLoop: Bool) {
+      player.currentItem?.preferredForwardBufferDuration = 2
+      player.actionAtItemEnd = .none
+      view.pausesOnDismantle = parent.pausesOnDismantle
+      view.shouldLoop = shouldLoop
+      view.player = player
+      parent.onLayerReady?(view.playerLayer)
     }
   }
 }
@@ -145,6 +106,9 @@ final class PlayerContainer: UIView {
   private var loopObserver: NSObjectProtocol?
   private var statusObserver: NSObjectProtocol?
   private var isCleanedUp = false
+
+  /// A pool-owned player must keep playing when an old page releases its layer.
+  var pausesOnDismantle = true
 
   /// Whether this player should loop automatically
   var shouldLoop: Bool = true {
@@ -262,8 +226,7 @@ final class PlayerContainer: UIView {
     guard !isCleanedUp else { return }
     isCleanedUp = true
 
-    // Pause player first
-    player?.pause()
+    if pausesOnDismantle { player?.pause() }
 
     // Remove all observers
     removeAllObservers()
@@ -275,7 +238,7 @@ final class PlayerContainer: UIView {
     coordinator = nil
   }
 
-  deinit {
+  isolated deinit {
     cleanup()
   }
 }
@@ -285,17 +248,20 @@ struct PlayerLayerView: NSViewRepresentable {
   let player: AVPlayer
   let gravity: AVLayerVideoGravity
   let shouldLoop: Bool
+  let pausesOnDismantle: Bool
   var onLayerReady: ((AVPlayerLayer) -> Void)?
 
   init(
     player: AVPlayer,
     gravity: AVLayerVideoGravity = .resizeAspectFill,
     shouldLoop: Bool = true,
+    pausesOnDismantle: Bool = true,
     onLayerReady: ((AVPlayerLayer) -> Void)? = nil
   ) {
     self.player = player
     self.gravity = gravity
     self.shouldLoop = shouldLoop
+    self.pausesOnDismantle = pausesOnDismantle
     self.onLayerReady = onLayerReady
   }
 
@@ -311,16 +277,17 @@ struct PlayerLayerView: NSViewRepresentable {
     view.playerLayer.isOpaque = true
     view.coordinator = context.coordinator
 
-    // Set player and loop configuration asynchronously
-    context.coordinator.configurePlayerAsync(for: view, player: player, shouldLoop: shouldLoop)
+    // Layer attachment is synchronous; the owner controls asynchronous asset loading.
+    context.coordinator.configurePlayer(for: view, player: player, shouldLoop: shouldLoop)
 
     return view
   }
 
   func updateNSView(_ nsView: PlayerContainerMac, context: Context) {
-    // Update player if needed without blocking
+    context.coordinator.parent = self
+    nsView.pausesOnDismantle = pausesOnDismantle
     if nsView.player !== player {
-      context.coordinator.configurePlayerAsync(for: nsView, player: player, shouldLoop: shouldLoop)
+      context.coordinator.configurePlayer(for: nsView, player: player, shouldLoop: shouldLoop)
     }
 
     // Update other properties
@@ -332,42 +299,21 @@ struct PlayerLayerView: NSViewRepresentable {
     nsView.cleanup()
   }
 
-  // Coordinator class to handle async operations
+  @MainActor
   class Coordinator {
-    private let logger = Logger(subsystem: "blue.catbird", category: "PlayerLayerView")
-    private let parent: PlayerLayerView
+    var parent: PlayerLayerView
 
     init(_ parent: PlayerLayerView) {
       self.parent = parent
     }
 
-    func configurePlayerAsync(for view: PlayerContainerMac, player: AVPlayer, shouldLoop: Bool) {
-      Task {
-        // Lightweight defaults only; skip heavy asset key preloads here
-        await MainActor.run {
-          player.currentItem?.preferredForwardBufferDuration = 2.0
-          view.player = player
-          view.shouldLoop = shouldLoop
-          
-          parent.onLayerReady?(view.playerLayer)
-        }
-      }
-    }
-
-    private func preparePlayer(_ player: AVPlayer) async {
-      guard let asset = await player.currentItem?.asset as? AVURLAsset else { return }
-
-      do {
-        async let duration = asset.load(.duration)
-        async let transform = asset.load(.preferredTransform)
-        async let tracks = asset.load(.tracks)
-        async let isPlayable = asset.load(.isPlayable)
-
-        _ = try await (duration, transform, tracks, isPlayable)
-        player.currentItem?.preferredForwardBufferDuration = 5.0
-      } catch {
-        logger.debug("Error pre-loading asset properties: \(error)")
-      }
+    func configurePlayer(for view: PlayerContainerMac, player: AVPlayer, shouldLoop: Bool) {
+      player.currentItem?.preferredForwardBufferDuration = 2
+      player.actionAtItemEnd = .none
+      view.pausesOnDismantle = parent.pausesOnDismantle
+      view.shouldLoop = shouldLoop
+      view.player = player
+      parent.onLayerReady?(view.playerLayer)
     }
   }
 }
@@ -379,6 +325,9 @@ final class PlayerContainerMac: NSView {
   private var loopObserver: NSObjectProtocol?
   private var statusObserver: NSObjectProtocol?
   private var isCleanedUp = false
+
+  /// A pool-owned player must keep playing when an old page releases its layer.
+  var pausesOnDismantle = true
 
   var shouldLoop: Bool = true {
     didSet {
@@ -474,13 +423,13 @@ final class PlayerContainerMac: NSView {
     guard !isCleanedUp else { return }
     isCleanedUp = true
 
-    player?.pause()
+    if pausesOnDismantle { player?.pause() }
     removeAllObservers()
     playerLayer.player = nil
     coordinator = nil
   }
 
-  deinit {
+  isolated deinit {
     cleanup()
   }
 }
