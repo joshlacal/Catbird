@@ -6,6 +6,7 @@ import SwiftUI
 struct VideoFeedUIFixture: View {
   @State private var selection: Int? = 0
   @State private var isMuted = true
+  @State private var path: [VideoFeedFixtureDestination] = []
   private let pages = [
     VideoFeedFixtureItem(id: 0, title: "Portrait", aspectRatio: 9.0 / 16.0, color: .indigo),
     VideoFeedFixtureItem(id: 1, title: "Landscape", aspectRatio: 16.0 / 9.0, color: .orange),
@@ -15,17 +16,28 @@ struct VideoFeedUIFixture: View {
   var body: some View {
     TabView {
       Tab("Home", systemImage: "house") {
-        NavigationStack {
+        NavigationStack(path: $path) {
           ZStack {
             Color.black.ignoresSafeArea()
             VideoFeedPager(items: pages, selection: $selection) { item, size in
-              VideoFeedFixturePage(item: item, pageSize: size, isActive: selection == item.id)
+              VideoFeedFixturePage(
+                item: item, pageSize: size, isActive: selection == item.id,
+                onComments: { path.append(.thread) }, onProfile: { path.append(.profile) }
+              )
             }
           }
           .safeAreaInset(edge: .top, spacing: 0) {
             VideoFeedNavigationControls(isMuted: isMuted, onBack: {}, onMute: { isMuted.toggle() })
           }
           .modifier(VideoFeedNavigationModifier())
+          .navigationDestination(for: VideoFeedFixtureDestination.self) { destination in
+            switch destination {
+            case .thread:
+              Text("Fixture thread comments").accessibilityIdentifier("videoFixtureThread")
+            case .profile:
+              Text("Fixture author profile").accessibilityIdentifier("videoFixtureProfile")
+            }
+          }
         }
       }
       Tab("Notifications", systemImage: "bell") { Text("Local notification fixture") }
@@ -65,12 +77,12 @@ private struct VideoFeedFixturePage: View {
   let item: VideoFeedFixtureItem
   let pageSize: CGSize
   let isActive: Bool
+  let onComments: () -> Void
+  let onProfile: () -> Void
   @State private var coordinator = VideoFeedActionCoordinator()
   @State private var isLiked = false
   @State private var isReposted = false
   @State private var currentTime = 15.0
-  @State private var showThread = false
-  @State private var showProfile = false
   @State private var isPaused = true
 
   var body: some View {
@@ -98,7 +110,7 @@ private struct VideoFeedFixturePage: View {
         pageSize: pageSize,
         hasCaption: true,
         author: { compact in
-          Button { showProfile = true } label: {
+          Button(action: onProfile) {
             HStack(spacing: 8) {
               Circle().fill(.white.opacity(0.6)).frame(width: 38, height: 38)
               VStack(alignment: .leading) {
@@ -112,7 +124,7 @@ private struct VideoFeedFixturePage: View {
           .buttonStyle(.plain)
         },
         caption: { lines in
-          Button { showThread = true } label: {
+          Button(action: onComments) {
             Text("A long caption checks wrapping, larger text, and narrow or resized video pages.")
               .font(.subheadline)
               .lineLimit(lines)
@@ -130,7 +142,7 @@ private struct VideoFeedFixturePage: View {
             likeCount: isLiked ? 124 : 123,
             repostCount: isReposted ? 5 : 4,
             canAct: isActive && !coordinator.isBusy,
-            onComments: { showThread = true },
+            onComments: onComments,
             onLike: { performFixtureAction { isLiked.toggle() } },
             onRepost: { performFixtureAction { isReposted.toggle() } }
           )
@@ -144,12 +156,6 @@ private struct VideoFeedFixturePage: View {
     .clipped()
     .onChange(of: isActive) { _, active in if !active { coordinator.cancel() } }
     .onDisappear { coordinator.cancel() }
-    .navigationDestination(isPresented: $showThread) {
-      Text("Fixture thread comments").accessibilityIdentifier("videoFixtureThread")
-    }
-    .navigationDestination(isPresented: $showProfile) {
-      Text("Fixture author profile").accessibilityIdentifier("videoFixtureProfile")
-    }
     .alert("Action unsuccessful", isPresented: Binding(
       get: { coordinator.errorMessage != nil },
       set: { if !$0 { coordinator.errorMessage = nil } }
@@ -171,6 +177,8 @@ private struct VideoFeedFixturePage: View {
     }
   }
 }
+
+private enum VideoFeedFixtureDestination: Hashable { case thread, profile }
 
 private enum VideoFeedFixtureFailure: Error { case rejected }
 #endif

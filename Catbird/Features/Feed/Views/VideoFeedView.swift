@@ -28,7 +28,7 @@ public struct VideoFeedView: View {
   @State private var isVisible = false
   @State private var resumePlaybackWhenActive = false
   @State private var cursor: String?
-  @State private var isLoading: Bool = false
+  @State private var pagination = VideoFeedPaginationCoordinator()
   @State private var isInitialLoading: Bool = true
   @State private var hasMore: Bool = true
   @State private var errorMessage: String?
@@ -72,6 +72,21 @@ public struct VideoFeedView: View {
     .safeAreaInset(edge: .top, spacing: 0) {
       navigationControls
     }
+    .safeAreaInset(edge: .bottom, spacing: 0) {
+      if let error = pagination.errorMessage {
+        HStack(spacing: 12) {
+          Text(error)
+            .font(.footnote)
+            .frame(maxWidth: .infinity, alignment: .leading)
+          Button("Retry") { requestNextPageIfNeeded(retrying: true) }
+            .frame(minWidth: 44, minHeight: 44)
+            .accessibilityIdentifier("videoLoadMoreRetry")
+        }
+        .foregroundStyle(.white)
+        .padding(.horizontal, 16)
+        .background(.black)
+      }
+    }
     .modifier(VideoFeedNavigationModifier())
     .task {
       if items.isEmpty {
@@ -84,13 +99,12 @@ public struct VideoFeedView: View {
       isVisible = true
       if !items.isEmpty {
         updatePlaybackForActiveIndex(activeIndex)
+        requestNextPageIfNeeded()
       }
     }
     .onChange(of: activeItemID) { _, _ in
       updatePlaybackForActiveIndex(activeIndex)
-    }
-    .task(id: paginationCursor) {
-      if paginationCursor != nil { await loadNextPage() }
+      requestNextPageIfNeeded()
     }
     .onChange(of: scenePhase) { previous, phase in
       if phase == .active {
@@ -104,16 +118,13 @@ public struct VideoFeedView: View {
     }
     .onDisappear {
       isVisible = false
+      pagination.cancel()
       playerPool.cleanup()
     }
   }
 
   private var activeIndex: Int {
     items.firstIndex(where: { $0.id == activeItemID }) ?? 0
-  }
-
-  private var paginationCursor: String? {
-    !isInitialLoading && hasMore && activeIndex >= items.count - 3 ? cursor : nil
   }
 
   private var navigationControls: some View {
@@ -159,6 +170,7 @@ public struct VideoFeedView: View {
         self.activeItemID = parsedItems.first?.id
         updatePlaybackForActiveIndex(0)
       }
+      requestNextPageIfNeeded()
     } catch is CancellationError {
       self.isInitialLoading = false
     } catch {
@@ -167,46 +179,37 @@ public struct VideoFeedView: View {
     }
   }
 
-  private func loadNextPage() async {
-    guard !isLoading, hasMore, let currentCursor = cursor else { return }
-    isLoading = true
-    defer { isLoading = false }
+  private func requestNextPageIfNeeded(retrying: Bool = false) {
+    guard isVisible, !isInitialLoading, hasMore, activeIndex >= items.count - 3,
+          let currentCursor = cursor else { return }
+    pagination.request(retrying: retrying, operation: {
+      try await self.loadNextPage(cursor: currentCursor)
+    }, onSuccess: {
+      // A filtered or overlapping page can contain no new videos. Continue only
+      // after a successful request with a new cursor, never after a failure.
+      self.requestNextPageIfNeeded()
+    })
+  }
 
-    guard let client = appState.atProtoClient else {
-      isLoading = false
-      return
-    }
-
+  private func loadNextPage(cursor currentCursor: String) async throws {
+    guard let client = appState.atProtoClient else { throw PostViewModelError.missingClient }
+    let uri = try ATProtocolURI(uriString: feedURI)
     let feedManager = FeedManager(client: client)
+    let (feedPosts, nextCursor) = try await feedManager.fetchFeed(
+      fetchType: .feed(uri), cursor: currentCursor
+    )
+    let newItems = extractVideoItems(from: feedPosts)
+    var seenIDs = Set(items.map(\.id))
+    let uniqueNewItems = newItems.filter { seenIDs.insert($0.id).inserted }
 
-    do {
-      guard let uri = try? ATProtocolURI(uriString: feedURI) else {
-        isLoading = false
-        return
-      }
-
-      let (feedPosts, nextCursor) = try await feedManager.fetchFeed(
-        fetchType: .feed(uri),
-        cursor: currentCursor
-      )
-
-      let newItems = extractVideoItems(from: feedPosts)
-      // Append only items not already in the feed
-      var seenIDs = Set(items.map(\.id))
-      let uniqueNewItems = newItems.filter { seenIDs.insert($0.id).inserted }
-
-      try Task.checkCancellation()
-      self.items.append(contentsOf: uniqueNewItems)
-      if activeItemID == nil { activeItemID = items.first?.id }
-      self.cursor = nextCursor
-      self.hasMore = nextCursor != nil && nextCursor != currentCursor && !feedPosts.isEmpty
-      self.isLoading = false
-
-      // Update prewarming with newly appended items
-      updatePrewarming(for: activeIndex)
-    } catch {
-      self.isLoading = false
-    }
+    // Even a transport that finishes after cancellation cannot publish an old
+    // page over the new visible screen's request.
+    try Task.checkCancellation()
+    self.items.append(contentsOf: uniqueNewItems)
+    if activeItemID == nil { activeItemID = items.first?.id }
+    self.cursor = nextCursor
+    self.hasMore = nextCursor != nil && nextCursor != currentCursor && !feedPosts.isEmpty
+    updatePrewarming(for: activeIndex)
   }
 
   private func extractVideoItems(from feedPosts: [AppBskyFeedDefs.FeedViewPost]) -> [VideoFeedItem] {
@@ -867,5 +870,55 @@ final class VideoFeedActionCoordinator {
   func cancel() {
     actionTask?.cancel()
     errorMessage = nil
+  }
+}
+
+/// Owns next-page requests independently of the selected video, so moving among
+/// the last few videos cannot cancel/restart the same cursor task accidentally.
+@MainActor @Observable
+final class VideoFeedPaginationCoordinator {
+  private(set) var isLoading = false
+  private(set) var errorMessage: String?
+  private var requestID: UUID?
+  private var requestTask: Task<Void, Never>?
+
+  func request(
+    retrying: Bool = false,
+    operation: @escaping @MainActor () async throws -> Void,
+    onSuccess: @escaping @MainActor () -> Void
+  ) {
+    guard !isLoading, retrying || errorMessage == nil else { return }
+    let id = UUID()
+    requestID = id
+    isLoading = true
+    errorMessage = nil
+    requestTask = Task {
+      var succeeded = false
+      defer {
+        if self.requestID == id {
+          self.requestID = nil
+          self.requestTask = nil
+          self.isLoading = false
+          if succeeded { onSuccess() }
+        }
+      }
+      do {
+        try Task.checkCancellation()
+        try await operation()
+        try Task.checkCancellation()
+        succeeded = true
+      } catch {
+        if self.requestID == id, !Task.isCancelled {
+          self.errorMessage = "More videos couldn’t load."
+        }
+      }
+    }
+  }
+
+  func cancel() {
+    requestID = nil
+    requestTask?.cancel()
+    requestTask = nil
+    isLoading = false
   }
 }
