@@ -31,7 +31,7 @@ struct FeedBannerArtwork<Artwork: View>: View {
           .mask {
             VStack(spacing: 0) {
               LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
-                .frame(height: inset > 0 ? min(56, artworkHeight) : 0)
+                .frame(height: inset > 0 ? min(28, artworkHeight) : 0)
               Color.black
             }
           }
