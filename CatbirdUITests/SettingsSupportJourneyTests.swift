@@ -64,6 +64,18 @@ final class SettingsSupportJourneyTests: XCTestCase {
     XCTAssertFalse(app.staticTexts["These do not unlock features"].exists)
   }
 
+  func testSupportUnavailableCanRetry() {
+    let app = launch(screen: "about", extra: ["--settings-support-retry"])
+    XCTAssertTrue(app.navigationBars["About"].waitForExistence(timeout: 10))
+    let retry = app.buttons["SupportProductsRetry"].firstMatch
+    reveal(retry, in: app)
+    capture(app, "Support products unavailable with retry")
+    retry.tap()
+    let smallTip = app.buttons["SupportTip.blue.catbird.support.onetime.small"].firstMatch
+    XCTAssertTrue(smallTip.waitForExistence(timeout: 5))
+    capture(app, "Support products loaded after retry")
+  }
+
   private func launch(screen: String, extra: [String] = []) -> XCUIApplication {
     let app = XCUIApplication()
     app.launchArguments = ["--settings-ui-fixture", "--settings-screen=\(screen)"] + extra

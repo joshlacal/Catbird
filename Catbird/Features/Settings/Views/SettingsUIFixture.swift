@@ -9,6 +9,7 @@ struct SettingsUIFixture: View {
   @State private var appState: AppState?
   @State private var container: ModelContainer?
   @State private var failure: String?
+  @State private var supportStore = SupportTipStore(client: SettingsTipFixtureClient())
 
   private let arguments = ProcessInfo.processInfo.arguments
 
@@ -44,7 +45,7 @@ struct SettingsUIFixture: View {
     case "appearance": AppearanceSettingsView()
     case "accessibility": AccessibilitySettingsView()
     case "content": ContentMediaSettingsView()
-    case "about": AboutSettingsView()
+    case "about": AboutSettingsView(supportStore: supportStore)
     default: SettingsView()
     }
   }
@@ -77,5 +78,29 @@ struct SettingsUIFixture: View {
       failure = error.localizedDescription
     }
   }
+}
+
+/// Predictable presentation data derived from the existing local catalog, never a store purchase.
+@MainActor
+private final class SettingsTipFixtureClient: SupportTipClient {
+  private var loadCount = 0
+
+  func products(for identifiers: Set<String>) async throws -> [SupportTipProduct] {
+    loadCount += 1
+    if ProcessInfo.processInfo.arguments.contains("--settings-support-retry"), loadCount == 1 {
+      return []
+    }
+    return [
+      SupportTipProduct(id: "blue.catbird.support.onetime.small", displayName: "Small Support", displayPrice: "$4.99", price: 4.99),
+      SupportTipProduct(id: "blue.catbird.support.onetime.medium", displayName: "Medium Support", displayPrice: "$9.99", price: 9.99),
+      SupportTipProduct(id: "blue.catbird.support.onetime.large", displayName: "Large Support", displayPrice: "$19.99", price: 19.99),
+      SupportTipProduct(id: "blue.catbird.support.onetime.extralarge", displayName: "Extra Large Support", displayPrice: "$49.99", price: 49.99)
+    ].filter { identifiers.contains($0.id) }
+  }
+
+  func purchase(productID: String) async throws -> SupportTipPurchaseResult { .cancelled }
+  func transactionUpdates() -> AsyncStream<SupportTipVerification> { AsyncStream { $0.finish() } }
+  func unfinishedTransactions() -> AsyncStream<SupportTipVerification> { AsyncStream { $0.finish() } }
+  func storefrontUpdates() -> AsyncStream<Void> { AsyncStream { $0.finish() } }
 }
 #endif
