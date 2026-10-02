@@ -262,7 +262,12 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     // Apply initial themed colors and start observing theme changes
     updateThemeColors()
     setupThemeObserver()
-    
+
+    collectionView.registerForTraitChanges([UITraitPreferredContentSizeCategory.self, UITraitHorizontalSizeClass.self]) {
+      (collectionView: UICollectionView, _: UITraitCollection) in
+      collectionView.collectionViewLayout.invalidateLayout()
+    }
+
     // Prevent VoiceOver from auto-scrolling
     collectionView.accessibilityTraits = .none
     collectionView.shouldGroupAccessibilityChildren = true
@@ -526,7 +531,10 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   // MARK: - CollectionView Layout
 
   // Reuse PostHeightCalculator for accurate height estimations
-  private lazy var heightCalculator = PostHeightCalculator()
+  private lazy var heightCalculator = PostHeightCalculator(config: .standard(
+    containerWidth: collectionView.bounds.width,
+    traitCollection: collectionView.traitCollection
+  ))
 
   // Extract section creation to a separate method for better organization
   private func createSection(with estimatedHeight: CGFloat, for section: Section)
@@ -578,8 +586,13 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     let repliesEstimatedHeightFloor: CGFloat = 250
 
     let layoutProvider: UICollectionViewCompositionalLayoutSectionProvider = {
-      [weak self] (sectionIndex, _) -> NSCollectionLayoutSection? in
+      [weak self] (sectionIndex, environment) -> NSCollectionLayoutSection? in
       guard let self = self, let section = Section(rawValue: sectionIndex) else { return nil }
+
+      self.heightCalculator.updateLayout(
+        containerWidth: environment.container.effectiveContentSize.width,
+        traitCollection: environment.traitCollection
+      )
 
       var estimatedHeight: CGFloat
 
@@ -1845,7 +1858,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       itemHeight: attributes.frame.height,
       visibleHeightInViewport: min(attributes.frame.height, collectionView.bounds.height),
       timestamp: CACurrentMediaTime(),
-      displayScale: UIScreen.main.scale
+      displayScale: collectionView.traitCollection.displayScale
     )
     
     controllerLogger.debug("🎯 Thread anchor captured - section: \(firstVisibleIndexPath.section), item: \(firstVisibleIndexPath.item), postId: \(postId)")
