@@ -56,6 +56,9 @@ final class SettingsSupportJourneyTests: XCTestCase {
     selectMaximumTextSize("Accessibility Large", picker: maximum, in: app)
     capture(app, "Maximum Text Size selection updates its full value")
     selectMaximumTextSize("Accessibility Extra Extra Extra Large", picker: maximum, in: app)
+    revealMaximumTextSizePicker(maximum, in: app)
+    XCTAssertEqual(maximum.value as? String, "Accessibility Extra Extra Extra Large")
+    capture(app, "Maximum Text Size largest selection fully visible before rotation")
     XCUIDevice.shared.orientation = .landscapeLeft
     var previousFrames: [CGRect] = []
     var stableReadings = 0
@@ -216,17 +219,6 @@ final class SettingsSupportJourneyTests: XCTestCase {
     XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 5), .completed)
   }
 
-  private func selectMaximumTextSize(_ name: String, picker: XCUIElement, in app: XCUIApplication) {
-    picker.tap()
-    let choice = app.buttons[name].firstMatch
-    XCTAssertTrue(choice.waitForExistence(timeout: 3))
-    choice.tap()
-    let changed = XCTNSPredicateExpectation(
-      predicate: NSPredicate(format: "value == %@", name), object: picker
-    )
-    XCTAssertEqual(XCTWaiter.wait(for: [changed], timeout: 5), .completed)
-  }
-
   private func launch(screen: String, extra: [String] = []) -> XCUIApplication {
     let app = XCUIApplication()
     app.launchArguments = ["--settings-ui-fixture", "--settings-screen=\(screen)"] + extra
@@ -251,5 +243,115 @@ final class SettingsSupportJourneyTests: XCTestCase {
     attachment.name = name
     attachment.lifetime = .keepAlways
     add(attachment)
+  }
+}
+
+private extension SettingsSupportJourneyTests {
+  func selectMaximumTextSize(_ name: String, picker: XCUIElement, in app: XCUIApplication) {
+    picker.tap()
+    let opened = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+      self.maximumTextSizeMenu(in: app) != nil
+    }, object: app)
+    XCTAssertEqual(XCTWaiter.wait(for: [opened], timeout: 3), .completed)
+
+    for attempt in 0..<8 {
+      guard let menu = maximumTextSizeMenu(in: app) else {
+        XCTFail("The Maximum Text Size menu disappeared before selecting \(name)")
+        return
+      }
+      let viewport = maximumTextSizeMenuViewport(menu, in: app)
+      guard !viewport.isNull, !viewport.isEmpty else {
+        XCTFail("The Maximum Text Size menu has no visible receiving viewport")
+        return
+      }
+      let choice = menu.buttons[name].firstMatch
+      let choiceFrame = choice.exists ? choice.frame : .null
+      let geometry = XCTAttachment(string: "menu=\(menu.frame); viewport=\(viewport); choice=\(name); frame=\(choiceFrame)")
+      geometry.name = "Maximum Text Size menu geometry \(name) step \(attempt)"
+      geometry.lifetime = .keepAlways
+      add(geometry)
+      capture(app, "Maximum Text Size open menu \(name) step \(attempt)")
+
+      if choice.exists && choice.isHittable && fullyContains(choice.frame, in: viewport) {
+        choice.tap()
+        let closed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+          self.maximumTextSizeMenu(in: app) == nil
+        }, object: app)
+        XCTAssertEqual(XCTWaiter.wait(for: [closed], timeout: 3), .completed)
+        let changed = XCTNSPredicateExpectation(
+          predicate: NSPredicate(format: "value == %@", name), object: picker
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [changed], timeout: 5), .completed)
+        return
+      }
+      if attempt < 7 {
+        dragWithin(menu, viewport: viewport, upward: !choice.exists || choice.frame.maxY > viewport.maxY)
+      }
+    }
+    let hierarchy = XCTAttachment(string: app.debugDescription)
+    hierarchy.name = "Maximum Text Size menu traversal exhausted"
+    hierarchy.lifetime = .keepAlways
+    add(hierarchy)
+    XCTFail("Expected the complete \(name) option inside the visible menu after bounded scrolling")
+  }
+
+  func maximumTextSizeMenu(in app: XCUIApplication) -> XCUIElement? {
+    let names = [
+      "Extra Extra Large", "Extra Extra Extra Large", "Accessibility Medium", "Accessibility Large",
+      "Accessibility Extra Large", "Accessibility Extra Extra Large", "Accessibility Extra Extra Extra Large"
+    ]
+    return app.collectionViews.allElementsBoundByIndex.first { collection in
+      collection.buttons.matching(NSPredicate(format: "label IN %@", names)).count > 0
+    }
+  }
+
+  func maximumTextSizeMenuViewport(_ menu: XCUIElement, in app: XCUIApplication) -> CGRect {
+    var viewport = app.windows.firstMatch.frame.intersection(menu.frame)
+    let anchor = menu.buttons.firstMatch
+    guard anchor.exists else { return .null }
+    // Native menu collections can extend beyond their clipping containers. Only
+    // enclosing containers with a collection are relevant; row wrappers are not.
+    let containers = app.otherElements.containing(.button, identifier: anchor.label).allElementsBoundByIndex
+    var foundContainer = false
+    for container in containers where container.collectionViews.count > 0 {
+      let bounds = container.frame
+      if !bounds.isEmpty {
+        foundContainer = true
+        viewport = viewport.intersection(bounds)
+      }
+    }
+    return foundContainer ? viewport : .null
+  }
+
+  func revealMaximumTextSizePicker(_ picker: XCUIElement, in app: XCUIApplication) {
+    for attempt in 0..<8 {
+      let form = app.collectionViews.firstMatch
+      var viewport = app.windows.firstMatch.frame.intersection(form.frame)
+      let top = max(viewport.minY, app.navigationBars["Accessibility"].frame.maxY)
+      viewport = CGRect(x: viewport.minX, y: top, width: viewport.width, height: viewport.maxY - top)
+      if picker.exists && picker.isHittable && fullyContains(picker.frame, in: viewport) { return }
+      if attempt < 7 {
+        dragWithin(form, viewport: viewport, upward: !picker.exists || picker.frame.maxY > viewport.maxY)
+      }
+    }
+    XCTFail("Expected the full closed Maximum Text Size selection to be visible before rotation")
+  }
+
+  func fullyContains(_ frame: CGRect, in viewport: CGRect) -> Bool {
+    !frame.isNull && !frame.isEmpty && viewport.insetBy(dx: -1, dy: -1).contains(frame)
+  }
+
+  func dragWithin(_ element: XCUIElement, viewport: CGRect, upward: Bool) {
+    let bounds = element.frame
+    let upperY = viewport.minY + viewport.height * 0.25
+    let lowerY = viewport.maxY - viewport.height * 0.25
+    let origin = element.coordinate(withNormalizedOffset: .zero)
+    let upper = origin.withOffset(CGVector(dx: viewport.midX - bounds.minX, dy: upperY - bounds.minY))
+    let lower = origin.withOffset(CGVector(dx: viewport.midX - bounds.minX, dy: lowerY - bounds.minY))
+    if upward {
+      lower.press(forDuration: 0.05, thenDragTo: upper)
+    } else {
+      upper.press(forDuration: 0.05, thenDragTo: lower)
+    }
   }
 }
