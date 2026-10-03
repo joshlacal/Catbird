@@ -5,6 +5,7 @@ import SwiftUI
 struct ReplyContextPanel: View {
   let post: AppBskyFeedDefs.PostView
   let availableHeight: CGFloat
+  var compactHeight = false
   let onViewOriginal: () -> Void
   @Binding var path: NavigationPath
 
@@ -12,7 +13,7 @@ struct ReplyContextPanel: View {
   @ScaledMetric(relativeTo: .body) private var editorReserve: CGFloat = 160
 
   private var sourceHeight: CGFloat {
-    guard !dynamicTypeSize.isAccessibilitySize,
+    guard !compactHeight, !dynamicTypeSize.isAccessibilitySize,
           availableHeight >= editorReserve + 68 + 96 else { return 0 }
     return min(240, availableHeight - editorReserve - 68)
   }
@@ -36,6 +37,10 @@ struct ReplyContextPanel: View {
         .accessibilityLabel("View original post")
         .accessibilityIdentifier("reply-source-expand")
       }
+      .frame(height: compactHeight ? 0 : nil)
+      .clipped()
+      .allowsHitTesting(!compactHeight)
+      .accessibilityHidden(compactHeight)
 
       ScrollView {
         ReplySourcePostView(post: post, path: $path)
@@ -48,7 +53,7 @@ struct ReplyContextPanel: View {
       .accessibilityHidden(sourceHeight == 0)
     }
     .padding(.horizontal, 16)
-    .padding(.vertical, 4)
+    .padding(.vertical, compactHeight ? 0 : 4)
   }
 }
 

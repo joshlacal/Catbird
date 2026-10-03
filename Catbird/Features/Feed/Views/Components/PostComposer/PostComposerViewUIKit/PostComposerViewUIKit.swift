@@ -24,6 +24,7 @@ struct PostComposerViewUIKit: View {
 
   @Environment(\.dismiss) var dismiss
   @Environment(\.horizontalSizeClass) private var hSize
+  @Environment(\.verticalSizeClass) private var vSize
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   
   // Store AppState reference locally to avoid global observation
@@ -213,6 +214,29 @@ struct PostComposerViewUIKit: View {
         .navigationTitle(getNavigationTitle(vm: vm))
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+          if usesCompactReplyLayout(vm: vm), let parent = vm.parentPost {
+            ToolbarItem(placement: .principal) {
+              VStack(spacing: 0) {
+                Text(getNavigationTitle(vm: vm)).appHeadline()
+                Label("Replying to @\(parent.author.handle.description)", systemImage: "arrowshape.turn.up.left")
+                  .appFont(AppTextRole.caption)
+                  .foregroundStyle(.secondary)
+                  .lineLimit(1)
+                  .accessibilityElement(children: .combine)
+                  .accessibilityIdentifier("reply-source-identity")
+              }
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+              Button(action: { openReplySource(vm: vm) }) {
+                Image(systemName: "arrow.up.left.and.arrow.down.right")
+                  .frame(width: 44, height: 44)
+                  .contentShape(Rectangle())
+              }
+              .buttonStyle(.plain)
+              .accessibilityLabel("View original post")
+              .accessibilityIdentifier("reply-source-expand")
+            }
+          }
           // Leading: X button with confirmation dialog
           ToolbarItem(placement: .cancellationAction) {
             Button(action: {
@@ -402,13 +426,15 @@ struct PostComposerViewUIKit: View {
   
   @ViewBuilder
   private func mainContent(vm: PostComposerViewModel) -> some View {
+    let compactReply = usesCompactReplyLayout(vm: vm)
     sheetModifiers(vm: vm,
       GeometryReader { geometry in
         VStack(spacing: 0) {
           if let parent = vm.parentPost {
             ReplyContextPanel(post: parent, availableHeight: geometry.size.height,
+                              compactHeight: compactReply,
                               onViewOriginal: { openReplySource(vm: vm) }, path: $replySourcePath)
-            Divider()
+            Divider().frame(height: compactReply ? 0 : nil).clipped()
           } else if vm.isReply {
             Label("Original post not loaded", systemImage: "arrowshape.turn.up.left")
               .appFont(AppTextRole.caption)
@@ -431,8 +457,9 @@ struct PostComposerViewUIKit: View {
               }
               threadEntriesSection(vm: vm)
             }
-            .padding(.top, 8)
+            .padding(.top, compactReply ? 0 : 8)
           }
+          .defaultScrollAnchor(compactReply && !vm.isThreadMode ? .top : nil, for: .sizeChanges)
           .accessibilityIdentifier("reply-composer-scroll")
         }
       }
@@ -501,6 +528,14 @@ struct PostComposerViewUIKit: View {
     )
   }
 
+  private func usesCompactReplyLayout(vm: PostComposerViewModel) -> Bool {
+    #if os(iOS)
+    return vm.parentPost != nil && vSize == .compact
+    #else
+    return false
+    #endif
+  }
+
   private func openReplySource(vm: PostComposerViewModel, resetPath: Bool = true) {
     #if os(iOS)
     replySourceEditor = vm.activeRichTextView
@@ -511,7 +546,11 @@ struct PostComposerViewUIKit: View {
   }
 
   private func composerAccessoryStack(vm: PostComposerViewModel) -> some View {
-    VStack(alignment: .leading, spacing: 8) {
+    let compactReply = usesCompactReplyLayout(vm: vm)
+    let layout = compactReply
+      ? AnyLayout(HStackLayout(spacing: 8))
+      : AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+    return layout {
       ComposerChipsStrip(
         outlineTags: vm.outlineTags,
         selectedLanguages: vm.selectedLanguages,
@@ -540,6 +579,7 @@ struct PostComposerViewUIKit: View {
           showingLabelSelector = true
         }
       )
+      .frame(maxWidth: compactReply ? .infinity : nil, alignment: .leading)
 
       ComposerAccessoryBar(
         isPlusMenuOpen: $showingPlusMenu,
@@ -570,10 +610,11 @@ struct PostComposerViewUIKit: View {
           }
         )
       )
+      .fixedSize(horizontal: compactReply, vertical: compactReply)
     }
     .padding(.horizontal, 16)
-    .padding(.top, 4)
-    .padding(.bottom, 8)
+    .padding(.top, compactReply ? 0 : 4)
+    .padding(.bottom, compactReply ? 0 : 8)
   }
 
   private func languageSummary(vm: PostComposerViewModel) -> String {
@@ -604,6 +645,7 @@ struct PostComposerViewUIKit: View {
   
   @ViewBuilder
   private func composerEditorSection(vm: PostComposerViewModel) -> some View {
+    let avatarSize = usesCompactReplyLayout(vm: vm) ? DesignTokens.Size.avatarMD : Self.composerAvatarSize
     HStack(alignment: .top, spacing: 12) {
       // Tappable avatar that opens account switcher
       Button(action: {
@@ -618,10 +660,10 @@ struct PostComposerViewUIKit: View {
         UIKitAvatarView(
           did: appState.userDID,
           client: appState.atProtoClient,
-          size: Self.composerAvatarSize,
+          size: avatarSize,
           avatarURL: appState.currentUserProfile?.finalAvatarURL()
         )
-        .frame(width: Self.composerAvatarSize, height: Self.composerAvatarSize)
+        .frame(width: avatarSize, height: avatarSize)
         .contentShape(Circle())
         .clipShape(Circle())
         .clipped()
@@ -632,11 +674,11 @@ struct PostComposerViewUIKit: View {
           } placeholder: {
             Circle().fill(Color.systemGray5)
           }
-          .frame(width: Self.composerAvatarSize, height: Self.composerAvatarSize)
+          .frame(width: avatarSize, height: avatarSize)
           .clipShape(Circle())
         } else {
           Circle().fill(Color.systemGray5)
-            .frame(width: Self.composerAvatarSize, height: Self.composerAvatarSize)
+            .frame(width: avatarSize, height: avatarSize)
         }
         #endif
       }
