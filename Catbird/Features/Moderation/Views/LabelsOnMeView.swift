@@ -110,17 +110,19 @@ struct LabelsOnMeView: View {
   }
 
   private func appealSheet(for label: ComAtprotoLabelDefs.Label) -> some View {
-    AppealLabelSheet(
+    let presentedLabelBinding = $appealingLabel
+    return AppealLabelSheet(
       label: label,
       info: presentation(for: label),
+      presentedLabel: presentedLabelBinding,
       appealDetails: $appealDetails,
       submission: submission,
-      isCurrentPresentation: { self.isCurrentViewer && self.appealingLabel?.id == label.id },
-      onSubmit: { self.startSubmission(label) },
+      isCurrentViewer: { self.isCurrentViewer },
+      onSubmit: { reason in self.startSubmission(label, reason: reason, presentation: presentedLabelBinding) },
       onCancel: {
-        guard self.appealingLabel?.id == label.id else { return }
+        guard presentedLabelBinding.wrappedValue?.id == label.id else { return }
         self.cancelSubmission()
-        self.appealingLabel = nil
+        presentedLabelBinding.wrappedValue = nil
       }
     )
   }
@@ -134,11 +136,10 @@ struct LabelsOnMeView: View {
 
   private func cancelSubmission() { submission.cancel() }
 
-  private func startSubmission(_ label: ComAtprotoLabelDefs.Label) {
-    guard isCurrentViewer, appealingLabel?.id == label.id else { return }
-    let reason = appealDetails
+  private func startSubmission(_ label: ComAtprotoLabelDefs.Label, reason: String, presentation: Binding<ComAtprotoLabelDefs.Label?>) {
+    guard isCurrentViewer, presentation.wrappedValue?.id == label.id else { return }
     submission.submit {
-      guard isCurrentViewer else { throw LabelAppealError.accountChanged }
+      guard isCurrentViewer, presentation.wrappedValue?.id == label.id else { throw LabelAppealError.accountChanged }
       return try await reportingService.submitAppeal(label: label, viewerDID: viewerDID, details: reason)
     }
   }
@@ -172,10 +173,11 @@ struct LabelsOnMeView: View {
 private struct AppealLabelSheet: View {
   let label: ComAtprotoLabelDefs.Label
   let info: AccountLabelPresentation
+  @Binding var presentedLabel: ComAtprotoLabelDefs.Label?
   @Binding var appealDetails: String
   let submission: LabelAppealSubmission
-  let isCurrentPresentation: @MainActor () -> Bool
-  let onSubmit: @MainActor () -> Void
+  let isCurrentViewer: @MainActor () -> Bool
+  let onSubmit: @MainActor (String) -> Void
   let onCancel: @MainActor () -> Void
 
   @FocusState private var isAppealReasonFocused: Bool
@@ -205,9 +207,9 @@ private struct AppealLabelSheet: View {
                 .accessibilityIdentifier("appealSubmissionError")
             }
             Button {
-              guard isCurrentPresentation() else { return }
+              guard isCurrentPresentation else { return }
               isAppealReasonFocused = false
-              onSubmit()
+              onSubmit(appealDetails)
             } label: {
               HStack {
                 if submission.isSubmitting { ProgressView() }
@@ -217,12 +219,12 @@ private struct AppealLabelSheet: View {
             }
             .accessibilityIdentifier("appealSubmit")
             .disabled(submission.isSubmitting || appealDetails.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-              || appealDetails.count > 300 || !isCurrentPresentation())
+              || appealDetails.count > 300 || !isCurrentPresentation)
           }
           .id("appealSubmission")
         }
         .onChange(of: submission.errorMessage) { _, errorMessage in
-          guard errorMessage != nil, isCurrentPresentation() else { return }
+          guard errorMessage != nil, isCurrentPresentation else { return }
           isAppealReasonFocused = false
           withAnimation { scroll.scrollTo("appealSubmission", anchor: .bottom) }
         }
@@ -237,6 +239,10 @@ private struct AppealLabelSheet: View {
         }
       }
     }
+  }
+
+  private var isCurrentPresentation: Bool {
+    isCurrentViewer() && presentedLabel?.id == label.id
   }
 
   private var appealSubmissionTitle: LocalizedStringKey {
