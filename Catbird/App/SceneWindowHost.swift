@@ -298,6 +298,7 @@ struct SceneNavigationHost<Content: View>: View {
   let appStateManager: AppStateManager
   @Bindable var context: SceneNavigationContext
   @ViewBuilder var content: () -> Content
+  @State private var composerDetent: PresentationDetent = .large
 
   var body: some View {
     content()
@@ -317,8 +318,12 @@ struct SceneNavigationHost<Content: View>: View {
         .applyAppStateEnvironment(appState)
         .environment(appStateManager)
         .environment(context)
-        .presentationDetents(request.parentPost == nil ? [.large] : [.medium, .large])
+        .presentationDetents(request.parentPost == nil ? [.large] : [.medium, .large],
+                             selection: $composerDetent)
         .presentationDragIndicator(.visible)
+      }
+      .onChange(of: context.postComposerRequest?.id) { _, _ in
+        composerDetent = .large
       }
   }
 }

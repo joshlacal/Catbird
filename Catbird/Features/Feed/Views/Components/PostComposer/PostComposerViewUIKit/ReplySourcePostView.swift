@@ -24,11 +24,13 @@ struct ReplyContextPanel: View {
           .appFont(AppTextRole.caption)
           .foregroundStyle(.secondary)
           .lineLimit(1)
+          .accessibilityElement(children: .combine)
           .accessibilityIdentifier("reply-source-identity")
         Spacer(minLength: 0)
         Button(action: onViewOriginal) {
           Image(systemName: "arrow.up.left.and.arrow.down.right")
             .frame(width: 44, height: 44)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel("View original post")
@@ -41,12 +43,12 @@ struct ReplyContextPanel: View {
       .frame(height: sourceHeight)
       .clipped()
       .allowsHitTesting(sourceHeight > 0)
-      .accessibilityHidden(sourceHeight == 0)
+      .accessibilityElement(children: .contain)
       .accessibilityIdentifier("reply-source-scroll")
+      .accessibilityHidden(sourceHeight == 0)
     }
     .padding(.horizontal, 16)
     .padding(.vertical, 4)
-    .accessibilityIdentifier("reply-source-panel")
   }
 }
 
@@ -87,7 +89,6 @@ struct ReplySourcePostView: View {
     }
     .frame(maxWidth: .infinity, alignment: .leading)
     .fixedSize(horizontal: false, vertical: true)
-    .accessibilityIdentifier("reply-original-post")
     .onChange(of: post.uri) { _, _ in revealsBlockedSource = false }
     .onChange(of: relationship) { _, _ in revealsBlockedSource = false }
   }
