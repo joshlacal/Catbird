@@ -92,13 +92,13 @@ final class SupportTipStore {
     transactionTask = Task { [weak self] in
       for await update in updates {
         guard !Task.isCancelled else { break }
-        await self?.handle(update)
+        await self?.handle(update, origin: "updates")
       }
     }
     unfinishedTask = Task { [weak self] in
       for await transaction in unfinished {
         guard !Task.isCancelled else { break }
-        await self?.handle(transaction)
+        await self?.handle(transaction, origin: "unfinished")
       }
     }
     storefrontTask = Task { [weak self] in
@@ -156,12 +156,17 @@ final class SupportTipStore {
     }
     purchasingProductID = product.id
     purchaseMessage = nil
-    defer { purchasingProductID = nil }
+    defer {
+      purchasingProductID = nil
+      #if DEBUG && os(iOS) && targetEnvironment(simulator)
+      receipt("purchase.return", origin: "purchase", productID: product.id)
+      #endif
+    }
 
     do {
       switch try await client.purchase(productID: product.id) {
       case .success(let verification):
-        await handle(verification)
+        await handle(verification, origin: "purchase")
       case .pending:
         purchaseMessage = "Your tip is pending approval. Thanks for your support!"
       case .cancelled:
@@ -175,34 +180,81 @@ final class SupportTipStore {
     }
   }
 
-  private func handle(_ verification: SupportTipVerification) async {
+  private func handle(_ verification: SupportTipVerification, origin: String) async {
     switch verification {
     case .verified(let transaction):
+      #if DEBUG && os(iOS) && targetEnvironment(simulator)
+      receipt("delivery", origin: origin, transaction: transaction)
+      #endif
       guard Self.productIDs.contains(transaction.productID), transaction.isConsumable else { return }
       // Purchase, updates, and launch reconciliation can deliver the same transaction.
       // Every caller must await the same finish and message update before returning.
       if let completion = transactionCompletionTasks[transaction.id] {
+        #if DEBUG && os(iOS) && targetEnvironment(simulator)
+        receipt("dedupe.join.enter", origin: origin, transaction: transaction)
+        #endif
         await completion.value
+        #if DEBUG && os(iOS) && targetEnvironment(simulator)
+        receipt("dedupe.join.return", origin: origin, transaction: transaction)
+        #endif
         return
       }
-      guard !handledTransactionIDs.contains(transaction.id) else { return }
+      guard !handledTransactionIDs.contains(transaction.id) else {
+        #if DEBUG && os(iOS) && targetEnvironment(simulator)
+        receipt("dedupe.handled.skip", origin: origin, transaction: transaction)
+        #endif
+        return
+      }
       let completion = Task { [weak self] in
+        #if DEBUG && os(iOS) && targetEnvironment(simulator)
+        self?.receipt("finish.begin", origin: origin, transaction: transaction)
+        #endif
         await transaction.finish()
+        #if DEBUG && os(iOS) && targetEnvironment(simulator)
+        self?.receipt("finish.end", origin: origin, transaction: transaction)
+        #endif
         guard let self else { return }
         self.handledTransactionIDs.insert(transaction.id)
         self.transactionCompletionTasks[transaction.id] = nil
         self.purchaseMessage = transaction.isRevoked
           ? "The App Store updated your tip."
           : "Thanks for your support!"
+        #if DEBUG && os(iOS) && targetEnvironment(simulator)
+        self.receipt("completion", origin: origin, transaction: transaction)
+        #endif
       }
       transactionCompletionTasks[transaction.id] = completion
       await completion.value
+      #if DEBUG && os(iOS) && targetEnvironment(simulator)
+      receipt("handle.return", origin: origin, transaction: transaction)
+      #endif
     case .unverified(let productID):
+      #if DEBUG && os(iOS) && targetEnvironment(simulator)
+      receipt("delivery.unverified", origin: origin, productID: productID)
+      #endif
       guard Self.productIDs.contains(productID) else { return }
       Self.logger.error("Tip transaction could not be verified for \(productID, privacy: .public)")
       purchaseMessage = "Your tip couldn't be verified. Please try again later."
     }
   }
+
+  #if DEBUG && os(iOS) && targetEnvironment(simulator)
+  private func receipt(_ event: String, origin: String, transaction: SupportTipTransaction? = nil, productID: String? = nil) {
+    guard ProcessInfo.processInfo.arguments.contains("--support-tip-storekit-test") else { return }
+    var fields = [
+      "origin": origin,
+      "productID": transaction?.productID ?? productID ?? "",
+      "purchaseMessage": purchaseMessage ?? "<nil>",
+      "isPurchasing": String(isPurchasing)
+    ]
+    if let transaction {
+      fields["id"] = String(transaction.id)
+      fields["isConsumable"] = String(transaction.isConsumable)
+      fields["isRevoked"] = String(transaction.isRevoked)
+    }
+    supportTipDiagnosticReceipt(event, fields: fields)
+  }
+  #endif
 }
 
 @MainActor
@@ -220,7 +272,7 @@ final class StoreKitTipClient: SupportTipClient {
   func purchase(productID: String) async throws -> SupportTipPurchaseResult {
     guard let product = availableProducts[productID] else { throw StoreKitError.notAvailableInStorefront }
     switch try await product.purchase() {
-    case .success(let verification): return .success(Self.map(verification))
+    case .success(let verification): return .success(Self.map(verification, origin: "purchase"))
     case .pending: return .pending
     case .userCancelled: return .cancelled
     @unknown default: throw StoreKitError.unknown
@@ -228,11 +280,11 @@ final class StoreKitTipClient: SupportTipClient {
   }
 
   func transactionUpdates() -> AsyncStream<SupportTipVerification> {
-    transactionStream(StoreKit.Transaction.updates)
+    transactionStream(StoreKit.Transaction.updates, origin: "updates")
   }
 
   func unfinishedTransactions() -> AsyncStream<SupportTipVerification> {
-    transactionStream(StoreKit.Transaction.unfinished)
+    transactionStream(StoreKit.Transaction.unfinished, origin: "unfinished")
   }
 
   func storefrontUpdates() -> AsyncStream<Void> {
@@ -248,12 +300,12 @@ final class StoreKitTipClient: SupportTipClient {
     }
   }
 
-  private func transactionStream(_ sequence: StoreKit.Transaction.Transactions) -> AsyncStream<SupportTipVerification> {
+  private func transactionStream(_ sequence: StoreKit.Transaction.Transactions, origin: String) -> AsyncStream<SupportTipVerification> {
     AsyncStream { continuation in
       let task = Task {
         for await verification in sequence {
           guard !Task.isCancelled else { break }
-          continuation.yield(Self.map(verification))
+          continuation.yield(Self.map(verification, origin: origin))
         }
         continuation.finish()
       }
@@ -261,18 +313,54 @@ final class StoreKitTipClient: SupportTipClient {
     }
   }
 
-  private static func map(_ verification: VerificationResult<StoreKit.Transaction>) -> SupportTipVerification {
+  private static func map(_ verification: VerificationResult<StoreKit.Transaction>, origin: String) -> SupportTipVerification {
     switch verification {
     case .verified(let transaction):
+      #if DEBUG && os(iOS) && targetEnvironment(simulator)
+      let nativeToken = ProcessInfo.processInfo.arguments.contains("--support-tip-storekit-test") ? UUID().uuidString : ""
+      let nativeFields = [
+        "origin": origin, "nativeToken": nativeToken, "id": String(transaction.id),
+        "originalID": String(transaction.originalID), "productID": transaction.productID,
+        "isConsumable": String(transaction.productType == .consumable),
+        "isRevoked": String(transaction.revocationDate != nil)
+      ]
+      supportTipDiagnosticReceipt("native.map.verified", fields: nativeFields)
+      #endif
       return .verified(SupportTipTransaction(
         id: transaction.id,
         productID: transaction.productID,
         isConsumable: transaction.productType == .consumable,
         isRevoked: transaction.revocationDate != nil,
-        finish: { await transaction.finish() }
+        finish: {
+          #if DEBUG && os(iOS) && targetEnvironment(simulator)
+          supportTipDiagnosticReceipt("native.finish.begin", fields: nativeFields)
+          #endif
+          await transaction.finish()
+          #if DEBUG && os(iOS) && targetEnvironment(simulator)
+          supportTipDiagnosticReceipt("native.finish.end", fields: nativeFields)
+          #endif
+        }
       ))
     case .unverified(let transaction, _):
+      #if DEBUG && os(iOS) && targetEnvironment(simulator)
+      supportTipDiagnosticReceipt("native.map.unverified", fields: [
+        "origin": origin, "id": String(transaction.id), "originalID": String(transaction.originalID),
+        "productID": transaction.productID, "isConsumable": String(transaction.productType == .consumable),
+        "isRevoked": String(transaction.revocationDate != nil)
+      ])
+      #endif
       return .unverified(productID: transaction.productID)
     }
   }
 }
+
+#if DEBUG && os(iOS) && targetEnvironment(simulator)
+nonisolated private func supportTipDiagnosticReceipt(_ event: String, fields: [String: String]) {
+  guard ProcessInfo.processInfo.arguments.contains("--support-tip-storekit-test") else { return }
+  var receipt = fields
+  receipt["event"] = event
+  guard let data = try? JSONSerialization.data(withJSONObject: receipt, options: [.sortedKeys]),
+        let json = String(data: data, encoding: .utf8) else { return }
+  print("SupportTipStoreDiagnosticReceipt \(json)")
+}
+#endif
