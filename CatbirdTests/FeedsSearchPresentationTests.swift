@@ -319,6 +319,7 @@ struct FeedsSearchPresentationTests {
       SavedSearch(name: "River Walks", query: "rivers", filters: SearchFilterState()),
       SavedSearch(name: "Local Trails", query: "trails", filters: SearchFilterState())
     ]
+    var nativeResults: [(name: String, passed: Bool)] = []
     for (name, width) in [("narrow", CGFloat(320)), ("wide", CGFloat(768))] {
       // Retain UIKit's natural safe area so this standalone scroll fixture's first header
       // stays below the native top region; this does not qualify the full Search shell.
@@ -334,7 +335,186 @@ struct FeedsSearchPresentationTests {
         additionalSafeAreaInsets: .zero
       ) { host in
         let top = try await host.capture("saved-interests-\(name)-top",
-          requiring: ["Saved Searches", "All Saved", "Garden Journal"])
+          requiring: ["Saved Searches", "Garden Journal"])
+        struct NativeSavedButton {
+          let traits: UIAccessibilityTraits
+          let frame: CGRect
+        }
+        // Keep dynamically vended elements alive; identity addresses cannot be reused mid-walk.
+        var retainedObjects: [ObjectIdentifier: NSObject] = [:]
+        var exposedVisits: [ObjectIdentifier: Bool] = [:]
+        var records: [[String: Any]] = []
+        var buttons: [NativeSavedButton] = []
+        var traversalComplete = true
+        let maximumNodes = 4096
+        let maximumChildren = 512
+        let maximumDepth = 64
+        let viewport = host.controller.view.bounds
+        let safeArea = host.actualSafeAreaFrame
+        let screenSpace = host.window.windowScene?.screen.coordinateSpace
+        if screenSpace == nil { traversalComplete = false }
+
+        func finite(_ rect: CGRect) -> Bool {
+          [rect.origin.x, rect.origin.y, rect.size.width, rect.size.height]
+            .allSatisfy { $0.isFinite } && rect.width > 0 && rect.height > 0
+        }
+
+        @MainActor
+        func visit(_ object: NSObject, path: String, depth: Int, exposed: Bool) {
+          let identity = ObjectIdentifier(object)
+          if let previouslyExposed = exposedVisits[identity] {
+            records.append(["path": path, "identity": String(describing: identity),
+              "revisited": true, "exposedPath": exposed, "previouslyExposed": previouslyExposed])
+            // A diagnostic-only visit must not swallow a later actually exposed path.
+            if previouslyExposed || !exposed { return }
+          }
+          guard depth <= maximumDepth,
+            retainedObjects[identity] != nil || retainedObjects.count < maximumNodes else {
+            traversalComplete = false
+            records.append(["path": path, "error": "traversal-bound-exceeded"])
+            return
+          }
+          retainedObjects[identity] = object
+          exposedVisits[identity] = exposed
+          var ancestors = Set<ObjectIdentifier>()
+          var provenance: [[String: Any]] = []
+          var ancestor: NSObject? = object
+          var hidden = false
+          while let current = ancestor {
+            guard ancestors.count < maximumDepth,
+              ancestors.insert(ObjectIdentifier(current)).inserted else {
+              traversalComplete = false
+              hidden = true
+              provenance.append(["error": "ancestor-cycle-or-bound-exceeded"])
+              break
+            }
+            let view = current as? UIView
+            let excluded = current.accessibilityElementsHidden || view?.isHidden == true
+              || (view.map { !$0.alpha.isFinite || $0.alpha <= 0.01 } ?? false)
+            provenance.append(["class": String(describing: type(of: current)),
+              "accessibilityElementsHidden": current.accessibilityElementsHidden,
+              "viewHidden": view?.isHidden ?? false, "viewAlpha": String(describing: view?.alpha ?? 1),
+              "excluded": excluded])
+            hidden = hidden || excluded
+            if let view {
+              ancestor = view.superview
+            } else if let element = current as? UIAccessibilityElement {
+              if let container = element.accessibilityContainer {
+                ancestor = container as? NSObject
+                if ancestor == nil {
+                  traversalComplete = false
+                  hidden = true
+                  provenance.append(["error": "unsupported-accessibility-container"])
+                }
+              } else {
+                ancestor = nil
+              }
+            } else {
+              ancestor = nil
+            }
+          }
+          let screenFrame = object.accessibilityFrame
+          let frame: CGRect
+          if let screenSpace {
+            let windowFrame = host.window.convert(screenFrame, from: screenSpace)
+            frame = host.controller.view.convert(windowFrame, from: host.window)
+          } else {
+            frame = .null
+          }
+          let label = object.accessibilityLabel
+          let traits = object.accessibilityTraits
+          records.append(["path": path, "identity": String(describing: identity),
+            "class": String(describing: type(of: object)), "label": label.map { $0 as Any } ?? NSNull(),
+            "isAccessibilityElement": object.isAccessibilityElement, "traits": String(traits.rawValue),
+            "exposedPath": exposed, "excludedByHiddenState": hidden, "hiddenProvenance": provenance,
+            "screenFrame": NSCoder.string(for: screenFrame), "hostFrame": NSCoder.string(for: frame)])
+          guard !hidden else { return }
+          if exposed, object.isAccessibilityElement, label == "All Saved" {
+            buttons.append(NativeSavedButton(traits: traits, frame: frame))
+          }
+
+          @MainActor
+          func visitChildren(_ children: [Any], source: String, exposed: Bool) {
+            guard children.count <= maximumChildren else {
+              traversalComplete = false
+              records.append(["path": path, "error": "child-bound-exceeded", "source": source])
+              return
+            }
+            for (index, child) in children.enumerated() {
+              guard let child = child as? NSObject else {
+                traversalComplete = false
+                records.append(["path": path, "error": "non-NSObject-child", "source": source])
+                continue
+              }
+              visit(child, path: "\(path)/\(source)[\(index)]", depth: depth + 1, exposed: exposed)
+            }
+          }
+          // Accessible elements are leaves. Explicit container children override view children.
+          let childPathExposed = exposed && !object.isAccessibilityElement
+          let explicitElements = object.accessibilityElements
+          var defaultViewChildren = false
+          if let elements = explicitElements {
+            visitChildren(elements, source: "accessibilityElements", exposed: childPathExposed)
+          } else {
+            let count = object.accessibilityElementCount()
+            defaultViewChildren = count == NSNotFound
+            if count != NSNotFound {
+              if count < 0 || count > maximumChildren {
+                traversalComplete = false
+                records.append(["path": path, "error": "invalid-container-count", "count": count])
+              } else {
+                for index in 0..<count {
+                  guard let element = object.accessibilityElement(at: index) as? NSObject else {
+                    traversalComplete = false
+                    records.append(["path": path, "error": "missing-indexed-child", "index": index])
+                    continue
+                  }
+                  visit(element, path: "\(path)/indexed[\(index)]", depth: depth + 1, exposed: childPathExposed)
+                }
+              }
+            }
+          }
+          if let view = object as? UIView {
+            visitChildren(view.subviews, source: "subviews",
+              exposed: childPathExposed && defaultViewChildren)
+          }
+        }
+
+        visit(host.window, path: "window", depth: 0, exposed: true)
+        // Additional view diagnostics cannot bypass the window's exposed container semantics.
+        visit(host.controller.view, path: "hostingViewDiagnostics", depth: 0, exposed: false)
+        let uniqueButton = buttons.count == 1 ? buttons.first : nil
+        let nativePrerequisite = traversalComplete && screenSpace != nil && (uniqueButton.map {
+          $0.traits.contains(.button) && !$0.traits.contains(.notEnabled)
+            && finite($0.frame) && viewport.contains($0.frame) && safeArea.contains($0.frame)
+        } ?? false)
+        // Native semantics and geometry must succeed before the observed OCR variant is accepted.
+        let associatedLines = top.lines.filter { line in
+          guard nativePrerequisite, let button = uniqueButton,
+            ["> All Saved", "> AIl Saved"].contains(line.text), finite(line.rect),
+            viewport.contains(line.rect), safeArea.contains(line.rect) else { return false }
+          return button.frame.insetBy(dx: -1, dy: -1).contains(line.rect)
+        }
+        let corroborated = nativePrerequisite && associatedLines.count == 1
+        let attachment: [String: Any] = [
+          "png": "saved-interests-\(name)-top.png", "typography": host.typographyContext,
+          "screenCoordinateSpaceAvailable": screenSpace != nil, "traversalComplete": traversalComplete,
+          "visitedCount": retainedObjects.count, "nativeMatchCount": buttons.count,
+          "nativePrerequisite": nativePrerequisite, "viewport": NSCoder.string(for: viewport),
+          "safeArea": NSCoder.string(for: safeArea), "nativeRecords": records,
+          "ocrLines": top.lines.map { ["text": $0.text, "rect": NSCoder.string(for: $0.rect)] },
+          "associatedLines": associatedLines.map { ["text": $0.text, "rect": NSCoder.string(for: $0.rect)] },
+          "associationTolerancePoints": 1, "corroborated": corroborated
+        ]
+        do {
+          let data = try JSONSerialization.data(withJSONObject: attachment, options: [.prettyPrinted, .sortedKeys])
+          Attachment.record(Array(data), named: "saved-interests-\(name)-native-ax-association.json")
+          nativeResults.append((name: name, passed: corroborated))
+        } catch {
+          Attachment.record(Array(String(describing: error).utf8),
+            named: "saved-interests-\(name)-native-ax-serialization-error.txt")
+          nativeResults.append((name: name, passed: false))
+        }
         var collected = top.transcript
         if let scroll = host.verticalScrollView {
           let maximumOffset = max(0, scroll.contentSize.height - scroll.bounds.height + scroll.adjustedContentInset.bottom)
@@ -354,6 +534,12 @@ struct FeedsSearchPresentationTests {
             "Missing reachable saved-search or interest content: \(label); see scroll receipts")
         }
       }
+    }
+    // Record both widths before asserting the new native/OCR conjunction.
+    #expect(nativeResults.count == 2, "Both width diagnostics must be retained")
+    for result in nativeResults {
+      #expect(result.passed,
+        "Require exact unique enabled All Saved native semantics and contained full OCR at \(result.name); see native-ax-association receipt")
     }
   }
 
