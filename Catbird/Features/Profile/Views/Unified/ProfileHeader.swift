@@ -30,6 +30,7 @@ struct ProfileHeader: View {
     @State private var showUnfollowConfirmation = false
     @State private var showingSuggestedFollows = false
     @State private var showingAccountLabels = false
+    @State private var selectedAccountLabelID: String?
     @State private var pendingGermAction: GermProfileAction?
     @State private var germLaunchError = false
     @Namespace private var imageTransition
@@ -77,7 +78,7 @@ struct ProfileHeader: View {
         .sheet(isPresented: $showingAccountLabels) {
             if let client = appState.atProtoClient {
                 LabelsOnMeView(
-                    labels: visibleAccountLabels,
+                    labels: inspectedAccountLabels,
                     targetDescription: "Account @\(profile.handle)",
                     viewerDID: appState.userDID,
                     reportingService: ReportingService(client: client)
@@ -112,6 +113,7 @@ struct ProfileHeader: View {
             if !isActive {
                 pendingGermAction = nil
                 showingAccountLabels = false
+                selectedAccountLabelID = nil
             }
         }
         .onAppear {
@@ -549,15 +551,31 @@ struct ProfileHeader: View {
             }
             
             if !visibleAccountLabels.isEmpty {
-                Button { showingAccountLabels = true } label: {
-                    Label(visibleAccountLabels.count == 1 ? "1 account label" : "\(visibleAccountLabels.count) account labels", systemImage: "tag")
-                        .font(.subheadline)
-                        .fixedSize(horizontal: false, vertical: true)
+                if viewModel.isCurrentUser {
+                    Button {
+                        selectedAccountLabelID = nil
+                        showingAccountLabels = true
+                    } label: {
+                        Label(visibleAccountLabels.count == 1 ? "1 account label" : "\(visibleAccountLabels.count) account labels", systemImage: "tag")
+                            .font(.subheadline)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Color.accentColor)
+                    .padding(.vertical, 4)
+                    .accessibilityHint("Opens label names, issuing services, and eligible appeals")
+                } else {
+                    ProfileAccountLabelsView(
+                        labels: visibleAccountLabels,
+                        viewerDID: appState.userDID,
+                        isActiveViewer: { isActiveProfileViewer },
+                        onSelectLabel: { label in
+                            selectedAccountLabelID = label.id
+                            showingAccountLabels = true
+                        }
+                    )
+                    .environment(appState)
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(Color.accentColor)
-                .padding(.vertical, 4)
-                .accessibilityHint("Opens label names, issuing services, and eligible appeals")
             }
 
             if let action = germAction {
@@ -680,6 +698,11 @@ struct ProfileHeader: View {
     private var visibleAccountLabels: [ComAtprotoLabelDefs.Label] {
         guard isActiveProfileViewer else { return [] }
         return AccountLabelPresentation.accountLabels(profile.labels ?? [], subjectDID: profile.did.didString(), subscribedIssuers: Set(subscribedLabelerDIDs))
+    }
+
+    private var inspectedAccountLabels: [ComAtprotoLabelDefs.Label] {
+        guard let selectedAccountLabelID else { return visibleAccountLabels }
+        return visibleAccountLabels.filter { $0.id == selectedAccountLabelID }
     }
 
     private var subscribedLabelerDIDs: [String] {

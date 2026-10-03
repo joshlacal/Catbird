@@ -12,6 +12,57 @@ import XCTest
 /// and retained state. These do not qualify whole-app window/device resizing.
 @MainActor
 final class SocialComponentLayoutTests: XCTestCase {
+  func testProfileLabelsAreEnumeratedAtLargeTextAndRTL() async throws {
+    try await withFixture { state, _ in
+      let original = try XCTUnwrap(SocialActionsFixtureData.labels(owned: false).first)
+      let otherIssuer = try DID(didString: "did:plc:independentlabeler")
+      let otherLabel = ComAtprotoLabelDefs.Label(
+        src: otherIssuer, uri: original.uri, val: original.val, cts: original.cts
+      )
+      let otherLabeler = AppBskyLabelerDefs.LabelerViewDetailed(
+        uri: try ATProtocolURI(uriString: "at://\(otherIssuer.didString())/app.bsky.labeler.service/self"),
+        cid: SocialActionsFixtureData.labeler.cid,
+        creator: .init(did: otherIssuer, handle: try Handle(handleString: "independent.labels.test"), displayName: "Independent Labels"),
+        policies: .init(labelValues: [.init(rawValue: original.val)], labelValueDefinitions: [
+          .init(identifier: original.val, severity: "inform", blurs: "none", locales: [
+            .init(lang: LanguageCodeContainer(lang: Locale.Language(identifier: "en")),
+              name: "Community membership verified after participation", description: "An informational membership label")
+          ])
+        ]),
+        indexedAt: original.cts
+      )
+      // Two issuers can apply the same value; both must retain their own row and details.
+      let labels = AccountLabelPresentation.accountLabels(
+        [original, otherLabel], subjectDID: original.uri.uriString(),
+        subscribedIssuers: [original.src.didString(), otherIssuer.didString()]
+      )
+      var selections: [String] = []
+      for direction in [LayoutDirection.leftToRight, .rightToLeft] {
+        let rows = ProfileAccountLabelsView(
+          labels: labels, viewerDID: state.userDID, isActiveViewer: { true },
+          labelers: [SocialActionsFixtureData.labeler, otherLabeler],
+          onSelectLabel: { selections.append($0.id) }
+        )
+        let content = ScrollView { rows.padding(.horizontal, 16) }
+          .environment(\.layoutDirection, direction)
+        try await self.captureSizes(
+          component: direction == .leftToRight ? "profile-label-list-ltr" : "profile-label-list-rtl",
+          state: state, content: content,
+          expectedText: { name in
+            name == "short" ? ["Joined May 23", "Issued by"]
+              : ["Joined May 23", "Community membership verified", "Issued by"]
+          },
+          validateState: { _ in
+            XCTAssertEqual(labels.count, 2)
+            XCTAssertEqual(Set(labels.map(\.id)).count, 2)
+            XCTAssertTrue(selections.isEmpty, "Layout changes must not open an inspector")
+            XCTAssertTrue(labels.allSatisfy { !ReportingService.canAppeal($0, viewerDID: state.userDID) })
+          }
+        )
+      }
+    }
+  }
+
   func testLabelInspectorResizesAtLargeText() async throws {
     try await withFixture { state, client in
       let labels = SocialActionsFixtureData.labels(owned: false)
@@ -49,7 +100,7 @@ final class SocialComponentLayoutTests: XCTestCase {
       try await self.captureSizes(
         component: "profile-germ", state: state, content: profile,
         expectedText: { name in
-          name == "short" ? ["River"] : ["account label", "Germ DM", "Following", "Followers", "Posts"]
+          name == "short" ? ["River"] : ["joined-may", "Germ DM", "Following", "Followers", "Posts"]
         }
       ) { _ in
         XCTAssertEqual(model.selectedProfileTab, .media)
