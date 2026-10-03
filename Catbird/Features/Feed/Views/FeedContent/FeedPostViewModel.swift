@@ -805,58 +805,26 @@ final class FeedPostViewModel {
     
     /// Performs the actual mute operation on the server
     private func performMuteAuthor() async throws {
-        guard let client = appState?.atProtoClient else {
+        guard let appState, let fvp = feedViewPost else {
             throw PostInteractionError.clientUnavailable
         }
-
-        guard let fvp = feedViewPost else {
-            logger.error("Missing feedViewPost while muting author for: \(self.post.id, privacy: .public)")
-            throw PostInteractionError.clientUnavailable
+        guard try await appState.graphManager.mute(did: fvp.post.author.did.didString()) else {
+            throw PostInteractionError.moderationFailed
         }
-
-        let authorDID = fvp.post.author.did
-
-        let (responseCode) = try await client.app.bsky.graph.muteActor(
-            input: AppBskyGraphMuteActor.Input(actor: ATIdentifier.did(authorDID))
-        )
-
-        guard responseCode >= 200 && responseCode < 300 else {
-            throw PostInteractionError.serverError(responseCode)
-        }
-
         logger.debug("Successfully muted author: \(fvp.post.author.handle)")
     }
-    
-    /// Performs the actual block operation on the server
+
+    /// Performs the block and updates the shared graph state before refreshing previews.
     private func performBlockAuthor() async throws {
-        guard let client = appState?.atProtoClient else {
+        guard let appState, let fvp = feedViewPost else {
             throw PostInteractionError.clientUnavailable
         }
-
-        guard let fvp = feedViewPost else {
-            logger.error("Missing feedViewPost while blocking author for: \(self.post.id, privacy: .public)")
-            throw PostInteractionError.clientUnavailable
+        guard try await appState.graphManager.block(did: fvp.post.author.did.didString()) else {
+            throw PostInteractionError.moderationFailed
         }
-
-        let blockRecord = AppBskyGraphBlock(
-            subject: fvp.post.author.did,
-            createdAt: ATProtocolDate(date: Date())
-        )
-
-        let (responseCode, _) = try await client.com.atproto.repo.createRecord(
-            input: ComAtprotoRepoCreateRecord.Input(
-                repo: ATIdentifier(string: try client.getDid()),
-                collection: try NSID(nsidString: "app.bsky.graph.block"),
-                record: ATProtocolValueContainer.knownType(blockRecord)
-            )
-        )
-
-        guard responseCode >= 200 && responseCode < 300 else {
-            throw PostInteractionError.serverError(responseCode)
-        }
-
         logger.debug("Successfully blocked author: \(fvp.post.author.handle)")
     }
+
 }
 
 // MARK: - Errors

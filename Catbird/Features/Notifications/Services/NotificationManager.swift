@@ -1424,6 +1424,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     guard responseCode == 200 else {
       throw NotificationServiceError.serverError("HTTP \(responseCode)")
     }
+    NotificationCenter.default.post(name: NSNotification.Name("UserGraphChanged"), object: nil)
   }
 
   /// Unmutes a thread for push notifications
@@ -1442,6 +1443,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     guard responseCode == 200 else {
       throw NotificationServiceError.serverError("HTTP \(responseCode)")
     }
+    NotificationCenter.default.post(name: NSNotification.Name("UserGraphChanged"), object: nil)
   }
 
   // MARK: - Private Methods

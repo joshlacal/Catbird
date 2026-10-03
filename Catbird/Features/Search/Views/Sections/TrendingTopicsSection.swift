@@ -13,6 +13,7 @@ struct TrendingTopicsSection: View {
   @Environment(SceneNavigationContext.self) private var sceneContext
     @Environment(AppState.self) private var appState
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     
     let topics: [AppBskyUnspeccedDefs.TrendView]
     let onSelect: (String) -> Void
@@ -136,6 +137,8 @@ struct TrendingTopicsSection: View {
             topicLabel(topic)
         }
         .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
+        .accessibilityHint("Open posts about this topic")
         .contentShape(Rectangle())
         .contextMenu {
             Button {
@@ -162,11 +165,10 @@ struct TrendingTopicsSection: View {
                                 .foregroundStyle(.orange)
                         }
                     }
-                    Text(topic.displayName)
-                        .appFont(AppTextRole.headline)
-                        .foregroundStyle(.primary)
-                        .multilineTextAlignment(.leading)
-                        .fixedSize(horizontal: false, vertical: true)
+                    TrendingTopicTitle(title: topic.displayName)
+                    if dynamicTypeSize.isAccessibilitySize {
+                        TrendingTopicArtwork(link: topic.link)
+                    }
                     if let description = TrendingTopicPresentation.description(for: topic) {
                         Text(description)
                             .appFont(AppTextRole.subheadline)
@@ -182,9 +184,13 @@ struct TrendingTopicsSection: View {
                     .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
+                if !dynamicTypeSize.isAccessibilitySize {
+                    TrendingTopicArtwork(link: topic.link)
+                }
                 Image(systemName: "chevron.right")
                     .appFont(AppTextRole.caption)
                     .foregroundStyle(.tertiary)
+                    .accessibilityHidden(true)
                     .padding(.top, DesignTokens.Spacing.xs)
             }
             .padding(.vertical, DesignTokens.Spacing.base)

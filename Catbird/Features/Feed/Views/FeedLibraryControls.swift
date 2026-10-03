@@ -6,6 +6,8 @@ struct FeedLibraryControls: View {
   @Environment(AppState.self) private var appState
   let feed: AppBskyFeedDefs.GeneratorView
   var onOpen: (() -> Void)? = nil
+  var compactLabels = false
+  var alignsTrailing = false
   @State private var showExplanation = false
 
   private var actions: FeedLibraryActions { appState.feedLibraryActions }
@@ -14,7 +16,7 @@ struct FeedLibraryControls: View {
   private let education = FeedDiscoveryEducationStore()
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 6) {
+    VStack(alignment: alignsTrailing ? .trailing : .leading, spacing: 6) {
       if state == .saving {
         ProgressView("Saving")
           .font(.caption)
@@ -22,10 +24,12 @@ struct FeedLibraryControls: View {
       } else if membership == .absent {
         Button { perform(.saved) } label: {
           Label("Add", systemImage: "plus")
-            .frame(minHeight: 44)
+            .labelStyle(FeedLibraryActionLabelStyle(compact: compactLabels))
+            .frame(minWidth: 44, minHeight: 44)
         }
         .buttonStyle(.bordered)
         .accessibilityLabel("Add \(feed.displayName) to Saved")
+        .accessibilityIdentifier("feed.library.add.\(feed.uri.uriString())")
       } else {
         Menu {
           if membership == .saved {
@@ -45,10 +49,12 @@ struct FeedLibraryControls: View {
           } icon: {
             Image(systemName: membership == .pinned ? "pin.fill" : "checkmark")
           }
-            .frame(minHeight: 44)
+            .labelStyle(FeedLibraryActionLabelStyle(compact: compactLabels))
+            .frame(minWidth: 44, minHeight: 44)
         }
         .buttonStyle(.bordered)
         .accessibilityLabel("\(feed.displayName), \(membership == .pinned ? "Pinned" : "Saved"). Manage feed")
+        .accessibilityIdentifier("feed.library.manage.\(feed.uri.uriString())")
       }
       feedback
     }
@@ -105,6 +111,23 @@ struct FeedLibraryControls: View {
         }
       } catch {
         // FeedLibraryActions retains the per-feed error and local sync status.
+      }
+    }
+  }
+}
+
+/// Only the resting control collapses to an icon; menu items keep their titles.
+private struct FeedLibraryActionLabelStyle: LabelStyle {
+  let compact: Bool
+
+  @ViewBuilder
+  func makeBody(configuration: Configuration) -> some View {
+    if compact {
+      configuration.icon
+    } else {
+      HStack(spacing: 6) {
+        configuration.icon
+        configuration.title
       }
     }
   }

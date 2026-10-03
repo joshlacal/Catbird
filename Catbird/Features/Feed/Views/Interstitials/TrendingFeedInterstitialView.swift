@@ -34,7 +34,7 @@ public struct TrendingFeedInterstitialView: View {
   }
 }
 
-/// The production presentation is independent of account services so fixture hosts can exercise it.
+/// Shared production layout; topic artwork reads the enclosing account’s moderated preview cache.
 struct TrendingFeedPresentation: View {
   let content: TrendingFeedContent
   let showTopics: Bool
@@ -85,15 +85,12 @@ struct TrendingFeedPresentation: View {
 
         if showTopics && !content.trends.isEmpty {
           ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: DesignTokens.Spacing.sm) {
+            HStack(alignment: .top, spacing: DesignTokens.Spacing.sm) {
               ForEach(content.trends.prefix(6), id: \.topic) { trend in
                 Button { onSelectTopic(trend) } label: {
                   VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
-                    Text(trend.displayName)
-                      .appFont(size: Typography.Size.subheadline, weight: .semibold, relativeTo: .subheadline)
-                      .foregroundStyle(.primary)
-                      .lineLimit(2)
-                      .fixedSize(horizontal: false, vertical: true)
+                    TrendingTopicArtwork(link: trend.link)
+                    TrendingTopicTitle(title: trend.displayName, size: 20)
                     if trend.postCount > 0 {
                       Text("\(trend.postCount.formatted(.number.notation(.compactName))) posts")
                         .appFont(AppTextRole.caption)
@@ -101,13 +98,14 @@ struct TrendingFeedPresentation: View {
                     }
                   }
                   .multilineTextAlignment(.leading)
-                  .frame(maxWidth: dynamicTypeSize.isAccessibilitySize ? 260 : 200, alignment: .leading)
+                  .frame(width: dynamicTypeSize.isAccessibilitySize ? 260 : 200, alignment: .leading)
                   .padding(.horizontal, DesignTokens.Spacing.base)
                   .padding(.vertical, DesignTokens.Spacing.md)
                   .frame(minHeight: 44, alignment: .leading)
                   .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: DesignTokens.Size.radiusMD))
                 }
                 .buttonStyle(.plain)
+                .accessibilityElement(children: .combine)
                 .accessibilityHint("Open posts about this topic")
               }
             }

@@ -32,10 +32,10 @@ extension PostComposerViewUIKit {
                   UIKitAvatarView(
                     did: appState.userDID,
                     client: appState.atProtoClient,
-                    size: 60,
+                    size: Self.composerAvatarSize,
                     avatarURL: appState.currentUserProfile?.finalAvatarURL()
                   )
-                  .frame(width: 60, height: 60)
+                  .frame(width: Self.composerAvatarSize, height: Self.composerAvatarSize)
                   #else
                   if let profile = appState.currentUserProfile, let avatarURL = profile.avatar {
                     AsyncImage(url: URL(string: avatarURL.description)) { image in
@@ -43,24 +43,17 @@ extension PostComposerViewUIKit {
                     } placeholder: {
                       Circle().fill(Color.systemGray5)
                     }
-                    .frame(width: 60, height: 60)
+                    .frame(width: Self.composerAvatarSize, height: Self.composerAvatarSize)
                     .clipShape(Circle())
                   } else {
                     Circle()
                       .fill(Color.systemGray5)
-                      .frame(width: 60, height: 60)
+                      .frame(width: Self.composerAvatarSize, height: Self.composerAvatarSize)
                   }
                   #endif
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Switch account")
-
-                if index < vm.threadEntries.count - 1 {
-                  Rectangle()
-                    .fill(Color.systemGray4)
-                    .frame(width: 2)
-                    .frame(maxHeight: .infinity)
-                }
               }
 
               if index == vm.currentThreadIndex {
@@ -83,7 +76,7 @@ extension PostComposerViewUIKit {
               }
             }
             .padding(.horizontal, 16)
-            .padding(.top, 12)
+            .padding(.top, index == 0 ? 12 : 4)
             .contentShape(Rectangle())
             .onTapGesture {
               pcThreadLogger.info("PostComposerThread: Switching to thread entry at index \(index)")
@@ -102,10 +95,16 @@ extension PostComposerViewUIKit {
             } else {
               inactiveEntryMediaSection(entry: entry)
             }
-
+          }
+          .background(alignment: .topLeading) {
             if index < vm.threadEntries.count - 1 {
-              Divider()
-                .padding(.leading, 88)
+              Rectangle()
+                .fill(Color.systemGray4)
+                .frame(width: 2)
+                .padding(.top, (index == 0 ? 12 : 4) + Self.composerAvatarSize + 4)
+                .padding(.leading, 16 + (Self.composerAvatarSize - 2) / 2)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
             }
           }
           .opacity(index == vm.currentThreadIndex ? 1.0 : 0.55)

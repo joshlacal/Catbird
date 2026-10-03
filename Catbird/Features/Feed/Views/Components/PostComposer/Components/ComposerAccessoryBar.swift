@@ -113,7 +113,7 @@ struct ComposerAccessoryBar: View {
         setMenu(false)
         actions.onAddToThread()
       } label: {
-        Image(systemName: "plus.square.on.square")
+        Image(systemName: "text.badge.plus")
           .font(.system(size: 16))
           .frame(width: 36, height: 36)
           .padding(4)

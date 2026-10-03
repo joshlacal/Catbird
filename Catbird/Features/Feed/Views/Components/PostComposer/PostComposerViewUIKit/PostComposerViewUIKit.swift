@@ -20,6 +20,8 @@ import UIKit
 private let pcUIKitLogger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "Catbird", category: "PostComposerUIKit")
 
 struct PostComposerViewUIKit: View {
+  static let composerAvatarSize = DesignTokens.Size.avatarXL
+
   @Environment(\.dismiss) var dismiss
   @Environment(\.horizontalSizeClass) private var hSize
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -542,10 +544,10 @@ struct PostComposerViewUIKit: View {
         UIKitAvatarView(
           did: appState.userDID,
           client: appState.atProtoClient,
-          size: 40,
+          size: Self.composerAvatarSize,
           avatarURL: appState.currentUserProfile?.finalAvatarURL()
         )
-        .frame(width: 40, height: 40)
+        .frame(width: Self.composerAvatarSize, height: Self.composerAvatarSize)
         .contentShape(Circle())
         .clipShape(Circle())
         .clipped()
@@ -556,10 +558,11 @@ struct PostComposerViewUIKit: View {
           } placeholder: {
             Circle().fill(Color.systemGray5)
           }
-          .frame(width: 40, height: 40)
+          .frame(width: Self.composerAvatarSize, height: Self.composerAvatarSize)
           .clipShape(Circle())
         } else {
-          Circle().fill(Color.systemGray5).frame(width: 40, height: 40)
+          Circle().fill(Color.systemGray5)
+            .frame(width: Self.composerAvatarSize, height: Self.composerAvatarSize)
         }
         #endif
       }

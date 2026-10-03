@@ -1097,6 +1097,7 @@ final class GraphManager {
         return false
       }
 
+      NotificationCenter.default.post(name: NSNotification.Name("UserGraphChanged"), object: nil)
       logger.debug("Successfully muted thread")
       return true
     } catch {
@@ -1128,6 +1129,7 @@ final class GraphManager {
         return false
       }
 
+      NotificationCenter.default.post(name: NSNotification.Name("UserGraphChanged"), object: nil)
       logger.debug("Successfully unmuted thread")
       return true
     } catch {

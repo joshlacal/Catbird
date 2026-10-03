@@ -602,11 +602,10 @@ struct ImageViewerItemView: UIViewRepresentable {
   
   private func loadImage(into imageView: UIImageView, context: Context) {
     guard let imageUrl = URL(string: image.fullsize.uriString()) else { return }
-    let jxlUrl = ImageLoadingManager.cdnURL(imageUrl)
 
     // Use the shared pipeline to load the image
     ImageLoadingManager.shared.pipeline.loadImage(
-      with: jxlUrl,
+      with: imageUrl,
       completion: { result in
         if case .success(let response) = result {
           imageView.image = response.image
@@ -780,7 +779,7 @@ struct ImageViewerItemView: View {
   private let logger = Logger(subsystem: "blue.catbird", category: "ImageViewerItemView")
   
   var body: some View {
-    AsyncImage(url: image.fullsize.url.map { ImageLoadingManager.cdnURL($0) }) { phase in
+    AsyncImage(url: image.fullsize.url) { phase in
       switch phase {
       case .empty:
         ProgressView()
@@ -1144,7 +1143,7 @@ struct EnhancedImageViewer: View {
   }
 
   private func prefetchFullSizeImages() async {
-    let urls = images.compactMap { $0.fullsize.url.map { ImageLoadingManager.cdnURL($0) } }
+    let urls = images.compactMap { $0.fullsize.url }
     let manager = ImageLoadingManager.shared
     await manager.prefetchImages(urls: urls)
   }
@@ -1152,12 +1151,11 @@ struct EnhancedImageViewer: View {
 #if os(iOS)
   private func shareCurrentImage() {
     guard let image = images[safe: currentIndex],
-          let sourceURL = image.fullsize.url else { return }
+          let imageURL = image.fullsize.url else { return }
     cancelImageShareLoad()
     let requestID = UUID()
     let imageID = image.id
     shareRequestID = requestID
-    let imageURL = ImageLoadingManager.cdnURL(sourceURL)
     shareLoadTask = Task { @MainActor in
       defer {
         if self.shareRequestID == requestID {
@@ -1371,8 +1369,8 @@ class ZoomableImageViewController: UIViewController, UIScrollViewDelegate {
   }
 
   init(image: AppBskyEmbedImages.ViewImage, liveTextEnabled: Bool, liveTextSupported: Bool) {
-    let fullsize = ImageLoadingManager.cdnURL(URL(string: image.fullsize.uriString()) ?? URL(string: "about:blank")!)
-    let thumbnail = URL(string: image.thumb.uriString()).map { ImageLoadingManager.cdnURL($0) }
+    let fullsize = URL(string: image.fullsize.uriString()) ?? URL(string: "about:blank")!
+    let thumbnail = URL(string: image.thumb.uriString())
     self.imageSource = .url(fullsize: fullsize, thumbnail: thumbnail)
     self.accessibilityAltText = image.alt
     self.liveTextSupported = liveTextSupported

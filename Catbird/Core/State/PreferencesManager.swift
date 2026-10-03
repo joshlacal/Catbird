@@ -18,6 +18,9 @@ final class PreferencesManager {
   // Add cache for server preferences to maintain consistency
   private var cachedServerPreferences: Preferences?
   private var feedLibraryWriteRevision: UInt64 = 0
+  /// Nil until this account's accepted-labeler header has finished applying to its current client.
+  @MainActor private(set) var appliedAcceptLabelerDIDs: [String]?
+  @MainActor private var labelerHeaderGeneration = 0
 
   // Current state
   enum PreferencesState: Equatable {
@@ -75,8 +78,11 @@ final class PreferencesManager {
   }
 
   /// Update client reference when it changes
+  @MainActor
   func updateClient(_ client: ATProtoClient?) {
     self.client = client
+    appliedAcceptLabelerDIDs = nil
+    labelerHeaderGeneration += 1
 
     // Reset cache when client changes - we'll need to refetch data for the new user
     if client == nil {
@@ -93,8 +99,11 @@ final class PreferencesManager {
   }
 
   /// Configure the manager for a specific account
+  @MainActor
   func configure(accountDID: String) {
     self.accountDID = accountDID
+    appliedAcceptLabelerDIDs = nil
+    labelerHeaderGeneration += 1
     // Clear cache so next fetch loads the correct account's data
     cachedServerPreferences = nil
     logger.debug("PreferencesManager configured for account: \(accountDID)")
@@ -159,6 +168,8 @@ final class PreferencesManager {
     cachedServerPreferences = nil
 
     // Reset state
+    appliedAcceptLabelerDIDs = nil
+    labelerHeaderGeneration += 1
     state = .initializing
 
     guard let modelContext = modelContext else {
@@ -1666,7 +1677,17 @@ final class PreferencesManager {
 
     if let client = client {
       let appliedAccountDID = accountDID
+      labelerHeaderGeneration += 1
+      let generation = labelerHeaderGeneration
+      appliedAcceptLabelerDIDs = nil
       await client.setAcceptLabelers(dids: dids)
+      guard self.client === client else { return }
+      guard accountDID == appliedAccountDID, generation == labelerHeaderGeneration else {
+        // An overlapping setter may have finished last; omit previews until a fresh application.
+        appliedAcceptLabelerDIDs = nil
+        return
+      }
+      appliedAcceptLabelerDIDs = dids
       NotificationCenter.default.post(
         name: Self.acceptLabelersHeaderDidChange,
         object: self,

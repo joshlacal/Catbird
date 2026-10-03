@@ -32,7 +32,6 @@ struct Post: View, Equatable {
     @State private var isTranslating = false
     @State private var shouldPrepareTranslation = false
     @State private var showTranslationPopover = false
-    @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(AppState.self) private var appState
     @Environment(\.adultContentEnabled) private var adultContentEnabled
@@ -130,20 +129,13 @@ struct Post: View, Equatable {
         let displayString = displayAttributedString(base: baseForBody, key: key)
 
         VStack(alignment: .leading, spacing: 6) {
-            // Translation button with enhanced styling
+            // Translation action and language metadata
             if shouldShowTranslationButton || indicatorLanguage != nil {
-                HStack(spacing: 6) {
+                VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
                     if shouldShowTranslationButton {
                         translationButton
                     }
-                    if let indicatorLanguage {
-                        Text(languageName(for: indicatorLanguage))
-                            .appCaption2()
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3)
-                            .background(.secondary.opacity(0.12), in: Capsule())
-                    }
+                    languageMetadata
                 }
             }
             
@@ -287,14 +279,10 @@ struct Post: View, Equatable {
             }
         }
     
-    private var sourceLanguageCodes: String {
+    private var sourceLanguageNames: String {
         sourceLanguages
-            .compactMap { $0.baseLanguageCode }
+            .map { languageName(for: $0) }
             .joined(separator: ", ")
-    }
-    
-    private var targetLanguageCode: String {
-        targetLanguage.baseLanguageCode?.lowercased() ?? "en"
     }
 
     private func displayAttributedString(
@@ -342,7 +330,21 @@ struct Post: View, Equatable {
         return localized ?? (identifier.isEmpty ? "Unknown" : identifier)
     }
 
-    // Enhanced translation button with better styling
+    private var languageMetadata: some View {
+        Group {
+            if shouldShowTranslationButton {
+                Text("From \(sourceLanguageNames) to \(languageName(for: targetLanguage))")
+            } else if let indicatorLanguage {
+                Text(languageName(for: indicatorLanguage))
+            }
+        }
+        .appCaption2()
+        .foregroundStyle(.secondary)
+        .multilineTextAlignment(.leading)
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     private var translationButton: some View {
         Button(action: toggleTranslation) {
             HStack(spacing: 6) {
@@ -357,23 +359,23 @@ struct Post: View, Equatable {
                     
                     Text(showTranslation ? "Hide Translation" : "Translate")
                         .customScaledFont(size: 12, weight: .medium)
-                    
-                    Text("(\(sourceLanguageCodes) → \(targetLanguageCode))")
-                        .customScaledFont(size: 11, weight: .regular)
-                        .foregroundColor(.secondary.opacity(0.8))
                 }
             }
-            .padding(.vertical, 4)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.vertical, 8)
             .padding(.horizontal, 8)
+            .frame(minWidth: 44, minHeight: 44)
             .background(
                 Capsule()
-                    .fill(Color.secondary.opacity(0.15))
+                    .fill(Color.accentColor.opacity(0.12))
             )
-            .foregroundColor(colorScheme == .dark ? .white.opacity(0.9) : .primary.opacity(0.8))
+            .foregroundColor(.accentColor)
             .contentShape(Capsule())
         }
         .buttonStyle(PlainButtonStyle())
         .disabled(isTranslating)
+        .accessibilityLabel(isTranslating ? Text("Translating...") : Text(showTranslation ? "Hide Translation" : "Translate"))
+        .accessibilityHint(showTranslation ? Text("Show the original post") : Text("Translate into \(languageName(for: targetLanguage))"))
     }
 
     private func toggleTranslation() {

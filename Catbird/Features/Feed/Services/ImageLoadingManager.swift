@@ -54,10 +54,8 @@ actor ImageLoadingManager {
     /// Start prefetching images for the given URLs
     /// - Parameter urls: Array of image URLs to prefetch
     func startPrefetching(urls: [URL]) {
-        // Transform CDN URLs to preferred format
-        let transformedURLs = urls.map { Self.cdnURL($0) }
         // Filter out already prefetched URLs
-        let newURLs = transformedURLs.filter { !prefetchedURLs.contains($0) }
+        let newURLs = urls.filter { !prefetchedURLs.contains($0) }
         guard !newURLs.isEmpty else { return }
         
         // Check if we need to clear some prefetched images
@@ -200,23 +198,10 @@ extension ImageLoadingManager {
         ]
     }
 
-    /// Converts a Bluesky CDN image URL to request JPEG XL format.
-    /// JXL is supported natively since iOS 17 / macOS 14 via ImageIO.
-    static func cdnURL(_ url: URL, format: String = "jxl") -> URL {
-        let str = url.absoluteString
-        guard str.contains("cdn.bsky.app") || str.contains("cdn.bsky.social") else { return url }
-        // Replace existing format suffix (@jpeg, @png, @webp) or append one
-        if let atRange = str.range(of: "@", options: .backwards),
-           str[atRange.upperBound...].allSatisfy({ $0.isLetter }) {
-            return URL(string: String(str[..<atRange.lowerBound]) + "@\(format)") ?? url
-        }
-        return URL(string: str + "@\(format)") ?? url
-    }
-
     /// Create a request with optimized caching key for the given size
     static func imageRequest(for url: URL, targetSize: CGSize) -> ImageRequest {
         let safeSize = normalizedTargetSize(targetSize)
-        var request = ImageRequest(url: cdnURL(url))
+        var request = ImageRequest(url: url)
 
         // Add size to cache key for better cache efficiency
         request.processors = processors(for: safeSize)

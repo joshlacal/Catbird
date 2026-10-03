@@ -113,6 +113,7 @@ struct AddFeedSheet: View {
           ForEach(model.items) { feed in
             FeedDiscoveryHeaderView(
               feed: feed,
+              libraryControlsTrailing: true,
               onTap: { path.append(FeedPreviewRoute(feed: feed)) },
               onLikedByTap: { path.append(NavigationDestination.postLikes(feed.uri.uriString())) },
               onOpenFeed: { open(feed) }

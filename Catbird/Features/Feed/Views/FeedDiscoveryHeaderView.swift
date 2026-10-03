@@ -10,7 +10,9 @@ import AppKit
 struct FeedDiscoveryHeaderView: View {
   @Environment(AppState.self) private var appState
   @Environment(\.themeManager) private var themeManager
+  @Environment(\.dynamicTypeSize) private var dynamicTypeSize
   let feed: AppBskyFeedDefs.GeneratorView
+  var libraryControlsTrailing = false
   /// Invoked when the row body (avatar + text) is tapped. When `nil` the row is
   /// non-tappable — used when this view is the header of an already-open feed.
   var onTap: (() -> Void)? = nil
@@ -33,28 +35,30 @@ struct FeedDiscoveryHeaderView: View {
   }
   
   var body: some View {
-    VStack(alignment: .leading, spacing: 8) {
-      // Tappable content region — avatar + text. Disabled (non-tappable) when
-      // no onTap is provided, e.g. the header of an already-open feed.
-      Button {
-        onTap?()
-      } label: {
+    Group {
+      if libraryControlsTrailing {
         HStack(alignment: .top, spacing: 12) {
-          feedAvatar
-          feedInfo
-          Spacer(minLength: 8)
+          previewButton
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .layoutPriority(1)
+          VStack(alignment: .trailing, spacing: 4) {
+            FeedLibraryControls(feed: feed, onOpen: onOpenFeed,
+                                compactLabels: dynamicTypeSize.isAccessibilitySize,
+                                alignsTrailing: true)
+            moreMenu
+          }
+          .frame(width: dynamicTypeSize.isAccessibilitySize ? 76 : 104, alignment: .trailing)
+          .fixedSize(horizontal: false, vertical: true)
         }
-        .contentShape(Rectangle())
-      }
-      .buttonStyle(.plain)
-      .disabled(onTap == nil)
-
-      // Trailing actions are separate hit targets, so tapping them never
-      // triggers row navigation.
-      HStack(alignment: .top) {
-        FeedLibraryControls(feed: feed, onOpen: onOpenFeed)
-        Spacer(minLength: 8)
-        moreMenu
+      } else {
+        VStack(alignment: .leading, spacing: 8) {
+          previewButton
+          HStack(alignment: .top) {
+            FeedLibraryControls(feed: feed, onOpen: onOpenFeed)
+            Spacer(minLength: 8)
+            moreMenu
+          }
+        }
       }
     }
     .padding(.vertical, 8)
@@ -72,6 +76,33 @@ struct FeedDiscoveryHeaderView: View {
     .task(id: feed.uri.uriString()) {
       seedFromFeedViewer()
     }
+  }
+
+  /// Preview and library controls stay separate buttons in both arrangements.
+  private var previewButton: some View {
+    Button {
+      onTap?()
+    } label: {
+      Group {
+        if libraryControlsTrailing && dynamicTypeSize.isAccessibilitySize {
+          VStack(alignment: .leading, spacing: 8) {
+            feedAvatar
+            feedInfo
+          }
+        } else {
+          HStack(alignment: .top, spacing: 12) {
+            feedAvatar
+            feedInfo
+            if !libraryControlsTrailing { Spacer(minLength: 8) }
+          }
+        }
+      }
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .disabled(onTap == nil)
+    .accessibilityIdentifier("feed.discovery.preview.\(feed.uri.uriString())")
   }
   // MARK: - Avatar
 
@@ -112,7 +143,9 @@ struct FeedDiscoveryHeaderView: View {
       Text(feed.displayName)
         .appFont(AppTextRole.headline)
         .foregroundStyle(.primary)
-        .lineLimit(1)
+        .lineLimit(libraryControlsTrailing ? nil : 1)
+        .multilineTextAlignment(.leading)
+        .fixedSize(horizontal: false, vertical: true)
 
       subtitleLine
 
@@ -125,6 +158,7 @@ struct FeedDiscoveryHeaderView: View {
           .fixedSize(horizontal: false, vertical: true)
       }
     }
+    .frame(maxWidth: .infinity, alignment: .leading)
   }
 
   private var subtitleLine: some View {
@@ -133,7 +167,9 @@ struct FeedDiscoveryHeaderView: View {
     return Text(text)
       .appFont(AppTextRole.subheadline)
       .foregroundStyle(.secondary)
-      .lineLimit(1)
+      .lineLimit(libraryControlsTrailing ? nil : 1)
+      .multilineTextAlignment(.leading)
+      .fixedSize(horizontal: false, vertical: true)
   }
 
   // MARK: - Trailing actions
@@ -181,7 +217,8 @@ struct FeedDiscoveryHeaderView: View {
       Image(systemName: "ellipsis")
         .appFont(AppTextRole.headline)
         .foregroundStyle(.secondary)
-        .frame(width: 32, height: 32)
+        .frame(width: libraryControlsTrailing ? 44 : 32,
+               height: libraryControlsTrailing ? 44 : 32)
         .contentShape(Rectangle())
     }
     .buttonStyle(.plain)

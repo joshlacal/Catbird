@@ -316,6 +316,7 @@ final class AppState {
 
     /// Cache of prefetched feeds by type
     @ObservationIgnored private let prefetchedFeedCache = PrefetchedFeedCache()
+    @MainActor @ObservationIgnored let trendingTopicMediaStore = TrendingTopicMediaStore()
 
     /// Flag to track if AuthManager initialization is complete
     @ObservationIgnored private var isAuthManagerInitialized = false

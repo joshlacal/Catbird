@@ -223,6 +223,7 @@ struct AllTrendingTopicsView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(AppState.self) private var appState
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var selectedCategory: String?
     @State private var showContributors: Bool = false
     @State private var viewMode: ViewMode = .list
@@ -401,8 +402,7 @@ private struct InlineTopicSummaryLine: View {
     
     private var topicsGridView: some View {
         LazyVGrid(columns: [
-            GridItem(.flexible(), spacing: 12),
-            GridItem(.flexible(), spacing: 12)
+            GridItem(.adaptive(minimum: dynamicTypeSize.isAccessibilitySize ? 280 : 180), spacing: 12)
         ], spacing: 16) {
             ForEach(filteredTopics, id: \.link) { topic in
                 compactTopicCard(topic: topic)
@@ -413,8 +413,7 @@ private struct InlineTopicSummaryLine: View {
     
     private func topicCard(topic: AppBskyUnspeccedDefs.TrendView) -> some View {
         Button {
-            // Create a full URL from the relative path to properly route to the feed
-            if let url = URL(string: "https://bsky.app\(topic.link)") {
+            if let url = URL(string: topic.link, relativeTo: URL(string: "https://bsky.app"))?.absoluteURL {
                 onSelect(url.absoluteString)
             }
             dismiss()
@@ -422,15 +421,9 @@ private struct InlineTopicSummaryLine: View {
             VStack(alignment: .leading, spacing: 16) {
                 // Main topic info
                 HStack(alignment: .top, spacing: 24) {
-                    // Category icon
-                    categoryIcon(for: topic.category)
-                        .appFont(AppTextRole.title2)
-                        .foregroundColor(categoryColor(for: topic.category))
-                        .frame(width: 48, height: 48)
-                        .background(
-                            Circle()
-                                .fill(categoryColor(for: topic.category).opacity(0.15))
-                        )
+                    if !dynamicTypeSize.isAccessibilitySize {
+                        TrendingTopicArtwork(link: topic.link)
+                    }
                     
                     VStack(alignment: .leading, spacing: 8) {
                         // Category and badges
@@ -456,12 +449,10 @@ private struct InlineTopicSummaryLine: View {
                         }
                         
                         // Topic name
-                        Text(topic.displayName)
-                            .appFont(AppTextRole.title2.weight(.semibold))
-                            .foregroundColor(Color.dynamicText(appState.themeManager, style: .primary, currentScheme: colorScheme))
-                            .multilineTextAlignment(.leading)
-                            .lineLimit(nil)
-                            .fixedSize(horizontal: false, vertical: true)
+                        TrendingTopicTitle(title: topic.displayName)
+                        if dynamicTypeSize.isAccessibilitySize {
+                            TrendingTopicArtwork(link: topic.link)
+                        }
                         // Topic summary
                         InlineTopicSummaryLine(topic: topic)
                         
@@ -495,12 +486,12 @@ private struct InlineTopicSummaryLine: View {
                 }
                 
                 // Contributors section (conditionally shown)
-                if showContributors && !topic.actors.isEmpty {
+                if showContributors && !appState.topicPreview(for: topic.link).contributorProfiles.isEmpty {
                     VStack(alignment: .leading, spacing: 12) {
                         Color.dynamicSeparator(appState.themeManager, currentScheme: colorScheme)
                             .frame(height: 1)
                         
-                        Text("Top Contributors")
+                        Text("Topic Participants")
                             .appFont(AppTextRole.subheadline.weight(.medium))
                             .foregroundColor(Color.dynamicText(appState.themeManager, style: .primary, currentScheme: colorScheme))
                         
@@ -518,8 +509,7 @@ private struct InlineTopicSummaryLine: View {
     
     private func compactTopicCard(topic: AppBskyUnspeccedDefs.TrendView) -> some View {
         Button {
-            // Create a full URL from the relative path to properly route to the feed
-            if let url = URL(string: "https://bsky.app\(topic.link)") {
+            if let url = URL(string: topic.link, relativeTo: URL(string: "https://bsky.app"))?.absoluteURL {
                 onSelect(url.absoluteString)
             }
             dismiss()
@@ -542,12 +532,8 @@ private struct InlineTopicSummaryLine: View {
                     }
                 }
                 
-                Text(topic.displayName)
-                    .appFont(AppTextRole.headline.weight(.semibold))
-                    .foregroundColor(Color.dynamicText(appState.themeManager, style: .primary, currentScheme: colorScheme))
-                    .multilineTextAlignment(.leading)
-                    .lineLimit(nil)
-                    .fixedSize(horizontal: false, vertical: true)
+                TrendingTopicTitle(title: topic.displayName, size: 20)
+                TrendingTopicArtwork(link: topic.link)
                 InlineTopicSummaryLine(topic: topic)
                 
                 VStack(alignment: .leading, spacing: 4) {
@@ -575,7 +561,7 @@ private struct InlineTopicSummaryLine: View {
     private func topicContributors(topic: AppBskyUnspeccedDefs.TrendView) -> some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 12) {
-                ForEach(topic.actors.prefix(4), id: \.did) { actor in
+                ForEach(appState.topicPreview(for: topic.link).contributorProfiles, id: \.did) { actor in
                     contributorView(actor: actor)
                 }
             }
@@ -589,7 +575,7 @@ private struct InlineTopicSummaryLine: View {
             sceneContext.navigationManager.navigate(to: .profile(actor.did.didString()))
         } label: {
             HStack(spacing: 8) {
-                AsyncProfileImage(url: actor.finalAvatarURL(), size: 32)
+                AsyncProfileImage(url: actor.finalAvatarURL(), size: 32, labels: actor.labels)
                 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(actor.displayName ?? "@\(actor.handle)")

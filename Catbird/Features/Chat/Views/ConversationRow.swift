@@ -107,7 +107,9 @@ struct ConversationRow: View {
     .accessibilityAddTraits(.isButton)
     .accessibilityHint("Double tap to open conversation")
     .spacingSM(.vertical)
-    .alignmentGuide(.listRowSeparatorLeading) { _ in 0 }
+    .alignmentGuide(.listRowSeparatorLeading) { _ in
+      DesignTokens.Size.avatarLG + DesignTokens.Spacing.base
+    }
     .alignmentGuide(.listRowSeparatorTrailing) { dimensions in dimensions.width }
     // Consider adding context menu for mute/leave actions
   }

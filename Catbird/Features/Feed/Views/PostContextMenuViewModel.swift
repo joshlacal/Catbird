@@ -137,36 +137,9 @@ final class PostContextMenuViewModel {
     }
 
     func blockUser() async {
-        let targetDid = post.author.did.didString()
-
-        // Publish the block record directly.
-        let did = appState.userDID
-        let block = AppBskyGraphBlock(subject: post.author.did, createdAt: ATProtocolDate(date: Date()))
         do {
-            let input = ComAtprotoRepoCreateRecord.Input(
-                repo: try ATIdentifier(string: did),
-                collection: try NSID(nsidString: "app.bsky.graph.block"),
-                record: ATProtocolValueContainer.knownType(block)
-            )
-
-            let result = try await appState.atProtoClient?.com.atproto.repo.createRecord(input: input)
-            if let (responseCode, _) = result {
-                if responseCode == 200 {
-
-                    logger.debug("User blocked successfully")
-
-                    // Show block toast
-                    await MainActor.run {
-                        appState.toastManager.show(
-                            ToastItem(
-                                message: "User blocked",
-                                icon: "hand.raised.fill",
-                                duration: 2.5
-                            )
-                        )
-                    }
-                }
-            }
+            guard try await appState.graphManager.block(did: post.author.did.didString()) else { return }
+            appState.toastManager.show(ToastItem(message: "User blocked", icon: "hand.raised.fill", duration: 2.5))
         } catch {
             logger.debug("Error blocking user: \(error)")
         }
@@ -174,51 +147,22 @@ final class PostContextMenuViewModel {
 
     func muteUser() async {
         do {
-            let input = AppBskyGraphMuteActor.Input(actor: try ATIdentifier(string: post.author.did.didString()))
-
-            let responseCode = try await appState.atProtoClient?.app.bsky.graph.muteActor(input: input)
-            if responseCode == 200 {
-                logger.debug("User muted successfully")
-                
-                // Show mute toast
-                await MainActor.run {
-                    appState.toastManager.show(
-                        ToastItem(
-                            message: "User muted",
-                            icon: "speaker.slash.fill",
-                            duration: 2.5
-                        )
-                    )
-                }
-            }
+            guard try await appState.graphManager.mute(did: post.author.did.didString()) else { return }
+            appState.toastManager.show(ToastItem(message: "User muted", icon: "speaker.slash.fill", duration: 2.5))
         } catch {
             logger.debug("Error muting user: \(error)")
         }
     }
 
     func muteThread() async {
-        let input = AppBskyGraphMuteThread.Input(root: post.uri)
         do {
-            let responseCode = try await appState.atProtoClient?.app.bsky.graph.muteThread(input: input)
-            if responseCode == 200 {
-                logger.debug("Thread muted successfully")
-                
-                // Show thread mute toast
-                await MainActor.run {
-                    appState.toastManager.show(
-                        ToastItem(
-                            message: "Thread muted",
-                            icon: "bell.slash.fill",
-                            duration: 2.5
-                        )
-                    )
-                }
-            }
+            guard try await appState.graphManager.muteThread(threadRootUri: resolvedRootPostURI ?? post.uri) else { return }
+            appState.toastManager.show(ToastItem(message: "Thread muted", icon: "bell.slash.fill", duration: 2.5))
         } catch {
             logger.debug("Error muting thread: \(error)")
         }
     }
-    
+
     func hidePost() async {
         let postURI = post.uri.uriString()
         await appState.postHidingManager.hidePost(postURI)
