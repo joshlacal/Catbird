@@ -219,6 +219,7 @@ struct PostComposerViewUIKit: View {
               VStack(spacing: 0) {
                 Text(getNavigationTitle(vm: vm)).appHeadline()
                 Label("Replying to @\(parent.author.handle.description)", systemImage: "arrowshape.turn.up.left")
+                  .labelStyle(.titleAndIcon)
                   .appFont(AppTextRole.caption)
                   .foregroundStyle(.secondary)
                   .lineLimit(1)

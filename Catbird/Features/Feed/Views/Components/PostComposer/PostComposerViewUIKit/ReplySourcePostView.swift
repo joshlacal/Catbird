@@ -20,27 +20,25 @@ struct ReplyContextPanel: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: sourceHeight > 0 ? 8 : 0) {
-      HStack(spacing: 8) {
-        Label("Replying to @\(post.author.handle.description)", systemImage: "arrowshape.turn.up.left")
-          .appFont(AppTextRole.caption)
-          .foregroundStyle(.secondary)
-          .lineLimit(1)
-          .accessibilityElement(children: .combine)
-          .accessibilityIdentifier("reply-source-identity")
-        Spacer(minLength: 0)
-        Button(action: onViewOriginal) {
-          Image(systemName: "arrow.up.left.and.arrow.down.right")
-            .frame(width: 44, height: 44)
-            .contentShape(Rectangle())
+      if !compactHeight {
+        HStack(spacing: 8) {
+          Label("Replying to @\(post.author.handle.description)", systemImage: "arrowshape.turn.up.left")
+            .appFont(AppTextRole.caption)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("reply-source-identity")
+          Spacer(minLength: 0)
+          Button(action: onViewOriginal) {
+            Image(systemName: "arrow.up.left.and.arrow.down.right")
+              .frame(width: 44, height: 44)
+              .contentShape(Rectangle())
+          }
+          .buttonStyle(.plain)
+          .accessibilityLabel("View original post")
+          .accessibilityIdentifier("reply-source-expand")
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel("View original post")
-        .accessibilityIdentifier("reply-source-expand")
       }
-      .frame(height: compactHeight ? 0 : nil)
-      .clipped()
-      .allowsHitTesting(!compactHeight)
-      .accessibilityHidden(compactHeight)
 
       ScrollView {
         ReplySourcePostView(post: post, path: $path)
