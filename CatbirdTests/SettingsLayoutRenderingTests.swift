@@ -352,6 +352,7 @@ private extension SettingsLayoutRenderingTests {
     collection.setContentOffset(CGPoint(x: initial.offset.x, y: initial.topOffset), animated: false)
     await settle(host: host, parent: parent)
     var reachedEnd = false
+    var previousTop: CGFloat?
     var previousBottom: CGFloat?
 
     for index in 0..<24 {
@@ -369,9 +370,11 @@ private extension SettingsLayoutRenderingTests {
         XCTFail("The captured Form has no useful viewport: \(name)")
         return
       }
-      if let previousBottom {
-        XCTAssertLessThanOrEqual(captured.visibleTop, previousBottom + 1, "Sweep captures must overlap without a gap: \(name)")
+      if let previousTop, let previousBottom {
+        XCTAssertLessThanOrEqual(max(previousTop, captured.visibleTop), min(previousBottom, captured.visibleBottom) + 1,
+          "Sweep captures must overlap without a gap in either direction: \(name)")
       }
+      previousTop = captured.visibleTop
       previousBottom = captured.visibleBottom
       if captured.isAtEnd {
         reachedEnd = true
