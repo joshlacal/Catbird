@@ -75,7 +75,7 @@ struct TrendingTopicArtworkPresentation: View {
 
   private func request(_ url: URL, size: CGSize) -> ImageRequest {
     let pixels = CGSize(width: size.width * PlatformScreenInfo.scale, height: size.height * PlatformScreenInfo.scale)
-    return ImageRequest(url: ImageLoadingManager.cdnURL(url), processors: [
+    return ImageRequest(url: url, processors: [
       ImageProcessors.Resize(size: pixels, unit: .pixels, contentMode: .aspectFill)
     ], priority: .low)
   }
