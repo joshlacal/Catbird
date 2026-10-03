@@ -317,7 +317,7 @@ struct SceneNavigationHost<Content: View>: View {
         .applyAppStateEnvironment(appState)
         .environment(appStateManager)
         .environment(context)
-        .presentationDetents([.large])
+        .presentationDetents(request.parentPost == nil ? [.large] : [.medium, .large])
         .presentationDragIndicator(.visible)
       }
   }

@@ -823,6 +823,10 @@ final class PostComposerViewModel {
     return nil
   }
 
+  var isReply: Bool {
+    parentPost != nil || pendingParentPostURI != nil
+  }
+
   func ensureDraftReferencesReadyForPosting() throws {
     guard let reason = draftReferenceLoadingReason else { return }
     let validation = PostComposerSubmitValidationState(canSubmit: false, reason: reason)

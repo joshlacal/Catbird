@@ -72,6 +72,13 @@ struct PostComposerViewUIKit: View {
   @State var suppressAutoSaveOnDismiss = false
   @State var activeEditorFocusID = UUID()
   @State var didSetInitialFocusID = false
+  @State private var showingReplySource = false
+  @State private var restoreEditorAfterReplySource = false
+  @State private var replySourcePath = NavigationPath()
+  @State private var replySourceSelectedTab = 0
+  #if os(iOS)
+  @State private var replySourceEditor: UITextView?
+  #endif
   @State var mentionOverlayCooldownUntil: Date = .distantPast
 
   @State var autoSaveTask: Task<Void, Never>?
@@ -384,7 +391,7 @@ struct PostComposerViewUIKit: View {
   }
   
   private func getNavigationTitle(vm: PostComposerViewModel) -> String {
-    if vm.parentPost != nil {
+    if vm.isReply {
       return "Reply"
     } else if vm.isThreadMode {
       return "Thread"
@@ -396,19 +403,38 @@ struct PostComposerViewUIKit: View {
   @ViewBuilder
   private func mainContent(vm: PostComposerViewModel) -> some View {
     sheetModifiers(vm: vm,
-      ScrollView {
-        VStack(spacing: 16) {
-          // Show a single editor instance.
-          // In thread mode, the active editor is rendered inside threadEntriesSection.
-          if !vm.isThreadMode {
-            composerEditorSection(vm: vm)
-            mentionSuggestionsSection(vm: vm)
-            mediaAttachmentsSection(vm: vm)
-            metadataSection(vm: vm)
+      GeometryReader { geometry in
+        VStack(spacing: 0) {
+          if let parent = vm.parentPost {
+            ReplyContextPanel(post: parent, availableHeight: geometry.size.height,
+                              onViewOriginal: { openReplySource(vm: vm) }, path: $replySourcePath)
+            Divider()
+          } else if vm.isReply {
+            Label("Original post not loaded", systemImage: "arrowshape.turn.up.left")
+              .appFont(AppTextRole.caption)
+              .foregroundStyle(.secondary)
+              .frame(maxWidth: .infinity, alignment: .leading)
+              .padding(.horizontal, 16)
+              .padding(.vertical, 12)
+              .accessibilityIdentifier("reply-source-loading")
+            Divider()
           }
-          threadEntriesSection(vm: vm)
+
+          ScrollView {
+            VStack(spacing: 16) {
+              // Keep one editor subtree through source expansion and size changes.
+              if !vm.isThreadMode {
+                composerEditorSection(vm: vm)
+                mentionSuggestionsSection(vm: vm)
+                mediaAttachmentsSection(vm: vm)
+                metadataSection(vm: vm)
+              }
+              threadEntriesSection(vm: vm)
+            }
+            .padding(.top, 8)
+          }
+          .accessibilityIdentifier("reply-composer-scroll")
         }
-        .padding(.top, 8)
       }
       .background(Color.systemBackground)
       .overlay {
@@ -424,6 +450,45 @@ struct PostComposerViewUIKit: View {
       .safeAreaInset(edge: .bottom) {
         composerAccessoryStack(vm: vm)
       }
+      .sheet(isPresented: $showingReplySource, onDismiss: {
+        #if os(iOS)
+        if restoreEditorAfterReplySource, viewModel === vm,
+           vm.editingClaim == nil || vm.ownsEditingDraft,
+           let editor = replySourceEditor,
+           vm.activeRichTextView === editor, editor.window != nil {
+          editor.becomeFirstResponder()
+        }
+        replySourceEditor = nil
+        #endif
+        restoreEditorAfterReplySource = false
+        replySourcePath = NavigationPath()
+      }) {
+        if let parent = vm.parentPost {
+          NavigationStack(path: $replySourcePath) {
+            ScrollView {
+              ReplySourcePostView(post: parent, path: $replySourcePath)
+                .padding(16)
+            }
+            .navigationTitle("Original Post")
+            .toolbar {
+              ToolbarItem(placement: .confirmationAction) {
+                Button("Done") { showingReplySource = false }
+              }
+            }
+            .navigationDestination(for: NavigationDestination.self) { destination in
+              NavigationHandler.viewForDestination(destination, path: $replySourcePath,
+                                                   appState: appState, selectedTab: $replySourceSelectedTab)
+            }
+          }
+          .presentationDetents([.large])
+          .presentationDragIndicator(.visible)
+        }
+      }
+      .onChange(of: replySourcePath) { _, path in
+        if !path.isEmpty, !showingReplySource {
+          openReplySource(vm: vm, resetPath: false)
+        }
+      }
       .onChange(of: showingPlusMenu) { _, isOpen in
         #if os(iOS)
         if isOpen {
@@ -434,6 +499,15 @@ struct PostComposerViewUIKit: View {
         #endif
       }
     )
+  }
+
+  private func openReplySource(vm: PostComposerViewModel, resetPath: Bool = true) {
+    #if os(iOS)
+    replySourceEditor = vm.activeRichTextView
+    restoreEditorAfterReplySource = vm.activeRichTextView?.isFirstResponder == true
+    #endif
+    if resetPath { replySourcePath = NavigationPath() }
+    showingReplySource = true
   }
 
   private func composerAccessoryStack(vm: PostComposerViewModel) -> some View {
@@ -577,7 +651,7 @@ struct PostComposerViewUIKit: View {
         ),
         linkFacets: $linkFacets,
         pendingSelectionRange: $pendingSelectionRange,
-        placeholder: vm.parentPost != nil ? "Write your reply..." : "What's on your mind?",
+        placeholder: vm.isReply ? "Write your reply..." : "What's on your mind?",
         onImagePasted: { image in
           pcUIKitLogger.info("PostComposerViewUIKit: Image pasted into editor")
           #if os(iOS)
