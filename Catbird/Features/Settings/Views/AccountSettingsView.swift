@@ -59,6 +59,7 @@ struct AccountSettingsView: View {
     @State private var deactivateConfirmText = ""
     @State private var isDeactivating = false
     @State private var isReactivating = false
+    @State private var accountDeletionTarget: AccountDeletionTarget?
     @State private var formError: String?
     @State private var showingFormError = false
 
@@ -281,6 +282,21 @@ struct AccountSettingsView: View {
                     }
                     .settingsControl(.init(rawValue: "account.deactivate"))
                 }
+                Section {
+                    Button {
+                        let did = appState.userDID
+                        let handle = profile.flatMap { $0.did.description == did ? $0.handle.description : nil }
+                        accountDeletionTarget = AccountDeletionTarget(did: did, handle: handle)
+                    } label: {
+                        Label("Account Deletion Options", systemImage: "person.crop.circle.badge.minus")
+                    }
+                    .disabled(appState.userDID.isEmpty || isDeactivating || isReactivating || isExportingData)
+                    .accessibilityIdentifier("AccountDeletion.Options")
+                } header: {
+                    Text("Account Deletion")
+                } footer: {
+                    Text("Review permanent provider-account deletion and how it differs from deactivation or removing an account from Catbird.")
+                }
             }
             .navigationTitle("Account Details")
             #if os(iOS)
@@ -338,6 +354,10 @@ struct AccountSettingsView: View {
                         reloadAccountDetails()
                     }
                 )
+            }
+            .sheet(item: $accountDeletionTarget) { target in
+                AccountDeletionSheet(target: target)
+                    .environment(\.openURL, OpenURLAction { url in .systemAction(url) })
             }
             .alert("Deactivate Account", isPresented: $isShowingDeactivateAlert) {
                 TextField("Type DEACTIVATE to confirm", text: $deactivateConfirmText)
