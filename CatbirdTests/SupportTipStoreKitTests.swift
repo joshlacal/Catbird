@@ -98,20 +98,31 @@ struct SupportTipStoreKitTests {
     try #require(distinctCompletedCount == 2)
 
     try await setError(.generic(.userCancelled), forAPI: .purchase, phase: "cancel.override", store: store, session: session)
-    try await purchase(tip, phase: "cancel.purchase", store: store, session: session)
+    try await purchase(
+      tip, phase: "cancel.purchase", requiresImmediateMessage: true, store: store, session: session
+    )
     try #require(store.purchaseMessage == nil)
     try #require(!store.isPurchasing)
     try await setError(.generic(.unknown), forAPI: .purchase, phase: "genericError.override", store: store, session: session)
-    try await purchase(tip, phase: "genericError.purchase", store: store, session: session)
+    try await purchase(
+      tip, phase: "genericError.purchase", expectedImmediateMessage: "Your tip couldn't be completed. Please try again.",
+      store: store, session: session
+    )
     try #require(store.purchaseMessage == "Your tip couldn't be completed. Please try again.")
     try await setError(.purchase(.productUnavailable), forAPI: .purchase, phase: "unavailable.override", store: store, session: session)
-    try await purchase(tip, phase: "unavailable.purchase", store: store, session: session)
+    try await purchase(
+      tip, phase: "unavailable.purchase", expectedImmediateMessage: "Your tip couldn't be completed. Please try again.",
+      store: store, session: session
+    )
     try #require(store.purchaseMessage == "Your tip couldn't be completed. Please try again.")
     try await setError(nil, forAPI: .purchase, phase: "purchase.clearOverride", store: store, session: session)
 
     // No About view is mounted: approval must reach the application-owned observer.
     try await setAskToBuy(true, phase: "pending.enable", store: store, session: session)
-    try await purchase(tip, phase: "pending.purchase", store: store, session: session)
+    try await purchase(
+      tip, phase: "pending.purchase", expectedImmediateMessage: "Your tip is pending approval. Thanks for your support!",
+      store: store, session: session
+    )
     try #require(store.purchaseMessage == "Your tip is pending approval. Thanks for your support!")
     let pending = try #require(session.allTransactions().first {
       $0.productIdentifier == tip.id && $0.pendingAskToBuyConfirmation
@@ -157,7 +168,7 @@ struct SupportTipStoreKitTests {
   }
 
   private func purchase(
-    _ product: SupportTipProduct, phase: String, expectedImmediateMessage: String? = nil,
+    _ product: SupportTipProduct, phase: String, expectedImmediateMessage: String? = nil, requiresImmediateMessage: Bool = false,
     store: SupportTipStore, session: SKTestSession
   ) async throws {
     try await recordAction(phase, store: store, session: session) {
@@ -168,7 +179,7 @@ struct SupportTipStoreKitTests {
       try #require(containsExpectedProduct, "\(phase): expected product must still be in the loaded catalog")
       await store.purchase(product)
       // A completed purchase must publish its result before returning, without diagnostic waits.
-      if let expectedImmediateMessage {
+      if requiresImmediateMessage || expectedImmediateMessage != nil {
         try #require(store.purchaseMessage == expectedImmediateMessage, "\(phase): purchase must return with its result")
         try #require(!store.isPurchasing, "\(phase): purchase must return with purchasing state cleared")
       }
