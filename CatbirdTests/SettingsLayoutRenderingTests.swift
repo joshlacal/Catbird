@@ -155,6 +155,13 @@ final class SettingsLayoutRenderingTests: XCTestCase {
     attachment.lifetime = .keepAlways
     add(attachment)
     print("SETTINGS_LAYOUT_RECEIPT \(receipt)")
+
+    if !largeText && screen == .accessibility && ["narrow", "short"].contains(viewport.name) {
+      try await captureWholeFormSweep(collection, host: host, parent: parent, label: label)
+    }
+    if !largeText && screen == .appearance {
+      try await captureContentEnd(collection, host: host, parent: parent, label: label)
+    }
   }
 
   private func assertVisibleRowsWithinHorizontalBounds(_ collection: UICollectionView, label: String) {
@@ -305,6 +312,119 @@ final class SettingsLayoutRenderingTests: XCTestCase {
     func transactionUpdates() -> AsyncStream<SupportTipVerification> { AsyncStream { $0.finish() } }
     func unfinishedTransactions() -> AsyncStream<SupportTipVerification> { AsyncStream { $0.finish() } }
     func storefrontUpdates() -> AsyncStream<Void> { AsyncStream { $0.finish() } }
+  }
+}
+
+private extension SettingsLayoutRenderingTests {
+  @MainActor
+  struct ScrollCaptureGeometry {
+    let offset: CGPoint
+    let contentSize: CGSize
+    let bounds: CGRect
+    let insets: UIEdgeInsets
+
+    init(_ collection: UICollectionView) {
+      offset = collection.contentOffset
+      contentSize = collection.contentSize
+      bounds = collection.bounds
+      insets = collection.adjustedContentInset
+    }
+
+    var topOffset: CGFloat { -insets.top }
+    var endOffset: CGFloat { max(topOffset, contentSize.height - bounds.height + insets.bottom) }
+    var usefulHeight: CGFloat { bounds.height - insets.top - insets.bottom }
+    var visibleTop: CGFloat { offset.y + insets.top }
+    var visibleBottom: CGFloat { offset.y + bounds.height - insets.bottom }
+    var isAtEnd: Bool { abs(offset.y - endOffset) <= 1 }
+    var description: String {
+      """
+      Content offset: \(offset); content size: \(contentSize)
+      Collection bounds: \(bounds); adjusted content insets: \(insets)
+      Legal top: \(topOffset); actual content end: \(endOffset); useful viewport height: \(usefulHeight)
+      Visible content range: \(visibleTop)...\(visibleBottom)
+      """
+    }
+  }
+
+  func captureWholeFormSweep<Content: View>(_ collection: UICollectionView,
+                                            host: UIHostingController<Content>, parent: UIViewController, label: String) async throws {
+    let initial = ScrollCaptureGeometry(collection)
+    collection.setContentOffset(CGPoint(x: initial.offset.x, y: initial.topOffset), animated: false)
+    await settle(host: host, parent: parent)
+    var reachedEnd = false
+    var previousBottom: CGFloat?
+
+    for index in 0..<24 {
+      let current = ScrollCaptureGeometry(collection)
+      guard current.usefulHeight > 0 else {
+        XCTFail("The Form has no useful viewport for the capture sweep: \(label)")
+        return
+      }
+      if index == 0 {
+        XCTAssertEqual(current.offset.y, current.topOffset, accuracy: 1, "Sweep must start at the actual top: \(label)")
+      }
+      let name = "\(label)-sweep-\(String(format: "%02d", index))"
+      let captured = try attachScrollPosition(collection, view: host.view, named: name)
+      guard captured.usefulHeight > 0 else {
+        XCTFail("The captured Form has no useful viewport: \(name)")
+        return
+      }
+      if let previousBottom {
+        XCTAssertLessThanOrEqual(captured.visibleTop, previousBottom + 1, "Sweep captures must overlap without a gap: \(name)")
+      }
+      previousBottom = captured.visibleBottom
+      if captured.isAtEnd {
+        reachedEnd = true
+        break
+      }
+      if index < 23 {
+        // Self-sizing rows can change content size while settling. Advance from
+        // the measured offset and recompute the end and useful height each time.
+        let next = min(captured.endOffset, captured.offset.y + captured.usefulHeight / 2)
+        collection.setContentOffset(CGPoint(x: captured.offset.x, y: next), animated: false)
+        await settle(host: host, parent: parent)
+      }
+    }
+    XCTAssertTrue(reachedEnd, "The bounded overlapping sweep must reach the actual content end: \(label)")
+    let final = ScrollCaptureGeometry(collection)
+    XCTAssertEqual(final.offset.y, final.endOffset, accuracy: 1, "Sweep content end: \(label)")
+  }
+
+  func captureContentEnd<Content: View>(_ collection: UICollectionView,
+                                        host: UIHostingController<Content>, parent: UIViewController, label: String) async throws {
+    for _ in 0..<8 {
+      let current = ScrollCaptureGeometry(collection)
+      collection.setContentOffset(CGPoint(x: current.offset.x, y: current.endOffset), animated: false)
+      await settle(host: host, parent: parent)
+      if ScrollCaptureGeometry(collection).isAtEnd { break }
+    }
+    let settled = ScrollCaptureGeometry(collection)
+    XCTAssertEqual(settled.offset.y, settled.endOffset, accuracy: 1, "Appearance content end after settling: \(label)")
+    let captured = try attachScrollPosition(collection, view: host.view, named: "\(label)-content-end")
+    XCTAssertEqual(captured.offset.y, captured.endOffset, accuracy: 1, "Appearance content end after capture: \(label)")
+  }
+
+  func attachScrollPosition(_ collection: UICollectionView, view: UIView,
+                            named name: String) throws -> ScrollCaptureGeometry {
+    let before = ScrollCaptureGeometry(collection)
+    try attach(view, named: name)
+    let after = ScrollCaptureGeometry(collection)
+    XCTAssertEqual(before.visibleTop, after.visibleTop, accuracy: 1, "Capture visible top must remain stable: \(name)")
+    XCTAssertEqual(before.visibleBottom, after.visibleBottom, accuracy: 1, "Capture visible bottom must remain stable: \(name)")
+    let receipt = """
+    \(name)
+    Before capture:
+    \(before.description)
+    After capture:
+    \(after.description)
+    Evidence boundary: additional hosted Form pixels only. Review the image to identify complete text glyphs; no accessibility target or production behavior claim.
+    """
+    let attachment = XCTAttachment(string: receipt)
+    attachment.name = "\(name)-scroll-geometry"
+    attachment.lifetime = .keepAlways
+    add(attachment)
+    print("SETTINGS_LAYOUT_SCROLL_RECEIPT \(receipt)")
+    return after
   }
 }
 #endif

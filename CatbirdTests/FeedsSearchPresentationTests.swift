@@ -320,6 +320,8 @@ struct FeedsSearchPresentationTests {
       SavedSearch(name: "Local Trails", query: "trails", filters: SearchFilterState())
     ]
     for (name, width) in [("narrow", CGFloat(320)), ("wide", CGFloat(768))] {
+      // Retain UIKit's natural safe area so this standalone scroll fixture's first header
+      // stays below the native top region; this does not qualify the full Search shell.
       try await withHost(
         ScrollView {
           VStack(alignment: .leading, spacing: 28) {
@@ -328,7 +330,8 @@ struct FeedsSearchPresentationTests {
             ExploreInterestsCard(userInterests: ["Science", "Gardening"], onEditInterests: {}, onDismiss: {})
           }
           .padding(.vertical, 16)
-        }, appState: appState, size: CGSize(width: width, height: 800), scheme: .dark
+        }, appState: appState, size: CGSize(width: width, height: 800), scheme: .dark,
+        additionalSafeAreaInsets: .zero
       ) { host in
         let top = try await host.capture("saved-interests-\(name)-top",
           requiring: ["Saved Searches", "All Saved", "Garden Journal"])
