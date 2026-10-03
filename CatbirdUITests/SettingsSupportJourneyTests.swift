@@ -82,6 +82,10 @@ final class SettingsSupportJourneyTests: XCTestCase {
     geometry.lifetime = .keepAlways
     add(geometry)
     capture(app, "Accessibility large text landscape")
+    let fullScreen = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+    fullScreen.name = "Accessibility-large-text-landscape-full-screen-comparison"
+    fullScreen.lifetime = .keepAlways
+    add(fullScreen)
   }
 
   func testUnauthenticatedContentPreferencesExposeRetry() {
