@@ -1,5 +1,6 @@
 #if os(iOS)
 import UIKit
+import CoreFoundation
 import Testing
 import Petrel
 @testable import Catbird
@@ -7,9 +8,17 @@ import Petrel
 @Suite(.serialized)
 @MainActor
 struct URLHandlerPresentationTests {
-  private func makeWindow(root suppliedRoot: UIViewController? = nil) -> UIWindow {
+  private func makeWindow(root suppliedRoot: UIViewController? = nil,
+                          scene: UIWindowScene? = nil) -> UIWindow {
     let root = suppliedRoot ?? UIViewController()
-    let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+    let frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+    let window: UIWindow
+    if let scene {
+      window = UIWindow(windowScene: scene)
+      window.frame = frame
+    } else {
+      window = UIWindow(frame: frame)
+    }
     window.rootViewController = root
     window.isHidden = false
     root.view.layoutIfNeeded()
@@ -52,39 +61,101 @@ struct URLHandlerPresentationTests {
     }
   }
 
-  private func retireWindow(root: UIViewController,
-                            anchor: SceneBrowserPresentationAnchor? = nil) -> RetirementProbe {
-    autoreleasepool {
-      let window = self.makeWindow(root: root)
+  private func retireWindow(root: UIViewController, scene: UIWindowScene,
+                            anchor: SceneBrowserPresentationAnchor? = nil) throws -> RetirementProbe {
+    try autoreleasepool {
+      let window = self.makeWindow(root: root, scene: scene)
       let probe = RetirementProbe(window)
+      defer {
+        window.isHidden = true
+        window.rootViewController = nil
+        window.windowScene = nil
+      }
+      try #require(window.windowScene === scene)
+      try #require(root.viewIfLoaded?.window === window)
       anchor?.register(controller: root)
+      if let anchor {
+        try #require(anchor.attachedWindow === window)
+      }
       window.isHidden = true
       window.rootViewController = nil
+      // Hiding removes visibility; nil removes membership in the native scene.
+      window.windowScene = nil
+      try #require(window.windowScene == nil)
+      try #require(root.viewIfLoaded?.window == nil)
       return probe
     }
   }
 
+  @MainActor
+  private final class IdleBoundaryWaiter {
+    private var continuation: CheckedContinuation<Bool, Never>?
+    private var observer: CFRunLoopObserver?
+    private var timeout: DispatchWorkItem?
+
+    init(_ continuation: CheckedContinuation<Bool, Never>) {
+      self.continuation = continuation
+    }
+
+    func start() {
+      let observer = CFRunLoopObserverCreateWithHandler(
+        kCFAllocatorDefault, CFRunLoopActivity.beforeWaiting.rawValue, false, CFIndex.max
+      ) { [self] _, _ in
+        // This observer is installed only on the main run loop.
+        MainActor.assumeIsolated { self.finish(reachedIdle: true) }
+      }!
+      self.observer = observer
+      CFRunLoopAddObserver(CFRunLoopGetMain(), observer, .commonModes)
+      let timeout = DispatchWorkItem { [self] in
+        // This work item is submitted only to the main queue.
+        MainActor.assumeIsolated { self.finish(reachedIdle: false) }
+      }
+      self.timeout = timeout
+      DispatchQueue.main.asyncAfter(deadline: .now() + 1, execute: timeout)
+      CFRunLoopWakeUp(CFRunLoopGetMain())
+    }
+
+    private func finish(reachedIdle: Bool) {
+      guard let continuation else { return }
+      self.continuation = nil
+      if let observer {
+        CFRunLoopRemoveObserver(CFRunLoopGetMain(), observer, .commonModes)
+        CFRunLoopObserverInvalidate(observer)
+        self.observer = nil
+      }
+      timeout?.cancel()
+      timeout = nil
+      continuation.resume(returning: reachedIdle)
+    }
+  }
+
   private func settleRetirement(_ probes: RetirementProbe...) async {
-    // UIKit may enqueue containment/window cleanup and autoreleased objects.
-    // Cross main-queue turns, checking only inside a drained local pool; do not
-    // carry a strong reference obtained from a weak probe across suspension.
+    // Main-queue dispatch alone need not reach UIKit's run-loop cleanup.
+    // Each idle-boundary wait has a wall timeout and removes its observer.
     for _ in 0..<20 {
-      await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-        DispatchQueue.main.async { continuation.resume() }
+      let reachedIdle = await withCheckedContinuation { continuation in
+        IdleBoundaryWaiter(continuation).start()
+      }
+      guard reachedIdle else {
+        Issue.record("Main run loop did not reach its idle cleanup boundary within one second")
+        return
       }
       if probes.allSatisfy({ $0.isReleased }) { return }
     }
   }
 
-  @Test func retiredFeedControllerPreservesOriginWindow() async {
+  @Test func retiredFeedControllerPreservesOriginWindow() async throws {
     let root = UIViewController()
     let window = makeWindow(root: root)
     let controlRoot = UIViewController()
     let controlWindow = makeWindow(root: controlRoot)
     defer { window.isHidden = true; controlWindow.isHidden = true }
+    try #require(root.viewIfLoaded?.window === window)
+    try #require(controlRoot.viewIfLoaded?.window === controlWindow)
     let anchor = SceneBrowserPresentationAnchor()
     let control = retireFeed(in: controlRoot)
     let retiredFeed = retireFeed(in: root, anchor: anchor)
+    try #require(anchor.attachedWindow === window)
 
     await settleRetirement(control, retiredFeed)
     #expect(control.isReleased, "UIKit control feed still retained: \(control.identity)")
@@ -154,20 +225,34 @@ struct URLHandlerPresentationTests {
     #expect(anchor.attachedWindow !== second)
   }
 
-  @Test func anchorDoesNotRetainWindowOrFollowRetiredOrigin() async {
+  @Test func anchorDoesNotRetainWindowOrFollowRetiredOrigin() async throws {
     let root = UIViewController()
     let controlRoot = UIViewController()
     let anchor = SceneBrowserPresentationAnchor()
-    let control = retireWindow(root: controlRoot)
-    let retiredWindow = retireWindow(root: root, anchor: anchor)
-    let replacement = makeWindow(root: root)
-    let controlReplacement = makeWindow(root: controlRoot)
-    defer { replacement.isHidden = true; controlReplacement.isHidden = true }
+    let scene = try #require(UIApplication.shared.connectedScenes
+      .compactMap { $0 as? UIWindowScene }
+      .first { $0.activationState == .foregroundActive })
+    let control = try retireWindow(root: controlRoot, scene: scene)
+    let retiredWindow = try retireWindow(root: root, scene: scene, anchor: anchor)
+    let replacement = makeWindow(root: root, scene: scene)
+    let controlReplacement = makeWindow(root: controlRoot, scene: scene)
+    defer {
+      replacement.isHidden = true
+      replacement.rootViewController = nil
+      replacement.windowScene = nil
+      controlReplacement.isHidden = true
+      controlReplacement.rootViewController = nil
+      controlReplacement.windowScene = nil
+    }
+    try #require(root.viewIfLoaded?.window === replacement)
+    try #require(controlRoot.viewIfLoaded?.window === controlReplacement)
 
     // Reject following the reused controller even while UIKit may retain the
     // old window; eventual deallocation is a separate lifetime contract.
     #expect(anchor.attachedWindow == nil)
     await settleRetirement(control, retiredWindow)
+    try #require(root.viewIfLoaded?.window === replacement)
+    try #require(controlRoot.viewIfLoaded?.window === controlReplacement)
     #expect(control.isReleased, "UIKit control window still retained: \(control.identity)")
     #expect(retiredWindow.isReleased, "Anchored window still retained: \(retiredWindow.identity)")
     #expect(anchor.attachedWindow == nil)
