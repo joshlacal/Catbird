@@ -110,6 +110,47 @@ struct SupportTipStoreTests {
     #expect(await recorder.ids == [5])
   }
 
+  @Test(arguments: [false, true])
+  func duplicatePurchaseWaitsForTheObserversInFlightFinish(cancelPurchaser: Bool) async throws {
+    let client = TipClientFixture()
+    let finishGate = TipFinishGate()
+    let store = SupportTipStore(client: client)
+    await store.loadProducts()
+    let verified = SupportTipVerification.verified(SupportTipTransaction(
+      id: 50, productID: TipClientFixture.product.id, isConsumable: true, isRevoked: false
+    ) {
+      await finishGate.finish(50)
+    })
+    client.purchaseResult = .success(verified)
+
+    // Let the application observer claim this transaction and suspend inside finish().
+    // The purchase call then receives exactly that same transaction while it is unfinished.
+    client.updates.continuation.yield(verified)
+    defer { Task { await finishGate.release() } }
+    try await requireEventually { await finishGate.startedIDs == [50] }
+    var purchaseReturned = false
+    let purchaseTask = Task {
+      await store.purchase(TipClientFixture.product)
+      purchaseReturned = true
+    }
+    try await requireEventually { client.purchaseCount == 1 }
+    if cancelPurchaser { purchaseTask.cancel() }
+
+    // The fixture purchase() has no suspension: seeing its call means the MainActor purchase
+    // path has either joined finish() or returned. No timer releases the completion latch.
+    #expect(!purchaseReturned)
+    #expect(store.isPurchasing)
+    #expect(store.purchaseMessage == nil)
+    #expect(await finishGate.completedIDs.isEmpty)
+    await finishGate.release()
+    await purchaseTask.value
+    #expect(purchaseReturned)
+    #expect(!store.isPurchasing)
+    #expect(store.purchaseMessage == "Thanks for your support!")
+    #expect(await finishGate.startedIDs == [50])
+    #expect(await finishGate.completedIDs == [50])
+  }
+
   @Test func unverifiedAndUnrelatedTransactionsAreNotFinished() async {
     let client = TipClientFixture()
     let recorder = TipFinishRecorder()
@@ -171,6 +212,15 @@ struct SupportTipStoreTests {
     }
   }
 
+  private func requireEventually(_ condition: () async -> Bool) async throws {
+    let deadline = ContinuousClock.now + .seconds(2)
+    while !(await condition()), ContinuousClock.now < deadline {
+      try await Task.sleep(for: .milliseconds(5))
+    }
+    let matched = await condition()
+    try #require(matched)
+  }
+
   private func eventually(_ condition: () -> Bool) async throws {
     let deadline = ContinuousClock.now + .seconds(2)
     while !condition(), ContinuousClock.now < deadline {
@@ -183,6 +233,27 @@ struct SupportTipStoreTests {
 private actor TipFinishRecorder {
   private(set) var ids: [UInt64] = []
   func finish(_ id: UInt64) { ids.append(id) }
+}
+
+private actor TipFinishGate {
+  private(set) var startedIDs: [UInt64] = []
+  private(set) var completedIDs: [UInt64] = []
+  private var continuations: [CheckedContinuation<Void, Never>] = []
+  private var isReleased = false
+
+  func finish(_ id: UInt64) async {
+    startedIDs.append(id)
+    if !isReleased {
+      await withCheckedContinuation { continuations.append($0) }
+    }
+    completedIDs.append(id)
+  }
+
+  func release() {
+    isReleased = true
+    continuations.forEach { $0.resume() }
+    continuations = []
+  }
 }
 
 private enum TipFixtureError: Error { case unavailable }

@@ -69,6 +69,7 @@ final class SupportTipStore {
   @ObservationIgnored private var storefrontTask: Task<Void, Never>?
   @ObservationIgnored private var productLoadTask: Task<Void, Never>?
   @ObservationIgnored private var handledTransactionIDs: Set<UInt64> = []
+  @ObservationIgnored private var transactionCompletionTasks: [UInt64: Task<Void, Never>] = [:]
   @ObservationIgnored private var reloadRequested = false
   private static let logger = Logger(subsystem: "blue.catbird", category: "SupportTipStore")
 
@@ -178,12 +179,24 @@ final class SupportTipStore {
     switch verification {
     case .verified(let transaction):
       guard Self.productIDs.contains(transaction.productID), transaction.isConsumable else { return }
-      // Both purchase() and updates can deliver the same transaction. Claim it before suspending.
-      guard handledTransactionIDs.insert(transaction.id).inserted else { return }
-      await transaction.finish()
-      purchaseMessage = transaction.isRevoked
-        ? "The App Store updated your tip."
-        : "Thanks for your support!"
+      // Purchase, updates, and launch reconciliation can deliver the same transaction.
+      // Every caller must await the same finish and message update before returning.
+      if let completion = transactionCompletionTasks[transaction.id] {
+        await completion.value
+        return
+      }
+      guard !handledTransactionIDs.contains(transaction.id) else { return }
+      let completion = Task { [weak self] in
+        await transaction.finish()
+        guard let self else { return }
+        self.handledTransactionIDs.insert(transaction.id)
+        self.transactionCompletionTasks[transaction.id] = nil
+        self.purchaseMessage = transaction.isRevoked
+          ? "The App Store updated your tip."
+          : "Thanks for your support!"
+      }
+      transactionCompletionTasks[transaction.id] = completion
+      await completion.value
     case .unverified(let productID):
       guard Self.productIDs.contains(productID) else { return }
       Self.logger.error("Tip transaction could not be verified for \(productID, privacy: .public)")
