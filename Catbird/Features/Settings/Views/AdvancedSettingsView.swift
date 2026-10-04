@@ -47,7 +47,8 @@ struct AdvancedSettingsView: View {
   @State private var selectedChatOption: ChatOption = .blueskyPBC
   @State private var customAppViewDID: String = ""
   @State private var customChatDID: String = ""
-  @State private var isSaving = false
+  @State private var activeSaveID: UUID?
+  private var isSaving: Bool { activeSaveID != nil }
   @State private var showingSaveConfirmation = false
   @State private var saveOutcomeUnconfirmed = false
   @State private var confirmingReload = false
@@ -149,12 +150,16 @@ struct AdvancedSettingsView: View {
   
   @MainActor private func publishDraftGuard() {
     draftGuard?.accountDID = originDID
-    draftGuard?.hasChanges = hasUnsavedChanges || saveOutcomeUnconfirmed
-    draftGuard?.resolve = { save in await resolveDraft(save: save) }
+    draftGuard?.hasChanges = hasUnsavedChanges || saveOutcomeUnconfirmed || isSaving
+    draftGuard?.resolve = { save in await self.resolveDraft(save: save) }
   }
   @MainActor private func resolveDraft(save: Bool) async -> Bool {
+    guard !isSaving else { return false }
     guard originDID == appState.userDID && originDID.map(SettingsAccountBoundary.isCurrent) == true else { return false }
-    if save { await saveChanges(); return !hasUnsavedChanges && !saveOutcomeUnconfirmed }
+    if save {
+      let didSave = await saveChanges()
+      return didSave && !isSaving && !hasUnsavedChanges && !saveOutcomeUnconfirmed
+    }
     if saveOutcomeUnconfirmed {
       let reloaded = await loadCurrentSettings(reconcileRuntime: true)
       publishDraftGuard()
@@ -409,7 +414,11 @@ struct AdvancedSettingsView: View {
     publishDraftGuard()
   }
   
-  private func saveChanges() async {
+  @discardableResult
+  private func saveChanges() async -> Bool {
+    // A queued Save or departure resolver cannot mutate the owning save's state.
+    guard activeSaveID == nil else { return false }
+    let requestedDraft = currentDraft
     let expectedAppState = appState
     let expectedRevision = AppStateManager.shared.settingsAccountContextRevision
     guard let expectedDID = originDID, SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision),
@@ -419,22 +428,22 @@ struct AdvancedSettingsView: View {
         code: -1,
         userInfo: [NSLocalizedDescriptionKey: "Not authenticated"]
       )
-      return
+      return false
     }
     
     // Determine final DIDs based on selections
     let finalAppViewDID: String
-    if let predefinedDID = selectedAppViewOption.did {
+    if let predefinedDID = requestedDraft.appView.did {
       finalAppViewDID = predefinedDID
     } else {
-      finalAppViewDID = customAppViewDID
+      finalAppViewDID = requestedDraft.customAppView
     }
     
     let finalChatDID: String
-    if let predefinedDID = selectedChatOption.did {
+    if let predefinedDID = requestedDraft.chat.did {
       finalChatDID = predefinedDID
     } else {
-      finalChatDID = customChatDID
+      finalChatDID = requestedDraft.customChat
     }
     
     // Validate DIDs
@@ -444,7 +453,7 @@ struct AdvancedSettingsView: View {
         code: -2,
         userInfo: [NSLocalizedDescriptionKey: "Invalid AppView DID format"]
       )
-      return
+      return false
     }
     
     guard !finalChatDID.isEmpty, finalChatDID.hasPrefix("did:") else {
@@ -453,10 +462,18 @@ struct AdvancedSettingsView: View {
         code: -3,
         userInfo: [NSLocalizedDescriptionKey: "Invalid Chat DID format"]
       )
-      return
+      return false
     }
     
-    isSaving = true
+    let saveID = UUID()
+    activeSaveID = saveID
+    publishDraftGuard()
+    defer {
+      if activeSaveID == saveID {
+        activeSaveID = nil
+        publishDraftGuard()
+      }
+    }
     var didAttemptSDKSave = false
 
     do {
@@ -474,13 +491,15 @@ struct AdvancedSettingsView: View {
           })
       }
       
-      guard !Task.isCancelled, SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision) else { isSaving = false; return }
-      baseline = currentDraft
+      guard activeSaveID == saveID, !Task.isCancelled,
+            SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision) else { return false }
+      baseline = requestedDraft
       saveOutcomeUnconfirmed = false
       publishDraftGuard()
       showingSaveConfirmation = true
+      return true
     } catch {
-      guard SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision) else { isSaving = false; return }
+      guard activeSaveID == saveID, SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision) else { return false }
       saveOutcomeUnconfirmed = saveOutcomeUnconfirmed || didAttemptSDKSave
       publishDraftGuard()
       if didAttemptSDKSave {
@@ -490,7 +509,7 @@ struct AdvancedSettingsView: View {
       }
     }
     
-    isSaving = false
+    return false
   }
 }
 
