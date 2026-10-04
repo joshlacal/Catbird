@@ -149,13 +149,22 @@ enum SettingsCatalog {
             add(title, .appearance, "appearance.\(id)", "Appearance")
         }
         for (title, id) in [("Font Style", "fontStyle"), ("Font Size", "fontSize"), ("Line Spacing", "lineSpacing"), ("Letter Spacing", "letterSpacing"), ("Use Dynamic Type", "dynamicType"), ("Maximum Text Size", "maxSize"), ("Reading Time", "readingTime"), ("Highlight Links", "highlightLinks"), ("Link Style", "linkStyle")] {
-            add(title, .textReadability, "text.\(id)", "Accessibility › Text & Readability", "Current account", ["font", "larger text", "Dynamic Type"])
+            let aliases: [String]
+            switch id {
+            case "fontStyle": aliases = ["font", "typeface"]
+            case "fontSize", "maxSize": aliases = ["font", "larger text", "text size"]
+            case "dynamicType": aliases = ["Dynamic Type", "system text size"]
+            case "lineSpacing": aliases = ["paragraph spacing"]
+            case "letterSpacing": aliases = ["tracking"]
+            default: aliases = []
+            }
+            add(title, .textReadability, "text.\(id)", "Accessibility › Text & Readability", "Current account", aliases)
         }
         for (title, id) in [("Require Image Descriptions", "altText"), ("Image Description Badges", "altBadges"), ("Reduce Motion", "reduceMotion"), ("Prefer Crossfade", "crossfade"), ("Increase Contrast", "increaseContrast"), ("Bold Text", "boldText"), ("Confirm Actions", "confirmActions"), ("Haptic Feedback", "haptics")] {
             add(title, .accessibility, "accessibility.\(id)", "Accessibility")
         }
         for (title, id) in [("Interface Language", "interface"), ("Primary Language", "primary"), ("Content Languages", "content"), ("Hide Other Languages", "hideOtherLanguages"), ("Language Indicators", "indicators")] {
-            add(title, .language, "languages.\(id)", "Language")
+            add(title, .language, "languages.\(id)", "Language", "Current account", id == "hideOtherLanguages" ? ["feed language filter", "filter by language"] : [])
         }
         add("Default Reply Permissions", .defaultPostInteractions, "privacy.defaultReplies", "Privacy & Interactions › Default Replies & Quotes", "New posts")
         add("Default Quote Permissions", .defaultPostInteractions, "privacy.defaultQuotes", "Privacy & Interactions › Default Replies & Quotes", "New posts")
