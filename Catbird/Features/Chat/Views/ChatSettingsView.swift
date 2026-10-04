@@ -23,7 +23,21 @@ enum ChatPrivacyOption: String, CaseIterable, Identifiable, Sendable {
 }
 
 /// Settings view for chat-related options and actions
+private struct ChatPrivacySettingsRecord {
+  var allowIncoming: String
+  var allowGroupInvites: String?
+  var cid: CID?
+}
+
 struct ChatSettingsView: View {
+  enum Presentation { case modal, navigation }
+  let initialFocus: SettingsControlID?
+  let presentation: Presentation
+
+  init(initialFocus: SettingsControlID? = nil, presentation: Presentation = .modal) {
+    self.initialFocus = initialFocus
+    self.presentation = presentation
+  }
   @Environment(AppState.self) private var appState
   @Environment(\.dismiss) private var dismiss
   
@@ -35,108 +49,23 @@ struct ChatSettingsView: View {
   @State private var isMarkingAllRead = false
   @State private var exportedData: Data?
   @State private var errorMessage: String?
-  @State private var messagesFrom: ChatPrivacyOption = .following
-  @State private var groupInvitesFrom: ChatPrivacyOption = .following
-  @State private var isLoadingDeclaration = true
-  @State private var declarationLoadError: String?
-  @State private var isSavingDeclaration = false
-  @State private var declarationCid: CID?
+  @State private var privacyEditor: AccountSettingsEditSession<ChatPrivacySettingsRecord>?
   private let logger = Logger(subsystem: "blue.catbird", category: "ChatSettingsView")
   
   var body: some View {
-    NavigationStack {
-      List {
-        Section {
-          if isLoadingDeclaration {
-            HStack {
-              Text("Loading chat privacy settings…")
-                .foregroundStyle(.secondary)
-              Spacer()
-              ProgressView()
-                .scaleEffect(0.8)
-            }
-          } else if let declarationLoadError {
-            VStack(alignment: .leading, spacing: 8) {
-              HStack {
-                Image(systemName: "exclamationmark.triangle.fill")
-                  .foregroundStyle(.orange)
-                Text("Failed to load privacy settings")
-                  .font(.subheadline)
-                  .foregroundStyle(.primary)
-              }
-              Text(declarationLoadError)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-              Button("Retry") {
-                Task {
-                  await loadDeclaration()
-                }
-              }
-              .font(.subheadline)
-            }
-            .padding(.vertical, 4)
-          } else {
-            Picker("Messages from", selection: Binding(
-              get: { messagesFrom },
-              set: { newValue in
-                guard !isSavingDeclaration, newValue != messagesFrom else { return }
-                let previous = messagesFrom
-                messagesFrom = newValue
-                Task {
-                  await updateDeclaration(
-                    messagesFrom: newValue,
-                    groupInvitesFrom: groupInvitesFrom,
-                    previousMessagesFrom: previous,
-                    previousGroupInvitesFrom: groupInvitesFrom
-                  )
-                }
-              }
-            )) {
-              ForEach(ChatPrivacyOption.allCases) { option in
-                Text(option.title).tag(option)
-              }
-            }
-            .disabled(isSavingDeclaration)
+    Group {
+      if presentation == .modal {
+        NavigationStack { settingsContent }
+      } else {
+        settingsContent
+      }
+    }
+  }
 
-            Picker("Group chat invites from", selection: Binding(
-              get: { groupInvitesFrom },
-              set: { newValue in
-                guard !isSavingDeclaration, newValue != groupInvitesFrom else { return }
-                let previous = groupInvitesFrom
-                groupInvitesFrom = newValue
-                Task {
-                  await updateDeclaration(
-                    messagesFrom: messagesFrom,
-                    groupInvitesFrom: newValue,
-                    previousMessagesFrom: messagesFrom,
-                    previousGroupInvitesFrom: previous
-                  )
-                }
-              }
-            )) {
-              ForEach(ChatPrivacyOption.allCases) { option in
-                Text(option.title).tag(option)
-              }
-            }
-            .disabled(isSavingDeclaration)
-            
-            if isSavingDeclaration {
-              HStack {
-                Text("Saving privacy settings…")
-                  .font(.caption)
-                  .foregroundStyle(.secondary)
-                Spacer()
-                ProgressView()
-                  .scaleEffect(0.8)
-              }
-            }
-          }
-        } header: {
-          Text("Bluesky Chat Privacy")
-        } footer: {
-          Text("Choose who can send you direct messages and invite you to group chats on Bluesky.")
-        }
-
+  private var settingsContent: some View {
+    SettingsFocusedForm(initialFocus: initialFocus, isReady: privacyEditor?.canEdit == true) {
+      SettingsScopeSection()
+      privacySection
         Section {
           Button {
             markAllConversationsAsRead()
@@ -218,13 +147,11 @@ struct ChatSettingsView: View {
         }
       }
       .navigationTitle("Chat Settings")
-    #if os(iOS)
-    .toolbarTitleDisplayMode(.inline)
-    #endif
+      .modifier(ChatSettingsTitleStyle())
       .toolbar {
-        ToolbarItem(placement: .primaryAction) {
-          Button("Done") {
-            dismiss()
+        if presentation == .modal {
+          ToolbarItem(placement: .primaryAction) {
+            Button("Done") { dismiss() }
           }
         }
       }
@@ -254,134 +181,130 @@ struct ChatSettingsView: View {
       } message: {
         Text(errorMessage ?? "An unknown error occurred")
       }
-      .task {
-        await loadDeclaration()
-      }
-    }
+      .task(id: appState.userDID) { await loadPrivacyEditor() }
+      .onDisappear { privacyEditor?.invalidate() }
   }
 
-  private func loadDeclaration() async {
-    guard let client = appState.atProtoClient else {
-      await MainActor.run {
-        self.declarationLoadError = "Not authenticated"
-        self.isLoadingDeclaration = false
-      }
-      return
-    }
-
-    await MainActor.run {
-      self.isLoadingDeclaration = true
-      self.declarationLoadError = nil
-    }
-
-    do {
-      let params = ComAtprotoRepoGetRecord.Parameters(
-        repo: try ATIdentifier(string: appState.userDID),
-        collection: try NSID(nsidString: "chat.bsky.actor.declaration"),
-        rkey: try RecordKey(keyString: "self")
-      )
-      let (code, recordOutput) = try await client.com.atproto.repo.getRecord(input: params)
-      if code == 200, let recordOutput {
-        let cid = recordOutput.cid
-        if let decl = recordOutput.value.decoded(ChatBskyActorDeclaration.self) {
-          let incoming = ChatPrivacyOption(rawValue: decl.allowIncoming) ?? .following
-          let groupInvites = decl.allowGroupInvites.flatMap(ChatPrivacyOption.init(rawValue:)) ?? incoming
-          await MainActor.run {
-            self.declarationCid = cid
-            self.messagesFrom = incoming
-            self.groupInvitesFrom = groupInvites
-            self.isLoadingDeclaration = false
-            self.declarationLoadError = nil
+  @ViewBuilder
+  private var privacySection: some View {
+    Section {
+      if let editor = privacyEditor {
+        switch editor.state {
+        case .unavailable:
+          Text("This account is no longer active. Open Settings for the current account.")
+        case .loading:
+          ProgressView("Loading chat privacy settings…")
+        case .loadFailed:
+          Text("Chat privacy settings could not be loaded.")
+          Text(editor.errorMessage ?? "Try again.").font(.footnote).foregroundStyle(.secondary)
+          Button("Retry") { Task { await editor.load() } }
+        case .ready, .saving, .saveFailed:
+          privacyPicker("Messages from", groupInvites: false, editor: editor)
+            .settingsControl(.init(rawValue: "privacy.messages"))
+          privacyPicker("Group chat invitations from", groupInvites: true, editor: editor)
+            .settingsControl(.init(rawValue: "privacy.groupInvitations"))
+          if editor.displayedValue?.allowGroupInvites == nil {
+            Text("Group invitations follow your message rule until you save a separate invitation rule.")
+              .font(.footnote).foregroundStyle(.secondary)
           }
-          return
-        } else {
-          logger.error("Failed to decode ChatBskyActorDeclaration from successful response")
-          await MainActor.run {
-            self.declarationLoadError = "Failed to parse chat privacy settings."
-            self.isLoadingDeclaration = false
+          if editor.state == .saving {
+            ProgressView("Saving chat privacy settings…")
+          } else if editor.state == .saveFailed {
+            Text("Your saved rules are still selected.")
+            Text(editor.errorMessage ?? "The change was not saved.").font(.footnote).foregroundStyle(.secondary)
+            Button("Retry This Change") { editor.retrySave() }
           }
-          return
         }
       } else {
-        logger.warning("Failed to load chat declaration: status \(code)")
-        await MainActor.run {
-          self.declarationLoadError = "Server returned status \(code)."
-          self.isLoadingDeclaration = false
-        }
+        ProgressView("Loading chat privacy settings…")
       }
-    } catch let atprotoError as ATProtoError<ComAtprotoRepoGetRecord.Error> where atprotoError.error == .recordNotFound {
-      await MainActor.run {
-        self.declarationCid = nil
-        self.messagesFrom = .following
-        self.groupInvitesFrom = .following
-        self.isLoadingDeclaration = false
-        self.declarationLoadError = nil
-      }
-    } catch let xrpcError as ATProtoXRPCError where xrpcError.error == "RecordNotFound" {
-      await MainActor.run {
-        self.declarationCid = nil
-        self.messagesFrom = .following
-        self.groupInvitesFrom = .following
-        self.isLoadingDeclaration = false
-        self.declarationLoadError = nil
-      }
-    } catch {
-      logger.warning("No existing chat declaration record or failed to load: \(error.localizedDescription)")
-      await MainActor.run {
-        self.declarationLoadError = error.localizedDescription
-        self.isLoadingDeclaration = false
-      }
+    } header: {
+      Text("Bluesky Chat Privacy")
+    } footer: {
+      Text("Choose who can send you direct messages and invite you to group chats on Bluesky. Changes apply to this account.")
     }
+    .settingsControl(.init(rawValue: "privacy.chatPrivacy"))
   }
 
-  private func updateDeclaration(
-    messagesFrom: ChatPrivacyOption,
-    groupInvitesFrom: ChatPrivacyOption,
-    previousMessagesFrom: ChatPrivacyOption,
-    previousGroupInvitesFrom: ChatPrivacyOption
-  ) async {
-    guard let client = appState.atProtoClient else {
-      await MainActor.run {
-        self.messagesFrom = previousMessagesFrom
-        self.groupInvitesFrom = previousGroupInvitesFrom
-        self.errorMessage = "Not authenticated"
+  private func privacyPicker(
+    _ title: String, groupInvites: Bool,
+    editor: AccountSettingsEditSession<ChatPrivacySettingsRecord>
+  ) -> some View {
+    let raw = groupInvites
+      ? (editor.displayedValue?.allowGroupInvites ?? editor.displayedValue?.allowIncoming ?? "")
+      : (editor.displayedValue?.allowIncoming ?? "")
+    return Picker(title, selection: Binding(
+      get: { raw },
+      set: { selection in
+        guard editor.canEdit, var value = editor.confirmedValue, selection != raw else { return }
+        if groupInvites { value.allowGroupInvites = selection } else { value.allowIncoming = selection }
+        editor.submit(value)
       }
-      return
+    )) {
+      if ChatPrivacyOption(rawValue: raw) == nil {
+        Text("Saved rule (unsupported)").tag(raw)
+      }
+      ForEach(ChatPrivacyOption.allCases) { Text($0.title).tag($0.rawValue) }
     }
+    .disabled(!editor.canEdit)
+  }
 
-    await MainActor.run {
-      self.isSavingDeclaration = true
-    }
-
-    do {
-      let declaration = ChatBskyActorDeclaration(
-        allowIncoming: messagesFrom.rawValue,
-        allowGroupInvites: groupInvitesFrom.rawValue
-      )
-      let input = ComAtprotoRepoPutRecord.Input(
-        repo: try ATIdentifier(string: appState.userDID),
-        collection: try NSID(nsidString: "chat.bsky.actor.declaration"),
-        rkey: try RecordKey(keyString: "self"),
-        record: .knownType(declaration),
-        swapRecord: declarationCid
-      )
-      let (code, output) = try await client.com.atproto.repo.putRecord(input: input)
-      guard code == 200, let output else {
-        throw NSError(domain: "ChatSettings", code: code, userInfo: [NSLocalizedDescriptionKey: "Failed to update chat privacy settings (\(code))."])
+  @MainActor
+  private func loadPrivacyEditor() async {
+    privacyEditor?.invalidate()
+    let state = appState
+    let account = state.userDID
+    let contextRevision = AppStateManager.shared.settingsAccountContextRevision
+    let client = state.atProtoClient
+    let editor = AccountSettingsEditSession<ChatPrivacySettingsRecord>(
+      accountDID: account,
+      isCurrentAccount: {
+        AppStateManager.shared.lifecycle.userDID == account
+          && AppStateManager.shared.settingsAccountContextRevision == contextRevision
+          && !state.isTransitioningAccounts
+          && state.atProtoClient === client
+      },
+      load: {
+        guard let client else { throw ChatPrivacySettingsError.notAuthenticated }
+        do {
+          let (code, output) = try await client.com.atproto.repo.getRecord(input: .init(
+            repo: try ATIdentifier(string: account),
+            collection: try NSID(nsidString: "chat.bsky.actor.declaration"),
+            rkey: try RecordKey(keyString: "self")
+          ))
+          guard code == 200, let output,
+                let record = output.value.decoded(ChatBskyActorDeclaration.self) else {
+            throw ChatPrivacySettingsError.response(code)
+          }
+          return ChatPrivacySettingsRecord(allowIncoming: record.allowIncoming,
+            allowGroupInvites: record.allowGroupInvites, cid: output.cid)
+        } catch let error as ATProtoError<ComAtprotoRepoGetRecord.Error> where error.error == .recordNotFound {
+          return ChatPrivacySettingsRecord(allowIncoming: "following", allowGroupInvites: "following", cid: nil)
+        } catch let error as ATProtoXRPCError where error.error == "RecordNotFound" {
+          return ChatPrivacySettingsRecord(allowIncoming: "following", allowGroupInvites: "following", cid: nil)
+        }
+      },
+      save: { value in
+        guard let client, AppStateManager.shared.lifecycle.userDID == account,
+              AppStateManager.shared.settingsAccountContextRevision == contextRevision,
+              !state.isTransitioningAccounts, state.atProtoClient === client else {
+          throw ChatPrivacySettingsError.accountChanged
+        }
+        let (code, output) = try await client.com.atproto.repo.putRecord(input: .init(
+          repo: try ATIdentifier(string: account),
+          collection: try NSID(nsidString: "chat.bsky.actor.declaration"),
+          rkey: try RecordKey(keyString: "self"),
+          record: .knownType(ChatBskyActorDeclaration(allowIncoming: value.allowIncoming,
+            allowGroupInvites: value.allowGroupInvites)),
+          swapRecord: value.cid
+        ))
+        guard code == 200, let output else { throw ChatPrivacySettingsError.response(code) }
+        return ChatPrivacySettingsRecord(allowIncoming: value.allowIncoming,
+          allowGroupInvites: value.allowGroupInvites, cid: output.cid)
       }
-      await MainActor.run {
-        self.declarationCid = output.cid
-        self.isSavingDeclaration = false
-      }
-    } catch {
-      logger.error("Failed to update chat declaration: \(error.localizedDescription)")
-      await MainActor.run {
-        self.messagesFrom = previousMessagesFrom
-        self.groupInvitesFrom = previousGroupInvitesFrom
-        self.isSavingDeclaration = false
-        self.errorMessage = "Failed to update chat privacy settings: \(error.localizedDescription)"
-      }
-    }
+    )
+    privacyEditor = editor
+    await editor.load()
   }
 
   private func markAllConversationsAsRead() {
@@ -431,6 +354,27 @@ struct ChatSettingsView: View {
         }
       }
     }
+  }
+}
+
+private enum ChatPrivacySettingsError: LocalizedError {
+  case notAuthenticated, accountChanged, response(Int)
+  var errorDescription: String? {
+    switch self {
+    case .notAuthenticated: "Sign in to load chat privacy settings."
+    case .accountChanged: "The account changed. Open these settings again."
+    case .response(let code): "Chat privacy settings could not be confirmed (status \(code)). Try again."
+    }
+  }
+}
+
+private struct ChatSettingsTitleStyle: ViewModifier {
+  func body(content: Content) -> some View {
+    #if os(iOS)
+    content.toolbarTitleDisplayMode(.inline)
+    #else
+    content
+    #endif
   }
 }
 

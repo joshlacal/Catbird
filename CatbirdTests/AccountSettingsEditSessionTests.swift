@@ -63,9 +63,10 @@ struct AccountSettingsEditSessionTests {
       save: { $0 }
     )
     let load = Task { await session.load() }
-    while response == nil { await Task.yield() }
+    for _ in 0..<1_000 { if response != nil { break }; await Task.yield() }
+    guard let response else { #expect(Bool(false), "Read did not start"); load.cancel(); return }
     current = false
-    response?.resume(returning: 7)
+    response.resume(returning: 7)
     await load.value
     #expect(session.confirmedValue == nil)
     #expect(session.state == .unavailable)
@@ -81,10 +82,11 @@ struct AccountSettingsEditSessionTests {
     )
     await session.load()
     let save = session.submit(2)
-    while response == nil { await Task.yield() }
+    for _ in 0..<1_000 { if response != nil { break }; await Task.yield() }
+    guard let response else { #expect(Bool(false), "Save did not start"); save?.cancel(); return }
     session.invalidate()
     await session.load()
-    response?.resume(returning: 2)
+    response.resume(returning: 2)
     await save?.value
     #expect(session.state == .ready)
     #expect(session.confirmedValue == 1)
