@@ -327,6 +327,10 @@ private struct InlineTopicSummaryLine: View {
                 }
             }
         }
+        .task(id: appState.topicPreviewPrefetchIdentity(links: filteredTopics.map(\.link))) {
+            appState.prefetchTopicPreviews(links: filteredTopics.map(\.link), owner: .search)
+        }
+        .onDisappear { appState.cancelTopicPreviewPrefetch(owner: .search) }
     }
     
     private var emptyStateView: some View {
@@ -375,7 +379,7 @@ private struct InlineTopicSummaryLine: View {
                 .background(
                     Capsule()
                         .fill(selectedCategory == category ?
-                              categoryColor(for: category) :
+                              TrendingTopicCategoryStyle.color(for: category) :
                               Color.dynamicSecondaryBackground(appState.themeManager, currentScheme: colorScheme))
                 )
                 .foregroundColor(selectedCategory == category ?
@@ -421,20 +425,9 @@ private struct InlineTopicSummaryLine: View {
             VStack(alignment: .leading, spacing: 16) {
                 // Main topic info
                 HStack(alignment: .top, spacing: 24) {
-                    if !dynamicTypeSize.isAccessibilitySize {
-                        TrendingTopicArtwork(link: topic.link)
-                    }
-                    
                     VStack(alignment: .leading, spacing: 8) {
                         // Category and badges
                         HStack {
-                            if let category = topic.category {
-                                Text(formatCategory(category))
-                                    .appFont(AppTextRole.caption.weight(.medium))
-                                    .foregroundColor(categoryColor(for: topic.category))
-                                    .textCase(.uppercase)
-                            }
-                            
                             Spacer()
                             
                             HStack(spacing: 6) {
@@ -449,10 +442,8 @@ private struct InlineTopicSummaryLine: View {
                         }
                         
                         // Topic name
-                        TrendingTopicTitle(title: topic.displayName)
-                        if dynamicTypeSize.isAccessibilitySize {
-                            TrendingTopicArtwork(link: topic.link)
-                        }
+                        TrendingTopicHeading(title: topic.displayName, category: topic.category)
+                        TrendingTopicArtwork(link: topic.link)
                         // Topic summary
                         InlineTopicSummaryLine(topic: topic)
                         
@@ -515,24 +506,10 @@ private struct InlineTopicSummaryLine: View {
             dismiss()
         } label: {
             VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    categoryIcon(for: topic.category)
-                        .appFont(AppTextRole.headline)
-                        .foregroundColor(categoryColor(for: topic.category))
-                        .frame(width: 32, height: 32)
-                        .background(
-                            Circle()
-                                .fill(categoryColor(for: topic.category).opacity(0.15))
-                        )
-                    
-                    Spacer()
-                    
-                    if let status = topic.status, status == "hot" {
-                        trendingBadge(status: status)
-                    }
+                TrendingTopicHeading(title: topic.displayName, category: topic.category, size: 20)
+                if let status = topic.status, status == "hot" {
+                    trendingBadge(status: status)
                 }
-                
-                TrendingTopicTitle(title: topic.displayName, size: 20)
                 TrendingTopicArtwork(link: topic.link)
                 InlineTopicSummaryLine(topic: topic)
                 
@@ -599,48 +576,6 @@ private struct InlineTopicSummaryLine: View {
     }
     
     // Helper functions
-    private func categoryIcon(for category: String?) -> some View {
-        switch category {
-        case "pop-culture":
-            return Image(systemName: "music.note.tv")
-        case "politics":
-            return Image(systemName: "building.columns")
-        case "sports":
-            return Image(systemName: "figure.basketball")
-        case "video-games":
-            return Image(systemName: "gamecontroller")
-        case "tech":
-            return Image(systemName: "laptopcomputer")
-        case "business":
-            return Image(systemName: "chart.bar")
-        case "science":
-            return Image(systemName: "atom")
-        default:
-            return Image(systemName: "number")
-        }
-    }
-    
-    private func categoryColor(for category: String?) -> Color {
-        switch category {
-        case "pop-culture":
-            return .purple
-        case "politics":
-            return .blue
-        case "sports":
-            return .orange
-        case "video-games":
-            return .green
-        case "tech":
-            return .cyan
-        case "business":
-            return .yellow
-        case "science":
-            return .mint
-        default:
-            return .gray
-        }
-    }
-    
     private func trendingBadge(status: String) -> some View {
         Text(status.uppercased())
             .appFont(size: 10)

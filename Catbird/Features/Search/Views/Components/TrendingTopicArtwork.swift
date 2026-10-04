@@ -30,10 +30,10 @@ struct TrendingTopicArtworkPresentation: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 4) {
-      if !preview.media.isEmpty {
-        ZStack {
+      ZStack {
+        if !preview.media.isEmpty {
           ForEach(Array(preview.media.enumerated()), id: \.element.id) { index, card in
-            LazyImage(request: request(card.url, size: CGSize(width: 62, height: 72))) { state in
+            LazyImage(request: TrendingTopicImageRequests.request(card.url, size: CGSize(width: 62, height: 72))) { state in
               if let image = state.image {
                 image.resizable().scaledToFill()
                   .frame(width: 62, height: 72)
@@ -48,12 +48,12 @@ struct TrendingTopicArtworkPresentation: View {
             .offset(x: offset(index), y: index == 1 ? -2 : 2)
           }
         }
-        .frame(width: 108, height: 86)
       }
+      .frame(width: 108, height: 86)
       if showParticipants && !preview.participants.isEmpty {
         HStack(spacing: -6) {
           ForEach(preview.participants) { participant in
-            LazyImage(request: request(participant.avatar, size: CGSize(width: 26, height: 26))) { state in
+            LazyImage(request: TrendingTopicImageRequests.request(participant.avatar, size: CGSize(width: 26, height: 26))) { state in
               if let image = state.image {
                 image.resizable().scaledToFill()
                   .frame(width: 26, height: 26)
@@ -68,16 +68,11 @@ struct TrendingTopicArtworkPresentation: View {
         .padding(.horizontal, 8)
       }
     }
+    // A late response, failed image or text-only topic cannot resize its row or hosting cell.
+    .frame(width: 108, height: showParticipants ? 116 : 86, alignment: .topLeading)
     .accessibilityHidden(true)
     .allowsHitTesting(false)
     .transaction { $0.animation = nil }
-  }
-
-  private func request(_ url: URL, size: CGSize) -> ImageRequest {
-    let pixels = CGSize(width: size.width * PlatformScreenInfo.scale, height: size.height * PlatformScreenInfo.scale)
-    return ImageRequest(url: url, processors: [
-      ImageProcessors.Resize(size: pixels, unit: .pixels, contentMode: .aspectFill)
-    ], priority: .low)
   }
 
   private func offset(_ index: Int) -> CGFloat {

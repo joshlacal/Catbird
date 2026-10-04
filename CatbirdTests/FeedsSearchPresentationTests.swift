@@ -129,6 +129,62 @@ struct FeedsSearchPresentationTests {
     }
   }
 
+  @Test("Late media and unavailable images keep the following timeline row in place")
+  func trendingArtworkKeepsReservedGeometry() async throws {
+    let appState = try await makeAppState()
+    let state = TrendingArtworkGeometryState()
+    let url = URL(fileURLWithPath: "/nonexistent/trending-preview-fixture.png")
+    let stages: [(String, TrendingTopicPreview)] = [
+      ("empty", .init()),
+      ("one-unavailable", .init(media: [.init(id: "one", url: url)])),
+      ("three-unavailable", .init(media: (0..<3).map { .init(id: "card-\($0)", url: url) },
+        participants: (0..<3).map { .init(id: "author-\($0)", avatar: url) })),
+      ("moderated-back-to-empty", .init()),
+    ]
+    for showParticipants in [false, true] {
+      state.preview = .init()
+      try await withHost(
+        TrendingArtworkGeometryFixture(state: state, showParticipants: showParticipants),
+        appState: appState, size: CGSize(width: 320, height: 500)
+      ) { host in
+        var baseline: CGFloat?
+        for (name, preview) in stages {
+          state.preview = preview
+          let receipt = try await host.capture("trending-reserved-\(showParticipants)-\(name)",
+            requiring: ["TITLE STAYS", "TIMELINE CONTINUES"])
+          let next = try #require(receipt.lines.first { $0.text.contains("TIMELINE CONTINUES") })
+          if let baseline {
+            #expect(abs(next.rect.minY - baseline) <= 1, "Late media and fallback must not change the next row's position")
+          } else {
+            baseline = next.rect.minY
+          }
+        }
+      }
+    }
+  }
+
+  @Test("Category marks and wide Search titles fit narrow, dark, large-text and RTL containers")
+  func trendingCategoryHeadingAcrossLayouts() async throws {
+    let appState = try await makeAppState()
+    for (name, scheme, typeSize, direction) in [
+      ("light", ColorScheme.light, DynamicTypeSize.large, LayoutDirection.leftToRight),
+      ("dark", ColorScheme.dark, DynamicTypeSize.large, LayoutDirection.leftToRight),
+      ("rtl-large", ColorScheme.dark, DynamicTypeSize.accessibility1, LayoutDirection.rightToLeft),
+    ] {
+      try await withHost(
+        VStack(alignment: .leading, spacing: 20) {
+          TrendingTopicHeading(title: "Moon Garden", category: "science")
+          TrendingTopicHeading(title: "Community Sports", category: "sports")
+          Text("TIMELINE CONTINUES")
+        }.padding(16).environment(\.layoutDirection, direction),
+        appState: appState, size: CGSize(width: 320, height: 760), scheme: scheme, typeSize: typeSize
+      ) { host in
+        _ = try await host.capture("trending-category-\(name)",
+          requiring: ["Moon Garden", "Community Sports", "Science", "Sports", "TIMELINE CONTINUES"])
+      }
+    }
+  }
+
   @Test("Empty or hidden interstitials leave the next timeline row immediately available")
   func hiddenTrendingDoesNotReserveAVisibleCell() async throws {
     let appState = try await makeAppState()
@@ -632,6 +688,25 @@ extension FeedsSearchPresentationTests {
       try await host.applySyntheticSafeAreaInsets(additionalSafeAreaInsets)
     }
     try await body(host)
+  }
+}
+
+@Observable @MainActor
+private final class TrendingArtworkGeometryState {
+  var preview = TrendingTopicPreview()
+}
+
+private struct TrendingArtworkGeometryFixture: View {
+  let state: TrendingArtworkGeometryState
+  let showParticipants: Bool
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 0) {
+      Text("TITLE STAYS")
+      TrendingTopicArtworkPresentation(preview: state.preview, showParticipants: showParticipants)
+      Text("TIMELINE CONTINUES")
+    }
+    .padding(16)
   }
 }
 

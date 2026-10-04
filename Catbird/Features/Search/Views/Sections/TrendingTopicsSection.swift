@@ -67,6 +67,10 @@ struct TrendingTopicsSection: View {
                 topicsListView
             }
         }
+        .task(id: appState.topicPreviewPrefetchIdentity(links: topics.map(\.link))) {
+            appState.prefetchTopicPreviews(links: topics.map(\.link), owner: .search)
+        }
+        .onDisappear { appState.cancelTopicPreviewPrefetch(owner: .search) }
         .sheet(isPresented: $isShowingCopilot) {
             if let topic = copilotTopic {
                 let context = CopilotContext.topic(
@@ -151,67 +155,58 @@ struct TrendingTopicsSection: View {
     }
     
     private func topicLabel(_ topic: AppBskyUnspeccedDefs.TrendView) -> some View {
-            HStack(alignment: .top, spacing: DesignTokens.Spacing.base) {
-                VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
-                    HStack(spacing: DesignTokens.Spacing.sm) {
-                        if let category = topic.category {
-                            Label(formatCategory(category), systemImage: categorySymbol(for: category))
-                                .appFont(AppTextRole.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        if topic.status == "hot" {
-                            Label("Trending", systemImage: "flame.fill")
-                                .appFont(AppTextRole.caption)
-                                .foregroundStyle(.orange)
-                        }
-                    }
-                    TrendingTopicTitle(title: topic.displayName)
-                    if dynamicTypeSize.isAccessibilitySize {
-                        TrendingTopicArtwork(link: topic.link)
-                    }
-                    if let description = TrendingTopicPresentation.description(for: topic) {
-                        Text(description)
-                            .appFont(AppTextRole.subheadline)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(3)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    ViewThatFits(in: .horizontal) {
-                        HStack(spacing: DesignTokens.Spacing.base) { topicMetadata(topic) }
-                        VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) { topicMetadata(topic) }
-                    }
-                    .appFont(AppTextRole.caption)
-                    .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                if !dynamicTypeSize.isAccessibilitySize {
-                    TrendingTopicArtwork(link: topic.link)
-                }
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+            HStack(alignment: .top, spacing: DesignTokens.Spacing.sm) {
+                TrendingTopicHeading(title: topic.displayName, category: topic.category)
                 Image(systemName: "chevron.right")
                     .appFont(AppTextRole.caption)
                     .foregroundStyle(.tertiary)
                     .accessibilityHidden(true)
                     .padding(.top, DesignTokens.Spacing.xs)
             }
-            .padding(.vertical, DesignTokens.Spacing.base)
-            .padding(.horizontal, 16)
-            .contentShape(Rectangle())
+            if topic.status == "hot" {
+                Label("Trending", systemImage: "flame.fill")
+                    .appFont(AppTextRole.caption)
+                    .foregroundStyle(.orange)
+            }
+            if dynamicTypeSize.isAccessibilitySize {
+                topicDetails(topic)
+                TrendingTopicArtwork(link: topic.link)
+            } else {
+                HStack(alignment: .top, spacing: DesignTokens.Spacing.sm) {
+                    topicDetails(topic)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    TrendingTopicArtwork(link: topic.link)
+                }
+            }
+        }
+        .padding(.vertical, DesignTokens.Spacing.base)
+        .padding(.horizontal, 16)
+        .contentShape(Rectangle())
+    }
+
+    private func topicDetails(_ topic: AppBskyUnspeccedDefs.TrendView) -> some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+            if let description = TrendingTopicPresentation.description(for: topic) {
+                Text(description)
+                    .appFont(AppTextRole.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: DesignTokens.Spacing.base) { topicMetadata(topic) }
+                VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) { topicMetadata(topic) }
+            }
+            .appFont(AppTextRole.caption)
+            .foregroundStyle(.secondary)
+        }
     }
 
     @ViewBuilder
     private func topicMetadata(_ topic: AppBskyUnspeccedDefs.TrendView) -> some View {
         Text(formatPostCount(topic.postCount)).fixedSize()
         Text(formatTimeSince(topic.startedAt.date)).fixedSize()
-    }
-
-    private func categorySymbol(for category: String) -> String {
-        let icons = [
-            "pop-culture": "music.note.tv", "politics": "building.columns",
-            "sports": "figure.basketball", "video-games": "gamecontroller",
-            "tech": "laptopcomputer", "business": "chart.bar",
-            "science": "atom", "news": "newspaper"
-        ]
-        return icons[category.lowercased()] ?? "number"
     }
 
     private func formatPostCount(_ count: Int) -> String {
@@ -239,23 +234,7 @@ struct TrendingTopicsSection: View {
         }
     }
     
-    private func formatCategory(_ category: String) -> String {
-        // Special cases dictionary
-        let specialCases: [String: String] = [
-            "pop-culture": "Entertainment",
-            "video-games": "Video Games"
-        ]
-        
-        // Check for special cases first
-        if let specialCase = specialCases[category.lowercased()] {
-            return specialCase
-        }
-        
-        // Otherwise format normally
-        let words = category.components(separatedBy: "-")
-        let capitalizedWords = words.map { $0.capitalized }
-        return capitalizedWords.joined(separator: " ")
-    }
+
 }
 
 /// A common discovery heading with a second row when the title and actions need more room.
