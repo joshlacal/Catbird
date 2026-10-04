@@ -152,6 +152,82 @@ struct ModerationPreferenceTests {
         #expect(fixture.items.contains { if case .adultContentPref(let p) = $0 { return p.enabled }; return false })
     }
 
+    @Test("Already subscribed no-op confirms fresh membership and safety without a PUT")
+    @MainActor
+    func alreadySubscribedPublishesConfirmedSnapshot() async throws {
+        let service = try DID(didString: "did:plc:remote-subscribed-service")
+        let fixture = SafetyPreferencesFixture(items: [
+            .labelersPref(.init(labelers: [.init(did: service)])),
+            .adultContentPref(.init(enabled: true)),
+            .contentLabelPref(.init(labelerDid: service, label: "custom", visibility: "hide")),
+            .mutedWordsPref(.init(items: [.init(id: "remote-word", value: "retained", targets: [.tag], actorTarget: "exclude-following")]))
+        ])
+        let (manager, local) = try fixture.makeManager()
+        #expect(local.labelers.isEmpty)
+        try await manager.addLabeler(service, expectedAccountDID: fixture.account)
+        #expect(fixture.writes.isEmpty)
+        #expect(local.labelers.map(\.did) == [service])
+        #expect(local.hasConfirmedServerPreferences)
+        #expect(local.adultContentEnabled)
+        #expect(local.contentLabelPrefs.first?.visibility == "hide")
+        #expect(local.mutedWords.first?.targets == ["tag"])
+        #expect(local.mutedWords.first?.actorTarget == "exclude-following")
+        #expect(try manager.confirmedFeedFilterPreferences()?.labelers.first?.did == service)
+    }
+
+    @Test("A stale already-subscribed no-op cannot publish after account reconfiguration")
+    @MainActor
+    func staleNoOpSubscriptionRejected() async throws {
+        let service = try DID(didString: "did:plc:remote-subscribed-service")
+        let fixture = SafetyPreferencesFixture(items: [.labelersPref(.init(labelers: [.init(did: service)]))])
+        let (manager, local) = try fixture.makeManager()
+        fixture.pauseNextRead = true
+        let edit = Task { try await manager.addLabeler(service, expectedAccountDID: fixture.account) }
+        try await fixture.waitForPausedRead()
+        manager.configure(accountDID: "did:plc:safety-other")
+        manager.configure(accountDID: fixture.account)
+        fixture.resumeRead()
+        do { try await edit.value; Issue.record("A stale no-op must fail") } catch {}
+        #expect(fixture.writes.isEmpty)
+        #expect(local.labelers.isEmpty)
+        #expect(!local.hasConfirmedServerPreferences)
+    }
+
+    @Test("Reset builtin service overrides inherits the actual Warn fallback", arguments: ["self-harm", "corpse", "nsfw", "porn", "graphic-media", "NUDITY"])
+    @MainActor
+    func builtinInheritanceMatchesConsumedPolicy(label: String) async throws {
+        let service = try DID(didString: "did:plc:builtin-service")
+        let key = ProfileLabelPreferenceAdapter.consumedKey(for: label)
+        let fixture = SafetyPreferencesFixture(items: [
+            .contentLabelPref(.init(labelerDid: service, label: key, visibility: "ignore")),
+            .adultContentPref(.init(enabled: true))
+        ])
+        let (manager, local) = try fixture.makeManager()
+        try await manager.removeContentLabelOverride(label: key, labelerDid: service,
+                                                    expectedAccountDID: fixture.account)
+        let inherited = ModerationServiceLabelPolicy.inheritedVisibility(label: label,
+          preferences: local.contentLabelPrefs, definitionDefault: "hide")
+        #expect(inherited == .warn)
+        #expect(inherited == ContentFilterManager.getVisibilityForLabel(label: key,
+          labelerDid: service, preferences: local.contentLabelPrefs))
+        let global = [ContentLabelPreference(labelerDid: nil, label: key, visibility: "ignore")]
+        #expect(ModerationServiceLabelPolicy.inheritedVisibility(label: label,
+          preferences: global, definitionDefault: "hide") == .show)
+    }
+
+    @Test("Custom service inheritance retains supplied defaults and exact key spelling")
+    func customServiceInheritanceRemainsExplicit() {
+        #expect(ModerationServiceLabelPolicy.inheritedVisibility(label: "Custom-Key",
+          preferences: [], definitionDefault: "hide") == .hide)
+        #expect(ModerationServiceLabelPolicy.inheritedVisibility(label: "Custom-Key",
+          preferences: [], definitionDefault: nil) == .show)
+        let global = [ContentLabelPreference(labelerDid: nil, label: "Custom-Key", visibility: "ignore")]
+        #expect(ModerationServiceLabelPolicy.inheritedVisibility(label: "Custom-Key",
+          preferences: global, definitionDefault: "hide") == .show)
+        #expect(ModerationServiceLabelPolicy.inheritedVisibility(label: "custom-key",
+          preferences: global, definitionDefault: "hide") == .hide)
+    }
+
     @Test("Failed reads and writes leave confirmed local moderation unchanged", arguments: [false, true])
     @MainActor
     func failuresPreserveLocalState(readFails: Bool) async throws {

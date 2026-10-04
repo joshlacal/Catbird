@@ -1567,7 +1567,43 @@ final class PreferencesManager {
         await applyAcceptLabelersHeader(from: localPrefs)
         try validatePreferenceOperation(operation)
       }
+    } else {
+      // A successful fresh GET is authoritative even when the requested edit already exists.
+      try await publishConfirmedNoOp(items, preferenceType: preferenceType, operation: operation)
     }
+  }
+
+  @MainActor
+  private func publishConfirmedNoOp(
+    _ items: [AppBskyActorDefs.PreferencesForUnionArray], preferenceType: String,
+    operation: PreferenceOperationContext
+  ) async throws {
+    try validatePreferenceOperation(operation)
+    let localPrefs = try await getPreferences()
+    try validatePreferenceOperation(operation)
+    let beforeCommit = localPrefs.detachedSnapshot()
+    applyConfirmedFilterPolicy(items, to: localPrefs)
+    if preferenceType == "interests" {
+      localPrefs.interests = items.compactMap { item -> [String]? in
+        if case .interestsPref(let value) = item { return value.tags }
+        return nil
+      }.last ?? []
+    }
+    do { try await savePreferences(localPrefs) }
+    catch {
+      localPrefs.restoreValues(from: beforeCommit)
+      cachedServerPreferences = nil
+      state = .error("Confirmed preferences could not be saved locally. Reload preferences to recover.")
+      throw error
+    }
+    try validatePreferenceOperation(operation)
+    cachedServerPreferences = localPrefs
+    sharedDefaults.set(localPrefs.adultContentEnabled, forKey: scopedKey("isAdultContentEnabled"))
+    await applyAcceptLabelersHeader(from: localPrefs)
+    try validatePreferenceOperation(operation)
+    state = .ready
+    NotificationCenter.default.post(name: NSNotification.Name("FeedPreferencesChanged"), object: nil,
+                                    userInfo: ["accountDID": operation.accountDID])
   }
 
   @MainActor

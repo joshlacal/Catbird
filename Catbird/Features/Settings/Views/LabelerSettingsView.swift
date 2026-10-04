@@ -155,7 +155,7 @@ struct ModerationServiceSettingsView: View {
           Section {
             ContentVisibilitySelector(title: title(for: label), description: description(for: label),
               selection: Binding(get: { visibility(for: label) }, set: { save(label: label, visibility: $0) }))
-              .disabled(isSaving || (!adultContentEnabled && ["nsfw", "suggestive", "nudity"].contains(label)))
+              .disabled(isSaving || (!adultContentEnabled && ["nsfw", "suggestive", "nudity"].contains(ProfileLabelPreferenceAdapter.consumedKey(for: label))))
               .accessibilityIdentifier("moderation.service.\(label)")
             if hasOverride(for: label) {
               Button("Use Inherited Setting") { inherit(label: label) }.disabled(isSaving)
@@ -195,28 +195,30 @@ struct ModerationServiceSettingsView: View {
       ?? "Choose whether this service’s labeled content is shown, warned, or hidden."
   }
   private func hasOverride(for label: String) -> Bool {
-    preferences.contains { $0.label == label && $0.labelerDid == serviceDID }
+    let key = ProfileLabelPreferenceAdapter.consumedKey(for: label)
+    return preferences.contains { $0.label == key && $0.labelerDid == serviceDID }
   }
   private func inheritedVisibility(for label: String) -> ContentVisibility {
-    if let global = preferences.first(where: { $0.label == label && $0.labelerDid == nil }) {
-      return ContentVisibility(fromPreference: global.visibility)
-    }
-    if let setting = definition(for: label)?.defaultSetting { return ContentVisibility(fromPreference: setting) }
-    return ["nsfw", "suggestive", "graphic", "nudity"].contains(label) ? .warn : .show
+    ModerationServiceLabelPolicy.inheritedVisibility(label: label, preferences: preferences,
+      definitionDefault: definition(for: label)?.defaultSetting)
   }
   private func visibility(for label: String) -> ContentVisibility {
-    if let scoped = preferences.first(where: { $0.label == label && $0.labelerDid == serviceDID }) {
-      return ContentVisibility(fromPreference: scoped.visibility)
-    }
-    return inheritedVisibility(for: label)
+    ProfileLabelPreferenceAdapter.selection(raw: label, labelerDID: serviceDID,
+      preferences: preferences, inheritedDefault: inheritedVisibility(for: label)).visibility
   }
   private func inheritanceDescription(for label: String) -> String {
-    if !["nsfw", "suggestive", "graphic", "nudity"].contains(label),
-       !preferences.contains(where: { $0.label == label && $0.labelerDid == nil }),
+    let key = ProfileLabelPreferenceAdapter.consumedKey(for: label)
+    let isBuiltin = ContentLabels.contentWarningLabels.contains(label.lowercased())
+    let hasGlobal = preferences.contains { $0.label == key && $0.labelerDid == nil }
+    if ProfileLabelPreferenceAdapter.selection(raw: label, labelerDID: serviceDID,
+      preferences: preferences, inheritedDefault: inheritedVisibility(for: label)).usesLegacyRawKey {
+      return "Saved choice for an older label name. Choose a setting to apply it to this content."
+    }
+    if !isBuiltin, !hasGlobal,
        definition(for: label)?.defaultSetting == nil {
       return "No inherited warning setting is available. Choose an override to apply one."
     }
-    let origin = preferences.contains { $0.label == label && $0.labelerDid == nil } ? "Global setting" : "Service default"
+    let origin = hasGlobal ? "Global setting" : (isBuiltin ? "Default setting" : "Service default")
     return "\(hasOverride(for: label) ? "Override active. " : "Inherited. ")\(origin): \(inheritedVisibility(for: label).displayName)."
   }
   private func load() async {
@@ -237,15 +239,17 @@ struct ModerationServiceSettingsView: View {
   }
   private func save(label: String, visibility: ContentVisibility) {
     guard hasConfirmedPreferences, !isSaving else { return }
+    let key = ProfileLabelPreferenceAdapter.consumedKey(for: label)
     edit { manager, account in
-      try await manager.setContentLabelVisibility(label: label, visibility: visibility.preferenceValue,
+      try await manager.setContentLabelVisibility(label: key, visibility: visibility.preferenceValue,
         labelerDid: serviceDID, expectedAccountDID: account)
     }
   }
   private func inherit(label: String) {
     guard hasConfirmedPreferences, !isSaving else { return }
+    let key = ProfileLabelPreferenceAdapter.consumedKey(for: label)
     edit { manager, account in
-      try await manager.removeContentLabelOverride(label: label, labelerDid: serviceDID, expectedAccountDID: account)
+      try await manager.removeContentLabelOverride(label: key, labelerDid: serviceDID, expectedAccountDID: account)
     }
   }
   private func setSubscribed(_ enabled: Bool) {
@@ -266,6 +270,7 @@ struct ModerationServiceSettingsView: View {
         let loaded = try await manager.getPreferences()
         guard request == editRequest, manager.accountDID == account, appState.userDID == account else { return }
         preferences = loaded.contentLabelPrefs
+        adultContentEnabled = loaded.adultContentEnabled
         isSubscribed = isDefaultService || loaded.labelers.contains { $0.did == serviceDID }
       } catch {
         guard request == editRequest, manager.accountDID == account, appState.userDID == account else { return }
@@ -273,5 +278,20 @@ struct ModerationServiceSettingsView: View {
         errorMessage = "Could not save settings: \(error.localizedDescription)"
       }
     }
+  }
+}
+
+/// The Settings inheritance display follows the unchanged builtin runtime resolver.
+enum ModerationServiceLabelPolicy {
+  static func inheritedVisibility(label: String, preferences: [ContentLabelPreference],
+                                  definitionDefault: String?) -> ContentVisibility {
+    let key = ProfileLabelPreferenceAdapter.consumedKey(for: label)
+    if ContentLabels.contentWarningLabels.contains(label.lowercased()) {
+      return ContentFilterManager.getVisibilityForLabel(label: key, preferences: preferences)
+    }
+    if let global = preferences.first(where: { $0.label == key && $0.labelerDid == nil }) {
+      return ContentVisibility(fromPreference: global.visibility)
+    }
+    return definitionDefault.map { ContentVisibility(fromPreference: $0) } ?? .show
   }
 }
