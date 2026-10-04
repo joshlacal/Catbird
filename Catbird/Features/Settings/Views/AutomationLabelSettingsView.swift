@@ -174,6 +174,7 @@ struct AutomationLabelSettingsView: View {
         }
         let userDID = appState.userDID
         let operationRevision = AppStateManager.shared.settingsAccountContextRevision
+        var isReadingProfileRecord = false
         
         do {
             let originatingAppState = appState
