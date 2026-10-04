@@ -636,43 +636,43 @@ class ThemeColorCache {
 extension Color {
     /// Adaptive background color that respects contrast settings
     static func adaptiveBackground(appState: AppState?, defaultColor: Color) -> Color {
-        let increaseContrast = appState?.appSettings.increaseContrast ?? false
+        let increaseContrast = appState?.appSettings.effectiveIncreaseContrast ?? false
         return increaseContrast ? defaultColor.opacity(0.95) : defaultColor
     }
     
     /// Adaptive foreground color that respects contrast settings
     static func adaptiveForeground(appState: AppState?, defaultColor: Color) -> Color {
-        let increaseContrast = appState?.appSettings.increaseContrast ?? false
+        let increaseContrast = appState?.appSettings.effectiveIncreaseContrast ?? false
         return increaseContrast ? .primary : defaultColor
     }
     
     /// Adaptive border color that respects contrast settings
     static func adaptiveBorder(appState: AppState?) -> Color {
-        let increaseContrast = appState?.appSettings.increaseContrast ?? false
+        let increaseContrast = appState?.appSettings.effectiveIncreaseContrast ?? false
         return increaseContrast ? .primary.opacity(0.3) : .gray.opacity(0.2)
     }
     
     /// Adaptive text color that respects contrast settings
     static func adaptiveText(appState: AppState?, themeManager: ThemeManager, style: TextStyle = .primary, currentScheme: ColorScheme) -> Color {
-        let increaseContrast = appState?.appSettings.increaseContrast ?? false
+        let increaseContrast = appState?.appSettings.effectiveIncreaseContrast ?? false
         return dynamicText(themeManager, style: style, currentScheme: currentScheme, increaseContrast: increaseContrast)
     }
 
     /// Adaptive text color variant that accepts AppSettings directly
     static func adaptiveText(appSettings: AppSettings?, themeManager: ThemeManager, style: TextStyle = .primary, currentScheme: ColorScheme) -> Color {
-        let increaseContrast = appSettings?.increaseContrast ?? false
+        let increaseContrast = appSettings?.effectiveIncreaseContrast ?? false
         return dynamicText(themeManager, style: style, currentScheme: currentScheme, increaseContrast: increaseContrast)
     }
     
     /// Adaptive border color that respects theme and contrast settings
     static func adaptiveBorder(appState: AppState?, themeManager: ThemeManager, isProminent: Bool = false, currentScheme: ColorScheme) -> Color {
-        let increaseContrast = appState?.appSettings.increaseContrast ?? false
+        let increaseContrast = appState?.appSettings.effectiveIncreaseContrast ?? false
         return dynamicBorder(themeManager, isProminent: isProminent, currentScheme: currentScheme, increaseContrast: increaseContrast)
     }
     
     /// Adaptive separator color that respects contrast settings
     static func adaptiveSeparator(appState: AppState?, themeManager: ThemeManager, currentScheme: ColorScheme) -> Color {
-        let increaseContrast = appState?.appSettings.increaseContrast ?? false
+        let increaseContrast = appState?.appSettings.effectiveIncreaseContrast ?? false
         return dynamicSeparator(themeManager, currentScheme: currentScheme, increaseContrast: increaseContrast)
     }
 }

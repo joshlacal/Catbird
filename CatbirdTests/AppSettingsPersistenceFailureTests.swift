@@ -203,6 +203,9 @@ struct AppSettingsPersistenceFailureTests {
 
     fixture.initialize()
     await fixture.drainPublications()
+    #expect(fixture.settings.persistenceState == .saveFailed)
+    #expect(fixture.settings.pendingChangesDescription.contains("discarded-a-theme"))
+    #expect(await fixture.settings.resolvePendingChanges(for: fixture.didA, decision: .discard) == .resolved)
     fixture.settings.theme = "saved-a-theme"
     fixture.settings.disableHaptics = true
     fixture.settings.afterPendingSave { effects += 1 }
@@ -470,6 +473,114 @@ struct AppSettingsPersistenceFailureTests {
     #expect(stored.externalMediaConsents["future-provider"] == "future-consent")
     #expect(fixture.notifications == [fixture.didA])
   }
+  @Test("Departure resolution is bound to the originating account and retains failed drafts")
+  func pendingDepartureResolution() async throws {
+    let fixture = try SettingsPersistenceFixture()
+    defer { fixture.restoreDefaults() }
+    try fixture.seed { $0.theme = "light" }
+    try fixture.seed(accountDID: fixture.didB) { $0.theme = "dark" }
+    fixture.initialize()
+    await fixture.drainPublications()
+    fixture.settings.theme = "account-a-attempt"
+    let staleSave = try #require(fixture.scheduledActions.last)
+    #expect(fixture.settings.pendingChangesSummary?.accountDID == fixture.didA)
+    fixture.failSave = true
+    #expect(await fixture.settings.resolvePendingChanges(for: fixture.didA, decision: .save) == .saveFailed)
+    #expect(fixture.settings.theme == "light")
+    #expect(fixture.settings.hasPendingChanges)
+    fixture.failSave = false
+    fixture.initialize(accountDID: fixture.didB)
+    staleSave()
+    #expect(await fixture.settings.resolvePendingChanges(for: fixture.didA, decision: .discard) == .accountChanged)
+    #expect(fixture.settings.theme == "dark")
+    fixture.initialize()
+    #expect(fixture.settings.persistenceState == .saveFailed)
+    #expect(fixture.settings.pendingChangesDescription.contains("account-a-attempt"))
+    #expect(await fixture.settings.resolvePendingChanges(for: fixture.didA, decision: .save) == .resolved)
+    #expect(try fixture.storedRow()?.theme == "account-a-attempt")
+    #expect(!fixture.settings.hasPendingChanges)
+  }
+
+  @Test("Discard fences scheduled saves and effects without changing confirmed backups")
+  func explicitDiscardFencesWork() async throws {
+    let fixture = try SettingsPersistenceFixture()
+    defer { fixture.restoreDefaults() }
+    try fixture.seed { $0.theme = "light" }
+    fixture.initialize()
+    await fixture.drainPublications()
+    let backups = fixture.globalBackupValues()
+    var effects = 0
+    fixture.settings.theme = "dark"
+    fixture.settings.afterPendingSave { effects += 1 }
+    let scheduledSave = try #require(fixture.scheduledActions.last)
+    #expect(await fixture.settings.resolvePendingChanges(for: fixture.didA, decision: .discard) == .resolved)
+    scheduledSave()
+    await fixture.drainPublications()
+    #expect(fixture.settings.theme == "light")
+    #expect(try fixture.storedRow()?.theme == "light")
+    #expect(fixture.settings.persistenceState == .ready)
+    #expect(!fixture.settings.hasPendingChanges)
+    #expect(fixture.globalBackupValues() == backups)
+    #expect(fixture.notifications.isEmpty)
+    #expect(effects == 0)
+    #expect(fixture.saveCount == 0)
+  }
+
+  @Test("External media consent commits atomically and retains unknown providers")
+  func atomicExternalMediaConsent() async throws {
+    let fixture = try SettingsPersistenceFixture()
+    defer { fixture.restoreDefaults() }
+    try fixture.seed { row in
+      row.externalMediaConsents = ["future-provider": "future-choice"]
+      row.setConsent(.hide, for: .youtube)
+    }
+    fixture.initialize()
+    await fixture.drainPublications()
+    fixture.failSave = true
+    #expect(!fixture.settings.applyExternalMediaConsent(.allow, providers: [.youtube, .spotify]))
+    #expect(fixture.settings.externalMediaConsent(for: .youtube) == .hide)
+    #expect(fixture.settings.externalMediaConsent(for: .spotify) == .undecided)
+    #expect(try fixture.storedRow()?.externalMediaConsents["future-provider"] == "future-choice")
+    #expect(fixture.settings.hasPendingChanges)
+    fixture.failSave = false
+    #expect(await fixture.settings.resolvePendingChanges(for: fixture.didA, decision: .save) == .resolved)
+    #expect(fixture.settings.externalMediaConsent(for: .youtube) == .allow)
+    #expect(fixture.settings.externalMediaConsent(for: .spotify) == .allow)
+    #expect(try fixture.storedRow()?.externalMediaConsents["future-provider"] == "future-choice")
+  }
+
+  @Test("Opening settings preserves every legacy cap and the explicit full system range",
+        arguments: AppTextSizeLimit.options.map(\.value))
+  func textSizeLimitIsNeverMigrated(value: String) async throws {
+    let fixture = try SettingsPersistenceFixture()
+    defer { fixture.restoreDefaults() }
+    try fixture.seed { $0.maxDynamicTypeSize = value }
+    fixture.initialize()
+    #expect(fixture.settings.maxDynamicTypeSize == value)
+    #expect(try fixture.storedRow()?.maxDynamicTypeSize == value)
+    #expect(fixture.saveCount == 0)
+    #expect(AppSettingsModel().maxDynamicTypeSize == "accessibility1")
+  }
+
+  @Test("System accessibility augments runtime behavior without changing stored choices")
+  func systemAccessibilityDoesNotSavePreferences() async throws {
+    let fixture = try SettingsPersistenceFixture()
+    defer { fixture.restoreDefaults() }
+    try fixture.seed()
+    fixture.initialize()
+    await fixture.drainPublications()
+    fixture.settings.refreshSystemAccessibility(.init(reduceMotion: true, prefersCrossfade: true, increaseContrast: true, boldText: true))
+    #expect(fixture.settings.effectiveReduceMotion)
+    #expect(fixture.settings.effectivePrefersCrossfade)
+    #expect(fixture.settings.effectiveIncreaseContrast)
+    #expect(fixture.settings.effectiveBoldText)
+    #expect(!fixture.settings.reduceMotion)
+    #expect(!fixture.settings.increaseContrast)
+    #expect(!fixture.settings.boldText)
+    #expect(!fixture.settings.hasPendingChanges)
+    #expect(fixture.saveCount == 0)
+  }
+
 }
 
 @MainActor

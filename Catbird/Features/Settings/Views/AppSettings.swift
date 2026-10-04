@@ -3,6 +3,11 @@ import SwiftUI
 import SwiftData
 import Observation
 import OSLog
+#if os(iOS)
+import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
 
 /// AppSettings manages all app-specific settings that aren't synced with the Bluesky server
 @Observable final class AppSettings {
@@ -25,6 +30,8 @@ import OSLog
         var scheduleSave: (@escaping () -> Void) -> Timer? = { action in
             Timer.scheduledTimer(withTimeInterval: 0.1, repeats: false) { _ in action() }
         }
+        var standardDefaults: UserDefaults = .standard
+        var sharedDefaults: UserDefaults = AppSettingsModel.sharedDefaults()
 
         static let live = Persistence(
             fetch: { context, accountDID in
@@ -53,6 +60,8 @@ import OSLog
     private var defaults = AppSettingsModel()
     private var isInitializing = true
     private var notificationDebounceTimer: Timer?
+    private var accessibilityObservers: [(NotificationCenter, NSObjectProtocol)] = []
+    private(set) var systemAccessibility = SystemAccessibilitySnapshot()
     var persistence = Persistence.live
     private(set) var persistenceState: PersistenceState = .unavailable
 
@@ -86,7 +95,7 @@ import OSLog
         string("Line Spacing", \.lineSpacing, ["tight": "Tight", "normal": "Normal", "relaxed": "Relaxed"])
         string("Letter Spacing", \.letterSpacing, ["tight": "Tight", "normal": "Normal", "loose": "Loose"])
         bool("Use System Text Size", \.dynamicTypeEnabled)
-        string("Maximum Text Size", \.maxDynamicTypeSize, ["xxLarge": "Extra Extra Large", "xxxLarge": "Extra Extra Extra Large", "accessibility1": "Accessibility Medium", "accessibility2": "Accessibility Large", "accessibility3": "Accessibility Extra Large", "accessibility4": "Accessibility Extra Extra Large", "accessibility5": "Accessibility Extra Extra Extra Large"])
+        string("Maximum Text Size", \.maxDynamicTypeSize, ["system": "Full System Range", "xxLarge": "Extra Extra Large", "xxxLarge": "Extra Extra Extra Large", "accessibility1": "Accessibility Medium", "accessibility2": "Accessibility Large", "accessibility3": "Accessibility Extra Large", "accessibility4": "Accessibility Extra Extra Large", "accessibility5": "Accessibility Extra Extra Extra Large"])
         bool("Require Alt Text", \.requireAltText)
         bool("Larger Alt Text Badges", \.largerAltTextBadges)
         bool("Disable Haptics", \.disableHaptics)
@@ -134,16 +143,111 @@ import OSLog
         return changes.isEmpty ? "Your selected settings are waiting to be saved." : changes.joined(separator: "\n")
     }
 
-    init() {}
+    struct PendingChangesSummary: Equatable {
+        let accountDID: String
+        let description: String
+        let persistenceState: PersistenceState
+    }
+
+    enum PendingDecision { case save, discard }
+    enum PendingResolution: Equatable { case resolved, saveFailed, accountChanged, unavailable }
+
+    var hasPendingChanges: Bool {
+        guard let accountDID else { return false }
+        return pendingDrafts[accountDID] != nil
+    }
+
+    var pendingChangesSummary: PendingChangesSummary? {
+        guard let accountDID, hasPendingChanges else { return nil }
+        return PendingChangesSummary(accountDID: accountDID, description: pendingChangesDescription, persistenceState: persistenceState)
+    }
+
+    var effectiveReduceMotion: Bool {
+        AccessibilityAccommodationPolicy.isEnabled(system: systemAccessibility.reduceMotion, app: reduceMotion)
+    }
+
+    var effectivePrefersCrossfade: Bool {
+        AccessibilityAccommodationPolicy.usesCrossfade(system: systemAccessibility, reduceMotion: reduceMotion, prefersCrossfade: prefersCrossfade)
+    }
+
+    var effectiveIncreaseContrast: Bool {
+        AccessibilityAccommodationPolicy.isEnabled(system: systemAccessibility.increaseContrast, app: increaseContrast)
+    }
+
+    var effectiveBoldText: Bool {
+        AccessibilityAccommodationPolicy.isEnabled(system: systemAccessibility.boldText, app: boldText)
+    }
+
+    init() {
+        #if os(iOS)
+        let center = NotificationCenter.default
+        let names = [UIAccessibility.reduceMotionStatusDidChangeNotification,
+                     UIAccessibility.prefersCrossFadeTransitionsStatusDidChangeNotification,
+                     UIAccessibility.darkerSystemColorsStatusDidChangeNotification,
+                     UIAccessibility.boldTextStatusDidChangeNotification]
+        #elseif os(macOS)
+        let center = NSWorkspace.shared.notificationCenter
+        let names = [NSWorkspace.accessibilityDisplayOptionsDidChangeNotification]
+        #endif
+        for name in names {
+            let observer = center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor [weak self] in self?.refreshSystemAccessibility() }
+            }
+            accessibilityObservers.append((center, observer))
+        }
+        Task { @MainActor [weak self] in self?.refreshSystemAccessibility() }
+    }
+
+    deinit {
+        for (center, observer) in accessibilityObservers { center.removeObserver(observer) }
+        notificationDebounceTimer?.invalidate()
+    }
+
+    @MainActor func refreshSystemAccessibility(_ snapshot: SystemAccessibilitySnapshot? = nil) {
+        systemAccessibility = snapshot ?? .current
+    }
+
+    @MainActor
+    func resolvePendingChanges(for accountDID: String, decision: PendingDecision) async -> PendingResolution {
+        guard self.accountDID == accountDID else { return .accountChanged }
+        switch decision {
+        case .save:
+            guard modelContext != nil, savedSettings != nil else { return .unavailable }
+            return persistPendingChanges(for: accountDID) ? .resolved : .saveFailed
+        case .discard:
+            guard hasPendingChanges else { return persistenceState == .ready ? .resolved : .unavailable }
+            guard let savedSettings else { return .unavailable }
+            generation &+= 1
+            notificationDebounceTimer?.invalidate()
+            notificationDebounceTimer = nil
+            pendingDrafts.removeValue(forKey: accountDID)
+            pendingBaselines.removeValue(forKey: accountDID)
+            pendingEffects.removeValue(forKey: accountDID)
+            settingsModel = snapshot(savedSettings, accountDID: accountDID)
+            persistenceState = .ready
+            return .resolved
+        }
+    }
+
+    @discardableResult
+    func persistPendingChanges(for accountDID: String) -> Bool {
+        guard self.accountDID == accountDID else { return false }
+        return persistPendingChanges()
+    }
+
+    /// A player may open only after the complete provider choice is committed.
+    @MainActor @discardableResult
+    func applyExternalMediaConsent(_ consent: ExternalMediaConsent, providers: [ExternalMediaProvider]) -> Bool {
+        guard canEditPersistedSettings, let settingsModel else { return false }
+        for provider in providers { settingsModel.setConsent(consent, for: provider) }
+        saveChanges()
+        return persistPendingChanges()
+    }
 
     func configure(accountDID: String) {
         guard self.accountDID != accountDID else { return }
         generation &+= 1
-        if let previousAccount = self.accountDID {
-            pendingDrafts.removeValue(forKey: previousAccount)
-            pendingBaselines.removeValue(forKey: previousAccount)
-            pendingEffects.removeValue(forKey: previousAccount)
-        }
+        // Retain the originating account's attempt until Save or Discard resolves it.
         notificationDebounceTimer?.invalidate()
         notificationDebounceTimer = nil
         self.accountDID = accountDID
@@ -177,7 +281,7 @@ import OSLog
                     context.delete(legacy)
                 } else {
                     let allowLegacyFallback = try !AppSettingsModel.hasPerAccountSettings(in: context)
-                    row.migrateFromUserDefaults(accountDID: accountDID, includeLegacyFallback: allowLegacyFallback, writeWidgetBackup: false)
+                    row.migrateFromUserDefaults(accountDID: accountDID, includeLegacyFallback: allowLegacyFallback, writeWidgetBackup: false, defaults: standardDefaults)
                 }
                 context.insert(row)
                 try persistence.save(context)
@@ -304,7 +408,7 @@ import OSLog
         self.accountDID == accountDID && self.generation == generation
     }
 
-    private var standardDefaults: UserDefaults { .standard }
+    private var standardDefaults: UserDefaults { persistence.standardDefaults }
     private var accountScopedDefaultsDID: String? { accountDID }
     private var shouldUseRuntimeLegacyFallback: Bool {
         AppSettingsModel.shouldUseLegacyFallback(for: accountScopedDefaultsDID, defaults: standardDefaults)
@@ -402,7 +506,7 @@ import OSLog
         
         // Also save to app group for widgets
         if writesActiveBackup {
-            let groupDefaults = AppSettingsModel.sharedDefaults()
+            let groupDefaults = persistence.sharedDefaults
             groupDefaults.set(theme, forKey: "theme")
             groupDefaults.set(darkThemeMode, forKey: "darkThemeMode")
         }
