@@ -23,24 +23,27 @@ final class AccountSettingsEditSession<Value> {
   @ObservationIgnored private let loadValue: @MainActor () async throws -> Value
   @ObservationIgnored private let saveValue: @MainActor (Value) async throws -> Value
   @ObservationIgnored private let isCurrentAccount: @MainActor () -> Bool
+  @ObservationIgnored private let allowEditingAfterSaveFailure: Bool
   @ObservationIgnored private var generation: UInt64 = 0
   @ObservationIgnored private var failedValue: Value?
   @ObservationIgnored private var saveTask: Task<Void, Never>?
 
   init(
     accountDID: String,
+    allowEditingAfterSaveFailure: Bool = true,
     isCurrentAccount: @escaping @MainActor () -> Bool,
     load: @escaping @MainActor () async throws -> Value,
     save: @escaping @MainActor (Value) async throws -> Value
   ) {
     self.accountDID = accountDID
     self.isCurrentAccount = isCurrentAccount
+    self.allowEditingAfterSaveFailure = allowEditingAfterSaveFailure
     self.loadValue = load
     self.saveValue = save
   }
 
   var canEdit: Bool {
-    isCurrentAccount() && (state == .ready || state == .saveFailed)
+    isCurrentAccount() && (state == .ready || (state == .saveFailed && allowEditingAfterSaveFailure))
   }
 
   var displayedValue: Value? {
@@ -72,7 +75,13 @@ final class AccountSettingsEditSession<Value> {
   /// Admission is synchronous so two taps cannot start overlapping writes.
   @discardableResult
   func submit(_ value: Value) -> Task<Void, Never>? {
-    guard canEdit else { return nil }
+    submit(value, isRetry: false)
+  }
+
+  private func submit(_ value: Value, isRetry: Bool) -> Task<Void, Never>? {
+    guard isCurrentAccount(),
+      state == .ready || (state == .saveFailed && (allowEditingAfterSaveFailure || isRetry))
+    else { return nil }
     generation &+= 1
     let request = generation
     proposedValue = value
@@ -105,7 +114,7 @@ final class AccountSettingsEditSession<Value> {
   @discardableResult
   func retrySave() -> Task<Void, Never>? {
     guard state == .saveFailed, let failedValue else { return nil }
-    return submit(failedValue)
+    return submit(failedValue, isRetry: true)
   }
 
   func invalidate() {

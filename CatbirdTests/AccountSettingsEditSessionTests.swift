@@ -51,6 +51,98 @@ struct AccountSettingsEditSessionTests {
     await session.submit(3)?.value
     #expect(session.confirmedValue == 2)
     #expect(session.displayedValue == 2)
+    #expect(session.canEdit)
+    let newEdit = session.submit(4)
+    #expect(newEdit != nil)
+    await newEdit?.value
+    #expect(values == [2, 2, 3, 4])
+  }
+
+  @Test("An uncertain save blocks new edits but permits only one exact retry")
+  func uncertainSaveRequiresRetryOrReload() async {
+    var remoteValue = 1
+    var writes: [Int] = []
+    var failLocalPersistence = true
+    let session = AccountSettingsEditSession<Int>(
+      accountDID: "did:test:a", allowEditingAfterSaveFailure: false,
+      isCurrentAccount: { true }, load: { remoteValue },
+      save: { value in
+        writes.append(value)
+        remoteValue = value
+        if failLocalPersistence { throw Failure.write }
+        return value
+      }
+    )
+    await session.load()
+    await session.submit(2)?.value
+    #expect(remoteValue == 2)
+    #expect(session.state == .saveFailed)
+    #expect(session.displayedValue == 1)
+    #expect(!session.canEdit)
+    #expect(session.submit(1) == nil)
+    #expect(session.submit(3) == nil)
+    #expect(writes == [2])
+
+    failLocalPersistence = false
+    let retry = session.retrySave()
+    #expect(retry != nil)
+    #expect(session.state == .saving)
+    #expect(session.retrySave() == nil)
+    #expect(session.submit(3) == nil)
+    await retry?.value
+    #expect(writes == [2, 2])
+    #expect(session.confirmedValue == 2)
+    #expect(session.canEdit)
+  }
+
+  @Test("Reload after an uncertain save accepts the remote value and reenables editing")
+  func uncertainSaveReloadsAcceptedRemoteValue() async {
+    var remoteValue = 1
+    var writes: [Int] = []
+    let session = AccountSettingsEditSession<Int>(
+      accountDID: "did:test:a", allowEditingAfterSaveFailure: false,
+      isCurrentAccount: { true }, load: { remoteValue },
+      save: { value in
+        writes.append(value)
+        remoteValue = value
+        throw Failure.write
+      }
+    )
+    await session.load()
+    await session.submit(2)?.value
+    #expect(!session.canEdit)
+    #expect(session.confirmedValue == 1)
+    await session.load()
+    #expect(session.state == .ready)
+    #expect(session.confirmedValue == 2)
+    #expect(session.canEdit)
+    #expect(session.retrySave() == nil)
+    let newEdit = session.submit(1)
+    #expect(newEdit != nil)
+    await newEdit?.value
+    #expect(writes == [2, 1])
+  }
+
+  @Test("Exact retry remains bound to the originating account and cannot survive invalidation")
+  func uncertainSaveRetryChecksAccount() async {
+    var current = true
+    var writes = 0
+    let session = AccountSettingsEditSession<Int>(
+      accountDID: "did:test:a", allowEditingAfterSaveFailure: false,
+      isCurrentAccount: { current }, load: { 1 },
+      save: { _ in writes += 1; throw Failure.write }
+    )
+    await session.load()
+    await session.submit(2)?.value
+    current = false
+    #expect(session.retrySave() == nil)
+    #expect(session.submit(3) == nil)
+    #expect(writes == 1)
+    session.invalidate()
+    current = true
+    #expect(session.retrySave() == nil)
+    #expect(session.state == .unavailable)
+    #expect(writes == 1)
   }
 
   @Test("Stale read cannot publish to a replacement account")

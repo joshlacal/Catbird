@@ -421,6 +421,18 @@ final class AppState {
         composerDraftManager.updateAppState(self)
         chatManager.updateAppState(self)
 
+        // Settings requests and post-save effects belong to the actual source-account drain.
+        preferencesManager.beginSettingsAccountOperation = { [weak self] in
+            self?.accountServiceWork.beginOperation()
+        }
+        preferencesManager.endSettingsAccountOperation = { [weak self] token in
+            self?.accountServiceWork.endOperation(token)
+        }
+        appSettings.persistence.startEffect = { [weak self] action in
+            guard let self else { return false }
+            return self.accountServiceWork.start(operation: action) != nil
+        }
+
         // Apply initial theme settings immediately from UserDefaults
         // This ensures proper theme is applied even before SwiftData is fully initialized
         appSettings.applyInitialThemeSettings(to: _themeManager)
@@ -455,6 +467,9 @@ final class AppState {
     /// No service, editing session, cached model, or database is retired here.
     @MainActor
     func suspendForAccountSwitch() async throws {
+        guard appSettings.suspendLocalChanges(for: userDID) else {
+            throw AccountServiceWork.BarrierError.accountChanged
+        }
         accountServiceWork.suspend()
         settingsUpdateDebounceTimer?.invalidate()
         settingsUpdateDebounceTimer = nil
@@ -462,6 +477,12 @@ final class AppState {
         backgroundPollingTask = nil
         try await suspendAccountPollers()
         try await accountServiceWork.drain()
+        guard appSettings.flushPendingChangesForAccountSwitch(for: userDID) else {
+            throw SettingsAccountSwitchError.localSaveRefused(
+                appSettings.accountSwitchFlushFailure?.localizedDescription
+                    ?? "Your Settings changes could not be saved. Retry or discard them in Settings before switching accounts."
+            )
+        }
     }
 
     @MainActor
@@ -507,6 +528,9 @@ final class AppState {
                   try await originalClient.getDid() == userDID else {
                 throw AccountServiceWork.BarrierError.serviceResumeFailed
             }
+            guard appSettings.resumeLocalChanges(for: userDID) else {
+                throw AccountServiceWork.BarrierError.accountChanged
+            }
         } catch {
             try? await suspendAccountPollers()
             throw error
@@ -541,11 +565,26 @@ final class AppState {
         accountServiceWork.start(priority: priority, operation: operation)
     }
 
+    /// Settings I/O is registered until its actual body ends, including cancellation.
+    @MainActor
+    func performSettingsAccountOperation<Value>(
+        _ operation: @escaping @MainActor () async throws -> Value
+    ) async throws -> Value {
+        guard AppStateManager.shared.lifecycle.appState === self,
+              let token = accountServiceWork.beginOperation() else {
+            throw AccountServiceWork.BarrierError.accountChanged
+        }
+        defer { accountServiceWork.endOperation(token) }
+        try Task.checkCancellation()
+        return try await operation()
+    }
+
     /// Cleanup method called when this AppState is evicted from cache
     /// This cancels long-running tasks and releases resources without deallocating the object
     @MainActor
     func cleanup() {
         logger.info("🧹 Cleaning up AppState for user: \(self.userDID)")
+        _ = appSettings.suspendLocalChanges(for: userDID)
         accountServiceWork.suspend()
         settingsUpdateDebounceTimer?.invalidate()
         settingsUpdateDebounceTimer = nil
@@ -1046,8 +1085,10 @@ final class AppState {
             forName: NSNotification.Name("AppSettingsChanged"),
             object: nil,
             queue: .main
-        ) { [weak self] _ in
-            guard let self = self else { return }
+        ) { [weak self] notification in
+            guard let self, !self.accountServiceWork.isSuspended,
+                  AppStateManager.shared.lifecycle.appState === self,
+                  notification.userInfo?["accountDID"] as? String == self.userDID else { return }
 
             // Create a hash of current settings to detect actual changes
             let currentSettingsHash = self.createSettingsHash()
@@ -1064,7 +1105,8 @@ final class AppState {
             // Debounce rapid setting changes
             self.settingsUpdateDebounceTimer?.invalidate()
             self.settingsUpdateDebounceTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: false) { [weak self] _ in
-                guard let self = self else { return }
+                guard let self, !self.accountServiceWork.isSuspended,
+                      AppStateManager.shared.lifecycle.appState === self else { return }
 
                 self.logger.debug("Applying debounced settings change")
 

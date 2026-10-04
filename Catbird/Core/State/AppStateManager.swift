@@ -110,7 +110,6 @@ final class AppStateManager {
 
   /// Fences Settings callbacks when an account leaves and later returns.
   private(set) var settingsAccountContextRevision: UInt64 = 0
-  private let settingsSwitchPreflight = SettingsAccountSwitchPreflight()
   private let composerSwitchQueue = ComposerAccountSwitchQueue()
   private let accountSwitchOperationBarrier = AccountSwitchOperationBarrier()
   private var isLoggingOut = false
@@ -839,39 +838,7 @@ final class AppStateManager {
       return .failed(AccountSwitchError.invalidDID.localizedDescription)
     }
 
-    let settingsSource = lifecycle.appState
-    let settingsSourceDID = settingsSource?.userDID
-    let settingsRevision = settingsAccountContextRevision
-    let settingsResolution = await settingsSwitchPreflight.resolve(
-      hasPendingChanges: settingsSource?.appSettings.hasPendingChanges == true,
-      isCurrent: {
-        self.settingsAccountContextRevision == settingsRevision
-          && self.lifecycle.appState === settingsSource
-          && !self.isTransitioning && !self.isLoggingOut
-          && !self.composerSwitchQueue.isSwitching && !self.accountSwitchRequiresRestart
-      },
-      accountOperationInProgress: { SettingsAccountOperationGate.activeAccountDID != nil },
-      savePending: {
-        guard let settingsSource, let settingsSourceDID else { return false }
-        return await settingsSource.appSettings.resolvePendingChanges(
-          for: settingsSourceDID, decision: .save
-        ) == .resolved
-      }
-    )
-    switch settingsResolution {
-    case .allowed: break
-    case .busy: return .busy
-    case .cancelled, .accountChanged: return .cancelled
-    case .saveFailed:
-      return .failed("Your Settings changes could not be saved. Retry or discard them in Settings before switching accounts.")
-    }
-
-    guard !Task.isCancelled else { return .cancelled }
-    guard settingsAccountContextRevision == settingsRevision,
-          lifecycle.appState === settingsSource else { return .cancelled }
-    guard !isTransitioning, !isLoggingOut, !composerSwitchQueue.isSwitching,
-          !accountSwitchRequiresRestart,
-          SettingsAccountOperationGate.activeAccountDID == nil else { return .busy }
+    guard SettingsAccountOperationGate.activeAccountDID == nil else { return .busy }
 
     let admission = composerSwitchQueue.begin(
       to: userDID,
@@ -928,6 +895,9 @@ final class AppStateManager {
       composerSwitchQueue.fail(id: attempt.id)
       if accountSwitchRequiresRestart {
         return .failed("Catbird could not restore the previous account safely. Restart the app; your draft has been preserved.")
+      }
+      if error is SettingsAccountSwitchError {
+        return .blockedBySettings(error.localizedDescription)
       }
       return error is CancellationError ? .cancelled : .failed(error.localizedDescription)
     }

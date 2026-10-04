@@ -249,6 +249,7 @@ struct DefaultPostInteractionSettingsView: View {
     let manager = state.preferencesManager
     let session = AccountSettingsEditSession<AppBskyActorDefs.PostInteractionSettingsPref>(
       accountDID: account,
+      allowEditingAfterSaveFailure: false,
       isCurrentAccount: {
         manager.accountDID == account && AppStateManager.shared.lifecycle.userDID == account
           && AppStateManager.shared.settingsAccountContextRevision == contextRevision
@@ -288,9 +289,11 @@ struct DefaultPostInteractionSettingsView: View {
       var seen: Set<String> = []
       var cursor: String?
       repeat {
-        let (code, output) = try await client.app.bsky.graph.getLists(input: .init(
-          actor: try ATIdentifier(string: account), limit: 50, cursor: cursor
-        ))
+        let (code, output) = try await state.performSettingsAccountOperation {
+          try await client.app.bsky.graph.getLists(input: .init(
+            actor: try ATIdentifier(string: account), limit: 50, cursor: cursor
+          ))
+        }
         guard !Task.isCancelled, AppStateManager.shared.lifecycle.userDID == account,
               AppStateManager.shared.settingsAccountContextRevision == contextRevision,
               listLoadRevision == loadRevision, !state.isTransitioningAccounts,

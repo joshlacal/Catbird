@@ -265,42 +265,46 @@ struct ChatSettingsView: View {
           && state.atProtoClient === client
       },
       load: {
-        guard let client else { throw ChatPrivacySettingsError.notAuthenticated }
-        do {
-          let (code, output) = try await client.com.atproto.repo.getRecord(input: .init(
-            repo: try ATIdentifier(string: account),
-            collection: try NSID(nsidString: "chat.bsky.actor.declaration"),
-            rkey: try RecordKey(keyString: "self")
-          ))
-          guard code == 200, let output,
-                let record = output.value.decoded(ChatBskyActorDeclaration.self) else {
-            throw ChatPrivacySettingsError.response(code)
+        return try await state.performSettingsAccountOperation {
+          guard let client else { throw ChatPrivacySettingsError.notAuthenticated }
+          do {
+            let (code, output) = try await client.com.atproto.repo.getRecord(input: .init(
+              repo: try ATIdentifier(string: account),
+              collection: try NSID(nsidString: "chat.bsky.actor.declaration"),
+              rkey: try RecordKey(keyString: "self")
+            ))
+            guard code == 200, let output,
+                  let record = output.value.decoded(ChatBskyActorDeclaration.self) else {
+              throw ChatPrivacySettingsError.response(code)
+            }
+            return ChatPrivacySettingsRecord(allowIncoming: record.allowIncoming,
+              allowGroupInvites: record.allowGroupInvites, cid: output.cid)
+          } catch let error as ATProtoError<ComAtprotoRepoGetRecord.Error> where error.error == .recordNotFound {
+            return ChatPrivacySettingsRecord(allowIncoming: "following", allowGroupInvites: "following", cid: nil)
+          } catch let error as ATProtoXRPCError where error.error == "RecordNotFound" {
+            return ChatPrivacySettingsRecord(allowIncoming: "following", allowGroupInvites: "following", cid: nil)
           }
-          return ChatPrivacySettingsRecord(allowIncoming: record.allowIncoming,
-            allowGroupInvites: record.allowGroupInvites, cid: output.cid)
-        } catch let error as ATProtoError<ComAtprotoRepoGetRecord.Error> where error.error == .recordNotFound {
-          return ChatPrivacySettingsRecord(allowIncoming: "following", allowGroupInvites: "following", cid: nil)
-        } catch let error as ATProtoXRPCError where error.error == "RecordNotFound" {
-          return ChatPrivacySettingsRecord(allowIncoming: "following", allowGroupInvites: "following", cid: nil)
         }
       },
       save: { value in
-        guard let client, AppStateManager.shared.lifecycle.userDID == account,
-              AppStateManager.shared.settingsAccountContextRevision == contextRevision,
-              !state.isTransitioningAccounts, state.atProtoClient === client else {
-          throw ChatPrivacySettingsError.accountChanged
+        return try await state.performSettingsAccountOperation {
+          guard let client, AppStateManager.shared.lifecycle.userDID == account,
+                AppStateManager.shared.settingsAccountContextRevision == contextRevision,
+                !state.isTransitioningAccounts, state.atProtoClient === client else {
+            throw ChatPrivacySettingsError.accountChanged
+          }
+          let (code, output) = try await client.com.atproto.repo.putRecord(input: .init(
+            repo: try ATIdentifier(string: account),
+            collection: try NSID(nsidString: "chat.bsky.actor.declaration"),
+            rkey: try RecordKey(keyString: "self"),
+            record: .knownType(ChatBskyActorDeclaration(allowIncoming: value.allowIncoming,
+              allowGroupInvites: value.allowGroupInvites)),
+            swapRecord: value.cid
+          ))
+          guard code == 200, let output else { throw ChatPrivacySettingsError.response(code) }
+          return ChatPrivacySettingsRecord(allowIncoming: value.allowIncoming,
+            allowGroupInvites: value.allowGroupInvites, cid: output.cid)
         }
-        let (code, output) = try await client.com.atproto.repo.putRecord(input: .init(
-          repo: try ATIdentifier(string: account),
-          collection: try NSID(nsidString: "chat.bsky.actor.declaration"),
-          rkey: try RecordKey(keyString: "self"),
-          record: .knownType(ChatBskyActorDeclaration(allowIncoming: value.allowIncoming,
-            allowGroupInvites: value.allowGroupInvites)),
-          swapRecord: value.cid
-        ))
-        guard code == 200, let output else { throw ChatPrivacySettingsError.response(code) }
-        return ChatPrivacySettingsRecord(allowIncoming: value.allowIncoming,
-          allowGroupInvites: value.allowGroupInvites, cid: output.cid)
       }
     )
     privacyEditor = editor

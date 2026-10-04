@@ -123,39 +123,43 @@ struct ActivityPrivacySettingsView: View {
           && state.atProtoClient === client
       },
       load: {
-        guard let client else { throw ActivityPrivacySettingsError.notAuthenticated }
-        do {
-          let (code, output) = try await client.com.atproto.repo.getRecord(input: .init(
-            repo: try ATIdentifier(string: account),
-            collection: try NSID(nsidString: "app.bsky.notification.declaration"),
-            rkey: try RecordKey(keyString: "self")
-          ))
-          guard code == 200, let output,
-                let record = output.value.decoded(AppBskyNotificationDeclaration.self) else {
-            throw ActivityPrivacySettingsError.response(code)
+        return try await state.performSettingsAccountOperation {
+          guard let client else { throw ActivityPrivacySettingsError.notAuthenticated }
+          do {
+            let (code, output) = try await client.com.atproto.repo.getRecord(input: .init(
+              repo: try ATIdentifier(string: account),
+              collection: try NSID(nsidString: "app.bsky.notification.declaration"),
+              rkey: try RecordKey(keyString: "self")
+            ))
+            guard code == 200, let output,
+                  let record = output.value.decoded(AppBskyNotificationDeclaration.self) else {
+              throw ActivityPrivacySettingsError.response(code)
+            }
+            return ActivityPrivacySettingsRecord(allowSubscriptions: record.allowSubscriptions, cid: output.cid)
+          } catch ComAtprotoRepoGetRecord.Error.recordNotFound {
+            return ActivityPrivacySettingsRecord(allowSubscriptions: ActivityPrivacyOption.followers.rawValue, cid: nil)
+          } catch let error as ATProtoError<ComAtprotoRepoGetRecord.Error> where error.error == .recordNotFound {
+            return ActivityPrivacySettingsRecord(allowSubscriptions: ActivityPrivacyOption.followers.rawValue, cid: nil)
+          } catch let error as ATProtoXRPCError where error.error == "RecordNotFound" {
+            return ActivityPrivacySettingsRecord(allowSubscriptions: ActivityPrivacyOption.followers.rawValue, cid: nil)
           }
-          return ActivityPrivacySettingsRecord(allowSubscriptions: record.allowSubscriptions, cid: output.cid)
-        } catch ComAtprotoRepoGetRecord.Error.recordNotFound {
-          return ActivityPrivacySettingsRecord(allowSubscriptions: ActivityPrivacyOption.followers.rawValue, cid: nil)
-        } catch let error as ATProtoError<ComAtprotoRepoGetRecord.Error> where error.error == .recordNotFound {
-          return ActivityPrivacySettingsRecord(allowSubscriptions: ActivityPrivacyOption.followers.rawValue, cid: nil)
-        } catch let error as ATProtoXRPCError where error.error == "RecordNotFound" {
-          return ActivityPrivacySettingsRecord(allowSubscriptions: ActivityPrivacyOption.followers.rawValue, cid: nil)
         }
       },
       save: { value in
-        guard let client, AppStateManager.shared.lifecycle.userDID == account,
-              AppStateManager.shared.settingsAccountContextRevision == contextRevision, !state.isTransitioningAccounts,
-              state.atProtoClient === client else { throw ActivityPrivacySettingsError.accountChanged }
-        let (code, output) = try await client.com.atproto.repo.putRecord(input: .init(
-          repo: try ATIdentifier(string: account),
-          collection: try NSID(nsidString: "app.bsky.notification.declaration"),
-          rkey: try RecordKey(keyString: "self"),
-          record: .knownType(AppBskyNotificationDeclaration(allowSubscriptions: value.allowSubscriptions)),
-          swapRecord: value.cid
-        ))
-        guard code == 200, let output else { throw ActivityPrivacySettingsError.response(code) }
-        return ActivityPrivacySettingsRecord(allowSubscriptions: value.allowSubscriptions, cid: output.cid)
+        return try await state.performSettingsAccountOperation {
+          guard let client, AppStateManager.shared.lifecycle.userDID == account,
+                AppStateManager.shared.settingsAccountContextRevision == contextRevision, !state.isTransitioningAccounts,
+                state.atProtoClient === client else { throw ActivityPrivacySettingsError.accountChanged }
+          let (code, output) = try await client.com.atproto.repo.putRecord(input: .init(
+            repo: try ATIdentifier(string: account),
+            collection: try NSID(nsidString: "app.bsky.notification.declaration"),
+            rkey: try RecordKey(keyString: "self"),
+            record: .knownType(AppBskyNotificationDeclaration(allowSubscriptions: value.allowSubscriptions)),
+            swapRecord: value.cid
+          ))
+          guard code == 200, let output else { throw ActivityPrivacySettingsError.response(code) }
+          return ActivityPrivacySettingsRecord(allowSubscriptions: value.allowSubscriptions, cid: output.cid)
+        }
       }
     )
     editor = session
