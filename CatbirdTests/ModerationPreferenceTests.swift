@@ -346,6 +346,35 @@ struct ModerationPreferenceTests {
         #expect(model.errorMessage == nil)
     }
 
+    @Test("Account admission remains registered until the actual preference body completes")
+    @MainActor
+    func settingsAccountAdmissionBoundary() async throws {
+        let fixture = SafetyPreferencesFixture(items: [])
+        let (manager, _) = try fixture.makeManager()
+        let boundary = SafetyAccountAdmissionFixture()
+        manager.beginSettingsAccountOperation = { boundary.begin() }
+        manager.endSettingsAccountOperation = { boundary.end($0) }
+        fixture.pauseNextRead = true
+        let request = Task { try await manager.setContentLabelVisibility(label: "graphic", visibility: "warn") }
+        try await fixture.waitForPausedRead()
+        #expect(boundary.active.count == 1)
+        boundary.isOpen = false
+        do {
+            try await manager.setContentLabelVisibility(label: "nudity", visibility: "hide")
+            Issue.record("Expected closed admission to reject before I/O")
+        } catch {
+            guard case PreferencesManagerError.accountChanged = error else {
+                Issue.record("Expected accountChanged, got \(error)"); return
+            }
+        }
+        #expect(boundary.active.count == 1)
+        #expect(fixture.writes.isEmpty)
+        fixture.resumeRead()
+        try await request.value
+        #expect(boundary.active.isEmpty)
+        #expect(boundary.completed == 1)
+    }
+
     @Test("Muted words honor targets, expiry, following exclusions, and alt text")
     func completeMutedWordRules() {
         let now = Date(timeIntervalSince1970: 100)
@@ -424,4 +453,16 @@ private final class SafetyPreferencesFixture {
         throw NSError(domain: "SafetyFixture", code: 1)
     }
     func resumeRead() { readContinuation?.resume(); readContinuation = nil }
+}
+
+@MainActor
+private final class SafetyAccountAdmissionFixture {
+    var isOpen = true
+    var active: Set<UUID> = []
+    var completed = 0
+    func begin() -> UUID? {
+        guard isOpen else { return nil }
+        let id = UUID(); active.insert(id); return id
+    }
+    func end(_ id: UUID) { active.remove(id); completed += 1 }
 }

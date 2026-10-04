@@ -127,6 +127,20 @@ final class PreferencesManager {
     return items
   }
 
+  /// AppState supplies the account-service admission boundary. Fixtures can omit it.
+  @MainActor var beginSettingsAccountOperation: (() -> UUID?)?
+  @MainActor var endSettingsAccountOperation: ((UUID) -> Void)?
+
+  @MainActor
+  func beginSettingsAccountIO() throws -> (() -> Void)? {
+    guard let begin = beginSettingsAccountOperation else { return nil }
+    guard let end = endSettingsAccountOperation, let token = begin() else {
+      throw PreferencesManagerError.accountChanged
+    }
+    // Capture the matching completion hook before any suspension.
+    return { end(token) }
+  }
+
   // MARK: - Initialization
 
   init(
@@ -296,6 +310,8 @@ final class PreferencesManager {
       throw PreferencesManagerError.modelContextNotInitialized
     }
 
+    let finishAccountIO = try beginSettingsAccountIO()
+    defer { finishAccountIO?() }
     await acquireSpecificEdit()
     defer { releaseSpecificEdit() }
     try validatePreferenceOperation(operation)
@@ -785,6 +801,8 @@ final class PreferencesManager {
   @MainActor
   private func syncFeedLibraryToServer(_ preferences: Preferences) async throws {
     let operation = try capturePreferenceOperation(expectedAccountDID: preferences.accountDID)
+    let finishAccountIO = try beginSettingsAccountIO()
+    defer { finishAccountIO?() }
     await acquireSpecificEdit()
     defer { releaseSpecificEdit() }
     try validatePreferenceOperation(operation)
@@ -853,6 +871,8 @@ final class PreferencesManager {
   @MainActor
   private func syncToServer(_ preferences: Preferences, expectedAccountDID: String? = nil) async throws {
     let operation = try capturePreferenceOperation(expectedAccountDID: expectedAccountDID ?? (preferences.accountDID.isEmpty ? nil : preferences.accountDID))
+    let finishAccountIO = try beginSettingsAccountIO()
+    defer { finishAccountIO?() }
     await acquireSpecificEdit()
     defer { releaseSpecificEdit() }
     let items = try await readSpecificPreferenceItems(operation)
@@ -1205,6 +1225,8 @@ final class PreferencesManager {
     update: @escaping (T?) throws -> T?
   ) async throws where T: Codable {
     let operation = try capturePreferenceOperation(expectedAccountDID: expectedAccountDID)
+    let finishAccountIO = try beginSettingsAccountIO()
+    defer { finishAccountIO?() }
     await acquireSpecificEdit()
     defer { releaseSpecificEdit() }
     try validatePreferenceOperation(operation)
@@ -1552,9 +1574,17 @@ final class PreferencesManager {
       throw PreferencesManagerError.clientNotInitialized
     }
 
+    let operation = try capturePreferenceOperation()
+    let finishAccountIO = try beginSettingsAccountIO()
+    defer { finishAccountIO?() }
     let feedRevisionAtRequest = feedLibraryWriteRevision
     let params = AppBskyActorGetPreferences.Parameters()
     let serverPrefs = try await client.app.bsky.actor.getPreferences(input: params)
+
+    try validatePreferenceOperation(operation)
+    guard (200..<300).contains(serverPrefs.responseCode), serverPrefs.data != nil else {
+      throw PreferencesManagerError.invalidData
+    }
 
     // Load local preferences
     let localPrefs = try await getPreferences()
@@ -1921,6 +1951,8 @@ final class PreferencesManager {
     expectedAccountDID: String? = nil
   ) async throws -> AppBskyActorDefs.PostInteractionSettingsPref? {
     let operation = try capturePreferenceOperation(expectedAccountDID: expectedAccountDID)
+    let finishAccountIO = try beginSettingsAccountIO()
+    defer { finishAccountIO?() }
     await acquireSpecificEdit()
     defer { releaseSpecificEdit() }
     let items = try await readSpecificPreferenceItems(operation)
