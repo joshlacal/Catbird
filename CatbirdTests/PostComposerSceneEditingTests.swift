@@ -119,16 +119,19 @@ struct PostComposerSceneEditingTests {
     try Data("recording fixture".utf8).write(to: audioURL)
     defer { try? FileManager.default.removeItem(at: audioURL); session.invalidate() }
     let claim = try #require(model.editingClaim)
-    #expect(model.preserveRecordedAudio(at: audioURL, claim: claim))
+    let origin = model.threadEntries[0].id
+    #expect(model.preserveRecordedAudio(at: audioURL, claim: claim, threadEntryID: origin))
     #expect(model.minimizeEditingDraft())
     #expect(session.currentDraft?.pendingAudioURLString == audioURL.absoluteString)
     let resumed = PostComposerViewModel(appState: model.appState, editingSession: session)
     try resumed.startEditing(claim: claim)
     #expect(resumed.pendingAudioURL == audioURL)
+    #expect(resumed.pendingAudioThreadEntryID == origin)
     #expect(resumed.submitValidationState.reason == .pendingAudio)
-    #expect(!model.preserveRecordedAudio(at: audioURL, claim: claim))
+    #expect(!model.preserveRecordedAudio(at: audioURL, claim: claim, threadEntryID: model.threadEntries[0].id))
     resumed.removePendingAudio()
     #expect(resumed.pendingAudioURL == nil)
+    #expect(resumed.pendingAudioThreadEntryID == nil)
     #expect(FileManager.default.fileExists(atPath: audioURL.path))
   }
 
@@ -183,34 +186,171 @@ struct PostComposerSceneEditingTests {
     #expect(!session.isMinimized)
   }
 
-  @Test("A stale audio preview cannot attach to a replacement editor or thread")
-  func lateAudioPreviewDoesNotReplaceContent() async throws {
+  @Test("Finishing after save and restore attaches to the recording's original post")
+  func pendingAudioRetainsOriginAcrossThreadSelectionAndRestore() async throws {
     let (model, session, _, _) = try await makeModel()
+    defer { session.invalidate() }
     try model.startEditing()
-    let audioURL = URL(fileURLWithPath: "/Documents/recording.m4a")
     let claim = try #require(model.editingClaim)
-    #expect(model.preserveRecordedAudio(at: audioURL, claim: claim))
-    let entryID = model.threadEntries[model.currentThreadIndex].id
+    let audioURL = URL(fileURLWithPath: "/Documents/original-recording.m4a")
+    let origin = model.threadEntries[0].id
+    #expect(model.preserveRecordedAudio(at: audioURL, claim: claim, threadEntryID: origin))
+    model.postText = "Recording belongs here"
     model.enterThreadMode()
     model.addNewThreadEntry()
-    let generatedURL = URL(fileURLWithPath: "/tmp/not-generated.mp4")
-    let switchedThread = try await model.finishPendingAudio(
-      withVideoAt: generatedURL, audioURL: audioURL, claim: claim, threadEntryID: entryID
+    model.postText = "Keep selected post unchanged"
+    let selectedEntry = model.threadEntries[model.currentThreadIndex].id
+    // Cancel/reopen visualizer retains pending data; persistence must retain the same origin.
+    let encoded = try JSONEncoder().encode(model.saveDraftState())
+    let decoded = try JSONDecoder().decode(PostComposerDraft.self, from: encoded)
+    #expect(decoded.pendingAudioThreadEntryID == origin)
+    #expect(model.minimizeEditingDraft())
+    let resumed = PostComposerViewModel(appState: model.appState, editingSession: session)
+    try resumed.startEditing(claim: claim)
+    #expect(resumed.pendingAudioThreadEntryID == origin)
+    #expect(resumed.threadEntries[resumed.currentThreadIndex].id == selectedEntry)
+    let prepared = try preparedAudioVideo()
+    defer { prepared.discard() }
+    let attached = try await resumed.finishPendingAudio(
+      withVideoAt: prepared.item.rawVideoURL!, audioURL: audioURL, claim: claim,
+      threadEntryID: origin, prepareVideo: { _ in prepared }
     )
-    #expect(!switchedThread)
+    #expect(attached)
+    #expect(resumed.threadEntries.first(where: { $0.id == origin })?.videoItem?.id == prepared.item.id)
+    #expect(resumed.videoItem == nil)
+    #expect(resumed.postText == "Keep selected post unchanged")
+    #expect(resumed.pendingAudioURL == nil)
+    #expect(resumed.pendingAudioThreadEntryID == nil)
+    #expect(session.currentDraft?.threadEntries.first?.videoItem != nil)
+    #expect(FileManager.default.fileExists(atPath: prepared.item.rawVideoURL!.path))
+  }
+
+  @Test("Removed original post retains audio for explicit recovery without retargeting it")
+  func removedAudioOriginCannotAttachElsewhere() async throws {
+    let (model, session, _, _) = try await makeModel()
+    defer { session.invalidate() }
+    try model.startEditing()
+    let claim = try #require(model.editingClaim)
+    let origin = model.threadEntries[0].id
+    let audioURL = URL(fileURLWithPath: "/Documents/orphaned-recording.m4a")
+    #expect(model.preserveRecordedAudio(at: audioURL, claim: claim, threadEntryID: origin))
+    model.enterThreadMode()
+    model.addNewThreadEntry()
+    model.removeThreadEntry(at: 0)
+    var preparations = 0
+    let attached = try await model.finishPendingAudio(
+      withVideoAt: audioURL, audioURL: audioURL, claim: claim, threadEntryID: origin,
+      prepareVideo: { _ in preparations += 1; return try preparedAudioVideo() }
+    )
+    #expect(!attached)
+    #expect(preparations == 0)
     #expect(model.pendingAudioURL == audioURL)
+    #expect(model.pendingAudioThreadEntryID == origin)
     #expect(model.videoItem == nil)
-    let replacement = PostComposerViewModel(appState: model.appState, editingSession: session)
-    replacement.postText = "Replacement editor"
-    try replacement.startEditing()
-    let replacedEditor = try await model.finishPendingAudio(
-      withVideoAt: generatedURL, audioURL: audioURL, claim: claim,
-      threadEntryID: model.threadEntries[model.currentThreadIndex].id
-    )
-    #expect(!replacedEditor)
-    #expect(replacement.videoItem == nil)
-    #expect(replacement.postText == "Replacement editor")
-    session.invalidate()
+  }
+
+  @Test("An already canceled audio finish cannot begin preparation or mutate the draft")
+  func canceledAudioFinishNeverPrepares() async throws {
+    let (model, session, _, _) = try await makeModel()
+    defer { session.invalidate() }
+    try model.startEditing()
+    let claim = try #require(model.editingClaim)
+    let origin = model.threadEntries[0].id
+    let audioURL = URL(fileURLWithPath: "/Documents/kept-recording.m4a")
+    #expect(model.preserveRecordedAudio(at: audioURL, claim: claim, threadEntryID: origin))
+    let originalContent = model.editingContent()
+    let originalSnapshot = try #require(session.snapshot())
+    var preparations = 0
+    let task = Task { @MainActor in
+      try await model.finishPendingAudio(
+        withVideoAt: audioURL, audioURL: audioURL, claim: claim, threadEntryID: origin,
+        prepareVideo: { _ in preparations += 1; return try preparedAudioVideo() }
+      )
+    }
+    task.cancel()
+    #expect(try await task.value == false)
+    #expect(preparations == 0)
+    #expect(model.editingContent() == originalContent)
+    #expect(session.snapshot()?.revision == originalSnapshot.revision)
+    #expect(session.currentDraft == originalSnapshot.draft)
+  }
+
+  @Test("Suspended audio preparation cannot overwrite cancellation, replacement claim, media, or thread selection",
+        arguments: ["cancel", "claim", "media", "thread"])
+  func suspendedAudioFinishPreservesChangedDraft(_ change: String) async throws {
+    let (model, session, _, _) = try await makeModel()
+    defer { session.invalidate() }
+    try model.startEditing()
+    let claim = try #require(model.editingClaim)
+    let origin = model.threadEntries[0].id
+    let audioURL = FileManager.default.temporaryDirectory.appendingPathComponent("kept-recording-\(UUID()).m4a")
+    let recordingBytes = Data("recording retained through stale preparation".utf8)
+    try recordingBytes.write(to: audioURL)
+    defer { try? FileManager.default.removeItem(at: audioURL) }
+    #expect(model.preserveRecordedAudio(at: audioURL, claim: claim, threadEntryID: origin))
+    let original = model.editingContent()
+    let originalSnapshot = try #require(session.snapshot())
+    let preparation = SuspendedAudioPreparation()
+    let task = Task { @MainActor in
+      try await model.finishPendingAudio(
+        withVideoAt: audioURL, audioURL: audioURL, claim: claim, threadEntryID: origin,
+        prepareVideo: { _ in await preparation.prepare() }
+      )
+    }
+    for _ in 0..<100 {
+      if preparation.continuation != nil { break }
+      try await Task.sleep(for: .milliseconds(5))
+    }
+    try #require(preparation.continuation != nil)
+    #expect(model.isPreparingPendingAudio)
+    #expect(model.editingContent() == original)
+    #expect(session.currentDraft == originalSnapshot.draft)
+    #expect(session.snapshot()?.revision == originalSnapshot.revision)
+    switch change {
+    case "cancel": task.cancel()
+    case "claim":
+      model.clearAll()
+      model.postText = "Replacement editor on the same model"
+      try model.startEditing()
+      #expect(model.editingClaim != claim)
+    case "media":
+      var photo = PostComposerViewModel.MediaItem()
+      photo.rawData = Data("new attachment".utf8)
+      photo.isLoading = false
+      model.mediaItems = [photo]
+    default:
+      model.enterThreadMode()
+      model.addNewThreadEntry()
+      model.postText = "Selected a new thread post during preparation"
+    }
+    let expectedSnapshot = try #require(model.captureEditingSnapshot())
+    let expected = model.editingContent()
+    let prepared = try preparedAudioVideo()
+    preparation.continuation?.resume(returning: prepared)
+    preparation.continuation = nil
+    #expect(try await task.value == false)
+    #expect(!model.isPreparingPendingAudio)
+    #expect(model.editingContent() == expected)
+    #expect(session.currentDraft == expectedSnapshot.draft)
+    #expect(session.snapshot()?.revision == expectedSnapshot.revision)
+    #expect(!FileManager.default.fileExists(atPath: prepared.item.rawVideoURL!.path))
+    #expect(try Data(contentsOf: audioURL) == recordingBytes)
+  }
+
+  private func preparedAudioVideo() throws -> PostComposerViewModel.PreparedPendingAudioVideo {
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent("staged-visualizer-\(UUID()).mp4")
+    try Data("staged video bytes".utf8).write(to: url)
+    var item = PostComposerViewModel.MediaItem(url: url, isAudioVisualizerVideo: true)
+    item.isLoading = false
+    return PostComposerViewModel.PreparedPendingAudioVideo(item: item)
+  }
+
+  @MainActor
+  private final class SuspendedAudioPreparation {
+    var continuation: CheckedContinuation<PostComposerViewModel.PreparedPendingAudioVideo, Never>?
+    func prepare() async -> PostComposerViewModel.PreparedPendingAudioVideo {
+      await withCheckedContinuation { continuation = $0 }
+    }
   }
 
   @Test("A dismissed model cannot minimize or reset the replacement editor")

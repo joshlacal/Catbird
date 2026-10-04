@@ -35,10 +35,12 @@ extension PostComposerViewUIKit {
         }
       }) {
         let recordingClaim = vm.editingClaim
+        let recordingEntryID = vm.threadEntries.indices.contains(vm.currentThreadIndex)
+          ? vm.threadEntries[vm.currentThreadIndex].id : nil
         PostComposerAudioRecordingView(
           onAudioRecorded: { url in
-            guard viewModel === vm,
-                  vm.preserveRecordedAudio(at: url, claim: recordingClaim) else { return }
+            guard viewModel === vm, let recordingEntryID,
+                  vm.preserveRecordedAudio(at: url, claim: recordingClaim, threadEntryID: recordingEntryID) else { return }
             showingAudioRecorder = false
           },
           onCancel: {
@@ -48,22 +50,29 @@ extension PostComposerViewUIKit {
         )
       }
       .sheet(isPresented: $showingAudioVisualizerPreview) {
-        if let audioURL = vm.pendingAudioURL,
-           vm.threadEntries.indices.contains(vm.currentThreadIndex) {
+        if let audioURL = vm.pendingAudioURL, let threadEntryID = vm.pendingAudioThreadEntryID,
+           vm.threadEntries.contains(where: { $0.id == threadEntryID }) {
           let previewClaim = vm.editingClaim
-          let threadEntryID = vm.threadEntries[vm.currentThreadIndex].id
           PendingComposerAudioPreview(
             audioURL: audioURL,
             onVideoGenerated: { videoURL in
               guard viewModel === vm else { return }
               Task { @MainActor in
                 do {
-                  _ = try await vm.finishPendingAudio(
+                  let attached = try await vm.finishPendingAudio(
                     withVideoAt: videoURL, audioURL: audioURL,
                     claim: previewClaim, threadEntryID: threadEntryID
                   )
+                  if !attached, viewModel === vm, vm.ownsEditingDraft, vm.editingClaim == previewClaim,
+                     vm.pendingAudioURL == audioURL {
+                    appState.toastManager.show(ToastItem(
+                      message: "Your draft changed. Your recording has been kept; choose Finish audio to try again.",
+                      icon: "waveform"
+                    ))
+                  }
                 } catch {
-                  guard viewModel === vm, vm.ownsEditingDraft else { return }
+                  guard !Task.isCancelled, viewModel === vm, vm.ownsEditingDraft,
+                        vm.editingClaim == previewClaim, vm.pendingAudioURL == audioURL else { return }
                   appState.toastManager.show(ToastItem(
                     message: "Your recording has been kept. \(error.localizedDescription)",
                     icon: "exclamationmark.triangle.fill"
@@ -74,6 +83,22 @@ extension PostComposerViewUIKit {
             onCancel: { showingAudioVisualizerPreview = false }
           )
           .environment(appState)
+        } else if let audioURL = vm.pendingAudioURL {
+          NavigationStack {
+            ScrollView {
+              VStack(spacing: 20) {
+                Text("Original post unavailable").font(.headline)
+                Text("This recording belongs to a post that is no longer in this draft. Save the recording before removing the attachment.")
+                ShareLink("Save recording", item: audioURL)
+                Button("Remove audio attachment", role: .destructive) {
+                  vm.removePendingAudio()
+                  showingAudioVisualizerPreview = false
+                }
+                Button("Close") { showingAudioVisualizerPreview = false }
+              }
+              .padding()
+            }
+          }
         }
       }
       .sheet(isPresented: $showingAccountSwitcher) {

@@ -5,6 +5,21 @@ import Testing
 @MainActor
 @Suite("Composer recording activation lifetime")
 struct ComposerRecordingStartTests {
+  @Test("Immediate invalidation never invokes the recording operation")
+  func invalidateBeforeTaskRuns() async throws {
+    let start = ComposerRecordingStart()
+    var operations = 0
+    var phases = 0
+    start.activate()
+    #expect(start.start(operation: { operations += 1; return true }, cancel: {},
+                        onStarted: { phases += 1 }, onFailure: { phases += 1 }))
+    // No yield between enqueueing and invalidating the request.
+    start.invalidate()
+    try await waitFor { !start.isPending }
+    #expect(operations == 0)
+    #expect(phases == 0)
+  }
+
   @Test("Cancel stops a late successful activation and never announces recording")
   func cancelDuringPendingActivation() async throws {
     let start = ComposerRecordingStart()

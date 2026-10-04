@@ -6,6 +6,21 @@ import Testing
 @MainActor
 @Suite("Composer and recorder combined lifetime")
 struct ComposerAudioLifecycleTests {
+  @Test("Immediate disappearance never requests session activation or creates a recorder")
+  func invalidateBeforeActivationBegins() async throws {
+    let fixture = try fixture()
+    defer { fixture.cleanup() }
+    #expect(fixture.begin())
+    fixture.start.invalidate()
+    fixture.service.stopRecording()
+    try await waitFor { !fixture.start.isPending }
+    #expect(fixture.session.requestedOwners.isEmpty)
+    #expect(fixture.events.createdURLs.isEmpty)
+    #expect(fixture.device.recordCount == 0)
+    #expect(fixture.events.started == 0)
+    #expect(fixture.events.failed == 0)
+  }
+
   @Test("Cancel while activation is suspended prevents recorder creation and phase publication")
   func cancelPendingActivation() async throws {
     let fixture = try fixture()

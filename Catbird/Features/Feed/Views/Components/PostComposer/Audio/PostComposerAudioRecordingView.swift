@@ -494,6 +494,7 @@ final class ComposerRecordingStart {
         requestID = nil
         task = nil
       }
+      guard requestID == request, isPresented, !Task.isCancelled else { return }
       do {
         let started = try await operation()
         guard requestID == request, !Task.isCancelled, isPresented else {

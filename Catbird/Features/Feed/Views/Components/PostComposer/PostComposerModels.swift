@@ -174,6 +174,7 @@ struct PostComposerDraft: Codable, Hashable {
   // Distinguishes an explicitly unrestricted draft from a legacy draft with no settings.
   var hasDraftInteractionSettings: Bool? = nil
   var pendingAudioURLString: String? = nil
+  var pendingAudioThreadEntryID: UUID? = nil
 }
 
 // MARK: - Codable Wrappers for Draft State
