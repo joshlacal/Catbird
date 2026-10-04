@@ -7,7 +7,7 @@ import UIKit
 
 @available(iOS 16.0, *)
 final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIViewController,
-  UICollectionViewDelegate,
+  UICollectionViewDelegateFlowLayout,
   UICollectionViewDataSourcePrefetching
 {
   typealias Message = DataSource.Message
@@ -161,6 +161,9 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
     view.backgroundColor = .clear
     setupCollectionView()
     setupDataSource()
+    (collectionView.collectionViewLayout as? ChatAnchoredLayout)?.measuredItemKey = { [weak self] indexPath in
+      self?.diffableDataSource.itemIdentifier(for: indexPath).map(AnyHashable.init)
+    }
     setupObservation()
     setupNewMessagesPill()
   }
@@ -944,6 +947,20 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
       content.alpha = 1
       content.transform = .identity
     }
+  }
+
+  /// With self-sizing enabled this is each item's starting estimate: the last
+  /// fitted height for the same message, so off-screen rows keep their measured
+  /// size across snapshot applies instead of collapsing to the default.
+  func collectionView(
+    _ collectionView: UICollectionView,
+    layout collectionViewLayout: UICollectionViewLayout,
+    sizeForItemAt indexPath: IndexPath
+  ) -> CGSize {
+    guard let layout = collectionViewLayout as? ChatAnchoredLayout else {
+      return CGSize(width: collectionView.bounds.width, height: ChatAnchoredLayout.defaultEstimatedHeight)
+    }
+    return layout.estimatedSize(at: indexPath)
   }
 
   // MARK: - UICollectionViewDataSourcePrefetching

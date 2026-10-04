@@ -20,17 +20,37 @@ final class ChatAnchoredLayout: UICollectionViewFlowLayout {
       let width = collectionView.bounds.width - collectionView.adjustedContentInset.left
         - collectionView.adjustedContentInset.right
       if width > 0, abs(estimatedItemSize.width - width) > 0.5 {
-        estimatedItemSize = CGSize(width: width, height: 80)
+        estimatedItemSize = CGSize(width: width, height: Self.defaultEstimatedHeight)
+        measuredHeights.removeAll()
       }
     }
     super.prepare()
+  }
+
+  static let defaultEstimatedHeight: CGFloat = 80
+
+  /// Stable identity for the item at an index path (message ID). When set, each
+  /// item's last fitted height becomes its estimate, so a full re-layout (any
+  /// snapshot apply) does not reset off-screen rows to the flat default and
+  /// shrink the scrollable range.
+  var measuredItemKey: ((IndexPath) -> AnyHashable?)?
+  private var measuredHeights: [AnyHashable: CGFloat] = [:]
+
+  func estimatedSize(at indexPath: IndexPath) -> CGSize {
+    let height = measuredItemKey?(indexPath).flatMap { measuredHeights[$0] } ?? Self.defaultEstimatedHeight
+    return CGSize(width: estimatedItemSize.width, height: height)
   }
 
   override func shouldInvalidateLayout(
     forPreferredLayoutAttributes preferredAttributes: UICollectionViewLayoutAttributes,
     withOriginalAttributes originalAttributes: UICollectionViewLayoutAttributes
   ) -> Bool {
-    abs(preferredAttributes.size.height - originalAttributes.size.height) > 0.5
+    if preferredAttributes.representedElementCategory == .cell,
+      abs(preferredAttributes.size.width - estimatedItemSize.width) < 0.5,
+      let key = measuredItemKey?(preferredAttributes.indexPath) {
+      measuredHeights[key] = preferredAttributes.size.height
+    }
+    return abs(preferredAttributes.size.height - originalAttributes.size.height) > 0.5
       || abs(preferredAttributes.size.width - originalAttributes.size.width) > 0.5
   }
 
@@ -175,16 +195,28 @@ final class ChatTranscriptCollectionView: UICollectionView {
     layout?.managesReadingAnchor = false
     let geometryChanged = contentSize != settledContentSize || bounds.size != settledViewportSize
       || adjustedContentInset != settledInsets
+    var bottomFollowIncomplete = false
     if mayFollow && geometryChanged && (wasAtBottom || pendingInsetBottomFollow) {
       isRestoringBottom = true
-      // Moving to the bottom can materialize another estimated cell. Settle its
-      // measurement before recording the next baseline, without an animation.
-      for _ in 0..<2 {
+      layout?.managesReadingAnchor = true
+      // Moving to the bottom can materialize or re-measure cells, changing the
+      // content height in the same pass. Check convergence after each layout,
+      // not before it, so the last pass cannot leave an unpinned gap.
+      for _ in 0..<4 {
         let bottom = max(-adjustedContentInset.top, contentSize.height - bounds.height + adjustedContentInset.bottom)
-        if abs(contentOffset.y - bottom) > 0.5 { contentOffset.y = bottom }
+        if abs(contentOffset.y - bottom) <= 0.5 { break }
+        contentOffset.y = bottom
         super.layoutSubviews()
       }
+      layout?.managesReadingAnchor = false
       isRestoringBottom = false
+      let bottom = max(-adjustedContentInset.top, contentSize.height - bounds.height + adjustedContentInset.bottom)
+      if abs(contentOffset.y - bottom) > 0.5 {
+        // Still unsettled: keep the bottom intent for the next pass rather than
+        // recording this geometry as the settled baseline.
+        bottomFollowIncomplete = true
+        setNeedsLayout()
+      }
     } else if layout?.preservesSelfSizingAnchor == true,
       let readerCell, let readerIndex, let readerY,
       indexPath(for: readerCell) == readerIndex {
@@ -198,7 +230,7 @@ final class ChatTranscriptCollectionView: UICollectionView {
         isRestoringBottom = false
       }
     }
-    pendingInsetBottomFollow = false
+    pendingInsetBottomFollow = bottomFollowIncomplete
     viewportReadingAnchor = nil
     settledBottomOffsetY = max(-adjustedContentInset.top, contentSize.height - bounds.height + adjustedContentInset.bottom)
     settledContentSize = contentSize
