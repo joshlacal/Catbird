@@ -375,6 +375,25 @@ struct ModerationPreferenceTests {
         #expect(boundary.completed == 1)
     }
 
+    @Test("Explicit profile builtin choice writes one consumed key and preserves raw records")
+    @MainActor
+    func profileAliasWritePreservesRawRecords() async throws {
+        let service = try DID(didString: "did:plc:profile-service")
+        let fixture = SafetyPreferencesFixture(items: [
+            .contentLabelPref(.init(label: "nsfw", visibility: "hide")),
+            .contentLabelPref(.init(labelerDid: service, label: "porn", visibility: "ignore")),
+            .contentLabelPref(.init(labelerDid: service, label: "Custom-Key", visibility: "unknown-imported-value"))])
+        let (manager, _) = try fixture.makeManager()
+        let consumed = ProfileLabelPreferenceAdapter.consumedKey(for: "porn")
+        try await manager.setContentLabelVisibility(label: consumed, visibility: "warn", labelerDid: service,
+                                                   expectedAccountDID: fixture.account)
+        #expect(fixture.labels.count == 4)
+        #expect(fixture.labels.contains { $0.label == "porn" && $0.visibility == "ignore" })
+        #expect(fixture.labels.contains { $0.label == "nsfw" && $0.labelerDid == nil && $0.visibility == "hide" })
+        #expect(fixture.labels.contains { $0.label == "nsfw" && $0.labelerDid == service && $0.visibility == "warn" })
+        #expect(fixture.labels.contains { $0.label == "Custom-Key" && $0.visibility == "unknown-imported-value" })
+    }
+
     @Test("Muted words honor targets, expiry, following exclusions, and alt text")
     func completeMutedWordRules() {
         let now = Date(timeIntervalSince1970: 100)
