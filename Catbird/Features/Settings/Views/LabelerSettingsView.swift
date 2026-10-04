@@ -5,6 +5,9 @@ import Petrel
 struct LabelerSettingsView: View {
     @Environment(AppState.self) private var appState
     @State private var labelers: [AppBskyLabelerDefs.LabelerViewDetailed] = []
+    let initialFocus: SettingsControlID?
+    @State private var loadRequest = UUID()
+    @State private var hasConfirmedPreferences = false
     @State private var isLoading = true
     @State private var errorMessage: String?
     
@@ -12,6 +15,10 @@ struct LabelerSettingsView: View {
     @State private var labelerPreferences: [String: [String: ContentVisibility]] = [:]
     @State private var isSaving = false
     
+    init(initialFocus: SettingsControlID? = nil) {
+        self.initialFocus = initialFocus
+    }
+
     var body: some View {
         Group {
             if isLoading {
@@ -62,7 +69,7 @@ struct LabelerSettingsView: View {
     }
     
     private var labelersList: some View {
-        Form {
+        SettingsFocusedForm(initialFocus: initialFocus, isReady: hasConfirmedPreferences && !isLoading) {
             ForEach(labelers, id: \.uri) { labeler in
                 Section {
                     labelerHeader(labeler)
@@ -176,21 +183,36 @@ struct LabelerSettingsView: View {
     }
     
     private func setPreference(labelerDid: String, label: String, visibility: ContentVisibility) {
-        if labelerPreferences[labelerDid] == nil {
-            labelerPreferences[labelerDid] = [:]
-        }
-        labelerPreferences[labelerDid]?[label] = visibility
-        
-        // Save to server
-        Task {
-            await savePreferences(labelerDid: labelerDid, label: label, visibility: visibility)
+        guard hasConfirmedPreferences, !isLoading, !isSaving,
+              getPreference(labelerDid: labelerDid, label: label) != visibility else { return }
+        let account = appState.userDID
+        let manager = appState.preferencesManager
+        isSaving = true
+        Task { @MainActor in
+            defer { isSaving = false }
+            do {
+                let did = try DID(didString: labelerDid)
+                try await manager.setContentLabelVisibility(label: label, visibility: visibility.preferenceValue,
+                                                             labelerDid: did, expectedAccountDID: account)
+                guard manager.accountDID == account, appState.userDID == account else { return }
+                if labelerPreferences[labelerDid] == nil { labelerPreferences[labelerDid] = [:] }
+                labelerPreferences[labelerDid]?[label] = visibility
+            } catch {
+                guard manager.accountDID == account else { return }
+                errorMessage = "Failed to save preference: \(error.localizedDescription)"
+            }
         }
     }
-    
+
     private func loadLabelers() async {
+        let request = UUID()
+        let account = appState.userDID
+        let manager = appState.preferencesManager
+        loadRequest = request
         isLoading = true
+        hasConfirmedPreferences = false
         errorMessage = nil
-        
+        defer { if loadRequest == request { isLoading = false } }
         do {
             guard let client = appState.atProtoClient else {
                 errorMessage = "Not authenticated"
@@ -199,10 +221,13 @@ struct LabelerSettingsView: View {
             }
             
             let reportingService = ReportingService(client: client)
-            labelers = try await reportingService.getSubscribedLabelers()
+            let loadedLabelers = try await reportingService.getSubscribedLabelers()
+            let preferences = try await manager.refreshSettingsPreferences(expectedAccountDID: account)
+            guard loadRequest == request, manager.accountDID == account, appState.atProtoClient === client else { return }
+            labelers = loadedLabelers
+            labelerPreferences = [:]
             
             // Load existing preferences for all labelers
-            let preferences = try await appState.preferencesManager.getPreferences()
             
             for labeler in labelers {
                 let labelerDid = labeler.creator.did.didString()
@@ -221,46 +246,14 @@ struct LabelerSettingsView: View {
                 labelerPreferences[labelerDid] = labelerPrefs
             }
             
-            isLoading = false
+            hasConfirmedPreferences = true
         } catch {
+            guard loadRequest == request, manager.accountDID == account else { return }
             errorMessage = error.localizedDescription
-            isLoading = false
         }
     }
     
-    private func savePreferences(labelerDid: String, label: String, visibility: ContentVisibility) async {
-        isSaving = true
-        
-        do {
-            // Create labeler-scoped preference
-            let labelerDID = try DID(didString: labelerDid)
-            let preference = ContentLabelPreference(
-                labelerDid: labelerDID,
-                label: label,
-                visibility: visibility.rawValue
-            )
-            
-            // Get existing preferences
-            let currentPrefs = try await appState.preferencesManager.getPreferences()
-            var updatedPrefs = currentPrefs.contentLabelPrefs
-            
-            // Remove any existing preference for this labeler+label combination
-            updatedPrefs.removeAll { pref in
-                pref.labelerDid?.didString() == labelerDid && pref.label == label
-            }
-            
-            // Add new preference
-            updatedPrefs.append(preference)
-            
-            // Save to server
-            try await appState.preferencesManager.updateContentLabelPreferences(updatedPrefs)
-            
-            isSaving = false
-        } catch {
-            errorMessage = "Failed to save preferences: \(error.localizedDescription)"
-            isSaving = false
-        }
-    }
+
 }
 
 #Preview("LabelerSettingsView") {

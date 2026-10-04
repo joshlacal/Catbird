@@ -13,7 +13,7 @@ final class PreferencesManager {
   // MARK: - Properties
 
   private let logger = Logger(subsystem: "blue.catbird", category: "PreferencesManager")
-  private let sharedDefaults = UserDefaults(suiteName: "group.blue.catbird.shared") ?? .standard
+  private let sharedDefaults: UserDefaults
 
   // Add cache for server preferences to maintain consistency
   private var cachedServerPreferences: Preferences?
@@ -63,15 +63,80 @@ final class PreferencesManager {
     let putPreferences: @MainActor ([AppBskyActorDefs.PreferencesForUnionArray]) async throws -> Int
   }
   private let specificPreferencesTransport: SpecificPreferencesTransport?
+  @MainActor private var preferenceSessionGeneration: UInt64 = 0
+  @MainActor private var specificEditInProgress = false
+  @MainActor private var specificEditWaiters: [CheckedContinuation<Void, Never>] = []
+
+  private struct PreferenceOperationContext {
+    let accountDID: String
+    let generation: UInt64
+    let client: ATProtoClient?
+  }
+
+  @MainActor
+  private func capturePreferenceOperation(expectedAccountDID: String? = nil) throws -> PreferenceOperationContext {
+    guard !accountDID.isEmpty, expectedAccountDID == nil || expectedAccountDID == accountDID else {
+      throw PreferencesManagerError.accountChanged
+    }
+    guard client != nil || specificPreferencesTransport != nil else {
+      throw PreferencesManagerError.clientNotInitialized
+    }
+    guard modelContext != nil else { throw PreferencesManagerError.modelContextNotInitialized }
+    return PreferenceOperationContext(accountDID: accountDID, generation: preferenceSessionGeneration, client: client)
+  }
+
+  @MainActor
+  private func validatePreferenceOperation(_ operation: PreferenceOperationContext) throws {
+    guard accountDID == operation.accountDID, preferenceSessionGeneration == operation.generation,
+          client === operation.client else { throw PreferencesManagerError.accountChanged }
+    try Task.checkCancellation()
+  }
+
+  @MainActor
+  private func acquireSpecificEdit() async {
+    if specificEditInProgress {
+      await withCheckedContinuation { specificEditWaiters.append($0) }
+    } else {
+      specificEditInProgress = true
+    }
+  }
+
+  @MainActor
+  private func releaseSpecificEdit() {
+    if specificEditWaiters.isEmpty {
+      specificEditInProgress = false
+    } else {
+      specificEditWaiters.removeFirst().resume()
+    }
+  }
+
+  @MainActor
+  private func readSpecificPreferenceItems(_ operation: PreferenceOperationContext) async throws -> [AppBskyActorDefs.PreferencesForUnionArray] {
+    try validatePreferenceOperation(operation)
+    let items: [AppBskyActorDefs.PreferencesForUnionArray]
+    if let transport = specificPreferencesTransport {
+      items = try await transport.getPreferences()
+    } else {
+      guard let client = operation.client else { throw PreferencesManagerError.clientNotInitialized }
+      let response = try await client.app.bsky.actor.getPreferences(input: .init())
+      guard response.responseCode >= 200 && response.responseCode < 300,
+            let fetched = response.data?.preferences.items else { throw PreferencesManagerError.invalidData }
+      items = fetched
+    }
+    try validatePreferenceOperation(operation)
+    return items
+  }
 
   // MARK: - Initialization
 
   init(
     client: ATProtoClient? = nil,
     modelContext: ModelContext? = nil,
-    specificPreferencesTransport: SpecificPreferencesTransport? = nil
+    specificPreferencesTransport: SpecificPreferencesTransport? = nil,
+    sharedDefaults: UserDefaults? = nil
   ) {
     self.specificPreferencesTransport = specificPreferencesTransport
+    self.sharedDefaults = sharedDefaults ?? UserDefaults(suiteName: "group.blue.catbird.shared") ?? .standard
     self.client = client
     self.modelContext = modelContext
     logger.debug("PreferencesManager initialized")
@@ -80,6 +145,7 @@ final class PreferencesManager {
   /// Update client reference when it changes
   @MainActor
   func updateClient(_ client: ATProtoClient?) {
+    preferenceSessionGeneration &+= 1
     self.client = client
     appliedAcceptLabelerDIDs = nil
     labelerHeaderGeneration += 1
@@ -101,18 +167,19 @@ final class PreferencesManager {
   /// Configure the manager for a specific account
   @MainActor
   func configure(accountDID: String) {
+    preferenceSessionGeneration &+= 1
     self.accountDID = accountDID
     appliedAcceptLabelerDIDs = nil
     labelerHeaderGeneration += 1
     // Clear cache so next fetch loads the correct account's data
     cachedServerPreferences = nil
     logger.debug("PreferencesManager configured for account: \(accountDID)")
+    let generation = preferenceSessionGeneration
     Task { @MainActor [weak self] in
-      if let self = self, let prefs = try? await self.loadPreferences() {
-        self.hideVerificationBadges = prefs.hideVerificationBadges
-      } else {
-        self?.hideVerificationBadges = false
-      }
+      guard let self, self.accountDID == accountDID, self.preferenceSessionGeneration == generation else { return }
+      let prefs = try? await self.loadPreferences()
+      guard self.accountDID == accountDID, self.preferenceSessionGeneration == generation else { return }
+      self.hideVerificationBadges = prefs?.hideVerificationBadges ?? false
     }
   }
 
@@ -205,6 +272,7 @@ final class PreferencesManager {
   /// Fetches preferences from server if needed
   @MainActor
   func fetchPreferences(forceRefresh: Bool = false) async throws {
+    let operation = PreferenceOperationContext(accountDID: accountDID, generation: preferenceSessionGeneration, client: client)
     // Start with setting state
     state = .loading
 
@@ -225,6 +293,7 @@ final class PreferencesManager {
     do {
       // Try to load from SwiftData first
       let localPreferences = try await loadPreferences()
+      try validatePreferenceOperation(operation)
 
       // Use cached server preferences if available and not forcing refresh
       if !forceRefresh, let cachedPrefs = cachedServerPreferences {
@@ -274,8 +343,10 @@ final class PreferencesManager {
       let feedRevisionAtRequest = feedLibraryWriteRevision
       let params = AppBskyActorGetPreferences.Parameters()
       let serverResponse = try await client.app.bsky.actor.getPreferences(input: params)
+      try validatePreferenceOperation(operation)
 
-      guard let resultItems = serverResponse.data?.preferences.items else {
+      guard serverResponse.responseCode >= 200 && serverResponse.responseCode < 300,
+            let resultItems = serverResponse.data?.preferences.items else {
         logger.error("No preferences data found in server response")
         state = .error("No preferences data found")
         throw PreferencesManagerError.invalidData
@@ -394,6 +465,7 @@ final class PreferencesManager {
 
       // --- Update Local Preferences using updateFeeds logic ---
       let currentPrefs = try await getPreferences()  // Get or create local instance
+      try validatePreferenceOperation(operation)
 
       // Keep unsynchronized URI intents when a refresh returns older server membership.
       FeedLibraryPendingStore().reconcile(
@@ -425,6 +497,7 @@ final class PreferencesManager {
       }
       // Save the updated local preferences object
       try await savePreferences(currentPrefs)  // Saves the modified currentPrefs to SwiftData
+      try validatePreferenceOperation(operation)
       logger.info("Local preferences updated and saved from server data.")
 
       // IMPORTANT: Update the cache with the processed preferences
@@ -433,13 +506,16 @@ final class PreferencesManager {
 
       // Apply accept-labelers header based on preferences
       await applyAcceptLabelersHeader(from: currentPrefs)
+      try validatePreferenceOperation(operation)
 
       // Update state
       state = .ready
 
     } catch {
       logger.error("Failed to fetch and process preferences: \(error.localizedDescription)")
-      state = .error(error.localizedDescription)
+      if accountDID == operation.accountDID, preferenceSessionGeneration == operation.generation {
+        state = .error(error.localizedDescription)
+      }
       throw error
     }
   }
@@ -483,10 +559,14 @@ final class PreferencesManager {
 
   /// Settings editing must not treat the generic offline fallback as a remote refresh.
   @MainActor
-  func refreshSettingsPreferences() async throws -> Preferences {
+  func refreshSettingsPreferences(expectedAccountDID: String? = nil) async throws -> Preferences {
     guard client != nil else { throw PreferencesManagerError.clientNotInitialized }
+    let operation = try capturePreferenceOperation(expectedAccountDID: expectedAccountDID)
     try await fetchPreferences(forceRefresh: true)
-    return try await getPreferences()
+    try validatePreferenceOperation(operation)
+    let preferences = try await getPreferences()
+    try validatePreferenceOperation(operation)
+    return preferences
   }
 
   /// Gets current preferences, creating default if none exist
@@ -526,6 +606,9 @@ final class PreferencesManager {
   /// Saves preferences to SwiftData
   @MainActor
   func savePreferences(_ preferences: Preferences) async throws {
+    guard preferences.accountDID.isEmpty || preferences.accountDID == accountDID else {
+      throw PreferencesManagerError.accountChanged
+    }
     guard let modelContext = modelContext else {
       logger.error("ModelContext not available for preferences save")
       throw PreferencesManagerError.modelContextNotInitialized
@@ -546,6 +629,9 @@ final class PreferencesManager {
       existingPreferences.queuedNudges = preferences.queuedNudges
       existingPreferences.nuxStates = preferences.nuxStates
       existingPreferences.interests = preferences.interests
+      existingPreferences.postInteractionSettingsPref = preferences.postInteractionSettingsPref
+      existingPreferences.verificationPrefs = preferences.verificationPrefs
+      existingPreferences.hideVerificationBadges = preferences.hideVerificationBadges
     } else {
       preferences.accountDID = accountDID
       modelContext.insert(preferences)
@@ -636,11 +722,17 @@ final class PreferencesManager {
   /// and existing feed IDs/types/order. This endpoint has no compare-and-swap token.
   @MainActor
   private func syncFeedLibraryToServer(_ preferences: Preferences) async throws {
-    guard let client else { throw PreferencesManagerError.clientNotInitialized }
+    let operation = try capturePreferenceOperation(expectedAccountDID: preferences.accountDID)
+    await acquireSpecificEdit()
+    defer { releaseSpecificEdit() }
+    try validatePreferenceOperation(operation)
+    guard let client = operation.client else { throw PreferencesManagerError.clientNotInitialized }
     let revision = feedLibraryWriteRevision
     let store = FeedLibraryPendingStore()
-    let pending = store.entries(accountDID: accountDID)
+    let pending = store.entries(accountDID: operation.accountDID)
+    let pendingOrder = store.pinnedOrder(accountDID: operation.accountDID)
     let response = try await client.app.bsky.actor.getPreferences(input: .init())
+    try validatePreferenceOperation(operation)
     guard (200..<300).contains(response.responseCode), let server = response.data else {
       throw PreferencesManagerError.invalidData
     }
@@ -668,6 +760,7 @@ final class PreferencesManager {
     var newIDs: [String: String] = [SystemFeedTypes.following: await TIDGenerator.next()]
     for entry in pending { newIDs[entry.uri] = await TIDGenerator.next() }
     feeds = FeedLibraryServerMerge.apply(pending, to: feeds, newIDs: newIDs)
+    feeds = FeedLibraryServerMerge.applyPinnedOrder(pendingOrder, to: feeds)
     // An intervening local writer supersedes this captured operation.
     guard revision == feedLibraryWriteRevision else { throw PreferencesManagerError.invalidData }
     items.removeAll {
@@ -678,7 +771,9 @@ final class PreferencesManager {
       pinned: feeds.filter { $0.pinned }.compactMap { try? ATProtocolURI(uriString: $0.value) },
       saved: feeds.compactMap { try? ATProtocolURI(uriString: $0.value) },
       timelineIndex: feeds.filter { $0.pinned }.firstIndex { $0.type == "timeline" })))
+    try validatePreferenceOperation(operation)
     let code = try await client.app.bsky.actor.putPreferences(input: .init(preferences: .init(items: items)))
+    try validatePreferenceOperation(operation)
     guard (200..<300).contains(code), revision == feedLibraryWriteRevision else {
       throw PreferencesManagerError.invalidData
     }
@@ -687,7 +782,9 @@ final class PreferencesManager {
     try await savePreferences(preferences)
     // Other pending URIs were included too, but only their exact captured revisions
     // may be acknowledged. A later edit remains pending.
-    for entry in pending { store.complete(entry, accountDID: accountDID) }
+    try validatePreferenceOperation(operation)
+    for entry in pending { store.complete(entry, accountDID: operation.accountDID) }
+    if let pendingOrder { store.completePinnedOrder(pendingOrder, accountDID: operation.accountDID) }
   }
 
   /// Syncs current preferences to the Bluesky API
@@ -954,69 +1051,58 @@ final class PreferencesManager {
   // MARK: - Convenience Methods for All Preference Types
 
   @MainActor
-  func setContentLabelVisibility(label: String, visibility: String, labelerDid: DID? = nil)
-    async throws {
-    let preferences = try await getPreferences()
-    preferences.setContentLabelVisibility(
-      for: label, visibility: visibility, labelerDid: labelerDid)
-    try await saveAndSyncPreferences(preferences)
+  func setContentLabelVisibility(
+    label: String, visibility: String, labelerDid: DID? = nil, expectedAccountDID: String? = nil
+  ) async throws {
+    try await updateContentLabelPreferences([
+      ContentLabelPreference(labelerDid: labelerDid, label: label, visibility: visibility)
+    ], expectedAccountDID: expectedAccountDID)
   }
 
   @MainActor
-  func setAdultContentEnabled(_ enabled: Bool) async throws {
-    let preferences = try await getPreferences()
-    preferences.adultContentEnabled = enabled
-    try await saveAndSyncPreferences(preferences)
+  func setAdultContentEnabled(_ enabled: Bool, expectedAccountDID: String? = nil) async throws {
+    try await updateAdultContentEnabled(enabled, expectedAccountDID: expectedAccountDID)
   }
 
   @MainActor
-  func setThreadViewPreferences(sort: String? = nil, prioritizeFollowedUsers: Bool? = nil)
-    async throws {
-    let preferences = try await getPreferences()
-
-    // Get existing or create new
-    var threadPref =
-      preferences.threadViewPref ?? ThreadViewPreference(sort: nil, prioritizeFollowedUsers: nil)
-
-    // Update only provided values
-    if let sort = sort {
-      threadPref = ThreadViewPreference(
-        sort: sort,
-        prioritizeFollowedUsers: threadPref.prioritizeFollowedUsers
-      )
+  func setThreadViewPreferences(
+    sort: String? = nil, prioritizeFollowedUsers: Bool? = nil, expectedAccountDID: String? = nil
+  ) async throws {
+    let operation = try capturePreferenceOperation(expectedAccountDID: expectedAccountDID)
+    if let sort {
+      try await updateSpecificPreferences(preferenceType: "threadView", expectedAccountDID: operation.accountDID) {
+        (_: AppBskyActorDefs.ThreadViewPref?) -> AppBskyActorDefs.ThreadViewPref? in .init(sort: sort)
+      }
+      try validatePreferenceOperation(operation)
     }
-
-    if let prioritize = prioritizeFollowedUsers {
-      threadPref = ThreadViewPreference(
-        sort: threadPref.sort,
-        prioritizeFollowedUsers: prioritize
-      )
+    if let prioritizeFollowedUsers {
+      let preferences = try await getPreferences()
+      try validatePreferenceOperation(operation)
+      preferences.threadViewPref = .init(sort: preferences.threadViewPref?.sort,
+                                         prioritizeFollowedUsers: prioritizeFollowedUsers)
+      try await savePreferences(preferences)
     }
-
-    preferences.threadViewPref = threadPref
-    try await saveAndSyncPreferences(preferences)
   }
 
   @MainActor
   func setFeedViewPreferences(
-    hideReplies: Bool? = nil,
-    hideRepliesByUnfollowed: Bool? = nil,
-    hideRepliesByLikeCount: Int? = nil,
-    hideReposts: Bool? = nil,
-    hideQuotePosts: Bool? = nil,
-    clearReplyLikeThreshold: Bool = false
+    hideReplies: Bool? = nil, hideRepliesByUnfollowed: Bool? = nil,
+    hideRepliesByLikeCount: Int? = nil, hideReposts: Bool? = nil, hideQuotePosts: Bool? = nil,
+    clearReplyLikeThreshold: Bool = false, expectedAccountDID: String? = nil
   ) async throws {
-    let preferences = try await getPreferences()
-    preferences.feedViewPref = Self.applyingFeedViewChanges(
-      to: preferences.feedViewPref,
-      hideReplies: hideReplies,
-      hideRepliesByUnfollowed: hideRepliesByUnfollowed,
-      hideRepliesByLikeCount: hideRepliesByLikeCount,
-      hideReposts: hideReposts,
-      hideQuotePosts: hideQuotePosts,
-      clearReplyLikeThreshold: clearReplyLikeThreshold
-    )
-    try await saveAndSyncPreferences(preferences)
+    try await updateSpecificPreferences(preferenceType: "feedView", expectedAccountDID: expectedAccountDID) {
+      (current: AppBskyActorDefs.FeedViewPref?) -> AppBskyActorDefs.FeedViewPref? in
+      let existing = current.map { FeedViewPreference(hideReplies: $0.hideReplies,
+        hideRepliesByUnfollowed: $0.hideRepliesByUnfollowed, hideRepliesByLikeCount: $0.hideRepliesByLikeCount,
+        hideReposts: $0.hideReposts, hideQuotePosts: $0.hideQuotePosts) }
+      let changed = Self.applyingFeedViewChanges(to: existing, hideReplies: hideReplies,
+        hideRepliesByUnfollowed: hideRepliesByUnfollowed, hideRepliesByLikeCount: hideRepliesByLikeCount,
+        hideReposts: hideReposts, hideQuotePosts: hideQuotePosts, clearReplyLikeThreshold: clearReplyLikeThreshold)
+      return .init(feed: "home", hideReplies: changed.hideReplies,
+        hideRepliesByUnfollowed: changed.hideRepliesByUnfollowed,
+        hideRepliesByLikeCount: changed.hideRepliesByLikeCount, hideReposts: changed.hideReposts,
+        hideQuotePosts: changed.hideQuotePosts)
+    }
   }
 
   /// Omitted fields retain the existing value; clearing the optional threshold is explicit.
@@ -1040,54 +1126,74 @@ final class PreferencesManager {
 
   @MainActor
   func addMutedWord(
-    word: String,
-    targets: [String],
-    actorTarget: String? = nil,
-    expiresAt: Date? = nil
+    word: String, targets: [String], actorTarget: String? = nil, expiresAt: Date? = nil,
+    expectedAccountDID: String? = nil
   ) async throws {
-    let preferences = try await getPreferences()
-    preferences.addMutedWord(word, targets: targets, actorTarget: actorTarget, expiresAt: expiresAt)
-    try await saveAndSyncPreferences(preferences)
-  }
-
-  @MainActor
-  func removeMutedWord(id: String) async throws {
-    let preferences = try await getPreferences()
-    preferences.removeMutedWord(id: id)
-    try await saveAndSyncPreferences(preferences)
-  }
-
-  @MainActor
-  func hidePost(_ uri: String) async throws {
-    let preferences = try await getPreferences()
-    preferences.hidePost(uri)
-    try await saveAndSyncPreferences(preferences)
-  }
-
-  @MainActor
-  func unhidePost(_ uri: String) async throws {
-    let preferences = try await getPreferences()
-    preferences.unhidePost(uri)
-    try await saveAndSyncPreferences(preferences)
-  }
-
-  @MainActor
-  func addLabeler(_ did: DID) async throws {
-    let preferences = try await getPreferences()
-    // Enforce limit: 1 reserved for default Bluesky moderation, up to 19 custom
-    if preferences.labelers.count >= 19 && !preferences.labelers.contains(where: { $0.did == did }) {
-      logger.warning("Attempted to add labeler beyond limit; current count=\(preferences.labelers.count)")
-      throw PreferencesManagerError.labelerLimitExceeded
+    let operation = try capturePreferenceOperation(expectedAccountDID: expectedAccountDID)
+    let id = await TIDGenerator.next().description
+    try validatePreferenceOperation(operation)
+    let expiry = expiresAt.flatMap { ATProtocolDate(iso8601String: ISO8601DateFormatter().string(from: $0)) }
+    try await updateSpecificPreferences(preferenceType: "mutedWords", expectedAccountDID: operation.accountDID) {
+      (current: [AppBskyActorDefs.MutedWord]?) -> [AppBskyActorDefs.MutedWord]? in
+      var words = current ?? []
+      words.append(.init(id: id, value: word, targets: targets.map { $0 == "content" ? .content : .tag },
+                         actorTarget: actorTarget, expiresAt: expiry))
+      return words
     }
-    preferences.addLabeler(did)
-    try await saveAndSyncPreferences(preferences)
   }
 
   @MainActor
-  func removeLabeler(_ did: DID) async throws {
-    let preferences = try await getPreferences()
-    preferences.removeLabeler(did)
-    try await saveAndSyncPreferences(preferences)
+  func removeMutedWord(id: String, expectedAccountDID: String? = nil) async throws {
+    try await updateSpecificPreferences(preferenceType: "mutedWords", expectedAccountDID: expectedAccountDID) {
+      (current: [AppBskyActorDefs.MutedWord]?) -> [AppBskyActorDefs.MutedWord]? in
+      (current ?? []).filter { ($0.id ?? "") != id }
+    }
+  }
+
+  @MainActor
+  func hidePost(_ uri: String, expectedAccountDID: String? = nil) async throws {
+    let postURI = try ATProtocolURI(uriString: uri)
+    try await updateSpecificPreferences(preferenceType: "hiddenPosts", expectedAccountDID: expectedAccountDID) {
+      (current: [ATProtocolURI]?) -> [ATProtocolURI]? in
+      var posts = current ?? []
+      guard !posts.contains(where: { $0.uriString() == uri }) else { return nil }
+      posts.append(postURI)
+      return posts
+    }
+  }
+
+  @MainActor
+  func unhidePost(_ uri: String, expectedAccountDID: String? = nil) async throws {
+    try await updateSpecificPreferences(preferenceType: "hiddenPosts", expectedAccountDID: expectedAccountDID) {
+      (current: [ATProtocolURI]?) -> [ATProtocolURI]? in
+      (current ?? []).filter { $0.uriString() != uri }
+    }
+  }
+
+  @MainActor
+  func addLabeler(_ did: DID, expectedAccountDID: String? = nil) async throws {
+    try await updateSpecificPreferences(preferenceType: "labelers", expectedAccountDID: expectedAccountDID) {
+      (current: [AppBskyActorDefs.LabelerPrefItem]?) -> [AppBskyActorDefs.LabelerPrefItem]? in
+      var labelers = current ?? []
+      guard !labelers.contains(where: { $0.did == did }) else { return nil }
+      guard labelers.count < 19 else { throw PreferencesManagerError.labelerLimitExceeded }
+      labelers.append(.init(did: did))
+      return labelers
+    }
+  }
+
+  @MainActor
+  func removeLabeler(_ did: DID, expectedAccountDID: String? = nil) async throws {
+    try await removeLabelers([did.didString()], expectedAccountDID: expectedAccountDID)
+  }
+
+  @MainActor
+  func removeLabelers(_ dids: Set<String>, expectedAccountDID: String? = nil) async throws {
+    guard !dids.isEmpty else { return }
+    try await updateSpecificPreferences(preferenceType: "labelers", expectedAccountDID: expectedAccountDID) {
+      (current: [AppBskyActorDefs.LabelerPrefItem]?) -> [AppBskyActorDefs.LabelerPrefItem]? in
+      (current ?? []).filter { !dids.contains($0.did.didString()) }
+    }
   }
 
   @MainActor
@@ -1133,13 +1239,18 @@ final class PreferencesManager {
   @MainActor
   func updateSpecificPreferences<T>(
     preferenceType: String,
-    update: @escaping (T?) -> T?
+    expectedAccountDID: String? = nil,
+    update: @escaping (T?) throws -> T?
   ) async throws where T: Codable {
+    let operation = try capturePreferenceOperation(expectedAccountDID: expectedAccountDID)
+    await acquireSpecificEdit()
+    defer { releaseSpecificEdit() }
+    try validatePreferenceOperation(operation)
     let items: [AppBskyActorDefs.PreferencesForUnionArray]
     if let transport = specificPreferencesTransport {
       items = try await transport.getPreferences()
     } else {
-      guard let client else { throw PreferencesManagerError.clientNotInitialized }
+      guard let client = operation.client else { throw PreferencesManagerError.clientNotInitialized }
       let params = AppBskyActorGetPreferences.Parameters()
       let serverPrefs = try await client.app.bsky.actor.getPreferences(input: params)
       guard serverPrefs.responseCode >= 200 && serverPrefs.responseCode < 300,
@@ -1152,73 +1263,76 @@ final class PreferencesManager {
       }
       items = fetchedItems
     }
+    try validatePreferenceOperation(operation)
 
     // Keep all existing preferences
     var allPrefs = items
 
     // Find existing preference of this type
-    var existingIndex: Int?
     var existingValue: T?
 
-    for (index, pref) in allPrefs.enumerated() {
+    for pref in allPrefs {
       // Check if this is the preference type we're looking for
       switch (preferenceType, pref) {
       case ("savedFeeds", .savedFeedsPrefV2(let value)):
         if T.self == [AppBskyActorDefs.SavedFeed].self {
-          existingIndex = index
+
           existingValue = value.items as? T
         }
       case ("adultContent", .adultContentPref(let value)):
         if T.self == Bool.self {
-          existingIndex = index
+
           existingValue = value.enabled as? T
         }
       case ("contentLabels", .contentLabelPref):
         if T.self == [AppBskyActorDefs.ContentLabelPref].self {
-          // For content labels, we need to collect all of them
-          if existingIndex == nil {
-            existingIndex = index
-            existingValue = [] as? T
-          }
-          // We'll handle this collection separately
+
+          existingValue = allPrefs.compactMap { item -> AppBskyActorDefs.ContentLabelPref? in
+            if case .contentLabelPref(let value) = item { return value }
+            return nil
+          } as? T
         }
       case ("threadView", .threadViewPref(let value)):
         if T.self == AppBskyActorDefs.ThreadViewPref.self {
-          existingIndex = index
+
           existingValue = value as? T
         }
       case ("feedView", .feedViewPref(let value)):
-        if T.self == AppBskyActorDefs.FeedViewPref.self {
-          existingIndex = index
+        if T.self == AppBskyActorDefs.FeedViewPref.self, value.feed == "home" {
+
           existingValue = value as? T
         }
       case ("mutedWords", .mutedWordsPref(let value)):
         if T.self == [AppBskyActorDefs.MutedWord].self {
-          existingIndex = index
+
           existingValue = value.items as? T
         }
       case ("hiddenPosts", .hiddenPostsPref(let value)):
         if T.self == [ATProtocolURI].self {
-          existingIndex = index
+
           existingValue = value.items as? T
         }
       case ("labelers", .labelersPref(let value)):
         if T.self == [AppBskyActorDefs.LabelerPrefItem].self {
-          existingIndex = index
+
           existingValue = value.labelers as? T
         }
       case ("interests", .interestsPref(let value)):
         if T.self == [String].self {
-          existingIndex = index
+
           existingValue = value.tags as? T
         }
+      case ("postInteractionSettings", .postInteractionSettingsPref(let value)):
+        existingValue = [value] as? T
+      case ("verification", .verificationPrefs(let value)):
+        existingValue = [value] as? T
       default:
         break
       }
     }
 
     // Update the preference
-    if let updatedValue = update(existingValue) {
+    if let updatedValue = try update(existingValue) {
       // Create new preference with updated value
       var newPref: AppBskyActorDefs.PreferencesForUnionArray?
 
@@ -1254,7 +1368,7 @@ final class PreferencesManager {
           }
 
           // Skip the normal append/replace logic
-          existingIndex = nil
+
         } else {
           throw PreferencesManagerError.invalidData
         }
@@ -1300,6 +1414,14 @@ final class PreferencesManager {
         } else {
           throw PreferencesManagerError.invalidData
         }
+      case "postInteractionSettings":
+        guard let values = updatedValue as? [AppBskyActorDefs.PostInteractionSettingsPref] else { throw PreferencesManagerError.invalidData }
+        allPrefs.removeAll { if case .postInteractionSettingsPref = $0 { return true }; return false }
+        if let value = values.first { newPref = .postInteractionSettingsPref(value) }
+      case "verification":
+        guard let values = updatedValue as? [AppBskyActorDefs.VerificationPrefs] else { throw PreferencesManagerError.invalidData }
+        allPrefs.removeAll { if case .verificationPrefs = $0 { return true }; return false }
+        if let value = values.first { newPref = .verificationPrefs(value) }
 
       default:
         throw PreferencesManagerError.invalidData
@@ -1307,9 +1429,17 @@ final class PreferencesManager {
 
       // Replace or add the preference if it was created
       if let newPref = newPref {
-        if let idx = existingIndex, preferenceType != "contentLabels" {
-          allPrefs[idx] = newPref
-        } else if preferenceType != "contentLabels" {
+        if preferenceType != "contentLabels" {
+          allPrefs.removeAll { item in
+            switch (preferenceType, item) {
+            case ("adultContent", .adultContentPref), ("threadView", .threadViewPref),
+                 ("mutedWords", .mutedWordsPref), ("hiddenPosts", .hiddenPostsPref),
+                 ("labelers", .labelersPref), ("interests", .interestsPref),
+                 ("savedFeeds", .savedFeedsPrefV2): return true
+            case ("feedView", .feedViewPref(let value)): return value.feed == "home"
+            default: return false
+            }
+          }
           allPrefs.append(newPref)
         }
       }
@@ -1319,14 +1449,16 @@ final class PreferencesManager {
       let input = AppBskyActorPutPreferences.Input(preferences: apiPreferences)
 
       let responseCode: Int
+      try validatePreferenceOperation(operation)
       if let transport = specificPreferencesTransport {
         responseCode = try await transport.putPreferences(allPrefs)
       } else {
-        guard let client else { throw PreferencesManagerError.clientNotInitialized }
+        guard let client = operation.client else { throw PreferencesManagerError.clientNotInitialized }
         responseCode = try await client.app.bsky.actor.putPreferences(input: input)
       }
+      try validatePreferenceOperation(operation)
 
-      if responseCode != 200 {
+      if !(200..<300).contains(responseCode) {
         throw NSError(
           domain: "Preferences", code: responseCode,
           userInfo: [NSLocalizedDescriptionKey: "Server returned error code \(responseCode)"])
@@ -1334,6 +1466,7 @@ final class PreferencesManager {
 
       // Only update local model after successful server update
       let localPrefs = try await getPreferences()
+      try validatePreferenceOperation(operation)
 
       // Update local preferences based on type
       switch preferenceType {
@@ -1364,7 +1497,7 @@ final class PreferencesManager {
         if let pref = updatedValue as? AppBskyActorDefs.ThreadViewPref {
           localPrefs.threadViewPref = ThreadViewPreference(
             sort: pref.sort,
-            prioritizeFollowedUsers: nil
+            prioritizeFollowedUsers: localPrefs.threadViewPref?.prioritizeFollowedUsers
           )
         }
 
@@ -1406,12 +1539,26 @@ final class PreferencesManager {
         if let tags = updatedValue as? [String] {
           localPrefs.interests = tags
         }
+      case "postInteractionSettings":
+        localPrefs.postInteractionSettingsPref = (updatedValue as? [AppBskyActorDefs.PostInteractionSettingsPref])?.first
+      case "verification":
+        localPrefs.verificationPrefs = (updatedValue as? [AppBskyActorDefs.VerificationPrefs])?.first
+        localPrefs.hideVerificationBadges = localPrefs.verificationPrefs?.hideBadges ?? false
+        hideVerificationBadges = localPrefs.hideVerificationBadges
 
       default:
         break
       }
 
       try await savePreferences(localPrefs)
+      try validatePreferenceOperation(operation)
+      cachedServerPreferences = localPrefs
+      if preferenceType == "adultContent" {
+        sharedDefaults.set(localPrefs.adultContentEnabled, forKey: scopedKey("isAdultContentEnabled"))
+      } else if preferenceType == "labelers" {
+        await applyAcceptLabelersHeader(from: localPrefs)
+        try validatePreferenceOperation(operation)
+      }
     }
   }
 
@@ -1641,22 +1788,27 @@ final class PreferencesManager {
 
   /// Updates adult content setting and syncs to server
   @MainActor
-  func updateAdultContentEnabled(_ enabled: Bool) async throws {
-    let preferences = try await getPreferences()
-    preferences.adultContentEnabled = enabled
-
-    // Also update the app state's copy for consistency
-    sharedDefaults.set(enabled, forKey: scopedKey("isAdultContentEnabled"))
-
-    try await saveAndSyncPreferences(preferences)
+  func updateAdultContentEnabled(_ enabled: Bool, expectedAccountDID: String? = nil) async throws {
+    try await updateSpecificPreferences(preferenceType: "adultContent", expectedAccountDID: expectedAccountDID) {
+      (_: Bool?) -> Bool? in enabled
+    }
   }
 
-  /// Updates content label preferences and syncs to server
+  /// Upsert only the supplied (label, service) keys using the latest remote snapshot.
   @MainActor
-  func updateContentLabelPreferences(_ contentLabels: [ContentLabelPreference]) async throws {
-    let preferences = try await getPreferences()
-    preferences.contentLabelPrefs = contentLabels
-    try await saveAndSyncPreferences(preferences)
+  func updateContentLabelPreferences(
+    _ contentLabels: [ContentLabelPreference], expectedAccountDID: String? = nil
+  ) async throws {
+    guard !contentLabels.isEmpty else { return }
+    try await updateSpecificPreferences(preferenceType: "contentLabels", expectedAccountDID: expectedAccountDID) {
+      (current: [AppBskyActorDefs.ContentLabelPref]?) -> [AppBskyActorDefs.ContentLabelPref]? in
+      let existing = (current ?? []).map {
+        ContentLabelPreference(labelerDid: $0.labelerDid, label: $0.label, visibility: $0.visibility)
+      }
+      return Preferences.mergingContentLabelPreferences(contentLabels, into: existing).map {
+        .init(labelerDid: $0.labelerDid, label: $0.label, visibility: $0.visibility)
+      }
+    }
   }
 
   // MARK: - Accept-Labelers Header Application
@@ -1780,43 +1932,27 @@ final class PreferencesManager {
   }
   
   @MainActor
-  func setPostInteractionSettingsPref(_ pref: AppBskyActorDefs.PostInteractionSettingsPref?) async throws {
-    guard let client = client else {
-      throw PreferencesManagerError.clientNotInitialized
+  func getConfirmedPostInteractionSettingsPref(
+    expectedAccountDID: String? = nil
+  ) async throws -> AppBskyActorDefs.PostInteractionSettingsPref? {
+    let operation = try capturePreferenceOperation(expectedAccountDID: expectedAccountDID)
+    await acquireSpecificEdit()
+    defer { releaseSpecificEdit() }
+    let items = try await readSpecificPreferenceItems(operation)
+    return items.compactMap { item -> AppBskyActorDefs.PostInteractionSettingsPref? in
+      if case .postInteractionSettingsPref(let value) = item { return value }
+      return nil
+    }.last
+  }
+
+  @MainActor
+  func setPostInteractionSettingsPref(
+    _ pref: AppBskyActorDefs.PostInteractionSettingsPref?, expectedAccountDID: String? = nil
+  ) async throws {
+    try await updateSpecificPreferences(preferenceType: "postInteractionSettings", expectedAccountDID: expectedAccountDID) {
+      (_: [AppBskyActorDefs.PostInteractionSettingsPref]?) -> [AppBskyActorDefs.PostInteractionSettingsPref]? in
+      pref.map { [$0] } ?? []
     }
-    
-    // Fetch server preferences first to preserve everything
-    let params = AppBskyActorGetPreferences.Parameters()
-    let serverResponse = try await client.app.bsky.actor.getPreferences(input: params)
-    guard serverResponse.responseCode >= 200 && serverResponse.responseCode < 300,
-          let items = serverResponse.data?.preferences.items else {
-      throw NSError(
-        domain: "Preferences",
-        code: serverResponse.responseCode != 0 ? serverResponse.responseCode : -1,
-        userInfo: [NSLocalizedDescriptionKey: "Failed to fetch existing preferences from server before update"]
-      )
-    }
-    var allPrefs = items
-    
-    allPrefs.removeAll { item in
-      if case .postInteractionSettingsPref = item { return true }
-      return false
-    }
-    
-    if let pref = pref {
-      allPrefs.append(.postInteractionSettingsPref(pref))
-    }
-    
-    let input = AppBskyActorPutPreferences.Input(preferences: AppBskyActorDefs.Preferences(items: allPrefs))
-    let responseCode = try await client.app.bsky.actor.putPreferences(input: input)
-    guard responseCode >= 200 && responseCode < 300 else {
-      throw NSError(domain: "Preferences", code: responseCode, userInfo: [NSLocalizedDescriptionKey: "Failed to update post interaction settings on server"])
-    }
-    
-    let localPrefs = try await getPreferences()
-    localPrefs.postInteractionSettingsPref = pref
-    try await savePreferences(localPrefs)
-    cachedServerPreferences = localPrefs
   }
 
   // MARK: - Verification Preferences (G45)
@@ -1828,48 +1964,13 @@ final class PreferencesManager {
   }
   
   @MainActor
-  func setVerificationPrefs(_ pref: AppBskyActorDefs.VerificationPrefs?) async throws {
-    guard let client = client else {
-      throw PreferencesManagerError.clientNotInitialized
+  func setVerificationPrefs(_ pref: AppBskyActorDefs.VerificationPrefs?, expectedAccountDID: String? = nil) async throws {
+    try await updateSpecificPreferences(preferenceType: "verification", expectedAccountDID: expectedAccountDID) {
+      (_: [AppBskyActorDefs.VerificationPrefs]?) -> [AppBskyActorDefs.VerificationPrefs]? in
+      pref.map { [$0] } ?? []
     }
-    
-    // Fetch server preferences first to preserve everything
-    let params = AppBskyActorGetPreferences.Parameters()
-    let serverResponse = try await client.app.bsky.actor.getPreferences(input: params)
-    guard serverResponse.responseCode >= 200 && serverResponse.responseCode < 300,
-          let items = serverResponse.data?.preferences.items else {
-      throw NSError(
-        domain: "Preferences",
-        code: serverResponse.responseCode != 0 ? serverResponse.responseCode : -1,
-        userInfo: [NSLocalizedDescriptionKey: "Failed to fetch existing preferences from server before update"]
-      )
-    }
-    var allPrefs = items
-    
-    allPrefs.removeAll { item in
-      if case .verificationPrefs = item { return true }
-      return false
-    }
-    
-    if let pref = pref {
-      allPrefs.append(.verificationPrefs(pref))
-    }
-    
-    let input = AppBskyActorPutPreferences.Input(preferences: AppBskyActorDefs.Preferences(items: allPrefs))
-    let responseCode = try await client.app.bsky.actor.putPreferences(input: input)
-    guard responseCode >= 200 && responseCode < 300 else {
-      throw NSError(domain: "Preferences", code: responseCode, userInfo: [NSLocalizedDescriptionKey: "Failed to update verification preferences on server"])
-    }
-    
-    let localPrefs = try await getPreferences()
-    localPrefs.verificationPrefs = pref
-    localPrefs.hideVerificationBadges = pref?.hideBadges ?? false
-    self.hideVerificationBadges = pref?.hideBadges ?? false
-    try await savePreferences(localPrefs)
-    cachedServerPreferences = localPrefs
   }
 
-  // Helper to compare relevant parts of preferences for caching logic
   private func arePreferencesSemanticallyEqual(_ pref1: Preferences, _ pref2: Preferences) -> Bool {
     // Compare feed orders and other critical settings if needed
     return pref1.pinnedFeeds == pref2.pinnedFeeds && pref1.savedFeeds == pref2.savedFeeds
@@ -1885,6 +1986,7 @@ enum PreferencesManagerError: Error, LocalizedError {
   case backupFailed
   case restoreFailed
   case labelerLimitExceeded
+  case accountChanged
 
   var errorDescription: String? {
     switch self {
@@ -1900,6 +2002,8 @@ enum PreferencesManagerError: Error, LocalizedError {
       return "Failed to restore preferences from backup"
     case .labelerLimitExceeded:
       return "You can add up to 19 custom labelers in addition to the default moderation service"
+    case .accountChanged:
+      return "The account changed. Reload these settings before saving."
     }
   }
 }
