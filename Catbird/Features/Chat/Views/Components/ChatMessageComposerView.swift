@@ -22,16 +22,7 @@ struct ChatMessageComposerView: View {
   var dismissKeyboardOnSend: Bool = false
   var placeholderText: String = "Message"
 
-  @Environment(\.colorScheme) private var colorScheme
   @FocusState private var isTextFieldFocused: Bool
-
-  private var composerTint: Color {
-    Color.primary.opacity(colorScheme == .dark ? 0.14 : 0.06)
-  }
-
-  private var composerStroke: Color {
-    Color.primary.opacity(colorScheme == .dark ? 0.3 : 0.12)
-  }
 
   private var composerCornerRadius: CGFloat {
     DesignTokens.Size.radiusXXL + DesignTokens.Spacing.sm
@@ -59,15 +50,9 @@ struct ChatMessageComposerView: View {
       }
 
       composerContent
-        .modifier(
-          ComposerGlassPanelModifier(
-            tint: composerTint,
-            strokeColor: composerStroke,
-            cornerRadius: composerCornerRadius
-          )
-        )
-        .accessibilityIdentifier("chat.composer.\(accessibilityConvoIdPrefix)")
     }
+    .modifier(ComposerGlassPanelModifier(cornerRadius: composerCornerRadius))
+    .accessibilityIdentifier("chat.composer.\(accessibilityConvoIdPrefix)")
   }
 
   // MARK: - Staged Post Preview
@@ -131,21 +116,23 @@ struct ChatMessageComposerView: View {
     ZStack(alignment: .topLeading) {
       if text.isEmpty {
         Text(placeholderText)
-          .font(.system(size: DesignTokens.FontSize.body))
+          .font(.body)
           .foregroundColor(.secondary)
           .padding(.top, 6)
           .padding(.leading, 5)  // Match TextEditor's internal leading inset
           .padding(.top, 8)  // Match TextEditor's internal top inset
+          .accessibilityHidden(true)
       }
 
       TextEditor(text: $text)
-        .font(.system(size: DesignTokens.FontSize.body))
+        .font(.body)
         .lineSpacing(0)
         .frame(minHeight: 36, maxHeight: 120)
         .scrollContentBackground(.hidden)
         .background(Color.clear)
         .padding(.top, 6)
         .focused($isTextFieldFocused)
+        .accessibilityLabel(placeholderText)
         .accessibilityIdentifier("chat.composer.textInput.\(accessibilityConvoIdPrefix)")
         .onChange(of: text) { _, newValue in
           #if targetEnvironment(macCatalyst)
@@ -183,8 +170,9 @@ struct ChatMessageComposerView: View {
         .frame(width: DesignTokens.Size.buttonSM, height: DesignTokens.Size.buttonSM)
         .background(canSend ? Color.accentColor : Color.secondary.opacity(0.25))
         .clipShape(.circle)
+        .frame(minWidth: 44, minHeight: 44)
+        .contentShape(Circle())
     }
-    .contentShape(Circle())
     .disabled(!canSend)
     .opacity(canSend ? 1 : 0.5)
     .accessibilityLabel("Send message")
@@ -217,31 +205,26 @@ struct ChatMessageComposerView: View {
 // MARK: - Glass Panel
 
 private struct ComposerGlassPanelModifier: ViewModifier {
-  let tint: Color
-  let strokeColor: Color
+  @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+  @Environment(\.colorSchemeContrast) private var contrast
   let cornerRadius: CGFloat
 
   func body(content: Content) -> some View {
-    if #available(iOS 26.0, macOS 26.0, *) {
-      content
-        .clipShape(ConcentricRectangle())
-        .glassEffect(
-          .regular.interactive().tint(tint),
-          in: .containerRelative
-        )
-        .shadow(color: Color.black.opacity(0.08), radius: 4)
-        .padding(12)
-    } else {
-      content
-        .background(
-          RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-            .fill(Color.gray.opacity(0.12))
-        )
-        .overlay {
-          RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-            .strokeBorder(strokeColor.opacity(0.6), lineWidth: DesignTokens.Size.borderThin)
-        }
-        .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+    let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+    Group {
+      if reduceTransparency {
+        content
+          .background(Color(platformColor: PlatformColor.platformSecondarySystemBackground), in: shape)
+          .overlay { shape.strokeBorder(Color.primary.opacity(contrast == .increased ? 0.6 : 0.2)) }
+      } else if #available(iOS 26.0, macOS 26.0, *) {
+        content
+          .glassEffect(.regular.interactive(), in: shape)
+      } else {
+        content
+          .background(.regularMaterial, in: shape)
+          .overlay { shape.strokeBorder(Color.primary.opacity(contrast == .increased ? 0.6 : 0.2)) }
+      }
     }
+    .padding(12)
   }
 }

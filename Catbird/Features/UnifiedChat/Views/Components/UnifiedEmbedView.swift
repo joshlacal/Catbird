@@ -176,27 +176,17 @@ private struct UnifiedGIFView: View {
 
   @Environment(\.scenePhase) private var scenePhase
 
-  /// Bubble width when the media bubble fills edge-to-edge (no padding).
-  private let bubbleWidth: CGFloat = 280
   /// Corner radius matches the bubble in `UnifiedMessageBubble`.
   private let bubbleCornerRadius: CGFloat = 18
 
   private let logger = Logger(subsystem: "blue.catbird", category: "UnifiedGIFView")
 
-  /// Pre-calculated height for deterministic sizing in self-sizing cells.
-  /// Honors the GIF's actual aspect ratio (no minimum height floor — short/wide GIFs
-  /// stay short/wide instead of getting padded vertically into the bubble background).
-  private var calculatedHeight: CGFloat {
-    let ratio = calculateAspectRatio()
-    return min(bubbleWidth / ratio, 400)
-  }
-
   var body: some View {
     Group {
       if let player = loopingPlayer?.player {
-        playerView(player)
+        ChatMediaAspectLayout(gif: gif) { playerView(player) }
       } else if isLoading {
-        loadingView
+        ChatMediaAspectLayout(gif: gif) { loadingView }
       } else if let error = loadError {
         errorView(error)
       } else {
@@ -249,7 +239,6 @@ private struct UnifiedGIFView: View {
       )
     }
     .frame(maxWidth: .infinity)
-    .frame(height: calculatedHeight)
     .clipped()
     .clipShape(RoundedRectangle(cornerRadius: bubbleCornerRadius, style: .continuous))
   }
@@ -278,7 +267,6 @@ private struct UnifiedGIFView: View {
         .scaleEffect(1.2)
     }
     .frame(maxWidth: .infinity)
-    .frame(height: calculatedHeight)
     .clipped()
     .clipShape(RoundedRectangle(cornerRadius: bubbleCornerRadius, style: .continuous))
   }
@@ -309,9 +297,6 @@ private struct UnifiedGIFView: View {
       .padding()
     }
     .frame(maxWidth: .infinity)
-    .frame(height: calculatedHeight)
-    .clipped()
-    .clipShape(RoundedRectangle(cornerRadius: bubbleCornerRadius, style: .continuous))
   }
 
   // MARK: - Placeholder State
@@ -395,13 +380,6 @@ private struct UnifiedGIFView: View {
 
   // MARK: - Helpers
 
-  private func calculateAspectRatio() -> CGFloat {
-    guard let width = gif.width, let height = gif.height, height > 0 else {
-      return 16.0 / 9.0
-    }
-    return CGFloat(width) / CGFloat(height)
-  }
-
   private func installDiagnostics(for player: AVPlayer, url: URL) {
     guard let item = player.currentItem else {
       logger.error("Tenor GIF diagnostics: missing currentItem for url=\(url, privacy: .public)")
@@ -447,6 +425,20 @@ private struct UnifiedGIFView: View {
   }
 }
 
+/// Loading and playback share one size based on the available bubble width.
+private struct ChatMediaAspectLayout: Layout {
+  let gif: GIFEmbedData
+
+  func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+    ChatMediaGeometry.size(proposedWidth: proposal.width, pixelWidth: gif.width, pixelHeight: gif.height)
+  }
+
+  func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+    subviews.first?.place(at: bounds.origin, anchor: .topLeading,
+      proposal: ProposedViewSize(width: bounds.width, height: bounds.height))
+  }
+}
+
 // MARK: - Record Embed
 
 private struct RecordEmbedContainer: View {
@@ -471,21 +463,15 @@ private struct RecordEmbedContainer: View {
       && !appState.isTransitioningAccounts
   }
 
-  private var cacheKey: String {
-    "\(accountDID):\(String(describing: appState.atProtoClient.map(ObjectIdentifier.init))):\(uriString)"
-  }
-
   var body: some View {
     Group {
       // Render warm data on the first sizing pass, before the task starts.
       if !isActiveAccount {
         EmptyView()
-      } else if let record = record ?? RecordEmbedCache.cache[cacheKey] {
+      } else if let record = record ?? ChatRecordEmbedStore.shared.cachedRecord(uri: uriString, appState: appState) {
         RecordEmbedView(record: record, labels: nil, path: $navigationPath)
           .environment(\.postID, uriString)
           .foregroundStyle(.primary)
-      } else if isLoading {
-        loadingView
       } else if let error = loadError {
         errorView(error)
       } else {
@@ -494,7 +480,7 @@ private struct RecordEmbedContainer: View {
     }
     .task {
       if record == nil {
-        await loadRecord(force: false)
+        await loadRecord()
       }
     }
   }
@@ -502,12 +488,14 @@ private struct RecordEmbedContainer: View {
   @ViewBuilder
   private var placeholderView: some View {
     Button {
-      Task { await loadRecord(force: true) }
+      Task { await loadRecord() }
     } label: {
       VStack(alignment: .leading, spacing: 8) {
         HStack(spacing: 8) {
           Image(systemName: "quote.bubble")
             .foregroundStyle(.secondary)
+            .opacity(isLoading ? 0 : 1)
+            .overlay { if isLoading { ProgressView().controlSize(.mini) } }
           Text(title)
             .font(.caption)
             .fontWeight(.medium)
@@ -532,26 +520,13 @@ private struct RecordEmbedContainer: View {
       .embedCardStyle(colorScheme: colorScheme)
     }
     .buttonStyle(.plain)
-  }
-
-  @ViewBuilder
-  private var loadingView: some View {
-    HStack(spacing: 8) {
-      ProgressView()
-        .scaleEffect(0.8)
-      Text("Loading post…")
-        .font(.caption2)
-        .foregroundStyle(.secondary)
-    }
-    .padding(10)
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .embedCardStyle(colorScheme: colorScheme)
+    .disabled(isLoading)
   }
 
   @ViewBuilder
   private func errorView(_ error: String) -> some View {
     Button {
-      Task { await loadRecord(force: true) }
+      Task { await loadRecord() }
     } label: {
       VStack(alignment: .leading, spacing: 6) {
         Label("Failed to load post", systemImage: "exclamationmark.triangle")
@@ -574,110 +549,26 @@ private struct RecordEmbedContainer: View {
     .buttonStyle(.plain)
   }
 
-  private func mapEmbeds(
-    from embed: AppBskyFeedDefs.PostViewEmbedUnion
-  ) -> [AppBskyEmbedRecord.ViewRecordEmbedsUnion] {
-    switch embed {
-    case .appBskyEmbedImagesView(let imageView):
-      return [.appBskyEmbedImagesView(imageView)]
-    case .appBskyEmbedGalleryView(let galleryView):
-      return [.appBskyEmbedGalleryView(galleryView)]
-    case .appBskyEmbedExternalView(let externalView):
-      return [.appBskyEmbedExternalView(externalView)]
-    case .appBskyEmbedRecordView(let recordView):
-      return [.appBskyEmbedRecordView(recordView)]
-    case .appBskyEmbedRecordWithMediaView(let recordWithMediaView):
-      return [.appBskyEmbedRecordWithMediaView(recordWithMediaView)]
-    case .appBskyEmbedVideoView(let videoView):
-      return [.appBskyEmbedVideoView(videoView)]
-    case .unexpected:
-      return []
-    }
-  }
-
   @MainActor
-  private func loadRecord(force: Bool) async {
-    let requestState = appState
+  private func loadRecord() async {
     guard !isLoading, !Task.isCancelled, isActiveAccount else { return }
-
-    if !force, let cached = RecordEmbedCache.cache[cacheKey] {
-      record = cached
-      return
-    }
-
-    guard let uri = try? ATProtocolURI(uriString: uriString) else {
-      loadError = "Invalid post URI"
-      return
-    }
-
-    guard let client = appState.atProtoClient else {
-      loadError = "AT Protocol client not available"
-      return
-    }
-
-    guard isActiveAccount, appState === requestState,
-      requestState.atProtoClient === client else { return }
     isLoading = true
     loadError = nil
     defer { isLoading = false }
-
     do {
-      let (responseCode, response) = try await client.app.bsky.feed.getPosts(
-        input: .init(uris: [uri])
-      )
-
+      let loaded = try await ChatRecordEmbedStore.shared.load(uri: uriString, appState: appState)
       try Task.checkCancellation()
-      guard isActiveAccount, appState === requestState,
-        requestState.atProtoClient === client else { return }
-
-      guard responseCode == 200, let post = response?.posts.first else {
-        isLoading = false
-        loadError = "Post not found"
-        return
-      }
-
-      let embeds: [AppBskyEmbedRecord.ViewRecordEmbedsUnion]? = post.embed.flatMap { embed in
-        let mapped = mapEmbeds(from: embed)
-        return mapped.isEmpty ? nil : mapped
-      }
-
-      let viewRecord = AppBskyEmbedRecord.ViewRecord(
-        uri: post.uri,
-        cid: post.cid,
-        author: post.author,
-        value: post.record,
-        labels: post.labels,
-        replyCount: post.replyCount,
-        repostCount: post.repostCount,
-        likeCount: post.likeCount,
-        quoteCount: post.quoteCount,
-        embeds: embeds,
-        indexedAt: post.indexedAt
-      )
-
-      let union = AppBskyEmbedRecord.ViewRecordUnion.appBskyEmbedRecordViewRecord(viewRecord)
-      // Bound session memory; all entries are segregated by requesting account.
-      if RecordEmbedCache.cache.count >= 256 { RecordEmbedCache.cache.removeAll(keepingCapacity: true) }
-      RecordEmbedCache.cache[cacheKey] = union
-      record = union
-
-      logger.debug("Loaded record embed: \(uriString)")
+      guard isActiveAccount else { return }
+      record = loaded
     } catch is CancellationError {
-      // A reused cell or account switch is not a failed post.
+      // Reuse, interrupted presentation and account changes are not load errors.
     } catch {
-      guard isActiveAccount, appState === requestState,
-        requestState.atProtoClient === client else { return }
+      guard !Task.isCancelled, isActiveAccount else { return }
       loadError = error.localizedDescription
       logger.error("Failed to load record embed: \(error.localizedDescription)")
     }
-
-    isLoading = false
   }
 
-  @MainActor
-  private enum RecordEmbedCache {
-    static var cache: [String: AppBskyEmbedRecord.ViewRecordUnion] = [:]
-  }
 }
 
 // MARK: - Embed Card Style

@@ -71,6 +71,7 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
   private var sceneContext: SceneNavigationContext
 
   private var observationTask: Task<Void, Never>?
+  private var embedPrefetchTasks: [String: (id: UUID, task: Task<Void, Never>)] = [:]
   private var lastMessageSignaturesByID: [String: String] = [:]
   private var lastSnapshotItems: [Item] = []
   private var lastOldestMessageID: String?
@@ -148,6 +149,7 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
 
   deinit {
     observationTask?.cancel()
+    for request in embedPrefetchTasks.values { request.task.cancel() }
     NotificationCenter.default.removeObserver(self)
   }
 
@@ -155,6 +157,7 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
 
   override func viewDidLoad() {
     super.viewDidLoad()
+    view.backgroundColor = .clear
     setupCollectionView()
     setupDataSource()
     setupObservation()
@@ -172,6 +175,7 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
 
   override func viewDidDisappear(_ animated: Bool) {
     super.viewDidDisappear(animated)
+    cancelEmbedPrefetch()
     // Only tear down observation when truly leaving the screen (popped from nav stack),
     // not when a sheet or full-screen cover is presented over this view controller.
     // Cancelling here caused incoming websocket messages to be silently dropped from the
@@ -191,6 +195,7 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
     collectionView.delegate = self
     collectionView.prefetchDataSource = self
     collectionView.keyboardDismissMode = .interactive
+    collectionView.bounces = true
     collectionView.alwaysBounceVertical = true
     collectionView.showsVerticalScrollIndicator = true
     #if compiler(>=6.2)
@@ -389,6 +394,11 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
   @MainActor
   private func processObservationCycle() async {
     let newItems = currentSnapshotItems()
+    // The initial viewport is at the newest messages; UIKit prefetch covers
+    // history scrolling after this first bounded metadata warm-up.
+    for message in dataSource.messages.suffix(8).reversed() {
+      if let uri = message.embed?.recordURI { prefetchEmbed(uri: uri) }
+    }
     let itemsChanged = newItems != lastSnapshotItems
     let newSignaturesByID = currentMessageSignaturesByID()
     let stableIDs = Set(lastMessageSignaturesByID.keys).intersection(newSignaturesByID.keys)
@@ -443,7 +453,7 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
       ((previousItemCount == 0) || wasLockedToBottom)
     let shouldPinBottomAfterUpdate =
       !userIsInteracting &&
-      (forceScrollToBottom || wasLockedToBottom || shouldAutoScrollForNewItems)
+      (forceScrollToBottom || (!UIAccessibility.isVoiceOverRunning && (wasLockedToBottom || shouldAutoScrollForNewItems)))
     let currentOldestMessageID = dataSource.messages.first?.id
     let currentMessageCount = dataSource.messages.count
     let didPrependOlderMessages =
@@ -552,6 +562,14 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
     anchor?.restore(in: collectionView, indexPathFor: { self.diffableDataSource.indexPath(for: $0) })
   }
 
+  func updateTranscriptBottomInset(_ height: CGFloat) {
+    loadViewIfNeeded()
+    guard height.isFinite, abs(collectionView.contentInset.bottom - height) > 0.5 else { return }
+    collectionView.contentInset.bottom = max(0, height)
+    collectionView.verticalScrollIndicatorInsets.bottom = max(0, height)
+    pillBottomConstraint?.constant = -12 - max(0, height)
+  }
+
   func updateNavigationBinding(_ binding: Binding<NavigationPath>) {
     navigationPath = binding
   }
@@ -565,6 +583,7 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
   }
 
   func updateAppState(_ newAppState: AppState) {
+    if appState !== newAppState { cancelEmbedPrefetch() }
     if appState?.userDID != newAppState.userDID {
       reactionDetailsController?.dismiss(animated: false)
       dismissReactionOverlay()
@@ -920,14 +939,40 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
   // MARK: - UICollectionViewDataSourcePrefetching
 
   func collectionView(_ collectionView: UICollectionView, prefetchItemsAt indexPaths: [IndexPath]) {
-    // Hook for future media prefetching
+    for index in indexPaths {
+      guard case .message(let id) = diffableDataSource.itemIdentifier(for: index),
+        let uri = dataSource.message(for: id)?.embed?.recordURI else { continue }
+      prefetchEmbed(uri: uri)
+    }
   }
 
   func collectionView(
     _ collectionView: UICollectionView,
     cancelPrefetchingForItemsAt indexPaths: [IndexPath]
   ) {
-    // Hook for cancelling prefetch work when cells leave the screen
+    for index in indexPaths {
+      guard case .message(let id) = diffableDataSource.itemIdentifier(for: index),
+        let uri = dataSource.message(for: id)?.embed?.recordURI else { continue }
+      embedPrefetchTasks.removeValue(forKey: uri)?.task.cancel()
+    }
+  }
+
+  private func prefetchEmbed(uri: String) {
+    guard embedPrefetchTasks.count < 4, embedPrefetchTasks[uri] == nil,
+      let appState, ChatRecordEmbedStore.shared.cachedRecord(uri: uri, appState: appState) == nil else { return }
+    let requestID = UUID()
+    let task = Task { @MainActor [weak self] in
+      _ = try? await ChatRecordEmbedStore.shared.load(uri: uri, appState: appState)
+      if self?.embedPrefetchTasks[uri]?.id == requestID {
+        self?.embedPrefetchTasks.removeValue(forKey: uri)
+      }
+    }
+    embedPrefetchTasks[uri] = (requestID, task)
+  }
+
+  private func cancelEmbedPrefetch() {
+    for request in embedPrefetchTasks.values { request.task.cancel() }
+    embedPrefetchTasks.removeAll()
   }
 
   // MARK: - New Messages Pill Actions

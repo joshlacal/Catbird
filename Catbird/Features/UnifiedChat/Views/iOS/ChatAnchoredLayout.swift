@@ -105,8 +105,10 @@ final class ChatTranscriptCollectionView: UICollectionView {
   override init(frame: CGRect, collectionViewLayout layout: UICollectionViewLayout) {
     super.init(frame: frame, collectionViewLayout: layout)
     selfSizingInvalidation = .enabledIncludingConstraints
-    // The SwiftUI viewport has already excluded navigation, footer and keyboard.
+    // SwiftUI excludes navigation and keyboard. The measured footer is our sole inset.
     contentInsetAdjustmentBehavior = .never
+    bounces = true
+    alwaysBounceVertical = true
   }
 
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -126,12 +128,15 @@ final class ChatTranscriptCollectionView: UICollectionView {
   }
 
   private var settledBottomOffsetY: CGFloat?
+  private var settledContentSize = CGSize.zero
+  private var settledViewportSize = CGSize.zero
+  private var settledInsets = UIEdgeInsets.zero
   private var isRestoringBottom = false
   private var viewportReadingAnchor: (cell: UICollectionViewCell, index: IndexPath, y: CGFloat)?
 
   override var bounds: CGRect {
     willSet {
-      guard abs(newValue.height - bounds.height) > 0.5, bounds.height > 0 else { return }
+      guard newValue.size != bounds.size, bounds.height > 0 else { return }
       // Capture against the old viewport before UIKit reacts to a keyboard or
       // growing composer. Keeping a reader's origin and bottom intent are distinct.
       let bottom = max(-adjustedContentInset.top,
@@ -153,8 +158,11 @@ final class ChatTranscriptCollectionView: UICollectionView {
       return
     }
     let layout = collectionViewLayout as? ChatAnchoredLayout
+    let isInteracting = isTracking || isDragging || isDecelerating
+    let wasOverscrolling = contentOffset.y < -adjustedContentInset.top - 0.5
+      || settledBottomOffsetY.map { contentOffset.y > $0 + 0.5 } == true
     let mayFollow = layout?.preservesSelfSizingAnchor == true
-      && !isTracking && !isDragging && !isDecelerating
+      && !isInteracting && !wasOverscrolling && !UIAccessibility.isVoiceOverRunning
     let wasAtBottom = settledBottomOffsetY.map { abs(contentOffset.y - $0) <= 24 } ?? false
 
     let visibleTop = contentOffset.y + adjustedContentInset.top
@@ -165,7 +173,9 @@ final class ChatTranscriptCollectionView: UICollectionView {
     layout?.managesReadingAnchor = layout?.preservesSelfSizingAnchor == true
     super.layoutSubviews()
     layout?.managesReadingAnchor = false
-    if mayFollow && (wasAtBottom || pendingInsetBottomFollow) {
+    let geometryChanged = contentSize != settledContentSize || bounds.size != settledViewportSize
+      || adjustedContentInset != settledInsets
+    if mayFollow && geometryChanged && (wasAtBottom || pendingInsetBottomFollow) {
       isRestoringBottom = true
       // Moving to the bottom can materialize another estimated cell. Settle its
       // measurement before recording the next baseline, without an animation.
@@ -179,8 +189,10 @@ final class ChatTranscriptCollectionView: UICollectionView {
       let readerCell, let readerIndex, let readerY,
       indexPath(for: readerCell) == readerIndex {
       let bottom = max(-adjustedContentInset.top, contentSize.height - bounds.height + adjustedContentInset.bottom)
-      let target = min(bottom, max(-adjustedContentInset.top, readerCell.frame.minY - readerY))
-      if abs(target - contentOffset.y) > 0.5 {
+      if let target = ChatScrollGeometry.readingOffset(
+        target: readerCell.frame.minY - readerY, current: contentOffset.y,
+        bottom: bottom, top: -adjustedContentInset.top, isInteracting: isInteracting
+      ) {
         isRestoringBottom = true
         contentOffset.y = target
         isRestoringBottom = false
@@ -189,6 +201,9 @@ final class ChatTranscriptCollectionView: UICollectionView {
     pendingInsetBottomFollow = false
     viewportReadingAnchor = nil
     settledBottomOffsetY = max(-adjustedContentInset.top, contentSize.height - bounds.height + adjustedContentInset.bottom)
+    settledContentSize = contentSize
+    settledViewportSize = bounds.size
+    settledInsets = adjustedContentInset
   }
 }
 
@@ -218,12 +233,17 @@ struct ChatVisibleItemAnchor<Item: Hashable> {
     guard let indexPath = indexPathFor(item),
       let attributes = collectionView.layoutAttributesForItem(at: indexPath) else { return }
     let target = attributes.frame.minY - viewportY
-    guard abs(target - collectionView.contentOffset.y) > 0.5 else { return }
     let bottom = max(
       -collectionView.adjustedContentInset.top,
       collectionView.contentSize.height - collectionView.bounds.height + collectionView.adjustedContentInset.bottom
     )
-    collectionView.contentOffset.y = min(bottom, max(-collectionView.adjustedContentInset.top, target))
+    if let offset = ChatScrollGeometry.readingOffset(
+      target: target, current: collectionView.contentOffset.y,
+      bottom: bottom, top: -collectionView.adjustedContentInset.top,
+      isInteracting: collectionView.isTracking || collectionView.isDragging || collectionView.isDecelerating
+    ) {
+      collectionView.contentOffset.y = offset
+    }
   }
 }
 #endif

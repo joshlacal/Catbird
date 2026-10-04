@@ -6,6 +6,7 @@ import UIKit
 struct ChatCollectionViewBridge<DataSource: UnifiedChatDataSource>: UIViewControllerRepresentable {
   @Environment(SceneNavigationContext.self) private var sceneContext
   @Environment(AppState.self) private var appState
+  @Environment(\.chatTranscriptBottomInset) private var bottomInset
 
   let dataSource: DataSource
   @Binding var navigationPath: NavigationPath
@@ -36,6 +37,7 @@ struct ChatCollectionViewBridge<DataSource: UnifiedChatDataSource>: UIViewContro
     _ controller: ChatCollectionViewController<DataSource>,
     context: Context
   ) {
+    controller.updateTranscriptBottomInset(bottomInset)
     controller.updateNavigationBinding($navigationPath)
     controller.updateAppState(appState)
     controller.updateSceneContext(sceneContext)
