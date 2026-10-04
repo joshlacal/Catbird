@@ -205,7 +205,7 @@ final class MessagesViewportFixtureUITests: XCTestCase {
 
   private func moveToEdge(_ edge: Edge, app: XCUIApplication) throws {
     let collection = app.collectionViews["messages.fixture.transcript"].firstMatch
-    for _ in 0..<24 {
+    for _ in 0..<48 {
       let sample = try settled(app)
       let target = edge == .top ? sample.legalTop : sample.legalBottom
       if abs(sample.offsetY - target) <= sample.epsilon { return }
@@ -213,8 +213,8 @@ final class MessagesViewportFixtureUITests: XCTestCase {
       // while a gutter press-drag scrolls natively (R5 passive traces). Release
       // without a hold so the native deceleration carries the flick.
       let usableFraction = (sample.collectionFrame.height - sample.footerFrame.height) / sample.collectionFrame.height
-      let upper = collection.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: CGFloat(0.15 * usableFraction)))
-      let lower = collection.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: CGFloat(0.85 * usableFraction)))
+      let upper = collection.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: CGFloat(0.08 * usableFraction)))
+      let lower = collection.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: CGFloat(0.92 * usableFraction)))
       let (start, end) = edge == .top ? (upper, lower) : (lower, upper)
       start.press(forDuration: 0.01, thenDragTo: end, withVelocity: XCUIGestureVelocity(2_400), thenHoldForDuration: 0)
     }
