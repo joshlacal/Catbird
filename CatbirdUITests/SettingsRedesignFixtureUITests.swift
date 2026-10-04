@@ -27,14 +27,18 @@ final class SettingsRedesignFixtureUITests: XCTestCase {
     let app = try launch()
     XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 8))
     XCTAssertEqual(try sample(app).nativeWindowStyle, 1)
-    capture("settings-01-light-root-top", app)
+    capture("settings-01-light-root-top", app, witnesses: [
+      ("account category", app.buttons["settings.category.accountSecurity"].firstMatch),
+      ("privacy category", app.buttons["settings.category.privacyInteractions"].firstMatch)])
     for category in categories {
       let row = app.buttons["settings.category." + category.id].firstMatch
       try reveal(row, app)
       assertHitGeometry(row, app)
       XCTAssertTrue(row.label.contains(category.title))
     }
-    capture("settings-02-light-root-last-group", app)
+    capture("settings-02-light-root-last-group", app, witnesses: [
+      ("help category", app.buttons["settings.category.helpAbout"].firstMatch),
+      ("advanced category", app.buttons["settings.category.advanced"].firstMatch)])
 
     for (index, category) in categories.enumerated() {
       let search = try enterSearch(category.title, app)
@@ -44,12 +48,15 @@ final class SettingsRedesignFixtureUITests: XCTestCase {
       assertHitGeometry(result, app)
       XCTAssertTrue(result.label.contains(category.title))
       XCTAssertTrue(result.label.contains("Settings"), "Search result must retain its location context")
-      capture("settings-\(String(format: "%02d", 3 + index * 2))-\(category.id)-search-result", app)
+      capture("settings-\(String(format: "%02d", 3 + index * 2))-\(category.id)-search-result", app,
+        witnesses: [("search query", search), ("category result", result)])
       result.tap()
       XCTAssertTrue(app.navigationBars[category.title].waitForExistence(timeout: 5))
       let state = try sample(app)
       assertIsolation(state)
-      capture("settings-\(String(format: "%02d", 4 + index * 2))-\(category.id)-destination", app)
+      capture("settings-\(String(format: "%02d", 4 + index * 2))-\(category.id)-destination", app,
+        witnesses: [("category destination", app.navigationBars[category.title].firstMatch),
+          ("return control", app.navigationBars[category.title].buttons.firstMatch)])
       let back = app.navigationBars[category.title].buttons.firstMatch
       XCTAssertTrue(back.isHittable)
       back.tap()
@@ -60,9 +67,13 @@ final class SettingsRedesignFixtureUITests: XCTestCase {
     app.terminate()
     let dark = try launch(extra: ["--settings-dark"])
     XCTAssertEqual(try sample(dark).nativeWindowStyle, 2)
-    capture("settings-25-dark-root-top", dark)
+    capture("settings-25-dark-root-top", dark, witnesses: [
+      ("account category", dark.buttons["settings.category.accountSecurity"].firstMatch),
+      ("privacy category", dark.buttons["settings.category.privacyInteractions"].firstMatch)])
     try reveal(dark.buttons["settings.category.advanced"].firstMatch, dark)
-    capture("settings-26-dark-root-last-group", dark)
+    capture("settings-26-dark-root-last-group", dark, witnesses: [
+      ("help category", dark.buttons["settings.category.helpAbout"].firstMatch),
+      ("advanced category", dark.buttons["settings.category.advanced"].firstMatch)])
     // Colored SF Symbols and full text are pixel-review oracles; their presence
     // in an AX row does not establish the rendered tint or glyph completeness.
   }
@@ -71,7 +82,9 @@ final class SettingsRedesignFixtureUITests: XCTestCase {
     let app = try launch(extra: ["--settings-storage-unavailable"])
     let failed = try waitSample(app) { $0.persistenceState == "unavailable" && !$0.canEditLocalSettings }
     XCTAssertEqual(failed.localFetchCalls, 1)
-    capture("settings-27-local-store-unavailable-root", app)
+    capture("settings-27-local-store-unavailable-root", app, witnesses: [
+      ("local retry", app.buttons["SettingsPersistenceRetry"].firstMatch),
+      ("search query", app.searchFields["Search settings"].firstMatch)])
     _ = try enterSearch("autoplay", app)
     let result = app.buttons["settings.result.media.autoplayVideos"].firstMatch
     XCTAssertTrue(result.waitForExistence(timeout: 5))
@@ -80,7 +93,8 @@ final class SettingsRedesignFixtureUITests: XCTestCase {
     let autoplay = app.switches["media.autoplayVideos"].firstMatch
     try reveal(autoplay, app)
     XCTAssertFalse(autoplay.isEnabled)
-    capture("settings-28-unavailable-local-control-stays-disabled", app)
+    capture("settings-28-unavailable-local-control-stays-disabled", app, witnesses: [
+      ("autoplay control", autoplay), ("local retry", app.buttons["SettingsPersistenceRetry"].firstMatch)])
     let retry = app.buttons["SettingsPersistenceRetry"].firstMatch
     try reveal(retry, app, upward: false)
     XCTAssertTrue(retry.isEnabled)
@@ -92,10 +106,15 @@ final class SettingsRedesignFixtureUITests: XCTestCase {
     XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 5), .completed)
     XCTAssertEqual(autoplay.value as? String, "1", "Retry loads the seeded confirmed value")
     assertIsolation(recovered)
-    capture("settings-29-local-retry-loads-confirmed-value", app)
+    capture("settings-29-local-retry-loads-confirmed-value", app,
+      witnesses: [("autoplay control", autoplay), ("local retry", retry)])
   }
 
   func testRemoteReadFailureRetryCannotConfirmOrWritePreferences() throws {
+    // HELD: account admission rejects this unauthenticated fixture before a read.
+    // Timer progress/equal transport counts below cannot prove Retry was called.
+    // Keep this staged method out of any execution grant until Root approves a
+    // finite production-editor fixture seam and a positive invocation oracle.
     // The canonical destination and retained Retry copy must be checked against
     // accepted final feature source; no legacy-form fallback or runtime skip.
     let app = try launch(screen: "feedFiltering", extra: ["--settings-server-unavailable"])
@@ -107,7 +126,8 @@ final class SettingsRedesignFixtureUITests: XCTestCase {
     XCTAssertTrue(!remote.exists || !remote.isEnabled, "Unknown remote values must not be editable")
     let before = try sample(app)
     assertIsolation(before)
-    capture("settings-30-remote-values-unconfirmed-and-retry-reachable", app)
+    capture("settings-30-remote-values-unconfirmed-and-retry-reachable", app,
+      witnesses: [("remote retry (held)", retry), ("unconfirmed remote control", remote)])
     retry.tap()
     _ = try waitSample(app) { $0.sampleCount >= before.sampleCount + 3 }
     let completed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND enabled == true"), object: retry)
@@ -117,7 +137,8 @@ final class SettingsRedesignFixtureUITests: XCTestCase {
     XCTAssertEqual(after.localSaveCalls, before.localSaveCalls)
     XCTAssertGreaterThanOrEqual(after.transport.refusedRequests, before.transport.refusedRequests)
     assertIsolation(after)
-    capture("settings-31-local-remote-retry-remains-unconfirmed", app)
+    capture("settings-31-local-remote-retry-remains-unconfirmed", app,
+      witnesses: [("remote retry (held)", retry), ("unconfirmed remote control", remote)])
     // Zero HTTP calls is legitimate for a nil-client/admission rejection. The
     // attached before/after records do not claim successful service retry.
   }
@@ -132,7 +153,8 @@ final class SettingsRedesignFixtureUITests: XCTestCase {
     let picker = app.buttons["text.maxSize"].firstMatch
     try reveal(picker, app)
     XCTAssertEqual(picker.value as? String, textChoices.last)
-    capture("settings-32-native-accessibility-category-and-full-current-cap", app)
+    capture("settings-32-native-accessibility-category-and-full-current-cap", app,
+      witnesses: [("current text cap", picker)])
     for (index, choice) in textChoices.enumerated() {
       try reveal(picker, app)
       picker.tap()
@@ -140,7 +162,8 @@ final class SettingsRedesignFixtureUITests: XCTestCase {
       let button = menu.buttons[choice].firstMatch
       try revealMenuChoice(button, menu: menu, app: app)
       XCTAssertEqual(button.label, choice)
-      capture("settings-\(33 + index)-full-text-cap-choice-\(index + 1)", app)
+      capture("settings-\(33 + index)-full-text-cap-choice-\(index + 1)", app,
+        witnesses: [("text cap choice", button), ("text cap menu", menu), ("current text cap", picker)])
       button.tap()
       let selected = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", choice), object: picker)
       XCTAssertEqual(XCTWaiter.wait(for: [selected], timeout: 5), .completed)
@@ -148,7 +171,8 @@ final class SettingsRedesignFixtureUITests: XCTestCase {
     let saved = try waitSample(app) { $0.maxTextSize == "accessibility5" && $0.persistenceState == "ready" }
     assertIsolation(saved)
     try reveal(picker, app)
-    capture("settings-40-highest-cap-selected-with-full-value", app)
+    capture("settings-40-highest-cap-selected-with-full-value", app,
+      witnesses: [("highest text cap", picker)])
     XCUIDevice.shared.orientation = .landscapeLeft
     var previous = CGRect.zero
     var stable = 0
@@ -166,7 +190,8 @@ final class SettingsRedesignFixtureUITests: XCTestCase {
     XCTAssertGreaterThan(rotated.nativeWindowWidth, rotated.nativeWindowHeight)
     XCTAssertEqual(rotated.systemTextCategory, native.systemTextCategory)
     XCTAssertEqual(rotated.fontManagerTextCategory, rotated.systemTextCategory)
-    capture("settings-41-landscape-native-window-and-full-cap", app)
+    capture("settings-41-landscape-native-window-and-full-cap", app,
+      witnesses: [("landscape text cap", picker)])
   }
 
   private func launch(screen: String = "root", extra: [String] = []) throws -> XCUIApplication {
@@ -302,17 +327,51 @@ final class SettingsRedesignFixtureUITests: XCTestCase {
     XCTFail("Timed out waiting for observed fixture state")
     throw FixtureError.sampleMissing
   }
-  private func capture(_ name: String, _ app: XCUIApplication) {
+  private func capture(_ name: String, _ app: XCUIApplication, witnesses: [(String, XCUIElement)]) {
     let screenshot = XCTAttachment(screenshot: app.screenshot())
     screenshot.name = name; screenshot.lifetime = .keepAlways; add(screenshot)
-    let hierarchy = app.debugDescription
-    let ax = XCTAttachment(string: String(hierarchy.prefix(40_000))
-      + "\nAX character limit=40000; truncated=\(hierarchy.count > 40_000)")
-    ax.name = name + " — bounded native AX hierarchy"; ax.lifetime = .keepAlways; add(ax)
+    // Resolve only the explicitly named elements. Never construct the full
+    // application hierarchy merely to truncate its resulting string.
+    let elements: [(String, XCUIElement)] = [
+      ("native window", app.windows.firstMatch), ("navigation bar", app.navigationBars.firstMatch),
+      ("receiving form", app.collectionViews.firstMatch), ("keyboard", app.keyboards.firstMatch)
+    ] + witnesses
+    XCTAssertLessThanOrEqual(elements.count, 8, "Capture witnesses must stay finite")
+    let records = Array(elements.prefix(8)).map { elementWitness($0.0, $0.1) }
+    let payload: [String: Any] = ["checkpoint": name, "elementLimit": 8,
+      "identifierLimit": 160, "labelLimit": 512, "valueLimit": 512, "witnesses": records]
+    let data = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
+    let ax = XCTAttachment(string: data.flatMap { String(data: $0, encoding: .utf8) } ?? "witness serialization failed")
+    ax.name = name + " — compact explicit element witnesses"; ax.lifetime = .keepAlways; add(ax)
     let raw = app.descendants(matching: .any)["settings.fixture.counters"].firstMatch.value as? String ?? "missing probe"
     let receipt = XCTAttachment(string: raw + "\nwindow=\(app.windows.firstMatch.frame); receiving=\(receivingViewport(app))")
     receipt.name = name + " — actual state, refused transport and native geometry"
     receipt.lifetime = .keepAlways; add(receipt)
+  }
+  private func elementWitness(_ role: String, _ element: XCUIElement) -> [String: Any] {
+    let exists = element.exists
+    var record: [String: Any] = ["role": String(role.prefix(80)), "exists": exists]
+    guard exists else { return record }
+    let identifier = element.identifier
+    let label = element.label
+    // Values outside the scalar AX string/number contract are deliberately not
+    // expanded via description; the named probe has its own state attachment.
+    let value: String
+    if let string = element.value as? String { value = string }
+    else if let number = element.value as? NSNumber { value = number.stringValue }
+    else { value = "<non-scalar or absent>" }
+    let frame = element.frame
+    record["identifier"] = String(identifier.prefix(160))
+    record["identifierTruncated"] = identifier.count > 160
+    record["label"] = String(label.prefix(512))
+    record["labelTruncated"] = label.count > 512
+    record["value"] = String(value.prefix(512))
+    record["valueTruncated"] = value.count > 512
+    record["enabled"] = element.isEnabled
+    record["hittable"] = element.isHittable
+    record["frame"] = ["x": Double(frame.minX), "y": Double(frame.minY),
+      "width": Double(frame.width), "height": Double(frame.height)]
+    return record
   }
   private enum FixtureError: Error { case controlNotReached, sampleMissing }
   private struct Transport: Decodable { let refusedRequests: Int, attemptedWrites: Int, unexpectedRequests: Int }

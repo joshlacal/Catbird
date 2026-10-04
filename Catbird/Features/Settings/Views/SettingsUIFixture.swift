@@ -329,7 +329,8 @@ private final class SettingsFixtureEvidence {
     return ["ready": true, "sampleCount": sampleCount, "accountDID": appState.userDID,
       "sceneID": session.sceneID.uuidString, "editingDefaultsSuite": suiteName,
       "noAuthenticatedHost": shared.authentication.client == nil && shared.authentication.state.userDID == nil
-        && !shared.authentication.state.isAuthenticating && shared.lifecycle.appState == nil,
+        && !shared.authentication.state.isAuthenticating && shared.lifecycle.appState == nil
+        && shared.lifecycle.userDID == nil,
       "draftTestingConfigurationApplied": true, "currentDraftAbsent": session.currentDraft == nil,
       "persistenceState": String(describing: appState.appSettings.persistenceState),
       "canEditLocalSettings": appState.appSettings.canEditPersistedSettings,
