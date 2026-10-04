@@ -31,6 +31,7 @@ struct ExternalEmbedView: View {
     @State private var userTappedToShowEmbed = false
     @State private var showingConsentDialog = false
     @State private var pendingConsentProvider: ExternalMediaProvider?
+    @State private var consentSaveFailed = false
     @Environment(\.appSettings) private var appSettings
     @ObservationIgnored @Environment(AppState.self) private var appState
     @Environment(\.openURL) private var openURL
@@ -188,25 +189,24 @@ struct ExternalEmbedView: View {
             titleVisibility: .visible,
             presenting: pendingConsentProvider
         ) { provider in
-            Button("Enable external media") {
-                appState.appSettings.setExternalMediaConsentForAllProviders(.allow)
+            Button("Allow \(provider.displayName)") {
+                guard appState.appSettings.applyExternalMediaConsent(.allow, providers: [provider]) else {
+                    consentSaveFailed = true
+                    return
+                }
                 withAnimation(.easeInOut(duration: 0.3)) {
                     userTappedToShowEmbed = true
                 }
                 retryAttempt += 1
             }
-            Button("Enable \(provider.displayName) only") {
-                appState.appSettings.setExternalMediaConsent(.allow, for: provider)
-                withAnimation(.easeInOut(duration: 0.3)) {
-                    userTappedToShowEmbed = true
-                }
-                retryAttempt += 1
-            }
-            Button("No thanks", role: .cancel) {
-                appState.appSettings.setExternalMediaConsent(.hide, for: provider)
-            }
+            Button("Cancel", role: .cancel) {}
         } message: { provider in
             Text("Playing embeds connects directly to third-party servers and may share your IP address or tracking data with \(provider.displayName).")
+        }
+        .alert("Permission Wasn’t Saved", isPresented: $consentSaveFailed) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("The player remains blocked. Open External Media Permissions in Settings to retry saving this choice.")
         }
     }
 

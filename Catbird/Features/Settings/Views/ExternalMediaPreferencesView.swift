@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ExternalMediaPreferencesView: View {
     @Environment(AppState.self) private var appState
+    @State private var bulkConsent: ExternalMediaConsent?
     
     var body: some View {
         Form {
@@ -26,17 +27,17 @@ struct ExternalMediaPreferencesView: View {
             
             Section("Quick Actions") {
                 Button("Allow All Providers") {
-                    appState.appSettings.setExternalMediaConsentForAllProviders(.allow)
+                    bulkConsent = .allow
                 }
                 .foregroundStyle(.blue)
                 
                 Button("Ask Before Playing (Reset All)") {
-                    appState.appSettings.setExternalMediaConsentForAllProviders(.undecided)
+                    bulkConsent = .undecided
                 }
                 .foregroundStyle(.primary)
                 
                 Button("Block All Providers") {
-                    appState.appSettings.setExternalMediaConsentForAllProviders(.hide)
+                    bulkConsent = .hide
                 }
                 .foregroundStyle(.red)
             }
@@ -49,7 +50,23 @@ struct ExternalMediaPreferencesView: View {
             }
             .disabled(!appState.appSettings.canEditPersistedSettings)
         }
-        .navigationTitle("External Media")
+        .navigationTitle("External Media Permissions")
+        .confirmationDialog("Change All Provider Permissions?", isPresented: Binding(
+            get: { bulkConsent != nil },
+            set: { if !$0 { bulkConsent = nil } }
+        ), titleVisibility: .visible) {
+            if let bulkConsent {
+                Button(bulkConsent.title) {
+                    _ = appState.appSettings.applyExternalMediaConsent(
+                        bulkConsent, providers: ExternalMediaProvider.allCases
+                    )
+                    self.bulkConsent = nil
+                }
+            }
+            Button("Cancel", role: .cancel) { bulkConsent = nil }
+        } message: {
+            Text("This changes all \(ExternalMediaProvider.allCases.count) providers for this account on this device. Individual permissions remain available below.")
+        }
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
@@ -57,8 +74,6 @@ struct ExternalMediaPreferencesView: View {
     
     @ViewBuilder
     private func providerRow(for provider: ExternalMediaProvider) -> some View {
-        let currentConsent = appState.appSettings.externalMediaConsent(for: provider)
-        
         HStack {
             VStack(alignment: .leading, spacing: 2) {
                 Text(provider.displayName)
@@ -71,8 +86,8 @@ struct ExternalMediaPreferencesView: View {
             Spacer()
             
             Picker("\(provider.displayName) playback", selection: Binding(
-                get: { currentConsent },
-                set: { appState.appSettings.setExternalMediaConsent($0, for: provider) }
+                get: { appState.appSettings.externalMediaConsent(for: provider) },
+                set: { _ = appState.appSettings.applyExternalMediaConsent($0, providers: [provider]) }
             )) {
                 ForEach(ExternalMediaConsent.allCases, id: \.self) { consent in
                     Text(consent.title).tag(consent)
