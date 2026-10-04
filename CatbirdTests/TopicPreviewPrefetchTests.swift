@@ -10,6 +10,57 @@ struct TopicPreviewPrefetchTests {
     #expect(TopicPreviewPrefetchCoordinator.boundedLinks(["", "a", "a", "b", "c", "d", "e", "f", "g"]) == ["a", "b", "c", "d", "e", "f"])
   }
 
+  @Test("Resigning closes admission to queued and late metadata; only a visible return restarts")
+  func inactiveLateMetadataAndVisibleReturn() async throws {
+    let coordinator = TopicPreviewPrefetchCoordinator()
+    var admitted: [String] = []
+    let load: @MainActor (String) async -> Void = { admitted.append($0) }
+    // This batch is registered but its task has not yet run on the main actor.
+    #expect(coordinator.start(owner: .timeline, identity: "before-resign", links: ["departed"], load: load))
+    coordinator.setActive(false)
+    #expect(!coordinator.start(owner: .search, identity: "late-search", links: ["late-search"], load: load))
+    #expect(!coordinator.start(owner: .timeline, identity: "late-timeline", links: ["late-timeline"], load: load))
+    for _ in 0..<40 { await Task.yield() }
+    #expect(admitted.isEmpty)
+    coordinator.cancel(owner: .timeline)
+    coordinator.setActive(true)
+    for _ in 0..<40 { await Task.yield() }
+    #expect(admitted.isEmpty, "Foreground reopening must not resurrect departed owners")
+    #expect(coordinator.start(owner: .search, identity: "visible-return", links: ["visible"], load: load))
+    try await waitUntil { admitted == ["visible"] }
+    coordinator.cancelAll()
+  }
+
+  @Test("Inactive cancellation prevents queued feed work from entering its fetch")
+  func inactivityCancelsQueuedAdmissions() async throws {
+    let coordinator = TopicPreviewPrefetchCoordinator()
+    let gate = TopicPreviewRequestGate()
+    var active = 0
+    var admitted = 0
+    let load: @MainActor (String) async -> Void = { link in
+      do {
+        try await gate.acquire(link)
+        defer { gate.release(link) }
+        try Task.checkCancellation()
+        guard coordinator.isActive else { return }
+        active += 1
+        defer { active -= 1 }
+        admitted += 1
+        try await Task.sleep(for: .seconds(60))
+      } catch {}
+    }
+    #expect(coordinator.start(owner: .search, identity: "queued", links: (0..<6).map { "topic-\($0)" }, load: load))
+    try await waitUntil { active == 2 }
+    coordinator.setActive(false)
+    try await waitUntil { active == 0 }
+    for _ in 0..<40 { await Task.yield() }
+    #expect(admitted == 2)
+    #expect(!coordinator.start(owner: .search, identity: "late", links: ["late"], load: load))
+    coordinator.setActive(true)
+    try await gate.acquire("visible-after-active")
+    gate.release("visible-after-active")
+  }
+
   @Test("Repeated metadata coalesces while the same batch is running")
   func identicalMetadataCoalesces() async throws {
     let coordinator = TopicPreviewPrefetchCoordinator()

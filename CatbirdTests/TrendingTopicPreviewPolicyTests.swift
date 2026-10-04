@@ -844,6 +844,34 @@ struct TrendingTopicPreviewPolicyTests {
     #expect(store.preview(key: "topic", context: .init()) == .init())
   }
 
+  @Test("Inactive store rejects late metadata and row admission until a visible foreground return")
+  func inactiveStoreAdmissionAndReturn() async throws {
+    let store = TrendingTopicMediaStore()
+    store.setActive(false)
+    let revision = store.revision
+    var admissions = 0
+    let lateLoad: @MainActor (String) async -> Void = { _ in admissions += 1 }
+    #expect(!store.prefetchCoordinator.start(owner: .search, identity: "late", links: ["late"], load: lateLoad))
+    await store.load(key: "late") {
+      admissions += 1
+      return []
+    }
+    await settle()
+    #expect(admissions == 0)
+    store.cancelPrefetch(owner: .timeline)
+    store.setActive(true)
+    #expect(store.revision == revision + 1, "Visible tasks restart from the existing refresh revision")
+    await settle()
+    #expect(admissions == 0, "Foreground reopening keeps departed owner work cancelled")
+    let post = try fixture("foreground-visible", embed: images("foreground-visible"))
+    await store.load(key: "visible") {
+      admissions += 1
+      return [post]
+    }
+    #expect(admissions == 1)
+    #expect(store.preview(key: "visible", context: .init()).media.count == 1)
+  }
+
   private let timestamp = "2026-01-01T00:00:00Z"
 
   private func did(_ index: Int) -> String { "did:plc:previewauthor\(index)" }

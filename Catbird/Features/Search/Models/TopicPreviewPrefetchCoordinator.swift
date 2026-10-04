@@ -14,6 +14,12 @@ final class TopicPreviewPrefetchCoordinator {
     let task: Task<Void, Never>
   }
   private var batches: [TopicPreviewPrefetchOwner: Batch] = [:]
+  private(set) var isActive = true
+
+  func setActive(_ active: Bool) {
+    isActive = active
+    if !active { cancelAll() }
+  }
 
   static func boundedLinks(_ links: [String]) -> [String] {
     var seen = Set<String>()
@@ -27,17 +33,18 @@ final class TopicPreviewPrefetchCoordinator {
 
   func start(owner: TopicPreviewPrefetchOwner, identity: String, links: [String],
     load: @escaping @MainActor (String) async -> Void) -> Bool {
-    guard batches[owner]?.identity != identity else { return false }
+    guard isActive, batches[owner]?.identity != identity else { return false }
     cancel(owner: owner)
     let links = Self.boundedLinks(links)
     guard !links.isEmpty else { return false }
     let id = UUID()
     let task = Task { [weak self] in
+      guard self?.isActive == true, !Task.isCancelled else { return }
       await withTaskGroup(of: Void.self) { group in
         for link in links {
-          guard !Task.isCancelled else { break }
-          group.addTask { @MainActor in
-            guard !Task.isCancelled else { return }
+          guard self?.isActive == true, !Task.isCancelled else { break }
+          group.addTask { @MainActor [weak self] in
+            guard self?.isActive == true, !Task.isCancelled else { return }
             await load(link)
           }
         }

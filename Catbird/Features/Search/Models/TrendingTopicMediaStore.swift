@@ -21,12 +21,13 @@ final class TrendingTopicMediaStore {
   @ObservationIgnored let prefetchCoordinator = TopicPreviewPrefetchCoordinator()
   @ObservationIgnored private let imagePrefetcher = ImagePrefetcher(
     pipeline: ImageLoadingManager.shared.pipeline, maxConcurrentRequestCount: 2)
-  @ObservationIgnored private var imageRequests: [TopicPreviewPrefetchOwner: [ImageRequest]] = [:]
+  @ObservationIgnored private var imageOwnership = TopicPreviewImagePrefetchOwnership<ImageRequest, TrendingTopicImageRequests.Identity>()
   @ObservationIgnored private var lastLabelers: String?
   @ObservationIgnored private var graphObserver: NSObjectProtocol?
   @ObservationIgnored private var activityObserver: NSObjectProtocol?
   @ObservationIgnored private var inactivityObserver: NSObjectProtocol?
   private(set) var canReusePrefetchedFeed = true
+  private(set) var isActive = true
   @ObservationIgnored private var prefetchedLinksUsed: Set<String> = []
 
   func consumePrefetchedFeedReuse(for link: String) -> Bool {
@@ -41,16 +42,32 @@ final class TrendingTopicMediaStore {
         MainActor.assumeIsolated { self?.invalidateForGraphChange() }
       }
     #if canImport(UIKit)
+    setActive(UIApplication.shared.applicationState == .active)
     activityObserver = NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification,
       object: nil, queue: .main) { [weak self] _ in
         // Refresh viewer metadata after another client or a background App Intent changed moderation.
-        MainActor.assumeIsolated { self?.invalidateForGraphChange() }
+        MainActor.assumeIsolated { self?.setActive(true) }
       }
     inactivityObserver = NotificationCenter.default.addObserver(forName: UIApplication.willResignActiveNotification,
       object: nil, queue: .main) { [weak self] _ in
-        MainActor.assumeIsolated { self?.cancelPrefetches() }
+        MainActor.assumeIsolated { self?.setActive(false) }
       }
     #endif
+  }
+
+  func setActive(_ active: Bool) {
+    guard isActive != active else { return }
+    // Close admission before cancellation; a late metadata response cannot reopen it.
+    isActive = active
+    if active {
+      // Visible .task identities observe revision; departed surfaces retain no resume callbacks.
+      invalidateForGraphChange()
+      prefetchCoordinator.setActive(true)
+    } else {
+      prefetchCoordinator.setActive(false)
+      cancelRequests()
+      cancelPrefetches()
+    }
   }
 
   deinit {
@@ -79,7 +96,7 @@ final class TrendingTopicMediaStore {
 
   func load(key: String, hydrate: (([AppBskyFeedDefs.FeedViewPost]) async -> [AppBskyFeedDefs.PostView])? = nil,
     fetch: @escaping () async throws -> [AppBskyFeedDefs.FeedViewPost]) async {
-    guard !Task.isCancelled else { return }
+    guard isActive, !Task.isCancelled else { return }
     let id = UUID()
     // Own direct row requests as well as metadata batches, so account suspension cancels both.
     let request = Task { [weak self] in
@@ -101,25 +118,26 @@ final class TrendingTopicMediaStore {
 
   private func performLoad(key: String, hydrate: (([AppBskyFeedDefs.FeedViewPost]) async -> [AppBskyFeedDefs.PostView])?,
     fetch: () async throws -> [AppBskyFeedDefs.FeedViewPost]) async {
+    guard isActive, !Task.isCancelled else { return }
     guard entries[key]?.expiresAt ?? .distantPast <= Date() else { return }
     let requestRevision = revision
     do {
       try await gate.acquire(key)
       defer { gate.release(key) }
       try Task.checkCancellation()
-      guard revision == requestRevision else { return }
+      guard isActive, revision == requestRevision else { return }
       guard entries[key]?.expiresAt ?? .distantPast <= Date() else { return }
       let posts = try await fetch()
       try Task.checkCancellation()
-      guard revision == requestRevision else { return }
+      guard isActive, revision == requestRevision else { return }
       let quotedPosts = await hydrate?(posts) ?? []
       try Task.checkCancellation()
-      guard revision == requestRevision else { return }
+      guard isActive, revision == requestRevision else { return }
       cache(posts: posts, quotedPosts: quotedPosts, key: key, lifetime: 300)
     } catch is CancellationError {
       // Cancellation does not poison a later visible row's cache.
     } catch {
-      guard !Task.isCancelled, revision == requestRevision else { return }
+      guard isActive, !Task.isCancelled, revision == requestRevision else { return }
       // A failed preview remains a fully usable text topic; back navigation does not retry it.
       cache(posts: [], quotedPosts: [], key: key, lifetime: 60)
     }
@@ -142,15 +160,11 @@ final class TrendingTopicMediaStore {
   }
 
   func warmImages(_ preview: TrendingTopicPreview, owner: TopicPreviewPrefetchOwner) {
-    let existing = imageRequests[owner] ?? []
-    let existingURLs = Set(existing.compactMap(\.url))
-    let additions = TrendingTopicImageRequests.requests(for: preview).filter {
-      $0.url.map { !existingURLs.contains($0) } ?? false
-    }
+    guard isActive else { return }
     // Six topics, three static cards and three avatars each; never expand with scroll renders.
-    let bounded = Array(additions.prefix(max(0, 36 - existing.count)))
-    imageRequests[owner] = existing + bounded
-    imagePrefetcher.startPrefetching(with: bounded)
+    let additions = imageOwnership.append(TrendingTopicImageRequests.requests(for: preview), owner: owner,
+      identity: TrendingTopicImageRequests.identity)
+    imagePrefetcher.startPrefetching(with: additions)
   }
 
   func cancelPrefetch(owner: TopicPreviewPrefetchOwner) {
@@ -159,21 +173,41 @@ final class TrendingTopicMediaStore {
   }
 
   func resetImagePrefetch(owner: TopicPreviewPrefetchOwner) {
-    let removed = imageRequests.removeValue(forKey: owner) ?? []
-    let retainedURLs = Set(imageRequests.values.flatMap { $0 }.compactMap(\.url))
-    imagePrefetcher.stopPrefetching(with: removed.filter { $0.url.map { !retainedURLs.contains($0) } ?? true })
+    let unowned = imageOwnership.remove(owner: owner, identity: TrendingTopicImageRequests.identity)
+    imagePrefetcher.stopPrefetching(with: unowned)
   }
 
   private func cancelPrefetches() {
     prefetchCoordinator.cancelAll()
     imagePrefetcher.stopPrefetching()
-    imageRequests.removeAll()
+    imageOwnership.removeAll()
   }
 }
 
 /// Prefetch and display use identical resized requests so the shared pipeline can coalesce them.
 @MainActor
 enum TrendingTopicImageRequests {
+  /// Matches frozen Nuke's TaskLoadImageKey, including ordered processor identities.
+  struct Identity: Hashable {
+    let imageID: String?
+    let cachePolicy: URLRequest.CachePolicy
+    let allowsCellularAccess: Bool
+    let scale: Float
+    let thumbnail: ImageRequest.ThumbnailOptions?
+    let options: ImageRequest.Options
+    let processors: [AnyHashable]
+  }
+
+  static func identity(_ request: ImageRequest) -> Identity {
+    let resource = request.urlRequest
+    return Identity(imageID: request.imageId,
+      cachePolicy: resource?.cachePolicy ?? .useProtocolCachePolicy,
+      allowsCellularAccess: resource?.allowsCellularAccess ?? true,
+      scale: (request.userInfo[.scaleKey] as? NSNumber)?.floatValue ?? 1,
+      thumbnail: request.userInfo[.thumbnailKey] as? ImageRequest.ThumbnailOptions,
+      options: request.options, processors: request.processors.map(\.hashableIdentifier))
+  }
+
   static func request(_ url: URL, size: CGSize) -> ImageRequest {
     let pixels = CGSize(width: size.width * PlatformScreenInfo.scale, height: size.height * PlatformScreenInfo.scale)
     return ImageRequest(url: url, processors: [
@@ -232,7 +266,7 @@ extension AppState {
 
   @MainActor
   func loadTopicPreview(for link: String) async {
-    guard !isAccountSwitchSuspended, appSettings.showTrendingTopics, topicPreviewLabelerScopeIsCurrent,
+    guard trendingTopicMediaStore.isActive, !isAccountSwitchSuspended, appSettings.showTrendingTopics, topicPreviewLabelerScopeIsCurrent,
           (try? preferencesManager.getLocalPreferences()) != nil,
           let client = atProtoClient, let uri = TrendingTopicPreviewPolicy.feedURI(for: link) else { return }
     let labelers = topicPreviewLabelers
@@ -240,25 +274,28 @@ extension AppState {
     await withTopicPreviewAccountOperation {
       await trendingTopicMediaStore.load(key: labelers + "|" + link, hydrate: { posts in
         let uris = TrendingTopicPreviewPolicy.quotedPostURIs(in: posts)
-        guard !uris.isEmpty, !Task.isCancelled, !self.isAccountSwitchSuspended,
+        guard !uris.isEmpty, self.trendingTopicMediaStore.isActive, !Task.isCancelled, !self.isAccountSwitchSuspended,
               self.userDID == viewerDID, self.topicPreviewLabelers == labelers,
               self.topicPreviewLabelerScopeIsCurrent else { return [] }
         // Quote views omit thread-mute state. One bounded read resolves it under the same gate/header.
         let result = try? await client.app.bsky.feed.getPosts(input: .init(uris: uris))
-        guard !Task.isCancelled, !self.isAccountSwitchSuspended, self.userDID == viewerDID,
+        guard self.trendingTopicMediaStore.isActive, !Task.isCancelled, !self.isAccountSwitchSuspended, self.userDID == viewerDID,
               self.topicPreviewLabelers == labelers, self.topicPreviewLabelerScopeIsCurrent,
               let (status, response) = result, status == 200 else { return [] }
         return response?.posts ?? []
       }) {
         try Task.checkCancellation()
-        guard !self.isAccountSwitchSuspended, self.userDID == viewerDID else { throw CancellationError() }
+        guard self.trendingTopicMediaStore.isActive, !self.isAccountSwitchSuspended, self.userDID == viewerDID else { throw CancellationError() }
         // Reuse an already hydrated account feed when it has the default labeler scope.
         // Custom labeler subscriptions need a new response with their accepted-labeler header.
         if labelers.isEmpty, self.trendingTopicMediaStore.consumePrefetchedFeedReuse(for: link), let cached = await self.getPrefetchedFeed(.feed(uri)) {
           return Array(cached.posts.prefix(30))
         }
+        try Task.checkCancellation()
+        guard self.trendingTopicMediaStore.isActive, !self.isAccountSwitchSuspended,
+              self.userDID == viewerDID else { throw CancellationError() }
         let (status, response) = try await client.app.bsky.feed.getFeed(input: .init(feed: uri, limit: 12))
-        guard !self.isAccountSwitchSuspended, self.userDID == viewerDID, self.topicPreviewLabelers == labelers, self.topicPreviewLabelerScopeIsCurrent else { throw CancellationError() }
+        guard self.trendingTopicMediaStore.isActive, !self.isAccountSwitchSuspended, self.userDID == viewerDID, self.topicPreviewLabelers == labelers, self.topicPreviewLabelerScopeIsCurrent else { throw CancellationError() }
         guard status == 200, let response else { throw FeedPreviewError.fetchFailed(status) }
         return response.feed
       }
@@ -273,16 +310,16 @@ extension AppState {
 
   @MainActor
   func prefetchTopicPreviews(links: [String], owner: TopicPreviewPrefetchOwner) {
-    guard !isAccountSwitchSuspended, appSettings.showTrendingTopics, topicPreviewLabelerScopeIsCurrent else { return }
+    guard trendingTopicMediaStore.isActive, !isAccountSwitchSuspended, appSettings.showTrendingTopics, topicPreviewLabelerScopeIsCurrent else { return }
     let links = TopicPreviewPrefetchCoordinator.boundedLinks(links)
     let viewerDID = userDID
     let labelers = topicPreviewLabelers
     let revision = trendingTopicMediaStore.revision
     let identity = topicPreviewPrefetchIdentity(links: links)
     let started = trendingTopicMediaStore.prefetchCoordinator.start(owner: owner, identity: identity, links: links) { [weak self] link in
-      guard let self, !Task.isCancelled else { return }
+      guard let self, self.trendingTopicMediaStore.isActive, !Task.isCancelled else { return }
       await self.loadTopicPreview(for: link)
-      guard !Task.isCancelled, !self.isAccountSwitchSuspended, self.userDID == viewerDID,
+      guard self.trendingTopicMediaStore.isActive, !Task.isCancelled, !self.isAccountSwitchSuspended, self.userDID == viewerDID,
             self.topicPreviewLabelers == labelers, self.topicPreviewLabelerScopeIsCurrent,
             self.trendingTopicMediaStore.revision == revision else { return }
       // Re-evaluate current local decisions after awaits and before issuing any image request.
