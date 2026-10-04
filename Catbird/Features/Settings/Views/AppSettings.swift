@@ -32,6 +32,8 @@ import AppKit
         }
         var standardDefaults: UserDefaults = .standard
         var sharedDefaults: UserDefaults = AppSettingsModel.sharedDefaults()
+        // Production binds the account's drained work queue. Rejection keeps the effect pending.
+        var startEffect: @MainActor (@escaping @MainActor () async -> Void) -> Bool = { _ in false }
 
         static let live = Persistence(
             fetch: { context, accountDID in
@@ -56,7 +58,9 @@ import AppKit
         let action: @MainActor () async -> Void
     }
     private var pendingEffects: [String: [String: PendingEffect]] = [:]
+    private var admittedEffectIdentities: Set<UUID> = []
     private var accountDID: String?
+    private var suspendedAccountDID: String?
     private var generation: UInt64 = 0
     private var defaults = AppSettingsModel()
     private var isInitializing = true
@@ -67,12 +71,16 @@ import AppKit
     private(set) var persistenceState: PersistenceState = .unavailable
 
     var canEditPersistedSettings: Bool {
-        persistenceState == .ready || persistenceState == .saving
+        !isLocalChangesSuspended && (persistenceState == .ready || persistenceState == .saving)
     }
+
+    var isLocalChangesSuspended: Bool { suspendedAccountDID != nil }
 
     /// Describes the retained attempt while controls show the last confirmed values.
     var pendingChangesDescription: String {
-        guard let accountDID, let pending = pendingDrafts[accountDID], let savedSettings = pendingBaselines[accountDID] else {
+        guard let accountDID,
+              let pending = pendingDrafts[accountDID] ?? settingsModel ?? savedSettings,
+              let savedSettings = pendingBaselines[accountDID] ?? savedSettings else {
             return "Pending changes will be available after your saved settings load."
         }
         var changes: [String] = []
@@ -156,7 +164,7 @@ import AppKit
 
     var hasPendingChanges: Bool {
         guard let accountDID else { return false }
-        return pendingDrafts[accountDID] != nil
+        return pendingDrafts[accountDID] != nil || !(pendingEffects[accountDID] ?? [:]).isEmpty
     }
 
     var pendingChangesSummary: PendingChangesSummary? {
@@ -212,6 +220,7 @@ import AppKit
     @MainActor
     func resolvePendingChanges(for accountDID: String, decision: PendingDecision) async -> PendingResolution {
         guard self.accountDID == accountDID else { return .accountChanged }
+        guard !isLocalChangesSuspended else { return .unavailable }
         switch decision {
         case .save:
             guard modelContext != nil, savedSettings != nil else { return .unavailable }
@@ -233,8 +242,45 @@ import AppKit
 
     @discardableResult
     func persistPendingChanges(for accountDID: String) -> Bool {
-        guard self.accountDID == accountDID else { return false }
+        guard self.accountDID == accountDID, !isLocalChangesSuspended else { return false }
         return persistPendingChanges()
+    }
+
+    /// Close every ordinary edit path before the account switch's first suspension point.
+    @MainActor @discardableResult
+    func suspendLocalChanges(for accountDID: String) -> Bool {
+        guard self.accountDID == accountDID,
+              suspendedAccountDID == nil || suspendedAccountDID == accountDID else { return false }
+        suspendedAccountDID = accountDID
+        generation &+= 1
+        notificationDebounceTimer?.invalidate()
+        notificationDebounceTimer = nil
+        admittedEffectIdentities.removeAll()
+        return true
+    }
+
+    /// The switch owner calls this synchronously after draining the account's actual work.
+    @MainActor @discardableResult
+    func flushPendingChangesForAccountSwitch(for accountDID: String) -> Bool {
+        guard self.accountDID == accountDID, suspendedAccountDID == accountDID else { return false }
+        guard pendingDrafts[accountDID] != nil else { return true }
+        return persistPendingChanges(allowSuspended: true)
+    }
+
+    /// Reopen only the retained source that the lifecycle owner has verified as active.
+    @MainActor @discardableResult
+    func resumeLocalChanges(for accountDID: String) -> Bool {
+        guard self.accountDID == accountDID, suspendedAccountDID == accountDID,
+              persistence.isActiveAccount(accountDID, self) else { return false }
+        suspendedAccountDID = nil
+        generation &+= 1
+        admittedEffectIdentities.removeAll()
+        if pendingDrafts[accountDID] != nil, persistenceState == .saving {
+            settingsModel = savedSettings.map { snapshot($0, accountDID: accountDID) }
+            persistenceState = .saveFailed
+        }
+        publishSavedSettings(accountDID: accountDID, generation: generation, notify: true, allowPendingDraft: true)
+        return true
     }
 
     /// A player may open only after the complete provider choice is committed.
@@ -248,6 +294,7 @@ import AppKit
     }
 
     func configure(accountDID: String) {
+        guard !isLocalChangesSuspended else { return }
         guard self.accountDID != accountDID else { return }
         generation &+= 1
         // Retain the originating account's attempt until Save or Discard resolves it.
@@ -262,6 +309,7 @@ import AppKit
     }
 
     func initialize(with modelContext: ModelContext, accountDID: String, notifyOnSuccess: Bool = false) {
+        guard !isLocalChangesSuspended else { return }
         configure(accountDID: accountDID)
         generation &+= 1
         let attemptGeneration = generation
@@ -311,7 +359,7 @@ import AppKit
     }
 
     func retryPersistence() {
-        guard let accountDID, let modelContext else { return }
+        guard !isLocalChangesSuspended, let accountDID, let modelContext else { return }
         switch persistenceState {
         case .unavailable:
             initialize(with: modelContext, accountDID: accountDID, notifyOnSuccess: true)
@@ -324,7 +372,7 @@ import AppKit
 
     /// Coalesce effects by purpose; retries apply only the effect belonging to the retained draft.
     func afterPendingSave(key: String = "settings", description: String? = nil, _ action: @escaping @MainActor () async -> Void) {
-        guard let accountDID, pendingDrafts[accountDID] != nil else { return }
+        guard !isLocalChangesSuspended, let accountDID, pendingDrafts[accountDID] != nil else { return }
         pendingEffects[accountDID, default: [:]][key] = PendingEffect(description: description, action: action)
     }
 
@@ -334,6 +382,7 @@ import AppKit
         let confirmed = savedSettings
         Task { @MainActor [weak self] in
             guard let self, self.isCurrent(accountDID, generation: generation),
+                  !self.isLocalChangesSuspended,
                   self.savedSettings === confirmed,
                   self.persistenceState == .ready || (allowPendingDraft && self.persistenceState == .saveFailed)
             else { return }
@@ -351,23 +400,40 @@ import AppKit
         }
     }
 
+    @MainActor
     private func applyPendingEffects(accountDID: String, generation: UInt64) {
         for (key, effect) in pendingEffects[accountDID] ?? [:] {
-            Task { @MainActor [weak self] in
+            guard !isLocalChangesSuspended, isCurrent(accountDID, generation: generation),
+                  persistenceState == .ready, persistence.isActiveAccount(accountDID, self),
+                  !admittedEffectIdentities.contains(effect.identity) else { continue }
+            admittedEffectIdentities.insert(effect.identity)
+            let admitted = persistence.startEffect { @MainActor [weak self] in
+                defer { self?.admittedEffectIdentities.remove(effect.identity) }
                 guard let self, self.isCurrent(accountDID, generation: generation),
+                      !self.isLocalChangesSuspended,
                       self.persistenceState == .ready,
                       self.persistence.isActiveAccount(accountDID, self),
                       self.pendingEffects[accountDID]?[key]?.identity == effect.identity else { return }
                 self.pendingEffects[accountDID]?.removeValue(forKey: key)
                 await effect.action()
             }
+            if !admitted { admittedEffectIdentities.remove(effect.identity) }
         }
     }
 
     /// Flush the current account's pending edit. Returns true only after a successful save.
     @discardableResult
     func persistPendingChanges() -> Bool {
+        guard !isLocalChangesSuspended else { return false }
+        return persistPendingChanges(allowSuspended: false)
+    }
+
+    private func persistPendingChanges(allowSuspended: Bool) -> Bool {
+        guard allowSuspended || !isLocalChangesSuspended else { return false }
         guard let accountDID, let modelContext, let draft = pendingDrafts[accountDID] else {
+            if !isLocalChangesSuspended, persistenceState == .ready, let accountDID {
+                publishSavedSettings(accountDID: accountDID, generation: generation, notify: false)
+            }
             return persistenceState == .ready
         }
         let attemptGeneration = generation
@@ -435,6 +501,7 @@ import AppKit
 
     /// Save critical settings to UserDefaults as backup
     private func saveThemeSettingsToUserDefaults(writesActiveBackup: Bool = false, allowPendingDraft: Bool = false) {
+        guard !writesActiveBackup || !isLocalChangesSuspended else { return }
         guard persistenceState == .ready || (allowPendingDraft && persistenceState == .saveFailed),
               let confirmed = savedSettings else { return }
         let theme = confirmed.theme

@@ -644,6 +644,7 @@ private final class SettingsPersistenceFixture {
   let container: ModelContainer
   let context: ModelContext
   let settings = AppSettings()
+  let effectWork = AccountServiceWork()
   let didA = "did:plc:settings-a-\(UUID().uuidString)"
   let didB = "did:plc:settings-b-\(UUID().uuidString)"
   let didC = "did:plc:settings-c-\(UUID().uuidString)"
@@ -705,6 +706,9 @@ private final class SettingsPersistenceFixture {
       scheduleSave: { [weak self] action in
         self?.scheduledActions.append(action)
         return nil
+      },
+      startEffect: { [weak self] operation in
+        self?.effectWork.start(operation: operation) != nil
       }
     )
   }
