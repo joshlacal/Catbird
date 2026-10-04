@@ -15,6 +15,7 @@ extension PostComposerViewUIKit {
   @ViewBuilder
   func mediaAttachmentsSection(vm: PostComposerViewModel) -> some View {
     VStack(spacing: 12) {
+      pendingAudioAttachmentSection(vm: vm)
       if let gif = vm.selectedGif {
         selectedGifView(gif, vm: vm)
       }
@@ -31,6 +32,30 @@ extension PostComposerViewUIKit {
     .onAppear {
         pcMediaLogger.debug("PostComposerMedia: Rendering media attachments - images: \(vm.mediaItems.count), video: \(vm.videoItem != nil), gif: \(vm.selectedGif != nil)")
 
+    }
+  }
+
+  @ViewBuilder
+  func pendingAudioAttachmentSection(vm: PostComposerViewModel) -> some View {
+    if vm.pendingAudioURL != nil {
+      HStack {
+        Button {
+          showingAudioVisualizerPreview = true
+        } label: {
+          Label("Finish audio attachment", systemImage: "waveform")
+            .multilineTextAlignment(.leading)
+        }
+        .accessibilityHint("Opens your saved recording to create a video attachment.")
+        Spacer(minLength: 8)
+        Button {
+          vm.removePendingAudio()
+        } label: {
+          Image(systemName: "xmark.circle.fill")
+            .frame(minWidth: 44, minHeight: 44)
+        }
+        .accessibilityLabel("Remove audio attachment")
+      }
+      .disabled(vm.isPreparingPendingAudio)
     }
   }
   

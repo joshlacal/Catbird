@@ -34,6 +34,198 @@ struct PostComposerSceneEditingTests {
     return (PostComposerViewModel(appState: state, editingSession: session), session, defaults, persistence)
   }
 
+  @Test("Minimizing an empty reply clears its live reference and resets the composer")
+  func emptyReplyMinimizeResetsModel() async throws {
+    let (model, session, _, _) = try await makeModel()
+    let draft = PostComposerDraft(postText: " \n", mediaItems: [], videoItem: nil,
+      selectedGif: nil, selectedLanguages: [], selectedLabels: [], outlineTags: [],
+      threadEntries: [], isThreadMode: false, currentThreadIndex: 0,
+      parentPostURI: "at://did:plc:source/app.bsky.feed.post/reply", quotedPostURI: nil)
+    try model.startEditing(restoring: draft)
+    #expect(model.isReply)
+    #expect(!model.hasMeaningfulDraftContent)
+    #expect(model.minimizeEditingDraft())
+    #expect(!model.isReply)
+    #expect(model.postText.isEmpty)
+    #expect(session.currentDraft == nil)
+    #expect(!session.isMinimized)
+    #expect(model.mediaItems.isEmpty)
+  }
+
+  @Test("Thread draft dismissal preserves earlier posts after clearing the active post")
+  func threadDismissalKeepsInactiveContent() async throws {
+    let (model, session, _, _) = try await makeModel()
+    try model.startEditing()
+    model.postText = "First meaningful thread post"
+    model.enterThreadMode()
+    model.addNewThreadEntry()
+    model.postText = "Active post to clear"
+    model.updateCurrentThreadEntry()
+    model.postText = ""
+    #expect(model.hasMeaningfulDraftContent)
+    #expect(model.minimizeEditingDraft())
+    #expect(session.isMinimized)
+    #expect(session.currentDraft?.threadEntries.first?.text == "First meaningful thread post")
+    #expect(session.currentDraft?.threadEntries.last?.text.isEmpty == true)
+  }
+
+  @Test("Capturing a live thread twice retains serialized photo references and revision")
+  func threadSnapshotsRetainMediaReferences() async throws {
+    let (model, session, _, _) = try await makeModel()
+    var photo = PostComposerViewModel.MediaItem()
+    photo.rawData = Data("synthetic thread photo".utf8)
+    photo.isLoading = false
+    model.mediaItems = [photo]
+    model.postText = "Thread photo"
+    model.isThreadMode = true
+    try model.startEditing()
+    let first = try #require(model.captureEditingSnapshot())
+    #expect(model.hasMeaningfulDraftContent)
+    let second = try #require(model.captureEditingSnapshot())
+    #expect(first.draft == second.draft)
+    #expect(first.revision == second.revision)
+    #expect(session.currentDraft == first.draft)
+  }
+
+  @Test("Inspecting meaningful content does not serialize or revive cleared active thread text")
+  func contentInspectionIsPure() async throws {
+    let (model, session, _, _) = try await makeModel()
+    let draft = PostComposerDraft(postText: "", mediaItems: [], videoItem: nil,
+      selectedGif: nil, selectedLanguages: [], selectedLabels: [], outlineTags: [],
+      threadEntries: [], isThreadMode: false, currentThreadIndex: 0,
+      parentPostURI: "at://did:plc:source/app.bsky.feed.post/reply", quotedPostURI: nil)
+    try model.startEditing(restoring: draft)
+    model.enterThreadMode()
+    model.addNewThreadEntry()
+    model.postText = "Text cleared before dismissal"
+    let before = try #require(model.captureEditingSnapshot())
+    model.postText = ""
+    let entriesBeforeInspection = model.threadEntries
+
+    #expect(!model.hasMeaningfulDraftContent)
+    #expect(model.threadEntries == entriesBeforeInspection)
+    #expect(session.currentDraft == before.draft)
+    #expect(session.snapshot()?.revision == before.revision)
+    #expect(model.minimizeEditingDraft())
+    #expect(session.currentDraft == nil)
+    #expect(!model.isReply)
+  }
+
+  @Test("Pending audio survives minimize and explicit removal does not delete its file")
+  func pendingAudioIsPreservedUntilRemoved() async throws {
+    let (model, session, _, _) = try await makeModel()
+    try model.startEditing()
+    let audioURL = FileManager.default.temporaryDirectory.appendingPathComponent("pending-audio-\(UUID()).m4a")
+    try Data("recording fixture".utf8).write(to: audioURL)
+    defer { try? FileManager.default.removeItem(at: audioURL); session.invalidate() }
+    let claim = try #require(model.editingClaim)
+    #expect(model.preserveRecordedAudio(at: audioURL, claim: claim))
+    #expect(model.minimizeEditingDraft())
+    #expect(session.currentDraft?.pendingAudioURLString == audioURL.absoluteString)
+    let resumed = PostComposerViewModel(appState: model.appState, editingSession: session)
+    try resumed.startEditing(claim: claim)
+    #expect(resumed.pendingAudioURL == audioURL)
+    #expect(resumed.submitValidationState.reason == .pendingAudio)
+    #expect(!model.preserveRecordedAudio(at: audioURL, claim: claim))
+    resumed.removePendingAudio()
+    #expect(resumed.pendingAudioURL == nil)
+    #expect(FileManager.default.fileExists(atPath: audioURL.path))
+  }
+
+  @Test("A single-post reply containing only a kept link survives minimize and restoration")
+  func keptLinkReplySurvivesMinimize() async throws {
+    let (model, session, _, _) = try await makeModel()
+    let draft = PostComposerDraft(postText: "", mediaItems: [], videoItem: nil,
+      selectedGif: nil, selectedLanguages: [], selectedLabels: [], outlineTags: [],
+      threadEntries: [], isThreadMode: false, currentThreadIndex: 0,
+      parentPostURI: "at://did:plc:source/app.bsky.feed.post/reply", quotedPostURI: nil)
+    try model.startEditing(restoring: draft)
+    let before = try #require(model.captureEditingSnapshot())
+    let url = "https://example.com/kept-link"
+    let card = URLCardResponse(error: "", likelyType: "html", url: url,
+                              title: "Kept link", description: "Saved card", image: "")
+    model.selectedEmbedURL = url
+    model.urlsKeptForEmbed = [url]
+    model.urlCards[url] = card
+    #expect(model.postText.isEmpty)
+    #expect(model.hasMeaningfulDraftContent)
+    let updated = try #require(model.captureEditingSnapshot())
+    #expect(updated.revision > before.revision)
+    #expect(updated.draft.threadEntries.first?.selectedEmbedURL == url)
+    #expect(model.minimizeEditingDraft())
+    #expect(session.isMinimized)
+    let resumed = PostComposerViewModel(appState: model.appState, editingSession: session)
+    try resumed.startEditing(claim: updated.claim)
+    #expect(resumed.selectedEmbedURL == url)
+    #expect(resumed.urlsKeptForEmbed == [url])
+    #expect(resumed.urlCards[url] == card)
+    #expect(resumed.hasMeaningfulDraftContent)
+    #expect(resumed.isReply)
+    session.invalidate()
+  }
+
+  @Test("Stale single-post entry text cannot retain an otherwise empty reply")
+  func clearedSinglePostReplyDropsStaleEntryText() async throws {
+    let (model, session, _, _) = try await makeModel()
+    let draft = PostComposerDraft(postText: "", mediaItems: [], videoItem: nil,
+      selectedGif: nil, selectedLanguages: [], selectedLabels: [], outlineTags: [],
+      threadEntries: [], isThreadMode: false, currentThreadIndex: 0,
+      parentPostURI: "at://did:plc:source/app.bsky.feed.post/reply", quotedPostURI: nil)
+    try model.startEditing(restoring: draft)
+    model.postText = "Previous single-post text"
+    _ = try #require(model.captureEditingSnapshot())
+    model.postText = ""
+    #expect(model.threadEntries.first?.text == "Previous single-post text")
+    #expect(!model.hasMeaningfulDraftContent)
+    #expect(model.minimizeEditingDraft())
+    #expect(session.currentDraft == nil)
+    #expect(!model.isReply)
+    #expect(!session.isMinimized)
+  }
+
+  @Test("A stale audio preview cannot attach to a replacement editor or thread")
+  func lateAudioPreviewDoesNotReplaceContent() async throws {
+    let (model, session, _, _) = try await makeModel()
+    try model.startEditing()
+    let audioURL = URL(fileURLWithPath: "/Documents/recording.m4a")
+    let claim = try #require(model.editingClaim)
+    #expect(model.preserveRecordedAudio(at: audioURL, claim: claim))
+    let entryID = model.threadEntries[model.currentThreadIndex].id
+    model.enterThreadMode()
+    model.addNewThreadEntry()
+    let generatedURL = URL(fileURLWithPath: "/tmp/not-generated.mp4")
+    let switchedThread = try await model.finishPendingAudio(
+      withVideoAt: generatedURL, audioURL: audioURL, claim: claim, threadEntryID: entryID
+    )
+    #expect(!switchedThread)
+    #expect(model.pendingAudioURL == audioURL)
+    #expect(model.videoItem == nil)
+    let replacement = PostComposerViewModel(appState: model.appState, editingSession: session)
+    replacement.postText = "Replacement editor"
+    try replacement.startEditing()
+    let replacedEditor = try await model.finishPendingAudio(
+      withVideoAt: generatedURL, audioURL: audioURL, claim: claim,
+      threadEntryID: model.threadEntries[model.currentThreadIndex].id
+    )
+    #expect(!replacedEditor)
+    #expect(replacement.videoItem == nil)
+    #expect(replacement.postText == "Replacement editor")
+    session.invalidate()
+  }
+
+  @Test("A dismissed model cannot minimize or reset the replacement editor")
+  func staleMinimizeKeepsReplacement() async throws {
+    let (old, session, _, _) = try await makeModel()
+    try old.startEditing()
+    let replacement = PostComposerViewModel(appState: old.appState, editingSession: session)
+    replacement.postText = "Replacement text"
+    try replacement.startEditing()
+    #expect(!old.minimizeEditingDraft())
+    #expect(session.currentDraft?.postText == "Replacement text")
+    #expect(replacement.ownsEditingDraft)
+    #expect(!session.isMinimized)
+  }
+
   @Test("A request without a claim starts fresh instead of implicitly restoring another editor")
   func newRequestDoesNotResumePreviousEditor() async throws {
     let (model, session, _, _) = try await makeModel()

@@ -41,6 +41,23 @@ struct PostComposerDraftRestorationTests {
     #expect(restored.hasDraftInteractionSettings == nil)
     #expect(restored.draftThreadgateAllow == nil)
     #expect(restored.draftPostgateEmbeddingRules == nil)
+    #expect(restored.pendingAudioURLString == nil)
+  }
+
+  @Test("An unfinished recording round trips without clearing its file reference")
+  func pendingAudioRestoration() async throws {
+    let model = await makeViewModel()
+    var draft = makeDraft(parentURI: quoteURI)
+    let audioURL = URL(fileURLWithPath: "/Documents/composer-recording.m4a")
+    draft.pendingAudioURLString = audioURL.absoluteString
+    let decoded = try JSONDecoder().decode(PostComposerDraft.self, from: JSONEncoder().encode(draft))
+    model.restoreDraftState(decoded)
+    #expect(model.pendingAudioURL == audioURL)
+    #expect(model.hasMeaningfulDraftContent)
+    #expect(model.submitValidationState.reason == .pendingAudio)
+    #expect(model.saveDraftState().pendingAudioURLString == audioURL.absoluteString)
+    model.clearAll()
+    #expect(model.pendingAudioURL == nil)
   }
 
   @Test("Pending quote survives immediate autosave and is only attached to the root")

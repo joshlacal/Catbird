@@ -7,6 +7,8 @@ import SwiftUI
 import PhotosUI
 import Petrel
 import os
+import AVFoundation
+import CoreMedia
 
 private let pcSheetsLogger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "Catbird", category: "PostComposerSheets")
 
@@ -27,12 +29,16 @@ extension PostComposerViewUIKit {
       }
     
     let audioSheetContent = photoPickerContent
-      .sheet(isPresented: $showingAudioRecorder) {
+      .sheet(isPresented: $showingAudioRecorder, onDismiss: {
+        if viewModel === vm, vm.ownsEditingDraft, vm.pendingAudioURL != nil {
+          showingAudioVisualizerPreview = true
+        }
+      }) {
+        let recordingClaim = vm.editingClaim
         PostComposerAudioRecordingView(
           onAudioRecorded: { url in
-            pcSheetsLogger.info("PostComposerSheets: Audio recorded - URL: \(url.path)")
-            currentAudioURL = url
-            // Note: duration would need to be calculated separately if needed
+            guard viewModel === vm,
+                  vm.preserveRecordedAudio(at: url, claim: recordingClaim) else { return }
             showingAudioRecorder = false
           },
           onCancel: {
@@ -40,6 +46,35 @@ extension PostComposerViewUIKit {
             showingAudioRecorder = false
           }
         )
+      }
+      .sheet(isPresented: $showingAudioVisualizerPreview) {
+        if let audioURL = vm.pendingAudioURL,
+           vm.threadEntries.indices.contains(vm.currentThreadIndex) {
+          let previewClaim = vm.editingClaim
+          let threadEntryID = vm.threadEntries[vm.currentThreadIndex].id
+          PendingComposerAudioPreview(
+            audioURL: audioURL,
+            onVideoGenerated: { videoURL in
+              guard viewModel === vm else { return }
+              Task { @MainActor in
+                do {
+                  _ = try await vm.finishPendingAudio(
+                    withVideoAt: videoURL, audioURL: audioURL,
+                    claim: previewClaim, threadEntryID: threadEntryID
+                  )
+                } catch {
+                  guard viewModel === vm, vm.ownsEditingDraft else { return }
+                  appState.toastManager.show(ToastItem(
+                    message: "Your recording has been kept. \(error.localizedDescription)",
+                    icon: "exclamationmark.triangle.fill"
+                  ))
+                }
+              }
+            },
+            onCancel: { showingAudioVisualizerPreview = false }
+          )
+          .environment(appState)
+        }
       }
       .sheet(isPresented: $showingAccountSwitcher) {
         let transfer = accountSwitchSnapshot
@@ -218,18 +253,55 @@ extension PostComposerViewUIKit {
       #endif
 
     linkSheetContent
-      .alert("Discard Draft?", isPresented: $showingDismissAlert) {
-        Button("Discard", role: .destructive) {
-          pcSheetsLogger.info("PostComposerSheets: User chose to discard draft")
-          dismissReason = .discard
-          guard vm.discardEditingDraft() else { return }
-          dismiss()
+  }
+}
+
+private struct PendingComposerAudioPreview: View {
+  let audioURL: URL
+  let onVideoGenerated: (URL) -> Void
+  let onCancel: () -> Void
+  @State private var duration: TimeInterval?
+  @State private var loadingError: String?
+
+  var body: some View {
+    Group {
+      if let duration {
+        AudioVisualizerPreview(
+          audioURL: audioURL, audioDuration: duration,
+          onVideoGenerated: onVideoGenerated, onCancel: onCancel
+        )
+      } else {
+        NavigationStack {
+          Group {
+            if let loadingError {
+              ContentUnavailableView("Audio Unavailable", systemImage: "waveform",
+                                     description: Text(loadingError))
+            } else {
+              ProgressView("Loading recording")
+            }
+          }
+          .navigationTitle("Audio Visualizer")
+          .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+              Button("Cancel", action: onCancel)
+            }
+          }
         }
-        Button("Keep Editing", role: .cancel) { 
-          pcSheetsLogger.info("PostComposerSheets: User chose to keep editing")
-        }
-      } message: {
-        Text("You'll lose your post if you discard now.")
       }
+    }
+    .interactiveDismissDisabled()
+    .task(id: audioURL) {
+      do {
+        let loadedDuration = try await AVURLAsset(url: audioURL).load(.duration).seconds
+        guard !Task.isCancelled else { return }
+        guard loadedDuration.isFinite, loadedDuration > 0 else {
+          throw CocoaError(.fileReadCorruptFile)
+        }
+        duration = loadedDuration
+      } catch {
+        guard !Task.isCancelled else { return }
+        loadingError = error.localizedDescription
+      }
+    }
   }
 }

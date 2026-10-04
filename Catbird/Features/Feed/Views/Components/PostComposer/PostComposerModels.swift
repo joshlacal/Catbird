@@ -91,6 +91,7 @@ struct PostComposerSubmitValidationState: Equatable {
         case missingAltText
         case replyLoading
         case quoteLoading
+        case pendingAudio
     }
 
     let canSubmit: Bool
@@ -114,6 +115,8 @@ struct PostComposerSubmitValidationState: Equatable {
             return "The original post must load before this reply can be posted."
         case .quoteLoading:
             return "The quoted post must load before this draft can be posted."
+        case .pendingAudio:
+            return "Finish or remove your audio attachment before posting."
         case nil:
             return nil
         }
@@ -121,7 +124,7 @@ struct PostComposerSubmitValidationState: Equatable {
 
     var shouldShowInlineMessage: Bool {
         switch reason {
-        case .overCharacterLimit, .videoPreparing, .videoBlocked, .missingAltText, .replyLoading, .quoteLoading:
+        case .overCharacterLimit, .videoPreparing, .videoBlocked, .missingAltText, .replyLoading, .quoteLoading, .pendingAudio:
             return true
         case .emptyContent, .posting, nil:
             return false
@@ -170,6 +173,7 @@ struct PostComposerDraft: Codable, Hashable {
   var draftThreadgateAllow: [AppBskyDraftDefs.DraftThreadgateAllowUnion]? = nil
   // Distinguishes an explicitly unrestricted draft from a legacy draft with no settings.
   var hasDraftInteractionSettings: Bool? = nil
+  var pendingAudioURLString: String? = nil
 }
 
 // MARK: - Codable Wrappers for Draft State

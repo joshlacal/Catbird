@@ -91,6 +91,17 @@ struct DraftSyncTranslationTests {
 
   // MARK: - Push (local -> remote)
 
+  @Test("Pending audio stays local until it is converted to an attachment")
+  func pendingAudioStaysLocal() throws {
+    var draft = makeDraft(postText: "Recorded reply")
+    draft.pendingAudioURLString = "file:///Documents/recording.m4a"
+    #expect(!DraftSyncTranslator.isSyncable(draft))
+    let decoded = try JSONDecoder().decode(PostComposerDraft.self, from: JSONEncoder().encode(draft))
+    #expect(decoded.pendingAudioURLString == draft.pendingAudioURLString)
+    draft.pendingAudioURLString = nil
+    #expect(DraftSyncTranslator.isSyncable(draft))
+  }
+
   @Test("Single post push carries text, device identity and langs")
   func singlePostPush() {
     let draft = makeDraft(

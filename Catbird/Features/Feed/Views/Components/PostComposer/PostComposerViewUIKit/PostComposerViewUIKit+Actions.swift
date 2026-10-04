@@ -19,8 +19,9 @@ extension PostComposerViewUIKit {
       showingDismissAlert = true
     } else {
       pcActionsLogger.info("PostComposerActions: Discarding empty composer")
+      let ended = vm.isReply ? vm.minimizeEditingDraft() : vm.discardEditingDraft()
+      guard ended else { return }
       dismissReason = .discard
-      guard vm.discardEditingDraft() else { return }
       dismiss()
     }
   }
@@ -61,7 +62,7 @@ extension PostComposerViewUIKit {
   }
   
   func canSubmit(vm: PostComposerViewModel) -> Bool {
-    return vm.submitValidationState.canSubmit
+    return vm.submitValidationState.canSubmit && !isSubmitting && !hasPendingMediaIntent
   }
   
   func insertEmoji(_ emoji: String, vm: PostComposerViewModel) {

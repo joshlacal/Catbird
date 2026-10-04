@@ -229,6 +229,11 @@ final class SceneComposerEditingSession {
     guard owns(claim), !Task.isCancelled else { return false }
     flushLiveDraftProvider()
     guard owns(claim) else { return false }
+    if let snapshot = snapshot(), snapshot.draft.isEmptyReply {
+      // Release the editor and its recovery without deleting a saved draft row.
+      finish(snapshot: snapshot)
+      return true
+    }
     isMinimized = true
     return persistRecoveryReportingFailure()
   }
@@ -582,9 +587,29 @@ final class SceneComposerEditingSession {
 }
 
 extension PostComposerDraft {
+  /// A reply reference alone is context, rather than authored draft content.
+  var isEmptyReply: Bool {
+    (parentPostURI != nil || threadEntries.contains { $0.parentPostURI != nil })
+      && !hasMeaningfulContent
+  }
+
+  var hasMeaningfulContent: Bool {
+    !postText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+      || !mediaItems.isEmpty || videoItem != nil || selectedGif != nil
+      || quotedPostURI != nil || !outlineTags.isEmpty || !selectedLabels.isEmpty
+      || pendingAudioURLString != nil
+      || threadEntries.contains {
+        !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+          || !$0.mediaItems.isEmpty || $0.videoItem != nil || $0.selectedGif != nil
+          || $0.quotedPostURI != nil || !$0.hashtags.isEmpty
+          || $0.selectedEmbedURL != nil || !$0.urlsKeptForEmbed.isEmpty
+      }
+  }
+
   var hasRecoverableContent: Bool {
     !postText.isEmpty || !mediaItems.isEmpty || videoItem != nil || selectedGif != nil
       || parentPostURI != nil || quotedPostURI != nil || !outlineTags.isEmpty
+      || pendingAudioURLString != nil
       || threadEntries.contains {
         !$0.text.isEmpty || !$0.mediaItems.isEmpty || $0.videoItem != nil
           || $0.selectedGif != nil || $0.parentPostURI != nil || $0.quotedPostURI != nil

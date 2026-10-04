@@ -880,7 +880,134 @@ struct SceneComposerEditingSessionTests {
     #expect(try fixture.persistence.fetchDrafts(for: fixture.accountDID).isEmpty)
   }
 
-  private func makeDraft(_ text: String, imageURL: URL? = nil) -> PostComposerDraft {
+  @Test("Repeated empty replies release context and recovery without leaving a minimized draft")
+  func emptyRepliesResetOnMinimize() throws {
+    let fixture = try Fixture()
+    let scene = fixture.session()
+    defer { scene.invalidate(); fixture.cleanUp() }
+    let key = SceneComposerEditingSession.persistenceKey(sceneID: scene.sceneID, accountDID: fixture.accountDID)
+    for _ in 0..<3 {
+      let claim = try scene.beginNew(draft: makeDraft(" \n ", parentURI: "at://did:plc:source/app.bsky.feed.post/reply"))
+      #expect(scene.minimize(claim: claim))
+      #expect(scene.currentDraft == nil)
+      #expect(scene.activeClaim == nil)
+      #expect(!scene.isMinimized)
+      #expect(fixture.defaults.data(forKey: key) == nil)
+      #expect(!scene.resume(claim: claim))
+    }
+    _ = try scene.beginNew()
+    #expect(scene.currentDraft?.parentPostURI == nil)
+  }
+
+  @Test("Minimizing an empty saved reply releases its row and preserves unrelated drafts")
+  func emptyReplyDoesNotDeleteSavedRows() throws {
+    let fixture = try Fixture()
+    let empty = makeDraft("", parentURI: "at://did:plc:source/app.bsky.feed.post/reply")
+    let row = try fixture.save(empty)
+    let other = try fixture.save(makeDraft("Unrelated saved work"))
+    let scene = fixture.session()
+    let second = fixture.session()
+    defer { scene.invalidate(); second.invalidate(); fixture.cleanUp() }
+    let claim = try scene.restoreSaved(DraftPostViewModel(draftPost: row))
+    #expect(scene.minimize(claim: claim))
+    #expect(try fixture.persistence.syncState(for: row).deletedAt == nil)
+    #expect(try fixture.persistence.syncState(for: other).deletedAt == nil)
+    #expect(try row.decodeDraft() == empty)
+    #expect(try other.decodeDraft().postText == "Unrelated saved work")
+    _ = try second.restoreSaved(DraftPostViewModel(draftPost: row))
+    #expect(second.savedDraftID == row.id)
+  }
+
+  @Test("Minimization flushes newly typed reply content before deciding whether to reset")
+  func lateReplyTypingSurvivesMinimize() throws {
+    let fixture = try Fixture()
+    let scene = fixture.session()
+    defer { scene.invalidate(); fixture.cleanUp() }
+    let empty = makeDraft("", parentURI: "at://did:plc:source/app.bsky.feed.post/reply")
+    let claim = try scene.beginNew(draft: empty)
+    let editor = UUID()
+    let live = LiveDraftBox(draft: empty)
+    #expect(scene.claimEditor(editor, claim: claim))
+    #expect(scene.registerLiveDraftProvider(editorID: editor, claim: claim) { live.draft })
+    live.draft = makeDraft("Typing after the last save", parentURI: empty.parentPostURI)
+    #expect(scene.minimize(claim: claim))
+    #expect(scene.isMinimized)
+    #expect(scene.activeClaim == claim)
+    #expect(scene.currentDraft == live.draft)
+    #expect(scene.resume(claim: claim))
+    #expect(scene.currentDraft?.parentPostURI == empty.parentPostURI)
+  }
+
+  @Test("An attachment-only reply retains its media reference when minimized")
+  func attachmentReplySurvivesMinimize() throws {
+    let fixture = try Fixture()
+    let scene = fixture.session()
+    defer { scene.invalidate(); fixture.cleanUp() }
+    let draft = makeDraft("", imageURL: URL(fileURLWithPath: "/tmp/synthetic-reply-attachment.jpg"),
+                          parentURI: "at://did:plc:source/app.bsky.feed.post/reply")
+    let claim = try scene.beginNew(draft: draft)
+    #expect(scene.minimize(claim: claim))
+    #expect(scene.isMinimized)
+    #expect(scene.currentDraft == draft)
+    #expect(scene.resume(claim: claim))
+    #expect(scene.currentDraft?.mediaItems == draft.mediaItems)
+  }
+
+  @Test("An empty active reply cannot discard content in another thread entry", arguments: ["text", "video", "quote"])
+  func inactiveThreadReplySurvivesMinimize(kind: String) throws {
+    let fixture = try Fixture()
+    let scene = fixture.session()
+    defer { scene.invalidate(); fixture.cleanUp() }
+    var first = ThreadEntry()
+    if kind == "text" {
+      first.text = "Earlier thread post"
+    } else if kind == "video" {
+      var video = PostComposerViewModel.MediaItem()
+      video.rawVideoURL = URL(fileURLWithPath: "/tmp/synthetic-thread-video.mp4")
+      first.videoItem = video
+    } else {
+      first.draftQuotedPostURI = "at://did:plc:source/app.bsky.feed.post/quoted"
+    }
+    let entries = [first, ThreadEntry()].map {
+      CodableThreadEntry(from: $0, parentPost: nil, quotedPost: nil)
+    }
+    let draft = makeDraft("", parentURI: "at://did:plc:source/app.bsky.feed.post/reply", entries: entries)
+    let claim = try scene.beginNew(draft: draft)
+    #expect(scene.minimize(claim: claim))
+    #expect(scene.isMinimized)
+    #expect(scene.currentDraft == draft)
+    #expect(scene.resume(claim: claim))
+    #expect(scene.currentDraft?.threadEntries == entries)
+  }
+
+  @Test("An audio-only reply survives minimize, recovery and saved-draft restoration")
+  func pendingAudioReplySurvivesRecovery() throws {
+    let fixture = try Fixture()
+    let sceneID = UUID()
+    let scene = fixture.session(sceneID: sceneID)
+    var draft = makeDraft("", parentURI: "at://did:plc:source/app.bsky.feed.post/reply")
+    draft.pendingAudioURLString = "file:///Documents/recording.m4a"
+    let claim = try scene.beginNew(draft: draft)
+    #expect(scene.minimize(claim: claim))
+    #expect(scene.isMinimized)
+    #expect(scene.currentDraft == draft)
+    #expect(draft.hasMeaningfulContent)
+    #expect(draft.hasRecoverableContent)
+    #expect(!draft.isEmptyReply)
+
+    let restored = fixture.session(sceneID: sceneID)
+    defer { scene.invalidate(); restored.invalidate(); fixture.cleanUp() }
+    #expect(restored.currentDraft?.pendingAudioURLString == draft.pendingAudioURLString)
+    let snapshot = try #require(restored.snapshot())
+    let id = try restored.stash(snapshot)
+    let saved = try #require(fixture.persistence.fetchDraftModel(id: id))
+    #expect(try saved.decodeDraft().pendingAudioURLString == draft.pendingAudioURLString)
+    _ = try restored.restoreSaved(DraftPostViewModel(draftPost: saved))
+    #expect(restored.currentDraft?.pendingAudioURLString == draft.pendingAudioURLString)
+  }
+
+  private func makeDraft(_ text: String, imageURL: URL? = nil, parentURI: String? = nil,
+                         entries: [CodableThreadEntry] = []) -> PostComposerDraft {
     let images = imageURL.map {
       [CodableMediaItem(
         altText: "Shared draft attachment",
@@ -899,10 +1026,10 @@ struct SceneComposerEditingSessionTests {
       selectedLanguages: [],
       selectedLabels: [],
       outlineTags: [],
-      threadEntries: [],
-      isThreadMode: false,
+      threadEntries: entries,
+      isThreadMode: !entries.isEmpty,
       currentThreadIndex: 0,
-      parentPostURI: nil,
+      parentPostURI: parentURI,
       quotedPostURI: nil
     )
   }
