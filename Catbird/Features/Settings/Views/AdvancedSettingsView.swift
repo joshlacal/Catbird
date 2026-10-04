@@ -340,7 +340,8 @@ struct AdvancedSettingsView: View {
   }
   
   private func loadCurrentSettings(reconcileRuntime: Bool = false) async -> Bool {
-    let expectedDID = appState.userDID
+    let expectedAppState = appState
+    let expectedDID = expectedAppState.userDID
     let expectedRevision = AppStateManager.shared.settingsAccountContextRevision
     let token = reconcileRuntime ? SettingsAccountOperationGate.begin(for: expectedDID) : nil
     if reconcileRuntime && token == nil { error = SettingsProviderTransaction.Failure.operationInProgress; return false }
@@ -349,42 +350,54 @@ struct AdvancedSettingsView: View {
       isLoadingProviders = false
       if let token { SettingsAccountOperationGate.end(token: token) }
     }
-    guard let client = AppStateManager.shared.authentication.client,
-          let account = await client.getCurrentAccount(),
-          !Task.isCancelled, account.did == expectedDID,
-          SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision) else {
-      if reconcileRuntime { error = NSError(domain: "AdvancedSettings", code: -4, userInfo: [NSLocalizedDescriptionKey: "Saved providers could not be reloaded. Your typed choices are still here."]) }
+    guard let client = expectedAppState.atProtoClient,
+          SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision) else { return false }
+    do {
+      let account = try await expectedAppState.performSettingsAccountOperation {
+        guard SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision) else { throw CancellationError() }
+        guard let account = await client.getCurrentAccount(), account.did == expectedDID,
+              !Task.isCancelled, SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision) else {
+          throw CancellationError()
+        }
+        if reconcileRuntime {
+          await client.updateServiceDIDs(bskyAppViewDID: account.bskyAppViewDID, bskyChatDID: account.bskyChatDID)
+          guard !Task.isCancelled, SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision) else { throw CancellationError() }
+        }
+        return account
+      }
+      guard !Task.isCancelled, SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision) else { return false }
+
+      // Determine AppView option
+      if account.bskyAppViewDID == "did:web:api.bsky.app#bsky_appview" {
+        selectedAppViewOption = .blueskyPBC
+        customAppViewDID = ""
+      } else if account.bskyAppViewDID == "did:web:api.blacksky.community#bsky_appview" {
+        selectedAppViewOption = .blacksky
+        customAppViewDID = ""
+      } else {
+        selectedAppViewOption = .custom
+        customAppViewDID = account.bskyAppViewDID
+      }
+      
+      // Determine Chat option
+      if account.bskyChatDID == "did:web:api.bsky.chat#bsky_chat" {
+        selectedChatOption = .blueskyPBC
+        customChatDID = ""
+      } else {
+        selectedChatOption = .custom
+        customChatDID = account.bskyChatDID
+      }
+      
+      baseline = currentDraft
+      if reconcileRuntime { saveOutcomeUnconfirmed = false; error = nil }
+      return true
+    } catch {
+      guard SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision) else { return false }
+      if reconcileRuntime {
+        self.error = NSError(domain: "AdvancedSettings", code: -4, userInfo: [NSLocalizedDescriptionKey: "Saved providers could not be reloaded. Your typed choices are still here. \(error.localizedDescription)"])
+      }
       return false
     }
-    if reconcileRuntime {
-      await client.updateServiceDIDs(bskyAppViewDID: account.bskyAppViewDID, bskyChatDID: account.bskyChatDID)
-      guard !Task.isCancelled, SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision) else { return false }
-    }
-    
-    // Determine AppView option
-    if account.bskyAppViewDID == "did:web:api.bsky.app#bsky_appview" {
-      selectedAppViewOption = .blueskyPBC
-      customAppViewDID = ""
-    } else if account.bskyAppViewDID == "did:web:api.blacksky.community#bsky_appview" {
-      selectedAppViewOption = .blacksky
-      customAppViewDID = ""
-    } else {
-      selectedAppViewOption = .custom
-      customAppViewDID = account.bskyAppViewDID
-    }
-    
-    // Determine Chat option
-    if account.bskyChatDID == "did:web:api.bsky.chat#bsky_chat" {
-      selectedChatOption = .blueskyPBC
-      customChatDID = ""
-    } else {
-      selectedChatOption = .custom
-      customChatDID = account.bskyChatDID
-    }
-    
-    baseline = currentDraft
-    if reconcileRuntime { saveOutcomeUnconfirmed = false; error = nil }
-    return true
   }
   
   private func resetToDefaults() {
@@ -396,9 +409,10 @@ struct AdvancedSettingsView: View {
   }
   
   private func saveChanges() async {
+    let expectedAppState = appState
     let expectedRevision = AppStateManager.shared.settingsAccountContextRevision
     guard let expectedDID = originDID, SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision),
-          let savedDraft = baseline, let client = AppStateManager.shared.authentication.client else {
+          let savedDraft = baseline, expectedAppState.userDID == expectedDID, let client = expectedAppState.atProtoClient else {
       error = NSError(
         domain: "AdvancedSettings",
         code: -1,
@@ -442,18 +456,22 @@ struct AdvancedSettingsView: View {
     }
     
     isSaving = true
-    
+    var didAttemptSDKSave = false
+
     do {
       // Update and persist the DIDs
       let original = SettingsProviderServiceDIDs(appView: savedDraft.appView.did ?? savedDraft.customAppView, chat: savedDraft.chat.did ?? savedDraft.customChat)
       let requested = SettingsProviderServiceDIDs(appView: finalAppViewDID, chat: finalChatDID)
-      try await SettingsProviderTransaction.apply(accountDID: expectedDID, requested: requested, original: original,
-        isCurrent: { SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision) },
-        persist: { values in
-          try await client.updateAndPersistServiceDIDs(bskyAppViewDID: values.appView, bskyChatDID: values.chat)
-        }, restoreRuntime: { values in
-          await client.updateServiceDIDs(bskyAppViewDID: values.appView, bskyChatDID: values.chat)
-        })
+      try await expectedAppState.performSettingsAccountOperation {
+        try await SettingsProviderTransaction.apply(accountDID: expectedDID, requested: requested, original: original,
+          isCurrent: { SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision) },
+          persist: { values in
+            didAttemptSDKSave = true
+            try await client.updateAndPersistServiceDIDs(bskyAppViewDID: values.appView, bskyChatDID: values.chat)
+          }, restoreRuntime: { values in
+            await client.updateServiceDIDs(bskyAppViewDID: values.appView, bskyChatDID: values.chat)
+          })
+      }
       
       guard !Task.isCancelled, SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision) else { isSaving = false; return }
       baseline = currentDraft
@@ -462,9 +480,13 @@ struct AdvancedSettingsView: View {
       showingSaveConfirmation = true
     } catch {
       guard SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision) else { isSaving = false; return }
-      saveOutcomeUnconfirmed = true
+      saveOutcomeUnconfirmed = saveOutcomeUnconfirmed || didAttemptSDKSave
       publishDraftGuard()
-      self.error = NSError(domain: "AdvancedSettings", code: -5, userInfo: [NSLocalizedDescriptionKey: "The saved provider outcome could not be confirmed. Your typed choices are retained. Reload saved providers or retry. \(error.localizedDescription)"])
+      if didAttemptSDKSave {
+        self.error = NSError(domain: "AdvancedSettings", code: -5, userInfo: [NSLocalizedDescriptionKey: "The saved provider outcome could not be confirmed. Your typed choices are retained. Reload saved providers or retry. \(error.localizedDescription)"])
+      } else {
+        self.error = error
+      }
     }
     
     isSaving = false
