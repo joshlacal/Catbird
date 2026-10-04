@@ -201,7 +201,13 @@ final class ChatTranscriptCollectionView: UICollectionView {
     layout?.managesReadingAnchor = false
     let geometryChanged = contentSize != settledContentSize || bounds.size != settledViewportSize
       || adjustedContentInset != settledInsets
-    if mayFollow && geometryChanged && (wasAtBottom || pendingInsetBottomFollow) {
+    // A resting reader within a few points of the recorded bottom stays pinned
+    // even without a geometry change; otherwise the reading-anchor branch below
+    // can carry a bottom reader away when cells above re-measure.
+    let currentBottom = max(-adjustedContentInset.top, contentSize.height - bounds.height + adjustedContentInset.bottom)
+    let driftedFromBottom = settledBottomOffsetY.map { abs(contentOffset.y - $0) <= 4 } == true
+      && abs(contentOffset.y - currentBottom) > 0.5
+    if mayFollow && (geometryChanged || driftedFromBottom) && (wasAtBottom || pendingInsetBottomFollow) {
       isRestoringBottom = true
       layout?.managesReadingAnchor = true
       // Moving to the bottom can materialize or re-measure cells, changing the
