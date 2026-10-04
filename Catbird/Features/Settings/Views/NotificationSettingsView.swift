@@ -227,7 +227,10 @@ private struct NotificationPreferenceEditorView: View {
             get: { manager.preferences[keyPath: path].include },
             set: { include in
               save { preferences in
-                preferences[keyPath: path].include = include
+                let preference = preferences[keyPath: path]
+                preferences[keyPath: path] = .init(
+                  include: include, list: preference.list, push: preference.push
+                )
               }
             }
           )) {
@@ -262,11 +265,18 @@ private struct NotificationPreferenceEditorView: View {
     }, set: { value in
       save { preferences in
         if let path = category.filterablePath {
-          if push { preferences[keyPath: path].push = value }
-          else { preferences[keyPath: path].list = value }
+          let preference = preferences[keyPath: path]
+          preferences[keyPath: path] = .init(
+            include: preference.include,
+            list: push ? preference.list : value,
+            push: push ? value : preference.push
+          )
         } else if let path = category.plainPath {
-          if push { preferences[keyPath: path].push = value }
-          else { preferences[keyPath: path].list = value }
+          let preference = preferences[keyPath: path]
+          preferences[keyPath: path] = .init(
+            list: push ? preference.list : value,
+            push: push ? value : preference.push
+          )
         }
       }
     })
