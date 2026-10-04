@@ -29,6 +29,8 @@ struct SettingsProviderServiceDIDs: Equatable, Sendable {
         var errorDescription: String? { "Another account operation is in progress. Try again after it finishes." }
     }
     /// Restores the captured runtime mapping after a failed persistence attempt.
+    /// A thrown SDK save may have written the account record before its account-list update failed.
+    /// Runtime restoration does not prove durable rollback.
     /// Account expiry and logout remain SDK boundaries because that API has no explicit account argument.
     static func apply(
         accountDID: String,

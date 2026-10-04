@@ -49,6 +49,8 @@ struct AdvancedSettingsView: View {
   @State private var customChatDID: String = ""
   @State private var isSaving = false
   @State private var showingSaveConfirmation = false
+  @State private var saveOutcomeUnconfirmed = false
+  @State private var confirmingReload = false
   @State private var error: Error?
   let initialFocus: SettingsControlID?
   @State private var originDID: String?
@@ -73,8 +75,18 @@ struct AdvancedSettingsView: View {
         else if baseline == nil {
           Section {
             Text("Couldn’t load service providers. Your current providers are unchanged.").foregroundStyle(.secondary)
-            Button("Retry") { Task { await loadCurrentSettings(); publishDraftGuard() } }
+            Button("Retry") { Task { _ = await loadCurrentSettings(); publishDraftGuard() } }
           }
+        }
+        if saveOutcomeUnconfirmed {
+          Section("Saved outcome unconfirmed") {
+            Text("The SDK could not confirm which providers were saved. Your typed choices are still here. Reload saved providers to check the account record, or retry these choices.")
+              .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Button("Reload Saved Providers") { confirmingReload = true }
+            Button("Retry These Choices") { Task { await saveChanges() } }
+          }
+          .disabled(isSaving || isLoadingProviders)
+          .settingsControl(.init(rawValue: "advanced.providerRecovery"))
         }
         headerSection
         appViewSection.settingsControl(.init(rawValue: "advanced.appView")).disabled(baseline == nil || isSaving)
@@ -93,14 +105,14 @@ struct AdvancedSettingsView: View {
     .task(id: appState.userDID) {
       originDID = appState.userDID
       baseline = nil
-      await loadCurrentSettings()
+      _ = await loadCurrentSettings()
       publishDraftGuard()
     }
     .onChange(of: currentDraft) { _, _ in publishDraftGuard() }
-    .interactiveDismissDisabled(hasUnsavedChanges || isSaving)
-    .navigationBarBackButtonHidden(hasUnsavedChanges || isSaving)
+    .interactiveDismissDisabled(hasUnsavedChanges || saveOutcomeUnconfirmed || isSaving)
+    .navigationBarBackButtonHidden(hasUnsavedChanges || saveOutcomeUnconfirmed || isSaving)
     .toolbar {
-      if hasUnsavedChanges {
+      if hasUnsavedChanges || saveOutcomeUnconfirmed {
         ToolbarItem(placement: .cancellationAction) {
           Button("Back", systemImage: "chevron.left") { confirmingDeparture = true }.disabled(isSaving)
         }
@@ -112,6 +124,10 @@ struct AdvancedSettingsView: View {
       Button("Stay", role: .cancel) { }
     }
     .onDisappear { if draftGuard?.accountDID == originDID { draftGuard?.hasChanges = false; draftGuard?.resolve = nil } }
+    .confirmationDialog("Reload saved providers?", isPresented: $confirmingReload, titleVisibility: .visible) {
+      Button("Reload Saved Providers") { Task { _ = await loadCurrentSettings(reconcileRuntime: true); publishDraftGuard() } }
+      Button("Keep Typed Choices", role: .cancel) { }
+    } message: { Text("Replace the typed choices with the providers read from this account’s saved record.") }
     .alert("Saved", isPresented: $showingSaveConfirmation) {
       Button("OK") {
         showingSaveConfirmation = false
@@ -132,12 +148,17 @@ struct AdvancedSettingsView: View {
   
   @MainActor private func publishDraftGuard() {
     draftGuard?.accountDID = originDID
-    draftGuard?.hasChanges = hasUnsavedChanges
+    draftGuard?.hasChanges = hasUnsavedChanges || saveOutcomeUnconfirmed
     draftGuard?.resolve = { save in await resolveDraft(save: save) }
   }
   @MainActor private func resolveDraft(save: Bool) async -> Bool {
     guard originDID == appState.userDID && originDID.map(SettingsAccountBoundary.isCurrent) == true else { return false }
-    if save { await saveChanges(); return !hasUnsavedChanges }
+    if save { await saveChanges(); return !hasUnsavedChanges && !saveOutcomeUnconfirmed }
+    if saveOutcomeUnconfirmed {
+      let reloaded = await loadCurrentSettings(reconcileRuntime: true)
+      publishDraftGuard()
+      return reloaded
+    }
     guard let baseline else { return false }
     selectedAppViewOption = baseline.appView
     selectedChatOption = baseline.chat
@@ -318,22 +339,35 @@ struct AdvancedSettingsView: View {
     }
   }
   
-  private func loadCurrentSettings() async {
+  private func loadCurrentSettings(reconcileRuntime: Bool = false) async -> Bool {
     let expectedDID = appState.userDID
     let expectedRevision = AppStateManager.shared.settingsAccountContextRevision
+    let token = reconcileRuntime ? SettingsAccountOperationGate.begin(for: expectedDID) : nil
+    if reconcileRuntime && token == nil { error = SettingsProviderTransaction.Failure.operationInProgress; return false }
     isLoadingProviders = true
-    defer { isLoadingProviders = false }
+    defer {
+      isLoadingProviders = false
+      if let token { SettingsAccountOperationGate.end(token: token) }
+    }
     guard let client = AppStateManager.shared.authentication.client,
           let account = await client.getCurrentAccount(),
-          !Task.isCancelled, SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision) else {
-      return
+          !Task.isCancelled, account.did == expectedDID,
+          SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision) else {
+      if reconcileRuntime { error = NSError(domain: "AdvancedSettings", code: -4, userInfo: [NSLocalizedDescriptionKey: "Saved providers could not be reloaded. Your typed choices are still here."]) }
+      return false
+    }
+    if reconcileRuntime {
+      await client.updateServiceDIDs(bskyAppViewDID: account.bskyAppViewDID, bskyChatDID: account.bskyChatDID)
+      guard !Task.isCancelled, SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision) else { return false }
     }
     
     // Determine AppView option
     if account.bskyAppViewDID == "did:web:api.bsky.app#bsky_appview" {
       selectedAppViewOption = .blueskyPBC
+      customAppViewDID = ""
     } else if account.bskyAppViewDID == "did:web:api.blacksky.community#bsky_appview" {
       selectedAppViewOption = .blacksky
+      customAppViewDID = ""
     } else {
       selectedAppViewOption = .custom
       customAppViewDID = account.bskyAppViewDID
@@ -342,12 +376,15 @@ struct AdvancedSettingsView: View {
     // Determine Chat option
     if account.bskyChatDID == "did:web:api.bsky.chat#bsky_chat" {
       selectedChatOption = .blueskyPBC
+      customChatDID = ""
     } else {
       selectedChatOption = .custom
       customChatDID = account.bskyChatDID
     }
     
     baseline = currentDraft
+    if reconcileRuntime { saveOutcomeUnconfirmed = false; error = nil }
+    return true
   }
   
   private func resetToDefaults() {
@@ -420,11 +457,14 @@ struct AdvancedSettingsView: View {
       
       guard !Task.isCancelled, SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision) else { isSaving = false; return }
       baseline = currentDraft
+      saveOutcomeUnconfirmed = false
       publishDraftGuard()
       showingSaveConfirmation = true
     } catch {
       guard SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision) else { isSaving = false; return }
-      self.error = error
+      saveOutcomeUnconfirmed = true
+      publishDraftGuard()
+      self.error = NSError(domain: "AdvancedSettings", code: -5, userInfo: [NSLocalizedDescriptionKey: "The saved provider outcome could not be confirmed. Your typed choices are retained. Reload saved providers or retry. \(error.localizedDescription)"])
     }
     
     isSaving = false
