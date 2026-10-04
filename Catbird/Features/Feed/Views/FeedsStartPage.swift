@@ -117,6 +117,7 @@ struct FeedsStartPage: View {
   @State private var dropTargetItem: String?
   @State private var isDefaultFeedDropTarget = false
   @Namespace private var glassNamespace
+  @Namespace private var defaultFeedGlassNamespace
 
   // Profile state
   @State private var profile: AppBskyActorDefs.ProfileViewDetailed?
@@ -410,7 +411,17 @@ struct FeedsStartPage: View {
               )
           }
         }
-        .modifier(LaunchpadGlassChip(cornerRadius: 24, isEnabled: inSideDrawer))
+        .modifier(LaunchpadGlassChip(
+          cornerRadius: 24,
+          isEnabled: inSideDrawer && !isDefaultFeedSelected()
+        ))
+        .modifier(LaunchpadSelectionGlass(
+          isSelected: isDefaultFeedSelected(),
+          isDropTarget: false,
+          cornerRadius: 24,
+          namespace: defaultFeedGlassNamespace,
+          isEnabled: inSideDrawer
+        ))
         .overlay {
           if inSideDrawer && isDefaultFeedDropTarget {
             RoundedRectangle(cornerRadius: 24, style: .continuous)

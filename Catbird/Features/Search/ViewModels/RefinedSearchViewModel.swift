@@ -136,10 +136,12 @@ public enum SearchHTTPResponseClassification: Equatable, Sendable {
     guard !isSubscribed else { return }
     appState.stateInvalidationBus.subscribe(self)
     isSubscribed = true
+    appState.prefetchTopicPreviews(links: trendingTopics.map(\.link), owner: .search)
     logger.debug("RefinedSearchViewModel subscribed to state invalidation bus")
   }
 
   public func unsubscribeFromEvents() {
+    appState.cancelTopicPreviewPrefetch(owner: .search)
     guard isSubscribed else { return }
     appState.stateInvalidationBus.unsubscribe(self)
     isSubscribed = false
@@ -209,10 +211,14 @@ public enum SearchHTTPResponseClassification: Equatable, Sendable {
       logger.debug("Trending topics request completed in \(String(describing: elapsed), privacy: .public)")
     }
     do {
+      let viewerDID = appState.userDID
       let input = AppBskyUnspeccedGetTrends.Parameters(limit: 10)
       let (_, response) = try await client.app.bsky.unspecced.getTrends(input: input)
-      if let topicsResponse = response {
+      if let topicsResponse = response, !Task.isCancelled, !appState.isAccountSwitchSuspended, appState.userDID == viewerDID {
         trendingTopics = topicsResponse.trends
+        if isSubscribed {
+          appState.prefetchTopicPreviews(links: topicsResponse.trends.map(\.link), owner: .search)
+        }
       }
     } catch {
       logger.error("Error fetching trending topics: \(error.localizedDescription)")

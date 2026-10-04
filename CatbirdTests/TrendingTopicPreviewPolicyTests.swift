@@ -17,7 +17,7 @@ struct TrendingTopicPreviewPolicyTests {
       return
     }
     #expect(value is AppBskyFeedPost)
-    let posts = try [first, first] + (2...5).map { try fixture("post-\($0)", author: $0) }
+    let posts = try [first, first] + (2...5).map { try fixture("post-\($0)", author: $0, embed: images("post-\($0)")) }
     let preview = TrendingTopicPreviewPolicy.select(posts, context: .init())
 
     #expect(preview.media.count == 3)
@@ -126,19 +126,159 @@ struct TrendingTopicPreviewPolicyTests {
     #expect(preview.participants.count == 3)
   }
 
-  @Test("External link art and independently moderated quoted media are never selected")
+  @Test("Provided link art and hydrated safe quotes supply static thumbnails")
   func externalAndQuotedMedia() throws {
-    let external = try fixture("external", embed: [
-      "$type": "app.bsky.embed.external#view",
-      "external": ["uri": "https://external.example.test/article", "title": "Article", "description": "Description", "thumb": "https://external.example.test/art.jpg"]
-    ])
-    let quoted = try fixture("quoted", embed: quotedRecord())
+    let externalPost = try fixture("external", embed: external("external"))
+    let quotedPost = try fixture("quoted", author: 7, embed: images("quoted"))
+    let quote = try quotedRecord(for: quotedPost)
+    let quoted = try fixture("wrapper", embed: quote)
     let quoteWithOwnMedia = try fixture("quote-with-media", embed: [
-      "$type": "app.bsky.embed.recordWithMedia#view", "record": quotedRecord(), "media": images("quoted-own-media")
+      "$type": "app.bsky.embed.recordWithMedia#view", "record": quote, "media": images("quoted-own-media")
     ])
+    let context = TrendingTopicPreviewPolicy.Context(quotedPosts: [quotedPost.post.uri.uriString(): quotedPost.post])
 
-    #expect(TrendingTopicPreviewPolicy.select([external], context: .init()).media.isEmpty)
+    #expect(TrendingTopicPreviewPolicy.select([externalPost], context: .init()).media.map(\.url.absoluteString) == ["https://cdn.example.test/external-link-thumb.jpg"])
     #expect(TrendingTopicPreviewPolicy.select([quoted, quoteWithOwnMedia], context: .init()) == .init())
+    #expect(TrendingTopicPreviewPolicy.select([quoted], context: context).media.map(\.url.absoluteString) == ["https://cdn.example.test/quoted-thumb-0.jpg"])
+    #expect(TrendingTopicPreviewPolicy.select([quoteWithOwnMedia], context: context).media.map(\.url.absoluteString) == ["https://cdn.example.test/quoted-own-media-thumb-0.jpg"])
+  }
+
+  @Test("Quoted supplied and hydrated labels each fail closed", arguments: ["porn", "nudity", "!warn", "!hide", "custom-warning"])
+  func quotedLabelsBeforeSelection(_ labelValue: String) throws {
+    let ordinary = try fixture("quote", author: 7, embed: images("quote"))
+    let labeled = try fixture("quote", author: 7, embed: images("quote"), postLabels: [label(labelValue)])
+    let ordinaryWrapper = try fixture("wrapper", embed: quotedRecord(for: ordinary))
+    let labeledWrapper = try fixture("wrapper", embed: quotedRecord(for: labeled))
+
+    #expect(TrendingTopicPreviewPolicy.select([labeledWrapper], context: .init(quotedPosts: [ordinary.post.uri.uriString(): ordinary.post])) == .init())
+    #expect(TrendingTopicPreviewPolicy.select([ordinaryWrapper], context: .init(quotedPosts: [labeled.post.uri.uriString(): labeled.post])) == .init())
+  }
+
+  @Test("Hydrated quote thread state, authors, self labels, identity and local decisions are required")
+  func quotedHydrationSafeguards() throws {
+    let ordinary = try fixture("quote", author: 7, embed: images("quote"))
+    let wrapper = try fixture("wrapper", embed: quotedRecord(for: ordinary))
+    let quoteURI = ordinary.post.uri.uriString()
+    let variants = try [
+      fixture("quote", author: 7, embed: images("quote"), postViewer: ["threadMuted": true]),
+      fixture("quote", author: 7, embed: images("quote"), authorViewer: ["blockedBy": true]),
+      fixture("quote", author: 7, embed: images("quote"), authorLabels: [label("porn", subject: did(7))]),
+      fixture("quote", author: 7, embed: images("quote"), selfLabels: ["custom-warning"]),
+      fixture("quote", author: 7, text: "Different record", embed: images("quote")),
+      fixture("different-uri", author: 7, embed: images("quote")),
+      fixture("quote", author: 8, embed: images("quote"))
+    ]
+    for post in variants {
+      #expect(TrendingTopicPreviewPolicy.select([wrapper], context: .init(quotedPosts: [quoteURI: post.post])) == .init())
+    }
+    for context in [
+      TrendingTopicPreviewPolicy.Context(mutedUsers: [did(7)], quotedPosts: [quoteURI: ordinary.post]),
+      TrendingTopicPreviewPolicy.Context(blockedUsers: [did(7)], quotedPosts: [quoteURI: ordinary.post]),
+      TrendingTopicPreviewPolicy.Context(hiddenPosts: [quoteURI], quotedPosts: [quoteURI: ordinary.post]),
+      TrendingTopicPreviewPolicy.Context(feedPreference: feedPreference(hideQuotes: true), quotedPosts: [quoteURI: ordinary.post])
+    ] {
+      #expect(TrendingTopicPreviewPolicy.select([wrapper], context: context) == .init())
+    }
+    let labeledProvidedAuthor = try fixture("quote", author: 7, embed: images("quote"), authorLabels: [label("!warn", subject: did(7))])
+    let labeledWrapper = try fixture("wrapper", embed: quotedRecord(for: labeledProvidedAuthor))
+    #expect(TrendingTopicPreviewPolicy.select([labeledWrapper], context: .init(quotedPosts: [quoteURI: ordinary.post])) == .init())
+    let providedSelfLabel = try fixture("quote", author: 7, embed: images("quote"), selfLabels: ["nudity"])
+    let selfWrapper = try fixture("wrapper", embed: quotedRecord(for: providedSelfLabel))
+    #expect(TrendingTopicPreviewPolicy.select([selfWrapper], context: .init(quotedPosts: [quoteURI: providedSelfLabel.post])) == .init())
+  }
+
+  @Test("Quoted words and every nested media description obey the same filters")
+  func quotedMutedMetadataAndFilters() throws {
+    for embed in [images("quote", alt: "A sensitive-token scene"), video("quote", alt: "A sensitive-token scene"), external("quote", description: "A sensitive-token article")] {
+      let quoted = try fixture("quote", author: 7, embed: embed)
+      let wrapper = try fixture("wrapper", embed: quotedRecord(for: quoted))
+      let context = TrendingTopicPreviewPolicy.Context(mutedWords: [mutedWord("sensitive-token")], quotedPosts: [quoted.post.uri.uriString(): quoted.post])
+      #expect(TrendingTopicPreviewPolicy.select([wrapper], context: context) == .init())
+    }
+    let quoted = try fixture("quote", author: 7, text: "Quoted sensitive-token discussion", embed: images("quote"))
+    let wrapper = try fixture("wrapper", embed: quotedRecord(for: quoted))
+    #expect(TrendingTopicPreviewPolicy.select([wrapper], context: .init(mutedWords: [mutedWord("sensitive-token")], quotedPosts: [quoted.post.uri.uriString(): quoted.post])) == .init())
+    let safe = try fixture("quote", author: 7, embed: images("quote"))
+    let safeWrapper = try fixture("wrapper", embed: quotedRecord(for: safe))
+    #expect(TrendingTopicPreviewPolicy.select([safeWrapper], context: .init(quotedPosts: [safe.post.uri.uriString(): safe.post], allowsPost: { $0.post.uri != safe.post.uri })) == .init())
+    let ownMutedMedia = try fixture("own-muted-media", embed: ["$type": "app.bsky.embed.recordWithMedia#view", "record": quotedRecord(for: safe), "media": external("own", title: "A sensitive-token title")])
+    #expect(TrendingTopicPreviewPolicy.select([ownMutedMedia], context: .init(mutedWords: [mutedWord("sensitive-token")], quotedPosts: [safe.post.uri.uriString(): safe.post])) == .init())
+  }
+
+  @Test("Unavailable quotes, unresolved quote replies and excessive nesting remain text fallback")
+  func quotedUnavailableAndNestedContexts() throws {
+    for kind in ["viewNotFound", "viewBlocked", "viewDetached", "unknownRecord"] {
+      let record: [String: Any] = ["$type": "app.bsky.embed.record#\(kind)", "uri": uri("quote", author: 7), "notFound": true, "blocked": true, "detached": true, "author": ["did": did(7), "viewer": ["blockedBy": true]]]
+      let wrapper = try fixture("wrapper", embed: ["$type": "app.bsky.embed.record#view", "record": record])
+      #expect(TrendingTopicPreviewPolicy.select([wrapper], context: .init()) == .init())
+      #expect(TrendingTopicPreviewPolicy.quotedPostURIs(in: [wrapper]).isEmpty)
+    }
+    let reply = try fixture("quote-reply", author: 7, unhydratedReply: true)
+    let replyWrapper = try fixture("reply-wrapper", embed: quotedRecord(for: reply))
+    #expect(TrendingTopicPreviewPolicy.select([replyWrapper], context: .init(quotedPosts: [reply.post.uri.uriString(): reply.post])) == .init())
+
+    let leaf = try fixture("leaf", author: 7, embed: images("leaf"))
+    let second = try fixture("second", author: 8, embed: quotedRecord(for: leaf))
+    let third = try fixture("third", author: 9, embed: quotedRecord(for: second))
+    let wrapper = try fixture("wrapper", embed: quotedRecord(for: third))
+    let fourth = try fixture("fourth", author: 10, embed: quotedRecord(for: third))
+    let tooDeep = try fixture("too-deep", embed: quotedRecord(for: fourth))
+    let context = TrendingTopicPreviewPolicy.Context(quotedPosts: Dictionary(uniqueKeysWithValues: [leaf, second, third, fourth].map { ($0.post.uri.uriString(), $0.post) }))
+    #expect(TrendingTopicPreviewPolicy.select([wrapper], context: context).media.map(\.url.absoluteString) == ["https://cdn.example.test/leaf-thumb-0.jpg"])
+    #expect(TrendingTopicPreviewPolicy.select([tooDeep], context: context) == .init())
+    let missingLeaf = TrendingTopicPreviewPolicy.Context(quotedPosts: [second.post.uri.uriString(): second.post, third.post.uri.uriString(): third.post])
+    #expect(TrendingTopicPreviewPolicy.select([wrapper], context: missingLeaf) == .init())
+  }
+
+  @Test("Quote URI hydration is deterministic, unique and bounded by entries, count and depth")
+  func quotedURITraversalBoundaries() throws {
+    let quote = try fixture("quote", author: 7)
+    let duplicate = try fixture("duplicate", embed: quotedRecord(for: quote))
+    let wrappers = try (0..<10).map { index in
+      try fixture("wrapper-\(index)", embed: quotedRecord(for: fixture("quote-\(index)", author: 7)))
+    }
+    let expected = (0..<6).map { uri("quote-\($0)", author: 7) }
+    #expect(TrendingTopicPreviewPolicy.quotedPostURIs(in: wrappers).map { $0.uriString() } == expected)
+    #expect(TrendingTopicPreviewPolicy.quotedPostURIs(in: [duplicate, duplicate]).map { $0.uriString() } == [quote.post.uri.uriString()])
+    let ordinary = try fixture("ordinary")
+    #expect(TrendingTopicPreviewPolicy.quotedPostURIs(in: Array(repeating: ordinary, count: 30) + [duplicate]).isEmpty)
+    let second = try fixture("second", author: 8, embed: quotedRecord(for: quote))
+    let third = try fixture("third", author: 9, embed: quotedRecord(for: second))
+    let fourth = try fixture("fourth", author: 10, embed: quotedRecord(for: third))
+    let wrapper = try fixture("wrapper", embed: ["$type": "app.bsky.embed.recordWithMedia#view", "record": quotedRecord(for: fourth), "media": images("own")])
+    #expect(TrendingTopicPreviewPolicy.quotedPostURIs(in: [wrapper]).map { $0.uriString() } == [fourth.post.uri.uriString(), third.post.uri.uriString(), second.post.uri.uriString()])
+  }
+
+  @Test("Different representative posts cannot repeat the same quoted source or thumbnail")
+  func quotedSourceDeduplication() throws {
+    let quote = try fixture("quote", author: 7, embed: images("quote"))
+    let wrappers = try [fixture("one", embed: quotedRecord(for: quote)), fixture("two", author: 2, embed: quotedRecord(for: quote))]
+    let repeatedURL = try fixture("three", author: 3, embed: images("quote"))
+    let fourth = try fixture("four", author: 4, embed: images("unique"))
+    let context = TrendingTopicPreviewPolicy.Context(quotedPosts: [quote.post.uri.uriString(): quote.post])
+    let preview = TrendingTopicPreviewPolicy.select(wrappers + [repeatedURL, fourth], context: context)
+
+    #expect(preview.media.count == 2)
+    #expect(Set(preview.media.map(\.id)) == [uri("one"), uri("four", author: 4)])
+    #expect(Set(preview.media.map(\.url)).count == 2)
+  }
+
+  @Test("Link metadata and available video stills honor words and HTTPS without external fetching")
+  func externalAndVideoMetadataSafeguards() throws {
+    let missingLink = try fixture("no-link-thumb", embed: external("missing", hasThumbnail: false))
+    let insecureLink = try fixture("insecure-link", embed: external("insecure", scheme: "http"))
+    #expect(TrendingTopicPreviewPolicy.select([missingLink, insecureLink], context: .init()).media.isEmpty)
+    for embed in [external("link", title: "A sensitive-token title"), external("link", description: "A sensitive-token article"), video("video", alt: "A sensitive-token clip")] {
+      let post = try fixture("metadata", embed: embed)
+      #expect(TrendingTopicPreviewPolicy.select([post], context: .init(mutedWords: [mutedWord("sensitive-token")])) == .init())
+    }
+    let quotedVideo = try fixture("quoted-video", author: 7, embed: video("quoted-video"))
+    let wrapper = try fixture("wrapper", embed: quotedRecord(for: quotedVideo))
+    #expect(TrendingTopicPreviewPolicy.select([wrapper], context: .init(quotedPosts: [quotedVideo.post.uri.uriString(): quotedVideo.post])).media.map(\.url.absoluteString) == ["https://cdn.example.test/quoted-video-still.jpg"])
+    let gallery = try fixture("gallery", embed: ["$type": "app.bsky.embed.gallery#view", "items": [["$type": "app.bsky.embed.gallery#viewImage", "thumbnail": "https://cdn.example.test/gallery-thumb.jpg", "fullsize": "https://cdn.example.test/gallery-original.jpg", "alt": "Ordinary", "aspectRatio": ["width": 1, "height": 1]]]])
+    #expect(TrendingTopicPreviewPolicy.select([gallery], context: .init()).media.map(\.url.absoluteString) == ["https://cdn.example.test/gallery-thumb.jpg"])
+    let unknownGallery = try fixture("unknown-gallery", embed: ["$type": "app.bsky.embed.gallery#view", "items": [["$type": "app.bsky.embed.gallery#viewVideo", "thumbnail": "https://cdn.example.test/unknown-gallery-still.jpg"]]])
+    #expect(TrendingTopicPreviewPolicy.select([unknownGallery], context: .init()) == .init())
   }
 
   @Test("Non-HTTPS thumbnails and avatars cannot become image requests")
@@ -602,6 +742,108 @@ struct TrendingTopicPreviewPolicyTests {
   // MARK: - Hydrated protocol fixtures
 
   private let fixtureCID = "bafyreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku"
+  @Test("External-card hide decisions also apply to direct and quoted topic artwork")
+  func externalProviderHideDecisions() throws {
+    let link = try fixture("hidden-external", author: 7, embed: [
+      "$type": "app.bsky.embed.external#view",
+      "external": ["uri": "https://youtu.be/topic-preview", "title": "Video link", "description": "Description",
+        "thumb": "https://cdn.example.test/provider-still.jpg"]
+    ])
+    let quote = try fixture("hidden-external-quote", embed: quotedRecord(for: link))
+    let context = TrendingTopicPreviewPolicy.Context(quotedPosts: [link.post.uri.uriString(): link.post],
+      allowsExternal: { TrendingTopicExternalMediaPolicy.provider(for: $0) != .youtube })
+    #expect(TrendingTopicPreviewPolicy.select([link, quote], context: context) == .init())
+    #expect(TrendingTopicPreviewPolicy.select([link], context: .init()).media.count == 1)
+    for (url, expected) in [
+      ("https://youtube.com/shorts/example", ExternalMediaProvider.youtubeShorts),
+      ("https://static.klipy.com/example.gif", .klipy),
+      ("https://flic.kr/p/example", .flickr),
+      ("https://tenor.com/", .tenor),
+    ] {
+      #expect(TrendingTopicExternalMediaPolicy.provider(for: try #require(URL(string: url))) == expected)
+    }
+  }
+
+  @Test("Hydrated quote context shares the feed cache and is rechecked against current decisions")
+  func hydratedQuoteCacheRechecksLocalDecisions() async throws {
+    let store = TrendingTopicMediaStore()
+    let quote = try fixture("cached-quote", author: 7, embed: images("cached-quote"))
+    let wrapper = try fixture("cached-wrapper", embed: quotedRecord(for: quote))
+    var fetches = 0
+    var hydrations = 0
+    for _ in 0..<2 {
+      await store.load(key: "topic", hydrate: { _ in hydrations += 1; return [quote.post] }) {
+        fetches += 1
+        return [wrapper]
+      }
+    }
+    #expect(fetches == 1)
+    #expect(hydrations == 1)
+    #expect(store.preview(key: "topic", context: .init()).media.count == 1)
+    #expect(store.preview(key: "topic", context: .init(hiddenPosts: [quote.post.uri.uriString()])) == .init())
+    #expect(store.preview(key: "topic", context: .init(blockedUsers: [did(7)])) == .init())
+  }
+
+  @Test("Failed quote hydration keeps ordinary direct media while excluding the unresolved wrapper")
+  func missingHydrationPreservesDirectPosts() async throws {
+    let store = TrendingTopicMediaStore()
+    let direct = try fixture("ordinary-direct", embed: images("ordinary-direct"))
+    let quote = try fixture("unresolved-quote", author: 7, embed: images("unresolved-quote"))
+    let wrapper = try fixture("unresolved-wrapper", author: 2, embed: quotedRecord(for: quote))
+    await store.load(key: "topic", hydrate: { _ in [] }) { [direct, wrapper] }
+    let preview = store.preview(key: "topic", context: .init())
+    #expect(preview.media.map(\.id) == [direct.post.uri.uriString()])
+    #expect(preview.contributorProfiles.map { $0.did.didString() } == [did(1)])
+  }
+
+  @Test("Account suspension invalidation cancels visible and queued row requests without their caller cancelling")
+  func invalidationCancelsOwnedRowRequests() async throws {
+    let store = TrendingTopicMediaStore()
+    var started = 0
+    let tasks = (0..<3).map { index in
+      Task {
+        await store.load(key: "visible-\(index)") {
+          started += 1
+          try await Task.sleep(for: .seconds(60))
+          return []
+        }
+      }
+    }
+    let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+    while started < 2 {
+      try #require(ContinuousClock.now < deadline, "Two row fetches should enter the shared gate")
+      await Task.yield()
+    }
+    store.invalidateForGraphChange()
+    for task in tasks { await task.value }
+    #expect(started == 2, "A cancelled queued request cannot enter its fetch")
+    let post = try fixture("resumed-visible-row", embed: images("resumed-visible-row"))
+    await store.load(key: "fresh") { [post] }
+    #expect(store.preview(key: "fresh", context: .init()).media.count == 1)
+  }
+
+  @Test("Account or graph invalidation during quote hydration rejects the whole obsolete response")
+  func invalidationDuringHydrationRejectsResponse() async throws {
+    let store = TrendingTopicMediaStore()
+    let quote = try fixture("pending-quote", author: 7, embed: images("pending-quote"))
+    let wrapper = try fixture("pending-wrapper", embed: quotedRecord(for: quote))
+    var continuation: CheckedContinuation<[AppBskyFeedDefs.PostView], Never>?
+    let pending = Task {
+      await store.load(key: "topic", hydrate: { _ in
+        await withCheckedContinuation { continuation = $0 }
+      }) { [wrapper] }
+    }
+    let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+    while continuation == nil {
+      try #require(ContinuousClock.now < deadline, "Hydration should begin")
+      await Task.yield()
+    }
+    store.invalidateForGraphChange()
+    continuation?.resume(returning: [quote.post])
+    await pending.value
+    #expect(store.preview(key: "topic", context: .init()) == .init())
+  }
+
   private let timestamp = "2026-01-01T00:00:00Z"
 
   private func did(_ index: Int) -> String { "did:plc:previewauthor\(index)" }
@@ -666,10 +908,25 @@ struct TrendingTopicPreviewPolicyTests {
     }]
   }
 
-  private func video(_ key: String, hasThumbnail: Bool = true) -> [String: Any] {
+  private func video(_ key: String, hasThumbnail: Bool = true, alt: String? = nil) -> [String: Any] {
     var result: [String: Any] = ["$type": "app.bsky.embed.video#view", "cid": fixtureCID, "playlist": "https://video.example.test/\(key)/playlist.m3u8"]
     if hasThumbnail { result["thumbnail"] = "https://cdn.example.test/\(key)-still.jpg" }
+    if let alt { result["alt"] = alt }
     return result
+  }
+
+  private func external(_ key: String, title: String = "Article", description: String = "Description", hasThumbnail: Bool = true, scheme: String = "https") -> [String: Any] {
+    var link: [String: Any] = ["uri": "https://external.example.test/\(key)", "title": title, "description": description]
+    if hasThumbnail { link["thumb"] = "\(scheme)://cdn.example.test/\(key)-link-thumb.jpg" }
+    return ["$type": "app.bsky.embed.external#view", "external": link]
+  }
+
+  private func quotedRecord(for post: AppBskyFeedDefs.FeedViewPost) throws -> [String: Any] {
+    let encoded = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(post.post)) as? [String: Any])
+    var record: [String: Any] = ["$type": "app.bsky.embed.record#viewRecord", "uri": post.post.uri.uriString(), "cid": fixtureCID, "author": try #require(encoded["author"]), "value": try #require(encoded["record"]), "indexedAt": timestamp]
+    if let labels = encoded["labels"] { record["labels"] = labels }
+    if let embed = encoded["embed"] { record["embeds"] = [embed] }
+    return ["$type": "app.bsky.embed.record#view", "record": record]
   }
 
   private func quotedRecord() -> [String: Any] {
@@ -696,8 +953,8 @@ struct TrendingTopicPreviewPolicyTests {
     MutedWord(id: "fixture-\(value)", value: value, targets: targets, actorTarget: actorTarget, expiresAt: expiresAt)
   }
 
-  private func feedPreference(hideReplies: Bool = false, hideUnfollowedReplies: Bool = false, minimumLikes: Int? = nil, hideReposts: Bool = false) -> FeedViewPreference {
-    FeedViewPreference(hideReplies: hideReplies, hideRepliesByUnfollowed: hideUnfollowedReplies, hideRepliesByLikeCount: minimumLikes, hideReposts: hideReposts, hideQuotePosts: false)
+  private func feedPreference(hideReplies: Bool = false, hideUnfollowedReplies: Bool = false, minimumLikes: Int? = nil, hideReposts: Bool = false, hideQuotes: Bool = false) -> FeedViewPreference {
+    FeedViewPreference(hideReplies: hideReplies, hideRepliesByUnfollowed: hideUnfollowedReplies, hideRepliesByLikeCount: minimumLikes, hideReposts: hideReposts, hideQuotePosts: hideQuotes)
   }
 
   private func settle() async { for _ in 0..<40 { await Task.yield() } }

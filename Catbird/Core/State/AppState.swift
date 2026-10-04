@@ -456,6 +456,7 @@ final class AppState {
     @MainActor
     func suspendForAccountSwitch() async throws {
         accountServiceWork.suspend()
+        trendingTopicMediaStore.invalidateForGraphChange()
         settingsUpdateDebounceTimer?.invalidate()
         settingsUpdateDebounceTimer = nil
         backgroundPollingTask?.cancel()
@@ -541,12 +542,21 @@ final class AppState {
         accountServiceWork.start(priority: priority, operation: operation)
     }
 
+    /// Direct preview reads finish before the shared client's account credentials may change.
+    @MainActor
+    func withTopicPreviewAccountOperation(_ operation: @MainActor () async -> Void) async {
+        guard let lease = accountServiceWork.beginOperation() else { return }
+        defer { accountServiceWork.endOperation(lease) }
+        await operation()
+    }
+
     /// Cleanup method called when this AppState is evicted from cache
     /// This cancels long-running tasks and releases resources without deallocating the object
     @MainActor
     func cleanup() {
         logger.info("🧹 Cleaning up AppState for user: \(self.userDID)")
         accountServiceWork.suspend()
+        trendingTopicMediaStore.invalidateForGraphChange()
         settingsUpdateDebounceTimer?.invalidate()
         settingsUpdateDebounceTimer = nil
 

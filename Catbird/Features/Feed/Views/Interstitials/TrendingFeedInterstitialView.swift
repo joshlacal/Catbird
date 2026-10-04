@@ -31,6 +31,9 @@ public struct TrendingFeedInterstitialView: View {
       onHideVideos: { appState.appSettings.showTrendingVideos = false }
     )
     .background(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))
+    .onChange(of: appState.appSettings.showTrendingTopics) { _, showTopics in
+      if !showTopics { appState.cancelTopicPreviewPrefetch(owner: .timeline) }
+    }
   }
 }
 
@@ -89,8 +92,8 @@ struct TrendingFeedPresentation: View {
               ForEach(content.trends.prefix(6), id: \.topic) { trend in
                 Button { onSelectTopic(trend) } label: {
                   VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+                    TrendingTopicHeading(title: trend.displayName, category: trend.category, size: 20)
                     TrendingTopicArtwork(link: trend.link)
-                    TrendingTopicTitle(title: trend.displayName, size: 20)
                     if trend.postCount > 0 {
                       Text("\(trend.postCount.formatted(.number.notation(.compactName))) posts")
                         .appFont(AppTextRole.caption)
@@ -98,7 +101,7 @@ struct TrendingFeedPresentation: View {
                     }
                   }
                   .multilineTextAlignment(.leading)
-                  .frame(width: dynamicTypeSize.isAccessibilitySize ? 260 : 200, alignment: .leading)
+                  .frame(width: dynamicTypeSize.isAccessibilitySize ? 300 : 240, alignment: .leading)
                   .padding(.horizontal, DesignTokens.Spacing.base)
                   .padding(.vertical, DesignTokens.Spacing.md)
                   .frame(minHeight: 44, alignment: .leading)
@@ -125,6 +128,7 @@ struct TrendingFeedPresentation: View {
       .padding(.vertical, DesignTokens.Spacing.base)
       .frame(maxWidth: .infinity, alignment: .leading)
       .overlay(alignment: .bottom) { Divider() }
+      .modifier(TrendingTimelinePreviewPrefetch(links: showTopics ? content.trends.map(\.link) : []))
       .confirmationDialog(
         "Hide \(hideTarget?.name ?? "trending content")?",
         isPresented: Binding(
@@ -164,8 +168,12 @@ struct TrendingFeedContent: Equatable {
             return []
         }
         do {
+            let viewerDID = appState.userDID
             let (_, output) = try await client.app.bsky.unspecced.getTrends(input: .init(limit: 10))
-            return output?.trends ?? []
+            guard !Task.isCancelled, !appState.isAccountSwitchSuspended, appState.userDID == viewerDID else { return [] }
+            let trends = output?.trends ?? []
+            appState.prefetchTopicPreviews(links: trends.map(\.link), owner: .timeline)
+            return trends
         } catch {
             return []
         }
@@ -188,4 +196,15 @@ struct TrendingFeedContent: Equatable {
             return []
         }
     }
+}
+
+private struct TrendingTimelinePreviewPrefetch: ViewModifier {
+  @Environment(AppState.self) private var appState
+  let links: [String]
+
+  func body(content: Content) -> some View {
+    content.task(id: appState.topicPreviewPrefetchIdentity(links: links)) {
+      appState.prefetchTopicPreviews(links: links, owner: .timeline)
+    }
+  }
 }
