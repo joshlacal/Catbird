@@ -45,7 +45,7 @@ struct LabelerSettingsView: View {
             HStack {
               Text(did.didString()).font(.caption)
               Spacer()
-              Button("Remove", role: .destructive) { removeUnavailable(did) }.disabled(isSaving)
+              Button("Remove", role: .destructive) { removeUnavailable(did) }.disabled(!hasConfirmedPreferences || isSaving)
             }
           }
         }
@@ -69,7 +69,7 @@ struct LabelerSettingsView: View {
     let account = appState.userDID
     let manager = appState.preferencesManager
     let client = appState.atProtoClient
-    isLoading = true; errorMessage = nil; hasConfirmedPreferences = false
+    isLoading = true; isSaving = false; errorMessage = nil; hasConfirmedPreferences = false
     defer { if request == token { isLoading = false } }
     do {
       guard let client else { throw PreferencesManagerError.clientNotInitialized }
@@ -100,15 +100,17 @@ struct LabelerSettingsView: View {
   private func removeUnavailable(_ did: DID) {
     guard hasConfirmedPreferences, !isSaving else { return }
     let account = appState.userDID; let manager = appState.preferencesManager
+    let editRequest = request
     isSaving = true
     Task { @MainActor in
-      defer { isSaving = false }
+      defer { if request == editRequest, manager.accountDID == account, appState.userDID == account { isSaving = false } }
       do {
         try await manager.removeLabelers([did.didString()], expectedAccountDID: account)
-        guard appState.userDID == account, manager.accountDID == account else { return }
+        guard request == editRequest, appState.userDID == account, manager.accountDID == account else { return }
         unavailable.removeAll { $0 == did }
       } catch {
-        guard manager.accountDID == account else { return }
+        guard request == editRequest, manager.accountDID == account, appState.userDID == account else { return }
+        hasConfirmedPreferences = false
         errorMessage = "Could not remove service: \(error.localizedDescription)"
       }
     }
@@ -168,6 +170,7 @@ struct ModerationServiceSettingsView: View {
         Section {
           Text(errorMessage).foregroundStyle(.secondary)
           Button("Reload Settings") { Task { await load() } }.disabled(isLoading || isSaving)
+            .accessibilityIdentifier("moderation.service.retry")
         }
       }
     }
@@ -219,7 +222,7 @@ struct ModerationServiceSettingsView: View {
   private func load() async {
     let token = UUID(); request = token
     let account = appState.userDID; let manager = appState.preferencesManager
-    isLoading = true; hasConfirmedPreferences = false; errorMessage = nil
+    isLoading = true; isSaving = false; hasConfirmedPreferences = false; errorMessage = nil
     defer { if request == token { isLoading = false } }
     do {
       let loaded = try await manager.refreshSettingsPreferences(expectedAccountDID: account)
@@ -254,17 +257,19 @@ struct ModerationServiceSettingsView: View {
   }
   private func edit(_ operation: @escaping @MainActor (PreferencesManager, String) async throws -> Void) {
     let account = appState.userDID; let manager = appState.preferencesManager
+    let editRequest = request
     isSaving = true; errorMessage = nil
     Task { @MainActor in
-      defer { isSaving = false }
+      defer { if request == editRequest, manager.accountDID == account, appState.userDID == account { isSaving = false } }
       do {
         try await operation(manager, account)
         let loaded = try await manager.getPreferences()
-        guard manager.accountDID == account, appState.userDID == account else { return }
+        guard request == editRequest, manager.accountDID == account, appState.userDID == account else { return }
         preferences = loaded.contentLabelPrefs
         isSubscribed = isDefaultService || loaded.labelers.contains { $0.did == serviceDID }
       } catch {
-        guard manager.accountDID == account else { return }
+        guard request == editRequest, manager.accountDID == account, appState.userDID == account else { return }
+        hasConfirmedPreferences = false
         errorMessage = "Could not save settings: \(error.localizedDescription)"
       }
     }

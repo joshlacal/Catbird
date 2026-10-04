@@ -281,6 +281,7 @@ struct ModerationSettingsView: View {
         let manager = appState.preferencesManager
         loadRequest = request
         isLoading = true
+        isSavingPreferences = false
         hasConfirmedPreferences = false
         errorMessage = nil
         defer { if loadRequest == request { isLoading = false } }
@@ -472,17 +473,19 @@ struct ModerationSettingsView: View {
                   adultContentEnabled, !enabled else { return }
             let account = appState.userDID
             let manager = appState.preferencesManager
+            let request = loadRequest
             isSavingPreferences = true
             errorMessage = nil
             Task { @MainActor in
-                defer { isSavingPreferences = false }
+                defer { if loadRequest == request, manager.accountDID == account, appState.userDID == account { isSavingPreferences = false } }
                 do {
                     try await manager.updateAdultContentEnabled(enabled, expectedAccountDID: account)
-                    guard manager.accountDID == account, appState.userDID == account else { return }
+                    guard loadRequest == request, manager.accountDID == account, appState.userDID == account else { return }
                     adultContentEnabled = enabled
                     appState.isAdultContentEnabled = enabled
                 } catch {
-                    guard manager.accountDID == account else { return }
+                    guard loadRequest == request, manager.accountDID == account, appState.userDID == account else { return }
+                    hasConfirmedPreferences = false
                     errorMessage = "Failed to update adult content setting: \(error.localizedDescription)"
                 }
             }
@@ -495,17 +498,19 @@ struct ModerationSettingsView: View {
                   selected != value.wrappedValue else { return }
             let account = appState.userDID
             let manager = appState.preferencesManager
+            let request = loadRequest
             isSavingPreferences = true
             errorMessage = nil
             Task { @MainActor in
-                defer { isSavingPreferences = false }
+                defer { if loadRequest == request, manager.accountDID == account, appState.userDID == account { isSavingPreferences = false } }
                 do {
                     try await manager.setContentLabelVisibility(label: label, visibility: selected.preferenceValue,
                                                                  expectedAccountDID: account)
-                    guard manager.accountDID == account, appState.userDID == account else { return }
+                    guard loadRequest == request, manager.accountDID == account, appState.userDID == account else { return }
                     value.wrappedValue = selected
                 } catch {
-                    guard manager.accountDID == account else { return }
+                    guard loadRequest == request, manager.accountDID == account, appState.userDID == account else { return }
+                    hasConfirmedPreferences = false
                     errorMessage = "Failed to save content label preference: \(error.localizedDescription)"
                 }
             }
