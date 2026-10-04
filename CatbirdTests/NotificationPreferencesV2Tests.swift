@@ -25,7 +25,7 @@ final class NotificationPreferencesV2Tests: XCTestCase {
     var confirmed = NotificationPreferences()
     confirmed.chat = .init(include: "accepted", push: true)
     var updated = confirmed
-    updated.chat.push = false
+    updated.chat = .init(include: updated.chat.include, push: false)
     let input = updated.toPutPreferencesInput(changedFrom: confirmed)
     XCTAssertEqual(input.chat?.include, "accepted")
     XCTAssertEqual(input.chat?.push, false)

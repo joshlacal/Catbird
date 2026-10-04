@@ -230,7 +230,7 @@ import AppKit
         #if os(iOS)
         let center = NotificationCenter.default
         let names = [UIAccessibility.reduceMotionStatusDidChangeNotification,
-                     UIAccessibility.prefersCrossFadeTransitionsStatusDidChangeNotification,
+                     UIAccessibility.prefersCrossFadeTransitionsStatusDidChange,
                      UIAccessibility.darkerSystemColorsStatusDidChangeNotification,
                      UIAccessibility.boldTextStatusDidChangeNotification]
         #elseif os(macOS)
