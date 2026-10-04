@@ -133,7 +133,7 @@ struct ModerationSettingsView: View {
                         }
                     }
                     
-                    NavigationLink(destination: ModerationListView(accounts: $mutedAccounts, isLoading: $isLoadingMutedAccounts, title: "Muted Accounts", isBlocked: false)) {
+                    NavigationLink(destination: ModeratedAccountsSettingsView(kind: .muted)) {
                         Label {
                             Text("Muted Accounts")
                         } icon: {
@@ -143,7 +143,7 @@ struct ModerationSettingsView: View {
                     }
                     .settingsControl(.init(rawValue: "moderation.mutedAccounts"))
                     
-                    NavigationLink(destination: ModerationListView(accounts: $blockedAccounts, isLoading: $isLoadingBlockedAccounts, title: "Blocked Accounts", isBlocked: true)) {
+                    NavigationLink(destination: ModeratedAccountsSettingsView(kind: .blocked)) {
                         Label {
                             Text("Blocked Accounts")
                         } icon: {
@@ -227,94 +227,11 @@ struct ModerationSettingsView: View {
                     nudityContentVisibility: nudityContentVisibility
                 )
                 
-                // Content Labelers Section
-                Section("Content Labelers") {
+                Section("Moderation Services") {
                     NavigationLink(destination: LabelerSettingsView()) {
-                        Label {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Labeler Preferences")
-                                Text("Configure per-labeler content settings")
-                                    .appFont(AppTextRole.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        } icon: {
-                            Image(systemName: "slider.horizontal.3")
-                                .foregroundStyle(.blue)
-                        }
+                        Label("Moderation Services", systemImage: "checklist")
                     }
-                    
-                    if isLoadingLabelers {
-                        ProgressView()
-                    } else if labelers.isEmpty {
-                        Text("No labeler subscriptions to show")
-                            .foregroundStyle(.secondary)
-                    } else {
-                        ForEach(labelers) { labeler in
-                            NavigationLink {
-                                LabelerDetailView(labeler: labeler)
-                            } label: {
-                                HStack {
-                                    VStack(alignment: .leading) {
-                                        Text(labeler.name)
-                                        
-                                        if let description = labeler.description {
-                                            Text(description)
-                                                .appFont(AppTextRole.caption)
-                                                .foregroundStyle(.secondary)
-                                        }
-                                    }
-                                    
-                                    Spacer()
-                                    
-                                    if labeler.isEnabled {
-                                        Text("Enabled")
-                                            .appFont(AppTextRole.caption)
-                                            .fontWeight(.medium)
-                                            .padding(.horizontal, 8)
-                                            .padding(.vertical, 4)
-                                            .background(Color.green.opacity(0.2))
-                                            .foregroundStyle(.green)
-                                            .cornerRadius(4)
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    NavigationLink("Add Labeler", destination: AddLabelerView())
-                }
-                
-                // Unavailable Labelers Warning & Cleanup
-                if !unavailableLabelers.isEmpty {
-                    Section("Unavailable Labelers") {
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack(alignment: .top, spacing: 10) {
-                                Image(systemName: "exclamationmark.triangle.fill")
-                                    .foregroundStyle(.orange)
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text("\(unavailableLabelers.count) Subscribed Labeler(s) Unavailable")
-                                        .font(.subheadline)
-                                        .fontWeight(.semibold)
-                                    Text("These moderation services are offline or no longer exist. You can remove them from your subscriptions.")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                            
-                            Button(role: .destructive) {
-                                showingCleanupConfirmation = true
-                            } label: {
-                                if isCleaningUpLabelers {
-                                    ProgressView()
-                                } else {
-                                    Text("Remove Unavailable Labelers")
-                                }
-                            }
-                            .buttonStyle(.bordered)
-                            .disabled(isCleaningUpLabelers)
-                        }
-                        .padding(.vertical, 4)
-                    }
+                    .settingsControl(.init(rawValue: "moderation.labelers"))
                 }
                 if let error = errorMessage {
                     Section {
@@ -354,22 +271,8 @@ struct ModerationSettingsView: View {
         } message: {
             Text("Remove \(unavailableLabelers.count) unavailable labeler(s) from your subscribed moderation services?")
         }
-        .task {
-            await loadPreferences()
-            await loadLabelers()
-        }
-        .refreshable {
-            await loadPreferences()
-            await loadLabelers()
-            
-            if showMutedAccounts {
-                await loadMutedAccounts()
-            }
-            
-            if showBlockedAccounts {
-                await loadBlockedAccounts()
-            }
-        }
+        .task(id: appState.userDID) { await loadPreferences() }
+        .refreshable { await loadPreferences() }
     }
     
     private func loadPreferences() async {
@@ -479,7 +382,7 @@ struct ModerationSettingsView: View {
             guard manager.accountDID == account else { return }
             unavailableLabelers = []
             // Refresh hub
-            await loadLabelers()
+
         } catch {
             errorMessage = "Error cleaning up labelers: \(error.localizedDescription)"
         }

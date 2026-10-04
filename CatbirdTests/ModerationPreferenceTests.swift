@@ -241,6 +241,138 @@ struct ModerationPreferenceTests {
         #expect(fixture.items.contains { if case .adultContentPref = $0 { return true }; return false })
     }
 
+    @Test("Refresh finishes before the next focused transaction can publish")
+    @MainActor
+    func queuedRefreshCannotOverwriteEdit() async throws {
+        let fixture = SafetyPreferencesFixture(items: [.contentLabelPref(.init(label: "graphic", visibility: "warn"))])
+        let (manager, local) = try fixture.makeManager()
+        fixture.pauseNextRead = true
+        let refresh = Task { try await manager.fetchPreferences(forceRefresh: true) }
+        try await fixture.waitForPausedRead()
+        let edit = Task { try await manager.setContentLabelVisibility(label: "graphic", visibility: "hide") }
+        for _ in 0..<20 { await Task.yield() }
+        #expect(fixture.writes.isEmpty)
+        fixture.resumeRead()
+        try await refresh.value
+        try await edit.value
+        #expect(local.contentLabelPrefs.first?.visibility == "hide")
+        #expect(fixture.labels.first?.visibility == "hide")
+    }
+
+    @Test("Generic unrelated writes retain fresh remote safety fields")
+    @MainActor
+    func genericSyncPreservesRemoteSafety() async throws {
+        let service = try DID(didString: "did:plc:remote-service")
+        let fixture = SafetyPreferencesFixture(items: [
+            .contentLabelPref(.init(labelerDid: service, label: "custom", visibility: "hide")),
+            .adultContentPref(.init(enabled: true)),
+            .mutedWordsPref(.init(items: [.init(id: "fresh", value: "example", targets: [.tag])])),
+            .labelersPref(.init(labelers: [.init(did: service)]))
+        ])
+        let (manager, local) = try fixture.makeManager()
+        local.contentLabelPrefs = [.init(labelerDid: nil, label: "custom", visibility: "ignore")]
+        local.adultContentEnabled = false
+        local.savedFeeds = ["at://did:plc:feed/app.bsky.feed.generator/test"]
+        try await manager.saveAndSyncPreferences(local)
+        #expect(fixture.labels.count == 1)
+        #expect(fixture.labels.first?.labelerDid == service)
+        #expect(fixture.labels.first?.visibility == "hide")
+        #expect(fixture.items.contains { if case .adultContentPref(let p) = $0 { return p.enabled }; return false })
+        #expect(fixture.items.contains { if case .mutedWordsPref(let p) = $0 { return p.items.first?.id == "fresh" }; return false })
+        #expect(fixture.items.contains { if case .labelersPref(let p) = $0 { return p.labelers.first?.did == service }; return false })
+    }
+
+    @Test("Inherited scoped reset removes exactly one key")
+    @MainActor
+    func scopedResetPreservesOtherKeys() async throws {
+        let a = try DID(didString: "did:plc:service-a")
+        let b = try DID(didString: "did:plc:service-b")
+        let fixture = SafetyPreferencesFixture(items: [
+            .contentLabelPref(.init(label: "custom", visibility: "hide")),
+            .contentLabelPref(.init(labelerDid: a, label: "custom", visibility: "ignore")),
+            .contentLabelPref(.init(labelerDid: b, label: "custom", visibility: "warn"))])
+        let (manager, _) = try fixture.makeManager()
+        try await manager.removeContentLabelOverride(label: "custom", labelerDid: a)
+        #expect(fixture.labels.count == 2)
+        #expect(!fixture.labels.contains { $0.labelerDid == a })
+        #expect(fixture.labels.contains { $0.labelerDid == b })
+        #expect(fixture.labels.contains { $0.labelerDid == nil })
+    }
+
+    @Test("Default rows are not confirmed empty policies")
+    @MainActor
+    func confirmedPolicyAuthority() async throws {
+        let fixture = SafetyPreferencesFixture(items: [.mutedWordsPref(.init(items: []))])
+        let (manager, _) = try fixture.makeManager()
+        #expect(try manager.confirmedFeedFilterPreferences() == nil)
+        try await manager.setContentLabelVisibility(label: "graphic", visibility: "warn")
+        let confirmed = try manager.confirmedFeedFilterPreferences()
+        #expect(confirmed?.hasConfirmedServerPreferences == true)
+        #expect(confirmed?.mutedWords.isEmpty == true)
+    }
+
+    @Test("Optional local fields preserve actual absence")
+    func optionalLocalAbsence() {
+        let local = Preferences()
+        #expect(local.threadViewPref == nil)
+        #expect(local.feedViewPref == nil)
+        local.threadViewPref = .init(sort: "newest", prioritizeFollowedUsers: true)
+        local.threadViewPref = nil
+        #expect(local.threadViewPref == nil)
+    }
+
+    @Test("Paged account lists deduplicate and retry failed removals without false success")
+    @MainActor
+    func accountListPagingAndRemoval() async {
+        let a = ModeratedAccountsModel.Entry(did: "a", handle: "a.test", displayName: nil, avatar: nil)
+        let b = ModeratedAccountsModel.Entry(did: "b", handle: "b.test", displayName: nil, avatar: nil)
+        var removeSucceeds = false
+        var requests: [String?] = []
+        let model = ModeratedAccountsModel()
+        model.configure(.init(isCurrent: { true }, fetch: { cursor in
+            requests.append(cursor)
+            return cursor == nil ? .init(entries: [a], cursor: "next") : .init(entries: [a, b], cursor: nil)
+        }, remove: { _ in removeSucceeds }))
+        await model.loadNextPage()
+        await model.loadNextPage()
+        #expect(model.entries.map(\.did) == ["a", "b"])
+        #expect(requests == [nil, "next"])
+        await model.remove(a)
+        #expect(model.entries.map(\.did) == ["a", "b"])
+        #expect(model.errorMessage != nil)
+        removeSucceeds = true
+        await model.retry()
+        #expect(model.entries.map(\.did) == ["b"])
+        #expect(model.errorMessage == nil)
+    }
+
+    @Test("Muted words honor targets, expiry, following exclusions, and alt text")
+    func completeMutedWordRules() {
+        let now = Date(timeIntervalSince1970: 100)
+        func word(_ value: String = "cafe", targets: [String] = ["content"],
+                  actor: String? = nil, expiry: Date? = nil) -> MutedWord {
+            .init(id: "word", value: value, targets: targets, actorTarget: actor, expiresAt: expiry)
+        }
+        func matches(_ rule: MutedWord, text: String = "", tags: [String] = [],
+                     alt: String = "", followed: Bool = false) -> Bool {
+            MutedWordMatcher.matches(text: text, tags: tags, altText: alt,
+                                     authorIsFollowed: followed, words: [rule], now: now)
+        }
+        #expect(matches(word(), text: "A CAFÉ"))
+        #expect(matches(word(), alt: "A cafe table"))
+        #expect(!matches(word(targets: ["tag"]), text: "cafe", alt: "cafe"))
+        #expect(matches(word("#cafe", targets: ["tag"]), tags: ["CAFÉ"]))
+        #expect(!matches(word("cafe", targets: ["tag"]), tags: ["cafeteria"]))
+        #expect(!matches(word(actor: "exclude-following"), text: "cafe", followed: true))
+        #expect(matches(word(actor: "exclude-following"), text: "cafe", followed: false))
+        #expect(!matches(word(expiry: now), text: "cafe"))
+        #expect(!matches(word(expiry: now.addingTimeInterval(-1)), text: "cafe"))
+        #expect(matches(word(expiry: now.addingTimeInterval(1)), text: "cafe"))
+        #expect(!matches(word("  "), text: "anything"))
+        #expect(!matches(word("#", targets: ["tag"]), tags: ["cafe"]))
+        #expect(!matches(word(targets: []), text: "cafe"))
+    }
+
 }
 
 
