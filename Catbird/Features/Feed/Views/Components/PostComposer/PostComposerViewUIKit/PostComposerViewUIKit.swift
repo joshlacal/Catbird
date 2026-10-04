@@ -76,6 +76,10 @@ struct PostComposerViewUIKit: View {
   }
   @State private var positionedReply: ReplyEditorPosition?
   @State private var userScrolledReplyClaim: ComposerDraftClaim?
+  /// The scroll view's unobscured height (after navigation, keyboard and footer
+  /// insets). The reply area fills exactly this so the editor can sit at the top
+  /// without leaving scrollable blank space below it.
+  @State private var replyVisibleHeight: CGFloat = 0
   @State private var replySourcePath = NavigationPath()
   @State private var replySourceSelectedTab = 0
   @State var mentionOverlayCooldownUntil: Date = .distantPast
@@ -460,11 +464,18 @@ struct PostComposerViewUIKit: View {
                 }
                 threadEntriesSection(vm: vm)
               }
-              .frame(minHeight: vm.isReply ? geometry.size.height : nil, alignment: .top)
+              .frame(minHeight: vm.isReply ? replyMinimumHeight(fallback: geometry.size.height) : nil,
+                     alignment: .top)
             }
             .padding(.top, compactReply ? 0 : 8)
           }
           .accessibilityIdentifier("reply-composer-scroll")
+          .onScrollGeometryChange(for: CGFloat.self) { scrollGeometry in
+            scrollGeometry.containerSize.height - scrollGeometry.contentInsets.top
+              - scrollGeometry.contentInsets.bottom
+          } action: { _, visibleHeight in
+            replyVisibleHeight = max(0, visibleHeight)
+          }
           .onScrollPhaseChange { _, phase in
             if phase == .tracking || phase == .interacting || phase == .decelerating {
               userScrolledReplyClaim = vm.editingClaim
@@ -517,6 +528,10 @@ struct PostComposerViewUIKit: View {
     #else
     return false
     #endif
+  }
+
+  private func replyMinimumHeight(fallback: CGFloat) -> CGFloat {
+    replyVisibleHeight > 1 ? min(replyVisibleHeight, fallback) : fallback
   }
 
   private func scrollToReplyEditor(_ proxy: ScrollViewProxy, vm: PostComposerViewModel) {
