@@ -231,6 +231,11 @@ final class PreferencesManager {
   func clearAllPreferences() async {
     logger.info("Clearing preferences for current account due to logout")
 
+    // Invalidate in-flight account operations before any row is deleted.
+    preferenceSessionGeneration &+= 1
+    let clearingGeneration = preferenceSessionGeneration
+    let clearingAccount = accountDID
+    let clearingClient = client
     // Clear cached server preferences
     cachedServerPreferences = nil
 
@@ -258,8 +263,9 @@ final class PreferencesManager {
       logger.info("Preferences for current account successfully cleared")
       state = .ready
       // Also clear accept-labelers header since there are no preferences
-      if let client = client {
-        await client.setAcceptLabelers(dids: [])
+      if let clearingClient {
+        guard preferenceSessionGeneration == clearingGeneration, accountDID == clearingAccount, client === clearingClient else { return }
+        await clearingClient.setAcceptLabelers(dids: [])
       }
     } catch {
       logger.error("Failed to clear preferences: \(error.localizedDescription)")
@@ -277,7 +283,7 @@ final class PreferencesManager {
     state = .loading
 
     // Check if client exists before proceeding
-    guard let client = client else {
+    guard client != nil || specificPreferencesTransport != nil else {
       logger.warning("ATProto client not available for preferences fetch - deferring fetch")
       state = .ready  // Set to ready instead of error to allow app to continue
       return  // Return without throwing error
@@ -289,6 +295,10 @@ final class PreferencesManager {
       state = .error("ModelContext not initialized")
       throw PreferencesManagerError.modelContextNotInitialized
     }
+
+    await acquireSpecificEdit()
+    defer { releaseSpecificEdit() }
+    try validatePreferenceOperation(operation)
 
     do {
       // Try to load from SwiftData first
@@ -341,16 +351,7 @@ final class PreferencesManager {
       // Fetch from server
       logger.info("Fetching preferences from server")
       let feedRevisionAtRequest = feedLibraryWriteRevision
-      let params = AppBskyActorGetPreferences.Parameters()
-      let serverResponse = try await client.app.bsky.actor.getPreferences(input: params)
-      try validatePreferenceOperation(operation)
-
-      guard serverResponse.responseCode >= 200 && serverResponse.responseCode < 300,
-            let resultItems = serverResponse.data?.preferences.items else {
-        logger.error("No preferences data found in server response")
-        state = .error("No preferences data found")
-        throw PreferencesManagerError.invalidData
-      }
+      let resultItems = try await readSpecificPreferenceItems(operation)
 
       // Process all preference types from server
       var serverSavedFeeds: [String] = []
@@ -406,10 +407,11 @@ final class PreferencesManager {
         case .threadViewPref(let value):
           serverThreadViewPref = ThreadViewPreference(
             sort: value.sort,
-            prioritizeFollowedUsers: nil
+            prioritizeFollowedUsers: localPreferences?.threadViewPref?.prioritizeFollowedUsers
           )
 
         case .feedViewPref(let value):
+          guard value.feed == "home" else { continue }
           serverFeedViewPref = FeedViewPreference(
             hideReplies: value.hideReplies,
             hideRepliesByUnfollowed: value.hideRepliesByUnfollowed,
@@ -477,6 +479,7 @@ final class PreferencesManager {
       // A discovery write started or finished during this fetch: retain its newer
       // local feed lists, while still refreshing the unrelated preferences below.
 
+      let beforeRefresh = currentPrefs.detachedSnapshot()
       // Update other preferences directly
       currentPrefs.contentLabelPrefs = serverContentLabelPrefs
       currentPrefs.threadViewPref = serverThreadViewPref
@@ -492,11 +495,11 @@ final class PreferencesManager {
       currentPrefs.postInteractionSettingsPref = serverPostInteractionSettingsPref
       currentPrefs.verificationPrefs = serverVerificationPrefs
       currentPrefs.hideVerificationBadges = serverVerificationPrefs?.hideBadges ?? false
-      await MainActor.run {
-        self.hideVerificationBadges = serverVerificationPrefs?.hideBadges ?? false
-      }
-      // Save the updated local preferences object
-      try await savePreferences(currentPrefs)  // Saves the modified currentPrefs to SwiftData
+      currentPrefs.hasConfirmedServerPreferences = true
+      // Save before publishing derived state; a local failure retains prior values.
+      do { try await savePreferences(currentPrefs) }
+      catch { currentPrefs.restoreValues(from: beforeRefresh); cachedServerPreferences = nil; throw error }
+      self.hideVerificationBadges = serverVerificationPrefs?.hideBadges ?? false
       try validatePreferenceOperation(operation)
       logger.info("Local preferences updated and saved from server data.")
 
@@ -557,10 +560,56 @@ final class PreferencesManager {
     return preferences.first
   }
 
+  /// A created default row is not evidence that an empty remote policy was accepted.
+  @MainActor
+  func confirmedFeedFilterPreferences() throws -> Preferences? {
+    guard let value = try getLocalPreferences(), value.accountDID == accountDID,
+          value.hasConfirmedServerPreferences else { return nil }
+    return value
+  }
+
+  /// Keep known persisted safety rules during legacy-row confirmation failures.
+  /// This fallback never establishes that an empty policy was confirmed.
+  @MainActor
+  func retainedLocalFeedFilterPreferences() throws -> Preferences? {
+    guard let value = try getLocalPreferences(), value.accountDID == accountDID else { return nil }
+    guard value.hasConfirmedServerPreferences || !value.mutedWords.isEmpty || !value.contentLabelPrefs.isEmpty
+      || !value.labelers.isEmpty || !value.hiddenPosts.isEmpty else { return nil }
+    return value
+  }
+
+  /// Map the entire latest filter policy, not just the edited field, after a confirmed response.
+  @MainActor
+  private func applyConfirmedFilterPolicy(_ items: [AppBskyActorDefs.PreferencesForUnionArray], to value: Preferences) {
+    var labels: [ContentLabelPreference] = []
+    var adult = false
+    var words: [MutedWord] = []
+    var hidden: [String] = []
+    var labelers: [LabelerPreference] = []
+    var thread: ThreadViewPreference?
+    var home: FeedViewPreference?
+    for item in items {
+      switch item {
+      case .contentLabelPref(let p): labels.append(.init(labelerDid: p.labelerDid, label: p.label, visibility: p.visibility))
+      case .adultContentPref(let p): adult = p.enabled
+      case .mutedWordsPref(let p): words = p.items.map { .init(id: $0.id ?? "", value: $0.value, targets: $0.targets.map(\.rawValue), actorTarget: $0.actorTarget, expiresAt: $0.expiresAt?.date) }
+      case .hiddenPostsPref(let p): hidden = p.items.map { $0.uriString() }
+      case .labelersPref(let p): labelers = p.labelers.map { .init(did: $0.did) }
+      case .threadViewPref(let p): thread = .init(sort: p.sort, prioritizeFollowedUsers: value.threadViewPref?.prioritizeFollowedUsers)
+      case .feedViewPref(let p) where p.feed == "home":
+        home = .init(hideReplies: p.hideReplies, hideRepliesByUnfollowed: p.hideRepliesByUnfollowed,
+          hideRepliesByLikeCount: p.hideRepliesByLikeCount, hideReposts: p.hideReposts, hideQuotePosts: p.hideQuotePosts)
+      default: break
+      }
+    }
+    value.contentLabelPrefs = labels; value.adultContentEnabled = adult; value.mutedWords = words
+    value.hiddenPosts = hidden; value.labelers = labelers; value.threadViewPref = thread; value.feedViewPref = home
+    value.hasConfirmedServerPreferences = true
+  }
+
   /// Settings editing must not treat the generic offline fallback as a remote refresh.
   @MainActor
   func refreshSettingsPreferences(expectedAccountDID: String? = nil) async throws -> Preferences {
-    guard client != nil else { throw PreferencesManagerError.clientNotInitialized }
     let operation = try capturePreferenceOperation(expectedAccountDID: expectedAccountDID)
     try await fetchPreferences(forceRefresh: true)
     try validatePreferenceOperation(operation)
@@ -616,6 +665,7 @@ final class PreferencesManager {
 
     if let existingPreferences = try await loadPreferences() {
       // Update all properties of the existing preferences
+      existingPreferences.hasConfirmedServerPreferences = preferences.hasConfirmedServerPreferences
       existingPreferences.pinnedFeeds = preferences.pinnedFeeds
       existingPreferences.savedFeeds = preferences.savedFeeds
       existingPreferences.contentLabelPrefs = preferences.contentLabelPrefs
@@ -666,35 +716,47 @@ final class PreferencesManager {
   /// Saves preferences to both SwiftData and Bluesky API
   @MainActor
   func saveAndSyncPreferences(_ preferences: Preferences) async throws {
+    let operation = try capturePreferenceOperation(expectedAccountDID: preferences.accountDID.isEmpty ? nil : preferences.accountDID)
     feedLibraryWriteRevision &+= 1
     defer { feedLibraryWriteRevision &+= 1 }
     let pendingStore = FeedLibraryPendingStore()
-    let replacements = pendingStore.supersedePending(accountDID: accountDID,
+    let replacements = pendingStore.supersedePending(accountDID: operation.accountDID,
       pinned: preferences.pinnedFeeds, saved: preferences.savedFeeds)
+    if let confirmed = try confirmedFeedFilterPreferences(), confirmed !== preferences {
+      preferences.contentLabelPrefs = confirmed.contentLabelPrefs
+      preferences.adultContentEnabled = confirmed.adultContentEnabled
+      preferences.mutedWords = confirmed.mutedWords; preferences.labelers = confirmed.labelers
+      preferences.postInteractionSettingsPref = confirmed.postInteractionSettingsPref
+      preferences.verificationPrefs = confirmed.verificationPrefs
+      preferences.hideVerificationBadges = confirmed.hideVerificationBadges
+      preferences.hasConfirmedServerPreferences = true
+    }
     // First save locally. A failed local write must not replace an older retry intent.
     do { try await savePreferences(preferences) }
     catch {
       for change in replacements {
-        pendingStore.complete(change.replacement, accountDID: accountDID, restoring: change.previous)
+        pendingStore.complete(change.replacement, accountDID: operation.accountDID, restoring: change.previous)
       }
       throw error
     }
 
     // Update cache so getPreferences returns the latest pinnedFeeds order
+    try validatePreferenceOperation(operation)
     cachedServerPreferences = preferences
 
     // Acknowledgment applies only to the retry revisions included in this write.
-    let pendingAtSync = pendingStore.entries(accountDID: accountDID)
-    try await syncToServer(preferences)
-    for entry in pendingAtSync { pendingStore.complete(entry, accountDID: accountDID) }
+    let pendingAtSync = pendingStore.entries(accountDID: operation.accountDID)
+    try await syncToServer(preferences, expectedAccountDID: operation.accountDID)
+    try validatePreferenceOperation(operation)
+    for entry in pendingAtSync { pendingStore.complete(entry, accountDID: operation.accountDID) }
 
     // Refresh cache again post-sync
+    try validatePreferenceOperation(operation)
     cachedServerPreferences = preferences
 
     logger.debug("Preferences saved and synced to server")
 
-    // Apply accept-labelers header based on latest preferences
-    await applyAcceptLabelersHeader(from: preferences)
+    // Safety fields and the labeler header are owned by focused, confirmed edits.
   }
 
   /// Discovery keeps a durable local change when network synchronization fails.
@@ -789,60 +851,31 @@ final class PreferencesManager {
 
   /// Syncs current preferences to the Bluesky API
   @MainActor
-  private func syncToServer(_ preferences: Preferences) async throws {
-    guard let client = client else {
-      logger.warning("ATProto client not available for preferences sync")
-      throw PreferencesManagerError.clientNotInitialized
-    }
-
-    // IMPORTANT: Get current preferences from server first
-    logger.debug("Fetching current server preferences before updating")
-    let params = AppBskyActorGetPreferences.Parameters()
-    let serverPrefs = try await client.app.bsky.actor.getPreferences(input: params)
-
-    guard serverPrefs.responseCode >= 200 && serverPrefs.responseCode < 300,
-          let items = serverPrefs.data?.preferences.items else {
-      throw NSError(
-        domain: "Preferences",
-        code: serverPrefs.responseCode != 0 ? serverPrefs.responseCode : -1,
-        userInfo: [NSLocalizedDescriptionKey: "Failed to fetch existing preferences from server before update"]
-      )
-    }
+  private func syncToServer(_ preferences: Preferences, expectedAccountDID: String? = nil) async throws {
+    let operation = try capturePreferenceOperation(expectedAccountDID: expectedAccountDID ?? (preferences.accountDID.isEmpty ? nil : preferences.accountDID))
+    await acquireSpecificEdit()
+    defer { releaseSpecificEdit() }
+    let items = try await readSpecificPreferenceItems(operation)
 
     // Start with ALL existing preferences from server
     var allPrefItems = items
 
-    // Only remove the specific preferences we're updating
+    // Retained generic callers edit feed membership, hidden posts, NUX, or interests.
+    // All focused fields retain the latest remote records, including unknown/scoped keys.
     allPrefItems.removeAll { item in
       switch item {
       case .savedFeedsPref, .savedFeedsPrefV2:
         return true  // Remove feed prefs as we'll update them
-      case .adultContentPref:
-        return true  // Remove if we're updating it
-      case .contentLabelPref:
-        return true  // Remove all content labels as we'll update them
-      case .threadViewPref:
-        return preferences.threadViewPref != nil  // Only remove if we have a new value
-      case .feedViewPref:
-        return preferences.feedViewPref != nil  // Only remove if we have a new value
       case .personalDetailsPref:
         // Do not alter or write personalDetailsPref via putPreferences.
         return false
-      case .mutedWordsPref:
-        return !preferences.mutedWords.isEmpty  // Only remove if we have muted words
       case .hiddenPostsPref:
         return !preferences.hiddenPosts.isEmpty  // Only remove if we have hidden posts
-      case .labelersPref:
-        return !preferences.labelers.isEmpty  // Only remove if we have labelers
       case .bskyAppStatePref:
         return preferences.activeProgressGuide != nil || !preferences.nuxStates.isEmpty
           || !preferences.queuedNudges.isEmpty  // Only remove if we have app state prefs
       case .interestsPref:
         return !preferences.interests.isEmpty  // Only remove if we have interests
-      case .postInteractionSettingsPref:
-        return preferences.postInteractionSettingsPref != nil
-      case .verificationPrefs:
-        return preferences.verificationPrefs != nil
       default:
         return false  // Keep all other preference types
       }
@@ -903,85 +936,11 @@ final class PreferencesManager {
           timelineIndex: nil
         )))
 
-    // 2. Add all content label preferences
-    for pref in prefsToSync.contentLabelPrefs {
-      allPrefItems.append(
-        .contentLabelPref(
-          AppBskyActorDefs.ContentLabelPref(
-            labelerDid: pref.labelerDid,
-            label: pref.label,
-            visibility: pref.visibility
-          )))
-    }
-
-    // 3. Add adult content preference
-    allPrefItems.append(
-      .adultContentPref(
-        AppBskyActorDefs.AdultContentPref(
-          enabled: prefsToSync.adultContentEnabled
-        )))
-    // 5. Add thread view preferences if present
-    if let threadPref = prefsToSync.threadViewPref {
-      allPrefItems.append(
-        .threadViewPref(
-          AppBskyActorDefs.ThreadViewPref(
-            sort: threadPref.sort
-          )))
-    }
-
-    // 6. Add feed view preferences if present
-    if let feedPref = prefsToSync.feedViewPref {
-      allPrefItems.append(
-        .feedViewPref(
-          AppBskyActorDefs.FeedViewPref(
-            feed: "home",  // Important: Always use "home" for following feed
-            hideReplies: feedPref.hideReplies,
-            hideRepliesByUnfollowed: feedPref.hideRepliesByUnfollowed,
-            hideRepliesByLikeCount: feedPref.hideRepliesByLikeCount,
-            hideReposts: feedPref.hideReposts,
-            hideQuotePosts: feedPref.hideQuotePosts
-          )))
-    }
-
-    // 7. Add muted words if present
-    if !prefsToSync.mutedWords.isEmpty {
-      let mutedWordItems = prefsToSync.mutedWords.map { word -> AppBskyActorDefs.MutedWord in
-        let targets = word.targets.map { target -> AppBskyActorDefs.MutedWordTarget in
-          return target == "content" ? .content : .tag
-        }
-
-        var expiresAtDate: ATProtocolDate?
-        if let expires = word.expiresAt {
-          let dateFormatter = ISO8601DateFormatter()
-          expiresAtDate = ATProtocolDate(iso8601String: dateFormatter.string(from: expires))
-        }
-
-        return AppBskyActorDefs.MutedWord(
-          id: word.id,
-          value: word.value,
-          targets: targets,
-          actorTarget: word.actorTarget,
-          expiresAt: expiresAtDate
-        )
-      }
-
-      allPrefItems.append(.mutedWordsPref(AppBskyActorDefs.MutedWordsPref(items: mutedWordItems)))
-    }
-
     // 8. Add hidden posts if present
     if !prefsToSync.hiddenPosts.isEmpty {
       let hiddenPostUris = prefsToSync.hiddenPosts.compactMap { try? ATProtocolURI(uriString: $0) }
 
       allPrefItems.append(.hiddenPostsPref(AppBskyActorDefs.HiddenPostsPref(items: hiddenPostUris)))
-    }
-
-    // 9. Add labelers if present
-    if !prefsToSync.labelers.isEmpty {
-      let labelerItems = prefsToSync.labelers.map { labeler -> AppBskyActorDefs.LabelerPrefItem in
-        return AppBskyActorDefs.LabelerPrefItem(did: labeler.did)
-      }
-
-      allPrefItems.append(.labelersPref(AppBskyActorDefs.LabelersPref(labelers: labelerItems)))
     }
 
     // 10. Add app state preferences if needed
@@ -1022,29 +981,32 @@ final class PreferencesManager {
         .interestsPref(AppBskyActorDefs.InterestsPref(tags: prefsToSync.interests)))
     }
 
-    // 12. Add post interaction settings if present
-    if let postInteractionPref = prefsToSync.postInteractionSettingsPref {
-      allPrefItems.append(.postInteractionSettingsPref(postInteractionPref))
-    }
-
-    // 13. Add verification preferences if present
-    if let verificationPref = prefsToSync.verificationPrefs {
-      allPrefItems.append(.verificationPrefs(verificationPref))
-    }
     // Create the final preferences object and send to server
     let apiPreferences = AppBskyActorDefs.Preferences(items: allPrefItems)
     let input = AppBskyActorPutPreferences.Input(preferences: apiPreferences)
 
     // Send to server
-    let responseCode = try await client.app.bsky.actor.putPreferences(input: input)
+    try validatePreferenceOperation(operation)
+    let responseCode: Int
+    if let transport = specificPreferencesTransport { responseCode = try await transport.putPreferences(allPrefItems) }
+    else {
+      guard let client = operation.client else { throw PreferencesManagerError.clientNotInitialized }
+      responseCode = try await client.app.bsky.actor.putPreferences(input: input)
+    }
+    try validatePreferenceOperation(operation)
 
-    if responseCode != 200 {
+    if !(200..<300).contains(responseCode) {
       logger.error("Failed to sync preferences to server, response code: \(responseCode)")
       throw NSError(
         domain: "Preferences", code: responseCode,
         userInfo: [NSLocalizedDescriptionKey: "Server returned error code \(responseCode)"])
     }
 
+    let beforeCommit = preferences.detachedSnapshot()
+    applyConfirmedFilterPolicy(allPrefItems, to: preferences)
+    do { try await savePreferences(preferences) }
+    catch { preferences.restoreValues(from: beforeCommit); cachedServerPreferences = nil; throw error }
+    try validatePreferenceOperation(operation)
     logger.info("Successfully synced all preferences to server")
   }
 
@@ -1468,6 +1430,8 @@ final class PreferencesManager {
       let localPrefs = try await getPreferences()
       try validatePreferenceOperation(operation)
 
+      let beforeCommit = localPrefs.detachedSnapshot()
+      applyConfirmedFilterPolicy(allPrefs, to: localPrefs)
       // Update local preferences based on type
       switch preferenceType {
       case "savedFeeds":
@@ -1544,21 +1508,39 @@ final class PreferencesManager {
       case "verification":
         localPrefs.verificationPrefs = (updatedValue as? [AppBskyActorDefs.VerificationPrefs])?.first
         localPrefs.hideVerificationBadges = localPrefs.verificationPrefs?.hideBadges ?? false
-        hideVerificationBadges = localPrefs.hideVerificationBadges
 
       default:
         break
       }
 
-      try await savePreferences(localPrefs)
+      do { try await savePreferences(localPrefs) }
+      catch {
+        localPrefs.restoreValues(from: beforeCommit)
+        cachedServerPreferences = nil
+        state = .error("The server saved this change, but local storage failed. Reload preferences to recover.")
+        throw error
+      }
       try validatePreferenceOperation(operation)
       cachedServerPreferences = localPrefs
+      if preferenceType == "verification" { hideVerificationBadges = localPrefs.hideVerificationBadges }
+      if ["adultContent", "contentLabels", "mutedWords", "hiddenPosts", "labelers", "feedView", "threadView"].contains(preferenceType) {
+        NotificationCenter.default.post(name: NSNotification.Name("FeedPreferencesChanged"), object: nil,
+                                        userInfo: ["accountDID": operation.accountDID])
+      }
       if preferenceType == "adultContent" {
         sharedDefaults.set(localPrefs.adultContentEnabled, forKey: scopedKey("isAdultContentEnabled"))
       } else if preferenceType == "labelers" {
         await applyAcceptLabelersHeader(from: localPrefs)
         try validatePreferenceOperation(operation)
       }
+    }
+  }
+
+  @MainActor
+  func removeContentLabelOverride(label: String, labelerDid: DID, expectedAccountDID: String? = nil) async throws {
+    try await updateSpecificPreferences(preferenceType: "contentLabels", expectedAccountDID: expectedAccountDID) {
+      (current: [AppBskyActorDefs.ContentLabelPref]?) in
+      (current ?? []).filter { !($0.label == label && $0.labelerDid?.didString() == labelerDid.didString()) }
     }
   }
 
@@ -1707,13 +1689,15 @@ final class PreferencesManager {
     // You would need to handle more complex types like contentLabelPrefs
     // This is just a simplified example
 
-    if let adultContentEnabled = backup["adultContentEnabled"] as? Bool {
-      preferences.adultContentEnabled = adultContentEnabled
-    }
+    let restoredAdultContent = backup["adultContentEnabled"] as? Bool
+    let restoringAccount = accountDID
 
     // Validate and save
     try validatePreferences(preferences)
     try await saveAndSyncPreferences(preferences)
+    if let restoredAdultContent {
+      try await updateAdultContentEnabled(restoredAdultContent, expectedAccountDID: restoringAccount)
+    }
   }
 
   /// Add the missing updatePreference function
@@ -1905,9 +1889,10 @@ final class PreferencesManager {
   /// Updates feed view preference and syncs to server
   @MainActor
   func updateFeedViewPreference(_ feedViewPref: FeedViewPreference) async throws {
-    let preferences = try await getPreferences()
-    preferences.feedViewPref = feedViewPref
-    try await saveAndSyncPreferences(preferences)
+    try await setFeedViewPreferences(hideReplies: feedViewPref.hideReplies,
+      hideRepliesByUnfollowed: feedViewPref.hideRepliesByUnfollowed,
+      hideRepliesByLikeCount: feedViewPref.hideRepliesByLikeCount,
+      hideReposts: feedViewPref.hideReposts, hideQuotePosts: feedViewPref.hideQuotePosts)
   }
 
   // MARK: - Post Interaction Settings (G40)

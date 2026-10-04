@@ -448,7 +448,8 @@ struct FeedFilter: Identifiable, Hashable {
     activeFilterIds.formUnion(filters.filter(\.isEnabled).map(\.id))
     defaults.set(Array(activeFilterIds), forKey: key("FeedFilterActiveFilters"))
     defaults.set(sortMode.rawValue, forKey: key("FeedSortMode"))
-    NotificationCenter.default.post(name: NSNotification.Name("FeedFiltersChanged"), object: nil)
+    NotificationCenter.default.post(name: NSNotification.Name("FeedFiltersChanged"), object: self,
+      userInfo: ["accountDID": accountDID])
   }
 
   // Update the mute word processor

@@ -40,7 +40,7 @@ actor ContentFilterService {
   // MARK: - Individual Post Filtering
   
   /// Check if a FeedViewPost should be shown based on filtering rules
-  func shouldShowFeedViewPost(_ post: AppBskyFeedDefs.FeedViewPost, settings: FeedTunerSettings) -> Bool {
+  nonisolated func shouldShowFeedViewPost(_ post: AppBskyFeedDefs.FeedViewPost, settings: FeedTunerSettings) -> Bool {
     // Check if post is hidden (strongest filter after blocking)
     let postURI = post.post.uri.uriString()
     if settings.hiddenPosts.contains(postURI) {
@@ -89,9 +89,12 @@ actor ContentFilterService {
       }
     }
     
+    if MutedWordMatcher.matches(feedPost: post, words: settings.mutedWords, now: Date()) { return false }
+    if !passesLocalPostType(post.post, settings: settings) { return false }
+
     // Check reply filtering
     let isReply = post.reply != nil
-    if settings.hideReplies && isReply {
+    if settings.hideReplies && isReply && authorDID != settings.currentUserDid {
       logger.debug("Filtered: reply post (hideReplies enabled)")
       return false
     }
@@ -126,42 +129,15 @@ actor ContentFilterService {
         return false
       }
     }
-    // Check language filtering
-    if settings.hideNonPreferredLanguages && !settings.preferredLanguages.isEmpty {
-      if case .knownType(let record) = post.post.record,
-         let feedPost = record as? AppBskyFeedPost {
-        
-        var hasPreferredLanguage = false
-        
-        if let postLanguages = feedPost.langs, !postLanguages.isEmpty {
-          hasPreferredLanguage = postLanguages.contains { postLangContainer in
-            settings.preferredLanguages.contains { prefLang in
-              let postLangCode = postLangContainer.lang.languageCode?.identifier ?? postLangContainer.lang.minimalIdentifier
-              return postLangCode == prefLang
-            }
-          }
-        } else {
-          // No language metadata - use detection
-          let postText = feedPost.text
-          if !postText.isEmpty {
-            let detectedLanguage = LanguageDetector.shared.detectLanguage(for: postText)
-            if let detectedLang = detectedLanguage {
-              hasPreferredLanguage = settings.preferredLanguages.contains(detectedLang)
-            } else {
-              hasPreferredLanguage = true  // Allow if can't detect
-            }
-          } else {
-            hasPreferredLanguage = true  // Allow if no text
-          }
-        }
-        
-        if !hasPreferredLanguage {
-          logger.debug("Filtered: non-preferred language")
-          return false
-        }
-      }
+    // Declared and detected languages use the same account-local reading rules.
+    if settings.hideNonPreferredLanguages,
+       case .knownType(let record) = post.post.record,
+       let feedPost = record as? AppBskyFeedPost,
+       !ReadingLanguagePolicy.allows(declaredLanguages: feedPost.langs?.map { $0.lang.minimalIdentifier } ?? [],
+         preferredLanguages: settings.preferredLanguages, text: feedPost.text) {
+      return false
     }
-    
+
     // Check quote post filtering
     let isQuotePost: Bool = {
       guard case .knownType(let record) = post.post.record,
@@ -237,7 +213,7 @@ actor ContentFilterService {
   }
   
   /// Check if a PostView should be shown based on filtering rules
-  func shouldShowPostView(_ post: AppBskyFeedDefs.PostView, settings: FeedTunerSettings) -> Bool {
+  nonisolated func shouldShowPostView(_ post: AppBskyFeedDefs.PostView, settings: FeedTunerSettings) -> Bool {
     // Check if post author is blocked (strongest filter)
     let authorDID = post.author.did.didString()
     if settings.blockedUsers.contains(authorDID) {
@@ -251,42 +227,17 @@ actor ContentFilterService {
       return false
     }
     
-    // Check language filtering
-    if settings.hideNonPreferredLanguages && !settings.preferredLanguages.isEmpty {
-      if case .knownType(let record) = post.record,
-         let feedPost = record as? AppBskyFeedPost {
-        
-        var hasPreferredLanguage = false
-        
-        if let postLanguages = feedPost.langs, !postLanguages.isEmpty {
-          hasPreferredLanguage = postLanguages.contains { postLangContainer in
-            settings.preferredLanguages.contains { prefLang in
-              let postLangCode = postLangContainer.lang.languageCode?.identifier ?? postLangContainer.lang.minimalIdentifier
-              return postLangCode == prefLang
-            }
-          }
-        } else {
-          // No language metadata - use detection
-          let postText = feedPost.text
-          if !postText.isEmpty {
-            let detectedLanguage = LanguageDetector.shared.detectLanguage(for: postText)
-            if let detectedLang = detectedLanguage {
-              hasPreferredLanguage = settings.preferredLanguages.contains(detectedLang)
-            } else {
-              hasPreferredLanguage = true
-            }
-          } else {
-            hasPreferredLanguage = true
-          }
-        }
-        
-        if !hasPreferredLanguage {
-          logger.debug("Filtered: non-preferred language")
-          return false
-        }
-      }
+    if MutedWordMatcher.matches(post: post, words: settings.mutedWords, now: Date()) { return false }
+
+    // Declared and detected languages use the same account-local reading rules.
+    if settings.hideNonPreferredLanguages,
+       case .knownType(let record) = post.record,
+       let feedPost = record as? AppBskyFeedPost,
+       !ReadingLanguagePolicy.allows(declaredLanguages: feedPost.langs?.map { $0.lang.minimalIdentifier } ?? [],
+         preferredLanguages: settings.preferredLanguages, text: feedPost.text) {
+      return false
     }
-    
+
     // Check content label filtering
     if !settings.contentLabelPreferences.isEmpty || settings.hideAdultContent {
       if let labels = post.labels, !labels.isEmpty {
@@ -316,4 +267,38 @@ actor ContentFilterService {
     
     return true
   }
+  private nonisolated func passesLocalPostType(_ post: AppBskyFeedDefs.PostView, settings: FeedTunerSettings) -> Bool {
+    if settings.onlyTextPosts && post.embed != nil { return false }
+    if settings.onlyMediaPosts {
+      let hasMedia: Bool
+      guard let embed = post.embed else { return false }
+      switch embed {
+      case .appBskyEmbedImagesView, .appBskyEmbedGalleryView, .appBskyEmbedVideoView: hasMedia = true
+      case .appBskyEmbedRecordWithMediaView(let value):
+        switch value.media {
+        case .appBskyEmbedImagesView, .appBskyEmbedGalleryView, .appBskyEmbedVideoView: hasMedia = true
+        default: hasMedia = false
+        }
+      default: hasMedia = false
+      }
+      if !hasMedia { return false }
+    }
+    if settings.hideLinks {
+      if let embed = post.embed {
+        switch embed {
+        case .appBskyEmbedExternalView: return false
+        case .appBskyEmbedRecordWithMediaView(let value):
+          if case .appBskyEmbedExternalView = value.media { return false }
+        default: break
+        }
+      }
+      if case .knownType(let record) = post.record, let value = record as? AppBskyFeedPost {
+        for facet in value.facets ?? [] {
+          if facet.features.contains(where: { if case .appBskyRichtextFacetLink = $0 { return true }; return false }) { return false }
+        }
+      }
+    }
+    return true
+  }
+
 }

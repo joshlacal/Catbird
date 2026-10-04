@@ -82,7 +82,8 @@ final class FeedPreferenceEditor {
       confirmedAction = nil
       self.pending = nil
       error = nil
-      NotificationCenter.default.post(name: NSNotification.Name("FeedPreferencesChanged"), object: nil)
+      NotificationCenter.default.post(name: NSNotification.Name("FeedPreferencesChanged"), object: self,
+        userInfo: ["accountDID": accountDID])
     } catch {
       guard !Task.isCancelled, isCurrentAccount() else { return }
       self.error = "This change hasn’t been confirmed by Bluesky. \(error.localizedDescription)"

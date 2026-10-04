@@ -1494,56 +1494,47 @@ final class AppState {
     /// This ensures consistent filtering across feeds, threads, profiles, and search
     @MainActor
     func buildFilterSettings() async -> FeedTunerSettings {
-        // Get current user DID (AppState represents single account)
-        let currentUserDid = userDID
-
-        // Get moderation preferences from PreferencesManager
-        var contentLabelPrefs: [ContentLabelPreference] = []
-        var adultContentEnabled = false
-        var preferredLanguages: [String] = []
-        var feedViewPref: FeedViewPreference?
-
-        let preferences = try? await preferencesManager.getPreferences()
-        contentLabelPrefs = preferences?.contentLabelPrefs ?? []
-        adultContentEnabled = preferences?.adultContentEnabled ?? false
-        preferredLanguages = preferences?.contentLanguages ?? ["en"]
-        feedViewPref = preferences?.feedViewPref
-
-        // Get muted and blocked users from GraphManager
-        let mutedUsers = graphManager.muteCache
-        let blockedUsers = graphManager.blockCache
-
-        // Get feed filter settings (quick filters - these override server prefs)
-        let hideRepliesQuick = feedFilterSettings.hideReplies
-        let hideRepostsQuick = feedFilterSettings.hideReposts
-        let hideQuotePostsQuick = feedFilterSettings.hideQuotePosts
-        let hideLinks = feedFilterSettings.hideLinks
-        let onlyTextPosts = feedFilterSettings.onlyTextPosts
-        let onlyMediaPosts = feedFilterSettings.onlyMediaPosts
-
-        // Get hidden posts from PostHidingManager
-        let hiddenPosts = postHidingManager.hiddenPosts
-
-        // Build settings - combine quick filters with server-synced preferences
-        return FeedTunerSettings(
-            hideReplies: hideRepliesQuick || (feedViewPref?.hideReplies ?? false),
-            hideRepliesByUnfollowed: feedViewPref?.hideRepliesByUnfollowed ?? false,
-            hideRepliesByLikeCount: feedViewPref?.hideRepliesByLikeCount,
-            hideReposts: hideRepostsQuick || (feedViewPref?.hideReposts ?? false),
-            hideQuotePosts: hideQuotePostsQuick || (feedViewPref?.hideQuotePosts ?? false),
-            hideNonPreferredLanguages: !preferredLanguages.isEmpty && preferredLanguages != ["en"],
-            preferredLanguages: preferredLanguages,
-            mutedUsers: mutedUsers,
-            blockedUsers: blockedUsers,
-            hideLinks: hideLinks,
-            onlyTextPosts: onlyTextPosts,
-            onlyMediaPosts: onlyMediaPosts,
-            contentLabelPreferences: contentLabelPrefs,
-            hideAdultContent: !adultContentEnabled,
-            hiddenPosts: hiddenPosts,
-            currentUserDid: currentUserDid
-        )
+        let confirmed = (try? preferencesManager.confirmedFeedFilterPreferences()).map(FeedPreferenceSnapshot.init)
+        let retainedLocal = confirmed == nil
+            ? (try? preferencesManager.retainedLocalFeedFilterPreferences()).map(FeedPreferenceSnapshot.init) : nil
+        let snapshot = FeedPreferenceSnapshotStore.shared.resolve(accountDID: userDID,
+            confirmed: confirmed, retainedLocal: retainedLocal)
+        return makeFilterSettings(snapshot: snapshot)
     }
+
+    /// A side-effect-free snapshot shared by feed and search consumers.
+    @MainActor
+    func makeFilterSettings(preferences suppliedPreferences: Preferences?, localFilters: FeedFilterSettings? = nil) -> FeedTunerSettings {
+        makeFilterSettings(snapshot: suppliedPreferences.map(FeedPreferenceSnapshot.init), localFilters: localFilters)
+    }
+
+    @MainActor
+    func makeFilterSettings(snapshot suppliedSnapshot: FeedPreferenceSnapshot?, localFilters: FeedFilterSettings? = nil) -> FeedTunerSettings {
+        let preferences = suppliedSnapshot?.accountDID == userDID ? suppliedSnapshot : nil
+        let feed = preferences?.feedViewPref
+        let filters = localFilters ?? feedFilterSettings
+        var settings = FeedTunerSettings(
+            hideReplies: filters.hideReplies || (feed?.hideReplies ?? false),
+            hideRepliesByUnfollowed: feed?.hideRepliesByUnfollowed ?? false,
+            hideRepliesByLikeCount: feed?.hideRepliesByLikeCount,
+            hideReposts: filters.hideReposts || (feed?.hideReposts ?? false),
+            hideQuotePosts: filters.hideQuotePosts || (feed?.hideQuotePosts ?? false),
+            hideNonPreferredLanguages: appSettings.hideNonPreferredLanguages || filters.isFilterEnabled(name: "Filter by Language"),
+            preferredLanguages: appSettings.contentLanguages,
+            mutedUsers: graphManager.muteCache,
+            blockedUsers: graphManager.blockCache,
+            hideLinks: filters.hideLinks,
+            onlyTextPosts: filters.onlyTextPosts,
+            onlyMediaPosts: filters.onlyMediaPosts,
+            contentLabelPreferences: preferences?.contentLabelPrefs ?? [],
+            hideAdultContent: !(preferences?.adultContentEnabled ?? isAdultContentEnabled),
+            hiddenPosts: postHidingManager.hiddenPosts,
+            currentUserDid: userDID
+        )
+        settings.mutedWords = preferences?.mutedWords ?? []
+        return settings
+    }
+
 }
 
 // MARK: - Prefetched Feed Cache

@@ -43,6 +43,7 @@ final class Preferences {
   private var verificationPrefsData: String = "{}"
 
   // Simple properties
+  var hasConfirmedServerPreferences: Bool = false
   var adultContentEnabled: Bool = false
   var hideVerificationBadges: Bool = false
   var activeProgressGuide: String?
@@ -89,6 +90,7 @@ final class Preferences {
 
   var threadViewPref: ThreadViewPreference? {
     get {
+      guard threadViewPrefData != "{}" else { return nil }
       return try? JSONDecoder().decode(
         ThreadViewPreference.self, from: Data(threadViewPrefData.utf8))
     }
@@ -103,6 +105,7 @@ final class Preferences {
 
   var feedViewPref: FeedViewPreference? {
     get {
+      guard feedViewPrefData != "{}" else { return nil }
       return try? JSONDecoder().decode(FeedViewPreference.self, from: Data(feedViewPrefData.utf8))
     }
     set {
@@ -220,6 +223,35 @@ final class Preferences {
   }
 
   // Initialize with all the preferences
+  /// A detached value copy for restoring an in-memory managed row after save failure.
+  func detachedSnapshot() -> Preferences {
+    let copy = Preferences(accountDID: accountDID)
+    copy.restoreValues(from: self)
+    return copy
+  }
+
+  func restoreValues(from value: Preferences) {
+    hasConfirmedServerPreferences = value.hasConfirmedServerPreferences
+    pinnedFeeds = value.pinnedFeeds
+    savedFeeds = value.savedFeeds
+    contentLabelPrefs = value.contentLabelPrefs
+    threadViewPref = value.threadViewPref
+    feedViewPref = value.feedViewPref
+    adultContentEnabled = value.adultContentEnabled
+    mutedWords = value.mutedWords
+    hiddenPosts = value.hiddenPosts
+    labelers = value.labelers
+    activeProgressGuide = value.activeProgressGuide
+    queuedNudges = value.queuedNudges
+    nuxStates = value.nuxStates
+    interests = value.interests
+    postInteractionSettingsPref = value.postInteractionSettingsPref
+    verificationPrefs = value.verificationPrefs
+    hideVerificationBadges = value.hideVerificationBadges
+    primaryLanguage = value.primaryLanguage
+    contentLanguages = value.contentLanguages
+  }
+
   init(
     accountDID: String = "",
     savedFeeds: [String] = [],

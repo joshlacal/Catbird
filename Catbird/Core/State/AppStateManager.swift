@@ -84,6 +84,9 @@ final class AppStateManager {
   /// Current application lifecycle state
   private(set) var lifecycle: AppLifecycle = .launching {
     didSet {
+      if lifecycle.userDID != oldValue.userDID || lifecycle.isAuthenticated != oldValue.isAuthenticated {
+        settingsAccountContextRevision &+= 1
+      }
       if !composerSwitchQueue.isSwitching,
          !lifecycle.isAuthenticated || lifecycle.userDID != oldValue.userDID {
         composerSwitchQueue.invalidate()
@@ -105,6 +108,9 @@ final class AppStateManager {
   /// NO GUEST STATES - only authenticated accounts are cached
   private var authenticatedStates: [String: AppState] = [:]
 
+  /// Fences Settings callbacks when an account leaves and later returns.
+  private(set) var settingsAccountContextRevision: UInt64 = 0
+  private let settingsSwitchPreflight = SettingsAccountSwitchPreflight()
   private let composerSwitchQueue = ComposerAccountSwitchQueue()
   private let accountSwitchOperationBarrier = AccountSwitchOperationBarrier()
   private var isLoggingOut = false
@@ -832,6 +838,40 @@ final class AppStateManager {
     guard let userDID = normalizedUserDID(userDID) else {
       return .failed(AccountSwitchError.invalidDID.localizedDescription)
     }
+
+    let settingsSource = lifecycle.appState
+    let settingsSourceDID = settingsSource?.userDID
+    let settingsRevision = settingsAccountContextRevision
+    let settingsResolution = await settingsSwitchPreflight.resolve(
+      hasPendingChanges: settingsSource?.appSettings.hasPendingChanges == true,
+      isCurrent: {
+        self.settingsAccountContextRevision == settingsRevision
+          && self.lifecycle.appState === settingsSource
+          && !self.isTransitioning && !self.isLoggingOut
+          && !self.composerSwitchQueue.isSwitching && !self.accountSwitchRequiresRestart
+      },
+      accountOperationInProgress: { SettingsAccountOperationGate.activeAccountDID != nil },
+      savePending: {
+        guard let settingsSource, let settingsSourceDID else { return false }
+        return await settingsSource.appSettings.resolvePendingChanges(
+          for: settingsSourceDID, decision: .save
+        ) == .resolved
+      }
+    )
+    switch settingsResolution {
+    case .allowed: break
+    case .busy: return .busy
+    case .cancelled, .accountChanged: return .cancelled
+    case .saveFailed:
+      return .failed("Your Settings changes could not be saved. Retry or discard them in Settings before switching accounts.")
+    }
+
+    guard !Task.isCancelled else { return .cancelled }
+    guard settingsAccountContextRevision == settingsRevision,
+          lifecycle.appState === settingsSource else { return .cancelled }
+    guard !isTransitioning, !isLoggingOut, !composerSwitchQueue.isSwitching,
+          !accountSwitchRequiresRestart,
+          SettingsAccountOperationGate.activeAccountDID == nil else { return .busy }
 
     let admission = composerSwitchQueue.begin(
       to: userDID,
