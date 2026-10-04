@@ -9,15 +9,17 @@ struct VideoFeedPlayerPoolTests {
     let pool: VideoFeedPlayerPool
     let players: [FixtureVideoPlayer]
     let items: [FixtureVideoItem]
+    let audioSession: FixtureVideoAudioSession
   }
 
   private func fixture() -> Fixture {
     let players = (0..<3).map { _ in FixtureVideoPlayer() }
     let items = (0..<8).map { _ in FixtureVideoItem() }
-    let pool = VideoFeedPlayerPool(players: players) { url in
+    let audioSession = FixtureVideoAudioSession()
+    let pool = VideoFeedPlayerPool(players: players, audioSession: audioSession) { url in
       items[Int(url.lastPathComponent)!]
     }
-    return Fixture(pool: pool, players: players, items: items)
+    return Fixture(pool: pool, players: players, items: items, audioSession: audioSession)
   }
 
   private func sources(_ indices: [Int]) -> [(index: Int, url: URL)] {
@@ -56,7 +58,7 @@ struct VideoFeedPlayerPoolTests {
   func failedItemRetry() {
     let players = (0..<3).map { _ in FixtureVideoPlayer() }
     var created: [FixtureVideoItem] = []
-    let pool = VideoFeedPlayerPool(players: players) { _ in
+    let pool = VideoFeedPlayerPool(players: players, audioSession: FixtureVideoAudioSession()) { _ in
       let item = FixtureVideoItem()
       created.append(item)
       return item
@@ -217,13 +219,113 @@ struct VideoFeedPlayerPoolTests {
   @Test("Pool deallocation removes observers and releases loaded items")
   func deallocation() {
     let players = (0..<3).map { _ in FixtureVideoPlayer() }
-    var pool: VideoFeedPlayerPool? = VideoFeedPlayerPool(players: players) { _ in FixtureVideoItem() }
+    var pool: VideoFeedPlayerPool? = VideoFeedPlayerPool(
+      players: players, audioSession: FixtureVideoAudioSession()
+    ) { _ in FixtureVideoItem() }
     weak var releasedPool = pool
     pool?.prewarm(activeIndex: 0, items: sources([0, 1]))
     pool?.play(feedIndex: 0)
     pool = nil
     #expect(releasedPool == nil)
     #expect(players.allSatisfy { $0.currentItem == nil && $0.periodicObserver == nil })
+  }
+
+  @Test("Unmuted playback acquires audio while prewarming and inactive requests do not")
+  func audiblePlaybackOwnership() {
+    let fixture = fixture()
+    let pool = fixture.pool
+    let audio = fixture.audioSession
+    #expect(!pool.isMuted)
+    pool.prewarm(activeIndex: 0, items: sources([0, 1]))
+    pool.play(feedIndex: 1)
+    #expect(audio.owners.isEmpty)
+    #expect(audio.acquisitions == 0)
+    pool.play(feedIndex: 0)
+    #expect(audio.owners.count == 1)
+    #expect(fixture.players[0].isMuted == pool.isMuted)
+    pool.play(feedIndex: 0)
+    #expect(audio.acquisitions == 1)
+    pool.pauseAll()
+    #expect(audio.owners.isEmpty)
+    #expect(!pool.isMuted)
+    pool.play(feedIndex: 0)
+    #expect(audio.acquisitions == 2)
+    pool.cleanup()
+    pool.cleanup()
+    #expect(audio.owners.isEmpty)
+    #expect(audio.releases == 2)
+  }
+
+  @Test("Mute intent survives page recycling, retry, pause, and resume")
+  func muteIntentSurvivesLifecycle() {
+    let fixture = fixture()
+    let pool = fixture.pool
+    let audio = fixture.audioSession
+    pool.prewarm(activeIndex: 0, items: sources([0, 1]))
+    fixture.players[0].volume = 0.4
+    pool.play(feedIndex: 0)
+    pool.toggleMute()
+    #expect(pool.isMuted)
+    #expect(audio.owners.isEmpty)
+    #expect(fixture.players.allSatisfy { $0.isMuted })
+    #expect(fixture.players[0].volume == 0.4)
+    pool.prewarm(activeIndex: 3, items: sources([2, 3, 4]))
+    pool.play(feedIndex: 3)
+    pool.retry(feedIndex: 3)
+    pool.pauseAll()
+    pool.play(feedIndex: 3)
+    #expect(pool.isMuted)
+    #expect(fixture.players[0].isMuted)
+    #expect(audio.acquisitions == 1)
+    pool.toggleMute()
+    #expect(!pool.isMuted)
+    #expect(audio.owners.count == 1)
+    pool.pauseAll()
+    pool.toggleMute()
+    pool.toggleMute()
+    #expect(audio.owners.isEmpty)
+    #expect(audio.acquisitions == 2)
+    pool.play(feedIndex: 3)
+    #expect(audio.owners.count == 1)
+    #expect(audio.acquisitions == 3)
+    pool.cleanup()
+  }
+
+  @Test("Failed items never acquire audio and playback failure releases its owner")
+  func failedPlaybackReleasesAudio() async {
+    let fixture = fixture()
+    let pool = fixture.pool
+    let audio = fixture.audioSession
+    fixture.items[0].fixtureStatus = .failed
+    pool.prewarm(activeIndex: 0, items: sources([0]))
+    pool.play(feedIndex: 0)
+    #expect(audio.acquisitions == 0)
+    fixture.items[0].fixtureStatus = .readyToPlay
+    pool.retry(feedIndex: 0)
+    #expect(audio.owners.count == 1)
+    NotificationCenter.default.post(name: .AVPlayerItemFailedToPlayToEndTime, object: fixture.items[0])
+    await drainCallbacks()
+    #expect(audio.owners.isEmpty)
+    #expect(audio.releases == 1)
+    pool.cleanup()
+    #expect(audio.releases == 1)
+  }
+
+  @Test("Deallocation releases only the pool's audio owner")
+  func deallocationReleasesAudio() {
+    let audio = FixtureVideoAudioSession()
+    let otherOwner = UUID()
+    audio.acquireVideoPlayback(owner: otherOwner)
+    let players = (0..<3).map { _ in FixtureVideoPlayer() }
+    var pool: VideoFeedPlayerPool? = VideoFeedPlayerPool(players: players, audioSession: audio) { _ in
+      FixtureVideoItem()
+    }
+    pool?.prewarm(activeIndex: 0, items: sources([0]))
+    pool?.play(feedIndex: 0)
+    #expect(audio.owners.count == 2)
+    pool = nil
+    #expect(audio.owners == [otherOwner])
+    #expect(audio.releases == 1)
   }
 
   private func drainCallbacks() async {
@@ -299,4 +401,21 @@ private final class FixtureVideoPlayer: AVPlayer, @unchecked Sendable {
     return NSObject()
   }
   override func removeTimeObserver(_ observer: Any) { periodicObserver = nil }
+}
+
+// Access is confined to the pool suite's MainActor, like the player fixtures.
+private final class FixtureVideoAudioSession: VideoPlaybackAudioSession {
+  var owners: Set<UUID> = []
+  var acquisitions = 0
+  var releases = 0
+
+  func acquireVideoPlayback(owner: UUID) {
+    owners.insert(owner)
+    acquisitions += 1
+  }
+
+  func releaseVideoPlayback(owner: UUID) {
+    owners.remove(owner)
+    releases += 1
+  }
 }

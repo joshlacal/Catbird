@@ -22,6 +22,7 @@ final class AudioRecorderService: NSObject {
   // MARK: - Properties
   
   private var audioRecorder: AVAudioRecorder?
+  private var recordingSessionOwner: UUID?
   private var recordingTimer: Timer?
   private let audioLogger = Logger(subsystem: "blue.catbird", category: "AudioRecorderService")
   
@@ -44,6 +45,16 @@ final class AudioRecorderService: NSObject {
     setupAudioSession()
   }
   
+  isolated deinit {
+    audioRecorder?.delegate = nil
+    audioRecorder?.stop()
+    recordingTimer?.invalidate()
+    levelTimer?.invalidate()
+    if let owner = recordingSessionOwner {
+      AudioSessionManager.shared.resetAfterRecording(owner: owner)
+    }
+  }
+
   // MARK: - Setup
   
   private func setupAudioSession() {
@@ -97,74 +108,66 @@ final class AudioRecorderService: NSObject {
     guard hasPermission else {
       throw AudioRecordingError.permissionDenied
     }
-    
-    guard !isRecording else {
+    guard !isRecording, recordingSessionOwner == nil else {
       audioLogger.debug("Recording already in progress")
       return
     }
-    
-    // Configure audio session for recording
-    #if os(iOS)
-    let session = AVAudioSession.sharedInstance()
-    try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetooth])
-    try session.setActive(true)
-    #endif
-    
-    // Create recording URL
-    let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-    let recordingURL = documentsPath.appendingPathComponent("recording_\(Date().timeIntervalSince1970).m4a")
-    currentRecordingURL = recordingURL
-    
-    // Configure recorder settings
-    let settings: [String: Any] = [
-      AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
-      AVSampleRateKey: 44100.0,
-      AVNumberOfChannelsKey: 1,
-      AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
-    ]
-    
-    // Create and configure recorder
-    audioRecorder = try AVAudioRecorder(url: recordingURL, settings: settings)
-    audioRecorder?.delegate = self
-    audioRecorder?.isMeteringEnabled = true
-    audioRecorder?.prepareToRecord()
-    
-    // Start recording
-    guard audioRecorder?.record() == true else {
-      throw AudioRecordingError.recordingFailed
+
+    let owner = UUID()
+    recordingSessionOwner = owner
+    do {
+      try await AudioSessionManager.shared.configureForRecording(owner: owner)
+      try Task.checkCancellation()
+      // Stop/cancel may run while session activation is suspended.
+      guard recordingSessionOwner == owner else { throw CancellationError() }
+
+      let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+      let recordingURL = documentsPath.appendingPathComponent("recording_\(Date().timeIntervalSince1970).m4a")
+      currentRecordingURL = recordingURL
+      let settings: [String: Any] = [
+        AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
+        AVSampleRateKey: 44100.0,
+        AVNumberOfChannelsKey: 1,
+        AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
+      ]
+
+      let recorder = try AVAudioRecorder(url: recordingURL, settings: settings)
+      audioRecorder = recorder
+      recorder.delegate = self
+      recorder.isMeteringEnabled = true
+      guard recorder.prepareToRecord(), recorder.record() else {
+        throw AudioRecordingError.recordingFailed
+      }
+
+      isRecording = true
+      recordingDuration = 0
+      waveformSamples.removeAll()
+      startTimers()
+      audioLogger.debug("Started recording to: \(recordingURL)")
+    } catch {
+      if recordingSessionOwner == owner {
+        stopRecording()
+      } else {
+        AudioSessionManager.shared.resetAfterRecording(owner: owner)
+      }
+      throw error
     }
-    
-    isRecording = true
-    recordingDuration = 0
-    waveformSamples.removeAll()
-    
-    // Start timers
-    startTimers()
-    
-    audioLogger.debug("Started recording to: \(recordingURL)")
   }
-  
+
   func stopRecording() {
-    guard isRecording else { return }
-    
+    guard isRecording || recordingSessionOwner != nil else { return }
+    let owner = recordingSessionOwner
+    recordingSessionOwner = nil
+    audioRecorder?.delegate = nil
     audioRecorder?.stop()
+    audioRecorder = nil
     stopTimers()
-    
     isRecording = false
     recordingLevel = 0.0
-    
-    // Deactivate audio session
-    #if os(iOS)
-    do {
-      try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-    } catch {
-      audioLogger.debug("Failed to deactivate audio session: \(error)")
-    }
-    #endif
-    
+    if let owner { AudioSessionManager.shared.resetAfterRecording(owner: owner) }
     audioLogger.debug("Stopped recording")
   }
-  
+
   func cancelRecording() {
     stopRecording()
     
@@ -251,24 +254,27 @@ final class AudioRecorderService: NSObject {
 
 extension AudioRecorderService: AVAudioRecorderDelegate {
   nonisolated func audioRecorderDidFinishRecording(_ recorder: AVAudioRecorder, successfully flag: Bool) {
+    let recorderID = ObjectIdentifier(recorder)
     DispatchQueue.main.async { [weak self] in
-      guard let self = self else { return }
+      guard let self, self.audioRecorder.map(ObjectIdentifier.init) == recorderID else { return }
       if !flag {
         self.audioLogger.debug("Recording finished unsuccessfully")
         self.cancelRecording()
       } else {
+        self.stopRecording()
         self.audioLogger.debug("Recording finished successfully")
       }
     }
   }
   
   nonisolated func audioRecorderEncodeErrorDidOccur(_ recorder: AVAudioRecorder, error: Error?) {
+    let recorderID = ObjectIdentifier(recorder)
     DispatchQueue.main.async { [weak self] in
-      guard let self = self else { return }
-      if let error = error {
+      guard let self, self.audioRecorder.map(ObjectIdentifier.init) == recorderID else { return }
+      if let error {
         self.audioLogger.debug("Recording encode error: \(error)")
-        self.cancelRecording()
       }
+      self.cancelRecording()
     }
   }
 }

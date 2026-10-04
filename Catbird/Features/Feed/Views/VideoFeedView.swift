@@ -16,6 +16,7 @@ public struct VideoFeedView: View {
   public static let thevidsURI = "at://did:plc:z72i7hdynmk6r22z27h6tvur/app.bsky.feed.generator/thevids"
 
   public let feedURI: String
+  public let initialPost: AppBskyFeedDefs.PostView?
   @Binding public var path: NavigationPath
 
   @Environment(AppState.self) private var appState
@@ -30,21 +31,29 @@ public struct VideoFeedView: View {
   @State private var cursor: String?
   @State private var pagination = VideoFeedPaginationCoordinator()
   @State private var isInitialLoading: Bool = true
+  @State private var didLoadInitialFeed = false
+  @State private var initialLoadAttempt = 0
+  @State private var initialLoadRequestID: UUID?
   @State private var hasMore: Bool = true
   @State private var errorMessage: String?
   @State private var revealedItemIDs: Set<String> = []
 
-  public init(feedURI: String = VideoFeedView.thevidsURI, path: Binding<NavigationPath>? = nil) {
+  public init(
+    feedURI: String = VideoFeedView.thevidsURI,
+    initialPost: AppBskyFeedDefs.PostView? = nil,
+    path: Binding<NavigationPath>? = nil
+  ) {
     self.feedURI = feedURI
+    self.initialPost = initialPost
     self._path = path ?? .constant(NavigationPath())
   }
   public var body: some View {
     ZStack {
       Color.black.ignoresSafeArea()
 
-      if isInitialLoading || items.isEmpty {
+      if items.isEmpty {
         VideoFeedEmptyState(isLoading: isInitialLoading, errorMessage: errorMessage) {
-          Task { await loadInitialFeed() }
+          initialLoadAttempt += 1
         }
       } else {
         VideoFeedPager(items: items, selection: $activeItemID) { item, size in
@@ -74,13 +83,17 @@ public struct VideoFeedView: View {
       navigationControls
     }
     .safeAreaInset(edge: .bottom, spacing: 0) {
-      if let error = pagination.errorMessage {
+      if !items.isEmpty, let error = errorMessage ?? pagination.errorMessage {
         HStack(spacing: 12) {
           Text(error)
             .font(.footnote)
             .frame(maxWidth: .infinity, alignment: .leading)
           Button {
-            requestNextPageIfNeeded(retrying: true)
+            if errorMessage != nil {
+              initialLoadAttempt += 1
+            } else {
+              requestNextPageIfNeeded(retrying: true)
+            }
           } label: {
             Text("Retry")
               .frame(minWidth: 44, minHeight: 44)
@@ -94,9 +107,11 @@ public struct VideoFeedView: View {
       }
     }
     .modifier(VideoFeedNavigationModifier())
-    .task {
-      if items.isEmpty {
-        await loadInitialFeed()
+    .task(id: initialLoadAttempt) {
+      if !didLoadInitialFeed {
+        let requestID = UUID()
+        initialLoadRequestID = requestID
+        await loadInitialFeed(requestID: requestID)
       } else {
         updatePlaybackForActiveIndex(activeIndex)
       }
@@ -124,6 +139,7 @@ public struct VideoFeedView: View {
     }
     .onDisappear {
       isVisible = false
+      initialLoadRequestID = nil
       pagination.cancel()
       playerPool.cleanup()
     }
@@ -141,13 +157,22 @@ public struct VideoFeedView: View {
     )
   }
 
-  private func loadInitialFeed() async {
+  private func loadInitialFeed(requestID: UUID) async {
     isInitialLoading = true
     errorMessage = nil
+    defer {
+      if initialLoadRequestID == requestID { isInitialLoading = false }
+    }
+    // The tapped post is already loaded. Show it before fetching a feed whose
+    // first page may have changed or no longer contain that video.
+    if items.isEmpty {
+      items = VideoFeedItem.initialItems(startingAt: initialPost, feedPosts: [])
+      activeItemID = items.first?.id
+      updatePlaybackForActiveIndex(activeIndex)
+    }
 
     guard let client = appState.atProtoClient else {
       errorMessage = "Client unavailable"
-      isInitialLoading = false
       return
     }
 
@@ -156,7 +181,6 @@ public struct VideoFeedView: View {
     do {
       guard let uri = try? ATProtocolURI(uriString: feedURI) else {
         errorMessage = "Invalid feed URI: \(feedURI)"
-        isInitialLoading = false
         return
       }
 
@@ -165,23 +189,31 @@ public struct VideoFeedView: View {
         cursor: nil
       )
 
-      let parsedItems = extractVideoItems(from: feedPosts)
+      let parsedItems = VideoFeedItem.initialItems(startingAt: initialPost, feedPosts: feedPosts)
       try Task.checkCancellation()
+      guard initialLoadRequestID == requestID else { return }
       self.items = parsedItems
       self.cursor = nextCursor
       self.hasMore = nextCursor != nil && !feedPosts.isEmpty
       self.isInitialLoading = false
+      self.didLoadInitialFeed = true
 
       if !parsedItems.isEmpty {
-        self.activeItemID = parsedItems.first?.id
-        updatePlaybackForActiveIndex(0)
+        if !parsedItems.contains(where: { $0.id == activeItemID }) {
+          self.activeItemID = parsedItems.first?.id
+        }
+        // Updating the feed must not resume a seed video the user just paused.
+        if initialPost == nil || playerPool.wantsPlayback {
+          updatePlaybackForActiveIndex(activeIndex)
+        }
       }
       requestNextPageIfNeeded()
     } catch is CancellationError {
-      self.isInitialLoading = false
+      // SwiftUI owns the initial request and cancels it when leaving or retrying.
     } catch {
-      self.errorMessage = error.localizedDescription
-      self.isInitialLoading = false
+      if initialLoadRequestID == requestID, !Task.isCancelled {
+        self.errorMessage = error.localizedDescription
+      }
     }
   }
 
@@ -220,21 +252,7 @@ public struct VideoFeedView: View {
   }
 
   private func extractVideoItems(from feedPosts: [AppBskyFeedDefs.FeedViewPost]) -> [VideoFeedItem] {
-    feedPosts.compactMap { feedPost in
-      let post = feedPost.post
-      guard let embed = post.embed else { return nil }
-
-      if case .appBskyEmbedVideoView(let videoView) = embed,
-         let playlistURL = videoView.playlist.url {
-        return VideoFeedItem(
-          id: post.uri.uriString(),
-          post: post,
-          videoView: videoView,
-          playlistURL: playlistURL
-        )
-      }
-      return nil
-    }
+    feedPosts.compactMap { VideoFeedItem(post: $0.post) }
   }
 
   private func isItemEligibleForPlayback(_ item: VideoFeedItem) -> Bool {
@@ -342,23 +360,6 @@ private struct VideoFeedEmptyState: View {
           .foregroundStyle(.white.opacity(0.8))
       }
     }
-  }
-}
-
-// MARK: - Video Feed Models
-
-public struct VideoFeedItem: Identifiable, Hashable, Sendable {
-  public let id: String
-  public let post: AppBskyFeedDefs.PostView
-  public let videoView: AppBskyEmbedVideo.View
-  public let playlistURL: URL
-
-  public func hash(into hasher: inout Hasher) {
-    hasher.combine(id)
-  }
-
-  public static func == (lhs: VideoFeedItem, rhs: VideoFeedItem) -> Bool {
-    lhs.id == rhs.id
   }
 }
 

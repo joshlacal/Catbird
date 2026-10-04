@@ -30,7 +30,10 @@ public final class VideoFeedPlayerPool {
   public var canSeek: Bool { duration > 0 && playbackState != .failed && playbackState != .idle }
 
   public var isMuted = false {
-    didSet { players.forEach { $0.isMuted = isMuted } }
+    didSet {
+      players.forEach { $0.isMuted = isMuted }
+      updateAudioSessionOwnership()
+    }
   }
 
   @ObservationIgnored private var loadedURLs: [URL?]
@@ -45,18 +48,25 @@ public final class VideoFeedPlayerPool {
   @ObservationIgnored private var observationID = UUID()
   @ObservationIgnored private var seekID = UUID()
   @ObservationIgnored private let makeItem: (URL) -> AVPlayerItem
+  @ObservationIgnored private let audioSession: any VideoPlaybackAudioSession
+  @ObservationIgnored private let audioOwner = UUID()
+  @ObservationIgnored private var ownsAudioSession = false
 
   public convenience init() {
-    self.init(players: (0..<Self.poolSize).map { _ in AVPlayer() }) {
+    self.init(players: (0..<Self.poolSize).map { _ in AVPlayer() }, audioSession: AudioSessionManager.shared) {
       AVPlayerItem(asset: AVURLAsset(url: $0))
     }
   }
 
   /// Injection keeps lifecycle tests local and independent of streaming services.
-  init(players: [AVPlayer], makeItem: @escaping (URL) -> AVPlayerItem) {
+  init(
+    players: [AVPlayer], audioSession: any VideoPlaybackAudioSession,
+    makeItem: @escaping (URL) -> AVPlayerItem
+  ) {
     precondition(players.count == Self.poolSize)
     self.players = players
     self.makeItem = makeItem
+    self.audioSession = audioSession
     loadedURLs = Array(repeating: nil, count: Self.poolSize)
     feedIndices = Array(repeating: nil, count: Self.poolSize)
     loopObservers = Array(repeating: nil, count: Self.poolSize)
@@ -116,6 +126,7 @@ public final class VideoFeedPlayerPool {
     loadedURLs[slot] = nil
     feedIndices[slot] = nil
     failedSlots.remove(slot)
+    updateAudioSessionOwnership()
   }
 
   private func prepareSlot(_ slot: Int, feedIndex: Int, url: URL) {
@@ -171,6 +182,7 @@ public final class VideoFeedPlayerPool {
     wantsPlayback = true
     setupActiveObservers(for: players[slot], item: item)
     if item.status != .failed && !failedSlots.contains(slot) {
+      updateAudioSessionOwnership()
       players[slot].play()
     }
     refreshPlaybackState()
@@ -238,6 +250,21 @@ public final class VideoFeedPlayerPool {
     wantsPlayback = false
     playbackState = .idle
     resetProgress()
+    updateAudioSessionOwnership()
+  }
+
+  private func updateAudioSessionOwnership() {
+    let slot = slotIndex(for: activeFeedIndex)
+    let shouldOwnAudio = wantsPlayback && !isMuted && feedIndices[slot] == activeFeedIndex &&
+      players[slot].currentItem != nil && players[slot].currentItem?.status != .failed &&
+      !failedSlots.contains(slot)
+    guard shouldOwnAudio != ownsAudioSession else { return }
+    ownsAudioSession = shouldOwnAudio
+    if shouldOwnAudio {
+      audioSession.acquireVideoPlayback(owner: audioOwner)
+    } else {
+      audioSession.releaseVideoPlayback(owner: audioOwner)
+    }
   }
 }
 
@@ -270,6 +297,7 @@ extension VideoFeedPlayerPool {
   }
 
   private func refreshPlaybackState() {
+    defer { updateAudioSessionOwnership() }
     let slot = slotIndex(for: activeFeedIndex)
     guard feedIndices[slot] == activeFeedIndex, let item = players[slot].currentItem else {
       playbackState = .idle

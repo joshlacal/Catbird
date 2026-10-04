@@ -14,13 +14,85 @@ import AppKit
 #endif
 import os.log
 
-/// Thread-safety: this is a singleton whose mutable state (`isActive`,
-/// `wasAudioPlayingBeforeInterruption`) is only mutated on `sessionQueue`, so it
-/// is safe to share across concurrency domains — hence `@unchecked Sendable`.
-final class AudioSessionManager: @unchecked Sendable {
+protocol VideoPlaybackAudioSession: AnyObject {
+  func acquireVideoPlayback(owner: UUID)
+  func releaseVideoPlayback(owner: UUID)
+}
+
+/// The manager invokes this boundary only on its serial session queue.
+protocol AudioSessionDriving: Sendable {
+  var isVideoPlayback: Bool { get }
+  var isRecording: Bool { get }
+  func activateVideoPlayback() throws
+  func deactivatePlayback() throws
+  func configureAmbient() throws
+  func activateRecording() throws
+}
+
+private struct SystemAudioSession: AudioSessionDriving {
+  var isVideoPlayback: Bool {
+    #if os(iOS)
+    let session = AVAudioSession.sharedInstance()
+    return session.category == .playback && session.mode == .moviePlayback
+    #else
+    return false
+    #endif
+  }
+
+  var isRecording: Bool {
+    #if os(iOS)
+    let category = AVAudioSession.sharedInstance().category
+    return category == .record || category == .playAndRecord || category == .multiRoute
+    #else
+    return false
+    #endif
+  }
+
+  func activateVideoPlayback() throws {
+    #if os(iOS)
+    let session = AVAudioSession.sharedInstance()
+    // Bluetooth A2DP and AirPlay are implicit for output-only playback. The
+    // allowBluetooth/allowAirPlay options apply to recording categories.
+    try session.setCategory(
+      .playback, mode: .moviePlayback,
+      options: [.mixWithOthers]
+    )
+    try session.setActive(true)
+    #endif
+  }
+
+  func deactivatePlayback() throws {
+    #if os(iOS)
+    try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+    #endif
+  }
+
+  func configureAmbient() throws {
+    #if os(iOS)
+    let session = AVAudioSession.sharedInstance()
+    if session.category != .ambient {
+      try session.setCategory(.ambient, mode: .default)
+    }
+    #endif
+  }
+
+  func activateRecording() throws {
+    #if os(iOS)
+    let session = AVAudioSession.sharedInstance()
+    try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetooth])
+    try session.setActive(true)
+    #endif
+  }
+}
+
+/// Mutable ownership and all driver calls are confined to `sessionQueue`.
+final class AudioSessionManager: VideoPlaybackAudioSession, @unchecked Sendable {
   static let shared = AudioSessionManager()
-  private var wasAudioPlayingBeforeInterruption = false
-  private var isActive = false
+  private let driver: any AudioSessionDriving
+  private var playbackOwners: Set<UUID> = []
+  private var legacyVideoPlaybackRequested = false
+  private var recordingOwners: Set<UUID> = []
+  private var ownsVideoSession = false
   private let logger = Logger(subsystem: "blue.catbird", category: "AudioSessionManager")
 
   /// Serial queue for all AVAudioSession work. Keeps the synchronous, IPC-blocking
@@ -28,9 +100,10 @@ final class AudioSessionManager: @unchecked Sendable {
   /// serializes access to the manager's mutable state without locks.
   private let sessionQueue = DispatchQueue(label: "blue.catbird.audio-session")
 
-  private init() {
+  private convenience init() {
+    self.init(driver: SystemAudioSession())
     #if os(iOS)
-    // Configure audio session at startup to prevent auto-activation (iOS only)
+    // Preserve the system audio session until a playback owner needs it.
     setupInitialAudioSession()
 
     // Register for interruption notifications
@@ -39,6 +112,11 @@ final class AudioSessionManager: @unchecked Sendable {
     // macOS doesn't use AVAudioSession
     logger.debug("AudioSessionManager initialized for macOS - no audio session configuration needed")
     #endif
+  }
+
+  /// An injected driver avoids changing the device's shared session in tests.
+  init(driver: any AudioSessionDriving) {
+    self.driver = driver
   }
 
   // MARK: - Setup
@@ -102,150 +180,130 @@ final class AudioSessionManager: @unchecked Sendable {
 
   // MARK: - Public API
 
-  /// Called when user unmutes a video - prepares audio session for playback
+  /// A lease belongs to one playback surface, including muted Picture in Picture.
+  func acquireVideoPlayback(owner: UUID) {
+    sessionQueue.async {
+      self.playbackOwners.insert(owner)
+      self.activateVideoSessionIfAllowed()
+    }
+  }
+
+  func releaseVideoPlayback(owner: UUID) {
+    sessionQueue.async {
+      guard self.playbackOwners.remove(owner) != nil else { return }
+      self.releaseVideoSessionIfUnused()
+    }
+  }
+
+  /// Inline/fullscreen callers already coordinate their collective mute intent.
+  /// Keep it separate from leases so their mute cannot release a pool or PiP owner.
   func handleVideoUnmute() {
-    #if os(iOS)
     sessionQueue.async {
-      do {
-        let audioSession = AVAudioSession.sharedInstance()
-
-        // Store music playback state before we interrupt it
-        self.wasAudioPlayingBeforeInterruption = audioSession.isOtherAudioPlaying
-
-        // Configure for playback that ducks but doesn't stop background audio
-        // Use allowBluetooth and allowAirPlay for better audio support.
-        // IMPORTANT: Do not use .duckOthers to avoid attenuating/interrupting other audio apps.
-        try audioSession.setCategory(
-          .playback, mode: .moviePlayback,
-          options: [.mixWithOthers, .allowBluetooth, .allowAirPlay]
-        )
-        try audioSession.setActive(true)
-        self.isActive = true
-        self.logger.debug("Audio session activated for video with sound")
-      } catch {
-        self.logger.debug("Failed to configure audio session for unmute: \(error)")
-      }
+      self.legacyVideoPlaybackRequested = true
+      self.activateVideoSessionIfAllowed()
     }
-    #else
-    // macOS doesn't require audio session configuration
-    logger.debug("Video unmute handled - no audio session config needed on macOS")
-    #endif
   }
 
-
-  /// Called when user mutes a video - returns audio session to ambient state
   func handleVideoMute() {
-    #if os(iOS)
     sessionQueue.async {
-      do {
-        let audioSession = AVAudioSession.sharedInstance()
-
-        // Deactivate the session with notification to other audio apps
-        try audioSession.setActive(false, options: .notifyOthersOnDeactivation)
-
-        // Reset to ambient which doesn't affect other audio
-        try audioSession.setCategory(.ambient, mode: .default, options: [.mixWithOthers])
-        self.isActive = false
-        self.logger.debug("Audio session deactivated and set to ambient")
-      } catch {
-        self.logger.debug("Failed to deactivate audio session: \(error)")
-      }
+      self.legacyVideoPlaybackRequested = false
+      self.releaseVideoSessionIfUnused()
     }
-    #else
-    // macOS doesn't require audio session management
-    isActive = false
-    logger.debug("Video mute handled - no audio session changes needed on macOS")
-    #endif
   }
 
-
-  /// Ensures the app is in silent playback mode - used when autoplaying videos
+  /// Muted previews must not downgrade an audible video or a recording session.
   func configureForSilentPlayback() {
-    #if os(iOS)
     sessionQueue.async {
+      guard !self.hasVideoPlaybackOwner, self.recordingOwners.isEmpty, !self.driver.isRecording else { return }
       do {
-        let audioSession = AVAudioSession.sharedInstance()
-        // Only configure if we're not already in ambient mode to avoid interruptions
-        if audioSession.category != .ambient {
-          try audioSession.setCategory(.ambient, mode: .default, options: [.mixWithOthers])
-          self.logger.debug("Configured ambient audio session for silent/muted playback (mix with others)")
-        } else {
-          self.logger.debug("Audio session already in ambient mode - no change needed")
-        }
-        // CRITICAL: Never activate the session here - let it remain inactive
-        self.isActive = false
+        try self.driver.configureAmbient()
       } catch {
-        self.logger.debug("Failed to configure ambient session for silent playback: \(error)")
+        self.logger.debug("Failed to configure ambient session: \(error)")
       }
     }
-    #else
-    logger.debug("Silent playback configuration not required on macOS")
-    #endif
   }
-  
-  /// Configure audio session for recording.
-  ///
-  /// Unlike the playback helpers this is `async` and only returns once the
-  /// session is fully configured and active. The caller starts an
-  /// `AVAudioRecorder` immediately afterward, so recording must not begin
-  /// before `.playAndRecord` is active — a fire-and-forget dispatch would race
-  /// the recorder, and `sessionQueue.sync` would re-block the calling thread
-  /// (the very main-thread hang this refactor removes).
-  func configureForRecording() async {
-    #if os(iOS)
-    await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+
+  /// Returns after activation and propagates failures before a recorder starts.
+  func configureForRecording(owner: UUID) async throws {
+    try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
       sessionQueue.async {
         do {
-          let audioSession = AVAudioSession.sharedInstance()
-
-          // Store music playback state before interrupting
-          self.wasAudioPlayingBeforeInterruption = audioSession.isOtherAudioPlaying
-
-          // Configure for recording with playback capability
-          try audioSession.setCategory(
-            .playAndRecord,
-            mode: .default,
-            options: [.defaultToSpeaker, .allowBluetooth]
-          )
-          try audioSession.setActive(true)
-          self.isActive = true
-          self.logger.debug("Audio session configured for recording")
+          if self.recordingOwners.isEmpty {
+            try self.driver.activateRecording()
+            self.ownsVideoSession = false
+          }
+          self.recordingOwners.insert(owner)
+          continuation.resume()
         } catch {
-          self.logger.debug("Failed to configure audio session for recording: \(error)")
+          // setCategory may succeed before setActive throws. Roll that partial
+          // configuration back without granting a recording owner.
+          self.restoreAfterRecording()
+          continuation.resume(throwing: error)
         }
-        continuation.resume()
       }
     }
-    #else
-    // macOS doesn't require explicit audio session configuration for recording
-    isActive = true
-    logger.debug("Recording configuration not needed on macOS")
-    #endif
   }
-  
-  /// Reset audio session after recording
-  func resetAfterRecording() {
-    #if os(iOS)
+
+  func resetAfterRecording(owner: UUID) {
     sessionQueue.async {
-      do {
-        let audioSession = AVAudioSession.sharedInstance()
-
-        // Deactivate the session with notification to other audio apps
-        try audioSession.setActive(false, options: .notifyOthersOnDeactivation)
-
-        // Return to ambient mode which doesn't interfere with other audio
-        try audioSession.setCategory(.ambient, mode: .default, options: [.mixWithOthers])
-        self.isActive = false
-        self.logger.debug("Audio session reset after recording - set to ambient mode")
-      } catch {
-        self.logger.debug("Failed to reset audio session after recording: \(error)")
-      }
+      guard self.recordingOwners.remove(owner) != nil, self.recordingOwners.isEmpty else { return }
+      self.restoreAfterRecording()
     }
-    #else
-    // macOS doesn't require explicit session reset
-    isActive = false
-    logger.debug("Recording session reset on macOS")
-    #endif
+  }
+
+  private func restoreAfterRecording() {
+    // Do not undo a newer playback category installed after this recording.
+    // This also leaves the session alone if recording activation failed before
+    // changing its category.
+    guard driver.isRecording else { return }
+    do {
+      try driver.deactivatePlayback()
+      try driver.configureAmbient()
+      ownsVideoSession = false
+      if hasVideoPlaybackOwner { activateVideoSessionIfAllowed() }
+    } catch {
+      logger.debug("Failed to reset recording session: \(error)")
+    }
+  }
+
+  private var hasVideoPlaybackOwner: Bool {
+    !playbackOwners.isEmpty || legacyVideoPlaybackRequested
+  }
+
+  private func activateVideoSessionIfAllowed() {
+    // Respect managed recording ownership and any recording category installed
+    // by another audio consumer.
+    guard recordingOwners.isEmpty, !driver.isRecording else { return }
+    do {
+      try driver.activateVideoPlayback()
+      ownsVideoSession = true
+    } catch {
+      logger.debug("Failed to activate video session: \(error)")
+    }
+  }
+
+  private func releaseVideoSessionIfUnused() {
+    guard !hasVideoPlaybackOwner, recordingOwners.isEmpty, ownsVideoSession else { return }
+    // A recorder or audio preview may have replaced our category/mode since
+    // acquisition. Do not deactivate that newer consumer's session.
+    guard driver.isVideoPlayback else {
+      ownsVideoSession = false
+      return
+    }
+    do {
+      try driver.deactivatePlayback()
+      try driver.configureAmbient()
+      ownsVideoSession = false
+    } catch {
+      logger.debug("Failed to release video session: \(error)")
+    }
+  }
+
+  /// A queue barrier for deterministic tests of the injected session boundary.
+  func waitForPendingConfiguration() async {
+    await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+      sessionQueue.async { continuation.resume() }
+    }
   }
 
   // MARK: - Notification Handlers
@@ -261,12 +319,7 @@ final class AudioSessionManager: @unchecked Sendable {
 
     switch type {
     case .began:
-      // Audio session interrupted - store state on the session queue so this
-      // write stays serialized with the rest of the manager's state access.
-      sessionQueue.async {
-        self.wasAudioPlayingBeforeInterruption = AVAudioSession.sharedInstance().isOtherAudioPlaying
-        self.logger.debug("Audio session interrupted")
-      }
+      logger.debug("Audio session interrupted")
 
     case .ended:
       // Don't automatically configure audio session when interruption ends

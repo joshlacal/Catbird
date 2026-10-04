@@ -116,6 +116,7 @@ struct AVPlayerViewControllerWrapper: UIViewControllerRepresentable {
         private var outputVolumeObservation: NSKeyValueObservation?
         private var loopObservation: NSObjectProtocol?
         private var isPictureInPictureActive = false
+        private let pictureInPictureAudioOwner = UUID()
         private var deferredFullScreenTeardown = false
 
         init(_ parent: AVPlayerViewControllerWrapper) {
@@ -213,13 +214,16 @@ struct AVPlayerViewControllerWrapper: UIViewControllerRepresentable {
             if session.category != .playback {
                 try? session.setCategory(
                     .playback, mode: .moviePlayback,
-                    options: [.mixWithOthers, .allowBluetooth, .allowAirPlay]
+                    options: [.mixWithOthers]
                 )
             }
             try? session.setActive(true)
 
             // Delegate callbacks arrive on the main thread
             MainActor.assumeIsolated {
+                // Muted PiP also needs playback ownership. A video feed leaving
+                // the screen must not deactivate this session.
+                AudioSessionManager.shared.acquireVideoPlayback(owner: pictureInPictureAudioOwner)
                 // Retain the controller and this delegate so the PiP session
                 // survives the fullscreen cover (and this representable)
                 // being dismantled.
@@ -257,6 +261,7 @@ struct AVPlayerViewControllerWrapper: UIViewControllerRepresentable {
             }
             MainActor.assumeIsolated {
                 VideoCoordinator.shared.pictureInPictureDidStop(for: self.parent.model.id)
+                AudioSessionManager.shared.releaseVideoPlayback(owner: pictureInPictureAudioOwner)
             }
         }
 

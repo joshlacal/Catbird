@@ -7,7 +7,7 @@ import NukeUI
 import Petrel
 import SwiftUI
 
-/// Horizontal previews of the fixed Bluesky `thevids` feed; cards open posts, the header opens its pager.
+/// Horizontal previews of The Vids; cards open the pager at the selected video.
 public struct TrendingVideosSection: View {
   public enum Presentation {
     case timeline, discovery
@@ -26,7 +26,7 @@ public struct TrendingVideosSection: View {
   @Environment(\.fontManager) private var fontManager
   @ScaledMetric(relativeTo: .caption) private var authorLineHeight: CGFloat = 18
 
-  public static let thevidsURI = "at://did:plc:z72i7hdynmk6r22z27h6tvur/app.bsky.feed.generator/thevids"
+  public static let thevidsURI = VideoFeedView.thevidsURI
 
   public init(
     videos: [AppBskyFeedDefs.FeedViewPost],
@@ -142,7 +142,7 @@ public struct TrendingVideosSection: View {
     .buttonStyle(.plain)
     .accessibilityElement(children: .ignore)
     .accessibilityLabel("Video by \(author)\(altText.map { ", \($0)" } ?? "")")
-    .accessibilityHint("Open this video’s post and replies")
+    .accessibilityHint("Play this video in The Vids")
   }
 
   private var fallbackThumbnail: some View {

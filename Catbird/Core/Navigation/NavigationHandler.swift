@@ -136,6 +136,9 @@ struct NavigationHandler {
     case .videoFeed:
       VideoFeedView(path: path)
         .id("videoFeed")
+    case .videoFeedStartingAt(let post):
+      VideoFeedView(initialPost: post, path: path)
+        .id("videoFeed-\(post.uri.uriString())")
 
     case .settings(let route):
       settingsView(for: route)
@@ -259,7 +262,7 @@ struct NavigationHandler {
       return "Activity Alerts"
     case .notificationActivity:
       return "Activity"
-    case .videoFeed:
+    case .videoFeed, .videoFeedStartingAt:
       return "Videos"
     case .settings(let route):
       switch route {
@@ -329,7 +332,7 @@ struct NavigationHandler {
       return "bell.badge"
     case .notificationActivity:
       return "bell"
-    case .videoFeed:
+    case .videoFeed, .videoFeedStartingAt:
       return "play.rectangle"
     case .settings:
       return "gear"
