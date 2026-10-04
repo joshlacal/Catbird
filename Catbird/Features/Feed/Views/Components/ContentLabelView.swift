@@ -212,16 +212,18 @@ struct ContentLabelManager<Content: View>: View {
     let selfLabelValues: [String]?
     let contentType: String
     let onReveal: (() -> Void)?
+    let visibilityResolver: (@MainActor ([ComAtprotoLabelDefs.Label], [String]) async -> ContentVisibility)?
     @State private var isBlurred: Bool
     @State private var contentVisibility: ContentVisibility
     @Environment(AppState.self) private var appState
     let content: Content
     
-    init(labels: [ComAtprotoLabelDefs.Label]?, selfLabelValues: [String]? = nil, contentType: String = "content", onReveal: (() -> Void)? = nil, @ViewBuilder content: () -> Content) {
+    init(labels: [ComAtprotoLabelDefs.Label]?, selfLabelValues: [String]? = nil, contentType: String = "content", onReveal: (() -> Void)? = nil, visibilityResolver: (@MainActor ([ComAtprotoLabelDefs.Label], [String]) async -> ContentVisibility)? = nil, @ViewBuilder content: () -> Content) {
         self.labels = labels
         self.selfLabelValues = selfLabelValues
         self.contentType = contentType
         self.onReveal = onReveal
+        self.visibilityResolver = visibilityResolver
         self.content = content()
         // Use a more conservative initial visibility that will be updated by async task
         let initialVisibility = ContentLabelManager.getInitialContentVisibility(
@@ -487,7 +489,13 @@ struct ContentLabelManager<Content: View>: View {
     
     private func updateContentVisibility() async {
         // Consider both canonical labels and any self-applied label values
-        let visibility = await getEffectiveContentVisibility(for: labels ?? [], selfLabelValues: selfLabelValues ?? [])
+        let visibility: ContentVisibility
+        if let visibilityResolver {
+            visibility = await visibilityResolver(labels ?? [], selfLabelValues ?? [])
+        } else {
+            visibility = await getEffectiveContentVisibility(for: labels ?? [], selfLabelValues: selfLabelValues ?? [])
+        }
+        guard !Task.isCancelled else { return }
         await MainActor.run {
             self.contentVisibility = visibility
             self.isBlurred = (visibility == .warn)

@@ -22,10 +22,12 @@ struct VideoPlaybackCallerTests {
       CallerFixtureItem()
     }
     let response = DelayedVideoFeedResponse()
+    let intent = VideoFeedPlaybackIntent()
     var visibleIdentity: VideoFeedItem.RevealIdentity?
     let view = VideoFeedView(
       initialPost: seed,
       playerPool: pool,
+      playbackIntent: intent,
       feedLoader: { _ in await response.wait() },
       contentVisibilityObserver: { visibleIdentity = $0.revealIdentity }
     )
@@ -39,8 +41,9 @@ struct VideoPlaybackCallerTests {
     }
     try await eventually { response.isWaiting && visibleIdentity != nil && pool.wantsPlayback }
 
-    // This is the same pool action used by the page's play/pause button.
-    pool.togglePlayPause()
+    // The page button records this explicit action separately from pool holds.
+    intent.setPlaybackRequested(false, for: seed.uri.uriString())
+    try await eventually { !pool.wantsPlayback }
     #expect(!pool.wantsPlayback)
     let playCountWhenPaused = players[0].playCount
     response.complete(with: [.init(post: refreshed)])
@@ -52,6 +55,72 @@ struct VideoPlaybackCallerTests {
     #expect(!pool.wantsPlayback)
     #expect(players[0].playCount == playCountWhenPaused)
     #expect(players[0].timeControlStatus == .paused)
+  }
+
+  @Test("Delayed Show honors the selected video's request across a moderation hold", arguments: [
+    (true, false), (false, false), (false, true)
+  ])
+  func delayedShowRespectsIntent(warnedSeed: Bool, explicitlyPaused: Bool) async throws {
+    let seed = try videoPost(label: warnedSeed ? "nudity" : nil)
+    let refreshed = try videoPost(label: "nudity")
+    let refreshedIdentity = try #require(VideoFeedItem(post: refreshed)).revealIdentity
+    let players = (0..<3).map { _ in CallerFixturePlayer() }
+    let pool = VideoFeedPlayerPool(players: players, audioSession: CallerFixtureAudioSession()) { _ in
+      CallerFixtureItem()
+    }
+    let intent = VideoFeedPlaybackIntent()
+    let response = DelayedVideoFeedResponse()
+    let preferences = DelayedVideoVisibility()
+    var visibleIdentity: VideoFeedItem.RevealIdentity?
+    let view = VideoFeedView(
+      initialPost: seed,
+      playerPool: pool,
+      playbackIntent: intent,
+      feedLoader: { _ in await response.wait() },
+      contentVisibilityObserver: { visibleIdentity = $0.revealIdentity },
+      moderationResolver: { labels, _ in
+        if labels.contains(where: { $0.val == "nudity" }) { return await preferences.wait() }
+        return .show
+      }
+    )
+    let appState = try await fixtureAppState()
+    let window = host(view.environment(appState).environment(\.scenePhase, .active))
+    defer {
+      response.complete(with: [])
+      preferences.complete(with: .warn)
+      window.isHidden = true
+      window.rootViewController = nil
+      pool.cleanup()
+    }
+    try await eventually { response.isWaiting && intent.selectedItemID == seed.uri.uriString() }
+    if !warnedSeed {
+      try await eventually { visibleIdentity != nil && pool.wantsPlayback }
+      if explicitlyPaused {
+        intent.setPlaybackRequested(false, for: seed.uri.uriString())
+        try await eventually { !pool.wantsPlayback }
+      }
+    }
+    let previousPlayCount = players[0].playCount
+    response.complete(with: [.init(post: refreshed)])
+    try await eventually { preferences.isWaiting && !pool.wantsPlayback }
+    #expect(intent.requestsPlayback(for: seed.uri.uriString()) == !explicitlyPaused)
+    #expect(pool.activeFeedIndex == 0)
+
+    // Resolve the real warning manager's asynchronous visibility path using the
+    // existing Show preference mapping; no new content policy is introduced.
+    preferences.complete(with: ContentVisibility(fromPreference: "ignore"))
+    try await eventually { visibleIdentity == refreshedIdentity }
+    await settle(window)
+    #expect(intent.selectedItemID == seed.uri.uriString())
+    #expect(pool.activeFeedIndex == 0)
+    #expect(pool.wantsPlayback == !explicitlyPaused)
+    if explicitlyPaused {
+      #expect(players[0].playCount == previousPlayCount)
+      #expect(players[0].timeControlStatus == .paused)
+    } else {
+      #expect(players[0].playCount > previousPlayCount)
+      #expect(players[0].timeControlStatus == .playing)
+    }
   }
 
   @Test("Modern player setup preserves the same model across player recreation", arguments: [false, true])
@@ -116,11 +185,12 @@ struct VideoPlaybackCallerTests {
   private func videoPost(label: String?) throws -> AppBskyFeedDefs.PostView {
     let uri = try ATProtocolURI(uriString: "at://did:plc:videocallerfixture/app.bsky.feed.post/selected")
     let base = PublicPostTestFixtures.makePostView(uri: uri, authorDID: try DID(didString: "did:plc:videocallerfixture"))
+    let timestamp = ATProtocolDate(date: Date(timeIntervalSince1970: 1_700_000_000))
     return AppBskyFeedDefs.PostView(
       uri: uri, cid: base.cid, author: base.author, record: base.record,
       embed: .appBskyEmbedVideoView(.init(cid: base.cid, playlist: URI(uriString: "https://video.invalid/selected.m3u8"))),
-      indexedAt: base.indexedAt,
-      labels: label.map { [.init(src: base.author.did, uri: URI(uriString: uri.uriString()), val: $0, cts: base.indexedAt)] }
+      indexedAt: timestamp,
+      labels: label.map { [.init(src: base.author.did, uri: URI(uriString: uri.uriString()), val: $0, cts: timestamp)] }
     )
   }
 
@@ -164,6 +234,25 @@ private final class DelayedVideoFeedResponse {
   func complete(with posts: [AppBskyFeedDefs.FeedViewPost]) {
     continuation?.resume(returning: (posts, nil))
     continuation = nil
+  }
+}
+
+@MainActor
+private final class DelayedVideoVisibility {
+  private var continuations: [CheckedContinuation<ContentVisibility, Never>] = []
+  private var resolvedVisibility: ContentVisibility?
+  var isWaiting: Bool { !continuations.isEmpty }
+
+  func wait() async -> ContentVisibility {
+    if let resolvedVisibility { return resolvedVisibility }
+    return await withCheckedContinuation { continuations.append($0) }
+  }
+
+  func complete(with visibility: ContentVisibility) {
+    resolvedVisibility = visibility
+    let pending = continuations
+    continuations.removeAll()
+    for continuation in pending { continuation.resume(returning: visibility) }
   }
 }
 

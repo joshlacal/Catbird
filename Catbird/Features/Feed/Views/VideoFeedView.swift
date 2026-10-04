@@ -24,10 +24,10 @@ public struct VideoFeedView: View {
   @Environment(\.scenePhase) private var scenePhase
 
   @State private var playerPool = VideoFeedPlayerPool()
+  @State private var playbackIntent = VideoFeedPlaybackIntent()
   @State private var items: [VideoFeedItem] = []
   @State private var activeItemID: String?
   @State private var isVisible = false
-  @State private var resumePlaybackWhenActive = false
   @State private var cursor: String?
   @State private var pagination = VideoFeedPaginationCoordinator()
   @State private var isInitialLoading: Bool = true
@@ -39,6 +39,7 @@ public struct VideoFeedView: View {
   @State private var revealedItems: Set<VideoFeedItem.RevealIdentity> = []
   private var feedLoader: (@MainActor (String?) async throws -> ([AppBskyFeedDefs.FeedViewPost], String?))?
   private var contentVisibilityObserver: ((VideoFeedItem) -> Void)?
+  private var moderationResolver: (@MainActor ([ComAtprotoLabelDefs.Label], [String]) async -> ContentVisibility)?
 
   public init(
     feedURI: String = VideoFeedView.thevidsURI,
@@ -54,13 +55,17 @@ public struct VideoFeedView: View {
   init(
     initialPost: AppBskyFeedDefs.PostView,
     playerPool: VideoFeedPlayerPool,
+    playbackIntent: VideoFeedPlaybackIntent? = nil,
     feedLoader: @escaping @MainActor (String?) async throws -> ([AppBskyFeedDefs.FeedViewPost], String?),
-    contentVisibilityObserver: @escaping (VideoFeedItem) -> Void
+    contentVisibilityObserver: @escaping (VideoFeedItem) -> Void,
+    moderationResolver: (@MainActor ([ComAtprotoLabelDefs.Label], [String]) async -> ContentVisibility)? = nil
   ) {
     self.init(initialPost: initialPost)
     self._playerPool = State(initialValue: playerPool)
+    self._playbackIntent = State(initialValue: playbackIntent ?? VideoFeedPlaybackIntent())
     self.feedLoader = feedLoader
     self.contentVisibilityObserver = contentVisibilityObserver
+    self.moderationResolver = moderationResolver
   }
   public var body: some View {
     ZStack {
@@ -84,6 +89,9 @@ public struct VideoFeedView: View {
               onContentVisible: { revealItem(item, explicitlyRequested: false) },
               onRevealRequested: { revealItem(item, explicitlyRequested: true) },
               onConceal: { concealItem(item) },
+              onPlaybackToggle: { togglePlayback(for: item) },
+              onPlaybackRetry: { retryPlayback(for: item) },
+              moderationResolver: moderationResolver,
               onProfileTap: { did in
                 path.append(NavigationDestination.profile(did))
               },
@@ -143,13 +151,15 @@ public struct VideoFeedView: View {
       updatePlaybackForActiveIndex(activeIndex)
       requestNextPageIfNeeded()
     }
+    .onChange(of: playbackIntent.isPlaybackRequested) { _, _ in
+      updatePlaybackForActiveIndex(activeIndex)
+    }
     .onChange(of: scenePhase) { previous, phase in
       if phase == .active {
-        if isVisible, resumePlaybackWhenActive {
+        if isVisible {
           updatePlaybackForActiveIndex(activeIndex)
         }
       } else if previous == .active {
-        resumePlaybackWhenActive = playerPool.wantsPlayback
         playerPool.pauseAll()
       }
     }
@@ -199,15 +209,6 @@ public struct VideoFeedView: View {
       self.isInitialLoading = false
       self.didLoadInitialFeed = true
 
-      if !parsedItems.isEmpty {
-        if !parsedItems.contains(where: { $0.id == activeItemID }) {
-          self.activeItemID = parsedItems.first?.id
-        }
-        // Updating the feed must not resume a seed video the user just paused.
-        if initialPost == nil || playerPool.wantsPlayback {
-          updatePlaybackForActiveIndex(activeIndex)
-        }
-      }
       requestNextPageIfNeeded()
     } catch is CancellationError {
       // SwiftUI owns the initial request and cancels it when leaving or retrying.
@@ -251,24 +252,14 @@ public struct VideoFeedView: View {
   }
 
   private func publishItems(_ refreshed: [VideoFeedItem]) {
-    let resumePlayback = playerPool.wantsPlayback
     revealedItems.formIntersection(Set(refreshed.map(\.revealIdentity)))
     items = refreshed
     if !items.contains(where: { $0.id == activeItemID }) {
       activeItemID = items.first?.id
     }
-    // Revoke playback and cached players immediately, before the warning view
-    // is rebuilt. A same-URI label update must not retain an old reveal.
-    if !items.indices.contains(activeIndex) || !isItemEligibleForPlayback(items[activeIndex]) {
-      playerPool.pauseAll()
-    }
-    // Replacing a stream clears its old player slot. Restore only the intent
-    // captured before replacement; eligibility still gates the refreshed item.
-    if resumePlayback {
-      updatePlaybackForActiveIndex(activeIndex)
-    } else {
-      updatePrewarming(for: activeIndex)
-    }
+    // Reevaluate/evict before rebuilding the warning view. Temporary holds and
+    // stream replacement do not erase the selected video's requested playback.
+    updatePlaybackForActiveIndex(activeIndex)
   }
 
   private func isItemEligibleForPlayback(_ item: VideoFeedItem) -> Bool {
@@ -284,9 +275,11 @@ public struct VideoFeedView: View {
   private func revealItem(_ item: VideoFeedItem, explicitlyRequested: Bool) {
     guard let index = items.firstIndex(where: { $0.revealIdentity == item.revealIdentity }) else { return }
     revealedItems.insert(item.revealIdentity)
-    // A passive mount authorizes this snapshot but must not turn a paused seed
-    // into a play request. Only the warning's explicit reveal gesture can do so.
-    if index == activeIndex, explicitlyRequested || playerPool.wantsPlayback {
+    if item.id == activeItemID {
+      playbackIntent.select(item.id)
+      if explicitlyRequested { playbackIntent.setPlaybackRequested(true, for: item.id) }
+      // A passive Show resumes a pending request, while an explicit pause stays
+      // paused. The snapshot check above rejects old preference callbacks.
       updatePlaybackForActiveIndex(index)
     } else {
       updatePrewarming(for: activeIndex)
@@ -303,13 +296,40 @@ public struct VideoFeedView: View {
   }
 
   private func updatePlaybackForActiveIndex(_ index: Int) {
-    guard isVisible, scenePhase == .active, items.indices.contains(index) else { return }
+    playbackIntent.select(activeItemID)
+    guard isVisible, scenePhase == .active, items.indices.contains(index),
+          items[index].id == activeItemID else {
+      playerPool.pauseAll()
+      return
+    }
     updatePrewarming(for: index)
-    if isItemEligibleForPlayback(items[index]) {
+    if playbackIntent.requestsPlayback(for: items[index].id), isItemEligibleForPlayback(items[index]) {
       playerPool.play(feedIndex: index)
     } else {
       playerPool.pauseAll()
     }
+  }
+
+  private func togglePlayback(for item: VideoFeedItem) {
+    guard isVisible, scenePhase == .active, item.id == activeItemID,
+          items.contains(where: { $0.revealIdentity == item.revealIdentity }),
+          isItemEligibleForPlayback(item) else { return }
+    if !playerPool.wantsPlayback && playerPool.playbackState == .failed {
+      retryPlayback(for: item)
+      return
+    }
+    playbackIntent.select(item.id)
+    playbackIntent.setPlaybackRequested(!playerPool.wantsPlayback, for: item.id)
+    updatePlaybackForActiveIndex(activeIndex)
+  }
+
+  private func retryPlayback(for item: VideoFeedItem) {
+    guard isVisible, scenePhase == .active, item.id == activeItemID,
+          items.contains(where: { $0.revealIdentity == item.revealIdentity }),
+          isItemEligibleForPlayback(item) else { return }
+    playbackIntent.select(item.id)
+    playbackIntent.setPlaybackRequested(true, for: item.id)
+    playerPool.retry(feedIndex: activeIndex)
   }
 
   private func updatePrewarming(for index: Int) {
@@ -439,6 +459,9 @@ private struct VideoFeedItemView: View {
   let onContentVisible: () -> Void
   let onRevealRequested: () -> Void
   let onConceal: () -> Void
+  let onPlaybackToggle: () -> Void
+  let onPlaybackRetry: () -> Void
+  let moderationResolver: (@MainActor ([ComAtprotoLabelDefs.Label], [String]) async -> ContentVisibility)?
   let onProfileTap: (String) -> Void
   let onPostTap: (ATProtocolURI) -> Void
   @Environment(AppState.self) private var appState
@@ -459,7 +482,8 @@ private struct VideoFeedItemView: View {
         labels: item.post.labels,
         selfLabelValues: item.selfLabelValues,
         contentType: "video",
-        onReveal: onRevealRequested
+        onReveal: onRevealRequested,
+        visibilityResolver: moderationResolver
       ) {
         ZStack {
           if attachesPlayer {
@@ -473,7 +497,7 @@ private struct VideoFeedItemView: View {
             .onDisappear(perform: onConceal)
           }
 
-          Button { playerPool.togglePlayPause() } label: {
+          Button(action: onPlaybackToggle) {
             Color.clear.contentShape(Rectangle())
           }
           .buttonStyle(.plain)
@@ -496,9 +520,7 @@ private struct VideoFeedItemView: View {
       VideoFeedPageOverlays(
         status: {
           if isActive && isRevealed {
-            VideoFeedPlaybackStatus(state: playerPool.playbackState) {
-              playerPool.retry(feedIndex: index)
-            }
+            VideoFeedPlaybackStatus(state: playerPool.playbackState, onRetry: onPlaybackRetry)
           }
         },
         footer: { footer }
