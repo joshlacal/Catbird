@@ -52,6 +52,7 @@ import AppKit
     private var pendingBaselines: [String: AppSettingsModel] = [:]
     private struct PendingEffect {
         let identity = UUID()
+        let description: String?
         let action: @MainActor () async -> Void
     }
     private var pendingEffects: [String: [String: PendingEffect]] = [:]
@@ -140,6 +141,7 @@ import AppKit
         bool("Hide Other Languages", \.hideNonPreferredLanguages)
         bool("Show Language Indicators", \.showLanguageIndicators)
         bool("Logged-out Visibility", \.loggedOutVisibility)
+        changes.append(contentsOf: (pendingEffects[accountDID] ?? [:]).sorted { $0.key < $1.key }.compactMap { $0.value.description })
         return changes.isEmpty ? "Your selected settings are waiting to be saved." : changes.joined(separator: "\n")
     }
 
@@ -216,15 +218,15 @@ import AppKit
             return persistPendingChanges(for: accountDID) ? .resolved : .saveFailed
         case .discard:
             guard hasPendingChanges else { return persistenceState == .ready ? .resolved : .unavailable }
-            guard let savedSettings else { return .unavailable }
+            let confirmedDisplay = savedSettings ?? pendingBaselines[accountDID]
             generation &+= 1
             notificationDebounceTimer?.invalidate()
             notificationDebounceTimer = nil
             pendingDrafts.removeValue(forKey: accountDID)
             pendingBaselines.removeValue(forKey: accountDID)
             pendingEffects.removeValue(forKey: accountDID)
-            settingsModel = snapshot(savedSettings, accountDID: accountDID)
-            persistenceState = .ready
+            settingsModel = confirmedDisplay.map { snapshot($0, accountDID: accountDID) }
+            persistenceState = savedSettings == nil ? .unavailable : .ready
             return .resolved
         }
     }
@@ -238,7 +240,8 @@ import AppKit
     /// A player may open only after the complete provider choice is committed.
     @MainActor @discardableResult
     func applyExternalMediaConsent(_ consent: ExternalMediaConsent, providers: [ExternalMediaProvider]) -> Bool {
-        guard canEditPersistedSettings, let settingsModel else { return false }
+        guard canEditPersistedSettings, let settingsModel, let accountDID,
+              persistence.isActiveAccount(accountDID, self) else { return false }
         for provider in providers { settingsModel.setConsent(consent, for: provider) }
         saveChanges()
         return persistPendingChanges()
@@ -320,9 +323,9 @@ import AppKit
     }
 
     /// Coalesce effects by purpose; retries apply only the effect belonging to the retained draft.
-    func afterPendingSave(key: String = "settings", _ action: @escaping @MainActor () async -> Void) {
+    func afterPendingSave(key: String = "settings", description: String? = nil, _ action: @escaping @MainActor () async -> Void) {
         guard let accountDID, pendingDrafts[accountDID] != nil else { return }
-        pendingEffects[accountDID, default: [:]][key] = PendingEffect(action: action)
+        pendingEffects[accountDID, default: [:]][key] = PendingEffect(description: description, action: action)
     }
 
     private func publishSavedSettings(

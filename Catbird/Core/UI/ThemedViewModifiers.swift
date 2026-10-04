@@ -359,7 +359,7 @@ struct ThemedContrastAwareBackground: View {
     let appSettings: AppSettings
     let colorProvider: (ColorScheme, Bool) -> Color
     @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.accessibilityContrast) private var accessibilityContrast
+    @Environment(\.colorSchemeContrast) private var accessibilityContrast
     
     var body: some View {
         colorProvider(colorScheme, accessibilityContrast == .increased || appSettings.effectiveIncreaseContrast)
@@ -481,7 +481,7 @@ struct ThemedBorderView: View {
     let isProminent: Bool
     let appSettings: AppSettings?
     @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.accessibilityContrast) private var accessibilityContrast
+    @Environment(\.colorSchemeContrast) private var accessibilityContrast
     
     init(themeManager: ThemeManager, isProminent: Bool, appSettings: AppSettings? = nil) {
         self.themeManager = themeManager

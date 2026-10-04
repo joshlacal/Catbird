@@ -471,10 +471,8 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
             }
         }
         
-        // Apply Dynamic Type constraints if enabled
-        if dynamicTypeEnabled {
-            applyDynamicTypeConstraints()
-        }
+        // Also remove an earlier override when system scaling is turned off.
+        applyDynamicTypeConstraints()
         
         // Post notification for any components that need manual updates
         Task { @MainActor in

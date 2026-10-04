@@ -549,6 +549,62 @@ struct AppSettingsPersistenceFailureTests {
     #expect(try fixture.storedRow()?.externalMediaConsents["future-provider"] == "future-choice")
   }
 
+  @Test("A pending compatibility effect remains reviewable even when its stored value is unchanged")
+  func pendingCompatibilityEffectDescription() async throws {
+    let fixture = try SettingsPersistenceFixture()
+    defer { fixture.restoreDefaults() }
+    try fixture.seed()
+    fixture.initialize()
+    await fixture.drainPublications()
+    var effects = 0
+    fixture.settings.hideNonPreferredLanguages = false
+    fixture.settings.afterPendingSave(key: "language-filter", description: "Show posts in all reading languages") { effects += 1 }
+    fixture.failSave = true
+    fixture.fireLatestSave()
+    #expect(fixture.settings.pendingChangesDescription.contains("Show posts in all reading languages"))
+    #expect(effects == 0)
+    fixture.failSave = false
+    #expect(await fixture.settings.resolvePendingChanges(for: fixture.didA, decision: .save) == .resolved)
+    await fixture.drainPublications()
+    #expect(effects == 1)
+    #expect(!fixture.settings.hasPendingChanges)
+  }
+
+  @Test("Explicit discard can release an account draft after its saved row fails to reload")
+  func discardAfterAccountReloadFailure() async throws {
+    let fixture = try SettingsPersistenceFixture()
+    defer { fixture.restoreDefaults() }
+    try fixture.seed { $0.theme = "light" }
+    try fixture.seed(accountDID: fixture.didB)
+    fixture.initialize()
+    fixture.settings.theme = "pending-a"
+    fixture.initialize(accountDID: fixture.didB)
+    fixture.failFetch = true
+    fixture.initialize()
+    #expect(fixture.settings.persistenceState == .unavailable)
+    #expect(fixture.settings.hasPendingChanges)
+    #expect(await fixture.settings.resolvePendingChanges(for: fixture.didA, decision: .discard) == .resolved)
+    #expect(!fixture.settings.hasPendingChanges)
+    #expect(fixture.settings.persistenceState == .unavailable)
+    #expect(!fixture.settings.canEditPersistedSettings)
+    fixture.failFetch = false
+    #expect(try fixture.storedRow()?.theme == "light")
+  }
+
+  @Test("An inactive settings owner cannot allow an external player")
+  func inactiveExternalConsentOwnerIsRejected() async throws {
+    let fixture = try SettingsPersistenceFixture()
+    defer { fixture.restoreDefaults() }
+    try fixture.seed()
+    fixture.initialize()
+    await fixture.drainPublications()
+    fixture.activeDID = fixture.didB
+    #expect(!fixture.settings.applyExternalMediaConsent(.allow, providers: [.youtube]))
+    #expect(fixture.settings.externalMediaConsent(for: .youtube) == .undecided)
+    #expect(!fixture.settings.hasPendingChanges)
+    #expect(fixture.saveCount == 0)
+  }
+
   @Test("Opening settings preserves every legacy cap and the explicit full system range",
         arguments: AppTextSizeLimit.options.map(\.value))
   func textSizeLimitIsNeverMigrated(value: String) async throws {

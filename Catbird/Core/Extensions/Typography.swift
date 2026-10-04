@@ -739,7 +739,7 @@ extension View {
 struct AccessibleTextModifier: ViewModifier {
     let appState: AppState?
     @Environment(\.legibilityWeight) private var legibilityWeight
-    @Environment(\.accessibilityContrast) private var accessibilityContrast
+    @Environment(\.colorSchemeContrast) private var accessibilityContrast
     
     func body(content: Content) -> some View {
         let settings = appState?.appSettings
@@ -765,7 +765,7 @@ struct AccessibleTextModifier: ViewModifier {
 struct ComprehensiveAccessibilityModifier: ViewModifier {
     let appState: AppState?
     @Environment(\.legibilityWeight) private var legibilityWeight
-    @Environment(\.accessibilityContrast) private var accessibilityContrast
+    @Environment(\.colorSchemeContrast) private var accessibilityContrast
     
     func body(content: Content) -> some View {
         let settings = appState?.appSettings

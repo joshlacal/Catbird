@@ -1699,55 +1699,62 @@ final class PreferencesManager {
     }
   }
   
-  /// Updates language preferences and syncs with server
+  /// Retained compatibility entry point. Language choices have no server serializer.
   @MainActor
   func updateLanguagePreferences(appLanguage: String?, primaryLanguage: String, contentLanguages: [String]) async throws {
-    // Store in UserDefaults for immediate persistence
-    // Save app language (local only)
-    if let appLang = appLanguage {
-      sharedDefaults.set(appLang, forKey: "appLanguage")  // App language is intentionally global (device-level setting)
+    let expectedDID = accountDID
+    try await updateReadingLanguagePreferences(primaryLanguage: primaryLanguage, contentLanguages: contentLanguages, expectedAccountDID: expectedDID)
+    if let appLanguage {
+      sharedDefaults.set(appLanguage, forKey: "appLanguage")
     } else {
       sharedDefaults.removeObject(forKey: "appLanguage")
     }
-    
-    // Save primary language (per-account)
-    sharedDefaults.set(primaryLanguage, forKey: scopedKey("primaryLanguage"))
+  }
 
-    // Save content languages (per-account)
-    sharedDefaults.set(contentLanguages, forKey: scopedKey("contentLanguages"))
+  struct ReadingLanguagePersistence {
+    var fetch: (ModelContext, String) throws -> Preferences?
+    var save: (ModelContext) throws -> Void
+    static let live = Self(
+      fetch: { context, accountDID in
+        let descriptor = FetchDescriptor<Preferences>(predicate: #Predicate { $0.accountDID == accountDID })
+        return try context.fetch(descriptor).first
+      }, save: { try $0.save() }
+    )
+  }
+  var readingLanguagePersistence = ReadingLanguagePersistence.live
+  var readingLanguageDefaults: UserDefaults?
 
-    // Also save preferred languages for post composer (per-account)
-    sharedDefaults.set(contentLanguages, forKey: scopedKey("userPreferredLanguages"))
-    
-    // Sync language preferences with server if client is available
-    if let client = client {
-      do {
-        // Get current preferences
-        let preferences = try await getPreferences()
-        
-        // Update language-related preferences
-        // In AT Protocol, language preferences are stored as content filters
-        // We'll create a custom preference type for language preferences
-        preferences.primaryLanguage = primaryLanguage
-        preferences.contentLanguages = contentLanguages
-        
-        // Save and sync to server
-        try await saveAndSyncPreferences(preferences)
-        
-        logger.info("Language preferences synced to server - Primary: \(primaryLanguage), Content: \(contentLanguages.joined(separator: ", "))")
-      } catch {
-        logger.error("Failed to sync language preferences to server: \(error.localizedDescription)")
-        // Don't throw the error, as local storage succeeded
-      }
-    } else {
-      logger.warning("No client available - language preferences stored locally only")
+  /// Publish this account's confirmed local reading choice without sending unrelated preferences.
+  @MainActor
+  func updateReadingLanguagePreferences(primaryLanguage: String, contentLanguages: [String], expectedAccountDID: String) async throws {
+    guard !expectedAccountDID.isEmpty, accountDID == expectedAccountDID else {
+      throw PreferencesManagerError.invalidData
     }
-    
-    logger.info("Language preferences updated - App: \(appLanguage ?? "system"), Primary: \(primaryLanguage), Content: \(contentLanguages.joined(separator: ", "))")
-    
-    // Notify state invalidation to refresh feeds with new language filters
-    // This will be picked up by feeds to filter content appropriately
-    NotificationCenter.default.post(name: NSNotification.Name("LanguagePreferencesChanged"), object: nil)
+    let operation = PreferenceOperationContext(accountDID: accountDID, generation: preferenceSessionGeneration, client: client)
+    await acquireSpecificEdit()
+    defer { releaseSpecificEdit() }
+    try validatePreferenceOperation(operation)
+    guard let modelContext else { throw PreferencesManagerError.modelContextNotInitialized }
+    let context = ModelContext(modelContext.container)
+    context.autosaveEnabled = false
+    if let local = try readingLanguagePersistence.fetch(context, expectedAccountDID) {
+      guard accountDID == expectedAccountDID else { throw PreferencesManagerError.invalidData }
+      local.primaryLanguage = primaryLanguage
+      local.contentLanguages = contentLanguages
+      try readingLanguagePersistence.save(context)
+    }
+    guard accountDID == expectedAccountDID else { throw PreferencesManagerError.invalidData }
+    let defaults = readingLanguageDefaults ?? sharedDefaults
+    // There is no suspension between the account proof and this local transaction.
+    defaults.set(primaryLanguage, forKey: AppSettingsModel.scopedKey("primaryLanguage", accountDID: expectedAccountDID))
+    defaults.set(contentLanguages, forKey: AppSettingsModel.scopedKey("contentLanguages", accountDID: expectedAccountDID))
+    defaults.set(contentLanguages, forKey: AppSettingsModel.scopedKey("userPreferredLanguages", accountDID: expectedAccountDID))
+    if cachedServerPreferences?.accountDID == expectedAccountDID {
+      cachedServerPreferences?.primaryLanguage = primaryLanguage
+      cachedServerPreferences?.contentLanguages = contentLanguages
+    }
+    NotificationCenter.default.post(name: NSNotification.Name("LanguagePreferencesChanged"), object: self,
+      userInfo: ["accountDID": expectedAccountDID])
   }
 
   /// Updates feed view preference and syncs to server

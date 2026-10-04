@@ -22,6 +22,7 @@ enum NavigationFontConfig {
     private static var lastFontSize: CGFloat?
     private static var lastDynamicTypeEnabled: Bool?
     private static var lastMaxContentSizeCategory: String?
+    private static var lastSystemContentSizeCategory: String?
 
     /// Invalidate font cache when font settings change
     static func invalidateCache() {
@@ -31,6 +32,7 @@ enum NavigationFontConfig {
         lastFontSize = nil
         lastDynamicTypeEnabled = nil
         lastMaxContentSizeCategory = nil
+        lastSystemContentSizeCategory = nil
     }
 
     /// Check if cache is valid for current FontManager settings
@@ -38,7 +40,8 @@ enum NavigationFontConfig {
         return lastFontDesign == fontManager.fontDesign &&
                lastFontSize == fontManager.sizeScale &&
                lastDynamicTypeEnabled == fontManager.dynamicTypeEnabled &&
-               lastMaxContentSizeCategory == fontManager.maxDynamicTypeSize
+               lastMaxContentSizeCategory == fontManager.maxDynamicTypeSize &&
+               lastSystemContentSizeCategory == fontManager.currentContentSizeCategory.rawValue
     }
 
     /// Update cache validation properties
@@ -47,6 +50,7 @@ enum NavigationFontConfig {
         lastFontSize = fontManager.sizeScale
         lastDynamicTypeEnabled = fontManager.dynamicTypeEnabled
         lastMaxContentSizeCategory = fontManager.maxDynamicTypeSize
+        lastSystemContentSizeCategory = fontManager.currentContentSizeCategory.rawValue
     }
 
     /// Creates the custom large title font with Core Text variations and FontManager integration
