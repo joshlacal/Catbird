@@ -49,7 +49,10 @@ import AppKit
     private var modelContext: ModelContext?
     // These are detached copies. Failed writes cannot be autosaved by the shared context.
     private var settingsModel: AppSettingsModel?
-    private var savedSettings: AppSettingsModel?
+    private var savedSettings: AppSettingsModel? {
+        didSet { confirmedReadingSnapshotIdentity = UUID() }
+    }
+    private var confirmedReadingSnapshotIdentity = UUID()
     private var pendingDrafts: [String: AppSettingsModel] = [:]
     private var pendingBaselines: [String: AppSettingsModel] = [:]
     private struct PendingEffect {
@@ -179,6 +182,23 @@ import AppKit
     }
 
     private(set) var accountSwitchFlushFailure: AccountSwitchFlushFailure?
+
+    struct ConfirmedReadingLanguages: Equatable, Sendable {
+        fileprivate let identity: UUID
+        let accountDID: String
+        let primaryLanguage: String
+        let contentLanguages: [String]
+    }
+
+    /// Explicit compatibility Retry may use only this account's immutable confirmed choice.
+    @MainActor
+    func confirmedReadingLanguages(for accountDID: String) -> ConfirmedReadingLanguages? {
+        guard self.accountDID == accountDID, persistenceState == .ready,
+              !isLocalChangesSuspended, pendingDrafts[accountDID] == nil,
+              persistence.isActiveAccount(accountDID, self), let savedSettings else { return nil }
+        return ConfirmedReadingLanguages(identity: confirmedReadingSnapshotIdentity, accountDID: accountDID,
+            primaryLanguage: savedSettings.primaryLanguage, contentLanguages: savedSettings.contentLanguages)
+    }
 
     var hasPendingChanges: Bool {
         guard let accountDID else { return false }

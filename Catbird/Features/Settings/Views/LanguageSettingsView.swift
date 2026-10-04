@@ -158,6 +158,35 @@ class LanguageManager {
         }
     }
 
+    private enum ReadingLanguageRetryError: Error { case changedOrUnavailable }
+
+    func retryConfirmedReadingLanguages(in appState: AppState,
+        expected: AppSettings.ConfirmedReadingLanguages, accountContextRevision: UInt64) async {
+        guard !isLoading, let preferencesManager else { return }
+        isLoading = true
+        defer { isLoading = false }
+        do {
+            try await appState.performSettingsAccountOperation {
+                let owner = AppStateManager.shared
+                guard owner.lifecycle.appState === appState,
+                      owner.lifecycle.userDID == expected.accountDID,
+                      owner.settingsAccountContextRevision == accountContextRevision,
+                      appState.userDID == expected.accountDID,
+                      appState.preferencesManager === preferencesManager,
+                      appState.appSettings.confirmedReadingLanguages(for: expected.accountDID) == expected
+                else { throw ReadingLanguageRetryError.changedOrUnavailable }
+                try await preferencesManager.updateReadingLanguagePreferences(primaryLanguage: expected.primaryLanguage,
+                    contentLanguages: expected.contentLanguages, expectedAccountDID: expected.accountDID)
+                self.addToRecentLanguages(expected.primaryLanguage)
+                self.error = nil
+            }
+        } catch {
+            // Refusal must leave the existing compatibility error available for a later Retry.
+            self.error = self.error ?? "Your reading choice is saved in Catbird. Local language compatibility data could not be updated."
+            Self.logger.error("Confirmed reading-language Retry did not complete: \(error.localizedDescription)")
+        }
+    }
+
 }
 
 struct LanguageSettingsView: View {
@@ -169,6 +198,10 @@ struct LanguageSettingsView: View {
     var interfacePreferences = InterfaceLanguagePreferences()
 
     private var canEdit: Bool { appState.appSettings.canEditPersistedSettings }
+    private var canRetryReadingLanguages: Bool {
+        languageManager?.isLoading != true
+            && appState.appSettings.confirmedReadingLanguages(for: appState.userDID) != nil
+    }
 
     var body: some View {
         SettingsFocusedForm(initialFocus: initialFocus) {
@@ -189,14 +222,16 @@ struct LanguageSettingsView: View {
                     Text(error).foregroundStyle(.secondary)
                     Button("Retry Local Language Update") {
                         let capturedState = appState
-                        let capturedDID = appState.userDID
-                        let manager = languageManager
+                        guard let manager = languageManager,
+                              let confirmed = capturedState.appSettings.confirmedReadingLanguages(for: capturedState.userDID)
+                        else { return }
+                        let revision = AppStateManager.shared.settingsAccountContextRevision
                         Task { @MainActor in
-                            await manager?.syncReadingLanguagePreferences(primaryLanguage: capturedState.appSettings.primaryLanguage,
-                                contentLanguages: capturedState.appSettings.contentLanguages, expectedAccountDID: capturedDID)
+                            await manager.retryConfirmedReadingLanguages(in: capturedState, expected: confirmed,
+                                accountContextRevision: revision)
                         }
                     }
-                    .disabled(!canEdit || languageManager?.isLoading == true)
+                    .disabled(!canRetryReadingLanguages)
                 }
             }
             Section {
