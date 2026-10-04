@@ -195,7 +195,6 @@ final class ChatTranscriptCollectionView: UICollectionView {
     layout?.managesReadingAnchor = false
     let geometryChanged = contentSize != settledContentSize || bounds.size != settledViewportSize
       || adjustedContentInset != settledInsets
-    var bottomFollowIncomplete = false
     if mayFollow && geometryChanged && (wasAtBottom || pendingInsetBottomFollow) {
       isRestoringBottom = true
       layout?.managesReadingAnchor = true
@@ -210,13 +209,10 @@ final class ChatTranscriptCollectionView: UICollectionView {
       }
       layout?.managesReadingAnchor = false
       isRestoringBottom = false
+      // The last pass may still have changed the content height. Pin to the
+      // bottom recorded below so the next pass sees a reader at the bottom.
       let bottom = max(-adjustedContentInset.top, contentSize.height - bounds.height + adjustedContentInset.bottom)
-      if abs(contentOffset.y - bottom) > 0.5 {
-        // Still unsettled: keep the bottom intent for the next pass rather than
-        // recording this geometry as the settled baseline.
-        bottomFollowIncomplete = true
-        setNeedsLayout()
-      }
+      if abs(contentOffset.y - bottom) > 0.5 { contentOffset.y = bottom }
     } else if layout?.preservesSelfSizingAnchor == true,
       let readerCell, let readerIndex, let readerY,
       indexPath(for: readerCell) == readerIndex {
@@ -230,7 +226,7 @@ final class ChatTranscriptCollectionView: UICollectionView {
         isRestoringBottom = false
       }
     }
-    pendingInsetBottomFollow = bottomFollowIncomplete
+    pendingInsetBottomFollow = false
     viewportReadingAnchor = nil
     settledBottomOffsetY = max(-adjustedContentInset.top, contentSize.height - bounds.height + adjustedContentInset.bottom)
     settledContentSize = contentSize
