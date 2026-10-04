@@ -210,9 +210,10 @@ struct ChatSettingsView: View {
           if editor.state == .saving {
             ProgressView("Saving chat privacy settings…")
           } else if editor.state == .saveFailed {
-            Text("Your saved rules are still selected.")
-            Text(editor.errorMessage ?? "The change was not saved.").font(.footnote).foregroundStyle(.secondary)
+            Text("This change could not be confirmed. The last loaded rules are shown.")
+            Text(editor.errorMessage ?? "Retry the change or reload the saved rules.").font(.footnote).foregroundStyle(.secondary)
             Button("Retry This Change") { editor.retrySave() }
+            Button("Reload Saved Rules") { Task { await editor.load() } }
           }
         }
       } else {
@@ -258,6 +259,7 @@ struct ChatSettingsView: View {
     let client = state.atProtoClient
     let editor = AccountSettingsEditSession<ChatPrivacySettingsRecord>(
       accountDID: account,
+      allowEditingAfterSaveFailure: false,
       isCurrentAccount: {
         AppStateManager.shared.lifecycle.userDID == account
           && AppStateManager.shared.settingsAccountContextRevision == contextRevision

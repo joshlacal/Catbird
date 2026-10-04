@@ -91,10 +91,11 @@ struct ActivityPrivacySettingsView: View {
             Section { ProgressView("Saving subscription rule…") }
           } else if editor.state == .saveFailed {
             Section {
-              Text("Your previous rule is still selected.")
-              Text(editor.errorMessage ?? "The change was not saved.")
+              Text("This change could not be confirmed. The last loaded rule is shown.")
+              Text(editor.errorMessage ?? "Retry the change or reload the saved rule.")
                 .font(.footnote).foregroundStyle(.secondary)
               Button("Retry This Change") { editor.retrySave() }
+              Button("Reload Saved Rule") { Task { await editor.load() } }
             }
           }
         }
@@ -116,6 +117,7 @@ struct ActivityPrivacySettingsView: View {
     let client = state.atProtoClient
     let session = AccountSettingsEditSession<ActivityPrivacySettingsRecord>(
       accountDID: account,
+      allowEditingAfterSaveFailure: false,
       isCurrentAccount: {
         AppStateManager.shared.lifecycle.userDID == account
           && AppStateManager.shared.settingsAccountContextRevision == contextRevision
