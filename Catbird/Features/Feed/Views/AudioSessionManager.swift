@@ -19,6 +19,11 @@ protocol VideoPlaybackAudioSession: AnyObject {
   func releaseVideoPlayback(owner: UUID)
 }
 
+/// For synchronous native playback starts (AVKit PiP and composer preview).
+protocol ImmediatePlaybackAudioSession: VideoPlaybackAudioSession {
+  func acquireImmediatePlayback(owner: UUID) throws
+}
+
 /// The manager invokes this boundary only on its serial session queue.
 protocol AudioSessionDriving: Sendable {
   var isVideoPlayback: Bool { get }
@@ -86,11 +91,10 @@ private struct SystemAudioSession: AudioSessionDriving {
 }
 
 /// Mutable ownership and all driver calls are confined to `sessionQueue`.
-final class AudioSessionManager: VideoPlaybackAudioSession, @unchecked Sendable {
+final class AudioSessionManager: ImmediatePlaybackAudioSession, @unchecked Sendable {
   static let shared = AudioSessionManager()
   private let driver: any AudioSessionDriving
   private var playbackOwners: Set<UUID> = []
-  private var legacyVideoPlaybackRequested = false
   private var recordingOwners: Set<UUID> = []
   private var ownsVideoSession = false
   private let logger = Logger(subsystem: "blue.catbird", category: "AudioSessionManager")
@@ -195,19 +199,19 @@ final class AudioSessionManager: VideoPlaybackAudioSession, @unchecked Sendable 
     }
   }
 
-  /// Inline/fullscreen callers already coordinate their collective mute intent.
-  /// Keep it separate from leases so their mute cannot release a pool or PiP owner.
-  func handleVideoUnmute() {
-    sessionQueue.async {
-      self.legacyVideoPlaybackRequested = true
-      self.activateVideoSessionIfAllowed()
-    }
-  }
+  enum PlaybackActivationError: Error { case recordingInProgress }
 
-  func handleVideoMute() {
-    sessionQueue.async {
-      self.legacyVideoPlaybackRequested = false
-      self.releaseVideoSessionIfUnused()
+  /// AVKit and AVAudioPlayer start synchronously. Serialize their activation
+  /// through the same recording-aware boundary and grant no lease on failure.
+  /// Call from the playback caller, never from the manager's session queue.
+  func acquireImmediatePlayback(owner: UUID) throws {
+    try sessionQueue.sync {
+      guard recordingOwners.isEmpty, !driver.isRecording else {
+        throw PlaybackActivationError.recordingInProgress
+      }
+      try driver.activateVideoPlayback()
+      ownsVideoSession = true
+      playbackOwners.insert(owner)
     }
   }
 
@@ -267,7 +271,7 @@ final class AudioSessionManager: VideoPlaybackAudioSession, @unchecked Sendable 
   }
 
   private var hasVideoPlaybackOwner: Bool {
-    !playbackOwners.isEmpty || legacyVideoPlaybackRequested
+    !playbackOwners.isEmpty
   }
 
   private func activateVideoSessionIfAllowed() {

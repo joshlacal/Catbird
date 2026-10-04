@@ -4,14 +4,14 @@ import Testing
 
 @Suite("Video audio session ownership")
 struct AudioSessionOwnershipTests {
-  @Test("Muted inline setup and legacy mute cannot silence a video feed owner")
+  @Test("Muted inline setup and an unrelated release cannot silence a video feed owner")
   func silentPreviewRespectsOwner() async {
     let driver = FixtureAudioSessionDriver()
     let manager = AudioSessionManager(driver: driver)
     let owner = UUID()
     manager.acquireVideoPlayback(owner: owner)
     manager.configureForSilentPlayback()
-    manager.handleVideoMute()
+    manager.releaseVideoPlayback(owner: UUID())
     await manager.waitForPendingConfiguration()
     #expect(driver.actions == [.activateVideo])
     #expect(driver.mode == .video)
@@ -39,19 +39,20 @@ struct AudioSessionOwnershipTests {
     #expect(driver.actions.suffix(2) == [.deactivate, .ambient])
   }
 
-  @Test("Pool cleanup preserves newer inline or fullscreen unmute intent")
-  func newerLegacyIntent() async {
+  @Test("Pool cleanup preserves another active inline or fullscreen owner")
+  func otherActivePlaybackOwner() async {
     let driver = FixtureAudioSessionDriver()
     let manager = AudioSessionManager(driver: driver)
     let owner = UUID()
+    let inlineOwner = UUID()
     manager.acquireVideoPlayback(owner: owner)
-    manager.handleVideoUnmute()
+    manager.acquireVideoPlayback(owner: inlineOwner)
     manager.releaseVideoPlayback(owner: owner)
     manager.configureForSilentPlayback()
     await manager.waitForPendingConfiguration()
     #expect(driver.mode == .video)
     #expect(!driver.actions.contains(.deactivate))
-    manager.handleVideoMute()
+    manager.releaseVideoPlayback(owner: inlineOwner)
     await manager.waitForPendingConfiguration()
     #expect(driver.actions.suffix(2) == [.deactivate, .ambient])
   }
@@ -61,14 +62,15 @@ struct AudioSessionOwnershipTests {
     let driver = FixtureAudioSessionDriver()
     let manager = AudioSessionManager(driver: driver)
     let owner = UUID()
+    let inlineOwner = UUID()
     manager.acquireVideoPlayback(owner: owner)
     await manager.waitForPendingConfiguration()
     driver.mode = .recording
     manager.releaseVideoPlayback(owner: owner)
     manager.configureForSilentPlayback()
     manager.acquireVideoPlayback(owner: owner)
-    manager.handleVideoUnmute()
-    manager.handleVideoMute()
+    manager.acquireVideoPlayback(owner: inlineOwner)
+    manager.releaseVideoPlayback(owner: inlineOwner)
     manager.releaseVideoPlayback(owner: owner)
     await manager.waitForPendingConfiguration()
     #expect(driver.mode == .recording)
@@ -98,7 +100,7 @@ struct AudioSessionOwnershipTests {
     try await manager.configureForRecording(owner: recordingOwner)
     manager.acquireVideoPlayback(owner: owner)
     manager.configureForSilentPlayback()
-    manager.handleVideoMute()
+    manager.releaseVideoPlayback(owner: UUID())
     await manager.waitForPendingConfiguration()
     #expect(driver.actions == [.activateRecording])
     manager.resetAfterRecording(owner: recordingOwner)
@@ -166,6 +168,67 @@ struct AudioSessionOwnershipTests {
     manager.releaseVideoPlayback(owner: videoOwner)
     await manager.waitForPendingConfiguration()
   }
+  @Test("Retiring inline ownership leaves no phantom owner for a later feed")
+  func retiredInlineThenFeed() async {
+    let driver = FixtureAudioSessionDriver()
+    let manager = AudioSessionManager(driver: driver)
+    let inlineOwner = UUID()
+    let feedOwner = UUID()
+    manager.acquireVideoPlayback(owner: inlineOwner)
+    manager.releaseVideoPlayback(owner: inlineOwner)
+    manager.acquireVideoPlayback(owner: feedOwner)
+    manager.releaseVideoPlayback(owner: feedOwner)
+    await manager.waitForPendingConfiguration()
+    #expect(driver.mode == .ambient)
+    #expect(driver.actions == [.activateVideo, .deactivate, .ambient, .activateVideo, .deactivate, .ambient])
+    manager.acquireVideoPlayback(owner: inlineOwner)
+    await manager.waitForPendingConfiguration()
+    #expect(driver.mode == .video)
+    manager.releaseVideoPlayback(owner: inlineOwner)
+    await manager.waitForPendingConfiguration()
+  }
+
+  @Test("Synchronous PiP and preview starts cannot take a recording session")
+  func immediatePlaybackRespectsRecording() async throws {
+    let driver = FixtureAudioSessionDriver()
+    let manager = AudioSessionManager(driver: driver)
+    let recordingOwner = UUID()
+    let previewOwner = UUID()
+    try await manager.configureForRecording(owner: recordingOwner)
+    #expect(throws: AudioSessionManager.PlaybackActivationError.self) {
+      try manager.acquireImmediatePlayback(owner: previewOwner)
+    }
+    manager.releaseVideoPlayback(owner: previewOwner)
+    await manager.waitForPendingConfiguration()
+    #expect(driver.actions == [.activateRecording])
+    manager.resetAfterRecording(owner: recordingOwner)
+    await manager.waitForPendingConfiguration()
+    #expect(driver.mode == .ambient)
+    try manager.acquireImmediatePlayback(owner: previewOwner)
+    #expect(driver.mode == .video)
+    manager.releaseVideoPlayback(owner: previewOwner)
+    await manager.waitForPendingConfiguration()
+    #expect(driver.mode == .ambient)
+  }
+
+  @Test("Stopping a preview leaves a retained feed lease active")
+  func previewReleasePreservesFeed() async throws {
+    let driver = FixtureAudioSessionDriver()
+    let manager = AudioSessionManager(driver: driver)
+    let feedOwner = UUID()
+    let previewOwner = UUID()
+    manager.acquireVideoPlayback(owner: feedOwner)
+    try manager.acquireImmediatePlayback(owner: previewOwner)
+    manager.releaseVideoPlayback(owner: previewOwner)
+    manager.releaseVideoPlayback(owner: UUID())
+    await manager.waitForPendingConfiguration()
+    #expect(driver.mode == .video)
+    #expect(!driver.actions.contains(.deactivate))
+    manager.releaseVideoPlayback(owner: feedOwner)
+    await manager.waitForPendingConfiguration()
+    #expect(driver.mode == .ambient)
+  }
+
 }
 
 /// The lock protects both session-queue mutations and test-thread snapshots.

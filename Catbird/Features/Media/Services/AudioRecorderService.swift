@@ -17,17 +17,43 @@ import UIKit
 import AppKit
 #endif
 
+protocol AudioRecordingSession: AnyObject {
+  @MainActor func configureForRecording(owner: UUID) async throws
+  @MainActor func resetAfterRecording(owner: UUID)
+}
+
+extension AudioSessionManager: AudioRecordingSession {}
+
+/// Only the recorder operations used by this service; tests need no microphone.
+@MainActor
+protocol AudioRecordingDevice: AnyObject {
+  var delegate: (any AVAudioRecorderDelegate)? { get set }
+  var isMeteringEnabled: Bool { get set }
+  var isRecording: Bool { get }
+  func prepareToRecord() -> Bool
+  func record() -> Bool
+  func stop()
+  func updateMeters()
+  func averagePower(forChannel channelNumber: Int) -> Float
+}
+
+extension AVAudioRecorder: AudioRecordingDevice {}
+
 @MainActor @Observable
 final class AudioRecorderService: NSObject {
   // MARK: - Properties
   
-  private var audioRecorder: AVAudioRecorder?
+  private var audioRecorder: (any AudioRecordingDevice)?
   private var recordingSessionOwner: UUID?
+  private let audioSession: any AudioRecordingSession
+  private let recordingDirectory: URL
+  private let makeRecorder: (URL, [String: Any]) throws -> any AudioRecordingDevice
   private var recordingTimer: Timer?
   private let audioLogger = Logger(subsystem: "blue.catbird", category: "AudioRecorderService")
   
   // Observable properties
   var isRecording: Bool = false
+  var isStartingRecording: Bool { recordingSessionOwner != nil && !isRecording }
   var recordingDuration: TimeInterval = 0
   var recordingLevel: Float = 0.0
   var hasPermission: Bool = false
@@ -40,9 +66,25 @@ final class AudioRecorderService: NSObject {
   
   // MARK: - Initialization
   
-  override init() {
-    super.init()
+  override convenience init() {
+    self.init(
+      audioSession: AudioSessionManager.shared,
+      recordingDirectory: FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0],
+      makeRecorder: { try AVAudioRecorder(url: $0, settings: $1) }
+    )
     setupAudioSession()
+  }
+
+  /// Injected construction does not query permission or touch the shared session.
+  init(
+    audioSession: any AudioRecordingSession,
+    recordingDirectory: URL,
+    makeRecorder: @escaping (URL, [String: Any]) throws -> any AudioRecordingDevice
+  ) {
+    self.audioSession = audioSession
+    self.recordingDirectory = recordingDirectory
+    self.makeRecorder = makeRecorder
+    super.init()
   }
   
   isolated deinit {
@@ -51,7 +93,7 @@ final class AudioRecorderService: NSObject {
     recordingTimer?.invalidate()
     levelTimer?.invalidate()
     if let owner = recordingSessionOwner {
-      AudioSessionManager.shared.resetAfterRecording(owner: owner)
+      audioSession.resetAfterRecording(owner: owner)
     }
   }
 
@@ -108,7 +150,8 @@ final class AudioRecorderService: NSObject {
     guard hasPermission else {
       throw AudioRecordingError.permissionDenied
     }
-    guard !isRecording, recordingSessionOwner == nil else {
+    guard !isStartingRecording else { throw AudioRecordingError.recordingInProgress }
+    guard !isRecording else {
       audioLogger.debug("Recording already in progress")
       return
     }
@@ -116,13 +159,12 @@ final class AudioRecorderService: NSObject {
     let owner = UUID()
     recordingSessionOwner = owner
     do {
-      try await AudioSessionManager.shared.configureForRecording(owner: owner)
+      try await audioSession.configureForRecording(owner: owner)
       try Task.checkCancellation()
       // Stop/cancel may run while session activation is suspended.
       guard recordingSessionOwner == owner else { throw CancellationError() }
 
-      let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-      let recordingURL = documentsPath.appendingPathComponent("recording_\(Date().timeIntervalSince1970).m4a")
+      let recordingURL = recordingDirectory.appendingPathComponent("recording_\(Date().timeIntervalSince1970).m4a")
       currentRecordingURL = recordingURL
       let settings: [String: Any] = [
         AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
@@ -131,7 +173,7 @@ final class AudioRecorderService: NSObject {
         AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
       ]
 
-      let recorder = try AVAudioRecorder(url: recordingURL, settings: settings)
+      let recorder = try makeRecorder(recordingURL, settings)
       audioRecorder = recorder
       recorder.delegate = self
       recorder.isMeteringEnabled = true
@@ -148,7 +190,7 @@ final class AudioRecorderService: NSObject {
       if recordingSessionOwner == owner {
         stopRecording()
       } else {
-        AudioSessionManager.shared.resetAfterRecording(owner: owner)
+        audioSession.resetAfterRecording(owner: owner)
       }
       throw error
     }
@@ -164,7 +206,7 @@ final class AudioRecorderService: NSObject {
     stopTimers()
     isRecording = false
     recordingLevel = 0.0
-    if let owner { AudioSessionManager.shared.resetAfterRecording(owner: owner) }
+    if let owner { audioSession.resetAfterRecording(owner: owner) }
     audioLogger.debug("Stopped recording")
   }
 
@@ -284,6 +326,7 @@ extension AudioRecorderService: AVAudioRecorderDelegate {
 enum AudioRecordingError: LocalizedError {
   case permissionDenied
   case recordingFailed
+  case recordingInProgress
   case audioSessionError
   
   var errorDescription: String? {
@@ -292,6 +335,8 @@ enum AudioRecordingError: LocalizedError {
       return "Microphone permission is required to record audio"
     case .recordingFailed:
       return "Failed to start audio recording"
+    case .recordingInProgress:
+      return "Audio recording is still starting"
     case .audioSessionError:
       return "Failed to configure audio session"
     }

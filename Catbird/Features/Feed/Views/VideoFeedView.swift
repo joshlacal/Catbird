@@ -36,7 +36,7 @@ public struct VideoFeedView: View {
   @State private var initialLoadRequestID: UUID?
   @State private var hasMore: Bool = true
   @State private var errorMessage: String?
-  @State private var revealedItemIDs: Set<String> = []
+  @State private var revealedItems: Set<VideoFeedItem.RevealIdentity> = []
 
   public init(
     feedURI: String = VideoFeedView.thevidsURI,
@@ -63,11 +63,11 @@ public struct VideoFeedView: View {
               index: index,
               pageSize: size,
               isActive: item.id == activeItemID,
-              isRevealed: revealedItemIDs.contains(item.id),
+              isRevealed: revealedItems.contains(item.revealIdentity),
               attachesPlayer: abs(index - activeIndex) <= 1,
               playerPool: playerPool,
-              onReveal: { revealItem(at: index) },
-              onConceal: { concealItem(at: index) },
+              onReveal: { revealItem(item) },
+              onConceal: { concealItem(item) },
               onProfileTap: { did in
                 path.append(NavigationDestination.profile(did))
               },
@@ -192,7 +192,7 @@ public struct VideoFeedView: View {
       let parsedItems = VideoFeedItem.initialItems(startingAt: initialPost, feedPosts: feedPosts)
       try Task.checkCancellation()
       guard initialLoadRequestID == requestID else { return }
-      self.items = parsedItems
+      publishItems(parsedItems)
       self.cursor = nextCursor
       self.hasMore = nextCursor != nil && !feedPosts.isEmpty
       self.isInitialLoading = false
@@ -237,47 +237,50 @@ public struct VideoFeedView: View {
     let (feedPosts, nextCursor) = try await feedManager.fetchFeed(
       fetchType: .feed(uri), cursor: currentCursor
     )
-    let newItems = extractVideoItems(from: feedPosts)
-    var seenIDs = Set(items.map(\.id))
-    let uniqueNewItems = newItems.filter { seenIDs.insert($0.id).inserted }
-
     // Even a transport that finishes after cancellation cannot publish an old
     // page over the new visible screen's request.
     try Task.checkCancellation()
-    self.items.append(contentsOf: uniqueNewItems)
+    publishItems(VideoFeedItem.merging(items, with: feedPosts))
     if activeItemID == nil { activeItemID = items.first?.id }
     self.cursor = nextCursor
     self.hasMore = nextCursor != nil && nextCursor != currentCursor && !feedPosts.isEmpty
     updatePrewarming(for: activeIndex)
   }
 
-  private func extractVideoItems(from feedPosts: [AppBskyFeedDefs.FeedViewPost]) -> [VideoFeedItem] {
-    feedPosts.compactMap { VideoFeedItem(post: $0.post) }
+  private func publishItems(_ refreshed: [VideoFeedItem]) {
+    let resumePlayback = playerPool.wantsPlayback
+    revealedItems.formIntersection(Set(refreshed.map(\.revealIdentity)))
+    items = refreshed
+    if !items.contains(where: { $0.id == activeItemID }) {
+      activeItemID = items.first?.id
+    }
+    // Revoke playback and cached players immediately, before the warning view
+    // is rebuilt. A same-URI label update must not retain an old reveal.
+    if !items.indices.contains(activeIndex) || !isItemEligibleForPlayback(items[activeIndex]) {
+      playerPool.pauseAll()
+    }
+    // Replacing a stream clears its old player slot. Restore only the intent
+    // captured before replacement; eligibility still gates the refreshed item.
+    if resumePlayback {
+      updatePlaybackForActiveIndex(activeIndex)
+    } else {
+      updatePrewarming(for: activeIndex)
+    }
   }
 
   private func isItemEligibleForPlayback(_ item: VideoFeedItem) -> Bool {
-    if revealedItemIDs.contains(item.id) {
+    if revealedItems.contains(item.revealIdentity) {
       return true
     }
-    if case .knownType(let record) = item.post.record,
-       let postRecord = record as? AppBskyFeedPost,
-       let postLabels = postRecord.labels,
-       case .comAtprotoLabelDefsSelfLabels(let selfLabels) = postLabels {
-      let hasSelfWarning = selfLabels.values.contains {
-        ContentLabels.contentWarningLabels.contains($0.val.lowercased())
-      }
-      if hasSelfWarning {
-        return false
-      }
-    }
-    let visibility = ContentLabelManager<AnyView>.getInitialContentVisibility(labels: item.post.labels)
+    let visibility = ContentLabelManager<AnyView>.getInitialContentVisibility(
+      labels: item.post.labels, selfLabelValues: item.selfLabelValues
+    )
     return visibility == .show
   }
 
-  private func revealItem(at index: Int) {
-    guard items.indices.contains(index) else { return }
-    let item = items[index]
-    revealedItemIDs.insert(item.id)
+  private func revealItem(_ item: VideoFeedItem) {
+    guard let index = items.firstIndex(where: { $0.revealIdentity == item.revealIdentity }) else { return }
+    revealedItems.insert(item.revealIdentity)
     if index == activeIndex {
       updatePlaybackForActiveIndex(index)
     } else {
@@ -285,9 +288,9 @@ public struct VideoFeedView: View {
     }
   }
 
-  private func concealItem(at index: Int) {
-    guard items.indices.contains(index) else { return }
-    revealedItemIDs.remove(items[index].id)
+  private func concealItem(_ item: VideoFeedItem) {
+    guard let index = items.firstIndex(where: { $0.revealIdentity == item.revealIdentity }) else { return }
+    revealedItems.remove(item.revealIdentity)
     if index == activeIndex, !isItemEligibleForPlayback(items[index]) {
       playerPool.pauseAll()
     }
@@ -442,24 +445,12 @@ private struct VideoFeedItemView: View {
     return ""
   }
 
-  private var selfLabelValues: [String]? {
-    guard case .knownType(let record) = item.post.record,
-          let postRecord = record as? AppBskyFeedPost,
-          let postLabels = postRecord.labels else { return nil }
-    switch postLabels {
-    case .comAtprotoLabelDefsSelfLabels(let selfLabels):
-      return selfLabels.values.map { $0.val.lowercased() }
-    default:
-      return nil
-    }
-  }
-
   var body: some View {
     ZStack(alignment: .bottom) {
       Color.black
       ContentLabelManager(
         labels: item.post.labels,
-        selfLabelValues: selfLabelValues,
+        selfLabelValues: item.selfLabelValues,
         contentType: "video"
       ) {
         ZStack {
@@ -484,6 +475,7 @@ private struct VideoFeedItemView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
       }
+      .id(item.revealIdentity)
       .frame(maxWidth: .infinity, maxHeight: .infinity)
 
       LinearGradient(

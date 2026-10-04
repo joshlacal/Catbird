@@ -41,7 +41,38 @@ struct VideoFeedRoutingTests {
       .init(post: other), .init(post: refreshed), .init(post: other)
     ])
     #expect(items.map(\.id) == [selected.uri.uriString(), other.uri.uriString()])
-    #expect(items.first?.post == selected)
+    #expect(items.first?.post == refreshed)
+  }
+
+  @Test("Refreshed labels keep the selected URI but revoke the earlier reveal", arguments: ["porn", "graphic-media"])
+  func refreshedModeration(value: String) throws {
+    let selected = try post("selected")
+    let seed = try #require(VideoFeedItem(post: selected))
+    let refreshed = try post("selected", labels: [value])
+    let items = VideoFeedItem.initialItems(startingAt: selected, feedPosts: [
+      .init(post: try post("other")), .init(post: refreshed)
+    ])
+    let updated = try #require(items.first)
+    #expect(updated.id == seed.id)
+    #expect(updated != seed)
+    #expect(updated.post == refreshed)
+    #expect(updated.post.labels?.map(\.val) == [value])
+    #expect(updated.revealIdentity != seed.revealIdentity)
+    let reveals: Set<VideoFeedItem.RevealIdentity> = [seed.revealIdentity]
+    #expect(!reveals.contains(updated.revealIdentity))
+  }
+
+  @Test("Overlapping later pages refresh self-labels without moving the selection")
+  func refreshedSelfLabels() throws {
+    let seed = try #require(VideoFeedItem(post: post("selected")))
+    let refreshed = try post("selected", selfWarning: true)
+    let items = VideoFeedItem.merging([seed], with: [.init(post: refreshed)])
+    let updated = try #require(items.first)
+    #expect(items.count == 1)
+    #expect(updated.id == seed.id)
+    #expect(updated.post == refreshed)
+    #expect(updated.selfLabelValues == ["porn"])
+    #expect(updated.revealIdentity != seed.revealIdentity)
   }
 
   @Test("Selected video survives removal from the generator's current page")
@@ -94,7 +125,8 @@ struct VideoFeedRoutingTests {
     _ key: String,
     playlist: String = "shared",
     wrapsRecord: Bool = false,
-    selfWarning: Bool = false
+    selfWarning: Bool = false,
+    labels: [String] = []
   ) throws -> AppBskyFeedDefs.PostView {
     let uri = try ATProtocolURI(uriString: "at://did:plc:videofixture/app.bsky.feed.post/\(key)")
     let base = PublicPostTestFixtures.makePostView(uri: uri, authorDID: try DID(didString: "did:plc:videofixture"))
@@ -118,7 +150,11 @@ struct VideoFeedRoutingTests {
     )
     return AppBskyFeedDefs.PostView(
       uri: base.uri, cid: base.cid, author: base.author, record: .knownType(record),
-      embed: embed, indexedAt: base.indexedAt
+      embed: embed, indexedAt: base.indexedAt,
+      labels: labels.map { .init(
+        src: base.author.did, uri: URI(uriString: uri.uriString()),
+        val: $0, cts: base.indexedAt
+      ) }
     )
   }
 }
