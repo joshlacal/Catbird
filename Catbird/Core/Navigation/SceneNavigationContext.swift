@@ -44,11 +44,20 @@ final class SceneNavigationContext {
 
   @ObservationIgnored private weak var appState: AppState?
 
-  init(appState: AppState, sceneID: UUID) {
+  init(
+    appState: AppState,
+    sceneID: UUID,
+    composerEditingSession: SceneComposerEditingSession? = nil
+  ) {
+    if let composerEditingSession {
+      precondition(composerEditingSession.sceneID == sceneID)
+      precondition(composerEditingSession.accountDID == appState.userDID)
+    }
     self.appState = appState
     self.accountDID = appState.userDID
     self.sceneID = sceneID
-    self.composerEditingSession = SceneComposerEditingSession(appState: appState, sceneID: sceneID)
+    self.composerEditingSession = composerEditingSession
+      ?? SceneComposerEditingSession(appState: appState, sceneID: sceneID)
     self.navigationManager = AppNavigationManager()
     self.urlHandler = URLHandler()
     self.urlHandler.configure(with: appState, navigationManager: self.navigationManager)

@@ -58,9 +58,25 @@ private var isSceneRuntimeUIFixture: Bool {
   #endif
 }
 
+private var isInlineReplyUIFixture: Bool {
+  #if DEBUG && os(iOS)
+  ProcessInfo.processInfo.arguments.contains(InlineReplyValidationFixture.launchArgument)
+  #else
+  false
+  #endif
+}
+
+private var isMessagesViewportUIFixture: Bool {
+  #if DEBUG && os(iOS)
+  ProcessInfo.processInfo.arguments.contains(MessagesViewportValidationFixture.launchArgument)
+  #else
+  false
+  #endif
+}
+
 /// Any presentation fixture: skips account bootstrap and URL handling.
 private var isPresentationUIFixture: Bool {
-  isMessageRequestsUIFixture || isVideoFeedUIFixture || isSocialActionsUIFixture || isSettingsUIFixture || isSceneRuntimeUIFixture
+  isMessageRequestsUIFixture || isVideoFeedUIFixture || isSocialActionsUIFixture || isSettingsUIFixture || isSceneRuntimeUIFixture || isInlineReplyUIFixture || isMessagesViewportUIFixture
 }
 
 private var isSettingsUIFixture: Bool {
@@ -1006,6 +1022,18 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
             VideoFeedUIFixture()
           } else if isSocialActionsUIFixture {
             SocialActionsUIFixture()
+          } else if isInlineReplyUIFixture {
+            #if os(iOS)
+            InlineReplyValidationFixture()
+            #else
+            EmptyView()
+            #endif
+          } else if isMessagesViewportUIFixture {
+            #if os(iOS)
+            MessagesViewportValidationFixture()
+            #else
+            EmptyView()
+            #endif
           } else if isSceneRuntimeUIFixture {
             #if os(iOS)
             SceneRuntimeFixture(scene: scene)
