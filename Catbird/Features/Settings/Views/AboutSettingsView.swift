@@ -5,7 +5,6 @@ import WebKit
 import Nuke
 
 struct AboutSettingsView: View {
-    @State private var isClearingCache = false
     @State private var supportStore = SupportTipStore.shared
 
     init(supportStore: SupportTipStore = .shared) {
@@ -149,9 +148,7 @@ struct AboutSettingsView: View {
                     }
                 }
                 
-                NavigationLink(destination: OpenSourceLicensesView()) {
-                    Text("Open Source Licenses")
-                }
+
             }
             
             Section("Support") {
@@ -172,24 +169,7 @@ struct AboutSettingsView: View {
                     }
                 }
 
-                NavigationLink("System Log") {
-                    SystemLogView()
-                }
-                
-                Button {
-                    clearImageCache()
-                } label: {
-                    if isClearingCache {
-                        HStack {
-                            Text("Clearing cache...")
-                            Spacer()
-                            ProgressView()
-                        }
-                    } else {
-                        Text("Clear Image Cache")
-                    }
-                }
-                .disabled(isClearingCache)
+
             }
             
             Section {
@@ -200,15 +180,10 @@ struct AboutSettingsView: View {
                         .foregroundStyle(.secondary)
                 }
                 
-                HStack {
-                    Text("Build")
-                    Spacer()
-                    Text(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "Unknown")
-                        .foregroundStyle(.secondary)
-                }
+
             }
         }
-        .navigationTitle("About")
+        .navigationTitle("About & Support")
     #if os(iOS)
     .toolbarTitleDisplayMode(.inline)
     #endif
@@ -227,23 +202,7 @@ struct AboutSettingsView: View {
         }
     }
     
-    private func clearImageCache() {
-        isClearingCache = true
-        
-        // Clear Nuke image cache
-        ImagePipeline.shared.cache.removeAll()
-        
-        // Clear WKWebView cache
-        WKWebsiteDataStore.default().removeData(
-            ofTypes: [WKWebsiteDataTypeDiskCache, WKWebsiteDataTypeMemoryCache],
-            modifiedSince: Date(timeIntervalSince1970: 0)
-        ) {
-            Task { @MainActor in
-                isClearingCache = false
-            }
-        }
-    }
-    
+
 }
 
 #Preview {

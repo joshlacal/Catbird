@@ -13,6 +13,7 @@ enum AccountSwitchOutcome: Equatable, Sendable {
   case unchanged
   case busy
   case failed(String)
+  case blockedBySettings(String)
   case cancelled
 }
 

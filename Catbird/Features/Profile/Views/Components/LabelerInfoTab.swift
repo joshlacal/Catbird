@@ -8,12 +8,52 @@
 import SwiftUI
 import Petrel
 
+/// Canonical keys match the installed builtin renderer; raw records are never migrated.
+enum ProfileLabelPreferenceAdapter {
+    struct Selection {
+        let visibility: ContentVisibility
+        let usesLegacyRawKey: Bool
+        let hasExplicitPreference: Bool
+    }
+    static func consumedKey(for raw: String) -> String {
+        let value = raw.lowercased()
+        switch value {
+        case "nsfw", "porn", "sexual": return "nsfw"
+        case "gore", "violence", "graphic", "graphic-media": return "graphic"
+        case "nudity", "suggestive": return value
+        default: return ContentLabels.contentWarningLabels.contains(value) ? value : raw
+        }
+    }
+    static func selection(raw: String, labelerDID: DID, preferences: [ContentLabelPreference],
+                          inheritedDefault: ContentVisibility = .warn) -> Selection {
+        let key = consumedKey(for: raw)
+        if let scoped = preferences.first(where: { $0.label == key && $0.labelerDid == labelerDID }) {
+            return .init(visibility: ContentVisibility(fromPreference: scoped.visibility), usesLegacyRawKey: false, hasExplicitPreference: true)
+        }
+        if let global = preferences.first(where: { $0.label == key && $0.labelerDid == nil }) {
+            return .init(visibility: ContentVisibility(fromPreference: global.visibility), usesLegacyRawKey: false, hasExplicitPreference: true)
+        }
+        if key != raw {
+            let legacy = preferences.first { $0.label == raw && $0.labelerDid == labelerDID }
+                ?? preferences.first { $0.label == raw && $0.labelerDid == nil }
+            if let legacy {
+                return .init(visibility: ContentVisibility(fromPreference: legacy.visibility), usesLegacyRawKey: true, hasExplicitPreference: true)
+            }
+        }
+        return .init(visibility: inheritedDefault, usesLegacyRawKey: false, hasExplicitPreference: false)
+    }
+}
+
 /// Tab view showing labeler information, policies, and label settings
 struct LabelerInfoTab: View {
     let labelerDetails: AppBskyLabelerDefs.LabelerViewDetailed
     @Environment(AppState.self) private var appState
+    @State private var loadRequest = UUID()
+    @State private var rawFallbacks: Set<String> = []
+    @State private var explicitPreferences: Set<String> = []
     @State private var labelPreferences: [String: ContentVisibility] = [:]
     @State private var isSaving = false
+    @State private var hasConfirmedPreferences = false
     @State private var errorMessage: String?
     
     var body: some View {
@@ -53,11 +93,14 @@ struct LabelerInfoTab: View {
                         .appCaption()
                         .foregroundStyle(.red)
                         .padding()
+                    Button("Retry") { Task { await loadLabelPreferences() } }
+                        .disabled(isSaving)
+                        .accessibilityIdentifier("profile.labeler.settings.retry")
                 }
             }
             .padding()
         }
-        .task {
+        .task(id: appState.userDID) {
             await loadLabelPreferences()
         }
     }
@@ -198,13 +241,30 @@ struct LabelerInfoTab: View {
             selection: Binding(
                 get: { labelPreferences[identifier] ?? .warn },
                 set: { newValue in
-                    labelPreferences[identifier] = newValue
+                    guard hasConfirmedPreferences, !isSaving,
+                          rawFallbacks.contains(identifier) || !explicitPreferences.contains(identifier)
+                            || newValue != labelPreferences[identifier] else { return }
+                    let account = appState.userDID
+                    let manager = appState.preferencesManager
+                    let request = loadRequest
+                    isSaving = true
                     Task {
-                        await saveLabelPreference(identifier: identifier, visibility: newValue)
+                        await saveLabelPreference(identifier: identifier, visibility: newValue,
+                                                  manager: manager, account: account, request: request)
                     }
                 }
             )
         )
+        .disabled(!hasConfirmedPreferences || isSaving)
+        .accessibilityIdentifier("profile.labeler.setting.\(identifier)")
+        if rawFallbacks.contains(identifier) {
+            Text("This is an earlier stored choice. Changing it applies the shared content category setting for this service.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        if ProfileLabelPreferenceAdapter.consumedKey(for: identifier) == "nsfw", !appState.isAdultContentEnabled {
+            Text("Adult content is off. This choice is retained for when adult content is enabled.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
     }
     
     // MARK: - Helper Functions
@@ -280,65 +340,58 @@ struct LabelerInfoTab: View {
         }
     }
     
+    private func applyLabelPreferences(_ preferences: Preferences) {
+        var values: [String: ContentVisibility] = [:]
+        var fallbacks: Set<String> = []
+        var explicit: Set<String> = []
+        for labelValue in labelerDetails.policies.labelValues {
+            let raw = labelValue.rawValue
+            let definition = labelerDetails.policies.labelValueDefinitions?.first { $0.identifier == raw }
+            let inherited: ContentVisibility = ContentLabels.contentWarningLabels.contains(raw.lowercased()) ? .warn
+                : definition?.defaultSetting.map { ContentVisibility(fromPreference: $0) } ?? .show
+            let selection = ProfileLabelPreferenceAdapter.selection(raw: raw, labelerDID: labelerDetails.creator.did,
+                preferences: preferences.contentLabelPrefs, inheritedDefault: inherited)
+            values[raw] = selection.visibility
+            if selection.usesLegacyRawKey { fallbacks.insert(raw) }
+            if selection.hasExplicitPreference { explicit.insert(raw) }
+        }
+        labelPreferences = values; rawFallbacks = fallbacks; explicitPreferences = explicit
+    }
+
     private func loadLabelPreferences() async {
+        let request = UUID(); loadRequest = request
+        let account = appState.userDID; let manager = appState.preferencesManager
+        hasConfirmedPreferences = false; errorMessage = nil; isSaving = false
         do {
-            let preferences = try await appState.preferencesManager.getPreferences()
-            let labelerDid = labelerDetails.creator.did
-            
-            for labelValue in labelerDetails.policies.labelValues {
-                let visibility = ContentFilterManager.getVisibilityForLabel(
-                    label: labelValue.rawValue,
-                    labelerDid: labelerDid,
-                    preferences: preferences.contentLabelPrefs
-                )
-                await MainActor.run {
-                    labelPreferences[labelValue.rawValue] = visibility
-                }
-            }
+            let preferences = try await manager.refreshSettingsPreferences(expectedAccountDID: account)
+            guard loadRequest == request, !Task.isCancelled, manager.accountDID == account, appState.userDID == account else { return }
+            applyLabelPreferences(preferences)
+            hasConfirmedPreferences = true
         } catch {
-            await MainActor.run {
-                errorMessage = "Failed to load preferences: \(error.localizedDescription)"
-            }
+            guard loadRequest == request, manager.accountDID == account, appState.userDID == account else { return }
+            errorMessage = "Failed to load preferences: \(error.localizedDescription)"
         }
     }
-    
-    private func saveLabelPreference(identifier: String, visibility: ContentVisibility) async {
-        isSaving = true
+
+    private func saveLabelPreference(identifier: String, visibility: ContentVisibility,
+                                     manager: PreferencesManager, account: String, request: UUID) async {
+        defer { if loadRequest == request, manager.accountDID == account, appState.userDID == account { isSaving = false } }
         errorMessage = nil
-        
         do {
-            let labelerDid = labelerDetails.creator.did
-            let preference = ContentLabelPreference(
-                labelerDid: labelerDid,
-                label: identifier,
-                visibility: visibility.rawValue
-            )
-            
-            // Get existing preferences
-            let currentPrefs = try await appState.preferencesManager.getPreferences()
-            var updatedPrefs = currentPrefs.contentLabelPrefs
-            
-            // Remove any existing preference for this labeler+label combination
-            updatedPrefs.removeAll { pref in
-                pref.labelerDid?.didString() == labelerDid.didString() && pref.label == identifier
-            }
-            
-            // Add new preference
-            updatedPrefs.append(preference)
-            
-            // Save to server
-            try await appState.preferencesManager.updateContentLabelPreferences(updatedPrefs)
-            
-            await MainActor.run {
-                isSaving = false
-            }
+            let key = ProfileLabelPreferenceAdapter.consumedKey(for: identifier)
+            try await manager.setContentLabelVisibility(label: key, visibility: visibility.preferenceValue,
+                labelerDid: labelerDetails.creator.did, expectedAccountDID: account)
+            let preferences = try await manager.getPreferences()
+            guard loadRequest == request, manager.accountDID == account, appState.userDID == account else { return }
+            // Re-read every alias from the accepted local snapshot so sibling controls stay truthful.
+            applyLabelPreferences(preferences)
         } catch {
-            await MainActor.run {
-                errorMessage = "Failed to save preference: \(error.localizedDescription)"
-                isSaving = false
-            }
+            guard loadRequest == request, manager.accountDID == account, appState.userDID == account else { return }
+            hasConfirmedPreferences = false
+            errorMessage = "Failed to save preference: \(error.localizedDescription)"
         }
     }
+
 }
 
 /// Content visibility selector component used for labeler label settings (renamed to avoid conflicts)

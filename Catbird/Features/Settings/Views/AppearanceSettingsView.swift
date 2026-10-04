@@ -4,6 +4,7 @@ struct AppearanceSettingsView: View {
   @Environment(AppState.self) private var appState
   @Environment(\.colorScheme) private var colorScheme
   @State private var isShowingResetConfirmation = false
+  var initialFocus: SettingsControlID? = nil
 
   // Direct binding to AppSettings - no local state needed
   private var theme: Binding<String> {
@@ -27,29 +28,10 @@ struct AppearanceSettingsView: View {
     )
   }
 
-  private var fontStyle: Binding<String> {
-    Binding(
-      get: { appState.appSettings.fontStyle },
-      set: { appState.appSettings.fontStyle = $0 }
-    )
-  }
-
-  private var fontSize: Binding<String> {
-    Binding(
-      get: { appState.appSettings.fontSize },
-      set: { appState.appSettings.fontSize = $0 }
-    )
-  }
-
-  private var lineSpacing: Binding<String> {
-    Binding(
-      get: { appState.appSettings.lineSpacing },
-      set: { appState.appSettings.lineSpacing = $0 }
-    )
-  }
+  private var usesDarkTheme: Bool { theme.wrappedValue == "dark" || (theme.wrappedValue == "system" && colorScheme == .dark) }
 
   var body: some View {
-    Form {
+    SettingsFocusedForm(initialFocus: initialFocus, isReady: appState.appSettings.persistenceState != .unavailable) {
       SettingsPersistenceStatusSection(settings: appState.appSettings)
 
       // Theme Section
@@ -58,13 +40,23 @@ struct AppearanceSettingsView: View {
           Text("System").tag("system")
           Text("Light").tag("light")
           Text("Dark").tag("dark")
+          if !["system", "light", "dark"].contains(theme.wrappedValue) {
+            Text("Saved value: \(theme.wrappedValue)").tag(theme.wrappedValue)
+          }
         }
+        .settingsControl(.init(rawValue: "appearance.theme"))
 
-        if theme.wrappedValue == "dark" || (theme.wrappedValue == "system" && colorScheme == .dark) {
+        if usesDarkTheme || initialFocus?.rawValue == "appearance.darkMode" {
           Picker("Dark Mode Style", selection: darkThemeMode) {
             Text("Dim").tag("dim")
             Text("True Black").tag("black")
+            if !["dim", "black"].contains(darkThemeMode.wrappedValue) {
+              Text("Saved value: \(darkThemeMode.wrappedValue)").tag(darkThemeMode.wrappedValue)
+            }
           }
+          .disabled(!usesDarkTheme)
+          .settingsControl(.init(rawValue: "appearance.darkMode"))
+          if !usesDarkTheme { Text("Dark Mode Style is available when a dark theme is active.").foregroundStyle(.secondary) }
         }
       }
       .pickerStyle(.menu)
@@ -86,48 +78,29 @@ struct AppearanceSettingsView: View {
                 }
               }
             }
+            .settingsControl(.init(rawValue: "appearance.appIcon"))
           }
+        } else if initialFocus?.rawValue == "appearance.appIcon" {
+          Section { Text("Custom app icons are not available on this device.").settingsControl(.init(rawValue: "appearance.appIcon")) }
         }
       #endif
 
       // Accent Color Section
       Section("Accent Color") {
         AccentColorPicker(selection: accentColor)
-      }
-      .disabled(!appState.appSettings.canEditPersistedSettings)
-
-      // Typography Section
-      Section("Typography") {
-        Picker("Font Style", selection: fontStyle) {
-          Text("System").tag("system")
-          Text("Serif").tag("serif")
-          Text("Rounded").tag("rounded")
-          Text("Monospaced").tag("monospaced")
-        }
-
-        Picker("Font Size", selection: fontSize) {
-          Text("Small").tag("small")
-          Text("Default").tag("default")
-          Text("Large").tag("large")
-          Text("Extra Large").tag("extraLarge")
-        }
-
-        Picker("Line Spacing", selection: lineSpacing) {
-          Text("Tight").tag("tight")
-          Text("Normal").tag("normal")
-          Text("Relaxed").tag("relaxed")
-        }
-
-        FontPreviewRow()
+          .settingsControl(.init(rawValue: "appearance.accent"))
       }
       .disabled(!appState.appSettings.canEditPersistedSettings)
 
       Section {
-        NavigationLink("Text Scaling & Accessibility") {
-          AccessibilitySettingsView()
+        NavigationLink {
+          TextReadabilitySettingsView()
+        } label: {
+          SettingsNavigationRow(title: "Text & Readability", summary: "Font, spacing, system text size and reading aids", systemImage: "textformat.size", family: .accessibility)
         }
+        NavigationLink("Accessibility") { AccessibilitySettingsView() }
       } footer: {
-        Text("System text scaling, contrast, motion, and reading aids are managed in Accessibility.")
+        Text("Appearance and text choices apply to this account in Catbird on this device. The app icon applies to this device.")
       }
 
       // Colors Section
@@ -145,6 +118,7 @@ struct AppearanceSettingsView: View {
           isShowingResetConfirmation = true
         }
         .disabled(!appState.appSettings.canEditPersistedSettings)
+        .settingsControl(.init(rawValue: "appearance.reset"))
       } footer: {
         Text("Resets the theme, accent color, and custom typography for this account. Your app icon and accessibility settings are kept.")
       }
@@ -171,6 +145,7 @@ struct AppearanceSettingsView: View {
 
 struct AccentColorPicker: View {
   @Binding var selection: String
+  @Environment(\.colorScheme) private var colorScheme
 
   private let columns = [GridItem(.adaptive(minimum: 60), spacing: 12)]
 
@@ -194,11 +169,12 @@ struct AccentColorPicker: View {
               .shadow(color: option.color.opacity(0.4), radius: 3, y: 1)
 
             Text(option.displayName)
-              .font(.caption2)
-              .foregroundStyle(selection == option.rawValue ? option.color : .secondary)
+              .appFont(AppTextRole.caption2)
+              .foregroundStyle(selection == option.rawValue ? (colorScheme == .dark ? option.textDarkColor : option.textColor) : .secondary)
           }
         }
         .buttonStyle(.plain)
+        .frame(minWidth: 44, minHeight: 44)
         .accessibilityLabel(option.displayName)
         .accessibilityAddTraits(selection == option.rawValue ? .isSelected : [])
       }

@@ -24,6 +24,11 @@ final class FeedModel: StateInvalidationSubscriber {
   let feedManager: FeedManager
   private let appState: AppState
   private let feedTuner = FeedTuner()
+  private let contentFilterService = ContentFilterService()
+  @ObservationIgnored @MainActor private var confirmedFilterPreferences: FeedPreferenceSnapshot?
+  @ObservationIgnored @MainActor private var settingsRefreshGate: SettingsFeedRefreshGate?
+  @ObservationIgnored @MainActor private var readingFilterSignature: ReadingLanguageFilterSignature
+  @ObservationIgnored private var settingsObservers: [NSObjectProtocol] = []
   @ObservationIgnored private let prepareSlices: @Sendable ([FeedSlice]) async throws -> [PreparedFeedSlice]
 
   /// Feed generator info for custom feeds (contains DID for proxy routing)
@@ -97,7 +102,7 @@ final class FeedModel: StateInvalidationSubscriber {
     try checkPublication(publication)
     let prepared = try await prepareSlices(slices)
     try checkPublication(publication)
-    return prepared.map { preparedSlice in
+    let cachedPosts = prepared.map { preparedSlice in
       let cached = CachedFeedViewPost(prepared: preparedSlice, feedType: publication.feedKey)
       switch smartFilterDecisions[preparedSlice.slice.id] {
       case .collapsed(let ruleID):
@@ -109,6 +114,10 @@ final class FeedModel: StateInvalidationSubscriber {
       }
       return cached
     }
+    let localFilters = appState.feedFilterSettings
+    return filterCachedPosts(cachedPosts,
+      settings: appState.makeFilterSettings(snapshot: retainedFilterPreferenceSnapshot(), localFilters: localFilters),
+      hideDuplicateParents: localFilters.isFilterEnabled(name: "Hide Duplicate Posts"))
   }
   // Navigation state
   @MainActor var isReturningFromNavigation = false
@@ -127,6 +136,10 @@ final class FeedModel: StateInvalidationSubscriber {
     self.feedManager = feedManager
     self.appState = appState
     self.lastFeedType = feedManager.fetchType
+    self.readingFilterSignature = ReadingLanguageFilterSignature(
+      hideOtherLanguages: appState.appSettings.hideNonPreferredLanguages
+        || appState.feedFilterSettings.isFilterEnabled(name: "Filter by Language"),
+      preferredLanguages: appState.appSettings.contentLanguages)
     
     // Subscribe to state invalidation events
     appState.stateInvalidationBus.subscribe(self)
@@ -142,15 +155,19 @@ final class FeedModel: StateInvalidationSubscriber {
       }
     }
     
-    // Subscribe to feed preference changes (reply hiding, etc.)
-    NotificationCenter.default.addObserver(
-      forName: NSNotification.Name("FeedPreferencesChanged"),
-      object: nil,
-      queue: .main
-    ) { [weak self] _ in
-      Task { @MainActor in
-        await self?.handleSocialGraphChange()
+    // Settings edits use a separate scoped refresh; graph/intent behavior stays independent.
+    for name in ["FeedPreferencesChanged", "FeedFiltersChanged", "LanguagePreferencesChanged", "AppSettingsChanged"] {
+      let token = NotificationCenter.default.addObserver(
+        forName: NSNotification.Name(name), object: nil, queue: .main
+      ) { [weak self] notification in
+        let originDID = notification.userInfo?["accountDID"] as? String
+        let settingsIdentity = (notification.object as? AppSettings).map(ObjectIdentifier.init)
+        MainActor.assumeIsolated {
+          self?.handleSettingsPreferenceChange(originDID: originDID, settingsIdentity: settingsIdentity,
+            isAppSettingsChange: name == "AppSettingsChanged")
+        }
       }
+      settingsObservers.append(token)
     }
     
     // Subscribe to intent rule changes
@@ -181,6 +198,7 @@ final class FeedModel: StateInvalidationSubscriber {
     appState.stateInvalidationBus.unsubscribe(self)
     
     // Remove NotificationCenter observers
+    settingsObservers.forEach(NotificationCenter.default.removeObserver)
     NotificationCenter.default.removeObserver(self)
   }
   // MARK: - Feed Generator Info
@@ -769,32 +787,20 @@ final class FeedModel: StateInvalidationSubscriber {
   // Filter the current posts and return filtered posts, applying deduplication if active
   @MainActor
   func applyFilters(withSettings filterSettings: FeedFilterSettings) -> [CachedFeedViewPost] {
-    let activeFilters = filterSettings.activeFilters
-    let shouldDeduplicate = activeFilters.contains { $0.name == "Hide Duplicate Posts" }
+    let settings = appState.makeFilterSettings(snapshot: retainedFilterPreferenceSnapshot(), localFilters: filterSettings)
+    return filterCachedPosts(posts, settings: settings,
+      hideDuplicateParents: filterSettings.isFilterEnabled(name: "Hide Duplicate Posts"))
+  }
 
-    // Apply standard filters first (excluding the deduplication filter itself)
-    let standardFilteredPosts = posts.filter { cachedPost in
-      guard let post = try? cachedPost.feedViewPost else {
-        return false
-      }
-
-      for filter in activeFilters {
-        // Skip the deduplication filter here, it's applied separately
-        if filter.name == "Hide Duplicate Posts" { continue }
-
-        if !filter.filterBlock(post) {
-          return false
-        }
-      }
-      return true
+  /// The same immutable predicate is used by ordinary and cached feed entries.
+  @MainActor
+  private func filterCachedPosts(_ candidates: [CachedFeedViewPost], settings: FeedTunerSettings,
+                                hideDuplicateParents: Bool) -> [CachedFeedViewPost] {
+    let visible = candidates.filter { cached in
+      guard let post = try? cached.feedViewPost else { return false }
+      return contentFilterService.shouldShowFeedViewPost(post, settings: settings)
     }
-
-    // Apply deduplication if the filter is active
-    if shouldDeduplicate {
-      return deduplicatePosts(standardFilteredPosts)
-    } else {
-      return standardFilteredPosts
-    }
+    return hideDuplicateParents ? deduplicatePosts(visible) : visible
   }
 
   // Process and filter posts when loading, applying deduplication if active
@@ -832,33 +838,8 @@ final class FeedModel: StateInvalidationSubscriber {
       visibleSlices, publication: publication, smartFilterDecisions: smartFilterDecisions
     )
 
-    let activeFilters = filterSettings.activeFilters
-    let shouldDeduplicate = activeFilters.contains { $0.name == "Hide Duplicate Posts" }
-
-    // Apply standard filters first (excluding the deduplication filter itself)
-    let standardFilteredPosts = newCachedPosts.filter { cachedPost in
-      guard let post = try? cachedPost.feedViewPost else {
-        return false
-      }
-
-      for filter in activeFilters {
-        // Skip the deduplication filter here, it's applied separately
-        if filter.name == "Hide Duplicate Posts" { continue }
-
-        if !filter.filterBlock(post) {
-          return false
-        }
-      }
-      return true
-    }
-
-    // Apply deduplication if the filter is active
-    let deduplicatedPosts: [CachedFeedViewPost]
-    if shouldDeduplicate {
-      deduplicatedPosts = deduplicatePosts(standardFilteredPosts)
-    } else {
-      deduplicatedPosts = standardFilteredPosts
-    }
+    let deduplicatedPosts = filterCachedPosts(newCachedPosts, settings: tunerSettings,
+      hideDuplicateParents: filterSettings.isFilterEnabled(name: "Hide Duplicate Posts"))
 
     if feedType == .timeline {
       let result = await IntentControlCoordinator.shared.applyIntentControls(
@@ -1205,53 +1186,82 @@ final class FeedModel: StateInvalidationSubscriber {
   }
 
   // MARK: - Helper Methods
-  
-  /// Get current feed filter settings from preferences and app settings
-  private func getFilterSettings() async -> FeedTunerSettings {
-    do {
-      let preferences = try await appState.preferencesManager.getPreferences()
-      let feedPref = preferences.feedViewPref
-      
-      // Get muted and blocked users from GraphManager
-      let mutedUsers = await appState.graphManager.muteCache
-      let blockedUsers = await appState.graphManager.blockCache
-      
-      // Get quick filter settings from FeedFilterSettings (these override preferences)
-      let hideRepostsQuick = appState.feedFilterSettings.isFilterEnabled(name: "Hide Reposts")
-      let hideRepliesQuick = appState.feedFilterSettings.isFilterEnabled(name: "Hide Replies")
-      let hideQuotePostsQuick = appState.feedFilterSettings.isFilterEnabled(name: "Hide Quote Posts")
-      let hideLinks = appState.feedFilterSettings.isFilterEnabled(name: "Hide Link Posts")
-      let onlyTextPosts = appState.feedFilterSettings.isFilterEnabled(name: "Only Text Posts")
-      let onlyMediaPosts = appState.feedFilterSettings.isFilterEnabled(name: "Only Media Posts")
-      
-      // Get content label preferences for filtering
-      let contentLabelPrefs = preferences.contentLabelPrefs
-      let hideAdultContent = !appState.isAdultContentEnabled
-      
-      // Get hidden posts from PostHidingManager
-      let hiddenPosts = await MainActor.run { appState.postHidingManager.hiddenPosts }
-      
-      return FeedTunerSettings(
-        hideReplies: hideRepliesQuick || (feedPref?.hideReplies ?? false),
-        hideRepliesByUnfollowed: feedPref?.hideRepliesByUnfollowed ?? false,
-        hideRepliesByLikeCount: feedPref?.hideRepliesByLikeCount,
-        hideReposts: hideRepostsQuick || (feedPref?.hideReposts ?? false),
-        hideQuotePosts: hideQuotePostsQuick || (feedPref?.hideQuotePosts ?? false),
-        hideNonPreferredLanguages: appState.appSettings.hideNonPreferredLanguages,
-        preferredLanguages: appState.appSettings.contentLanguages,
-        mutedUsers: mutedUsers,
-        blockedUsers: blockedUsers,
-        hideLinks: hideLinks,
-        onlyTextPosts: onlyTextPosts,
-        onlyMediaPosts: onlyMediaPosts,
-        contentLabelPreferences: contentLabelPrefs,
-        hideAdultContent: hideAdultContent,
-        hiddenPosts: hiddenPosts,
-        currentUserDid: appState.userDID
-      )
-    } catch {
-      logger.warning("Failed to get feed preferences, using defaults: \(error)")
-      return .default
+
+  @MainActor
+  private func handleSettingsPreferenceChange(originDID: String?, settingsIdentity: ObjectIdentifier?,
+                                              isAppSettingsChange: Bool) {
+    let manager = AppStateManager.shared
+    guard originDID == appState.userDID,
+          manager.lifecycle.isAuthenticated, manager.lifecycle.appState === appState else { return }
+    let signature = ReadingLanguageFilterSignature(
+      hideOtherLanguages: appState.appSettings.hideNonPreferredLanguages
+        || appState.feedFilterSettings.isFilterEnabled(name: "Filter by Language"),
+      preferredLanguages: appState.appSettings.contentLanguages)
+    if isAppSettingsChange {
+      guard settingsIdentity == ObjectIdentifier(appState.appSettings), signature != readingFilterSignature else { return }
     }
+    readingFilterSignature = signature
+    let context = SettingsFeedRefreshContext(accountDID: appState.userDID,
+      accountRevision: manager.settingsAccountContextRevision,
+      clientIdentity: appState.atProtoClient.map(ObjectIdentifier.init))
+    if settingsRefreshGate == nil { settingsRefreshGate = SettingsFeedRefreshGate() }
+    settingsRefreshGate?.request(context: context, isCurrentContext: { [weak self] context in
+      guard let self else { return false }
+      let manager = AppStateManager.shared
+      return manager.lifecycle.isAuthenticated && manager.lifecycle.appState === self.appState
+        && manager.lifecycle.userDID == context.accountDID
+        && manager.settingsAccountContextRevision == context.accountRevision
+        && self.appState.atProtoClient.map(ObjectIdentifier.init) == context.clientIdentity
+    }, isLoading: { [weak self] in
+      guard let self else { return false }
+      return self.isLoading || self.isLoadingMore || self.isBackgroundRefreshing
+    }, prepare: { [weak self] isCurrent in
+      guard let self else { return }
+      _ = await self.getFilterSettings()
+      guard isCurrent() else { return }
+      let filtered = self.applyFilters(withSettings: self.appState.feedFilterSettings)
+      if filtered.count != self.posts.count { self.posts = filtered }
+    }, reload: { [weak self] in
+      guard let self else { return }
+      // The existing loader owns generations, pagination, caps and publication.
+      await self.loadFeed(fetch: self.lastFeedType, forceRefresh: true, strategy: .fullRefresh)
+    })
   }
+  
+  /// Failures retain confirmed account preferences and still honor local/graph filters.
+  @MainActor
+  private func getFilterSettings() async -> FeedTunerSettings {
+    let accountDID = appState.userDID
+    let clientIdentity = appState.atProtoClient.map(ObjectIdentifier.init)
+    let accountRevision = AppStateManager.shared.settingsAccountContextRevision
+    func isCurrentRead() -> Bool {
+      !Task.isCancelled && appState.userDID == accountDID
+        && appState.atProtoClient.map(ObjectIdentifier.init) == clientIdentity
+        && AppStateManager.shared.settingsAccountContextRevision == accountRevision
+    }
+    _ = retainedFilterPreferenceSnapshot()
+    do {
+      if try appState.preferencesManager.confirmedFeedFilterPreferences() == nil {
+        // A synthesized default empty row is not a confirmed empty mute policy.
+        _ = try await appState.preferencesManager.refreshSettingsPreferences()
+        guard isCurrentRead() else { return appState.makeFilterSettings(snapshot: confirmedFilterPreferences) }
+        _ = retainedFilterPreferenceSnapshot()
+      }
+    } catch {
+      logger.warning("Couldn’t read feed preferences; retaining confirmed account filters: \(error)")
+    }
+    return appState.makeFilterSettings(snapshot: confirmedFilterPreferences)
+  }
+
+  /// Read-only local authority lookup is also safe at synchronous publication seams.
+  @MainActor
+  private func retainedFilterPreferenceSnapshot() -> FeedPreferenceSnapshot? {
+    let confirmed = (try? appState.preferencesManager.confirmedFeedFilterPreferences()).map(FeedPreferenceSnapshot.init)
+    let retainedLocal = confirmed == nil
+      ? (try? appState.preferencesManager.retainedLocalFeedFilterPreferences()).map(FeedPreferenceSnapshot.init) : nil
+    confirmedFilterPreferences = FeedPreferenceSnapshotStore.shared.resolve(accountDID: appState.userDID,
+      confirmed: confirmed, retainedLocal: retainedLocal)
+    return confirmedFilterPreferences
+  }
+
 }

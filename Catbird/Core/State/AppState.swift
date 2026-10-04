@@ -421,6 +421,18 @@ final class AppState {
         composerDraftManager.updateAppState(self)
         chatManager.updateAppState(self)
 
+        // Settings requests and post-save effects belong to the actual source-account drain.
+        preferencesManager.beginSettingsAccountOperation = { [weak self] in
+            self?.accountServiceWork.beginOperation()
+        }
+        preferencesManager.endSettingsAccountOperation = { [weak self] token in
+            self?.accountServiceWork.endOperation(token)
+        }
+        appSettings.persistence.startEffect = { [weak self] action in
+            guard let self else { return false }
+            return self.accountServiceWork.start(operation: action) != nil
+        }
+
         // Apply initial theme settings immediately from UserDefaults
         // This ensures proper theme is applied even before SwiftData is fully initialized
         appSettings.applyInitialThemeSettings(to: _themeManager)
@@ -455,6 +467,9 @@ final class AppState {
     /// No service, editing session, cached model, or database is retired here.
     @MainActor
     func suspendForAccountSwitch() async throws {
+        guard appSettings.suspendLocalChanges(for: userDID) else {
+            throw AccountServiceWork.BarrierError.accountChanged
+        }
         accountServiceWork.suspend()
         trendingTopicMediaStore.invalidateForGraphChange()
         settingsUpdateDebounceTimer?.invalidate()
@@ -463,6 +478,12 @@ final class AppState {
         backgroundPollingTask = nil
         try await suspendAccountPollers()
         try await accountServiceWork.drain()
+        guard appSettings.flushPendingChangesForAccountSwitch(for: userDID) else {
+            throw SettingsAccountSwitchError.localSaveRefused(
+                appSettings.accountSwitchFlushFailure?.localizedDescription
+                    ?? "Your Settings changes could not be saved. Retry or discard them in Settings before switching accounts."
+            )
+        }
     }
 
     @MainActor
@@ -508,6 +529,9 @@ final class AppState {
                   try await originalClient.getDid() == userDID else {
                 throw AccountServiceWork.BarrierError.serviceResumeFailed
             }
+            guard appSettings.resumeLocalChanges(for: userDID) else {
+                throw AccountServiceWork.BarrierError.accountChanged
+            }
         } catch {
             try? await suspendAccountPollers()
             throw error
@@ -550,11 +574,26 @@ final class AppState {
         await operation()
     }
 
+    /// Settings I/O is registered until its actual body ends, including cancellation.
+    @MainActor
+    func performSettingsAccountOperation<Value>(
+        _ operation: @escaping @MainActor () async throws -> Value
+    ) async throws -> Value {
+        guard AppStateManager.shared.lifecycle.appState === self,
+              let token = accountServiceWork.beginOperation() else {
+            throw AccountServiceWork.BarrierError.accountChanged
+        }
+        defer { accountServiceWork.endOperation(token) }
+        try Task.checkCancellation()
+        return try await operation()
+    }
+
     /// Cleanup method called when this AppState is evicted from cache
     /// This cancels long-running tasks and releases resources without deallocating the object
     @MainActor
     func cleanup() {
         logger.info("🧹 Cleaning up AppState for user: \(self.userDID)")
+        _ = appSettings.suspendLocalChanges(for: userDID)
         accountServiceWork.suspend()
         trendingTopicMediaStore.invalidateForGraphChange()
         settingsUpdateDebounceTimer?.invalidate()
@@ -1056,8 +1095,10 @@ final class AppState {
             forName: NSNotification.Name("AppSettingsChanged"),
             object: nil,
             queue: .main
-        ) { [weak self] _ in
-            guard let self = self else { return }
+        ) { [weak self] notification in
+            guard let self, !self.accountServiceWork.isSuspended,
+                  AppStateManager.shared.lifecycle.appState === self,
+                  notification.userInfo?["accountDID"] as? String == self.userDID else { return }
 
             // Create a hash of current settings to detect actual changes
             let currentSettingsHash = self.createSettingsHash()
@@ -1074,7 +1115,8 @@ final class AppState {
             // Debounce rapid setting changes
             self.settingsUpdateDebounceTimer?.invalidate()
             self.settingsUpdateDebounceTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: false) { [weak self] _ in
-                guard let self = self else { return }
+                guard let self, !self.accountServiceWork.isSuspended,
+                      AppStateManager.shared.lifecycle.appState === self else { return }
 
                 self.logger.debug("Applying debounced settings change")
 
@@ -1504,56 +1546,47 @@ final class AppState {
     /// This ensures consistent filtering across feeds, threads, profiles, and search
     @MainActor
     func buildFilterSettings() async -> FeedTunerSettings {
-        // Get current user DID (AppState represents single account)
-        let currentUserDid = userDID
-
-        // Get moderation preferences from PreferencesManager
-        var contentLabelPrefs: [ContentLabelPreference] = []
-        var adultContentEnabled = false
-        var preferredLanguages: [String] = []
-        var feedViewPref: FeedViewPreference?
-
-        let preferences = try? await preferencesManager.getPreferences()
-        contentLabelPrefs = preferences?.contentLabelPrefs ?? []
-        adultContentEnabled = preferences?.adultContentEnabled ?? false
-        preferredLanguages = preferences?.contentLanguages ?? ["en"]
-        feedViewPref = preferences?.feedViewPref
-
-        // Get muted and blocked users from GraphManager
-        let mutedUsers = graphManager.muteCache
-        let blockedUsers = graphManager.blockCache
-
-        // Get feed filter settings (quick filters - these override server prefs)
-        let hideRepliesQuick = feedFilterSettings.hideReplies
-        let hideRepostsQuick = feedFilterSettings.hideReposts
-        let hideQuotePostsQuick = feedFilterSettings.hideQuotePosts
-        let hideLinks = feedFilterSettings.hideLinks
-        let onlyTextPosts = feedFilterSettings.onlyTextPosts
-        let onlyMediaPosts = feedFilterSettings.onlyMediaPosts
-
-        // Get hidden posts from PostHidingManager
-        let hiddenPosts = postHidingManager.hiddenPosts
-
-        // Build settings - combine quick filters with server-synced preferences
-        return FeedTunerSettings(
-            hideReplies: hideRepliesQuick || (feedViewPref?.hideReplies ?? false),
-            hideRepliesByUnfollowed: feedViewPref?.hideRepliesByUnfollowed ?? false,
-            hideRepliesByLikeCount: feedViewPref?.hideRepliesByLikeCount,
-            hideReposts: hideRepostsQuick || (feedViewPref?.hideReposts ?? false),
-            hideQuotePosts: hideQuotePostsQuick || (feedViewPref?.hideQuotePosts ?? false),
-            hideNonPreferredLanguages: !preferredLanguages.isEmpty && preferredLanguages != ["en"],
-            preferredLanguages: preferredLanguages,
-            mutedUsers: mutedUsers,
-            blockedUsers: blockedUsers,
-            hideLinks: hideLinks,
-            onlyTextPosts: onlyTextPosts,
-            onlyMediaPosts: onlyMediaPosts,
-            contentLabelPreferences: contentLabelPrefs,
-            hideAdultContent: !adultContentEnabled,
-            hiddenPosts: hiddenPosts,
-            currentUserDid: currentUserDid
-        )
+        let confirmed = (try? preferencesManager.confirmedFeedFilterPreferences()).map(FeedPreferenceSnapshot.init)
+        let retainedLocal = confirmed == nil
+            ? (try? preferencesManager.retainedLocalFeedFilterPreferences()).map(FeedPreferenceSnapshot.init) : nil
+        let snapshot = FeedPreferenceSnapshotStore.shared.resolve(accountDID: userDID,
+            confirmed: confirmed, retainedLocal: retainedLocal)
+        return makeFilterSettings(snapshot: snapshot)
     }
+
+    /// A side-effect-free snapshot shared by feed and search consumers.
+    @MainActor
+    func makeFilterSettings(preferences suppliedPreferences: Preferences?, localFilters: FeedFilterSettings? = nil) -> FeedTunerSettings {
+        makeFilterSettings(snapshot: suppliedPreferences.map(FeedPreferenceSnapshot.init), localFilters: localFilters)
+    }
+
+    @MainActor
+    func makeFilterSettings(snapshot suppliedSnapshot: FeedPreferenceSnapshot?, localFilters: FeedFilterSettings? = nil) -> FeedTunerSettings {
+        let preferences = suppliedSnapshot?.accountDID == userDID ? suppliedSnapshot : nil
+        let feed = preferences?.feedViewPref
+        let filters = localFilters ?? feedFilterSettings
+        var settings = FeedTunerSettings(
+            hideReplies: filters.hideReplies || (feed?.hideReplies ?? false),
+            hideRepliesByUnfollowed: feed?.hideRepliesByUnfollowed ?? false,
+            hideRepliesByLikeCount: feed?.hideRepliesByLikeCount,
+            hideReposts: filters.hideReposts || (feed?.hideReposts ?? false),
+            hideQuotePosts: filters.hideQuotePosts || (feed?.hideQuotePosts ?? false),
+            hideNonPreferredLanguages: appSettings.hideNonPreferredLanguages || filters.isFilterEnabled(name: "Filter by Language"),
+            preferredLanguages: appSettings.contentLanguages,
+            mutedUsers: graphManager.muteCache,
+            blockedUsers: graphManager.blockCache,
+            hideLinks: filters.hideLinks,
+            onlyTextPosts: filters.onlyTextPosts,
+            onlyMediaPosts: filters.onlyMediaPosts,
+            contentLabelPreferences: preferences?.contentLabelPrefs ?? [],
+            hideAdultContent: !(preferences?.adultContentEnabled ?? isAdultContentEnabled),
+            hiddenPosts: postHidingManager.hiddenPosts,
+            currentUserDid: userDID
+        )
+        settings.mutedWords = preferences?.mutedWords ?? []
+        return settings
+    }
+
 }
 
 // MARK: - Prefetched Feed Cache

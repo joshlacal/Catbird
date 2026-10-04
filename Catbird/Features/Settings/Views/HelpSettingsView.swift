@@ -7,101 +7,44 @@ import AppKit
 #endif
 
 struct HelpSettingsView: View {
-    @Environment(AppState.self) private var appState
-    @State private var isLoadingWebView = true
-    
     var body: some View {
-        VStack {
-            // Header with information
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Bluesky Help Center")
-                    .appFont(AppTextRole.headline)
-                    .padding(.top)
-                
-                Text("Find answers to common questions and learn how to use Bluesky's features.")
-                    .appFont(AppTextRole.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal)
-            .padding(.bottom, 8)
-            
-            // Web content
-            ZStack {
-                BlueskyHelpWebView(isLoading: $isLoadingWebView)
-                    .cornerRadius(8)
-                    .padding(.horizontal)
-                
-                if isLoadingWebView {
-                    ProgressView()
-                        .scaleEffect(1.5)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .background(Color.black.opacity(0.1))
-                }
-            }
-            
-            Spacer()
-            
-            // Contact support section
-            VStack(spacing: 8) {
-                Divider()
-                
-                Text("Need more help?")
-                    .appFont(AppTextRole.headline)
-                    .padding(.top, 4)
-                
+        Form {
+            Section("Catbird support") {
                 if let contactURL = LegalConfig.supportURL {
                     Link(destination: contactURL) {
-                        HStack {
-                            Image(systemName: "envelope.fill")
-                                .foregroundStyle(.tint)
-                            Text("Contact Catbird Support")
-                                .fontWeight(.medium)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                        .background(Color.accentColor.opacity(0.1))
-                        .foregroundStyle(.tint)
-                        .cornerRadius(8)
+                        SettingsNavigationRow(title: "Contact Catbird Support", systemImage: "envelope.fill", family: .support)
                     }
-                } else if let email = LegalConfig.supportEmail, let mailURL = URL(string: "mailto:\(email)") {
+                } else if let email = LegalConfig.supportEmail, let mailURL = URL(string: "mailto:" + email) {
                     Link(destination: mailURL) {
-                        HStack {
-                            Image(systemName: "envelope.fill")
-                                .foregroundStyle(.tint)
-                            Text("Contact Catbird Support")
-                                .fontWeight(.medium)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                        .background(Color.accentColor.opacity(0.1))
-                        .foregroundStyle(.tint)
-                        .cornerRadius(8)
+                        SettingsNavigationRow(title: "Contact Catbird Support", systemImage: "envelope.fill", family: .support)
                     }
+                } else {
+                    Text("Catbird support contact information is available in About & Support when configured.").foregroundStyle(.secondary)
                 }
-
+            }
+            Section("Bluesky resources") {
+                SettingsLink(screen: .blueskyHelpCenter, summary: "Bluesky’s FAQ for the social network", systemImage: "questionmark.bubble", family: .support)
                 Link(destination: URL(string: "https://blueskyweb.zendesk.com/hc/en-us")!) {
-                    HStack {
-                        Image(systemName: "envelope.fill")
-                            .foregroundStyle(.blue)
-                        
-                        Text("Contact Bluesky Support")
-                            .fontWeight(.medium)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding()
-                    .background(Color.blue.opacity(0.1))
-                    .foregroundStyle(.blue)
-                    .cornerRadius(8)
+                    SettingsNavigationRow(title: "Contact Bluesky Support", summary: "Opens Bluesky’s support site", systemImage: "arrow.up.right.square", family: .support)
                 }
-                .padding(.horizontal)
-                .padding(.bottom)
             }
         }
-        .navigationTitle("Help")
-    #if os(iOS)
-    .toolbarTitleDisplayMode(.inline)
-    #endif
+        .navigationTitle("Get Help")
+    }
+}
+
+struct BlueskyHelpCenterSettingsView: View {
+    @State private var isLoadingWebView = true
+    var body: some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.base) {
+            Text("Answers about Bluesky’s social network. This page is provided by Bluesky.")
+                .appFont(AppTextRole.subheadline).foregroundStyle(.secondary).padding(.horizontal)
+            ZStack {
+                BlueskyHelpWebView(isLoading: $isLoadingWebView)
+                if isLoadingWebView { ProgressView("Loading Bluesky Help Center…") }
+            }
+        }
+        .navigationTitle("Bluesky Help Center")
     }
 }
 

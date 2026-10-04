@@ -1,5 +1,4 @@
 import SwiftUI
-import Petrel
 import OSLog
 
 // MARK: - Language Model
@@ -144,258 +143,240 @@ class LanguageManager {
         saveRecentLanguages()
     }
     
-    func syncLanguagePreferences(appLanguage: String?, primaryLanguage: String, contentLanguages: [String]) async {
-        guard let preferencesManager = preferencesManager else {
-            Self.logger.warning("PreferencesManager not available for language sync")
-            return
-        }
-        
+    func syncReadingLanguagePreferences(primaryLanguage: String, contentLanguages: [String], expectedAccountDID: String) async {
+        guard let preferencesManager else { return }
         isLoading = true
         error = nil
-        
+        defer { isLoading = false }
         do {
-            // Update language preferences through PreferencesManager
-            try await preferencesManager.updateLanguagePreferences(
-                appLanguage: appLanguage,
-                primaryLanguage: primaryLanguage,
-                contentLanguages: contentLanguages
-            )
-            
-            // Add primary language to recent if not system
-            if let appLang = appLanguage, appLang != "system" {
-                addToRecentLanguages(appLang)
-            }
+            try await preferencesManager.updateReadingLanguagePreferences(primaryLanguage: primaryLanguage,
+                contentLanguages: contentLanguages, expectedAccountDID: expectedAccountDID)
             addToRecentLanguages(primaryLanguage)
-            
-            Self.logger.info("Language preferences synced successfully")
-            isLoading = false
         } catch {
-            Self.logger.error("Failed to sync language preferences: \(error.localizedDescription)")
-            self.error = "Failed to save language preferences"
-            isLoading = false
+            self.error = "Your reading choice is saved in Catbird. Local language compatibility data could not be updated."
+            Self.logger.error("Local reading-language publication failed: \(error.localizedDescription)")
         }
     }
+
+    private enum ReadingLanguageRetryError: Error { case changedOrUnavailable }
+
+    func retryConfirmedReadingLanguages(in appState: AppState,
+        expected: AppSettings.ConfirmedReadingLanguages, accountContextRevision: UInt64) async {
+        guard !isLoading, let preferencesManager else { return }
+        isLoading = true
+        defer { isLoading = false }
+        do {
+            try await appState.performSettingsAccountOperation {
+                let owner = AppStateManager.shared
+                guard owner.lifecycle.appState === appState,
+                      owner.lifecycle.userDID == expected.accountDID,
+                      owner.settingsAccountContextRevision == accountContextRevision,
+                      appState.userDID == expected.accountDID,
+                      appState.preferencesManager === preferencesManager,
+                      appState.appSettings.confirmedReadingLanguages(for: expected.accountDID) == expected
+                else { throw ReadingLanguageRetryError.changedOrUnavailable }
+                try await preferencesManager.updateReadingLanguagePreferences(primaryLanguage: expected.primaryLanguage,
+                    contentLanguages: expected.contentLanguages, expectedAccountDID: expected.accountDID)
+                self.addToRecentLanguages(expected.primaryLanguage)
+                self.error = nil
+            }
+        } catch {
+            // Refusal must leave the existing compatibility error available for a later Retry.
+            self.error = self.error ?? "Your reading choice is saved in Catbird. Local language compatibility data could not be updated."
+            Self.logger.error("Confirmed reading-language Retry did not complete: \(error.localizedDescription)")
+        }
+    }
+
 }
 
 struct LanguageSettingsView: View {
     @Environment(AppState.self) private var appState
     @State private var languageManager: LanguageManager?
-    
-    var body: some View {
-        Form {
-            SettingsPersistenceStatusSection(settings: appState.appSettings)
+    @State private var interfaceLanguage = "system"
+    @State private var confirmsShowingAllLanguages = false
+    var initialFocus: SettingsControlID? = nil
+    var interfacePreferences = InterfaceLanguagePreferences()
 
-            // Header Section
+    private var canEdit: Bool { appState.appSettings.canEditPersistedSettings }
+    private var canRetryReadingLanguages: Bool {
+        languageManager?.isLoading != true
+            && appState.appSettings.confirmedReadingLanguages(for: appState.userDID) != nil
+    }
+
+    var body: some View {
+        SettingsFocusedForm(initialFocus: initialFocus) {
             Section {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Language settings control both the app interface and content preferences.")
-                        .appFont(AppTextRole.subheadline)
-                        .foregroundStyle(.secondary)
-                    
-                    if let detectedLanguage = Language.detectSystemLanguage() {
-                        HStack {
-                            Image(systemName: "info.circle")
-                                .foregroundStyle(.blue)
-                            Text("System language detected: \(detectedLanguage.flag) \(detectedLanguage.englishName)")
-                                .appFont(AppTextRole.caption)
-                                .foregroundStyle(.blue)
-                        }
-                    }
-                }
-                .listRowBackground(Color.clear)
-                .listRowInsets(EdgeInsets(top: 10, leading: 16, bottom: 10, trailing: 16))
-            }
-            
-            // Loading/Error State
-            if let manager = languageManager {
-                if manager.isLoading {
-                    Section {
-                        HStack {
-                            ProgressView()
-                            Text("Saving language preferences...")
-                                .foregroundStyle(.secondary)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .center)
-                    }
-                }
-                
-                if let error = manager.error {
-                    Section {
-                        HStack {
-                            Image(systemName: "exclamationmark.triangle")
-                                .foregroundStyle(.red)
-                            Text(error)
-                                .appFont(AppTextRole.caption)
-                                .foregroundStyle(.red)
-                        }
-                    }
-                }
-            }
-            
-            Section("App Language") {
                 NavigationLink {
-                    EnhancedLanguageSelectionView(
-                        title: "App Language",
-                        selectedLanguage: Binding(
-                            get: { appState.appSettings.appLanguage },
-                            set: { newValue in
-                                guard appState.appSettings.canEditPersistedSettings else { return }
-                                appState.appSettings.appLanguage = newValue
-                                applyLanguagesAfterSaving()
-                            }
-                        ),
-                        allowSystemDefault: true,
-                        recentLanguages: languageManager?.recentlyUsedLanguages ?? []
-                    )
+                    InterfaceLanguageSelectionView(selectedLanguage: $interfaceLanguage, preferences: interfacePreferences)
                 } label: {
-                    HStack {
-                        Text("App Language")
-                        Spacer()
-                        HStack(spacing: 4) {
-                            if appState.appSettings.appLanguage == "system" {
-                                Image(systemName: "gear")
-                                    .appFont(AppTextRole.caption)
-                            } else if let lang = Language.allLanguages.first(where: { $0.id == appState.appSettings.appLanguage }) {
-                                Text(lang.flag)
-                            }
-                            Text(languageDisplayName(forCode: appState.appSettings.appLanguage))
-                        }
-                        .foregroundStyle(.secondary)
-                    }
+                    SettingsNavigationRow(title: "Interface Language", summary: languageName(interfaceLanguage), systemImage: "globe", family: .language)
                 }
-                
-                Text("Controls the language used in menus and system messages.")
-                    .appFont(AppTextRole.caption)
-                    .foregroundStyle(.secondary)
+                .settingsControl(.init(rawValue: "languages.interface"))
+            } header: { Text("This Device") } footer: {
+                Text("Menu language applies to every account on this device. Available choices reflect the translations included in Catbird. Some interface text may remain in English.")
             }
-            
-            Section("Primary Language") {
+
+            SettingsPersistenceStatusSection(settings: appState.appSettings)
+            if let error = languageManager?.error {
+                Section {
+                    Text(error).foregroundStyle(.secondary)
+                    Button("Retry Local Language Update") {
+                        let capturedState = appState
+                        guard let manager = languageManager,
+                              let confirmed = capturedState.appSettings.confirmedReadingLanguages(for: capturedState.userDID)
+                        else { return }
+                        let revision = AppStateManager.shared.settingsAccountContextRevision
+                        Task { @MainActor in
+                            await manager.retryConfirmedReadingLanguages(in: capturedState, expected: confirmed,
+                                accountContextRevision: revision)
+                        }
+                    }
+                    .disabled(!canRetryReadingLanguages)
+                }
+            }
+            Section {
                 NavigationLink {
-                    EnhancedLanguageSelectionView(
-                        title: "Primary Language",
-                        selectedLanguage: Binding(
-                            get: { appState.appSettings.primaryLanguage },
-                            set: { newValue in
-                                guard appState.appSettings.canEditPersistedSettings else { return }
-                                appState.appSettings.primaryLanguage = newValue
-                                // Ensure primary language is in content languages
-                                if !appState.appSettings.contentLanguages.contains(newValue) {
-                                    appState.appSettings.contentLanguages.append(newValue)
-                                }
-                                applyLanguagesAfterSaving()
+                    EnhancedLanguageSelectionView(title: "Primary Reading Language", selectedLanguage: Binding(
+                        get: { appState.appSettings.primaryLanguage },
+                        set: { value in
+                            guard canEdit else { return }
+                            appState.appSettings.primaryLanguage = value
+                            if !appState.appSettings.contentLanguages.contains(value) {
+                                appState.appSettings.contentLanguages.append(value)
                             }
-                        ),
-                        allowSystemDefault: false,
-                        recentLanguages: languageManager?.recentlyUsedLanguages ?? []
-                    )
+                            applyReadingLanguagesAfterSaving()
+                        }), allowSystemDefault: false, recentLanguages: languageManager?.recentlyUsedLanguages ?? [])
                 } label: {
-                    HStack {
-                        Text("Primary Language")
-                        Spacer()
-                        HStack(spacing: 4) {
-                            if let lang = Language.allLanguages.first(where: { $0.id == appState.appSettings.primaryLanguage }) {
-                                Text(lang.flag)
-                            }
-                            Text(languageDisplayName(forCode: appState.appSettings.primaryLanguage))
-                        }
-                        .foregroundStyle(.secondary)
-                    }
+                    SettingsNavigationRow(title: "Primary Reading Language", summary: languageName(appState.appSettings.primaryLanguage), systemImage: "text.book.closed", family: .language)
                 }
-                
-                Text("Your preferred content language for this account in Catbird on this device.")
-                    .appFont(AppTextRole.caption)
-                    .foregroundStyle(.secondary)
-            }
-            
-            Section("Content Languages") {
+                .settingsControl(.init(rawValue: "languages.primary"))
                 NavigationLink {
-                    EnhancedContentLanguagesView(
-                        selectedLanguages: Binding(
-                            get: { appState.appSettings.contentLanguages },
-                            set: { newValue in
-                                guard appState.appSettings.canEditPersistedSettings else { return }
-                                appState.appSettings.contentLanguages = newValue
-                                applyLanguagesAfterSaving()
-                            }
-                        ),
-                        primaryLanguage: appState.appSettings.primaryLanguage,
-                        recentLanguages: languageManager?.recentlyUsedLanguages ?? []
-                    )
+                    EnhancedContentLanguagesView(selectedLanguages: Binding(
+                        get: { appState.appSettings.contentLanguages },
+                        set: { value in
+                            guard canEdit else { return }
+                            appState.appSettings.contentLanguages = value
+                            applyReadingLanguagesAfterSaving()
+                        }), primaryLanguage: appState.appSettings.primaryLanguage, recentLanguages: languageManager?.recentlyUsedLanguages ?? [])
                 } label: {
-                    HStack {
-                        Text("Content Languages")
-                        Spacer()
-                        VStack(alignment: .trailing, spacing: 2) {
-                            Text("\(appState.appSettings.contentLanguages.count) selected")
-                                .foregroundStyle(.secondary)
-                            if appState.appSettings.contentLanguages.count <= 3 {
-                                HStack(spacing: 2) {
-                                    ForEach(appState.appSettings.contentLanguages.prefix(3), id: \.self) { code in
-                                        if let lang = Language.allLanguages.first(where: { $0.id == code }) {
-                                            Text(lang.flag)
-                                                .appFont(AppTextRole.caption2)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    SettingsNavigationRow(title: "Preferred Reading Languages", summary: appState.appSettings.contentLanguages.map(languageName).joined(separator: ", "), systemImage: "character.bubble", family: .language)
                 }
-                
-                Text("Languages you'd like to see content in. Posts in other languages may be filtered out.")
-                    .appFont(AppTextRole.caption)
-                    .foregroundStyle(.secondary)
+                .settingsControl(.init(rawValue: "languages.content"))
+                Toggle("Hide Posts in Other Languages", isOn: Binding(
+                    get: { appState.appSettings.hideNonPreferredLanguages || appState.feedFilterSettings.isFilterEnabled(name: "Filter by Language") },
+                    set: { value in
+                        if value { appState.appSettings.hideNonPreferredLanguages = true }
+                        else { confirmsShowingAllLanguages = true }
+                    }))
+                    .settingsControl(.init(rawValue: "languages.hideOtherLanguages"))
+                Toggle("Show Language Indicators", isOn: Binding(
+                    get: { appState.appSettings.showLanguageIndicators },
+                    set: { appState.appSettings.showLanguageIndicators = $0 }))
+                    .settingsControl(.init(rawValue: "languages.indicators"))
+            } header: { Text("This Account in Catbird") } footer: {
+                Text("Reading preferences apply to this account in Catbird on this device. Either stored language filter can hide posts; choosing Show All Languages turns both off after saving. Posts without a language remain eligible. Indicators identify posts outside your preferred reading languages. These choices are stored locally and do not change other Bluesky apps.")
             }
+            .disabled(!canEdit)
         }
-        .navigationTitle("Languages")
-    #if os(iOS)
-    .toolbarTitleDisplayMode(.inline)
-    #endif
-        .appDisplayScale(appState: appState)
+        .navigationTitle("Language")
+        .confirmationDialog("Show posts in all languages?", isPresented: $confirmsShowingAllLanguages, titleVisibility: .visible) {
+            Button("Show All Languages") { showAllReadingLanguages() }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("This turns off both language-filter sources for this account. Your preferred reading languages are kept.")
+        }
         .contrastAwareBackground(appState: appState, defaultColor: Color.systemBackground)
         .onAppear {
-            // Initialize language manager with proper preferences manager
-            if languageManager == nil {
-                languageManager = LanguageManager(preferencesManager: appState.preferencesManager)
-            }
+            interfaceLanguage = interfacePreferences.selectedLanguage
+            if languageManager == nil { languageManager = LanguageManager(preferencesManager: appState.preferencesManager) }
         }
+        .onChange(of: appState.userDID) { _, _ in
+            languageManager = LanguageManager(preferencesManager: appState.preferencesManager)
+            confirmsShowingAllLanguages = false
+            interfaceLanguage = interfacePreferences.selectedLanguage
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("AppLanguageDidChange"))) { _ in
+            interfaceLanguage = interfacePreferences.selectedLanguage
+        }
+        #if os(iOS)
+        .toolbarTitleDisplayMode(.inline)
+        #endif
     }
-    
-    private func applyLanguagesAfterSaving() {
-        let capturedAppState = appState
+
+    private func showAllReadingLanguages() {
+        guard canEdit else { return }
+        let capturedState = appState
         let capturedDID = appState.userDID
-        let languageManager = languageManager
-
-        appState.appSettings.afterPendingSave(key: "language") { @MainActor in
-            guard AppStateManager.shared.lifecycle.appState === capturedAppState,
+        appState.appSettings.hideNonPreferredLanguages = false
+        appState.appSettings.afterPendingSave(key: "language-filter", description: "Show posts in all reading languages") { @MainActor in
+            guard AppStateManager.shared.lifecycle.appState === capturedState,
                   AppStateManager.shared.lifecycle.userDID == capturedDID else { return }
-            let appLanguage = capturedAppState.appSettings.appLanguage
-            let primaryLanguage = capturedAppState.appSettings.primaryLanguage
-            let contentLanguages = capturedAppState.appSettings.contentLanguages
-            if Bundle.currentLanguage != appLanguage {
-                AppLanguageManager.shared.applyLanguage(appLanguage)
-            }
-            await languageManager?.syncLanguagePreferences(
-                appLanguage: appLanguage,
-                primaryLanguage: primaryLanguage,
-                contentLanguages: contentLanguages
-            )
+            capturedState.feedFilterSettings.setFilter(id: "Filter by Language", enabled: false)
         }
     }
 
-    private func languageDisplayName(forCode code: String) -> String {
-        if code == "system" {
-            if let detected = Language.detectSystemLanguage() {
-                return "System (\(detected.englishName))"
+    private func applyReadingLanguagesAfterSaving() {
+        let capturedState = appState
+        let capturedDID = appState.userDID
+        let manager = languageManager
+        appState.appSettings.afterPendingSave(key: "language") { @MainActor in
+            guard AppStateManager.shared.lifecycle.appState === capturedState,
+                  AppStateManager.shared.lifecycle.userDID == capturedDID else { return }
+            await manager?.syncReadingLanguagePreferences(primaryLanguage: capturedState.appSettings.primaryLanguage,
+                contentLanguages: capturedState.appSettings.contentLanguages, expectedAccountDID: capturedDID)
+        }
+    }
+
+    private func languageName(_ code: String) -> String {
+        if code == "system" { return "System Default" }
+        return Language.allLanguages.first { $0.id == code }?.englishName
+            ?? Locale.current.localizedString(forIdentifier: code) ?? code
+    }
+}
+
+struct InterfaceLanguageSelectionView: View {
+    @Binding var selectedLanguage: String
+    let preferences: InterfaceLanguagePreferences
+    private var available: [String] { InterfaceLanguagePreferences.availableLanguages() }
+
+    var body: some View {
+        Form {
+            Section {
+                languageRow("system", title: "System Default")
+                ForEach(available, id: \.self) { code in
+                    languageRow(code, title: Locale.current.localizedString(forIdentifier: code) ?? code)
+                }
+            } footer: {
+                Text("Applies to every account on this device. Only translations included in this build are offered.")
             }
-            return "System Default"
+            if selectedLanguage != "system" && !available.contains(selectedLanguage) {
+                Section {
+                    LabeledContent("Current language", value: Locale.current.localizedString(forIdentifier: selectedLanguage) ?? selectedLanguage)
+                } header: {
+                    Text("Saved Selection")
+                } footer: {
+                    Text("This saved selection is kept. Its translation is not included in this build, so unavailable text uses the default language. Choose System Default or an available translation to change it.")
+                }
+            }
         }
-        
-        if let language = Language.allLanguages.first(where: { $0.id == code }) {
-            return language.englishName
+        .navigationTitle("Interface Language")
+        #if os(iOS)
+        .toolbarTitleDisplayMode(.inline)
+        #endif
+    }
+
+    private func languageRow(_ code: String, title: String) -> some View {
+        Button {
+            preferences.select(code)
+            selectedLanguage = code
+        } label: {
+            HStack {
+                Text(title).foregroundStyle(.primary)
+                Spacer()
+                if selectedLanguage == code { Image(systemName: "checkmark").accessibilityHidden(true) }
+            }
         }
-        
-        return code.uppercased()
+        .accessibilityAddTraits(selectedLanguage == code ? .isSelected : [])
     }
 }
 
@@ -562,6 +543,7 @@ struct LanguageRow: View {
             }
         }
         .contentShape(Rectangle())
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }
 

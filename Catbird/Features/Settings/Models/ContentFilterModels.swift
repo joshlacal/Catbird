@@ -51,7 +51,7 @@ class ContentFilterManager {
     /// Convert content label preferences from the server model to our display model
     static func getVisibilityForLabel(label: String, preferences: [ContentLabelPreference]) -> ContentVisibility {
         // Look for a specific preference for this label
-        if let pref = preferences.first(where: { $0.label == label }) {
+        if let pref = preferences.first(where: { $0.label == label && $0.labelerDid == nil }) {
             return ContentVisibility(fromPreference: pref.visibility)
         }
 
@@ -82,8 +82,8 @@ class ContentFilterManager {
             return ContentVisibility(fromPreference: global.visibility)
         }
 
-        // Last fallback: any match for this label
-        return getVisibilityForLabel(label: label, preferences: preferences)
+        // A different service's override never becomes this service's default.
+        return .warn
     }
 
     /// Convert our display model to the server model format
