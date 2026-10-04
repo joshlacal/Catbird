@@ -69,13 +69,14 @@ struct AdvancedSettingsView: View {
   
   var body: some View {
     ResponsiveContentView {
-      SettingsFocusedForm(initialFocus: initialFocus, isReady: baseline != nil) {
+      SettingsFocusedForm(initialFocus: initialFocus == nil || baseline != nil ? initialFocus : .init(rawValue: "advanced.providerRetryLoad"), isReady: !isLoadingProviders) {
         SettingsScopeSection()
         if isLoadingProviders { Section { ProgressView("Loading service providers…") } }
         else if baseline == nil {
           Section {
             Text("Couldn’t load service providers. Your current providers are unchanged.").foregroundStyle(.secondary)
             Button("Retry") { Task { _ = await loadCurrentSettings(); publishDraftGuard() } }
+              .settingsControl(.init(rawValue: "advanced.providerRetryLoad"))
           }
         }
         if saveOutcomeUnconfirmed {

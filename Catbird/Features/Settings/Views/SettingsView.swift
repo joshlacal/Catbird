@@ -113,17 +113,22 @@ struct SettingsView: View {
 
     @MainActor private func loadProfile(for did: String) async {
         let revision = AppStateManager.shared.settingsAccountContextRevision
+        guard SettingsAccountBoundary.isCurrent(did, revision: revision),
+              let client = appState.atProtoClient else { return }
         isLoadingProfile = true
-        defer { if appState.userDID == did { isLoadingProfile = false } }
+        defer { if SettingsAccountBoundary.isCurrent(did, revision: revision) { isLoadingProfile = false } }
         do {
-            guard let client = appState.atProtoClient else { return }
-            let parameters = try AppBskyActorGetProfile.Parameters(actor: ATIdentifier(string: did))
-            let (_, fetched) = try await client.app.bsky.actor.getProfile(input: parameters)
-            try Task.checkCancellation()
-            guard appState.userDID == did, SettingsAccountBoundary.isCurrent(did, revision: revision) else { return }
-            profile = fetched
-            if let fetched {
-                AppStateManager.shared.authentication.cacheProfileData(for: did, handle: fetched.handle.description, displayName: fetched.displayName, avatarURL: fetched.finalAvatarURL())
+            let originatingAppState = appState
+            try await originatingAppState.performSettingsAccountOperation {
+                try Task.checkCancellation()
+                let parameters = try AppBskyActorGetProfile.Parameters(actor: ATIdentifier(string: did))
+                let (_, fetched) = try await client.app.bsky.actor.getProfile(input: parameters)
+                try Task.checkCancellation()
+                guard appState.userDID == did, SettingsAccountBoundary.isCurrent(did, revision: revision) else { return }
+                profile = fetched
+                if let fetched {
+                    AppStateManager.shared.authentication.cacheProfileData(for: did, handle: fetched.handle.description, displayName: fetched.displayName, avatarURL: fetched.finalAvatarURL())
+                }
             }
         } catch is CancellationError { }
         catch {

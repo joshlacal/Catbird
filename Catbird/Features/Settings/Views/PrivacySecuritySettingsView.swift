@@ -389,25 +389,29 @@ struct PrivacySecuritySettingsView: View {
         defer { if SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision) { isLoadingLoggedOutVisibility = false } }
 
         do {
-            let (code, record) = try await client.com.atproto.repo.getRecord(
-                input: try profileRecordParameters()
-            )
-            let isVisible: Bool
-            if code == 200, let record {
-                guard case let .knownType(value) = record.value,
-                      let profile = value as? AppBskyActorProfile else {
-                    throw visibilityError("Unexpected profile record format.")
+            let originatingAppState = appState
+            try await originatingAppState.performSettingsAccountOperation {
+                try Task.checkCancellation()
+                let (code, record) = try await client.com.atproto.repo.getRecord(
+                    input: try profileRecordParameters(for: expectedDID)
+                )
+                let isVisible: Bool
+                if code == 200, let record {
+                    guard case let .knownType(value) = record.value,
+                          let profile = value as? AppBskyActorProfile else {
+                        throw visibilityError("Unexpected profile record format.")
+                    }
+                    isVisible = !Self.hasNoUnauthenticatedLabel(profile.labels)
+                } else if code == 404 {
+                    isVisible = true
+                } else {
+                    throw visibilityError("Failed to load profile record (\(code)).")
                 }
-                isVisible = !Self.hasNoUnauthenticatedLabel(profile.labels)
-            } else if code == 404 {
-                isVisible = true
-            } else {
-                throw visibilityError("Failed to load profile record (\(code)).")
-            }
 
-            guard !Task.isCancelled, SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision) else { return }
-            setLoggedOutVisibilityProgrammatically(isVisible)
-            hasLoadedVisibility = true
+                guard !Task.isCancelled, SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision) else { return }
+                setLoggedOutVisibilityProgrammatically(isVisible)
+                hasLoadedVisibility = true
+            }
         } catch ComAtprotoRepoGetRecord.Error.recordNotFound {
             guard !Task.isCancelled, SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision) else { return }
             setLoggedOutVisibilityProgrammatically(true)
@@ -432,23 +436,28 @@ struct PrivacySecuritySettingsView: View {
         defer { isUpdatingLoggedOutVisibility = false }
 
         do {
-            let (code, record) = try await client.com.atproto.repo.getRecord(
-                input: try profileRecordParameters()
-            )
-            guard !Task.isCancelled, SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision) else { return }
-            if code == 200, let record {
-                try await putProfileVisibility(
-                    record: record,
-                    isVisible: isVisible,
-                    client: client
+            let originatingAppState = appState
+            try await originatingAppState.performSettingsAccountOperation {
+                try Task.checkCancellation()
+                let (code, record) = try await client.com.atproto.repo.getRecord(
+                    input: try profileRecordParameters(for: expectedDID)
                 )
-            } else if code == 404 {
-                try await createProfileVisibility(isVisible: isVisible, client: client)
-            } else {
-                throw visibilityError("Failed to load profile record (\(code)).")
+                guard !Task.isCancelled, SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision) else { return }
+                if code == 200, let record {
+                    try await putProfileVisibility(
+                        record: record,
+                        isVisible: isVisible,
+                        client: client,
+                        accountDID: expectedDID
+                    )
+                } else if code == 404 {
+                    try await createProfileVisibility(isVisible: isVisible, client: client, accountDID: expectedDID)
+                } else {
+                    throw visibilityError("Failed to load profile record (\(code)).")
+                }
+                guard !Task.isCancelled, SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision) else { return }
+                appState.appSettings.loggedOutVisibility = isVisible
             }
-            guard !Task.isCancelled, SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision) else { return }
-            appState.appSettings.loggedOutVisibility = isVisible
         } catch {
             guard !Task.isCancelled, SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision) else { return }
             logger.error("Error updating logged-out visibility: \(error.localizedDescription)")
@@ -467,25 +476,29 @@ struct PrivacySecuritySettingsView: View {
         defer { if SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision) { isLoadingAlgorithmicVisibility = false } }
 
         do {
-            let (code, recordData) = try await client.com.atproto.repo.getRecord(
-                input: .init(
-                    repo: try ATIdentifier(string: expectedDID),
-                    collection: try NSID(nsidString: "app.bsky.actor.contentVisibilityDeclaration"),
-                    rkey: try RecordKey(keyString: "self")
+            let originatingAppState = appState
+            try await originatingAppState.performSettingsAccountOperation {
+                try Task.checkCancellation()
+                let (code, recordData) = try await client.com.atproto.repo.getRecord(
+                    input: .init(
+                        repo: try ATIdentifier(string: expectedDID),
+                        collection: try NSID(nsidString: "app.bsky.actor.contentVisibilityDeclaration"),
+                        rkey: try RecordKey(keyString: "self")
+                    )
                 )
-            )
-            guard !Task.isCancelled, SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision) else { return }
-            if code == 200, let record = recordData,
-               case let .knownType(declarationValue) = record.value,
-               let declaration = declarationValue as? AppBskyActorContentVisibilityDeclaration {
-                self.hideFromAlgorithmicRecommendations = declaration.hideFromAlgorithmicRecommendations
-                hasLoadedAlgorithmicVisibility = true
-            } else if code == 404 {
-                // Explicit record-not-found implies false (opted in to recommendations)
-                self.hideFromAlgorithmicRecommendations = false
-                hasLoadedAlgorithmicVisibility = true
-            } else {
-                throw NSError(domain: "PrivacySecuritySettings", code: code, userInfo: [NSLocalizedDescriptionKey: "Failed to load content visibility declaration (\(code))."])
+                guard !Task.isCancelled, SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision) else { return }
+                if code == 200, let record = recordData,
+                   case let .knownType(declarationValue) = record.value,
+                   let declaration = declarationValue as? AppBskyActorContentVisibilityDeclaration {
+                    self.hideFromAlgorithmicRecommendations = declaration.hideFromAlgorithmicRecommendations
+                    hasLoadedAlgorithmicVisibility = true
+                } else if code == 404 {
+                    // Explicit record-not-found implies false (opted in to recommendations)
+                    self.hideFromAlgorithmicRecommendations = false
+                    hasLoadedAlgorithmicVisibility = true
+                } else {
+                    throw NSError(domain: "PrivacySecuritySettings", code: code, userInfo: [NSLocalizedDescriptionKey: "Failed to load content visibility declaration (\(code))."])
+                }
             }
         } catch ComAtprotoRepoGetRecord.Error.recordNotFound {
             guard !Task.isCancelled, SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision) else { return }
@@ -513,16 +526,20 @@ struct PrivacySecuritySettingsView: View {
         defer { isUpdatingAlgorithmicVisibility = false }
 
         do {
-            let decl = AppBskyActorContentVisibilityDeclaration(hideFromAlgorithmicRecommendations: hide)
-            let input = ComAtprotoRepoPutRecord.Input(
-                repo: try ATIdentifier(string: expectedDID),
-                collection: try NSID(nsidString: "app.bsky.actor.contentVisibilityDeclaration"),
-                rkey: try RecordKey(keyString: "self"),
-                record: .knownType(decl)
-            )
-            let (code, _) = try await client.com.atproto.repo.putRecord(input: input)
-            guard code == 200 else {
-                throw NSError(domain: "PrivacySecuritySettings", code: code, userInfo: [NSLocalizedDescriptionKey: "Failed to update algorithmic recommendations setting (\(code))."])
+            let originatingAppState = appState
+            try await originatingAppState.performSettingsAccountOperation {
+                try Task.checkCancellation()
+                let decl = AppBskyActorContentVisibilityDeclaration(hideFromAlgorithmicRecommendations: hide)
+                let input = ComAtprotoRepoPutRecord.Input(
+                    repo: try ATIdentifier(string: expectedDID),
+                    collection: try NSID(nsidString: "app.bsky.actor.contentVisibilityDeclaration"),
+                    rkey: try RecordKey(keyString: "self"),
+                    record: .knownType(decl)
+                )
+                let (code, _) = try await client.com.atproto.repo.putRecord(input: input)
+                guard code == 200 else {
+                    throw NSError(domain: "PrivacySecuritySettings", code: code, userInfo: [NSLocalizedDescriptionKey: "Failed to update algorithmic recommendations setting (\(code))."])
+                }
             }
         } catch {
             guard !Task.isCancelled, SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision) else { return }
@@ -537,9 +554,9 @@ struct PrivacySecuritySettingsView: View {
         showAlgorithmicVisibilityError = true
     }
 
-    private func profileRecordParameters() throws -> ComAtprotoRepoGetRecord.Parameters {
+    private func profileRecordParameters(for accountDID: String) throws -> ComAtprotoRepoGetRecord.Parameters {
         ComAtprotoRepoGetRecord.Parameters(
-            repo: try ATIdentifier(string: appState.userDID),
+            repo: try ATIdentifier(string: accountDID),
             collection: try NSID(nsidString: "app.bsky.actor.profile"),
             rkey: try RecordKey(keyString: "self")
         )
@@ -547,7 +564,8 @@ struct PrivacySecuritySettingsView: View {
     private func putProfileVisibility(
         record: ComAtprotoRepoGetRecord.Output,
         isVisible: Bool,
-        client: ATProtoClient
+        client: ATProtoClient,
+        accountDID: String
     ) async throws {
         guard case let .knownType(value) = record.value,
               let profile = value as? AppBskyActorProfile else {
@@ -567,7 +585,7 @@ struct PrivacySecuritySettingsView: View {
             createdAt: profile.createdAt
         )
         let input = ComAtprotoRepoPutRecord.Input(
-            repo: try ATIdentifier(string: appState.userDID),
+            repo: try ATIdentifier(string: accountDID),
             collection: try NSID(nsidString: "app.bsky.actor.profile"),
             rkey: try RecordKey(keyString: "self"),
             record: .knownType(updatedProfile),
@@ -577,7 +595,7 @@ struct PrivacySecuritySettingsView: View {
         guard code == 200 else { throw visibilityError("Profile update failed (\(code)).") }
     }
 
-    private func createProfileVisibility(isVisible: Bool, client: ATProtoClient) async throws {
+    private func createProfileVisibility(isVisible: Bool, client: ATProtoClient, accountDID: String) async throws {
         let profile = AppBskyActorProfile(
             displayName: nil,
             description: nil,
@@ -591,7 +609,7 @@ struct PrivacySecuritySettingsView: View {
             createdAt: ATProtocolDate(date: Date())
         )
         let input = ComAtprotoRepoCreateRecord.Input(
-            repo: try ATIdentifier(string: appState.userDID),
+            repo: try ATIdentifier(string: accountDID),
             collection: try NSID(nsidString: "app.bsky.actor.profile"),
             rkey: try RecordKey(keyString: "self"),
             record: .knownType(profile)

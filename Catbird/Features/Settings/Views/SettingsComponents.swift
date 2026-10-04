@@ -52,11 +52,11 @@ struct SettingsNavigationRow: View {
     }
 }
 
-private struct SettingsRequestedFocusKey: EnvironmentKey { static let defaultValue: SettingsControlID? = nil }
+private struct SettingsFocusCoordinatorKey: EnvironmentKey { static let defaultValue: SettingsFocusCoordinator? = nil }
 private extension EnvironmentValues {
-    var settingsRequestedFocus: SettingsControlID? {
-        get { self[SettingsRequestedFocusKey.self] }
-        set { self[SettingsRequestedFocusKey.self] = newValue }
+    var settingsFocusCoordinator: SettingsFocusCoordinator? {
+        get { self[SettingsFocusCoordinatorKey.self] }
+        set { self[SettingsFocusCoordinatorKey.self] = newValue }
     }
 }
 
@@ -64,17 +64,24 @@ struct SettingsFocusedForm<Content: View>: View {
     let initialFocus: SettingsControlID?
     var isReady: Bool = true
     @ViewBuilder let content: () -> Content
-    @State private var requestedFocus: SettingsControlID?
+    @State private var focusCoordinator = SettingsFocusCoordinator()
     var body: some View {
+        let request = SettingsFocusRequest(target: initialFocus, isReady: isReady)
         ScrollViewReader { proxy in
             Form { content() }
-                .environment(\.settingsRequestedFocus, requestedFocus)
-                .task(id: isReady) {
-                    guard isReady, let initialFocus else { return }
+                .environment(\.settingsFocusCoordinator, focusCoordinator)
+                .task(id: request) {
+                    guard !Task.isCancelled else { return }
+                    focusCoordinator.begin(request)
+                    guard request.isReady, request.target != nil else { return }
+                    if focusCoordinator.canScroll(request) {
+                        await Task.yield()
+                        guard !Task.isCancelled, focusCoordinator.markScrolled(request), let target = request.target else { return }
+                        proxy.scrollTo(target, anchor: .center)
+                    }
                     await Task.yield()
-                    proxy.scrollTo(initialFocus, anchor: .center)
-                    await Task.yield()
-                    requestedFocus = initialFocus
+                    guard !Task.isCancelled else { return }
+                    focusCoordinator.scheduleVoiceOver(request)
                 }
         }
     }
@@ -82,11 +89,14 @@ struct SettingsFocusedForm<Content: View>: View {
 
 private struct SettingsControlAnchor: ViewModifier {
     let control: SettingsControlID
-    @Environment(\.settingsRequestedFocus) private var requested
+    @Environment(\.settingsFocusCoordinator) private var coordinator
     @AccessibilityFocusState private var focused: Bool
     func body(content: Content) -> some View {
         content.id(control).accessibilityIdentifier(control.rawValue).accessibilityFocused($focused)
-            .task(id: requested) { if requested == control { focused = true } }
+            .task(id: coordinator?.requestedFocus) {
+                guard !Task.isCancelled, coordinator?.consumeVoiceOver(for: control) == true else { return }
+                focused = true
+            }
     }
 }
 

@@ -97,6 +97,7 @@ enum SettingsCatalog {
                 case .helpAbout: scope = "App"
                 case .accountSecurity, .advanced: scope = "Account and this device"
                 case .notifications: scope = "Account and device permission"
+                case .language: scope = "Interface on this device; reading for current account"
                 case .appearance: scope = "Account preferences; app icon on this device"
                 case .accessibility: scope = "Account preferences and system accommodations"
                 default: scope = "Current account"
@@ -111,17 +112,16 @@ enum SettingsCatalog {
         add("Export Public Account Data", .accountDetails, "account.export", "Account & Security › Account Details", "Current account", ["CAR", "backup"])
         add("Deactivate Account", .accountDetails, "account.deactivate", "Account & Security › Account Details")
         add("Sign Out", .accountSecurity, "account.signOut", "Account & Security")
-        add("Default Replies & Quotes", .defaultPostInteractions, "privacy.defaultPostInteractions", "Privacy & Interactions", "New posts", ["reply permissions", "quote permissions"])
+        add("Default Replies & Quotes", .defaultPostInteractions, nil, "Privacy & Interactions", "New posts", ["reply permissions", "quote permissions"])
         add("Direct Messages & Group Invitations", .messages, "privacy.messages", "Privacy & Interactions", "Current account", ["DM", "chat", "invites"])
-        add("Who Can Subscribe to My Posts", .activityPrivacy, "privacy.activitySubscriptions", "Privacy & Interactions", "Current account", ["post notifications", "activity privacy"])
+        add("Who Can Subscribe to My Posts", .activityPrivacy, "privacy.activitySubscriptions", "Privacy & Interactions", "Current account", ["post notifications", "activity privacy", "subscribers", "who may subscribe"])
         add("Visible to Signed-Out Visitors", .visibility, "privacy.loggedOutVisibility", "Privacy & Interactions › Visibility & Attribution", "Current account", ["logged out", "public profile"])
         add("Algorithmic Recommendations Request", .visibility, "privacy.algorithmicVisibility", "Privacy & Interactions › Visibility & Attribution", "Current account", ["hide posts", "discovery"])
         add("Credit Repost Discovery", .visibility, "privacy.attribution", "Privacy & Interactions › Visibility & Attribution")
         for (title, id, aliases) in [
             ("Adult Content", "adultContent", ["NSFW"]), ("Sexually Explicit Content", "nsfw", ["NSFW", "porn"]),
             ("Sexually Suggestive Content", "suggestive", ["sexual"]), ("Graphic Media", "graphic", ["gore", "violence"]),
-            ("Non-Sexual Nudity", "nudity", ["nudity"]), ("Muted Words & Hashtags", "mutedWords", ["mute", "hashtag"]),
-            ("Hidden Posts", "hiddenPosts", ["hide post"])] {
+            ("Non-Sexual Nudity", "nudity", ["nudity"]), ("Muted Words & Hashtags", "mutedWords", ["mute", "hashtag"])] {
             add(title, .moderation, "moderation.\(id)", "Moderation", "Current account", aliases)
         }
         add("Moderation Services", .labelers, "moderation.labelers", "Moderation", "Current account", ["labelers", "labels"])
@@ -164,11 +164,10 @@ enum SettingsCatalog {
             add(title, .accessibility, "accessibility.\(id)", "Accessibility")
         }
         for (title, id) in [("Interface Language", "interface"), ("Primary Language", "primary"), ("Content Languages", "content"), ("Hide Other Languages", "hideOtherLanguages"), ("Language Indicators", "indicators")] {
-            add(title, .language, "languages.\(id)", "Language", "Current account", id == "hideOtherLanguages" ? ["feed language filter", "filter by language"] : [])
+            add(title, .language, "languages.\(id)", "Language", id == "interface" ? "This device" : "Current account", id == "hideOtherLanguages" ? ["feed language filter", "filter by language"] : [])
         }
-        add("Default Reply Permissions", .defaultPostInteractions, "privacy.defaultReplies", "Privacy & Interactions › Default Replies & Quotes", "New posts")
+        add("Default Reply Permissions", .defaultPostInteractions, "privacy.defaultPostInteractions", "Privacy & Interactions › Default Replies & Quotes", "New posts")
         add("Default Quote Permissions", .defaultPostInteractions, "privacy.defaultQuotes", "Privacy & Interactions › Default Replies & Quotes", "New posts")
-        add("Who May Subscribe to My Posts", .activityPrivacy, "privacy.activitySubscribers", "Privacy & Interactions", "Current account")
         add("AppView Provider", .providers, "advanced.appView", "Advanced › Service Providers", "Current account", ["server", "Blacksky"])
         add("Chat Provider", .providers, "advanced.chatProvider", "Advanced › Service Providers", "Current account", ["server", "messages"])
         add("App Icon", .appIcon, nil, "Appearance", "This device")

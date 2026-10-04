@@ -38,12 +38,17 @@ struct AutomationLabelSettingsView: View {
     
     @State private var isBot: Bool = false
     @State private var isLoading: Bool = true
+    @State private var hasConfirmedProfileLoad = false
+    @State private var profileLoadError: String?
     @State private var isUpdating: Bool = false
     @State private var errorMessage: String?
     @State private var showErrorAlert: Bool = false
     @State private var profileDetailed: AppBskyActorDefs.ProfileViewDetailed?
     @State private var profileRecord: (cid: CID?, profile: AppBskyActorProfile)?
     
+    @State private var mountedAccountDID: String?
+    @State private var mountedAccountRevision: UInt64 = 0
+
     @State private var loadTask: Task<Void, Never>?
     @State private var updateTask: Task<Void, Never>?
     
@@ -62,13 +67,22 @@ struct AutomationLabelSettingsView: View {
             }
             
             Section {
-                Toggle("Automated Account (Bot)", isOn: Binding(
-                    get: { isBot },
-                    set: { newValue in
-                        updateBotLabel(to: newValue)
-                    }
-                ))
-                .disabled(isLoading || isUpdating)
+                if hasConfirmedProfileLoad {
+                    Toggle("Automated Account (Bot)", isOn: Binding(
+                        get: { isBot },
+                        set: { newValue in
+                            updateBotLabel(to: newValue)
+                        }
+                    ))
+                    .disabled(isLoading || isUpdating)
+                } else {
+                    LabeledContent("Automated Account (Bot)", value: isLoading ? "Loading…" : "Unavailable")
+                }
+                if let profileLoadError {
+                    Text(profileLoadError).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    Button("Retry") { Task { await loadProfileData() } }
+                        .disabled(isLoading || isUpdating)
+                }
             } footer: {
                 Text("Self-labeling as a bot helps people and algorithms understand automated activity from your account.")
                     .font(.footnote)
@@ -80,8 +94,13 @@ struct AutomationLabelSettingsView: View {
         .navigationBarTitleDisplayMode(.inline)
         #endif
         .task {
+            if mountedAccountDID == nil {
+                mountedAccountDID = appState.userDID
+                mountedAccountRevision = AppStateManager.shared.settingsAccountContextRevision
+            }
             await loadProfileData()
         }
+        .onChange(of: appState.userDID) { _, _ in updateTask?.cancel() }
         .alert("Error", isPresented: $showErrorAlert) {
             Button("OK") { }
         } message: {
@@ -143,52 +162,90 @@ struct AutomationLabelSettingsView: View {
     @MainActor
     private func loadProfileData() async {
         isLoading = true
+        hasConfirmedProfileLoad = false
+        profileLoadError = nil
         defer { isLoading = false }
         
-        guard let client = appState.atProtoClient else { return }
+        guard mountedAccountDID == appState.userDID,
+              mountedAccountDID.map { SettingsAccountBoundary.isCurrent($0, revision: mountedAccountRevision) } == true,
+              let client = appState.atProtoClient else {
+            profileLoadError = "Couldn’t load your automation label. Retry to confirm the current value."
+            return
+        }
         let userDID = appState.userDID
+        let operationRevision = AppStateManager.shared.settingsAccountContextRevision
         
         do {
-            let (profCode, profData) = try await client.app.bsky.actor.getProfile(
-                input: .init(actor: try ATIdentifier(string: userDID))
-            )
-            guard !Task.isCancelled else { return }
-            if profCode == 200, let profile = profData {
-                self.profileDetailed = profile
-            }
-            
-            let (recCode, recData) = try await client.com.atproto.repo.getRecord(
-                input: .init(
-                    repo: try ATIdentifier(string: userDID),
-                    collection: try NSID(nsidString: "app.bsky.actor.profile"),
-                    rkey: try RecordKey(keyString: "self")
+            let originatingAppState = appState
+            try await originatingAppState.performSettingsAccountOperation {
+                try Task.checkCancellation()
+                let (profCode, profData) = try await client.app.bsky.actor.getProfile(
+                    input: .init(actor: try ATIdentifier(string: userDID))
                 )
-            )
-            guard !Task.isCancelled else { return }
+                guard !Task.isCancelled, SettingsAccountBoundary.isCurrent(userDID, revision: operationRevision) else { return }
+                if profCode == 200, let profile = profData {
+                    self.profileDetailed = profile
+                }
             
-            if recCode == 200, let record = recData,
-               case let .knownType(profileValue) = record.value,
-               let profile = profileValue as? AppBskyActorProfile {
-                self.profileRecord = (cid: record.cid, profile: profile)
-                self.isBot = Self.hasBotLabel(profile.labels)
-            } else if recCode == 400 || recCode == 404 {
-                self.profileRecord = nil
-                self.isBot = false
+                isReadingProfileRecord = true
+                let (recCode, recData) = try await client.com.atproto.repo.getRecord(
+                    input: .init(
+                        repo: try ATIdentifier(string: userDID),
+                        collection: try NSID(nsidString: "app.bsky.actor.profile"),
+                        rkey: try RecordKey(keyString: "self")
+                    )
+                )
+                guard !Task.isCancelled, SettingsAccountBoundary.isCurrent(userDID, revision: operationRevision) else { return }
+            
+                if recCode == 200, let record = recData,
+                   case let .knownType(profileValue) = record.value,
+                   let profile = profileValue as? AppBskyActorProfile {
+                    if case .unexpected = profile.labels {
+                        throw NSError(domain: "AutomationLabelSettings", code: -1, userInfo: [NSLocalizedDescriptionKey: "Unsupported profile label format."])
+                    }
+                    self.profileRecord = (cid: record.cid, profile: profile)
+                    self.isBot = Self.hasBotLabel(profile.labels)
+                    hasConfirmedProfileLoad = true
+                } else {
+                    throw NSError(domain: "AutomationLabelSettings", code: recCode, userInfo: [NSLocalizedDescriptionKey: "Couldn’t confirm the profile record (status \(recCode))."])
+                }
             }
         } catch ComAtprotoRepoGetRecord.Error.recordNotFound {
-            guard !Task.isCancelled else { return }
-            self.profileRecord = nil
-            self.isBot = false
+            confirmProfileAbsent(for: userDID, revision: operationRevision, isProfileRecordRead: isReadingProfileRecord)
+        } catch let error as ATProtoError<ComAtprotoRepoGetRecord.Error> where error.error == .recordNotFound {
+            confirmProfileAbsent(for: userDID, revision: operationRevision, isProfileRecordRead: isReadingProfileRecord)
+        } catch let error as ATProtoXRPCError where error.error == "RecordNotFound" {
+            confirmProfileAbsent(for: userDID, revision: operationRevision, isProfileRecordRead: isReadingProfileRecord)
         } catch is CancellationError {
             // Task was cancelled
         } catch {
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, SettingsAccountBoundary.isCurrent(userDID, revision: operationRevision) else { return }
             logger.error("Failed to load profile record for bot label: \(error)")
+            profileLoadError = "Couldn’t load your automation label. Retry to confirm the current value."
         }
     }
     
     @MainActor
+    private func confirmProfileAbsent(for accountDID: String, revision: UInt64, isProfileRecordRead: Bool) {
+        guard !Task.isCancelled, SettingsAccountBoundary.isCurrent(accountDID, revision: revision) else { return }
+        guard isProfileRecordRead else {
+            profileLoadError = "Couldn’t load your automation label. Retry to confirm the current value."
+            return
+        }
+        profileRecord = nil
+        isBot = false
+        hasConfirmedProfileLoad = true
+    }
+
+    @MainActor
     private func updateBotLabel(to newValue: Bool) {
+        guard hasConfirmedProfileLoad, mountedAccountDID == appState.userDID,
+              mountedAccountDID.map { SettingsAccountBoundary.isCurrent($0, revision: mountedAccountRevision) } == true,
+              let client = appState.atProtoClient else { return }
+        let originatingAppState = appState
+        let accountDID = appState.userDID
+        let operationRevision = AppStateManager.shared.settingsAccountContextRevision
+        let currentRecord = profileRecord
         let previousValue = isBot
         isBot = newValue
         isUpdating = true
@@ -197,29 +254,37 @@ struct AutomationLabelSettingsView: View {
         updateTask = Task { @MainActor in
             defer { isUpdating = false }
             
-            guard let client = appState.atProtoClient else {
-                revert(to: previousValue, message: "Client not initialized.")
-                return
-            }
-            
             do {
-                if let record = profileRecord {
-                    guard let cid = record.cid else {
-                        throw NSError(
-                            domain: "AutomationLabelSettings",
-                            code: -1,
-                            userInfo: [NSLocalizedDescriptionKey: "Missing record CID for profile update."]
-                        )
+                try await originatingAppState.performSettingsAccountOperation {
+                    try Task.checkCancellation()
+                    guard SettingsAccountBoundary.isCurrent(accountDID, revision: operationRevision) else { throw GatewayPermissionError.stateChanged }
+                    if let record = currentRecord {
+                        guard let cid = record.cid else {
+                            throw NSError(
+                                domain: "AutomationLabelSettings",
+                                code: -1,
+                                userInfo: [NSLocalizedDescriptionKey: "Missing record CID for profile update."]
+                            )
+                        }
+                        try await putProfileBotLabel(newValue, record: (cid: cid, profile: record.profile), client: client, accountDID: accountDID)
+                    } else {
+                        try await createProfileBotLabel(newValue, client: client, accountDID: accountDID)
                     }
-                    try await putProfileBotLabel(newValue, record: (cid: cid, profile: record.profile), client: client)
-                } else {
-                    try await createProfileBotLabel(newValue, client: client)
+                    guard !Task.isCancelled, SettingsAccountBoundary.isCurrent(accountDID, revision: operationRevision) else { return }
+                    originatingAppState.stateInvalidationBus.notify(.profileUpdated(did: accountDID))
                 }
-                appState.stateInvalidationBus.notify(.profileUpdated(did: appState.userDID))
+                guard !Task.isCancelled, SettingsAccountBoundary.isCurrent(accountDID, revision: operationRevision) else { return }
                 await loadProfileData()
             } catch is CancellationError {
-                // Task was cancelled
+                guard SettingsAccountBoundary.isCurrent(accountDID, revision: operationRevision) else { return }
+                hasConfirmedProfileLoad = false
+                isBot = previousValue
+                profileLoadError = "The automation label update wasn’t confirmed. Retry to load the saved value before editing again."
             } catch {
+                guard SettingsAccountBoundary.isCurrent(accountDID, revision: operationRevision) else { return }
+                hasConfirmedProfileLoad = false
+                profileLoadError = "The automation label update wasn’t confirmed. Retry to load the saved value before editing again."
+                guard !Task.isCancelled else { return }
                 logger.error("Failed to update bot label: \(error)")
                 revert(to: previousValue, message: error.localizedDescription)
             }
@@ -229,7 +294,8 @@ struct AutomationLabelSettingsView: View {
     private func putProfileBotLabel(
         _ isBot: Bool,
         record: (cid: CID, profile: AppBskyActorProfile),
-        client: ATProtoClient
+        client: ATProtoClient,
+        accountDID: String
     ) async throws {
         let profile = record.profile
         let updatedProfile = AppBskyActorProfile(
@@ -245,7 +311,7 @@ struct AutomationLabelSettingsView: View {
             createdAt: profile.createdAt
         )
         let input = ComAtprotoRepoPutRecord.Input(
-            repo: try ATIdentifier(string: appState.userDID),
+            repo: try ATIdentifier(string: accountDID),
             collection: try NSID(nsidString: "app.bsky.actor.profile"),
             rkey: try RecordKey(keyString: "self"),
             record: .knownType(updatedProfile),
@@ -257,7 +323,7 @@ struct AutomationLabelSettingsView: View {
         }
     }
     
-    private func createProfileBotLabel(_ isBot: Bool, client: ATProtoClient) async throws {
+    private func createProfileBotLabel(_ isBot: Bool, client: ATProtoClient, accountDID: String) async throws {
         let profile = AppBskyActorProfile(
             displayName: nil,
             description: nil,
@@ -271,7 +337,7 @@ struct AutomationLabelSettingsView: View {
             createdAt: ATProtocolDate(date: Date())
         )
         let input = ComAtprotoRepoCreateRecord.Input(
-            repo: try ATIdentifier(string: appState.userDID),
+            repo: try ATIdentifier(string: accountDID),
             collection: try NSID(nsidString: "app.bsky.actor.profile"),
             rkey: try RecordKey(keyString: "self"),
             record: .knownType(profile)

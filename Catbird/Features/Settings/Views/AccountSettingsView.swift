@@ -45,6 +45,7 @@ struct AccountSettingsView: View {
     
     // Automation / Bot label
     @State private var isBotAccount = false
+    @State private var hasConfirmedAccountType = false
     
     // CAR Repository Export
     @State private var isExportingData = false
@@ -199,7 +200,7 @@ struct AccountSettingsView: View {
                     emailSection.settingsControl(.init(rawValue: "account.email"))
                     
                     Section("Account Type") {
-                        SettingsLink(screen: .automationLabel, summary: isBotAccount ? "Bot" : "None", systemImage: "person.crop.rectangle.badge.plus", family: .account)
+                        SettingsLink(screen: .automationLabel, summary: hasConfirmedAccountType ? (isBotAccount ? "Bot" : "None") : "Unknown", systemImage: "person.crop.rectangle.badge.plus", family: .account)
 
                     }
                     
@@ -395,7 +396,9 @@ struct AccountSettingsView: View {
     
     @MainActor
     private func exportRepositoryData() {
-        guard let client = appState.atProtoClient else { return }
+        guard mountedAccountDID == appState.userDID,
+                  mountedAccountDID.map { SettingsAccountBoundary.isCurrent($0, revision: mountedAccountRevision) } == true,
+                  let client = appState.atProtoClient else { return }
         let userDID = appState.userDID
         let operationRevision = AppStateManager.shared.settingsAccountContextRevision
         let handle = profile?.handle.description ?? userDID
@@ -407,19 +410,23 @@ struct AccountSettingsView: View {
         exportTask = Task { @MainActor in
             defer { isExportingData = false }
             do {
-                let (code, output) = try await client.com.atproto.sync.getRepo(
-                    input: .init(did: try DID(didString: userDID))
-                )
-                guard !Task.isCancelled, mountedAccountDID.map { SettingsAccountBoundary.isCurrent($0, revision: mountedAccountRevision) } == true else { return }
-                if code == 200, let output = output, !output.data.isEmpty {
-                    self.exportDocument = CARFileDocument(data: output.data)
-                    self.isShowingFileExporter = true
-                } else {
-                    formError = "Failed to export repository (status \(code))."
-                    showingFormError = true
+                let originatingAppState = appState
+                try await originatingAppState.performSettingsAccountOperation {
+                    try Task.checkCancellation()
+                    let (code, output) = try await client.com.atproto.sync.getRepo(
+                        input: .init(did: try DID(didString: userDID))
+                    )
+                    guard !Task.isCancelled, SettingsAccountBoundary.isCurrent(userDID, revision: operationRevision) else { return }
+                    if code == 200, let output = output, !output.data.isEmpty {
+                        self.exportDocument = CARFileDocument(data: output.data)
+                        self.isShowingFileExporter = true
+                    } else {
+                        formError = "Failed to export repository (status \(code))."
+                        showingFormError = true
+                    }
                 }
             } catch {
-                guard !Task.isCancelled, mountedAccountDID.map { SettingsAccountBoundary.isCurrent($0, revision: mountedAccountRevision) } == true else { return }
+                guard !Task.isCancelled, SettingsAccountBoundary.isCurrent(userDID, revision: operationRevision) else { return }
                 handleAPIError(error, operation: "export repository data")
             }
         }
@@ -438,6 +445,7 @@ struct AccountSettingsView: View {
     @MainActor
     private func loadAccountDetails() async {
         isLoading = true
+        hasConfirmedAccountType = false
         isAccountActive = nil
         accountStatus = nil
         
@@ -447,7 +455,9 @@ struct AccountSettingsView: View {
             }
         }
         
-        guard let client = appState.atProtoClient else {
+        guard mountedAccountDID == appState.userDID,
+                  mountedAccountDID.map { SettingsAccountBoundary.isCurrent($0, revision: mountedAccountRevision) } == true,
+                  let client = appState.atProtoClient else {
             if !Task.isCancelled {
                 handleAPIError(AuthError.clientNotInitialized, operation: "load account details")
             }
@@ -459,37 +469,41 @@ struct AccountSettingsView: View {
         
         // 1. Load session status & email info in independent do/catch
         do {
-            let grantedScopes = try await client.fetchGrantedScopes(for: userDID)
-            guard !Task.isCancelled, SettingsAccountBoundary.isCurrent(userDID, revision: operationRevision) else { return }
+            let originatingAppState = appState
+            try await originatingAppState.performSettingsAccountOperation {
+                try Task.checkCancellation()
+                let grantedScopes = try await client.fetchGrantedScopes(for: userDID)
+                guard !Task.isCancelled, SettingsAccountBoundary.isCurrent(userDID, revision: operationRevision) else { return }
             
-            let emailScopeGranted = grantedScopes.contains(GatewayPermission.accountEmailManage.rawValue)
-            self.hasEmailScope = emailScopeGranted
+                let emailScopeGranted = grantedScopes.contains(GatewayPermission.accountEmailManage.rawValue)
+                self.hasEmailScope = emailScopeGranted
             
-            let (sessionCode, sessionData) = try await client.com.atproto.server.getSession()
-            guard !Task.isCancelled, SettingsAccountBoundary.isCurrent(userDID, revision: operationRevision) else { return }
+                let (sessionCode, sessionData) = try await client.com.atproto.server.getSession()
+                guard !Task.isCancelled, SettingsAccountBoundary.isCurrent(userDID, revision: operationRevision) else { return }
             
-            if sessionCode == 200, let session = sessionData {
-                if emailScopeGranted {
-                    if let sessionEmail = session.email, !sessionEmail.isEmpty {
-                        self.email = sessionEmail
+                if sessionCode == 200, let session = sessionData {
+                    if emailScopeGranted {
+                        if let sessionEmail = session.email, !sessionEmail.isEmpty {
+                            self.email = sessionEmail
+                        } else {
+                            self.email = ""
+                        }
+                        self.isEmailVerified = session.emailConfirmed ?? false
+                        self.emailAuthFactor = session.emailAuthFactor
                     } else {
                         self.email = ""
+                        self.isEmailVerified = false
+                        self.emailAuthFactor = nil
                     }
-                    self.isEmailVerified = session.emailConfirmed ?? false
-                    self.emailAuthFactor = session.emailAuthFactor
+                    self.isAccountActive = session.active
+                    self.accountStatus = session.status
                 } else {
                     self.email = ""
                     self.isEmailVerified = false
                     self.emailAuthFactor = nil
+                    self.isAccountActive = nil
+                    self.accountStatus = nil
                 }
-                self.isAccountActive = session.active
-                self.accountStatus = session.status
-            } else {
-                self.email = ""
-                self.isEmailVerified = false
-                self.emailAuthFactor = nil
-                self.isAccountActive = nil
-                self.accountStatus = nil
             }
         } catch {
             guard !Task.isCancelled, SettingsAccountBoundary.isCurrent(userDID, revision: operationRevision) else { return }
@@ -506,32 +520,45 @@ struct AccountSettingsView: View {
         
         // 2. Load profile and self-labels in independent do/catch so profile failure cannot erase status or reactivation
         do {
-            let (profileCode, profileData) = try await client.app.bsky.actor.getProfile(
-                input: .init(actor: ATIdentifier(string: userDID))
-            )
-            guard !Task.isCancelled, SettingsAccountBoundary.isCurrent(userDID, revision: operationRevision) else { return }
-            
-            if profileCode == 200, let profile = profileData {
-                self.profile = profile
-            }
-            
-            let (recCode, recData) = try await client.com.atproto.repo.getRecord(
-                input: .init(
-                    repo: try ATIdentifier(string: userDID),
-                    collection: try NSID(nsidString: "app.bsky.actor.profile"),
-                    rkey: try RecordKey(keyString: "self")
+            let originatingAppState = appState
+            try await originatingAppState.performSettingsAccountOperation {
+                try Task.checkCancellation()
+                let (profileCode, profileData) = try await client.app.bsky.actor.getProfile(
+                    input: .init(actor: ATIdentifier(string: userDID))
                 )
-            )
-            guard !Task.isCancelled, SettingsAccountBoundary.isCurrent(userDID, revision: operationRevision) else { return }
-            if recCode == 200, let record = recData,
-               case let .knownType(profileRecord) = record.value,
-               let profile = profileRecord as? AppBskyActorProfile {
-                if case let .comAtprotoLabelDefsSelfLabels(selfLabels) = profile.labels {
-                    self.isBotAccount = selfLabels.values.contains { $0.val == "bot" }
-                } else {
-                    self.isBotAccount = false
+                guard !Task.isCancelled, SettingsAccountBoundary.isCurrent(userDID, revision: operationRevision) else { return }
+            
+                if profileCode == 200, let profile = profileData {
+                    self.profile = profile
+                }
+            
+                let (recCode, recData) = try await client.com.atproto.repo.getRecord(
+                    input: .init(
+                        repo: try ATIdentifier(string: userDID),
+                        collection: try NSID(nsidString: "app.bsky.actor.profile"),
+                        rkey: try RecordKey(keyString: "self")
+                    )
+                )
+                guard !Task.isCancelled, SettingsAccountBoundary.isCurrent(userDID, revision: operationRevision) else { return }
+                if recCode == 200, let record = recData,
+                   case let .knownType(profileRecord) = record.value,
+                   let profile = profileRecord as? AppBskyActorProfile {
+                    switch profile.labels {
+                    case .comAtprotoLabelDefsSelfLabels(let selfLabels):
+                        self.isBotAccount = selfLabels.values.contains { $0.val == "bot" }
+                        hasConfirmedAccountType = true
+                    case nil:
+                        self.isBotAccount = false
+                        hasConfirmedAccountType = true
+                    case .unexpected:
+                        hasConfirmedAccountType = false
+                    }
                 }
             }
+        } catch ComAtprotoRepoGetRecord.Error.recordNotFound {
+            guard !Task.isCancelled, SettingsAccountBoundary.isCurrent(userDID, revision: operationRevision) else { return }
+            isBotAccount = false
+            hasConfirmedAccountType = true
         } catch {
             guard !Task.isCancelled, SettingsAccountBoundary.isCurrent(userDID, revision: operationRevision) else { return }
             logger.warning("Failed to load profile details: \(error.localizedDescription)")
@@ -544,7 +571,9 @@ struct AccountSettingsView: View {
     private func manageEmailAction() {
         manageEmailTask?.cancel()
         manageEmailTask = Task { @MainActor in
-            guard let client = appState.atProtoClient else {
+            guard mountedAccountDID == appState.userDID,
+                  mountedAccountDID.map { SettingsAccountBoundary.isCurrent($0, revision: mountedAccountRevision) } == true,
+                  let client = appState.atProtoClient else {
                 if !Task.isCancelled {
                     handleAPIError(AuthError.clientNotInitialized, operation: "manage email")
                 }
@@ -560,57 +589,59 @@ struct AccountSettingsView: View {
             let targetDID = appState.userDID
             let targetRevision = AppStateManager.shared.settingsAccountContextRevision
             do {
-                try await ensurePermission(.accountEmailManage)
-                guard !Task.isCancelled, appState.userDID == targetDID, SettingsAccountBoundary.isCurrent(targetDID, revision: targetRevision) else {
-                    if appState.userDID != targetDID {
-                        throw GatewayPermissionError.stateChanged
+                let originatingAppState = appState
+                try await originatingAppState.performSettingsAccountOperation {
+                    try Task.checkCancellation()
+                    try await ensurePermission(.accountEmailManage)
+                    guard !Task.isCancelled, appState.userDID == targetDID, SettingsAccountBoundary.isCurrent(targetDID, revision: targetRevision) else {
+                        if appState.userDID != targetDID {
+                            throw GatewayPermissionError.stateChanged
+                        }
+                        return
                     }
-                    return
-                }
                 
-                let userDID = appState.userDID
-                let operationRevision = AppStateManager.shared.settingsAccountContextRevision
-                let grantedScopes = try await client.fetchGrantedScopes(for: userDID)
-                guard !Task.isCancelled, appState.userDID == targetDID, SettingsAccountBoundary.isCurrent(targetDID, revision: targetRevision) else {
-                    if appState.userDID != targetDID {
-                        throw GatewayPermissionError.stateChanged
+                    let grantedScopes = try await client.fetchGrantedScopes(for: targetDID)
+                    guard !Task.isCancelled, appState.userDID == targetDID, SettingsAccountBoundary.isCurrent(targetDID, revision: targetRevision) else {
+                        if appState.userDID != targetDID {
+                            throw GatewayPermissionError.stateChanged
+                        }
+                        return
                     }
-                    return
-                }
                 
-                let emailScopeGranted = grantedScopes.contains(GatewayPermission.accountEmailManage.rawValue)
-                self.hasEmailScope = emailScopeGranted
+                    let emailScopeGranted = grantedScopes.contains(GatewayPermission.accountEmailManage.rawValue)
+                    self.hasEmailScope = emailScopeGranted
                 
-                guard emailScopeGranted else {
-                    self.email = ""
-                    self.isEmailVerified = false
-                    self.emailAuthFactor = nil
-                    formError = "Missing required email management permission."
-                    showingFormError = true
-                    return
-                }
-                let (sessionCode, sessionData) = try await client.com.atproto.server.getSession()
-                guard !Task.isCancelled, mountedAccountDID.map { SettingsAccountBoundary.isCurrent($0, revision: mountedAccountRevision) } == true else { return }
+                    guard emailScopeGranted else {
+                        self.email = ""
+                        self.isEmailVerified = false
+                        self.emailAuthFactor = nil
+                        formError = "Missing required email management permission."
+                        showingFormError = true
+                        return
+                    }
+                    let (sessionCode, sessionData) = try await client.com.atproto.server.getSession()
+                    guard !Task.isCancelled, mountedAccountDID.map { SettingsAccountBoundary.isCurrent($0, revision: mountedAccountRevision) } == true else { return }
                 
-                if sessionCode == 200, let session = sessionData {
-                    if let sessionEmail = session.email, !sessionEmail.isEmpty {
-                        self.email = sessionEmail
+                    if sessionCode == 200, let session = sessionData {
+                        if let sessionEmail = session.email, !sessionEmail.isEmpty {
+                            self.email = sessionEmail
+                        } else {
+                            self.email = ""
+                        }
+                        self.isEmailVerified = session.emailConfirmed ?? false
+                        self.emailAuthFactor = session.emailAuthFactor
+                        self.isAccountActive = session.active
+                        self.accountStatus = session.status
+
+                        guard !Task.isCancelled, mountedAccountDID.map { SettingsAccountBoundary.isCurrent($0, revision: mountedAccountRevision) } == true else { return }
+                        isShowingEmailSheet = true
                     } else {
                         self.email = ""
+                        self.isEmailVerified = false
+                        self.emailAuthFactor = nil
+                        formError = "Failed to load account session (Code: \(sessionCode))."
+                        showingFormError = true
                     }
-                    self.isEmailVerified = session.emailConfirmed ?? false
-                    self.emailAuthFactor = session.emailAuthFactor
-                    self.isAccountActive = session.active
-                    self.accountStatus = session.status
-                    
-                    guard !Task.isCancelled, mountedAccountDID.map { SettingsAccountBoundary.isCurrent($0, revision: mountedAccountRevision) } == true else { return }
-                    isShowingEmailSheet = true
-                } else {
-                    self.email = ""
-                    self.isEmailVerified = false
-                    self.emailAuthFactor = nil
-                    formError = "Failed to load account session (Code: \(sessionCode))."
-                    showingFormError = true
                 }
             } catch is CancellationError {
                 // User cancelled permission upgrade - preserve form
@@ -635,7 +666,9 @@ struct AccountSettingsView: View {
                 }
             }
             
-            guard let client = appState.atProtoClient else {
+            guard mountedAccountDID == appState.userDID,
+                  mountedAccountDID.map { SettingsAccountBoundary.isCurrent($0, revision: mountedAccountRevision) } == true,
+                  let client = appState.atProtoClient else {
                 if !Task.isCancelled {
                     handleAPIError(AuthError.clientNotInitialized, operation: "send verification email")
                 }
@@ -644,21 +677,26 @@ struct AccountSettingsView: View {
             let targetDID = appState.userDID
             let targetRevision = AppStateManager.shared.settingsAccountContextRevision
             do {
-                try await ensurePermission(.accountEmailManage)
-                guard !Task.isCancelled, appState.userDID == targetDID, SettingsAccountBoundary.isCurrent(targetDID, revision: targetRevision) else {
-                    if appState.userDID != targetDID {
-                        throw GatewayPermissionError.stateChanged
+                let originatingAppState = appState
+                try await originatingAppState.performSettingsAccountOperation {
+                    try Task.checkCancellation()
+                    try await ensurePermission(.accountEmailManage)
+                    guard !Task.isCancelled, appState.userDID == targetDID, SettingsAccountBoundary.isCurrent(targetDID, revision: targetRevision) else {
+                        if appState.userDID != targetDID {
+                            throw GatewayPermissionError.stateChanged
+                        }
+                        return
                     }
-                    return
-                }
                 
-                let (responseCode) = try await client.com.atproto.server.requestEmailConfirmation()
+                    let (responseCode) = try await client.com.atproto.server.requestEmailConfirmation()
+                    guard !Task.isCancelled, SettingsAccountBoundary.isCurrent(targetDID, revision: targetRevision) else { return }
                 
-                if (200...299).contains(responseCode) {
-                    startEmailVerificationPolling()
-                } else if !Task.isCancelled {
-                    formError = "Failed to send verification email (Code: \(responseCode)). Please try again."
-                    showingFormError = true
+                    if (200...299).contains(responseCode) {
+                        startEmailVerificationPolling()
+                    } else if !Task.isCancelled {
+                        formError = "Failed to send verification email (Code: \(responseCode)). Please try again."
+                        showingFormError = true
+                    }
                 }
             } catch is CancellationError {
                 // User cancelled permission upgrade - preserve form
@@ -720,45 +758,51 @@ struct AccountSettingsView: View {
     @MainActor
     @discardableResult
     private func checkEmailVerificationStatus() async -> Bool {
-        guard let client = appState.atProtoClient else { return false }
+        guard mountedAccountDID == appState.userDID,
+              mountedAccountDID.map { SettingsAccountBoundary.isCurrent($0, revision: mountedAccountRevision) } == true,
+              let client = appState.atProtoClient else { return false }
         
         do {
-            let userDID = appState.userDID
-            let operationRevision = AppStateManager.shared.settingsAccountContextRevision
-            let grantedScopes = try await client.fetchGrantedScopes(for: userDID)
-            guard !Task.isCancelled else { return false }
+            let originatingAppState = appState
+            return try await originatingAppState.performSettingsAccountOperation {
+                try Task.checkCancellation()
+                let userDID = appState.userDID
+                let operationRevision = AppStateManager.shared.settingsAccountContextRevision
+                let grantedScopes = try await client.fetchGrantedScopes(for: userDID)
+                guard !Task.isCancelled, SettingsAccountBoundary.isCurrent(userDID, revision: operationRevision) else { return false }
             
-            let emailScopeGranted = grantedScopes.contains(GatewayPermission.accountEmailManage.rawValue)
-            self.hasEmailScope = emailScopeGranted
+                let emailScopeGranted = grantedScopes.contains(GatewayPermission.accountEmailManage.rawValue)
+                self.hasEmailScope = emailScopeGranted
             
-            if !emailScopeGranted {
-                self.email = ""
-                self.isEmailVerified = false
-                self.emailAuthFactor = nil
-                return false
-            }
+                if !emailScopeGranted {
+                    self.email = ""
+                    self.isEmailVerified = false
+                    self.emailAuthFactor = nil
+                    return false
+                }
             
-            let (sessionCode, sessionData) = try await client.com.atproto.server.getSession()
-            guard !Task.isCancelled else { return false }
+                let (sessionCode, sessionData) = try await client.com.atproto.server.getSession()
+                guard !Task.isCancelled, SettingsAccountBoundary.isCurrent(userDID, revision: operationRevision) else { return false }
             
-            if sessionCode == 200, let session = sessionData {
-                self.isEmailVerified = session.emailConfirmed ?? false
-                if let sessionEmail = session.email, !sessionEmail.isEmpty {
-                    self.email = sessionEmail
+                if sessionCode == 200, let session = sessionData {
+                    self.isEmailVerified = session.emailConfirmed ?? false
+                    if let sessionEmail = session.email, !sessionEmail.isEmpty {
+                        self.email = sessionEmail
+                    } else {
+                        self.email = ""
+                    }
+                    self.emailAuthFactor = session.emailAuthFactor
+                    self.isAccountActive = session.active
+                    self.accountStatus = session.status
+                    return true
                 } else {
                     self.email = ""
+                    self.isEmailVerified = false
+                    self.emailAuthFactor = nil
+                    self.isAccountActive = nil
+                    self.accountStatus = nil
+                    return false
                 }
-                self.emailAuthFactor = session.emailAuthFactor
-                self.isAccountActive = session.active
-                self.accountStatus = session.status
-                return true
-            } else {
-                self.email = ""
-                self.isEmailVerified = false
-                self.emailAuthFactor = nil
-                self.isAccountActive = nil
-                self.accountStatus = nil
-                return false
             }
         } catch {
             if Task.isCancelled || error is CancellationError {
@@ -781,7 +825,9 @@ struct AccountSettingsView: View {
                 isDeactivating = false
             }
             
-            guard let client = appState.atProtoClient else {
+            guard mountedAccountDID == appState.userDID,
+                  mountedAccountDID.map { SettingsAccountBoundary.isCurrent($0, revision: mountedAccountRevision) } == true,
+                  let client = appState.atProtoClient else {
                 if !Task.isCancelled {
                     handleAPIError(AuthError.clientNotInitialized, operation: "deactivate account")
                 }
@@ -790,17 +836,18 @@ struct AccountSettingsView: View {
             let targetDID = appState.userDID
             let targetRevision = AppStateManager.shared.settingsAccountContextRevision
             do {
-                try await ensurePermission(.accountStatusManage)
-                guard !Task.isCancelled, appState.userDID == targetDID, SettingsAccountBoundary.isCurrent(targetDID, revision: targetRevision) else {
-                    if appState.userDID != targetDID {
+                let originatingAppState = appState
+                let responseCode = try await originatingAppState.performSettingsAccountOperation {
+                    try Task.checkCancellation()
+                    try await ensurePermission(.accountStatusManage)
+                    guard !Task.isCancelled, originatingAppState.userDID == targetDID,
+                          SettingsAccountBoundary.isCurrent(targetDID, revision: targetRevision) else {
                         throw GatewayPermissionError.stateChanged
                     }
-                    return
+                    return try await client.com.atproto.server.deactivateAccount(
+                        input: .init(deleteAfter: nil)
+                    )
                 }
-                
-                let responseCode = try await client.com.atproto.server.deactivateAccount(
-                    input: .init(deleteAfter: nil)
-                )
                 
                 if (200...299).contains(responseCode) {
                     // Always process 2xx and reconcile logout even if view disappears
@@ -831,7 +878,9 @@ struct AccountSettingsView: View {
                 isReactivating = false
             }
             
-            guard let client = appState.atProtoClient else {
+            guard mountedAccountDID == appState.userDID,
+                  mountedAccountDID.map { SettingsAccountBoundary.isCurrent($0, revision: mountedAccountRevision) } == true,
+                  let client = appState.atProtoClient else {
                 if !Task.isCancelled {
                     handleAPIError(AuthError.clientNotInitialized, operation: "reactivate account")
                 }
@@ -840,15 +889,16 @@ struct AccountSettingsView: View {
             let targetDID = appState.userDID
             let targetRevision = AppStateManager.shared.settingsAccountContextRevision
             do {
-                try await ensurePermission(.accountStatusManage)
-                guard !Task.isCancelled, appState.userDID == targetDID, SettingsAccountBoundary.isCurrent(targetDID, revision: targetRevision) else {
-                    if appState.userDID != targetDID {
+                let originatingAppState = appState
+                let responseCode = try await originatingAppState.performSettingsAccountOperation {
+                    try Task.checkCancellation()
+                    try await ensurePermission(.accountStatusManage)
+                    guard !Task.isCancelled, originatingAppState.userDID == targetDID,
+                          SettingsAccountBoundary.isCurrent(targetDID, revision: targetRevision) else {
                         throw GatewayPermissionError.stateChanged
                     }
-                    return
+                    return try await client.com.atproto.server.activateAccount()
                 }
-                
-                let responseCode = try await client.com.atproto.server.activateAccount()
                 
                 if (200...299).contains(responseCode) {
                     // Always process 2xx and reconcile status even if view disappears
