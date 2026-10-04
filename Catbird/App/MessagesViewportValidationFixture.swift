@@ -427,7 +427,7 @@ private struct MessagesViewportNativeProbe: UIViewRepresentable {
     private var gestureSequence = 0
     private var gestureRequestedAt: TimeInterval?
     private var gestureQuietSince: TimeInterval?
-    private var gestureRecognizers: [UIGestureRecognizer] = []
+    private var tracedRecognizers: [UIGestureRecognizer] = []
     private var gestureTrace: MessagesViewportGestureTrace?
 
     init(source: MessagesViewportFixtureSource, measurements: MessagesViewportFixtureMeasurements) {
@@ -455,7 +455,7 @@ private struct MessagesViewportNativeProbe: UIViewRepresentable {
     func stop() {
       displayLink?.invalidate()
       displayLink = nil
-      gestureRecognizers = []
+      tracedRecognizers = []
     }
 
     @objc private func sample(_ link: CADisplayLink) {
@@ -562,7 +562,7 @@ private struct MessagesViewportNativeProbe: UIViewRepresentable {
         gestureSequence = measurements.gestureSequence
         gestureRequestedAt = time
         gestureQuietSince = nil
-        gestureRecognizers = []
+        tracedRecognizers = []
         gestureTrace = .init(sequence: gestureSequence, kind: measurements.gestureKind)
       }
       guard var trace = gestureTrace, trace.status == "waitingForTarget" || trace.status == "recording"
@@ -600,15 +600,15 @@ private struct MessagesViewportNativeProbe: UIViewRepresentable {
           trace.viewPath = views.map { self.describe($0, in: window) }
           // Keep the native collection pan first even if the hit-view ancestor
           // path is truncated. Inspect no delegates or private recognizer APIs.
-          gestureRecognizers = [collection.panGestureRecognizer]
+          tracedRecognizers = [collection.panGestureRecognizer]
           var seen: Set<ObjectIdentifier> = [ObjectIdentifier(collection.panGestureRecognizer)]
           for view in views {
             for recognizer in view.gestureRecognizers ?? [] where seen.insert(ObjectIdentifier(recognizer)).inserted {
-              if gestureRecognizers.count < trace.recognizerLimit { gestureRecognizers.append(recognizer) }
+              if tracedRecognizers.count < trace.recognizerLimit { tracedRecognizers.append(recognizer) }
               else { trace.recognizersTruncated = true }
             }
           }
-          trace.recognizers = gestureRecognizers.map { recognizer in
+          trace.recognizers = tracedRecognizers.map { recognizer in
             MessagesViewportGestureRecognizer(identity: self.identity(recognizer),
               className: String(String(reflecting: type(of: recognizer)).prefix(96)),
               owner: recognizer.view.map { self.describe($0, in: window) },
@@ -617,7 +617,7 @@ private struct MessagesViewportNativeProbe: UIViewRepresentable {
         }
       }
       if trace.status == "recording" {
-        let states = gestureRecognizers.map { recognizer in
+        let states = tracedRecognizers.map { recognizer in
           let touches = recognizer.numberOfTouches
           let active = recognizer.state == .began || recognizer.state == .changed
           let pan = recognizer as? UIPanGestureRecognizer
@@ -683,7 +683,7 @@ private struct MessagesViewportNativeProbe: UIViewRepresentable {
       if newRequest || trace.status != previousStatus || trace.recordedFrameCount != previousFrameCount {
         publishGestureTrace()
       }
-      if trace.status == "captured" || trace.status == "timedOut" { gestureRecognizers = [] }
+      if trace.status == "captured" || trace.status == "timedOut" { tracedRecognizers = [] }
     }
 
     private func publishGestureTrace() {
