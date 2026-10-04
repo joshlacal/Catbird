@@ -223,8 +223,10 @@ struct AppSettingsPersistenceFailureTests {
 
     fixture.initialize()
     await fixture.drainPublications()
+    #expect(effects == 1)
+    var retryEffects = 0
     fixture.settings.theme = "retry-a-theme"
-    fixture.settings.afterPendingSave { effects += 1 }
+    fixture.settings.afterPendingSave { retryEffects += 1 }
     fixture.failSave = true
     fixture.fireLatestSave()
     #expect(fixture.settings.persistenceState == .saveFailed)
@@ -242,7 +244,8 @@ struct AppSettingsPersistenceFailureTests {
     #expect(fixture.settings.theme == "account-b-theme")
     #expect(try fixture.storedRow()?.theme == "saved-a-theme")
     #expect(fixture.notifications.isEmpty)
-    #expect(effects == 0)
+    #expect(effects == 1)
+    #expect(retryEffects == 0)
   }
 
   @Test("Inactive account and superseded same-DID owners cannot publish global effects",

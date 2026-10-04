@@ -46,6 +46,7 @@ struct MessagesViewportValidationFixture: View {
               clearsDraftOnSend: false,
               placeholderText: "Local fixture text"
             )
+            .sendingDisabledForLocalFixture()
             .background { MessagesViewportFooterMarker(measurements: measurements) }
           }
           .overlay(alignment: .topLeading) {
@@ -255,7 +256,6 @@ private struct MessagesViewportFixtureSample: Codable {
   let bottomWitness: MessagesViewportDragWitness?
   let topHeldSeconds: Double
   let bottomHeldSeconds: Double
-  let sendShieldInstalled: Bool
 }
 
 private struct MessagesViewportFooterMarker: UIViewRepresentable {
@@ -301,8 +301,6 @@ private struct MessagesViewportNativeProbe: UIViewRepresentable {
     private let source: MessagesViewportFixtureSource
     private let measurements: MessagesViewportFixtureMeasurements
     private var displayLink: CADisplayLink?
-    private let sendShield = UIView()
-    private weak var sendNode: NSObject?
     private var sampleCount = 0
     private var resetSequence = 0
     private var lastOffset: CGFloat?
@@ -323,11 +321,7 @@ private struct MessagesViewportNativeProbe: UIViewRepresentable {
       accessibilityIdentifier = "messages.fixture.geometry"
       accessibilityLabel = "Actual transcript geometry and held drag witnesses"
       accessibilityTraits = .staticText
-      sendShield.backgroundColor = .clear
-      sendShield.isAccessibilityElement = true
-      sendShield.accessibilityIdentifier = "messages.fixture.sendDisabled"
-      sendShield.accessibilityLabel = "Sending disabled in local fixture"
-      sendShield.accessibilityTraits = [.button, .notEnabled]
+
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
@@ -343,7 +337,6 @@ private struct MessagesViewportNativeProbe: UIViewRepresentable {
     func stop() {
       displayLink?.invalidate()
       displayLink = nil
-      sendShield.removeFromSuperview()
     }
 
     @objc private func sample(_ link: CADisplayLink) {
@@ -359,7 +352,6 @@ private struct MessagesViewportNativeProbe: UIViewRepresentable {
       if let footer = views.compactMap({ $0 as? MessagesViewportFooterMarker.MarkerView }).first {
         measurements.footerFrame = footer.convert(footer.bounds, to: window)
       }
-      installSendShield(in: window)
       if resetSequence != measurements.resetSequence {
         resetSequence = measurements.resetSequence
         topWitness = nil; bottomWitness = nil
@@ -432,9 +424,7 @@ private struct MessagesViewportNativeProbe: UIViewRepresentable {
         anchorHeight: visible.map { Double($0.1.height) },
         rowsUnderFooter: rowsUnderFooter,
         topWitness: topWitness, bottomWitness: bottomWitness,
-        topHeldSeconds: topHeldSeconds, bottomHeldSeconds: bottomHeldSeconds,
-        sendShieldInstalled: sendShield.superview === window && !sendShield.frame.isEmpty
-          && measurements.footerFrame.contains(sendShield.frame)
+        topHeldSeconds: topHeldSeconds, bottomHeldSeconds: bottomHeldSeconds
       )
       measurements.latest = snapshot
       if let data = try? JSONEncoder().encode(snapshot) {
@@ -446,36 +436,7 @@ private struct MessagesViewportNativeProbe: UIViewRepresentable {
       [view] + view.subviews.flatMap { descendants(of: $0) }
     }
 
-    private func installSendShield(in window: UIWindow) {
-      // Public accessibility container APIs locate the real SwiftUI button.
-      // The clear touch shield and AX hiding leave panel size/material intact.
-      var visited = Set<ObjectIdentifier>()
-      func find(_ node: NSObject, depth: Int) -> NSObject? {
-        guard depth < 16, visited.insert(ObjectIdentifier(node)).inserted else { return nil }
-        if (node as? UIAccessibilityIdentification)?.accessibilityIdentifier
-          == "chat.composer.sendButton.viewporttest" { return node }
-        let count = node.accessibilityElementCount()
-        let elements = node.accessibilityElements ?? ((count > 0 && count < 128)
-          ? (0..<count).compactMap { node.accessibilityElement(at: $0) } : [])
-        for child in elements {
-          if let child = child as? NSObject, let found = find(child, depth: depth + 1) { return found }
-        }
-        if let view = node as? UIView {
-          for child in view.subviews {
-            if let found = find(child, depth: depth + 1) { return found }
-          }
-        }
-        return nil
-      }
-      guard let node = find(window, depth: 0) ?? sendNode, !node.accessibilityFrame.isEmpty else { return }
-      sendNode = node
-      if !node.accessibilityElementsHidden { node.accessibilityElementsHidden = true }
-      if !node.accessibilityTraits.contains(.notEnabled) { node.accessibilityTraits.insert(.notEnabled) }
-      let frame = window.convert(node.accessibilityFrame, from: nil)
-      if sendShield.frame != frame { sendShield.frame = frame }
-      if sendShield.superview !== window { window.addSubview(sendShield) }
-      if window.subviews.last !== sendShield { window.bringSubviewToFront(sendShield) }
-    }
+
   }
 }
 #endif

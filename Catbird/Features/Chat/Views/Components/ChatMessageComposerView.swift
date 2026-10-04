@@ -22,6 +22,16 @@ struct ChatMessageComposerView: View {
   var dismissKeyboardOnSend: Bool = false
   var placeholderText: String = "Message"
 
+  #if DEBUG
+  var fixtureSendingDisabled: Bool = false
+
+  func sendingDisabledForLocalFixture() -> Self {
+    var composer = self
+    composer.fixtureSendingDisabled = true
+    return composer
+  }
+  #endif
+
   @FocusState private var isTextFieldFocused: Bool
 
   private var composerCornerRadius: CGFloat {
@@ -40,7 +50,10 @@ struct ChatMessageComposerView: View {
   }
 
   private var canSend: Bool {
-    !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || attachedPost != nil
+    #if DEBUG
+    if fixtureSendingDisabled { return false }
+    #endif
+    return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || attachedPost != nil
   }
 
   var body: some View {

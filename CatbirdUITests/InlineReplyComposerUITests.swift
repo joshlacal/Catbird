@@ -154,6 +154,14 @@ final class InlineReplyComposerUITests: XCTestCase {
     XCTAssertTrue(editor.waitForExistence(timeout: 8), app.debugDescription)
     _ = try waitProbe(app) { ($0["focused"] as? Bool) == true }
     XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+    let quickPath = app.otherElements["UIContinuousPathIntroductionView"]
+    if quickPath.exists {
+      let proceed = quickPath.buttons["Continue"]
+      XCTAssertEqual(quickPath.buttons.matching(identifier: "Continue").count, 1)
+      proceed.tap()
+    }
+    XCTAssertTrue(app.keyboards.keys["q"].waitForExistence(timeout: 5),
+                  "Typing requires actual alphabetic keys after keyboard onboarding")
     XCTAssertTrue(editor.isHittable, "Initial source positioning must leave the native editor reachable")
     return editor
   }
@@ -199,16 +207,36 @@ final class InlineReplyComposerUITests: XCTestCase {
                            down: Bool, key: String) throws {
     for _ in 0..<18 {
       if try probe(app)[key] as? Bool == true { return }
-      if down { scroll.swipeDown() } else { scroll.swipeUp() }
+      dragSource(app, scroll: scroll, down: down)
     }
     XCTFail("The inline source marker did not enter the actual clipped viewport: \(key)")
+  }
+
+  private func dragSource(_ app: XCUIApplication, scroll: XCUIElement, down: Bool) {
+    var viewport = scroll.frame.intersection(app.windows.firstMatch.frame)
+    let barBottom = app.navigationBars["Reply"].frame.maxY
+    let keyboardTop = app.keyboards.firstMatch.frame.minY
+    // The prediction/accessory strip is a separate AX scroll view above the keys.
+    let accessories = app.scrollViews.allElementsBoundByIndex.filter {
+      $0.identifier != "reply-composer-scroll" && $0.frame.maxY <= keyboardTop + 1
+        && $0.frame.minY >= barBottom && $0.frame.width > viewport.width / 2
+    }
+    let lower = accessories.map { $0.frame.minY }.min() ?? keyboardTop
+    viewport = viewport.intersection(CGRect(x: viewport.minX, y: barBottom,
+      width: viewport.width, height: max(0, lower - barBottom)))
+    XCTAssertGreaterThan(viewport.height, 0)
+    let origin = app.windows.firstMatch.coordinate(withNormalizedOffset: .zero)
+    let startY = viewport.minY + viewport.height * (down ? 0.25 : 0.75)
+    let endY = viewport.minY + viewport.height * (down ? 0.75 : 0.25)
+    origin.withOffset(CGVector(dx: viewport.midX, dy: startY))
+      .press(forDuration: 0.1, thenDragTo: origin.withOffset(CGVector(dx: viewport.midX, dy: endY)))
   }
 
   private func returnToEditor(_ app: XCUIApplication, scroll: XCUIElement) throws {
     let editor = app.textViews["inline-reply.editor"].firstMatch
     for _ in 0..<12 {
       if editor.isHittable { return }
-      scroll.swipeUp()
+      dragSource(app, scroll: scroll, down: false)
     }
     XCTFail("Could not return to the existing reply editor by native scrolling")
   }

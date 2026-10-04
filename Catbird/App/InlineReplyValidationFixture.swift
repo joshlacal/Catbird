@@ -1,6 +1,6 @@
 #if DEBUG && os(iOS)
 import Foundation
-import Petrel
+@testable import Petrel
 import SwiftData
 import SwiftUI
 import UIKit
@@ -74,6 +74,7 @@ struct InlineReplyValidationFixture: View {
       guard URLProtocol.registerClass(InlineReplyLocalProtocol.self) else {
         throw FixtureError.transportRegistration
       }
+      await NetworkService.setNetworkTestProtocolClasses([InlineReplyLocalProtocol.self])
       let client = await ATProtoClient(baseURL: URL(string: "https://inline-reply.invalid")!)
       let state = AppState(userDID: Self.accountDID, client: client,
                            regulatoryChecker: NoAgePrompt())
@@ -292,6 +293,18 @@ private struct InlineReplyNativeProbe: UIViewRepresentable {
             let textRange = textView.textRange(from: start, to: end) else { return false }
       let markerFrame = textView.convert(textView.firstRect(for: textRange), to: window)
       var visible = window.bounds
+      var responder: UIResponder? = textView
+      while responder != nil && !(responder is UIViewController) { responder = responder?.next }
+      if let presenter = responder as? UIViewController {
+        let surface = presenter.view!
+        let keyboard = surface.convert(surface.keyboardLayoutGuide.layoutFrame, to: window)
+        if keyboard.minY < visible.maxY { visible.size.height = max(0, keyboard.minY - visible.minY) }
+        if let bar = presenter.navigationController?.navigationBar, !bar.isHidden {
+          let bottom = bar.convert(bar.bounds, to: window).maxY
+          visible = visible.intersection(CGRect(x: visible.minX, y: bottom,
+            width: visible.width, height: max(0, visible.maxY - bottom)))
+        }
+      }
       var ancestor: UIView? = textView
       while let current = ancestor {
         if current.isHidden || current.alpha == 0 { return false }

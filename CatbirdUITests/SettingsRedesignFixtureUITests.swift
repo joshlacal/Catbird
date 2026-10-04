@@ -284,10 +284,18 @@ final class SettingsRedesignFixtureUITests: XCTestCase {
     let window = app.windows.firstMatch.frame
     let form = app.collectionViews.firstMatch
     var viewport = form.exists ? window.intersection(form.frame) : window
-    let navigation = app.navigationBars.firstMatch.frame
-    let top = max(viewport.minY, navigation.maxY)
+    let navigation = app.navigationBars.firstMatch
+    var top = viewport.minY
+    if navigation.exists { top = max(top, navigation.frame.maxY) }
     var bottom = viewport.maxY
     if app.keyboards.firstMatch.exists { bottom = min(bottom, app.keyboards.firstMatch.frame.minY) }
+    // Active native search can replace the bar and sit above the keyboard.
+    let search = app.searchFields["Search settings"].firstMatch
+    if search.exists && search.isHittable {
+      let frame = search.frame
+      if frame.midY < viewport.midY { top = max(top, frame.maxY) }
+      else { bottom = min(bottom, frame.minY) }
+    }
     viewport = CGRect(x: viewport.minX, y: top, width: viewport.width, height: max(0, bottom - top))
     return viewport
   }

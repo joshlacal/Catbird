@@ -654,6 +654,8 @@ struct TrendingTopicPreviewPolicyTests {
     await source.waitForRequests(1)
     let revision = store.revision
 
+    NotificationCenter.default.post(name: UIApplication.willResignActiveNotification, object: nil)
+    #expect(!store.isActive)
     NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil)
 
     #expect(store.revision == revision + 1)
