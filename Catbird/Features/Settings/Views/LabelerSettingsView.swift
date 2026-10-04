@@ -77,6 +77,8 @@ struct LabelerSettingsView: View {
       var dids = [try DID(didString: Self.defaultDID)]
       for item in preferences.labelers where !dids.contains(item.did) { dids.append(item.did) }
       let bounded = Array(dids.prefix(20))
+      let finishAccountIO = try manager.beginSettingsAccountIO()
+      defer { finishAccountIO?() }
       let (code, data) = try await client.app.bsky.labeler.getServices(input: .init(dids: bounded, detailed: true))
       guard request == token, manager.accountDID == account, appState.userDID == account,
             appState.atProtoClient === client else { return }
@@ -131,7 +133,8 @@ struct ModerationServiceSettingsView: View {
   private var categories: [String] {
     let builtins = ["nsfw", "suggestive", "graphic", "nudity"]
     let aliases = Set(builtins + ["porn", "sexual", "gore", "violence", "graphic-media"])
-    return builtins + labeler.policies.labelValues.map(\.rawValue).filter { !aliases.contains($0) && !$0.hasPrefix("!") }
+    var seen = Set(builtins)
+    return builtins + labeler.policies.labelValues.map(\.rawValue).filter { !aliases.contains($0) && !$0.hasPrefix("!") && seen.insert($0).inserted }
   }
 
   var body: some View {
@@ -192,19 +195,24 @@ struct ModerationServiceSettingsView: View {
     preferences.contains { $0.label == label && $0.labelerDid == serviceDID }
   }
   private func inheritedVisibility(for label: String) -> ContentVisibility {
-    if let global = preferences.last(where: { $0.label == label && $0.labelerDid == nil }) {
+    if let global = preferences.first(where: { $0.label == label && $0.labelerDid == nil }) {
       return ContentVisibility(fromPreference: global.visibility)
     }
     if let setting = definition(for: label)?.defaultSetting { return ContentVisibility(fromPreference: setting) }
-    return .warn
+    return ["nsfw", "suggestive", "graphic", "nudity"].contains(label) ? .warn : .show
   }
   private func visibility(for label: String) -> ContentVisibility {
-    if let scoped = preferences.last(where: { $0.label == label && $0.labelerDid == serviceDID }) {
+    if let scoped = preferences.first(where: { $0.label == label && $0.labelerDid == serviceDID }) {
       return ContentVisibility(fromPreference: scoped.visibility)
     }
     return inheritedVisibility(for: label)
   }
   private func inheritanceDescription(for label: String) -> String {
+    if !["nsfw", "suggestive", "graphic", "nudity"].contains(label),
+       !preferences.contains(where: { $0.label == label && $0.labelerDid == nil }),
+       definition(for: label)?.defaultSetting == nil {
+      return "No inherited warning setting is available. Choose an override to apply one."
+    }
     let origin = preferences.contains { $0.label == label && $0.labelerDid == nil } ? "Global setting" : "Service default"
     return "\(hasOverride(for: label) ? "Override active. " : "Inherited. ")\(origin): \(inheritedVisibility(for: label).displayName)."
   }

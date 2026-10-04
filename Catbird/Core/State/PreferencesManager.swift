@@ -579,7 +579,7 @@ final class PreferencesManager {
   /// A created default row is not evidence that an empty remote policy was accepted.
   @MainActor
   func confirmedFeedFilterPreferences() throws -> Preferences? {
-    guard let value = try getLocalPreferences(), value.accountDID == accountDID,
+    guard let value = try storedFeedFilterPreferencesWithoutMigration(),
           value.hasConfirmedServerPreferences else { return nil }
     return value
   }
@@ -588,10 +588,17 @@ final class PreferencesManager {
   /// This fallback never establishes that an empty policy was confirmed.
   @MainActor
   func retainedLocalFeedFilterPreferences() throws -> Preferences? {
-    guard let value = try getLocalPreferences(), value.accountDID == accountDID else { return nil }
+    guard let value = try storedFeedFilterPreferencesWithoutMigration() else { return nil }
     guard value.hasConfirmedServerPreferences || !value.mutedWords.isEmpty || !value.contentLabelPrefs.isEmpty
-      || !value.labelers.isEmpty || !value.hiddenPosts.isEmpty else { return nil }
+      || !value.labelers.isEmpty || !value.hiddenPosts.isEmpty || value.feedViewPref != nil || value.adultContentEnabled else { return nil }
     return value
+  }
+
+  @MainActor
+  private func storedFeedFilterPreferencesWithoutMigration() throws -> Preferences? {
+    if let cachedServerPreferences, cachedServerPreferences.accountDID == accountDID { return cachedServerPreferences }
+    guard let modelContext else { throw PreferencesManagerError.modelContextNotInitialized }
+    return try modelContext.fetch(scopedPreferencesFetchDescriptor()).first
   }
 
   /// Map the entire latest filter policy, not just the edited field, after a confirmed response.

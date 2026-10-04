@@ -753,11 +753,14 @@ struct AddLabelerView: View {
         errorMessage = nil
         successMessage = nil
         
-        Task {
+        let account = appState.userDID
+        let manager = appState.preferencesManager
+        let requestedDID = labelerDID
+        Task { @MainActor in
             do {
-                let did = try DID(didString: labelerDID)
-                let labelerPreference = LabelerPreference(did: did)
-                try await appState.preferencesManager.addLabeler(did)
+                let did = try DID(didString: requestedDID)
+                try await manager.addLabeler(did, expectedAccountDID: account)
+                guard manager.accountDID == account, appState.userDID == account else { return }
                 
                 successMessage = "Labeler added successfully"
                 
@@ -766,9 +769,10 @@ struct AddLabelerView: View {
                 
                 // Dismiss after a short delay
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                    dismiss()
+                    if appState.userDID == account, manager.accountDID == account { dismiss() }
                 }
             } catch {
+                guard manager.accountDID == account, appState.userDID == account else { return }
                 errorMessage = "Failed to add labeler: \(error.localizedDescription)"
             }
             

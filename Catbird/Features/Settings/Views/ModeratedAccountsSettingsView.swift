@@ -86,7 +86,7 @@ final class ModeratedAccountsModel {
 
   func remove(_ entry: Entry) async {
     guard let transport, transport.isCurrent(), !isLoading,
-          !removing.contains(entry.did), entries.contains(where: { $0.did == entry.did }) else { return }
+          removing.isEmpty, entries.contains(where: { $0.did == entry.did }) else { return }
     let requestGeneration = generation
     removing.insert(entry.did)
     errorMessage = nil
@@ -140,7 +140,7 @@ struct ModeratedAccountsSettingsView: View {
             else {
               Button(kind.action) { selectedEntry = entry; showConfirmation = true }
                 .buttonStyle(.borderless)
-                .disabled(model.isLoading)
+                .disabled(model.isLoading || !model.removing.isEmpty)
                 .accessibilityLabel("\(kind.action) @\(entry.handle)")
             }
           }
@@ -185,9 +185,12 @@ struct ModeratedAccountsSettingsView: View {
     let state = appState
     let client = appState.atProtoClient
     let graph = appState.graphManager
+    let manager = appState.preferencesManager
     model.configure(.init(isCurrent: {
       state.userDID == account && state.atProtoClient === client && state.graphManager === graph
     }, fetch: { cursor in
+      let finishAccountIO = try manager.beginSettingsAccountIO()
+      defer { finishAccountIO?() }
       guard let client else { throw PreferencesManagerError.clientNotInitialized }
       if kind == .blocked {
         let (code, data) = try await client.app.bsky.graph.getBlocks(input: .init(limit: 50, cursor: cursor))
@@ -205,6 +208,8 @@ struct ModeratedAccountsSettingsView: View {
       guard state.userDID == account, state.atProtoClient === client, state.graphManager === graph else {
         throw PreferencesManagerError.accountChanged
       }
+      let finishAccountIO = try manager.beginSettingsAccountIO()
+      defer { finishAccountIO?() }
       // GraphManager resolves the block URI; a subject DID is never a record key.
       return kind == .blocked ? try await graph.unblock(did: did) : try await graph.unmute(did: did)
     }))
