@@ -2,62 +2,10 @@ import NukeUI
 import Petrel
 import SwiftUI
 
-struct ReplyContextPanel: View {
-  let post: AppBskyFeedDefs.PostView
-  let availableHeight: CGFloat
-  var compactHeight = false
-  let onViewOriginal: () -> Void
-  @Binding var path: NavigationPath
-
-  @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-  @ScaledMetric(relativeTo: .body) private var editorReserve: CGFloat = 160
-
-  private var sourceHeight: CGFloat {
-    guard !compactHeight, !dynamicTypeSize.isAccessibilitySize,
-          availableHeight >= editorReserve + 68 + 96 else { return 0 }
-    return min(240, availableHeight - editorReserve - 68)
-  }
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: sourceHeight > 0 ? 8 : 0) {
-      if !compactHeight {
-        HStack(spacing: 8) {
-          Label("Replying to @\(post.author.handle.description)", systemImage: "arrowshape.turn.up.left")
-            .appFont(AppTextRole.caption)
-            .foregroundStyle(.secondary)
-            .lineLimit(1)
-            .accessibilityElement(children: .combine)
-            .accessibilityIdentifier("reply-source-identity")
-          Spacer(minLength: 0)
-          Button(action: onViewOriginal) {
-            Image(systemName: "arrow.up.left.and.arrow.down.right")
-              .frame(width: 44, height: 44)
-              .contentShape(Rectangle())
-          }
-          .buttonStyle(.plain)
-          .accessibilityLabel("View original post")
-          .accessibilityIdentifier("reply-source-expand")
-        }
-      }
-
-      ScrollView {
-        ReplySourcePostView(post: post, path: $path)
-      }
-      .frame(height: sourceHeight)
-      .clipped()
-      .allowsHitTesting(sourceHeight > 0)
-      .accessibilityElement(children: .contain)
-      .accessibilityIdentifier("reply-source-scroll")
-      .accessibilityHidden(sourceHeight == 0)
-    }
-    .padding(.horizontal, 16)
-    .padding(.vertical, compactHeight ? 0 : 4)
-  }
-}
-
 /// Source context omits social actions and retains existing content and moderation behavior.
 struct ReplySourcePostView: View {
   let post: AppBskyFeedDefs.PostView
+  var avatarSize: CGFloat = DesignTokens.Size.avatarLG
   @Binding var path: NavigationPath
   @State private var revealsBlockedSource = false
 
@@ -92,6 +40,7 @@ struct ReplySourcePostView: View {
     }
     .frame(maxWidth: .infinity, alignment: .leading)
     .fixedSize(horizontal: false, vertical: true)
+    .accessibilityIdentifier("reply-inline-source")
     .onChange(of: post.uri) { _, _ in revealsBlockedSource = false }
     .onChange(of: relationship) { _, _ in revealsBlockedSource = false }
   }
@@ -108,15 +57,18 @@ struct ReplySourcePostView: View {
       }
 
       if let embed = post.embed {
-        if selfLabelValues.isEmpty {
-          sourceEmbed(embed, labels: post.labels)
-        } else {
-          // Merge parent labels once for this media, retaining self-label safety.
-          // The embed's own parent-label gates receive nil to avoid a nested duplicate.
-          ContentLabelManager(labels: post.labels, selfLabelValues: selfLabelValues, contentType: "media") {
-            sourceEmbed(embed, labels: nil)
+        Group {
+          if selfLabelValues.isEmpty {
+            sourceEmbed(embed, labels: post.labels)
+          } else {
+            // Merge parent labels once for this media, retaining self-label safety.
+            // The embed's own parent-label gates receive nil to avoid a nested duplicate.
+            ContentLabelManager(labels: post.labels, selfLabelValues: selfLabelValues, contentType: "media") {
+              sourceEmbed(embed, labels: nil)
+            }
           }
         }
+        .padding(.leading, avatarSize + 12)
       }
     }
   }
@@ -129,21 +81,22 @@ struct ReplySourcePostView: View {
 
   @ViewBuilder
   private var sourceText: some View {
-    VStack(alignment: .leading, spacing: 12) {
-      HStack(spacing: 12) {
-        LazyImage(url: post.author.finalAvatarURL()) { state in
-          if let image = state.image {
-            image.resizable().scaledToFill()
-          } else {
-            Image(systemName: "person.circle.fill")
-              .resizable()
-              .scaledToFit()
-              .foregroundStyle(.secondary)
-          }
+    HStack(alignment: .top, spacing: 12) {
+      LazyImage(url: post.author.finalAvatarURL()) { state in
+        if let image = state.image {
+          image.resizable().scaledToFill()
+        } else {
+          Image(systemName: "person.circle.fill")
+            .resizable()
+            .scaledToFit()
+            .foregroundStyle(.secondary)
         }
-        .frame(width: DesignTokens.Size.avatarLG, height: DesignTokens.Size.avatarLG)
-        .clipShape(Circle())
-        .accessibilityHidden(true)
+      }
+      .frame(width: avatarSize, height: avatarSize)
+      .clipShape(Circle())
+      .accessibilityHidden(true)
+
+      VStack(alignment: .leading, spacing: 8) {
         VStack(alignment: .leading, spacing: 2) {
           Text(post.author.displayName ?? post.author.handle.description)
             .appHeadline()
@@ -152,17 +105,16 @@ struct ReplySourcePostView: View {
             .foregroundStyle(.secondary)
         }
         .accessibilityElement(children: .combine)
-        Spacer(minLength: 0)
-      }
 
-      if case .knownType(let record) = post.record,
-         let feedPost = record as? AppBskyFeedPost {
-        Post(post: feedPost, isSelectable: true, path: $path, useUIKitSelectableText: true)
-      } else {
-        Text("Original post text is unavailable.")
-          .foregroundStyle(.secondary)
+        if case .knownType(let record) = post.record,
+           let feedPost = record as? AppBskyFeedPost {
+          Post(post: feedPost, isSelectable: true, path: $path, useUIKitSelectableText: true)
+        } else {
+          Text("Original post text is unavailable.")
+            .foregroundStyle(.secondary)
+        }
       }
-
+      .frame(maxWidth: .infinity, alignment: .leading)
     }
   }
 }

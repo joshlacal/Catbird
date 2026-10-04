@@ -33,6 +33,7 @@ enum DraftSyncTranslator {
   /// Reject oversized content instead of silently truncating an upload.
   static func isSyncable(_ draft: PostComposerDraft) -> Bool {
     guard draft.parentPostURI == nil,
+          draft.pendingAudioURLString == nil,
           draft.quotedPostURI == nil || (draft.quotedPostCID.flatMap { try? CID.parse($0) } != nil),
           draft.selectedGif == nil,
           draft.outlineTags.isEmpty,

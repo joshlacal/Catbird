@@ -114,8 +114,8 @@ struct ComposerAccessoryBar: View {
         actions.onAddToThread()
       } label: {
         Image(systemName: "text.badge.plus")
-          .font(.system(size: 16))
-          .frame(width: 36, height: 36)
+          .font(.system(size: 32))
+          .frame(width: 44, height: 36)
           .padding(4)
           .contentShape(Rectangle())
       }
@@ -123,6 +123,7 @@ struct ComposerAccessoryBar: View {
       .disabled(isAddToThreadDisabled)
       .opacity(isAddToThreadDisabled ? 0.3 : 1.0)
       .accessibilityLabel("Add another post to thread")
+      .accessibilityIdentifier("composer-add-thread-post")
       CharacterLimitIndicatorWrapper(currentCount: characterCount)
     }
     .padding(.horizontal, 10)

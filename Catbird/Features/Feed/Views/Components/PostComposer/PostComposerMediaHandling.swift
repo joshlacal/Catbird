@@ -309,6 +309,54 @@ extension PostComposerViewModel {
         return buffer
     }
     
+    // Staged media owns only its new copy. Rejected work must never unlink a saved recording.
+    struct PreparedPendingAudioVideo {
+        let item: MediaItem
+        var blockedReason: String?
+        var blockedCode: String?
+
+        func discard() {
+            if let url = item.rawVideoURL { try? FileManager.default.removeItem(at: url) }
+        }
+    }
+
+    func preparePendingAudioVideo(_ videoURL: URL) async throws -> PreparedPendingAudioVideo {
+        try Task.checkCancellation()
+        guard let container = FileManager.default.containerURL(
+            forSecurityApplicationGroupIdentifier: "group.blue.catbird.shared"
+        ) else { throw ComposerEditingError.persistenceUnavailable }
+        let directory = container.appendingPathComponent("SharedDrafts", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let copyURL = directory.appendingPathComponent(UUID().uuidString).appendingPathExtension("mp4")
+        try FileManager.default.copyItem(at: videoURL, to: copyURL)
+        var prepared = PreparedPendingAudioVideo(item: MediaItem(url: copyURL, isAudioVisualizerVideo: true))
+        var completed = false
+        defer { if !completed { prepared.discard() } }
+        var item = prepared.item
+        let generator = AVAssetImageGenerator(asset: AVURLAsset(url: copyURL))
+        generator.appliesPreferredTrackTransform = true
+        let cgImage = try await generator.image(at: .zero).image
+        try Task.checkCancellation()
+        #if os(iOS)
+        item.image = Image(uiImage: UIImage(cgImage: cgImage))
+        #elseif os(macOS)
+        item.image = Image(nsImage: NSImage(cgImage: cgImage, size: CGSize(width: cgImage.width, height: cgImage.height)))
+        #endif
+        item.aspectRatio = CGSize(width: cgImage.width, height: cgImage.height)
+        item.isLoading = false
+        prepared = PreparedPendingAudioVideo(item: item)
+        if let manager = mediaUploadManager {
+            let permission = await manager.preflightUploadPermission(force: true)
+            try Task.checkCancellation()
+            if !permission.allowed {
+                prepared.blockedReason = permission.message ?? "Video uploads are currently unavailable"
+                prepared.blockedCode = permission.code
+            }
+        }
+        completed = true
+        return prepared
+    }
+
     // MARK: - Audio Visualizer Video Processing
     
     @MainActor

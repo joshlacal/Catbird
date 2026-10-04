@@ -7,6 +7,8 @@ import SwiftUI
 import PhotosUI
 import Petrel
 import os
+import AVFoundation
+import CoreMedia
 
 private let pcSheetsLogger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "Catbird", category: "PostComposerSheets")
 
@@ -27,12 +29,18 @@ extension PostComposerViewUIKit {
       }
     
     let audioSheetContent = photoPickerContent
-      .sheet(isPresented: $showingAudioRecorder) {
+      .sheet(isPresented: $showingAudioRecorder, onDismiss: {
+        if viewModel === vm, vm.ownsEditingDraft, vm.pendingAudioURL != nil {
+          showingAudioVisualizerPreview = true
+        }
+      }) {
+        let recordingClaim = vm.editingClaim
+        let recordingEntryID = vm.threadEntries.indices.contains(vm.currentThreadIndex)
+          ? vm.threadEntries[vm.currentThreadIndex].id : nil
         PostComposerAudioRecordingView(
           onAudioRecorded: { url in
-            pcSheetsLogger.info("PostComposerSheets: Audio recorded - URL: \(url.path)")
-            currentAudioURL = url
-            // Note: duration would need to be calculated separately if needed
+            guard viewModel === vm, let recordingEntryID,
+                  vm.preserveRecordedAudio(at: url, claim: recordingClaim, threadEntryID: recordingEntryID) else { return }
             showingAudioRecorder = false
           },
           onCancel: {
@@ -40,6 +48,58 @@ extension PostComposerViewUIKit {
             showingAudioRecorder = false
           }
         )
+      }
+      .sheet(isPresented: $showingAudioVisualizerPreview) {
+        if let audioURL = vm.pendingAudioURL, let threadEntryID = vm.pendingAudioThreadEntryID,
+           vm.threadEntries.contains(where: { $0.id == threadEntryID }) {
+          let previewClaim = vm.editingClaim
+          PendingComposerAudioPreview(
+            audioURL: audioURL,
+            onVideoGenerated: { videoURL in
+              guard viewModel === vm else { return }
+              Task { @MainActor in
+                do {
+                  let attached = try await vm.finishPendingAudio(
+                    withVideoAt: videoURL, audioURL: audioURL,
+                    claim: previewClaim, threadEntryID: threadEntryID
+                  )
+                  if !attached, viewModel === vm, vm.ownsEditingDraft, vm.editingClaim == previewClaim,
+                     vm.pendingAudioURL == audioURL {
+                    appState.toastManager.show(ToastItem(
+                      message: "Your draft changed. Your recording has been kept; choose Finish audio to try again.",
+                      icon: "waveform"
+                    ))
+                  }
+                } catch {
+                  guard !Task.isCancelled, viewModel === vm, vm.ownsEditingDraft,
+                        vm.editingClaim == previewClaim, vm.pendingAudioURL == audioURL else { return }
+                  appState.toastManager.show(ToastItem(
+                    message: "Your recording has been kept. \(error.localizedDescription)",
+                    icon: "exclamationmark.triangle.fill"
+                  ))
+                }
+              }
+            },
+            onCancel: { showingAudioVisualizerPreview = false }
+          )
+          .environment(appState)
+        } else if let audioURL = vm.pendingAudioURL {
+          NavigationStack {
+            ScrollView {
+              VStack(spacing: 20) {
+                Text("Original post unavailable").font(.headline)
+                Text("This recording belongs to a post that is no longer in this draft. Save the recording before removing the attachment.")
+                ShareLink("Save recording", item: audioURL)
+                Button("Remove audio attachment", role: .destructive) {
+                  vm.removePendingAudio()
+                  showingAudioVisualizerPreview = false
+                }
+                Button("Close") { showingAudioVisualizerPreview = false }
+              }
+              .padding()
+            }
+          }
+        }
       }
       .sheet(isPresented: $showingAccountSwitcher) {
         let transfer = accountSwitchSnapshot
@@ -218,18 +278,55 @@ extension PostComposerViewUIKit {
       #endif
 
     linkSheetContent
-      .alert("Discard Draft?", isPresented: $showingDismissAlert) {
-        Button("Discard", role: .destructive) {
-          pcSheetsLogger.info("PostComposerSheets: User chose to discard draft")
-          dismissReason = .discard
-          guard vm.discardEditingDraft() else { return }
-          dismiss()
+  }
+}
+
+private struct PendingComposerAudioPreview: View {
+  let audioURL: URL
+  let onVideoGenerated: (URL) -> Void
+  let onCancel: () -> Void
+  @State private var duration: TimeInterval?
+  @State private var loadingError: String?
+
+  var body: some View {
+    Group {
+      if let duration {
+        AudioVisualizerPreview(
+          audioURL: audioURL, audioDuration: duration,
+          onVideoGenerated: onVideoGenerated, onCancel: onCancel
+        )
+      } else {
+        NavigationStack {
+          Group {
+            if let loadingError {
+              ContentUnavailableView("Audio Unavailable", systemImage: "waveform",
+                                     description: Text(loadingError))
+            } else {
+              ProgressView("Loading recording")
+            }
+          }
+          .navigationTitle("Audio Visualizer")
+          .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+              Button("Cancel", action: onCancel)
+            }
+          }
         }
-        Button("Keep Editing", role: .cancel) { 
-          pcSheetsLogger.info("PostComposerSheets: User chose to keep editing")
-        }
-      } message: {
-        Text("You'll lose your post if you discard now.")
       }
+    }
+    .interactiveDismissDisabled()
+    .task(id: audioURL) {
+      do {
+        let loadedDuration = try await AVURLAsset(url: audioURL).load(.duration).seconds
+        guard !Task.isCancelled else { return }
+        guard loadedDuration.isFinite, loadedDuration > 0 else {
+          throw CocoaError(.fileReadCorruptFile)
+        }
+        duration = loadedDuration
+      } catch {
+        guard !Task.isCancelled else { return }
+        loadingError = error.localizedDescription
+      }
+    }
   }
 }

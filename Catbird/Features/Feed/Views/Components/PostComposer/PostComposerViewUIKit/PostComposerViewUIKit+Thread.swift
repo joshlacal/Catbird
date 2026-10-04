@@ -14,7 +14,7 @@ extension PostComposerViewUIKit {
   @ViewBuilder
   func threadEntriesSection(vm: PostComposerViewModel) -> some View {
     if vm.isThreadMode && vm.threadEntries.count > 1 {
-      LazyVStack(spacing: 0) {
+      VStack(spacing: 0) {
         ForEach(Array(vm.threadEntries.enumerated()), id: \.element.id) { index, entry in
           VStack(spacing: 6) {
             HStack(alignment: .top, spacing: 12) {
@@ -54,6 +54,7 @@ extension PostComposerViewUIKit {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Switch account")
+                .disabled(hasPendingMediaIntent)
               }
 
               if index == vm.currentThreadIndex {
@@ -73,12 +74,14 @@ extension PostComposerViewUIKit {
                 }
                 .buttonStyle(.plain)
                 .padding(.top, 2)
+                .disabled(hasPendingMediaIntent)
               }
             }
             .padding(.horizontal, 16)
             .padding(.top, index == 0 ? 12 : 4)
             .contentShape(Rectangle())
             .onTapGesture {
+              guard !hasPendingMediaIntent else { return }
               pcThreadLogger.info("PostComposerThread: Switching to thread entry at index \(index)")
               withAnimation(.easeInOut(duration: 0.2)) {
                 vm.updateCurrentThreadEntry()
@@ -108,6 +111,7 @@ extension PostComposerViewUIKit {
             }
           }
           .opacity(index == vm.currentThreadIndex ? 1.0 : 0.55)
+          .id(entry.id)
         }
       }
       .onAppear {
@@ -129,7 +133,9 @@ extension PostComposerViewUIKit {
         placeholder: "What's on your mind?",
         onImagePasted: { image in
           #if os(iOS)
+          pendingPasteCount += 1
           Task {
+            defer { pendingPasteCount -= 1 }
             await vm.handleMediaPaste([NSItemProvider(object: image)])
           }
         #endif
@@ -150,12 +156,16 @@ extension PostComposerViewUIKit {
       focusActivationID: activeEditorFocusID,
       onPhotosAction: { presentPhotoPicker(vm: vm) },
       onVideoAction: { videoPickerVisible = true },
-      onAudioAction: { showingAudioRecorder = true },
+      onAudioAction: {
+        if vm.pendingAudioURL != nil { showingAudioVisualizerPreview = true }
+        else { showingAudioRecorder = true }
+      },
       onGifAction: { showingGifPicker = true },
       onLabelsAction: { showingLabelSelector = true },
       onThreadgateAction: { showingThreadgate = true },
       onLanguageAction: { showingLanguagePicker = true },
       onThreadAction: {
+        guard !hasPendingMediaIntent else { return }
         if vm.isThreadMode {
           pcThreadLogger.info("PostComposerThread: Adding new thread entry to existing thread")
           withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
@@ -214,6 +224,7 @@ extension PostComposerViewUIKit {
   @ViewBuilder
   private func activeEntryMediaSection(vm: PostComposerViewModel) -> some View {
     Group {
+      pendingAudioAttachmentSection(vm: vm)
       if let gif = vm.selectedGif {
         selectedGifView(gif, vm: vm)
       } else if let videoItem = vm.videoItem, let image = videoItem.image {

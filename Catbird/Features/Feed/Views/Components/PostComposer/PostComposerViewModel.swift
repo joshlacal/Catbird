@@ -71,6 +71,9 @@ final class PostComposerViewModel {
   
   var mediaItems: [MediaItem] = []
   var videoItem: MediaItem?
+  private(set) var pendingAudioURL: URL?
+  private(set) var pendingAudioThreadEntryID: UUID?
+  private(set) var isPreparingPendingAudio = false
   var currentEditingMediaId: UUID?
   var isAltTextEditorPresented = false
   var isPhotoEditorPresented = false
@@ -376,7 +379,7 @@ final class PostComposerViewModel {
     let content = editingContent()
     if content == serializedEditingContent, let draft = serializedEditingDraft { return draft }
     let draft = saveDraftState()
-    serializedEditingContent = content
+    serializedEditingContent = editingContent()
     serializedEditingDraft = draft
     return draft
   }
@@ -410,11 +413,104 @@ final class PostComposerViewModel {
     _ = captureEditingSnapshot()
   }
 
+  var hasMeaningfulDraftContent: Bool {
+    // SwiftUI reads this during layout. Inspect live state without serializing
+    // media or writing the active thread entry back into observable state.
+    if !postText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+      || !mediaItems.isEmpty || videoItem != nil || selectedGif != nil
+      || quotedPost != nil || !outlineTags.isEmpty || !selectedLabels.isEmpty
+      || selectedEmbedURL != nil || !urlsKeptForEmbed.isEmpty || pendingAudioURL != nil {
+      return true
+    }
+    return threadEntries.enumerated().contains { index, entry in
+      if entry.draftQuotedPostURI != nil { return true }
+      guard isThreadMode, index != currentThreadIndex else { return false }
+      return !entry.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        || !entry.mediaItems.isEmpty || entry.videoItem != nil || entry.selectedGif != nil
+        || entry.quotedPost != nil || !entry.hashtags.isEmpty || !entry.outlineTags.isEmpty
+        || entry.selectedEmbedURL != nil || !entry.urlsKeptForEmbed.isEmpty
+    }
+  }
+
+  @discardableResult
+  func minimizeEditingDraft() -> Bool {
+    guard !isSubmissionActive, ownsEditingDraft, let editingSession,
+          let editingClaim, captureEditingSnapshot() != nil,
+          editingSession.minimize(claim: editingClaim) else { return false }
+    if !ownsEditingDraft { clearAll() }
+    return true
+  }
+
   @discardableResult
   func discardEditingDraft() -> Bool {
     guard ownsEditingDraft, let editingSession, let editingClaim,
           editingSession.discard(claim: editingClaim) else { return false }
     clearAll()
+    return true
+  }
+
+  @discardableResult
+  func preserveRecordedAudio(at url: URL, claim: ComposerDraftClaim?, threadEntryID: UUID) -> Bool {
+    guard ownsEditingDraft, editingClaim == claim, pendingAudioURL == nil,
+          threadEntries.contains(where: { $0.id == threadEntryID }) else { return false }
+    pendingAudioURL = url
+    pendingAudioThreadEntryID = threadEntryID
+    saveDraftIfNeeded()
+    return true
+  }
+
+  func removePendingAudio() {
+    guard ownsEditingDraft, !isPreparingPendingAudio else { return }
+    // A saved row or another recovery envelope may still reference this file.
+    pendingAudioURL = nil
+    pendingAudioThreadEntryID = nil
+    saveDraftIfNeeded()
+  }
+
+  @discardableResult
+  func finishPendingAudio(
+    withVideoAt videoURL: URL,
+    audioURL: URL,
+    claim: ComposerDraftClaim?,
+    threadEntryID: UUID,
+    prepareVideo: (@MainActor (URL) async throws -> PreparedPendingAudioVideo)? = nil
+  ) async throws -> Bool {
+    guard !Task.isCancelled, !isPreparingPendingAudio, ownsEditingDraft, editingClaim == claim,
+          pendingAudioURL == audioURL, pendingAudioThreadEntryID == threadEntryID,
+          threadEntries.contains(where: { $0.id == threadEntryID }) else { return false }
+    // Includes live media identities and the active entry. No draft writes occur while staging.
+    let originalContent = editingContent()
+    isPreparingPendingAudio = true
+    defer { isPreparingPendingAudio = false }
+
+    let prepared: PreparedPendingAudioVideo
+    if let prepareVideo {
+      prepared = try await prepareVideo(videoURL)
+    } else {
+      prepared = try await preparePendingAudioVideo(videoURL)
+    }
+    var committed = false
+    defer { if !committed { prepared.discard() } }
+    guard !Task.isCancelled, ownsEditingDraft, editingClaim == claim,
+          pendingAudioURL == audioURL, pendingAudioThreadEntryID == threadEntryID,
+          editingContent() == originalContent,
+          let index = threadEntries.firstIndex(where: { $0.id == threadEntryID }) else { return false }
+
+    // One synchronous publication to the recording's original post, even when another is selected.
+    threadEntries[index].mediaItems = []
+    threadEntries[index].selectedGif = nil
+    threadEntries[index].videoItem = prepared.item
+    if index == currentThreadIndex {
+      mediaItems = []
+      selectedGif = nil
+      videoItem = prepared.item
+      videoUploadBlockedReason = prepared.blockedReason
+      videoUploadBlockedCode = prepared.blockedCode
+    }
+    pendingAudioURL = nil
+    pendingAudioThreadEntryID = nil
+    saveDraftIfNeeded()
+    committed = true
     return true
   }
 
@@ -461,6 +557,12 @@ final class PostComposerViewModel {
     let parentURI: String?
     let quotedURI: String?
     let interactionSettings: PostInteractionSettingsState
+    let pendingAudioURL: URL?
+    let pendingAudioThreadEntryID: UUID?
+    let detectedURLs: [String]
+    let urlCards: [String: URLCardResponse]
+    let selectedEmbedURL: String?
+    let urlsKeptForEmbed: Set<String>
   }
 
   func editingContent() -> EditingContent {
@@ -473,7 +575,10 @@ final class PostComposerViewModel {
       threadVideos: threadEntries.map { $0.videoItem.map(EditingContent.Media.init) },
       isThreadMode: isThreadMode, currentThreadIndex: currentThreadIndex,
       parentURI: parentPost?.uri.uriString() ?? pendingParentPostURI,
-      quotedURI: quotedPost?.uri.uriString(), interactionSettings: interactionSettings
+      quotedURI: quotedPost?.uri.uriString(), interactionSettings: interactionSettings,
+      pendingAudioURL: pendingAudioURL, pendingAudioThreadEntryID: pendingAudioThreadEntryID,
+      detectedURLs: detectedURLs, urlCards: urlCards,
+      selectedEmbedURL: selectedEmbedURL, urlsKeptForEmbed: urlsKeptForEmbed
     )
   }
 
@@ -574,6 +679,7 @@ final class PostComposerViewModel {
   }
   
   func saveDraftState() -> PostComposerDraft {
+    updateCurrentThreadEntry()
     let rootQuote = isThreadMode && currentThreadIndex != 0 ? threadEntries.first?.quotedPost : quotedPost
     let rootQuoteURI = threadEntries.first?.draftQuotedPostURI ?? rootQuote?.uri.uriString()
     let rootQuoteCID = threadEntries.first?.draftQuotedPostCID ?? rootQuote?.cid.string
@@ -598,7 +704,9 @@ final class PostComposerViewModel {
       quotedPostCID: rootQuoteCID,
       draftPostgateEmbeddingRules: rules.postgate,
       draftThreadgateAllow: rules.threadgate,
-      hasDraftInteractionSettings: true
+      hasDraftInteractionSettings: true,
+      pendingAudioURLString: pendingAudioURL?.absoluteString,
+      pendingAudioThreadEntryID: pendingAudioThreadEntryID
     )
   }
   
@@ -618,6 +726,8 @@ final class PostComposerViewModel {
     attributedPostText = AttributedString()
     mediaItems = []
     videoItem = nil
+    pendingAudioURL = nil
+    pendingAudioThreadEntryID = nil
     selectedGif = nil
     selectedLanguages = []
     selectedLabels = []
@@ -650,6 +760,8 @@ final class PostComposerViewModel {
     postText = draft.postText
     mediaItems = draft.mediaItems.map { $0.toMediaItem() }
     videoItem = draft.videoItem?.toMediaItem()
+    pendingAudioURL = draft.pendingAudioURLString.flatMap(URL.init(string:))
+    pendingAudioThreadEntryID = pendingAudioURL == nil ? nil : draft.pendingAudioThreadEntryID
     selectedGif = draft.selectedGif
     selectedLanguages = draft.selectedLanguages
     selectedLabels = draft.selectedLabels
@@ -658,6 +770,10 @@ final class PostComposerViewModel {
     if threadEntries.isEmpty { threadEntries = [ThreadEntry()] }
     isThreadMode = draft.isThreadMode
     currentThreadIndex = min(max(0, draft.currentThreadIndex), threadEntries.count - 1)
+    detectedURLs = threadEntries[currentThreadIndex].detectedURLs
+    urlCards = threadEntries[currentThreadIndex].urlCards
+    selectedEmbedURL = threadEntries[currentThreadIndex].selectedEmbedURL
+    urlsKeptForEmbed = threadEntries[currentThreadIndex].urlsKeptForEmbed
     parentPost = nil
     replyTo = nil
     quotedPost = nil
@@ -815,6 +931,7 @@ final class PostComposerViewModel {
   }
 
   var draftReferenceLoadingReason: PostComposerSubmitValidationState.Reason? {
+    if pendingAudioURL != nil { return .pendingAudio }
     if pendingParentPostURI != nil && parentPost == nil { return .replyLoading }
     let entries = isThreadMode ? threadEntries : Array(threadEntries.prefix(1))
     if entries.contains(where: { $0.draftQuotedPostURI != nil && postingQuoteReference(for: $0) == nil }) {
