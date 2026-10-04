@@ -62,7 +62,8 @@ struct ModerationSettingsView: View {
     }
 
     var body: some View {
-        SettingsFocusedForm(initialFocus: initialFocus, isReady: hasConfirmedPreferences && !isLoading) {
+        SettingsFocusedForm(initialFocus: hasConfirmedPreferences ? initialFocus
+          : initialFocus.map { _ in SettingsControlID(rawValue: "moderation.retryLoad") }, isReady: !isLoading) {
             if isLoading {
                 Section {
                     ProgressView()
@@ -74,7 +75,7 @@ struct ModerationSettingsView: View {
                     Text(errorMessage ?? "Content preferences could not be loaded.")
                         .foregroundStyle(.secondary)
                     Button("Retry") { Task { await loadPreferences() } }
-                        .accessibilityIdentifier("moderation.retryLoad")
+                        .settingsControl(.init(rawValue: "moderation.retryLoad"))
                 }
             } else {
                 if isSavingPreferences {
@@ -118,6 +119,8 @@ struct ModerationSettingsView: View {
                                 .foregroundStyle(.orange)
                         }
                     }
+
+                    .settingsControl(.init(rawValue: "moderation.mutedWords"))
 
                     NavigationLink(destination: ListsManagerView()) {
                         Label {
