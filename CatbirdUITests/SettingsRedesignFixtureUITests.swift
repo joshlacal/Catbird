@@ -1,0 +1,435 @@
+import CoreGraphics
+import Foundation
+import UIKit
+import XCTest
+
+/// Source-compatible with Root-accepted Settings. Compilation, exact compiled
+/// identifiers and rendered controls require Root's later native qualification.
+@MainActor
+final class SettingsRedesignFixtureUITests: XCTestCase {
+  private let categories: [(id: String, title: String)] = [
+    ("accountSecurity", "Account & Security"), ("privacyInteractions", "Privacy & Interactions"),
+    ("notifications", "Notifications"), ("feedsDiscovery", "Feeds & Discovery"),
+    ("moderation", "Moderation"), ("mediaLinks", "Media & Links"), ("language", "Language"),
+    ("appearance", "Appearance"), ("accessibility", "Accessibility"),
+    ("helpAbout", "Help & About"), ("advanced", "Advanced")
+  ]
+  private let textOptions: [(raw: String, title: String)] = [
+    ("system", "Full System Range"), ("xxLarge", "Extra Extra Large"),
+    ("xxxLarge", "Extra Extra Extra Large"), ("accessibility1", "Accessibility Medium"),
+    ("accessibility2", "Accessibility Large"), ("accessibility3", "Accessibility Extra Large"),
+    ("accessibility4", "Accessibility Extra Extra Large"),
+    ("accessibility5", "Accessibility Extra Extra Extra Large")]
+  private var textChoices: [String] { textOptions.map(\.title) }
+
+  override func setUpWithError() throws {
+    continueAfterFailure = false
+    XCUIDevice.shared.orientation = .portrait
+  }
+  override func tearDownWithError() throws { XCUIDevice.shared.orientation = .portrait }
+
+  func testElevenCategoryRowsAndSearchDestinationsKeepNativeContext() throws {
+    let app = try launch()
+    XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 8))
+    XCTAssertEqual(try sample(app).nativeWindowStyle, 1)
+    capture("settings-01-light-root-top", app, witnesses: [
+      ("account category", app.buttons["settings.category.accountSecurity"].firstMatch),
+      ("privacy category", app.buttons["settings.category.privacyInteractions"].firstMatch)])
+    for category in categories {
+      let row = app.buttons["settings.category." + category.id].firstMatch
+      try reveal(row, app)
+      assertHitGeometry(row, app)
+      XCTAssertTrue(row.label.contains(category.title))
+    }
+    capture("settings-02-light-root-last-group", app, witnesses: [
+      ("help category", app.buttons["settings.category.helpAbout"].firstMatch),
+      ("advanced category", app.buttons["settings.category.advanced"].firstMatch)])
+
+    for (index, category) in categories.enumerated() {
+      let search = try enterSearch(category.title, app)
+      let result = app.buttons["settings.result." + category.id].firstMatch
+      XCTAssertTrue(result.waitForExistence(timeout: 5))
+      try reveal(result, app)
+      assertHitGeometry(result, app)
+      XCTAssertTrue(result.label.contains(category.title))
+      XCTAssertTrue(result.label.contains("Settings"), "Search result must retain its location context")
+      capture("settings-\(String(format: "%02d", 3 + index * 2))-\(category.id)-search-result", app,
+        witnesses: [("search query", search), ("category result", result)])
+      result.tap()
+      XCTAssertTrue(app.navigationBars[category.title].waitForExistence(timeout: 5))
+      let state = try sample(app)
+      assertIsolation(state)
+      capture("settings-\(String(format: "%02d", 4 + index * 2))-\(category.id)-destination", app,
+        witnesses: [("category destination", app.navigationBars[category.title].firstMatch),
+          ("return control", app.navigationBars[category.title].buttons.firstMatch)])
+      let back = app.navigationBars[category.title].buttons.firstMatch
+      XCTAssertTrue(back.isHittable)
+      back.tap()
+      XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 5))
+      XCTAssertEqual(search.value as? String, category.title, "Returning must preserve the actual query")
+    }
+
+    app.terminate()
+    let dark = try launch(extra: ["--settings-dark"])
+    XCTAssertEqual(try sample(dark).nativeWindowStyle, 2)
+    capture("settings-25-dark-root-top", dark, witnesses: [
+      ("account category", dark.buttons["settings.category.accountSecurity"].firstMatch),
+      ("privacy category", dark.buttons["settings.category.privacyInteractions"].firstMatch)])
+    try reveal(dark.buttons["settings.category.advanced"].firstMatch, dark)
+    capture("settings-26-dark-root-last-group", dark, witnesses: [
+      ("help category", dark.buttons["settings.category.helpAbout"].firstMatch),
+      ("advanced category", dark.buttons["settings.category.advanced"].firstMatch)])
+    // Colored SF Symbols and full text are pixel-review oracles; their presence
+    // in an AX row does not establish the rendered tint or glyph completeness.
+  }
+
+  func testLocalStoreUnavailableRecoversConfirmedValuesAndSearchNavigation() throws {
+    let app = try launch(extra: ["--settings-storage-unavailable"])
+    let failed = try waitSample(app) { $0.persistenceState == "unavailable" && !$0.canEditLocalSettings }
+    XCTAssertEqual(failed.localFetchCalls, 1)
+    capture("settings-27-local-store-unavailable-root", app, witnesses: [
+      ("local retry", app.buttons["SettingsPersistenceRetry"].firstMatch),
+      ("search query", app.searchFields["Search settings"].firstMatch)])
+    _ = try enterSearch("autoplay", app)
+    let result = app.buttons["settings.result.media.autoplayVideos"].firstMatch
+    XCTAssertTrue(result.waitForExistence(timeout: 5))
+    result.tap()
+    XCTAssertTrue(app.navigationBars["Media & Links"].waitForExistence(timeout: 5))
+    let autoplay = app.switches["media.autoplayVideos"].firstMatch
+    try reveal(autoplay, app)
+    XCTAssertFalse(autoplay.isEnabled)
+    capture("settings-28-unavailable-local-control-stays-disabled", app, witnesses: [
+      ("autoplay control", autoplay), ("local retry", app.buttons["SettingsPersistenceRetry"].firstMatch)])
+    let retry = app.buttons["SettingsPersistenceRetry"].firstMatch
+    try reveal(retry, app, upward: false)
+    XCTAssertTrue(retry.isEnabled)
+    retry.tap()
+    let recovered = try waitSample(app) { $0.persistenceState == "ready" && $0.canEditLocalSettings }
+    XCTAssertEqual(recovered.localFetchCalls, failed.localFetchCalls + 1)
+    XCTAssertEqual(recovered.localSaveCalls, 0)
+    let enabled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: autoplay)
+    XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 5), .completed)
+    XCTAssertEqual(autoplay.value as? String, "1", "Retry loads the seeded confirmed value")
+    assertIsolation(recovered)
+    capture("settings-29-local-retry-loads-confirmed-value", app,
+      witnesses: [("autoplay control", autoplay), ("local retry", retry)])
+  }
+
+  func testFeedPreferenceRetryIsRejectedWithoutAuthenticatedOwnership() throws {
+    // This actual production-configured editor rejects before read; remote
+    // read failure/recovery requires separate admitted component/service proof.
+    let app = try launch(screen: "feedFiltering", extra: ["--settings-server-unavailable"])
+    XCTAssertTrue(app.navigationBars["Feed Filtering"].waitForExistence(timeout: 8))
+    let retry = app.buttons["Retry Loading"].firstMatch
+    try reveal(retry, app)
+    XCTAssertTrue(retry.isEnabled)
+    let remote = app.switches["feed.replies"].firstMatch
+    XCTAssertTrue(!remote.exists || !remote.isEnabled, "Unknown remote values must not be editable")
+    let before = try waitSample(app) { $0.feedLoad.finishedAttempts >= 1 }
+    XCTAssertNotNil(UUID(uuidString: before.feedLoad.editorID))
+    XCTAssertEqual(before.feedLoad.sceneID, before.sceneID)
+    XCTAssertFalse(before.feedLoad.editorChanged)
+    XCTAssertEqual(before.feedLoad.entries, 1)
+    XCTAssertEqual(before.feedLoad.refusals, 1)
+    XCTAssertEqual(before.feedLoad.notCurrentAccountRefusals, 1)
+    XCTAssertEqual(before.feedLoad.readEntries, 0)
+    XCTAssertEqual(before.feedLoad.finishedAttempts, 1)
+    XCTAssertEqual(before.feedLoad.lastEnteredAttempt, 1)
+    XCTAssertEqual(before.feedLoad.lastRefusedAttempt, 1)
+    XCTAssertEqual(before.feedLoad.lastFinishedAttempt, 1)
+    XCTAssertEqual(before.feedLoad.lastRefusalReason, "notCurrentAccount")
+    XCTAssertEqual(before.feedLoad.lastFinishedRefusalReason, "notCurrentAccount")
+    assertIsolation(before)
+    capture("settings-30-opening-feed-account-refusal", app,
+      witnesses: [("feed retry", retry), ("unconfirmed feed control", remote)])
+    retry.tap()
+    let after = try waitSample(app) { $0.feedLoad.finishedAttempts > before.feedLoad.finishedAttempts }
+    XCTAssertEqual(after.feedLoad.editorID, before.feedLoad.editorID)
+    XCTAssertEqual(after.feedLoad.sceneID, before.feedLoad.sceneID)
+    XCTAssertEqual(after.sceneID, before.sceneID)
+    XCTAssertFalse(after.feedLoad.editorChanged)
+    XCTAssertEqual(after.feedLoad.entries, before.feedLoad.entries + 1)
+    XCTAssertEqual(after.feedLoad.refusals, before.feedLoad.refusals + 1)
+    XCTAssertEqual(after.feedLoad.notCurrentAccountRefusals, before.feedLoad.notCurrentAccountRefusals + 1)
+    XCTAssertEqual(after.feedLoad.finishedAttempts, before.feedLoad.finishedAttempts + 1)
+    XCTAssertEqual(after.feedLoad.lastEnteredAttempt, before.feedLoad.lastEnteredAttempt + 1)
+    XCTAssertEqual(after.feedLoad.lastRefusedAttempt, after.feedLoad.lastEnteredAttempt)
+    XCTAssertEqual(after.feedLoad.lastFinishedAttempt, after.feedLoad.lastEnteredAttempt)
+    XCTAssertEqual(after.feedLoad.lastRefusalReason, "notCurrentAccount")
+    XCTAssertEqual(after.feedLoad.lastFinishedRefusalReason, "notCurrentAccount")
+    XCTAssertEqual(after.feedLoad.readEntries, 0)
+    XCTAssertTrue(retry.isEnabled)
+    XCTAssertTrue(!remote.exists || !remote.isEnabled)
+    XCTAssertEqual(before.localSaveCalls, 0)
+    XCTAssertEqual(after.localSaveCalls, before.localSaveCalls)
+    XCTAssertEqual(after.localFetchCalls, before.localFetchCalls)
+    XCTAssertEqual(after.transport.refusedRequests, before.transport.refusedRequests,
+      "Account refusal occurs before the editor's read; HTTP is not the Retry oracle")
+    assertIsolation(after)
+    capture("settings-31-single-feed-retry-account-refusal", app,
+      witnesses: [("feed retry", retry), ("unconfirmed feed control", remote)])
+  }
+
+  func testFullMaximumTextSizeChoicesUseActualCategoryAcrossRotation() throws {
+    let app = try launch(screen: "textReadability", extra: ["--settings-large-text", "--settings-dark"])
+    XCTAssertTrue(app.navigationBars["Text & Readability"].waitForExistence(timeout: 8))
+    let native = try sample(app)
+    XCTAssertEqual(native.systemTextCategory, UIContentSizeCategory.accessibilityExtraExtraExtraLarge.rawValue)
+    XCTAssertEqual(native.fontManagerTextCategory, native.systemTextCategory)
+    XCTAssertEqual(native.nativeWindowStyle, 2)
+    let picker = app.buttons["text.maxSize"].firstMatch
+    try reveal(picker, app)
+    XCTAssertEqual(picker.value as? String, textChoices.last)
+    capture("settings-32-native-accessibility-category-and-full-current-cap", app,
+      witnesses: [("current text cap", picker)])
+    for (index, option) in textOptions.enumerated() {
+      let choice = option.title
+      try reveal(picker, app)
+      picker.tap()
+      let menu = try waitMenu(app)
+      let button = menu.buttons[choice].firstMatch
+      try revealMenuChoice(button, menu: menu, app: app)
+      XCTAssertEqual(button.label, choice)
+      let checkpoint = option.raw == "system" ? "settings-42-full-system-range-choice"
+        : "settings-\(32 + index)-full-text-cap-choice-\(index)"
+      capture(checkpoint, app,
+        witnesses: [("text cap choice", button), ("text cap menu", menu), ("current text cap", picker)])
+      button.tap()
+      let selected = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", choice), object: picker)
+      XCTAssertEqual(XCTWaiter.wait(for: [selected], timeout: 5), .completed)
+      let confirmed = try waitSample(app) { $0.maxTextSize == option.raw && $0.persistenceState == "ready" }
+      XCTAssertEqual(confirmed.systemTextCategory, native.systemTextCategory)
+      XCTAssertEqual(confirmed.fontManagerTextCategory, confirmed.systemTextCategory)
+      assertIsolation(confirmed)
+      if option.raw == "system" {
+        capture("settings-43-full-system-range-confirmed-native-category", app,
+          witnesses: [("full system range selected", picker)])
+      }
+    }
+    let saved = try waitSample(app) { $0.maxTextSize == "accessibility5" && $0.persistenceState == "ready" }
+    assertIsolation(saved)
+    try reveal(picker, app)
+    capture("settings-40-highest-cap-selected-with-full-value", app,
+      witnesses: [("highest text cap", picker)])
+    XCUIDevice.shared.orientation = .landscapeLeft
+    var previous = CGRect.zero
+    var stable = 0
+    let landscape = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+      let frame = app.windows.firstMatch.frame
+      stable = frame.width > frame.height && frame == previous ? stable + 1 : 0
+      previous = frame
+      return stable >= 2
+    }, object: app)
+    XCTAssertEqual(XCTWaiter.wait(for: [landscape], timeout: 8), .completed)
+    try reveal(picker, app)
+    assertHitGeometry(picker, app)
+    XCTAssertEqual(picker.value as? String, textChoices.last)
+    let rotated = try sample(app)
+    XCTAssertGreaterThan(rotated.nativeWindowWidth, rotated.nativeWindowHeight)
+    XCTAssertEqual(rotated.systemTextCategory, native.systemTextCategory)
+    XCTAssertEqual(rotated.fontManagerTextCategory, rotated.systemTextCategory)
+    capture("settings-41-landscape-native-window-and-full-cap", app,
+      witnesses: [("landscape text cap", picker)])
+  }
+
+  private func launch(screen: String = "root", extra: [String] = []) throws -> XCUIApplication {
+    let app = XCUIApplication()
+    app.launchArguments = ["--settings-ui-fixture", "--settings-screen=" + screen,
+      "-defaultComposerLanguage", "en", "-AppleLanguages", "(en)", "-AppleLocale", "en_US",
+      "-UIPreferredContentSizeCategoryName", extra.contains("--settings-large-text")
+        ? UIContentSizeCategory.accessibilityExtraExtraExtraLarge.rawValue : UIContentSizeCategory.large.rawValue] + extra
+    app.launch()
+    let probe = app.descendants(matching: .any)["settings.fixture.counters"].firstMatch
+    XCTAssertTrue(probe.waitForExistence(timeout: 8), "A setup failure cannot be treated as an unavailable destination")
+    let value = try waitSample(app) { $0.ready }
+    assertIsolation(value)
+    XCTAssertEqual(value.systemTextCategory, extra.contains("--settings-large-text")
+      ? UIContentSizeCategory.accessibilityExtraExtraExtraLarge.rawValue : UIContentSizeCategory.large.rawValue)
+    XCTAssertEqual(value.fontManagerTextCategory, value.systemTextCategory)
+    return app
+  }
+
+  private func enterSearch(_ query: String, _ app: XCUIApplication) throws -> XCUIElement {
+    let field = app.searchFields["Search settings"].firstMatch
+    // Search belongs to native navigation chrome, outside the Form viewport.
+    // Pull the actual root to reveal it; don't apply a row viewport to this field.
+    var reached = false
+    for attempt in 0..<12 {
+      if field.exists && field.isHittable
+        && app.windows.firstMatch.frame.insetBy(dx: -1, dy: -1).contains(field.frame) {
+        reached = true; break
+      }
+      if attempt < 11 { app.swipeDown() }
+    }
+    guard reached else { XCTFail("Native Settings search field is unreachable"); throw FixtureError.controlNotReached }
+    field.tap()
+    let value = field.value as? String ?? ""
+    if !value.isEmpty && value != "Search settings" {
+      field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: value.count))
+    }
+    field.typeText(query)
+    XCTAssertEqual(field.value as? String, query)
+    return field
+  }
+
+  private func reveal(_ element: XCUIElement, _ app: XCUIApplication, upward: Bool = true) throws {
+    for attempt in 0..<12 {
+      if element.exists && element.isHittable && receivingViewport(app).insetBy(dx: -1, dy: -1).contains(element.frame) { return }
+      if attempt < 11 { if upward { app.swipeUp() } else { app.swipeDown() } }
+    }
+    XCTFail("Expected a fully reachable native control: \(element.identifier)")
+    throw FixtureError.controlNotReached
+  }
+  private func receivingViewport(_ app: XCUIApplication) -> CGRect {
+    let window = app.windows.firstMatch.frame
+    let form = app.collectionViews.firstMatch
+    var viewport = form.exists ? window.intersection(form.frame) : window
+    let navigation = app.navigationBars.firstMatch.frame
+    let top = max(viewport.minY, navigation.maxY)
+    var bottom = viewport.maxY
+    if app.keyboards.firstMatch.exists { bottom = min(bottom, app.keyboards.firstMatch.frame.minY) }
+    viewport = CGRect(x: viewport.minX, y: top, width: viewport.width, height: max(0, bottom - top))
+    return viewport
+  }
+  private func assertHitGeometry(_ element: XCUIElement, _ app: XCUIApplication,
+    file: StaticString = #filePath, line: UInt = #line) {
+    XCTAssertTrue(element.isHittable, file: file, line: line)
+    XCTAssertGreaterThanOrEqual(element.frame.height, 44, file: file, line: line)
+    XCTAssertGreaterThanOrEqual(element.frame.width, 44, file: file, line: line)
+    XCTAssertTrue(receivingViewport(app).insetBy(dx: -1, dy: -1).contains(element.frame),
+      "Actual control frame must fit the unobscured native receiving viewport", file: file, line: line)
+  }
+
+  private func waitMenu(_ app: XCUIApplication) throws -> XCUIElement {
+    let deadline = Date().addingTimeInterval(4)
+    repeat {
+      if let menu = app.collectionViews.allElementsBoundByIndex.first(where: {
+        $0.buttons.matching(NSPredicate(format: "label IN %@", textChoices)).count > 0
+      }) { return menu }
+      Thread.sleep(forTimeInterval: 0.08)
+    } while Date() < deadline
+    XCTFail("Native maximum text-size menu did not appear")
+    throw FixtureError.controlNotReached
+  }
+  private func revealMenuChoice(_ choice: XCUIElement, menu: XCUIElement, app: XCUIApplication) throws {
+    for attempt in 0..<8 {
+      let viewport = menuViewport(menu, app)
+      guard !viewport.isNull && !viewport.isEmpty else { throw FixtureError.controlNotReached }
+      if choice.exists && choice.isHittable && viewport.insetBy(dx: -1, dy: -1).contains(choice.frame) { return }
+      if attempt < 7 {
+        let origin = menu.coordinate(withNormalizedOffset: .zero)
+        let upper = origin.withOffset(CGVector(dx: viewport.midX - menu.frame.minX, dy: viewport.minY + viewport.height * 0.25 - menu.frame.minY))
+        let lower = origin.withOffset(CGVector(dx: viewport.midX - menu.frame.minX, dy: viewport.maxY - viewport.height * 0.25 - menu.frame.minY))
+        if !choice.exists || choice.frame.maxY > viewport.maxY { lower.press(forDuration: 0.05, thenDragTo: upper) }
+        else { upper.press(forDuration: 0.05, thenDragTo: lower) }
+      }
+    }
+    XCTFail("The complete text-cap choice is clipped or unreachable")
+    throw FixtureError.controlNotReached
+  }
+  private func menuViewport(_ menu: XCUIElement, _ app: XCUIApplication) -> CGRect {
+    var viewport = app.windows.firstMatch.frame.intersection(menu.frame)
+    let anchor = menu.buttons.firstMatch
+    guard anchor.exists else { return .null }
+    var found = false
+    for container in app.otherElements.containing(.button, identifier: anchor.label).allElementsBoundByIndex
+      where container.collectionViews.count > 0 && !container.frame.isEmpty {
+      found = true
+      viewport = viewport.intersection(container.frame)
+    }
+    return found ? viewport : .null
+  }
+
+  private func assertIsolation(_ sample: Sample, file: StaticString = #filePath, line: UInt = #line) {
+    XCTAssertTrue(sample.noAuthenticatedHost, file: file, line: line)
+    XCTAssertTrue(sample.draftTestingConfigurationApplied && sample.currentDraftAbsent, file: file, line: line)
+    XCTAssertTrue(sample.editingDefaultsSuite.hasPrefix("settings.native.fixture."), file: file, line: line)
+    XCTAssertEqual(sample.transport.attemptedWrites, 0, file: file, line: line)
+    XCTAssertEqual(sample.transport.unexpectedRequests, 0, file: file, line: line)
+    XCTAssertEqual(sample.fakeSupportPurchaseAttempts, 0, file: file, line: line)
+    XCTAssertTrue(sample.globalOrGroupDefaultsChangedKeys.isEmpty, file: file, line: line)
+    XCTAssertFalse(sample.feedLoad.editorChanged, file: file, line: line)
+    // Scoped default changes are expected AppSettings behavior within Root's
+    // disposable domains; this is not a zero-defaults-write assertion.
+  }
+  private func sample(_ app: XCUIApplication) throws -> Sample {
+    let raw = app.descendants(matching: .any)["settings.fixture.counters"].firstMatch.value as? String
+    guard let raw else { throw FixtureError.sampleMissing }
+    return try JSONDecoder().decode(Sample.self, from: Data(raw.utf8))
+  }
+  private func waitSample(_ app: XCUIApplication, _ predicate: (Sample) -> Bool) throws -> Sample {
+    let deadline = Date().addingTimeInterval(8)
+    repeat {
+      if let value = try? sample(app), predicate(value) { return value }
+      Thread.sleep(forTimeInterval: 0.08)
+    } while Date() < deadline
+    XCTFail("Timed out waiting for observed fixture state")
+    throw FixtureError.sampleMissing
+  }
+  private func capture(_ name: String, _ app: XCUIApplication, witnesses: [(String, XCUIElement)]) {
+    let screenshot = XCTAttachment(screenshot: app.screenshot())
+    screenshot.name = name; screenshot.lifetime = .keepAlways; add(screenshot)
+    // Resolve only the explicitly named elements. Never construct the full
+    // application hierarchy merely to truncate its resulting string.
+    let elements: [(String, XCUIElement)] = [
+      ("native window", app.windows.firstMatch), ("navigation bar", app.navigationBars.firstMatch),
+      ("receiving form", app.collectionViews.firstMatch), ("keyboard", app.keyboards.firstMatch)
+    ] + witnesses
+    XCTAssertLessThanOrEqual(elements.count, 8, "Capture witnesses must stay finite")
+    let records = Array(elements.prefix(8)).map { elementWitness($0.0, $0.1) }
+    let payload: [String: Any] = ["checkpoint": name, "elementLimit": 8,
+      "identifierLimit": 160, "labelLimit": 512, "valueLimit": 512, "witnesses": records]
+    let data = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
+    let ax = XCTAttachment(string: data.flatMap { String(data: $0, encoding: .utf8) } ?? "witness serialization failed")
+    ax.name = name + " — compact explicit element witnesses"; ax.lifetime = .keepAlways; add(ax)
+    let raw = app.descendants(matching: .any)["settings.fixture.counters"].firstMatch.value as? String ?? "missing probe"
+    let receipt = XCTAttachment(string: raw + "\nwindow=\(app.windows.firstMatch.frame); receiving=\(receivingViewport(app))")
+    receipt.name = name + " — actual state, refused transport and native geometry"
+    receipt.lifetime = .keepAlways; add(receipt)
+  }
+  private func elementWitness(_ role: String, _ element: XCUIElement) -> [String: Any] {
+    let exists = element.exists
+    var record: [String: Any] = ["role": String(role.prefix(80)), "exists": exists]
+    guard exists else { return record }
+    let identifier = element.identifier
+    let label = element.label
+    // Values outside the scalar AX string/number contract are deliberately not
+    // expanded via description; the named probe has its own state attachment.
+    let value: String
+    if let string = element.value as? String { value = string }
+    else if let number = element.value as? NSNumber { value = number.stringValue }
+    else { value = "<non-scalar or absent>" }
+    let frame = element.frame
+    record["identifier"] = String(identifier.prefix(160))
+    record["identifierTruncated"] = identifier.count > 160
+    record["label"] = String(label.prefix(512))
+    record["labelTruncated"] = label.count > 512
+    record["value"] = String(value.prefix(512))
+    record["valueTruncated"] = value.count > 512
+    record["enabled"] = element.isEnabled
+    record["hittable"] = element.isHittable
+    record["frame"] = ["x": Double(frame.minX), "y": Double(frame.minY),
+      "width": Double(frame.width), "height": Double(frame.height)]
+    return record
+  }
+  private enum FixtureError: Error { case controlNotReached, sampleMissing }
+  private struct Transport: Decodable { let refusedRequests: Int, attemptedWrites: Int, unexpectedRequests: Int }
+  private struct FeedLoad: Decodable {
+    let editorID: String, editorChanged: Bool, sceneID: String
+    let entries: Int, refusals: Int, notCurrentAccountRefusals: Int, readEntries: Int, finishedAttempts: Int
+    let lastEnteredAttempt: UInt64, lastRefusedAttempt: UInt64, lastFinishedAttempt: UInt64
+    let lastRefusalReason: String, lastFinishedRefusalReason: String
+  }
+  private struct Sample: Decodable {
+    let ready: Bool, sampleCount: Int, noAuthenticatedHost: Bool
+    let draftTestingConfigurationApplied: Bool, currentDraftAbsent: Bool
+    let editingDefaultsSuite: String, persistenceState: String, canEditLocalSettings: Bool
+    let sceneID: String
+    let localFetchCalls: Int, localSaveCalls: Int, fakeSupportPurchaseAttempts: Int
+    let maxTextSize: String, globalOrGroupDefaultsChangedKeys: [String]
+    let transport: Transport
+    let feedLoad: FeedLoad
+    let systemTextCategory: String, fontManagerTextCategory: String, nativeWindowStyle: Int
+    let nativeWindowWidth: Double, nativeWindowHeight: Double
+  }
+}

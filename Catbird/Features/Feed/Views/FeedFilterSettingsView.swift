@@ -1,7 +1,22 @@
 import SwiftUI
 
+#if DEBUG
+private struct FeedPreferenceLoadObserverKey: EnvironmentKey {
+  static let defaultValue: FeedPreferenceEditor.DebugLoadObserver? = nil
+}
+extension EnvironmentValues {
+  var feedPreferenceLoadObserver: FeedPreferenceEditor.DebugLoadObserver? {
+    get { self[FeedPreferenceLoadObserverKey.self] }
+    set { self[FeedPreferenceLoadObserverKey.self] = newValue }
+  }
+}
+#endif
+
 struct FeedFilterSettingsView: View {
   @Environment(AppState.self) private var appState
+  #if DEBUG
+  @Environment(\.feedPreferenceLoadObserver) private var loadObserver
+  #endif
   var initialFocus: SettingsControlID? = nil
   @State private var editor: FeedPreferenceEditor?
   @State private var reconciledFilter: String?
@@ -97,7 +112,16 @@ struct FeedFilterSettingsView: View {
     }
     .navigationTitle("Feed Filtering")
     .task(id: appState.userDID) {
+      #if DEBUG
+      let editor: FeedPreferenceEditor
+      if let loadObserver {
+        editor = FeedPreferenceEditor(appState: appState, observingLoads: loadObserver)
+      } else {
+        editor = FeedPreferenceEditor(appState: appState)
+      }
+      #else
       let editor = FeedPreferenceEditor(appState: appState)
+      #endif
       self.editor = editor
       await editor.load()
     }

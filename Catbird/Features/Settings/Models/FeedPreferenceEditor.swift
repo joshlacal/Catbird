@@ -20,6 +20,42 @@ final class FeedPreferenceEditor {
   @ObservationIgnored private let read: @MainActor () async throws -> FeedViewPreference?
   @ObservationIgnored private let write: @MainActor (FeedPreferenceEdit, String) async throws -> FeedViewPreference?
 
+  #if DEBUG
+  enum DebugLoadRefusal: String, Sendable {
+    case alreadyLoading, alreadySaving, pendingEdit, notCurrentAccount
+  }
+  struct DebugLoadEvent: Sendable {
+    enum Phase: Sendable {
+      case entered, refused(DebugLoadRefusal), readEntered, finished(refusal: DebugLoadRefusal?)
+    }
+    let editorID: UUID
+    let attemptSequence: UInt64
+    let phase: Phase
+  }
+  typealias DebugLoadObserver = @MainActor @Sendable (DebugLoadEvent) -> Void
+  @ObservationIgnored private var debugLoadObserver: DebugLoadObserver?
+  @ObservationIgnored private var debugEditorID: UUID?
+  @ObservationIgnored private var debugAttemptSequence: UInt64 = 0
+
+  /// Observation attaches to the unchanged production-configured editor.
+  convenience init(appState: AppState, observingLoads: @escaping DebugLoadObserver) {
+    self.init(appState: appState)
+    debugEditorID = UUID()
+    debugLoadObserver = observingLoads
+  }
+
+  private func beginDebugLoadObservation() -> UInt64? {
+    guard debugLoadObserver != nil else { return nil }
+    debugAttemptSequence += 1
+    emitDebugLoad(debugAttemptSequence, phase: .entered)
+    return debugAttemptSequence
+  }
+  private func emitDebugLoad(_ attempt: UInt64?, phase: DebugLoadEvent.Phase) {
+    guard let attempt, let editorID = debugEditorID, let observer = debugLoadObserver else { return }
+    observer(DebugLoadEvent(editorID: editorID, attemptSequence: attempt, phase: phase))
+  }
+  #endif
+
   convenience init(appState: AppState) {
     let did = appState.userDID
     let revision = AppStateManager.shared.settingsAccountContextRevision
@@ -55,10 +91,32 @@ final class FeedPreferenceEditor {
   }
 
   func load() async {
+    #if DEBUG
+    let attempt = beginDebugLoadObservation()
+    var refusal: DebugLoadRefusal?
+    defer { emitDebugLoad(attempt, phase: .finished(refusal: refusal)) }
+    // Keep the original guard's evaluation order and exactly one account proof.
+    guard !isLoading else {
+      refusal = .alreadyLoading; emitDebugLoad(attempt, phase: .refused(.alreadyLoading)); return
+    }
+    guard !isSaving else {
+      refusal = .alreadySaving; emitDebugLoad(attempt, phase: .refused(.alreadySaving)); return
+    }
+    guard pending == nil else {
+      refusal = .pendingEdit; emitDebugLoad(attempt, phase: .refused(.pendingEdit)); return
+    }
+    guard isCurrentAccount() else {
+      refusal = .notCurrentAccount; emitDebugLoad(attempt, phase: .refused(.notCurrentAccount)); return
+    }
+    #else
     guard !isLoading, !isSaving, pending == nil, isCurrentAccount() else { return }
+    #endif
     isLoading = true
     defer { isLoading = false }
     do {
+      #if DEBUG
+      emitDebugLoad(attempt, phase: .readEntered)
+      #endif
       let value = try await read()
       guard !Task.isCancelled, isCurrentAccount() else { return }
       confirmed = value
