@@ -211,15 +211,17 @@ struct ContentLabelManager<Content: View>: View {
     // Used only for visibility decisions; not displayed as badges.
     let selfLabelValues: [String]?
     let contentType: String
+    let onReveal: (() -> Void)?
     @State private var isBlurred: Bool
     @State private var contentVisibility: ContentVisibility
     @Environment(AppState.self) private var appState
     let content: Content
     
-    init(labels: [ComAtprotoLabelDefs.Label]?, selfLabelValues: [String]? = nil, contentType: String = "content", @ViewBuilder content: () -> Content) {
+    init(labels: [ComAtprotoLabelDefs.Label]?, selfLabelValues: [String]? = nil, contentType: String = "content", onReveal: (() -> Void)? = nil, @ViewBuilder content: () -> Content) {
         self.labels = labels
         self.selfLabelValues = selfLabelValues
         self.contentType = contentType
+        self.onReveal = onReveal
         self.content = content()
         // Use a more conservative initial visibility that will be updated by async task
         let initialVisibility = ContentLabelManager.getInitialContentVisibility(
@@ -346,11 +348,7 @@ struct ContentLabelManager<Content: View>: View {
                         .foregroundStyle(.white.opacity(0.8))
                         .padding(.bottom, 12)
 
-                    Button {
-                        withAnimation {
-                            isBlurred = false
-                        }
-                    } label: {
+                    Button(action: revealContent) {
                         Text("Show Content")
                             .appFont(AppTextRole.footnote)
                             .foregroundStyle(.white)
@@ -395,11 +393,7 @@ struct ContentLabelManager<Content: View>: View {
 
                             strongBlurOverlay
                         }
-                        .onTapGesture {
-                            withAnimation {
-                                isBlurred = false
-                            }
-                        }
+                        .onTapGesture(perform: revealContent)
                     } else {
                         // When revealed under warn, allow collapsing again to a compact placeholder
                         VStack(alignment: .leading, spacing: 6) {
@@ -457,6 +451,12 @@ struct ContentLabelManager<Content: View>: View {
             // Update visibility immediately when view appears
             await updateContentVisibility()
         }
+    }
+
+    private func revealContent() {
+        guard isBlurred else { return }
+        withAnimation { isBlurred = false }
+        onReveal?()
     }
     
     private var hiddenContentPlaceholder: some View {

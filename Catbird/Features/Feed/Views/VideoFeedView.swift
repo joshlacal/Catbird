@@ -37,6 +37,8 @@ public struct VideoFeedView: View {
   @State private var hasMore: Bool = true
   @State private var errorMessage: String?
   @State private var revealedItems: Set<VideoFeedItem.RevealIdentity> = []
+  private var feedLoader: (@MainActor (String?) async throws -> ([AppBskyFeedDefs.FeedViewPost], String?))?
+  private var contentVisibilityObserver: ((VideoFeedItem) -> Void)?
 
   public init(
     feedURI: String = VideoFeedView.thevidsURI,
@@ -46,6 +48,19 @@ public struct VideoFeedView: View {
     self.feedURI = feedURI
     self.initialPost = initialPost
     self._path = path ?? .constant(NavigationPath())
+  }
+
+  /// Exercise the production fetch/publication/remount path with local players.
+  init(
+    initialPost: AppBskyFeedDefs.PostView,
+    playerPool: VideoFeedPlayerPool,
+    feedLoader: @escaping @MainActor (String?) async throws -> ([AppBskyFeedDefs.FeedViewPost], String?),
+    contentVisibilityObserver: @escaping (VideoFeedItem) -> Void
+  ) {
+    self.init(initialPost: initialPost)
+    self._playerPool = State(initialValue: playerPool)
+    self.feedLoader = feedLoader
+    self.contentVisibilityObserver = contentVisibilityObserver
   }
   public var body: some View {
     ZStack {
@@ -66,7 +81,8 @@ public struct VideoFeedView: View {
               isRevealed: revealedItems.contains(item.revealIdentity),
               attachesPlayer: abs(index - activeIndex) <= 1,
               playerPool: playerPool,
-              onReveal: { revealItem(item) },
+              onContentVisible: { revealItem(item, explicitlyRequested: false) },
+              onRevealRequested: { revealItem(item, explicitlyRequested: true) },
               onConceal: { concealItem(item) },
               onProfileTap: { did in
                 path.append(NavigationDestination.profile(did))
@@ -171,23 +187,8 @@ public struct VideoFeedView: View {
       updatePlaybackForActiveIndex(activeIndex)
     }
 
-    guard let client = appState.atProtoClient else {
-      errorMessage = "Client unavailable"
-      return
-    }
-
-    let feedManager = FeedManager(client: client)
-
     do {
-      guard let uri = try? ATProtocolURI(uriString: feedURI) else {
-        errorMessage = "Invalid feed URI: \(feedURI)"
-        return
-      }
-
-      let (feedPosts, nextCursor) = try await feedManager.fetchFeed(
-        fetchType: .feed(uri),
-        cursor: nil
-      )
+      let (feedPosts, nextCursor) = try await fetchFeedPage(cursor: nil)
 
       let parsedItems = VideoFeedItem.initialItems(startingAt: initialPost, feedPosts: feedPosts)
       try Task.checkCancellation()
@@ -231,12 +232,7 @@ public struct VideoFeedView: View {
   }
 
   private func loadNextPage(cursor currentCursor: String) async throws {
-    guard let client = appState.atProtoClient else { throw PostViewModel.PostViewModelError.missingClient }
-    let uri = try ATProtocolURI(uriString: feedURI)
-    let feedManager = FeedManager(client: client)
-    let (feedPosts, nextCursor) = try await feedManager.fetchFeed(
-      fetchType: .feed(uri), cursor: currentCursor
-    )
+    let (feedPosts, nextCursor) = try await fetchFeedPage(cursor: currentCursor)
     // Even a transport that finishes after cancellation cannot publish an old
     // page over the new visible screen's request.
     try Task.checkCancellation()
@@ -245,6 +241,13 @@ public struct VideoFeedView: View {
     self.cursor = nextCursor
     self.hasMore = nextCursor != nil && nextCursor != currentCursor && !feedPosts.isEmpty
     updatePrewarming(for: activeIndex)
+  }
+
+  private func fetchFeedPage(cursor: String?) async throws -> ([AppBskyFeedDefs.FeedViewPost], String?) {
+    if let feedLoader { return try await feedLoader(cursor) }
+    guard let client = appState.atProtoClient else { throw PostViewModel.PostViewModelError.missingClient }
+    let uri = try ATProtocolURI(uriString: feedURI)
+    return try await FeedManager(client: client).fetchFeed(fetchType: .feed(uri), cursor: cursor)
   }
 
   private func publishItems(_ refreshed: [VideoFeedItem]) {
@@ -278,14 +281,17 @@ public struct VideoFeedView: View {
     return visibility == .show
   }
 
-  private func revealItem(_ item: VideoFeedItem) {
+  private func revealItem(_ item: VideoFeedItem, explicitlyRequested: Bool) {
     guard let index = items.firstIndex(where: { $0.revealIdentity == item.revealIdentity }) else { return }
     revealedItems.insert(item.revealIdentity)
-    if index == activeIndex {
+    // A passive mount authorizes this snapshot but must not turn a paused seed
+    // into a play request. Only the warning's explicit reveal gesture can do so.
+    if index == activeIndex, explicitlyRequested || playerPool.wantsPlayback {
       updatePlaybackForActiveIndex(index)
     } else {
       updatePrewarming(for: activeIndex)
     }
+    if !explicitlyRequested { contentVisibilityObserver?(item) }
   }
 
   private func concealItem(_ item: VideoFeedItem) {
@@ -430,7 +436,8 @@ private struct VideoFeedItemView: View {
   let isRevealed: Bool
   let attachesPlayer: Bool
   let playerPool: VideoFeedPlayerPool
-  let onReveal: () -> Void
+  let onContentVisible: () -> Void
+  let onRevealRequested: () -> Void
   let onConceal: () -> Void
   let onProfileTap: (String) -> Void
   let onPostTap: (ATProtocolURI) -> Void
@@ -451,7 +458,8 @@ private struct VideoFeedItemView: View {
       ContentLabelManager(
         labels: item.post.labels,
         selfLabelValues: item.selfLabelValues,
-        contentType: "video"
+        contentType: "video",
+        onReveal: onRevealRequested
       ) {
         ZStack {
           if attachesPlayer {
@@ -461,7 +469,7 @@ private struct VideoFeedItemView: View {
               shouldLoop: false,
               pausesOnDismantle: false
             )
-            .onAppear(perform: onReveal)
+            .onAppear(perform: onContentVisible)
             .onDisappear(perform: onConceal)
           }
 

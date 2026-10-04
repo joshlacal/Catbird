@@ -229,18 +229,84 @@ struct AudioSessionOwnershipTests {
     #expect(driver.mode == .ambient)
   }
 
+  @Test("Failed immediate activation restores its partial category without a phantom lease")
+  func immediateActivationRollback() async {
+    let driver = FixtureAudioSessionDriver()
+    driver.failPlaybackActivation = true
+    let manager = AudioSessionManager(driver: driver)
+    let failedOwner = UUID()
+    #expect(throws: FixtureAudioSessionDriver.ActivationError.self) {
+      try manager.acquireImmediatePlayback(owner: failedOwner)
+    }
+    #expect(driver.mode == .ambient)
+    #expect(driver.actions == [.activateVideo, .deactivate, .restore])
+    manager.releaseVideoPlayback(owner: failedOwner)
+    await manager.waitForPendingConfiguration()
+    #expect(driver.mode == .ambient)
+    #expect(driver.actions == [.activateVideo, .deactivate, .restore])
+  }
+
+  @Test("Failed preview activation cannot deactivate a retained feed owner")
+  func immediateFailureRetainsFeed() async {
+    let driver = FixtureAudioSessionDriver()
+    let manager = AudioSessionManager(driver: driver)
+    let feedOwner = UUID()
+    let failedOwner = UUID()
+    manager.acquireVideoPlayback(owner: feedOwner)
+    await manager.waitForPendingConfiguration()
+    driver.failPlaybackActivation = true
+    #expect(throws: FixtureAudioSessionDriver.ActivationError.self) {
+      try manager.acquireImmediatePlayback(owner: failedOwner)
+    }
+    manager.releaseVideoPlayback(owner: failedOwner)
+    await manager.waitForPendingConfiguration()
+    #expect(driver.mode == .video)
+    #expect(driver.actions == [.activateVideo, .activateVideo])
+    manager.releaseVideoPlayback(owner: feedOwner)
+    await manager.waitForPendingConfiguration()
+    #expect(driver.mode == .ambient)
+  }
+
+  @Test("Failed immediate activation restores an external playback configuration without deactivation")
+  func immediateFailureRestoresExternalConfiguration() {
+    let driver = FixtureAudioSessionDriver()
+    driver.mode = .otherPlayback
+    driver.failPlaybackActivation = true
+    let manager = AudioSessionManager(driver: driver)
+    #expect(throws: FixtureAudioSessionDriver.ActivationError.self) {
+      try manager.acquireImmediatePlayback(owner: UUID())
+    }
+    #expect(driver.mode == .otherPlayback)
+    #expect(driver.actions == [.activateVideo, .restore])
+  }
+
+  @Test("A newer external recording category is not rolled back after a failed activation")
+  func immediateFailurePreservesNewExternalOwner() {
+    let driver = FixtureAudioSessionDriver()
+    driver.failPlaybackActivation = true
+    driver.playbackFailureMode = .recording
+    let manager = AudioSessionManager(driver: driver)
+    #expect(throws: FixtureAudioSessionDriver.ActivationError.self) {
+      try manager.acquireImmediatePlayback(owner: UUID())
+    }
+    #expect(driver.mode == .recording)
+    #expect(driver.actions == [.activateVideo])
+  }
+
 }
 
 /// The lock protects both session-queue mutations and test-thread snapshots.
 private final class FixtureAudioSessionDriver: AudioSessionDriving, @unchecked Sendable {
-  enum Mode { case ambient, video, recording, otherPlayback }
-  enum Action { case activateVideo, deactivate, ambient, activateRecording }
-  enum ActivationError: Error { case recording }
+  enum Mode: String { case ambient, video, recording, otherPlayback }
+  enum Action { case activateVideo, deactivate, ambient, activateRecording, restore }
+  enum ActivationError: Error { case recording, playback }
 
   private let lock = NSLock()
   private var storedMode: Mode = .ambient
   private var storedActions: [Action] = []
   private var storedFailRecordingActivation = false
+  private var storedFailPlaybackActivation = false
+  private var storedPlaybackFailureMode: Mode?
 
   var mode: Mode {
     get { lock.withLock { storedMode } }
@@ -252,13 +318,35 @@ private final class FixtureAudioSessionDriver: AudioSessionDriving, @unchecked S
     get { lock.withLock { storedFailRecordingActivation } }
     set { lock.withLock { storedFailRecordingActivation = newValue } }
   }
+  var failPlaybackActivation: Bool {
+    get { lock.withLock { storedFailPlaybackActivation } }
+    set { lock.withLock { storedFailPlaybackActivation = newValue } }
+  }
+  var playbackFailureMode: Mode? {
+    get { lock.withLock { storedPlaybackFailureMode } }
+    set { lock.withLock { storedPlaybackFailureMode = newValue } }
+  }
+  var isAmbient: Bool { mode == .ambient }
+  var configuration: AudioSessionConfiguration {
+    AudioSessionConfiguration(category: mode.rawValue, mode: "default", options: 0)
+  }
+  func restoreConfiguration(_ configuration: AudioSessionConfiguration) throws {
+    lock.withLock {
+      storedMode = Mode(rawValue: configuration.category)!
+      storedActions.append(.restore)
+    }
+  }
   var isVideoPlayback: Bool { mode == .video }
   var isRecording: Bool { mode == .recording }
 
   func activateVideoPlayback() throws {
-    lock.withLock {
+    try lock.withLock {
       storedMode = .video
       storedActions.append(.activateVideo)
+      if storedFailPlaybackActivation {
+        if let mode = storedPlaybackFailureMode { storedMode = mode }
+        throw ActivationError.playback
+      }
     }
   }
 

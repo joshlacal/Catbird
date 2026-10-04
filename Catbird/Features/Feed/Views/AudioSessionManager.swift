@@ -25,9 +25,18 @@ protocol ImmediatePlaybackAudioSession: VideoPlaybackAudioSession {
 }
 
 /// The manager invokes this boundary only on its serial session queue.
+struct AudioSessionConfiguration: Equatable, Sendable {
+  let category: String
+  let mode: String
+  let options: UInt
+}
+
 protocol AudioSessionDriving: Sendable {
   var isVideoPlayback: Bool { get }
   var isRecording: Bool { get }
+  var isAmbient: Bool { get }
+  var configuration: AudioSessionConfiguration { get }
+  func restoreConfiguration(_ configuration: AudioSessionConfiguration) throws
   func activateVideoPlayback() throws
   func deactivatePlayback() throws
   func configureAmbient() throws
@@ -35,6 +44,36 @@ protocol AudioSessionDriving: Sendable {
 }
 
 private struct SystemAudioSession: AudioSessionDriving {
+  var isAmbient: Bool {
+    #if os(iOS)
+    let category = AVAudioSession.sharedInstance().category
+    return category == .ambient || category == .soloAmbient
+    #else
+    return true
+    #endif
+  }
+
+  var configuration: AudioSessionConfiguration {
+    #if os(iOS)
+    let session = AVAudioSession.sharedInstance()
+    return AudioSessionConfiguration(
+      category: session.category.rawValue, mode: session.mode.rawValue,
+      options: session.categoryOptions.rawValue
+    )
+    #else
+    return AudioSessionConfiguration(category: "ambient", mode: "default", options: 0)
+    #endif
+  }
+
+  func restoreConfiguration(_ configuration: AudioSessionConfiguration) throws {
+    #if os(iOS)
+    try AVAudioSession.sharedInstance().setCategory(
+      .init(rawValue: configuration.category), mode: .init(rawValue: configuration.mode),
+      options: .init(rawValue: configuration.options)
+    )
+    #endif
+  }
+
   var isVideoPlayback: Bool {
     #if os(iOS)
     let session = AVAudioSession.sharedInstance()
@@ -209,7 +248,27 @@ final class AudioSessionManager: ImmediatePlaybackAudioSession, @unchecked Senda
       guard recordingOwners.isEmpty, !driver.isRecording else {
         throw PlaybackActivationError.recordingInProgress
       }
-      try driver.activateVideoPlayback()
+      let previousConfiguration = driver.configuration
+      let canDeactivate = !hasVideoPlaybackOwner && !ownsVideoSession && driver.isAmbient
+      do {
+        try driver.activateVideoPlayback()
+      } catch {
+        // setCategory may succeed before setActive fails. Undo only our still-
+        // installed category; never deactivate a retained or external consumer.
+        if driver.isVideoPlayback, driver.configuration != previousConfiguration {
+          if canDeactivate {
+            do { try driver.deactivatePlayback() } catch {
+              logger.debug("Failed to deactivate partial playback activation: \(error)")
+            }
+          }
+          do {
+            try driver.restoreConfiguration(previousConfiguration)
+          } catch {
+            logger.debug("Failed to restore playback configuration: \(error)")
+          }
+        }
+        throw error
+      }
       ownsVideoSession = true
       playbackOwners.insert(owner)
     }

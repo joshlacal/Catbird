@@ -95,8 +95,8 @@ struct VideoFeedRoutingTests {
     #expect(VideoFeedItem(post: text) == nil)
   }
 
-  @Test("Quoted-record video cards retain their outer post identity and moderation labels")
-  func quotedVideo() throws {
+  @Test("Posts with their own video and a quote retain outer identity and moderation labels")
+  func outerVideoAlongsideQuote() throws {
     let selected = try post("quoted", wrapsRecord: true, selfWarning: true)
     let item = try #require(VideoFeedItem(post: selected))
     #expect(item.id == selected.uri.uriString())
