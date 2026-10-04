@@ -150,8 +150,8 @@ struct NotificationPreferencesPersistenceTests {
     #expect(fixture.service.fetchAccounts == [fixture.didA])
   }
 
-  @Test("A later queued failure rolls back to the latest accepted response")
-  func queuedFailureRestoresLatestConfirmedSnapshot() async throws {
+  @Test("A later failure rolls back to the latest accepted response")
+  func laterFailureRestoresLatestConfirmedSnapshot() async throws {
     let fixture = try await NotificationPersistenceFixture()
     defer { fixture.removeDefaultsSuite() }
     await fixture.manager.updateClient(fixture.clientA)
@@ -176,34 +176,20 @@ struct NotificationPreferencesPersistenceTests {
     var accepted = fixture.manager.preferences
     accepted.chat = .init(include: "accepted-custom-chat", push: false)
     accepted.mention = .init(include: "accepted-custom-mention", list: false, push: true)
-    let queuedQuote = AppBskyNotificationDefs.FilterablePreference(include: "all", list: true, push: true)
-    let secondSave = Task { @MainActor in
-      try await fixture.manager.updatePreferences({ $0.quote = queuedQuote }, expectedAccountDID: fixture.didA)
-    }
-    defer { secondSave.cancel() }
-    do {
-      try await fixture.waitUntil { fixture.manager.preferences.quote == queuedQuote }
-    } catch {
-      firstSave.cancel()
-      secondSave.cancel()
-      firstResponse.resolve(.failure(CancellationError()))
-      _ = await firstSave.result
-      _ = await secondSave.result
-      throw error
-    }
     #expect(fixture.service.saveRequests.count == 1)
-
-    fixture.service.failingSaveAccounts.insert(fixture.didA)
     firstResponse.resolve(.success(accepted.toServerPreferences()))
     let firstResult = await firstSave.result
-    let secondResult = await secondSave.result
     if case .failure(let error) = firstResult {
-      Issue.record("The first queued PUT unexpectedly failed: \(error.localizedDescription)")
+      Issue.record("The first PUT unexpectedly failed: \(error.localizedDescription)")
     }
-    switch secondResult {
-    case .success:
-      Issue.record("The second queued PUT unexpectedly succeeded")
-    case .failure(let error):
+    #expect(fixture.manager.preferencesState == .ready)
+
+    fixture.service.failingSaveAccounts.insert(fixture.didA)
+    let laterQuote = AppBskyNotificationDefs.FilterablePreference(include: "all", list: true, push: true)
+    do {
+      try await fixture.manager.updatePreferences({ $0.quote = laterQuote }, expectedAccountDID: fixture.didA)
+      Issue.record("The later PUT unexpectedly succeeded")
+    } catch {
       #expect(error as? NotificationPersistenceError == .save)
     }
 
@@ -213,11 +199,100 @@ struct NotificationPreferencesPersistenceTests {
     #expect(!fixture.manager.chatNotificationsEnabled)
     #expect(!fixture.defaults.bool(forKey: fixture.chatKey(fixture.didA)))
     #expect(fixture.service.snapshots[fixture.didA] == accepted)
-    let queuedInput = try #require(fixture.service.saveRequests.last?.input)
-    #expect(queuedInput.quote == queuedQuote)
-    #expect(queuedInput.like == nil)
-    #expect(queuedInput.chat == nil)
-    #expect(queuedInput.mention == nil)
+    let laterInput = try #require(fixture.service.saveRequests.last?.input)
+    #expect(laterInput.quote == laterQuote)
+    #expect(laterInput.like == nil)
+    #expect(laterInput.chat == nil)
+    #expect(laterInput.mention == nil)
+  }
+
+  @Test("A pending Likes save refuses Quotes edits and retains its failure for exact retry before a later save")
+  func failedFirstSaveRetainsRetryAndRefusesOverlappingEdit() async throws {
+    let fixture = try await NotificationPersistenceFixture()
+    defer { fixture.removeDefaultsSuite() }
+    var initial = fixture.originalA
+    initial.quote = .init(include: "custom-service-quote", list: true, push: true)
+    fixture.service.snapshots[fixture.didA] = initial
+    await fixture.manager.updateClient(fixture.clientA)
+    var firstRequested = initial
+    firstRequested.like = .init(include: initial.like.include, list: initial.like.list, push: false)
+    let firstResponse = NotificationSuspendedResponse<AppBskyNotificationDefs.Preferences?>()
+    fixture.service.heldSave = (fixture.didA, firstResponse)
+    let firstSave = Task { @MainActor in
+      try await fixture.manager.updatePreferences(firstRequested, expectedAccountDID: fixture.didA)
+    }
+    defer {
+      firstSave.cancel()
+      firstResponse.resolve(.failure(CancellationError()))
+    }
+    do {
+      try await firstResponse.waitUntilSuspended()
+    } catch {
+      firstSave.cancel()
+      firstResponse.resolve(.failure(CancellationError()))
+      _ = await firstSave.result
+      throw error
+    }
+    #expect(fixture.manager.preferencesState == .saving)
+    #expect(!fixture.manager.canEditNotificationPreferences)
+    #expect(fixture.manager.preferences == firstRequested)
+    let quotesOff = AppBskyNotificationDefs.FilterablePreference(
+      include: initial.quote.include, list: initial.quote.list, push: false)
+    do {
+      try await fixture.manager.updatePreferences({ $0.quote = quotesOff }, expectedAccountDID: fixture.didA)
+      Issue.record("A second edit was admitted while the first save was pending")
+    } catch {
+      #expect(error is NotificationManager.NotificationServiceError)
+      #expect(error.localizedDescription.contains("finish saving"))
+    }
+    #expect(fixture.service.saveRequests.count == 1)
+    #expect(fixture.manager.preferencesState == .saving)
+    #expect(fixture.manager.preferences == firstRequested)
+    #expect(fixture.manager.pendingNotificationChangesDescription == nil)
+    let failedInput = try #require(fixture.service.saveRequests.first?.input)
+    #expect(failedInput.like == firstRequested.like)
+    #expect(failedInput.quote == nil)
+    #expect(failedInput.chat == nil)
+    let exactAttempt = try fixture.encodedInput(failedInput)
+
+    firstResponse.resolve(.failure(NotificationPersistenceError.save))
+    switch await firstSave.result {
+    case .success:
+      Issue.record("The held first save unexpectedly succeeded")
+    case .failure(let error):
+      #expect(error as? NotificationPersistenceError == .save)
+    }
+    #expect(fixture.manager.preferencesState == .saveFailed(NotificationPersistenceError.save.localizedDescription))
+    #expect(!fixture.manager.canEditNotificationPreferences)
+    #expect(fixture.manager.preferences == initial)
+    #expect(fixture.manager.pendingNotificationChangesDescription == failedInput.notificationChangesDescription)
+    #expect(fixture.service.snapshots[fixture.didA] == initial)
+
+    await fixture.manager.retryNotificationPreferences(expectedAccountDID: fixture.didA)
+    #expect(fixture.service.saveRequests.count == 2)
+    let retriedInput = try #require(fixture.service.saveRequests.last?.input)
+    #expect(try fixture.encodedInput(retriedInput) == exactAttempt)
+    #expect(fixture.manager.preferencesState == .ready)
+    #expect(fixture.manager.canEditNotificationPreferences)
+    #expect(fixture.manager.preferences == firstRequested)
+    #expect(fixture.manager.pendingNotificationChangesDescription == nil)
+
+    try await fixture.manager.updatePreferences({ $0.quote = quotesOff }, expectedAccountDID: fixture.didA)
+    #expect(fixture.service.saveRequests.count == 3)
+    let laterInput = try #require(fixture.service.saveRequests.last?.input)
+    #expect(laterInput.quote == quotesOff)
+    #expect(laterInput.like == nil)
+    #expect(laterInput.chat == nil)
+    var finalRequested = firstRequested
+    finalRequested.quote = quotesOff
+    #expect(fixture.manager.preferencesState == .ready)
+    #expect(fixture.manager.preferences == finalRequested)
+    #expect(fixture.service.snapshots[fixture.didA] == finalRequested)
+    #expect(fixture.manager.preferences.chat.include == "custom-service-chat")
+    #expect(fixture.manager.preferences.quote.include == "custom-service-quote")
+    #expect(fixture.manager.preferences.verified == initial.verified)
+    #expect(fixture.manager.preferences.starterpackJoined == initial.starterpackJoined)
+    #expect(fixture.service.fetchAccounts == [fixture.didA])
   }
 
   @Test("A delayed GET from account A cannot replace account B or write its defaults")

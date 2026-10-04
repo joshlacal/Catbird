@@ -228,7 +228,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   }
 
   var canEditNotificationPreferences: Bool {
-    preferencesState == .ready || preferencesState == .saving
+    preferencesState == .ready
   }
 
   /// Delivery and service preferences have distinct states; neither implies the other is ready.
@@ -1013,6 +1013,9 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
     guard let did = currentAccountDID, !Task.isCancelled,
       expectedAccountDID == nil || expectedAccountDID == did else { throw CancellationError() }
+    guard preferencesState != .saving else {
+      throw NotificationServiceError.serverError("Wait for your current notification changes to finish saving.")
+    }
     guard serverPreferencesSnapshot != nil, canEditNotificationPreferences || retryInput != nil else {
       throw NotificationServiceError.serverError("Load your saved notification preferences before making changes.")
     }
