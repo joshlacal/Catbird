@@ -147,6 +147,12 @@ final class ChatTranscriptCollectionView: UICollectionView {
     }
   }
 
+  // Layout attribute queries can re-prepare the layout and change contentSize
+  // outside layoutSubviews. Schedule a pass so bottom follow still evaluates.
+  override var contentSize: CGSize {
+    didSet { if contentSize != oldValue { setNeedsLayout() } }
+  }
+
   private var settledBottomOffsetY: CGFloat?
   private var settledContentSize = CGSize.zero
   private var settledViewportSize = CGSize.zero
