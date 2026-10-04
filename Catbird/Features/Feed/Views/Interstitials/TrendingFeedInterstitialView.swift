@@ -22,7 +22,7 @@ public struct TrendingFeedInterstitialView: View {
         _ = sceneContext.urlHandler.handle(url.absoluteURL)
       },
       onSelectPost: { post in
-        sceneContext.navigationManager.navigate(to: .post(post.uri))
+        sceneContext.navigationManager.navigate(to: .videoFeedStartingAt(post))
       },
       onOpenVideos: {
         sceneContext.navigationManager.navigate(to: .videoFeed)

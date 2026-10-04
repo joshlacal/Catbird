@@ -24,6 +24,7 @@ public enum NavigationDestination: Hashable, Sendable {
     case activitySubscriptions
     case notificationActivity([ATProtocolURI])
     case videoFeed
+    case videoFeedStartingAt(AppBskyFeedDefs.PostView)
     case settings(SettingsRoute)
     #if os(iOS)
     case conversation(String) // convoId
@@ -93,6 +94,9 @@ public enum NavigationDestination: Hashable, Sendable {
             }
         case .videoFeed:
             hasher.combine("videoFeed")
+        case .videoFeedStartingAt(let post):
+            hasher.combine("videoFeedStartingAt")
+            hasher.combine(post.uri.uriString())
         case .settings(let route):
             hasher.combine("settings")
             hasher.combine(route)
@@ -150,6 +154,8 @@ public enum NavigationDestination: Hashable, Sendable {
             return lhsUris.map { $0.uriString() } == rhsUris.map { $0.uriString() }
         case (.videoFeed, .videoFeed):
             return true
+        case (.videoFeedStartingAt(let lhsPost), .videoFeedStartingAt(let rhsPost)):
+            return lhsPost.uri == rhsPost.uri
         case (.settings(let lhsRoute), .settings(let rhsRoute)):
             return lhsRoute == rhsRoute
         #if os(iOS)

@@ -70,6 +70,8 @@ struct ModernVideoPlayerView: View {
   @Environment(\.scenePhase) private var scenePhase
   @Environment(AppState.self) private var appState
   let postID: String
+  private var preparePlayer: (@MainActor (VideoModel) async throws -> AVPlayer)?
+  private var registerPlayer: (@MainActor (VideoModel, AVPlayer) -> Void)?
 
   // For iOS 18+ transitions
   @Namespace private var videoTransitionNamespace
@@ -84,9 +86,15 @@ struct ModernVideoPlayerView: View {
   // MARK: - Initializers
 
   // Primary initializer that takes a VideoModel directly
-  init(model: VideoModel, postID: String) {
+  init(
+    model: VideoModel, postID: String,
+    preparePlayer: (@MainActor (VideoModel) async throws -> AVPlayer)? = nil,
+    registerPlayer: (@MainActor (VideoModel, AVPlayer) -> Void)? = nil
+  ) {
     self.model = model
     self.postID = postID
+    self.preparePlayer = preparePlayer
+    self.registerPlayer = registerPlayer
   }
 
   // Convenience initializer for AppBskyEmbedVideo.View
@@ -188,6 +196,8 @@ struct ModernVideoPlayerView: View {
         
         if let player = player {
           VideoCoordinator.shared.appSettings = appState.appSettings
+          // The existing player may be owned by PiP with a native mute change
+          // still awaiting model synchronization. Let its guard run first.
           VideoCoordinator.shared.register(model, player: player)
         }
       }
@@ -342,19 +352,15 @@ struct ModernVideoPlayerView: View {
     
     // Create player
     do {
-      let newPlayer = try await VideoAssetManager.shared.preparePlayer(for: model)
+      let newPlayer: AVPlayer
+      if let preparePlayer {
+        newPlayer = try await preparePlayer(model)
+      } else {
+        newPlayer = try await VideoAssetManager.shared.preparePlayer(for: model)
+      }
       await MainActor.run {
         self.player = newPlayer
-        newPlayer.isMuted = true
-        newPlayer.volume = 0
-
-        model.isMuted = true
-        model.volume = 0
-        // Tenor/Giphy GIFs are MP4 videos that can have audio tracks; without
-        // ambient + mixWithOthers, AVPlayer activation can interrupt background
-        // audio (e.g. Music). Configure the same as HLS for all video types.
-        AudioSessionManager.shared.configureForSilentPlayback()
-        VideoCoordinator.shared.register(model, player: newPlayer)
+        registerPreparedPlayer(newPlayer)
         
         // Observe playback time to publish current position for reporting (WS-E / WS-J handoff)
         let interval = CMTime(seconds: 0.5, preferredTimescale: 600)
@@ -375,6 +381,19 @@ struct ModernVideoPlayerView: View {
       }
     } catch {
       logger.debug("Failed to setup player: \(error)")
+    }
+  }
+
+  private func registerPreparedPlayer(_ player: AVPlayer) {
+    // A new model supplies the muted default. Recreating a player for an
+    // existing model must retain the user's current mute and volume choices.
+    player.isMuted = model.isMuted
+    player.volume = model.isMuted ? 0 : model.volume
+    if let registerPlayer {
+      registerPlayer(model, player)
+    } else {
+      if model.isMuted { AudioSessionManager.shared.configureForSilentPlayback() }
+      VideoCoordinator.shared.register(model, player: player)
     }
   }
 

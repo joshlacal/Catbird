@@ -83,7 +83,7 @@ struct DiscoveryView: View {
                         videos: viewModel.trendingVideos,
                         isLoading: viewModel.isTrendingVideosLoading,
                         onSelectPost: { post in
-                            path.append(NavigationDestination.post(post.uri))
+                            path.append(NavigationDestination.videoFeedStartingAt(post))
                         },
                         onSeeAll: {
                             path.append(NavigationDestination.videoFeed)

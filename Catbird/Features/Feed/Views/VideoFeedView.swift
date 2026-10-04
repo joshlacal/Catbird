@@ -16,6 +16,7 @@ public struct VideoFeedView: View {
   public static let thevidsURI = "at://did:plc:z72i7hdynmk6r22z27h6tvur/app.bsky.feed.generator/thevids"
 
   public let feedURI: String
+  public let initialPost: AppBskyFeedDefs.PostView?
   @Binding public var path: NavigationPath
 
   @Environment(AppState.self) private var appState
@@ -23,28 +24,56 @@ public struct VideoFeedView: View {
   @Environment(\.scenePhase) private var scenePhase
 
   @State private var playerPool = VideoFeedPlayerPool()
+  @State private var playbackIntent = VideoFeedPlaybackIntent()
   @State private var items: [VideoFeedItem] = []
   @State private var activeItemID: String?
   @State private var isVisible = false
-  @State private var resumePlaybackWhenActive = false
   @State private var cursor: String?
   @State private var pagination = VideoFeedPaginationCoordinator()
   @State private var isInitialLoading: Bool = true
+  @State private var didLoadInitialFeed = false
+  @State private var initialLoadAttempt = 0
+  @State private var initialLoadRequestID: UUID?
   @State private var hasMore: Bool = true
   @State private var errorMessage: String?
-  @State private var revealedItemIDs: Set<String> = []
+  @State private var revealedItems: Set<VideoFeedItem.RevealIdentity> = []
+  private var feedLoader: (@MainActor (String?) async throws -> ([AppBskyFeedDefs.FeedViewPost], String?))?
+  private var contentVisibilityObserver: ((VideoFeedItem) -> Void)?
+  private var moderationResolver: (@MainActor ([ComAtprotoLabelDefs.Label], [String]) async -> ContentVisibility)?
 
-  public init(feedURI: String = VideoFeedView.thevidsURI, path: Binding<NavigationPath>? = nil) {
+  public init(
+    feedURI: String = VideoFeedView.thevidsURI,
+    initialPost: AppBskyFeedDefs.PostView? = nil,
+    path: Binding<NavigationPath>? = nil
+  ) {
     self.feedURI = feedURI
+    self.initialPost = initialPost
     self._path = path ?? .constant(NavigationPath())
+  }
+
+  /// Exercise the production fetch/publication/remount path with local players.
+  init(
+    initialPost: AppBskyFeedDefs.PostView,
+    playerPool: VideoFeedPlayerPool,
+    playbackIntent: VideoFeedPlaybackIntent? = nil,
+    feedLoader: @escaping @MainActor (String?) async throws -> ([AppBskyFeedDefs.FeedViewPost], String?),
+    contentVisibilityObserver: @escaping (VideoFeedItem) -> Void,
+    moderationResolver: (@MainActor ([ComAtprotoLabelDefs.Label], [String]) async -> ContentVisibility)? = nil
+  ) {
+    self.init(initialPost: initialPost)
+    self._playerPool = State(initialValue: playerPool)
+    self._playbackIntent = State(initialValue: playbackIntent ?? VideoFeedPlaybackIntent())
+    self.feedLoader = feedLoader
+    self.contentVisibilityObserver = contentVisibilityObserver
+    self.moderationResolver = moderationResolver
   }
   public var body: some View {
     ZStack {
       Color.black.ignoresSafeArea()
 
-      if isInitialLoading || items.isEmpty {
+      if items.isEmpty {
         VideoFeedEmptyState(isLoading: isInitialLoading, errorMessage: errorMessage) {
-          Task { await loadInitialFeed() }
+          initialLoadAttempt += 1
         }
       } else {
         VideoFeedPager(items: items, selection: $activeItemID) { item, size in
@@ -54,11 +83,15 @@ public struct VideoFeedView: View {
               index: index,
               pageSize: size,
               isActive: item.id == activeItemID,
-              isRevealed: revealedItemIDs.contains(item.id),
+              isRevealed: revealedItems.contains(item.revealIdentity),
               attachesPlayer: abs(index - activeIndex) <= 1,
               playerPool: playerPool,
-              onReveal: { revealItem(at: index) },
-              onConceal: { concealItem(at: index) },
+              onContentVisible: { revealItem(item, explicitlyRequested: false) },
+              onRevealRequested: { revealItem(item, explicitlyRequested: true) },
+              onConceal: { concealItem(item) },
+              onPlaybackToggle: { togglePlayback(for: item) },
+              onPlaybackRetry: { retryPlayback(for: item) },
+              moderationResolver: moderationResolver,
               onProfileTap: { did in
                 path.append(NavigationDestination.profile(did))
               },
@@ -74,13 +107,17 @@ public struct VideoFeedView: View {
       navigationControls
     }
     .safeAreaInset(edge: .bottom, spacing: 0) {
-      if let error = pagination.errorMessage {
+      if !items.isEmpty, let error = errorMessage ?? pagination.errorMessage {
         HStack(spacing: 12) {
           Text(error)
             .font(.footnote)
             .frame(maxWidth: .infinity, alignment: .leading)
           Button {
-            requestNextPageIfNeeded(retrying: true)
+            if errorMessage != nil {
+              initialLoadAttempt += 1
+            } else {
+              requestNextPageIfNeeded(retrying: true)
+            }
           } label: {
             Text("Retry")
               .frame(minWidth: 44, minHeight: 44)
@@ -94,9 +131,11 @@ public struct VideoFeedView: View {
       }
     }
     .modifier(VideoFeedNavigationModifier())
-    .task {
-      if items.isEmpty {
-        await loadInitialFeed()
+    .task(id: initialLoadAttempt) {
+      if !didLoadInitialFeed {
+        let requestID = UUID()
+        initialLoadRequestID = requestID
+        await loadInitialFeed(requestID: requestID)
       } else {
         updatePlaybackForActiveIndex(activeIndex)
       }
@@ -112,18 +151,21 @@ public struct VideoFeedView: View {
       updatePlaybackForActiveIndex(activeIndex)
       requestNextPageIfNeeded()
     }
+    .onChange(of: playbackIntent.isPlaybackRequested) { _, _ in
+      updatePlaybackForActiveIndex(activeIndex)
+    }
     .onChange(of: scenePhase) { previous, phase in
       if phase == .active {
-        if isVisible, resumePlaybackWhenActive {
+        if isVisible {
           updatePlaybackForActiveIndex(activeIndex)
         }
       } else if previous == .active {
-        resumePlaybackWhenActive = playerPool.wantsPlayback
         playerPool.pauseAll()
       }
     }
     .onDisappear {
       isVisible = false
+      initialLoadRequestID = nil
       pagination.cancel()
       playerPool.cleanup()
     }
@@ -141,47 +183,39 @@ public struct VideoFeedView: View {
     )
   }
 
-  private func loadInitialFeed() async {
+  private func loadInitialFeed(requestID: UUID) async {
     isInitialLoading = true
     errorMessage = nil
-
-    guard let client = appState.atProtoClient else {
-      errorMessage = "Client unavailable"
-      isInitialLoading = false
-      return
+    defer {
+      if initialLoadRequestID == requestID { isInitialLoading = false }
+    }
+    // The tapped post is already loaded. Show it before fetching a feed whose
+    // first page may have changed or no longer contain that video.
+    if items.isEmpty {
+      items = VideoFeedItem.initialItems(startingAt: initialPost, feedPosts: [])
+      activeItemID = items.first?.id
+      updatePlaybackForActiveIndex(activeIndex)
     }
 
-    let feedManager = FeedManager(client: client)
-
     do {
-      guard let uri = try? ATProtocolURI(uriString: feedURI) else {
-        errorMessage = "Invalid feed URI: \(feedURI)"
-        isInitialLoading = false
-        return
-      }
+      let (feedPosts, nextCursor) = try await fetchFeedPage(cursor: nil)
 
-      let (feedPosts, nextCursor) = try await feedManager.fetchFeed(
-        fetchType: .feed(uri),
-        cursor: nil
-      )
-
-      let parsedItems = extractVideoItems(from: feedPosts)
+      let parsedItems = VideoFeedItem.initialItems(startingAt: initialPost, feedPosts: feedPosts)
       try Task.checkCancellation()
-      self.items = parsedItems
+      guard initialLoadRequestID == requestID else { return }
+      publishItems(parsedItems)
       self.cursor = nextCursor
       self.hasMore = nextCursor != nil && !feedPosts.isEmpty
       self.isInitialLoading = false
+      self.didLoadInitialFeed = true
 
-      if !parsedItems.isEmpty {
-        self.activeItemID = parsedItems.first?.id
-        updatePlaybackForActiveIndex(0)
-      }
       requestNextPageIfNeeded()
     } catch is CancellationError {
-      self.isInitialLoading = false
+      // SwiftUI owns the initial request and cancels it when leaving or retrying.
     } catch {
-      self.errorMessage = error.localizedDescription
-      self.isInitialLoading = false
+      if initialLoadRequestID == requestID, !Task.isCancelled {
+        self.errorMessage = error.localizedDescription
+      }
     }
   }
 
@@ -199,90 +233,103 @@ public struct VideoFeedView: View {
   }
 
   private func loadNextPage(cursor currentCursor: String) async throws {
-    guard let client = appState.atProtoClient else { throw PostViewModel.PostViewModelError.missingClient }
-    let uri = try ATProtocolURI(uriString: feedURI)
-    let feedManager = FeedManager(client: client)
-    let (feedPosts, nextCursor) = try await feedManager.fetchFeed(
-      fetchType: .feed(uri), cursor: currentCursor
-    )
-    let newItems = extractVideoItems(from: feedPosts)
-    var seenIDs = Set(items.map(\.id))
-    let uniqueNewItems = newItems.filter { seenIDs.insert($0.id).inserted }
-
+    let (feedPosts, nextCursor) = try await fetchFeedPage(cursor: currentCursor)
     // Even a transport that finishes after cancellation cannot publish an old
     // page over the new visible screen's request.
     try Task.checkCancellation()
-    self.items.append(contentsOf: uniqueNewItems)
+    publishItems(VideoFeedItem.merging(items, with: feedPosts))
     if activeItemID == nil { activeItemID = items.first?.id }
     self.cursor = nextCursor
     self.hasMore = nextCursor != nil && nextCursor != currentCursor && !feedPosts.isEmpty
     updatePrewarming(for: activeIndex)
   }
 
-  private func extractVideoItems(from feedPosts: [AppBskyFeedDefs.FeedViewPost]) -> [VideoFeedItem] {
-    feedPosts.compactMap { feedPost in
-      let post = feedPost.post
-      guard let embed = post.embed else { return nil }
+  private func fetchFeedPage(cursor: String?) async throws -> ([AppBskyFeedDefs.FeedViewPost], String?) {
+    if let feedLoader { return try await feedLoader(cursor) }
+    guard let client = appState.atProtoClient else { throw PostViewModel.PostViewModelError.missingClient }
+    let uri = try ATProtocolURI(uriString: feedURI)
+    return try await FeedManager(client: client).fetchFeed(fetchType: .feed(uri), cursor: cursor)
+  }
 
-      if case .appBskyEmbedVideoView(let videoView) = embed,
-         let playlistURL = videoView.playlist.url {
-        return VideoFeedItem(
-          id: post.uri.uriString(),
-          post: post,
-          videoView: videoView,
-          playlistURL: playlistURL
-        )
-      }
-      return nil
+  private func publishItems(_ refreshed: [VideoFeedItem]) {
+    revealedItems.formIntersection(Set(refreshed.map(\.revealIdentity)))
+    items = refreshed
+    if !items.contains(where: { $0.id == activeItemID }) {
+      activeItemID = items.first?.id
     }
+    // Reevaluate/evict before rebuilding the warning view. Temporary holds and
+    // stream replacement do not erase the selected video's requested playback.
+    updatePlaybackForActiveIndex(activeIndex)
   }
 
   private func isItemEligibleForPlayback(_ item: VideoFeedItem) -> Bool {
-    if revealedItemIDs.contains(item.id) {
+    if revealedItems.contains(item.revealIdentity) {
       return true
     }
-    if case .knownType(let record) = item.post.record,
-       let postRecord = record as? AppBskyFeedPost,
-       let postLabels = postRecord.labels,
-       case .comAtprotoLabelDefsSelfLabels(let selfLabels) = postLabels {
-      let hasSelfWarning = selfLabels.values.contains {
-        ContentLabels.contentWarningLabels.contains($0.val.lowercased())
-      }
-      if hasSelfWarning {
-        return false
-      }
-    }
-    let visibility = ContentLabelManager<AnyView>.getInitialContentVisibility(labels: item.post.labels)
+    let visibility = ContentLabelManager<AnyView>.getInitialContentVisibility(
+      labels: item.post.labels, selfLabelValues: item.selfLabelValues
+    )
     return visibility == .show
   }
 
-  private func revealItem(at index: Int) {
-    guard items.indices.contains(index) else { return }
-    let item = items[index]
-    revealedItemIDs.insert(item.id)
-    if index == activeIndex {
+  private func revealItem(_ item: VideoFeedItem, explicitlyRequested: Bool) {
+    guard let index = items.firstIndex(where: { $0.revealIdentity == item.revealIdentity }) else { return }
+    revealedItems.insert(item.revealIdentity)
+    if item.id == activeItemID {
+      playbackIntent.select(item.id)
+      if explicitlyRequested { playbackIntent.setPlaybackRequested(true, for: item.id) }
+      // A passive Show resumes a pending request, while an explicit pause stays
+      // paused. The snapshot check above rejects old preference callbacks.
       updatePlaybackForActiveIndex(index)
     } else {
       updatePrewarming(for: activeIndex)
     }
+    if !explicitlyRequested { contentVisibilityObserver?(item) }
   }
 
-  private func concealItem(at index: Int) {
-    guard items.indices.contains(index) else { return }
-    revealedItemIDs.remove(items[index].id)
+  private func concealItem(_ item: VideoFeedItem) {
+    guard let index = items.firstIndex(where: { $0.revealIdentity == item.revealIdentity }) else { return }
+    revealedItems.remove(item.revealIdentity)
     if index == activeIndex, !isItemEligibleForPlayback(items[index]) {
       playerPool.pauseAll()
     }
   }
 
   private func updatePlaybackForActiveIndex(_ index: Int) {
-    guard isVisible, scenePhase == .active, items.indices.contains(index) else { return }
+    playbackIntent.select(activeItemID)
+    guard isVisible, scenePhase == .active, items.indices.contains(index),
+          items[index].id == activeItemID else {
+      playerPool.pauseAll()
+      return
+    }
     updatePrewarming(for: index)
-    if isItemEligibleForPlayback(items[index]) {
+    if playbackIntent.requestsPlayback(for: items[index].id), isItemEligibleForPlayback(items[index]) {
       playerPool.play(feedIndex: index)
     } else {
       playerPool.pauseAll()
     }
+  }
+
+  private func togglePlayback(for item: VideoFeedItem) {
+    guard isVisible, scenePhase == .active, item.id == activeItemID,
+          items.contains(where: { $0.revealIdentity == item.revealIdentity }),
+          isItemEligibleForPlayback(item) else { return }
+    if !playerPool.wantsPlayback && playerPool.playbackState == .failed {
+      retryPlayback(for: item)
+      return
+    }
+    playbackIntent.select(item.id)
+    playbackIntent.setPlaybackRequested(!playerPool.wantsPlayback, for: item.id)
+    updatePlaybackForActiveIndex(activeIndex)
+  }
+
+  private func retryPlayback(for item: VideoFeedItem) {
+    guard isVisible, scenePhase == .active, item.id == activeItemID,
+          items.contains(where: { $0.revealIdentity == item.revealIdentity }),
+          isItemEligibleForPlayback(item) else { return }
+    playbackIntent.select(item.id)
+    playbackIntent.setPlaybackRequested(true, for: item.id)
+    playerPool.retry(feedIndex: activeIndex)
   }
 
   private func updatePrewarming(for index: Int) {
@@ -342,23 +389,6 @@ private struct VideoFeedEmptyState: View {
           .foregroundStyle(.white.opacity(0.8))
       }
     }
-  }
-}
-
-// MARK: - Video Feed Models
-
-public struct VideoFeedItem: Identifiable, Hashable, Sendable {
-  public let id: String
-  public let post: AppBskyFeedDefs.PostView
-  public let videoView: AppBskyEmbedVideo.View
-  public let playlistURL: URL
-
-  public func hash(into hasher: inout Hasher) {
-    hasher.combine(id)
-  }
-
-  public static func == (lhs: VideoFeedItem, rhs: VideoFeedItem) -> Bool {
-    lhs.id == rhs.id
   }
 }
 
@@ -426,8 +456,12 @@ private struct VideoFeedItemView: View {
   let isRevealed: Bool
   let attachesPlayer: Bool
   let playerPool: VideoFeedPlayerPool
-  let onReveal: () -> Void
+  let onContentVisible: () -> Void
+  let onRevealRequested: () -> Void
   let onConceal: () -> Void
+  let onPlaybackToggle: () -> Void
+  let onPlaybackRetry: () -> Void
+  let moderationResolver: (@MainActor ([ComAtprotoLabelDefs.Label], [String]) async -> ContentVisibility)?
   let onProfileTap: (String) -> Void
   let onPostTap: (ATProtocolURI) -> Void
   @Environment(AppState.self) private var appState
@@ -441,25 +475,15 @@ private struct VideoFeedItemView: View {
     return ""
   }
 
-  private var selfLabelValues: [String]? {
-    guard case .knownType(let record) = item.post.record,
-          let postRecord = record as? AppBskyFeedPost,
-          let postLabels = postRecord.labels else { return nil }
-    switch postLabels {
-    case .comAtprotoLabelDefsSelfLabels(let selfLabels):
-      return selfLabels.values.map { $0.val.lowercased() }
-    default:
-      return nil
-    }
-  }
-
   var body: some View {
     ZStack(alignment: .bottom) {
       Color.black
       ContentLabelManager(
         labels: item.post.labels,
-        selfLabelValues: selfLabelValues,
-        contentType: "video"
+        selfLabelValues: item.selfLabelValues,
+        contentType: "video",
+        onReveal: onRevealRequested,
+        visibilityResolver: moderationResolver
       ) {
         ZStack {
           if attachesPlayer {
@@ -469,11 +493,11 @@ private struct VideoFeedItemView: View {
               shouldLoop: false,
               pausesOnDismantle: false
             )
-            .onAppear(perform: onReveal)
+            .onAppear(perform: onContentVisible)
             .onDisappear(perform: onConceal)
           }
 
-          Button { playerPool.togglePlayPause() } label: {
+          Button(action: onPlaybackToggle) {
             Color.clear.contentShape(Rectangle())
           }
           .buttonStyle(.plain)
@@ -483,6 +507,7 @@ private struct VideoFeedItemView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
       }
+      .id(item.revealIdentity)
       .frame(maxWidth: .infinity, maxHeight: .infinity)
 
       LinearGradient(
@@ -495,9 +520,7 @@ private struct VideoFeedItemView: View {
       VideoFeedPageOverlays(
         status: {
           if isActive && isRevealed {
-            VideoFeedPlaybackStatus(state: playerPool.playbackState) {
-              playerPool.retry(feedIndex: index)
-            }
+            VideoFeedPlaybackStatus(state: playerPool.playbackState, onRetry: onPlaybackRetry)
           }
         },
         footer: { footer }
