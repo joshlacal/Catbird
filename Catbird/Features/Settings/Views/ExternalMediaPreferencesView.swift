@@ -2,18 +2,18 @@ import SwiftUI
 
 struct ExternalMediaPreferencesView: View {
     @Environment(AppState.self) private var appState
+    var initialFocus: SettingsControlID? = nil
     @State private var bulkConsent: ExternalMediaConsent?
     
     var body: some View {
-        Form {
+        SettingsFocusedForm(initialFocus: initialFocus) {
+            SettingsScopeSection(scope: "Current account on this device")
             SettingsPersistenceStatusSection(settings: appState.appSettings)
 
             Section {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 8) {
-                        Image(systemName: "hand.raised.shield.fill")
-                            .foregroundStyle(.blue)
-                            .imageScale(.large)
+                        SettingsCategoryIcon(systemImage: "hand.raised.shield.fill", family: .media)
                         Text("Privacy Notice")
                             .font(.headline)
                     }
@@ -46,8 +46,10 @@ struct ExternalMediaPreferencesView: View {
             Section("Providers") {
                 ForEach(ExternalMediaProvider.allCases) { provider in
                     providerRow(for: provider)
+                        .settingsControl(.init(rawValue: "media.provider.\(provider.rawValue)"))
                 }
             }
+            .settingsControl(.init(rawValue: "media.providerPermissions"))
             .disabled(!appState.appSettings.canEditPersistedSettings)
         }
         .navigationTitle("External Media Permissions")

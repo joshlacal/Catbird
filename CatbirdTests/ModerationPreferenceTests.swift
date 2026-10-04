@@ -1,9 +1,10 @@
 import Testing
 import Foundation
 import Petrel
+import SwiftData
 @testable import Catbird
 
-@Suite("ModerationPreferenceTests")
+@Suite("ModerationPreferenceTests", .serialized)
 struct ModerationPreferenceTests {
     
     @Test("Unavailable labeler detection correctly flags missing DIDs")
@@ -98,4 +99,197 @@ struct ModerationPreferenceTests {
         let showFromTrue = !(truePref.hideBadges ?? false)
         #expect(showFromTrue == false)
     }
+    @Test("Global edits preserve scoped, custom, and newer remote preferences")
+    @MainActor
+    func globalEditPreservesUnrelatedKeys() async throws {
+        let service = try DID(didString: "did:plc:safety-service")
+        let fixture = SafetyPreferencesFixture(items: [
+            .adultContentPref(.init(enabled: true)), .interestsPref(.init(tags: ["Art"])),
+            .contentLabelPref(.init(label: "nsfw", visibility: "warn")),
+            .contentLabelPref(.init(labelerDid: service, label: "nsfw", visibility: "ignore")),
+            .contentLabelPref(.init(label: "custom-label", visibility: "hide"))
+        ])
+        let (manager, local) = try fixture.makeManager()
+        try await manager.setContentLabelVisibility(label: "nsfw", visibility: "hide", expectedAccountDID: fixture.account)
+        #expect(fixture.labels.count == 3)
+        #expect(fixture.labels.first { $0.label == "nsfw" && $0.labelerDid == nil }?.visibility == "hide")
+        #expect(fixture.labels.first { $0.labelerDid == service }?.visibility == "ignore")
+        #expect(fixture.labels.first { $0.label == "custom-label" }?.visibility == "hide")
+        #expect(local.contentLabelPrefs.count == 3)
+        #expect(fixture.items.contains { if case .adultContentPref(let p) = $0 { return p.enabled }; return false })
+        #expect(fixture.items.contains { if case .interestsPref(let p) = $0 { return p.tags == ["Art"] }; return false })
+    }
+
+    @Test("Scoped resolution never inherits another service", arguments: [false, true])
+    func scopedResolver(reverse: Bool) throws {
+        let serviceA = try DID(didString: "did:plc:safety-a")
+        let serviceB = try DID(didString: "did:plc:safety-b")
+        var preferences = [ContentLabelPreference(labelerDid: serviceB, label: "custom", visibility: "ignore")]
+        #expect(ContentFilterManager.getVisibilityForLabel(label: "custom", preferences: preferences) == .warn)
+        #expect(ContentFilterManager.getVisibilityForLabel(label: "custom", labelerDid: serviceA, preferences: preferences) == .warn)
+        preferences.append(.init(labelerDid: nil, label: "custom", visibility: "hide"))
+        preferences.append(.init(labelerDid: serviceA, label: "custom", visibility: "warn"))
+        if reverse { preferences.reverse() }
+        #expect(ContentFilterManager.getVisibilityForLabel(label: "custom", preferences: preferences) == .hide)
+        #expect(ContentFilterManager.getVisibilityForLabel(label: "custom", labelerDid: serviceA, preferences: preferences) == .warn)
+        #expect(ContentFilterManager.getVisibilityForLabel(label: "custom", labelerDid: serviceB, preferences: preferences) == .show)
+    }
+
+    @Test("Final mute word and service removals send explicit empty collections")
+    @MainActor
+    func explicitEmptySafetyCollections() async throws {
+        let service = try DID(didString: "did:plc:safety-service")
+        let fixture = SafetyPreferencesFixture(items: [
+            .mutedWordsPref(.init(items: [.init(id: "word1", value: "needle", targets: [.content], actorTarget: "exclude-following")])),
+            .labelersPref(.init(labelers: [.init(did: service)])), .adultContentPref(.init(enabled: true))
+        ])
+        let (manager, local) = try fixture.makeManager()
+        try await manager.removeMutedWord(id: "word1", expectedAccountDID: fixture.account)
+        try await manager.removeLabelers([service.didString()], expectedAccountDID: fixture.account)
+        #expect(fixture.items.contains { if case .mutedWordsPref(let p) = $0 { return p.items.isEmpty }; return false })
+        #expect(fixture.items.contains { if case .labelersPref(let p) = $0 { return p.labelers.isEmpty }; return false })
+        #expect(local.mutedWords.isEmpty && local.labelers.isEmpty)
+        #expect(fixture.items.contains { if case .adultContentPref(let p) = $0 { return p.enabled }; return false })
+    }
+
+    @Test("Failed reads and writes leave confirmed local moderation unchanged", arguments: [false, true])
+    @MainActor
+    func failuresPreserveLocalState(readFails: Bool) async throws {
+        let fixture = SafetyPreferencesFixture(items: [.contentLabelPref(.init(label: "nsfw", visibility: "hide"))])
+        fixture.failRead = readFails
+        fixture.writeStatus = 503
+        let (manager, local) = try fixture.makeManager()
+        local.contentLabelPrefs = [.init(labelerDid: nil, label: "nsfw", visibility: "hide")]
+        do {
+            try await manager.setContentLabelVisibility(label: "nsfw", visibility: "ignore", expectedAccountDID: fixture.account)
+            Issue.record("A failed safety transaction must throw")
+        } catch {}
+        #expect(fixture.writes.count == (readFails ? 0 : 1))
+        #expect(local.contentLabelPrefs.first?.visibility == "hide")
+        fixture.failRead = false
+        fixture.writeStatus = 200
+        try await manager.setContentLabelVisibility(label: "nsfw", visibility: "warn", expectedAccountDID: fixture.account)
+        #expect(local.contentLabelPrefs.first?.visibility == "warn")
+    }
+
+    @Test("A delayed read cannot write after A to B to A reconfiguration")
+    @MainActor
+    func staleAccountReadRejected() async throws {
+        let fixture = SafetyPreferencesFixture(items: [.contentLabelPref(.init(label: "nsfw", visibility: "hide"))])
+        fixture.pauseNextRead = true
+        let (manager, local) = try fixture.makeManager()
+        let edit = Task { @MainActor in
+            try await manager.setContentLabelVisibility(label: "nsfw", visibility: "ignore", expectedAccountDID: fixture.account)
+        }
+        try await fixture.waitForPausedRead()
+        manager.configure(accountDID: "did:plc:safety-other")
+        manager.configure(accountDID: fixture.account)
+        fixture.resumeRead()
+        do { try await edit.value; Issue.record("A stale generation must fail") } catch {}
+        #expect(fixture.writes.isEmpty)
+        #expect(local.contentLabelPrefs.isEmpty)
+    }
+
+    @Test("Concurrent different-key edits both survive a serialized remote transaction")
+    @MainActor
+    func concurrentEditsPreserveBothKeys() async throws {
+        let fixture = SafetyPreferencesFixture(items: [])
+        fixture.pauseNextRead = true
+        let (manager, _) = try fixture.makeManager()
+        let first = Task { @MainActor in try await manager.setContentLabelVisibility(label: "nsfw", visibility: "hide") }
+        try await fixture.waitForPausedRead()
+        let second = Task { @MainActor in try await manager.setContentLabelVisibility(label: "custom", visibility: "warn") }
+        await Task.yield()
+        fixture.resumeRead()
+        try await first.value
+        try await second.value
+        #expect(fixture.writes.count == 2)
+        #expect(fixture.labels.count == 2)
+    }
+
+    @Test("Feed row edits preserve remote fields and unrelated feed records")
+    @MainActor
+    func sparseFeedDelta() async throws {
+        let fixture = SafetyPreferencesFixture(items: [
+            .feedViewPref(.init(feed: "home", hideReplies: true, hideRepliesByLikeCount: 12, hideReposts: true)),
+            .feedViewPref(.init(feed: "other", hideReplies: false, hideRepliesByLikeCount: 42))
+        ])
+        let (manager, _) = try fixture.makeManager()
+        try await manager.setFeedViewPreferences(hideReposts: false, expectedAccountDID: fixture.account)
+        let feeds = fixture.items.compactMap { item -> AppBskyActorDefs.FeedViewPref? in
+            if case .feedViewPref(let p) = item { return p }; return nil
+        }
+        #expect(feeds.first { $0.feed == "home" }?.hideRepliesByLikeCount == 12)
+        #expect(feeds.first { $0.feed == "home" }?.hideReplies == true)
+        #expect(feeds.first { $0.feed == "home" }?.hideReposts == false)
+        #expect(feeds.first { $0.feed == "other" }?.hideRepliesByLikeCount == 42)
+    }
+
+    @Test("Confirmed defaults reads throw on failure and explicit nil removes only defaults")
+    @MainActor
+    func confirmedDefaultsBoundary() async throws {
+        let fixture = SafetyPreferencesFixture(items: [.postInteractionSettingsPref(.init()), .adultContentPref(.init(enabled: true))])
+        let (manager, local) = try fixture.makeManager()
+        #expect(try await manager.getConfirmedPostInteractionSettingsPref(expectedAccountDID: fixture.account) != nil)
+        fixture.failRead = true
+        do { _ = try await manager.getConfirmedPostInteractionSettingsPref(); Issue.record("Failed read must not look absent") } catch {}
+        #expect(fixture.writes.isEmpty)
+        fixture.failRead = false
+        try await manager.setPostInteractionSettingsPref(nil, expectedAccountDID: fixture.account)
+        #expect(!fixture.items.contains { if case .postInteractionSettingsPref = $0 { return true }; return false })
+        #expect(local.postInteractionSettingsPref == nil)
+        #expect(fixture.items.contains { if case .adultContentPref = $0 { return true }; return false })
+    }
+
+}
+
+
+@MainActor
+private final class SafetyPreferencesFixture {
+    let account = "did:plc:safety-fixture"
+    var items: [AppBskyActorDefs.PreferencesForUnionArray]
+    var writes: [[AppBskyActorDefs.PreferencesForUnionArray]] = []
+    var failRead = false
+    var writeStatus = 200
+    var pauseNextRead = false
+    private var readContinuation: CheckedContinuation<Void, Never>?
+
+    init(items: [AppBskyActorDefs.PreferencesForUnionArray]) { self.items = items }
+    var labels: [AppBskyActorDefs.ContentLabelPref] {
+        items.compactMap { if case .contentLabelPref(let p) = $0 { return p }; return nil }
+    }
+    var transport: PreferencesManager.SpecificPreferencesTransport {
+        .init(getPreferences: {
+            if self.pauseNextRead {
+                self.pauseNextRead = false
+                await withCheckedContinuation { self.readContinuation = $0 }
+            }
+            if self.failRead { throw NSError(domain: "SafetyFixture", code: 503) }
+            return self.items
+        }, putPreferences: { items in
+            self.writes.append(items)
+            if (200..<300).contains(self.writeStatus) { self.items = items }
+            return self.writeStatus
+        })
+    }
+    func makeManager() throws -> (PreferencesManager, Preferences) {
+        let container = try ModelContainer(for: Preferences.self,
+            configurations: ModelConfiguration(isStoredInMemoryOnly: true, cloudKitDatabase: .none))
+        let context = ModelContext(container)
+        let local = Preferences(accountDID: account)
+        context.insert(local)
+        try context.save()
+        let defaults = UserDefaults(suiteName: "SafetyFixture.\(UUID().uuidString)")!
+        let manager = PreferencesManager(modelContext: context, specificPreferencesTransport: transport, sharedDefaults: defaults)
+        manager.configure(accountDID: account)
+        return (manager, local)
+    }
+    func waitForPausedRead() async throws {
+        for _ in 0..<1000 {
+            if readContinuation != nil { return }
+            await Task.yield()
+        }
+        throw NSError(domain: "SafetyFixture", code: 1)
+    }
+    func resumeRead() { readContinuation?.resume(); readContinuation = nil }
 }

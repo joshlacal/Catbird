@@ -14,6 +14,7 @@ struct LabelerInfoTab: View {
     @Environment(AppState.self) private var appState
     @State private var labelPreferences: [String: ContentVisibility] = [:]
     @State private var isSaving = false
+    @State private var hasConfirmedPreferences = false
     @State private var errorMessage: String?
     
     var body: some View {
@@ -198,13 +199,18 @@ struct LabelerInfoTab: View {
             selection: Binding(
                 get: { labelPreferences[identifier] ?? .warn },
                 set: { newValue in
-                    labelPreferences[identifier] = newValue
+                    guard hasConfirmedPreferences, !isSaving, newValue != labelPreferences[identifier] else { return }
+                    let account = appState.userDID
+                    let manager = appState.preferencesManager
+                    isSaving = true
                     Task {
-                        await saveLabelPreference(identifier: identifier, visibility: newValue)
+                        await saveLabelPreference(identifier: identifier, visibility: newValue,
+                                                  manager: manager, account: account)
                     }
                 }
             )
         )
+        .disabled(!hasConfirmedPreferences || isSaving)
     }
     
     // MARK: - Helper Functions
@@ -282,7 +288,10 @@ struct LabelerInfoTab: View {
     
     private func loadLabelPreferences() async {
         do {
-            let preferences = try await appState.preferencesManager.getPreferences()
+            let account = appState.userDID
+            let manager = appState.preferencesManager
+            let preferences = try await manager.refreshSettingsPreferences(expectedAccountDID: account)
+            guard manager.accountDID == account else { return }
             let labelerDid = labelerDetails.creator.did
             
             for labelValue in labelerDetails.policies.labelValues {
@@ -295,44 +304,28 @@ struct LabelerInfoTab: View {
                     labelPreferences[labelValue.rawValue] = visibility
                 }
             }
+            hasConfirmedPreferences = true
         } catch {
+            hasConfirmedPreferences = false
             await MainActor.run {
                 errorMessage = "Failed to load preferences: \(error.localizedDescription)"
             }
         }
     }
     
-    private func saveLabelPreference(identifier: String, visibility: ContentVisibility) async {
-        isSaving = true
+    private func saveLabelPreference(identifier: String, visibility: ContentVisibility,
+                                     manager: PreferencesManager, account: String) async {
+        defer { isSaving = false }
         errorMessage = nil
         
         do {
             let labelerDid = labelerDetails.creator.did
-            let preference = ContentLabelPreference(
-                labelerDid: labelerDid,
-                label: identifier,
-                visibility: visibility.rawValue
-            )
-            
-            // Get existing preferences
-            let currentPrefs = try await appState.preferencesManager.getPreferences()
-            var updatedPrefs = currentPrefs.contentLabelPrefs
-            
-            // Remove any existing preference for this labeler+label combination
-            updatedPrefs.removeAll { pref in
-                pref.labelerDid?.didString() == labelerDid.didString() && pref.label == identifier
-            }
-            
-            // Add new preference
-            updatedPrefs.append(preference)
-            
-            // Save to server
-            try await appState.preferencesManager.updateContentLabelPreferences(updatedPrefs)
-            
-            await MainActor.run {
-                isSaving = false
-            }
+            try await manager.setContentLabelVisibility(label: identifier, visibility: visibility.preferenceValue,
+                                                        labelerDid: labelerDid, expectedAccountDID: account)
+            guard manager.accountDID == account else { return }
+            labelPreferences[identifier] = visibility
         } catch {
+            guard manager.accountDID == account else { return }
             await MainActor.run {
                 errorMessage = "Failed to save preference: \(error.localizedDescription)"
                 isSaving = false

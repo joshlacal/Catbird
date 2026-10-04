@@ -420,19 +420,27 @@ final class Preferences {
   }
 
   // New helper methods for content label preferences
-  func setContentLabelVisibility(for label: String, visibility: String, labelerDid: DID? = nil) {
-    // Remove existing preference if any
-    contentLabelPrefs.removeAll {
-      $0.label == label && $0.labelerDid?.didString() == labelerDid?.didString()
+  /// Apply only the addressed (label, service) keys. Other services and custom labels survive.
+  static func mergingContentLabelPreferences(
+    _ updates: [ContentLabelPreference], into existing: [ContentLabelPreference]
+  ) -> [ContentLabelPreference] {
+    var result = existing
+    for update in updates {
+      result.removeAll {
+        $0.label == update.label && $0.labelerDid?.didString() == update.labelerDid?.didString()
+      }
+      result.append(update)
     }
+    return result
+  }
 
-    // Add new preference
-    contentLabelPrefs.append(
+  func setContentLabelVisibility(for label: String, visibility: String, labelerDid: DID? = nil) {
+    contentLabelPrefs = Self.mergingContentLabelPreferences([
       ContentLabelPreference(
         labelerDid: labelerDid,
         label: label,
         visibility: visibility
-      ))
+      )], into: contentLabelPrefs)
   }
 
   // Helper for muted words

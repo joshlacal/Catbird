@@ -432,8 +432,7 @@ final class AppSettingsModel {
     }
     
     /// Migrate from existing UserDefaults settings
-    func migrateFromUserDefaults(accountDID: String? = nil, includeLegacyFallback: Bool = true, writeWidgetBackup: Bool = true) {
-        let defaults = UserDefaults.standard
+    func migrateFromUserDefaults(accountDID: String? = nil, includeLegacyFallback: Bool = true, writeWidgetBackup: Bool = true, defaults: UserDefaults = .standard) {
         
         // Appearance
         if let value = Self.stringValue(for: "theme", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { theme = value }
