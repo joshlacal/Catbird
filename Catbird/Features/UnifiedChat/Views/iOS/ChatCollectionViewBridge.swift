@@ -6,6 +6,7 @@ import UIKit
 struct ChatCollectionViewBridge<DataSource: UnifiedChatDataSource>: UIViewControllerRepresentable {
   @Environment(SceneNavigationContext.self) private var sceneContext
   @Environment(AppState.self) private var appState
+  @Environment(\.scenePhase) private var scenePhase
   @Environment(\.chatTranscriptBottomInset) private var bottomInset
 
   let dataSource: DataSource
@@ -30,6 +31,7 @@ struct ChatCollectionViewBridge<DataSource: UnifiedChatDataSource>: UIViewContro
     controller.onEditMessage = onEditMessage
     controller.onUnsendMessage = onUnsendMessage
     controller.onReply = onReply
+    controller.updatePrefetchSceneActivity(isActive: scenePhase == .active)
     return controller
   }
 
@@ -41,6 +43,7 @@ struct ChatCollectionViewBridge<DataSource: UnifiedChatDataSource>: UIViewContro
     controller.updateNavigationBinding($navigationPath)
     controller.updateAppState(appState)
     controller.updateSceneContext(sceneContext)
+    controller.updatePrefetchSceneActivity(isActive: scenePhase == .active)
     controller.onMessageLongPress = onMessageLongPress
     controller.onRequestEmojiPicker = onRequestEmojiPicker
     controller.onRetryMessage = onRetryMessage

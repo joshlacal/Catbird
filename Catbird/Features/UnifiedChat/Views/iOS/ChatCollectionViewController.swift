@@ -71,6 +71,7 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
   private var sceneContext: SceneNavigationContext
 
   private var observationTask: Task<Void, Never>?
+  private let embedPrefetchAdmission = ChatEmbedPrefetchAdmission()
   private var embedPrefetchTasks: [String: (id: UUID, task: Task<Void, Never>)] = [:]
   private var lastMessageSignaturesByID: [String: String] = [:]
   private var lastSnapshotItems: [Item] = []
@@ -173,9 +174,22 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
     Task { await dataSource.loadMessages() }
   }
 
+  override func viewDidAppear(_ animated: Bool) {
+    super.viewDidAppear(animated)
+    embedPrefetchAdmission.update(
+      isVisible: true, cancel: cancelEmbedPrefetch, warm: warmNewestEmbeds
+    )
+  }
+
+  override func viewWillDisappear(_ animated: Bool) {
+    embedPrefetchAdmission.update(
+      isVisible: false, cancel: cancelEmbedPrefetch, warm: warmNewestEmbeds
+    )
+    super.viewWillDisappear(animated)
+  }
+
   override func viewDidDisappear(_ animated: Bool) {
     super.viewDidDisappear(animated)
-    cancelEmbedPrefetch()
     // Only tear down observation when truly leaving the screen (popped from nav stack),
     // not when a sheet or full-screen cover is presented over this view controller.
     // Cancelling here caused incoming websocket messages to be silently dropped from the
@@ -394,11 +408,7 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
   @MainActor
   private func processObservationCycle() async {
     let newItems = currentSnapshotItems()
-    // The initial viewport is at the newest messages; UIKit prefetch covers
-    // history scrolling after this first bounded metadata warm-up.
-    for message in dataSource.messages.suffix(8).reversed() {
-      if let uri = message.embed?.recordURI { prefetchEmbed(uri: uri) }
-    }
+    warmNewestEmbeds()
     let itemsChanged = newItems != lastSnapshotItems
     let newSignaturesByID = currentMessageSignaturesByID()
     let stableIDs = Set(lastMessageSignaturesByID.keys).intersection(newSignaturesByID.keys)
@@ -957,11 +967,28 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
     }
   }
 
+  func updatePrefetchSceneActivity(isActive: Bool) {
+    embedPrefetchAdmission.update(
+      isSceneActive: isActive, cancel: cancelEmbedPrefetch, warm: warmNewestEmbeds
+    )
+  }
+
+  private func warmNewestEmbeds() {
+    // Observation remains live when covered; only optional metadata work stops.
+    embedPrefetchAdmission.performIfAllowed {
+      for message in dataSource.messages.suffix(8).reversed() {
+        if let uri = message.embed?.recordURI { prefetchEmbed(uri: uri) }
+      }
+    }
+  }
+
   private func prefetchEmbed(uri: String) {
-    guard embedPrefetchTasks.count < 4, embedPrefetchTasks[uri] == nil,
+    guard embedPrefetchAdmission.isAllowed,
+      embedPrefetchTasks.count < 4, embedPrefetchTasks[uri] == nil,
       let appState, ChatRecordEmbedStore.shared.cachedRecord(uri: uri, appState: appState) == nil else { return }
     let requestID = UUID()
     let task = Task { @MainActor [weak self] in
+      guard !Task.isCancelled, self?.embedPrefetchAdmission.isAllowed == true else { return }
       _ = try? await ChatRecordEmbedStore.shared.load(uri: uri, appState: appState)
       if self?.embedPrefetchTasks[uri]?.id == requestID {
         self?.embedPrefetchTasks.removeValue(forKey: uri)
