@@ -38,7 +38,7 @@ struct BlueskyHelpCenterSettingsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.base) {
             Text("Answers about Bluesky’s social network. This page is provided by Bluesky.")
-                .font(.subheadline).foregroundStyle(.secondary).padding(.horizontal)
+                .appFont(AppTextRole.subheadline).foregroundStyle(.secondary).padding(.horizontal)
             ZStack {
                 BlueskyHelpWebView(isLoading: $isLoadingWebView)
                 if isLoadingWebView { ProgressView("Loading Bluesky Help Center…") }

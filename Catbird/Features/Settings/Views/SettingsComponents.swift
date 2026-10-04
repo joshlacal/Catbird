@@ -44,8 +44,8 @@ struct SettingsNavigationRow: View {
         HStack(alignment: .center, spacing: DesignTokens.Spacing.base) {
             SettingsCategoryIcon(systemImage: systemImage, family: family)
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
-                Text(title).foregroundStyle(.primary)
-                if let summary, !summary.isEmpty { Text(summary).font(.subheadline).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
+                Text(title).appFont(AppTextRole.body).foregroundStyle(.primary)
+                if let summary, !summary.isEmpty { Text(summary).appFont(AppTextRole.subheadline).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
             }
         }
         .accessibilityElement(children: .combine)
@@ -102,7 +102,7 @@ struct SettingsScopeSection: View {
             LabeledContent("Applies to", value: scope)
             if scope == "Current account" {
                 let handle = AppStateManager.shared.authentication.getCachedProfileData(for: appState.userDID)?.handle
-                Text(handle.map { "@" + $0 } ?? appState.userDID).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                Text(handle.map { "@" + $0 } ?? appState.userDID).appFont(AppTextRole.caption).foregroundStyle(.secondary).textSelection(.enabled)
             }
         }
     }
