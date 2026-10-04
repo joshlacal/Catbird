@@ -59,6 +59,7 @@ import AppKit
     }
     private var pendingEffects: [String: [String: PendingEffect]] = [:]
     private var admittedEffectIdentities: Set<UUID> = []
+    private var startedEffectIdentities: [String: Set<UUID>] = [:]
     private var accountDID: String?
     private var suspendedAccountDID: String?
     private var generation: UInt64 = 0
@@ -162,6 +163,23 @@ import AppKit
     enum PendingDecision { case save, discard }
     enum PendingResolution: Equatable { case resolved, saveFailed, accountChanged, unavailable }
 
+    enum AccountSwitchFlushFailure: LocalizedError, Equatable {
+        case accountChanged, saveFailed, unfinishedChanges
+
+        var errorDescription: String? {
+            switch self {
+            case .accountChanged:
+                return "The original account could not be verified for its settings changes."
+            case .saveFailed:
+                return "Your local settings could not be saved. Retry saving or discard the pending changes before switching accounts."
+            case .unfinishedChanges:
+                return "Some settings changes still need to finish before you switch accounts. Return to Settings on the current account and try again."
+            }
+        }
+    }
+
+    private(set) var accountSwitchFlushFailure: AccountSwitchFlushFailure?
+
     var hasPendingChanges: Bool {
         guard let accountDID else { return false }
         return pendingDrafts[accountDID] != nil || !(pendingEffects[accountDID] ?? [:]).isEmpty
@@ -252,6 +270,7 @@ import AppKit
         guard self.accountDID == accountDID,
               suspendedAccountDID == nil || suspendedAccountDID == accountDID else { return false }
         suspendedAccountDID = accountDID
+        accountSwitchFlushFailure = nil
         generation &+= 1
         notificationDebounceTimer?.invalidate()
         notificationDebounceTimer = nil
@@ -262,9 +281,23 @@ import AppKit
     /// The switch owner calls this synchronously after draining the account's actual work.
     @MainActor @discardableResult
     func flushPendingChangesForAccountSwitch(for accountDID: String) -> Bool {
-        guard self.accountDID == accountDID, suspendedAccountDID == accountDID else { return false }
-        guard pendingDrafts[accountDID] != nil else { return true }
-        return persistPendingChanges(allowSuspended: true)
+        guard self.accountDID == accountDID, suspendedAccountDID == accountDID else {
+            accountSwitchFlushFailure = .accountChanged
+            return false
+        }
+        if pendingDrafts[accountDID] != nil, !persistPendingChanges(allowSuspended: true) {
+            accountSwitchFlushFailure = .saveFailed
+            return false
+        }
+        // Retirement would destroy this manager. A committed row alone cannot replace
+        // a retained compatibility action, such as clearing the legacy language filter.
+        guard (pendingEffects[accountDID] ?? [:]).isEmpty,
+              (startedEffectIdentities[accountDID] ?? []).isEmpty else {
+            accountSwitchFlushFailure = .unfinishedChanges
+            return false
+        }
+        accountSwitchFlushFailure = nil
+        return true
     }
 
     /// Reopen only the retained source that the lifecycle owner has verified as active.
@@ -408,13 +441,17 @@ import AppKit
                   !admittedEffectIdentities.contains(effect.identity) else { continue }
             admittedEffectIdentities.insert(effect.identity)
             let admitted = persistence.startEffect { @MainActor [weak self] in
-                defer { self?.admittedEffectIdentities.remove(effect.identity) }
+                defer {
+                    self?.admittedEffectIdentities.remove(effect.identity)
+                    self?.startedEffectIdentities[accountDID]?.remove(effect.identity)
+                }
                 guard let self, self.isCurrent(accountDID, generation: generation),
                       !self.isLocalChangesSuspended,
                       self.persistenceState == .ready,
                       self.persistence.isActiveAccount(accountDID, self),
                       self.pendingEffects[accountDID]?[key]?.identity == effect.identity else { return }
                 self.pendingEffects[accountDID]?.removeValue(forKey: key)
+                self.startedEffectIdentities[accountDID, default: []].insert(effect.identity)
                 await effect.action()
             }
             if !admitted { admittedEffectIdentities.remove(effect.identity) }

@@ -27,6 +27,7 @@ struct AppSettingsAccountSwitchTests {
     #expect(fixture.saveCount == 0)
     fixture.failSave = true
     #expect(!fixture.settings.flushPendingChangesForAccountSwitch(for: fixture.did))
+    #expect(fixture.settings.accountSwitchFlushFailure == .saveFailed)
     await fixture.settle()
     #expect(fixture.settings.hasPendingChanges)
     #expect(fixture.settings.pendingChangesDescription.contains("Theme: Dark"))
@@ -43,7 +44,7 @@ struct AppSettingsAccountSwitchTests {
     #expect(effects == 1)
   }
 
-  @Test("Closed flush writes account backup and defers active publication until verified resume")
+  @Test("Closed flush saves the row but refuses retirement until its follow-up effect finishes")
   func closedFlushDefersPublication() async throws {
     let fixture = try LocalSettingsSwitchFixture()
     defer { fixture.cleanUp() }
@@ -53,7 +54,8 @@ struct AppSettingsAccountSwitchTests {
     fixture.settings.theme = "dark"
     fixture.settings.afterPendingSave { effects += 1 }
     #expect(fixture.settings.suspendLocalChanges(for: fixture.did))
-    #expect(fixture.settings.flushPendingChangesForAccountSwitch(for: fixture.did))
+    #expect(!fixture.settings.flushPendingChangesForAccountSwitch(for: fixture.did))
+    #expect(fixture.settings.accountSwitchFlushFailure == .unfinishedChanges)
     await fixture.settle()
     #expect(try fixture.storedTheme() == "dark")
     #expect(fixture.defaults.string(forKey: AppSettingsModel.scopedKey("theme", accountDID: fixture.did)) == "dark")
@@ -73,6 +75,7 @@ struct AppSettingsAccountSwitchTests {
     #expect(fixture.settings.persistenceState == .unavailable)
     #expect(fixture.settings.suspendLocalChanges(for: fixture.did))
     #expect(fixture.settings.flushPendingChangesForAccountSwitch(for: fixture.did))
+    #expect(fixture.settings.accountSwitchFlushFailure == nil)
     #expect(!fixture.settings.flushPendingChangesForAccountSwitch(for: "did:plc:another"))
     #expect(fixture.saveCount == 0)
   }
@@ -93,7 +96,8 @@ struct AppSettingsAccountSwitchTests {
     #expect(fixture.settings.suspendLocalChanges(for: fixture.did))
     await admitted[0]()
     #expect(effects == 0 && fixture.settings.hasPendingChanges)
-    #expect(fixture.settings.flushPendingChangesForAccountSwitch(for: fixture.did))
+    #expect(!fixture.settings.flushPendingChangesForAccountSwitch(for: fixture.did))
+    #expect(fixture.settings.accountSwitchFlushFailure == .unfinishedChanges)
     #expect(fixture.settings.resumeLocalChanges(for: fixture.did))
     await fixture.settle()
     #expect(admitted.count == 2)
@@ -117,6 +121,8 @@ struct AppSettingsAccountSwitchTests {
     await fixture.settle()
     #expect(continuation != nil)
     #expect(fixture.settings.suspendLocalChanges(for: fixture.did))
+    #expect(!fixture.settings.flushPendingChangesForAccountSwitch(for: fixture.did))
+    #expect(fixture.settings.accountSwitchFlushFailure == .unfinishedChanges)
     fixture.work.suspend()
     var drained = false
     let drain = Task { @MainActor in
@@ -129,6 +135,38 @@ struct AppSettingsAccountSwitchTests {
     try await drain.value
     #expect(drained && completed)
     #expect(fixture.settings.flushPendingChangesForAccountSwitch(for: fixture.did))
+  }
+
+  @Test("Successful retirement cannot lose the retained Show All language-filter action")
+  func retirementWaitsForLanguageCompatibilityAction() async throws {
+    let fixture = try LocalSettingsSwitchFixture()
+    defer { fixture.cleanUp() }
+    await fixture.settle()
+    var legacyLanguageFilterEnabled = true
+    var retired = false
+    fixture.settings.hideNonPreferredLanguages = false
+    fixture.settings.afterPendingSave(key: "language-filter", description: "Show posts in all reading languages") {
+      legacyLanguageFilterEnabled = false
+    }
+    #expect(fixture.settings.suspendLocalChanges(for: fixture.did))
+    fixture.work.suspend()
+    try await fixture.work.drain(timeout: .seconds(1))
+    if fixture.settings.flushPendingChangesForAccountSwitch(for: fixture.did) { retired = true }
+    #expect(!retired)
+    #expect(fixture.settings.accountSwitchFlushFailure == .unfinishedChanges)
+    #expect(legacyLanguageFilterEnabled && fixture.settings.hasPendingChanges)
+    #expect(fixture.settings.pendingChangesDescription.contains("Show posts in all reading languages"))
+    let saved = try ModelContext(fixture.container).fetch(FetchDescriptor<AppSettingsModel>()).first
+    #expect(saved?.hideNonPreferredLanguages == false)
+    fixture.work.resume()
+    #expect(fixture.settings.resumeLocalChanges(for: fixture.did))
+    await fixture.settle()
+    #expect(!legacyLanguageFilterEnabled && !fixture.settings.hasPendingChanges)
+    #expect(fixture.settings.suspendLocalChanges(for: fixture.did))
+    fixture.work.suspend()
+    try await fixture.work.drain(timeout: .seconds(1))
+    if fixture.settings.flushPendingChangesForAccountSwitch(for: fixture.did) { retired = true }
+    #expect(retired && fixture.settings.accountSwitchFlushFailure == nil)
   }
 }
 
