@@ -11,6 +11,8 @@ struct EmailUpdateSheet: View {
     
     @Environment(AppState.self) private var appState
     @Environment(\.dismiss) private var dismiss
+    @State private var mountedAccountDID: String?
+    @State private var mountedAccountRevision: UInt64 = 0
     
     @State private var newEmail: String = ""
     @State private var emailAuthFactorChoice: Bool?
@@ -45,7 +47,7 @@ struct EmailUpdateSheet: View {
     }
     
     private var canSubmit: Bool {
-        guard !isBusy else { return false }
+        guard !isBusy, mountedAccountDID == appState.userDID && mountedAccountDID.map { SettingsAccountBoundary.isCurrent($0, revision: mountedAccountRevision) } == true else { return false }
         let email = effectiveEmail
         guard !email.isEmpty && email.contains("@") else { return false }
         if isTokenRequired {
@@ -144,7 +146,7 @@ struct EmailUpdateSheet: View {
                     }
                 }
             }
-            .navigationTitle("Update Email")
+            .navigationTitle("Email & Sign-In Codes")
             #if os(iOS)
             .toolbarTitleDisplayMode(.inline)
             #endif
@@ -174,6 +176,8 @@ struct EmailUpdateSheet: View {
                     .disabled(!canSubmit)
                 }
             }
+            .task { if mountedAccountDID == nil { mountedAccountDID = appState.userDID; mountedAccountRevision = AppStateManager.shared.settingsAccountContextRevision } }
+            .onChange(of: appState.userDID) { _, _ in emailTask?.cancel(); dismiss() }
             .interactiveDismissDisabled(isBusy)
             .onDisappear {
                 if !isUpdating {
@@ -188,7 +192,7 @@ struct EmailUpdateSheet: View {
         let email = effectiveEmail
         let authFactor = emailAuthFactorChoice
         
-        guard let client = appState.atProtoClient else {
+        guard mountedAccountDID == appState.userDID && mountedAccountDID.map { SettingsAccountBoundary.isCurrent($0, revision: mountedAccountRevision) } == true, let client = appState.atProtoClient else {
             errorMessage = "Client not available."
             return
         }
@@ -199,10 +203,10 @@ struct EmailUpdateSheet: View {
         
         do {
             try await ensurePermission(.accountEmailManage)
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, mountedAccountDID.map { SettingsAccountBoundary.isCurrent($0, revision: mountedAccountRevision) } == true else { return }
             
             let (responseCode, data) = try await client.com.atproto.server.requestEmailUpdate()
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, mountedAccountDID.map { SettingsAccountBoundary.isCurrent($0, revision: mountedAccountRevision) } == true else { return }
             
             if (200...299).contains(responseCode) {
                 if data?.tokenRequired == true {
@@ -218,13 +222,13 @@ struct EmailUpdateSheet: View {
                 isRequestingCode = false
             }
         } catch let error as GatewayPermissionError where error == .cancelled {
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, mountedAccountDID.map { SettingsAccountBoundary.isCurrent($0, revision: mountedAccountRevision) } == true else { return }
             errorMessage = nil
             isRequestingCode = false
         } catch is CancellationError {
             // Task cancelled
         } catch {
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, mountedAccountDID.map { SettingsAccountBoundary.isCurrent($0, revision: mountedAccountRevision) } == true else { return }
             errorMessage = error.localizedDescription
             isRequestingCode = false
         }
@@ -246,7 +250,7 @@ struct EmailUpdateSheet: View {
             return
         }
         
-        guard let client = appState.atProtoClient else {
+        guard mountedAccountDID == appState.userDID && mountedAccountDID.map { SettingsAccountBoundary.isCurrent($0, revision: mountedAccountRevision) } == true, let client = appState.atProtoClient else {
             errorMessage = "Client not available."
             return
         }
@@ -258,14 +262,14 @@ struct EmailUpdateSheet: View {
         do {
             // Immediately before account calls ensure accountEmailManage
             try await ensurePermission(.accountEmailManage)
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, mountedAccountDID.map { SettingsAccountBoundary.isCurrent($0, revision: mountedAccountRevision) } == true else { return }
             
             if isTokenRequired {
                 await performUpdate(email: email, authFactor: authFactor, token: currentToken)
             } else {
                 // Request email update first
                 let (responseCode, data) = try await client.com.atproto.server.requestEmailUpdate()
-                guard !Task.isCancelled else { return }
+                guard !Task.isCancelled, mountedAccountDID.map { SettingsAccountBoundary.isCurrent($0, revision: mountedAccountRevision) } == true else { return }
                 
                 if (200...299).contains(responseCode) {
                     if data?.tokenRequired == true {
@@ -282,13 +286,13 @@ struct EmailUpdateSheet: View {
                 }
             }
         } catch let error as GatewayPermissionError where error == .cancelled {
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, mountedAccountDID.map { SettingsAccountBoundary.isCurrent($0, revision: mountedAccountRevision) } == true else { return }
             errorMessage = nil
             isUpdating = false
         } catch is CancellationError {
             // Task cancelled
         } catch {
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, mountedAccountDID.map { SettingsAccountBoundary.isCurrent($0, revision: mountedAccountRevision) } == true else { return }
             errorMessage = error.localizedDescription
             isUpdating = false
         }
@@ -296,7 +300,7 @@ struct EmailUpdateSheet: View {
     
     @MainActor
     private func performUpdate(email: String, authFactor: Bool?, token: String?) async {
-        guard let client = appState.atProtoClient else {
+        guard mountedAccountDID == appState.userDID && mountedAccountDID.map { SettingsAccountBoundary.isCurrent($0, revision: mountedAccountRevision) } == true, let client = appState.atProtoClient else {
             if !Task.isCancelled {
                 errorMessage = "Client not available."
                 isUpdating = false
@@ -309,13 +313,14 @@ struct EmailUpdateSheet: View {
         do {
             // Immediately before account calls ensure accountEmailManage
             try await ensurePermission(.accountEmailManage)
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, mountedAccountDID.map { SettingsAccountBoundary.isCurrent($0, revision: mountedAccountRevision) } == true else { return }
             let input = ComAtprotoServerUpdateEmail.Input(
                 email: email,
                 emailAuthFactor: authFactor,
                 token: token
             )
             let responseCode = try await client.com.atproto.server.updateEmail(input: input)
+            guard !Task.isCancelled, mountedAccountDID.map { SettingsAccountBoundary.isCurrent($0, revision: mountedAccountRevision) } == true else { return }
             
             if (200...299).contains(responseCode) {
                 onEmailUpdated(email)
@@ -326,7 +331,7 @@ struct EmailUpdateSheet: View {
                 isUpdating = false
             }
         } catch let error as ATProtoError<ComAtprotoServerUpdateEmail.Error> {
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, mountedAccountDID.map { SettingsAccountBoundary.isCurrent($0, revision: mountedAccountRevision) } == true else { return }
             switch error.error {
             case .tokenRequired:
                 isTokenRequired = true
@@ -338,13 +343,13 @@ struct EmailUpdateSheet: View {
             }
             isUpdating = false
         } catch let error as GatewayPermissionError where error == .cancelled {
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, mountedAccountDID.map { SettingsAccountBoundary.isCurrent($0, revision: mountedAccountRevision) } == true else { return }
             errorMessage = nil
             isUpdating = false
         } catch is CancellationError {
             // Task cancelled
         } catch {
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, mountedAccountDID.map { SettingsAccountBoundary.isCurrent($0, revision: mountedAccountRevision) } == true else { return }
             errorMessage = error.localizedDescription
             isUpdating = false
         }
@@ -367,6 +372,8 @@ struct HandleUpdateSheet: View {
     
     @Environment(AppState.self) private var appState
     @Environment(\.dismiss) private var dismiss
+    @State private var mountedAccountDID: String?
+    @State private var mountedAccountRevision: UInt64 = 0
     
     @State private var handleType: HandleType = .serviceDomain
     
@@ -433,7 +440,7 @@ struct HandleUpdateSheet: View {
     }
     
     private var canUpdate: Bool {
-        guard !isUpdating else { return false }
+        guard !isUpdating, mountedAccountDID.map { SettingsAccountBoundary.isCurrent($0, revision: mountedAccountRevision) } == true else { return false }
         switch handleType {
         case .serviceDomain:
             return !cleanedLocalPart.isEmpty &&
@@ -519,8 +526,10 @@ struct HandleUpdateSheet: View {
                 }
             }
             .task {
+                if mountedAccountDID == nil { mountedAccountDID = appState.userDID; mountedAccountRevision = AppStateManager.shared.settingsAccountContextRevision }
                 await loadServerDomains()
             }
+            .onChange(of: appState.userDID) { _, _ in cancelTasks(); dismiss() }
             .interactiveDismissDisabled(isUpdating)
             .onDisappear {
                 cancelTasks()
@@ -719,7 +728,7 @@ struct HandleUpdateSheet: View {
     
     @MainActor
     private func loadServerDomains() async {
-        guard let client = appState.atProtoClient else { return }
+        guard mountedAccountDID == appState.userDID && mountedAccountDID.map { SettingsAccountBoundary.isCurrent($0, revision: mountedAccountRevision) } == true, let client = appState.atProtoClient else { return }
         isLoadingDomains = true
         defer { isLoadingDomains = false }
         
@@ -768,7 +777,7 @@ struct HandleUpdateSheet: View {
         availabilityMessage = nil
         
         checkTask = Task { @MainActor in
-            guard let client = appState.atProtoClient else {
+            guard mountedAccountDID == appState.userDID && mountedAccountDID.map { SettingsAccountBoundary.isCurrent($0, revision: mountedAccountRevision) } == true, let client = appState.atProtoClient else {
                 if !Task.isCancelled {
                     isCheckingAvailability = false
                     isAvailable = nil
@@ -781,7 +790,7 @@ struct HandleUpdateSheet: View {
                 let (responseCode, _) = try await client.com.atproto.identity.resolveHandle(
                     input: .init(handle: validatedHandle)
                 )
-                guard !Task.isCancelled else { return }
+                guard !Task.isCancelled, mountedAccountDID.map { SettingsAccountBoundary.isCurrent($0, revision: mountedAccountRevision) } == true else { return }
                 
                 if (200...299).contains(responseCode) {
                     isAvailable = false
@@ -791,15 +800,15 @@ struct HandleUpdateSheet: View {
                     availabilityMessage = "Unable to verify handle availability (Code: \(responseCode))."
                 }
             } catch let protoError as ATProtoError<ComAtprotoIdentityResolveHandle.Error> where protoError.error == .handleNotFound {
-                guard !Task.isCancelled else { return }
+                guard !Task.isCancelled, mountedAccountDID.map { SettingsAccountBoundary.isCurrent($0, revision: mountedAccountRevision) } == true else { return }
                 isAvailable = true
                 availabilityMessage = "Handle available."
             } catch let xrpcError as ATProtoXRPCError where xrpcError.error == "HandleNotFound" || xrpcError.error == ComAtprotoIdentityResolveHandle.Error.handleNotFound.rawValue {
-                guard !Task.isCancelled else { return }
+                guard !Task.isCancelled, mountedAccountDID.map { SettingsAccountBoundary.isCurrent($0, revision: mountedAccountRevision) } == true else { return }
                 isAvailable = true
                 availabilityMessage = "Handle available."
             } catch {
-                guard !Task.isCancelled else { return }
+                guard !Task.isCancelled, mountedAccountDID.map { SettingsAccountBoundary.isCurrent($0, revision: mountedAccountRevision) } == true else { return }
                 isAvailable = nil
                 availabilityMessage = "Could not check availability: \(error.localizedDescription)"
             }
@@ -834,7 +843,7 @@ struct HandleUpdateSheet: View {
                 }
             }
             
-            guard let client = appState.atProtoClient else {
+            guard mountedAccountDID == appState.userDID && mountedAccountDID.map { SettingsAccountBoundary.isCurrent($0, revision: mountedAccountRevision) } == true, let client = appState.atProtoClient else {
                 if !Task.isCancelled {
                     isDomainVerified = false
                     domainVerificationMessage = "Client not available."
@@ -846,7 +855,7 @@ struct HandleUpdateSheet: View {
                 let (code, data) = try await client.com.atproto.identity.resolveHandle(
                     input: .init(handle: validatedHandle)
                 )
-                guard !Task.isCancelled else { return }
+                guard !Task.isCancelled, mountedAccountDID.map { SettingsAccountBoundary.isCurrent($0, revision: mountedAccountRevision) } == true else { return }
                 
                 if code == 200, let resolved = data {
                     let resolvedDID = resolved.did.description
@@ -863,15 +872,15 @@ struct HandleUpdateSheet: View {
                     domainVerificationMessage = "Could not resolve domain (Code: \(code))."
                 }
             } catch let protoError as ATProtoError<ComAtprotoIdentityResolveHandle.Error> where protoError.error == .handleNotFound {
-                guard !Task.isCancelled else { return }
+                guard !Task.isCancelled, mountedAccountDID.map { SettingsAccountBoundary.isCurrent($0, revision: mountedAccountRevision) } == true else { return }
                 isDomainVerified = false
                 domainVerificationMessage = "Domain does not resolve to any DID. Please check your DNS TXT or well-known setup."
             } catch let xrpcError as ATProtoXRPCError where xrpcError.error == "HandleNotFound" || xrpcError.error == ComAtprotoIdentityResolveHandle.Error.handleNotFound.rawValue {
-                guard !Task.isCancelled else { return }
+                guard !Task.isCancelled, mountedAccountDID.map { SettingsAccountBoundary.isCurrent($0, revision: mountedAccountRevision) } == true else { return }
                 isDomainVerified = false
                 domainVerificationMessage = "Domain does not resolve to any DID. Please check your DNS TXT or well-known setup."
             } catch {
-                guard !Task.isCancelled else { return }
+                guard !Task.isCancelled, mountedAccountDID.map { SettingsAccountBoundary.isCurrent($0, revision: mountedAccountRevision) } == true else { return }
                 isDomainVerified = false
                 domainVerificationMessage = "Verification failed: \(error.localizedDescription)"
             }
@@ -880,7 +889,7 @@ struct HandleUpdateSheet: View {
     
     @MainActor
     private func updateHandle(handle: Handle) async {
-        guard let client = appState.atProtoClient else {
+        guard mountedAccountDID == appState.userDID && mountedAccountDID.map { SettingsAccountBoundary.isCurrent($0, revision: mountedAccountRevision) } == true, let client = appState.atProtoClient else {
             if !Task.isCancelled {
                 errorMessage = "Client not available."
             }
@@ -892,7 +901,7 @@ struct HandleUpdateSheet: View {
         
         do {
             try await ensurePermission(.identityHandle)
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, mountedAccountDID.map { SettingsAccountBoundary.isCurrent($0, revision: mountedAccountRevision) } == true else { return }
             
             let input = ComAtprotoIdentityUpdateHandle.Input(handle: handle)
             let responseCode = try await client.com.atproto.identity.updateHandle(input: input)
@@ -906,13 +915,13 @@ struct HandleUpdateSheet: View {
                 isUpdating = false
             }
         } catch let error as GatewayPermissionError where error == .cancelled {
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, mountedAccountDID.map { SettingsAccountBoundary.isCurrent($0, revision: mountedAccountRevision) } == true else { return }
             errorMessage = nil
             isUpdating = false
         } catch is CancellationError {
             // Task cancelled
         } catch {
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, mountedAccountDID.map { SettingsAccountBoundary.isCurrent($0, revision: mountedAccountRevision) } == true else { return }
             errorMessage = error.localizedDescription
             isUpdating = false
         }

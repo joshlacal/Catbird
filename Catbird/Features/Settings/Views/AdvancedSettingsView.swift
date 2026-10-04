@@ -4,6 +4,7 @@ import Petrel
 struct AdvancedSettingsView: View {
   @Environment(AppState.self) private var appState
   @Environment(\.dismiss) private var dismiss
+  @Environment(\.settingsDraftGuard) private var draftGuard
   
   // Predefined AppView options
   enum AppViewOption: String, CaseIterable, Identifiable {
@@ -49,28 +50,68 @@ struct AdvancedSettingsView: View {
   @State private var isSaving = false
   @State private var showingSaveConfirmation = false
   @State private var error: Error?
-  @State private var hasUnsavedChanges = false
+  let initialFocus: SettingsControlID?
+  @State private var originDID: String?
+  @State private var isLoadingProviders = true
+  @State private var baseline: ProviderDraft?
+  @State private var confirmingDeparture = false
+  private struct ProviderDraft: Equatable {
+    let appView: AppViewOption
+    let chat: ChatOption
+    let customAppView: String
+    let customChat: String
+  }
+  private var currentDraft: ProviderDraft { ProviderDraft(appView: selectedAppViewOption, chat: selectedChatOption, customAppView: customAppViewDID, customChat: customChatDID) }
+  private var hasUnsavedChanges: Bool { baseline.map { $0 != currentDraft } ?? false }
+  init(initialFocus: SettingsControlID? = nil) { self.initialFocus = initialFocus }
   
   var body: some View {
     ResponsiveContentView {
-      List {
+      SettingsFocusedForm(initialFocus: initialFocus, isReady: baseline != nil) {
+        SettingsScopeSection()
+        if isLoadingProviders { Section { ProgressView("Loading service providers…") } }
+        else if baseline == nil {
+          Section {
+            Text("Couldn’t load service providers. Your current providers are unchanged.").foregroundStyle(.secondary)
+            Button("Retry") { Task { await loadCurrentSettings(); publishDraftGuard() } }
+          }
+        }
         headerSection
-        appViewSection
-        chatSection
-        resetSection
+        appViewSection.settingsControl(.init(rawValue: "advanced.appView")).disabled(baseline == nil || isSaving)
+        chatSection.settingsControl(.init(rawValue: "advanced.chatProvider")).disabled(baseline == nil || isSaving)
+        resetSection.disabled(baseline == nil || isSaving)
         saveSection
         warningSection
       }
     }
-    .navigationTitle("Advanced Settings")
+    .navigationTitle("Service Providers")
     #if os(iOS)
     .toolbarTitleDisplayMode(.inline)
     #endif
     .appDisplayScale(appState: appState)
     .contrastAwareBackground(appState: appState, defaultColor: Color.systemBackground)
-    .task {
+    .task(id: appState.userDID) {
+      originDID = appState.userDID
+      baseline = nil
       await loadCurrentSettings()
+      publishDraftGuard()
     }
+    .onChange(of: currentDraft) { _, _ in publishDraftGuard() }
+    .interactiveDismissDisabled(hasUnsavedChanges || isSaving)
+    .navigationBarBackButtonHidden(hasUnsavedChanges || isSaving)
+    .toolbar {
+      if hasUnsavedChanges {
+        ToolbarItem(placement: .cancellationAction) {
+          Button("Back", systemImage: "chevron.left") { confirmingDeparture = true }.disabled(isSaving)
+        }
+      }
+    }
+    .confirmationDialog("Unsaved provider changes", isPresented: $confirmingDeparture, titleVisibility: .visible) {
+      Button("Save") { Task { if await resolveDraft(save: true) { dismiss() } } }
+      Button("Discard Changes", role: .destructive) { Task { if await resolveDraft(save: false) { dismiss() } } }
+      Button("Stay", role: .cancel) { }
+    }
+    .onDisappear { if draftGuard?.accountDID == originDID { draftGuard?.hasChanges = false; draftGuard?.resolve = nil } }
     .alert("Saved", isPresented: $showingSaveConfirmation) {
       Button("OK") {
         showingSaveConfirmation = false
@@ -78,7 +119,7 @@ struct AdvancedSettingsView: View {
     } message: {
       Text("Service DID settings have been updated.")
     }
-    .alert("Error", isPresented: .constant(error != nil)) {
+    .alert("Error", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
       Button("OK") {
         error = nil
       }
@@ -89,6 +130,23 @@ struct AdvancedSettingsView: View {
     }
   }
   
+  @MainActor private func publishDraftGuard() {
+    draftGuard?.accountDID = originDID
+    draftGuard?.hasChanges = hasUnsavedChanges
+    draftGuard?.resolve = { save in await resolveDraft(save: save) }
+  }
+  @MainActor private func resolveDraft(save: Bool) async -> Bool {
+    guard originDID == appState.userDID && originDID.map(SettingsAccountBoundary.isCurrent) == true else { return false }
+    if save { await saveChanges(); return !hasUnsavedChanges }
+    guard let baseline else { return false }
+    selectedAppViewOption = baseline.appView
+    selectedChatOption = baseline.chat
+    customAppViewDID = baseline.customAppView
+    customChatDID = baseline.customChat
+    publishDraftGuard()
+    return true
+  }
+
   private var headerSection: some View {
     Section {
       Text("Configure custom service endpoints for your account. These settings are per-account and persist across app restarts.")
@@ -125,9 +183,6 @@ struct AdvancedSettingsView: View {
       }
     }
     .pickerStyle(.segmented)
-    .onChange(of: selectedAppViewOption) { _, _ in
-      hasUnsavedChanges = true
-    }
   }
   
   private var customAppViewField: some View {
@@ -143,9 +198,6 @@ struct AdvancedSettingsView: View {
         .textInputAutocapitalization(.never)
         .keyboardType(.URL)
         #endif
-        .onChange(of: customAppViewDID) { _, _ in
-          hasUnsavedChanges = true
-        }
     }
     .padding(.top, 8)
   }
@@ -178,9 +230,6 @@ struct AdvancedSettingsView: View {
       }
     }
     .pickerStyle(.segmented)
-    .onChange(of: selectedChatOption) { _, _ in
-      hasUnsavedChanges = true
-    }
   }
   
   private var customChatField: some View {
@@ -196,9 +245,6 @@ struct AdvancedSettingsView: View {
         .textInputAutocapitalization(.never)
         .keyboardType(.URL)
         #endif
-        .onChange(of: customChatDID) { _, _ in
-          hasUnsavedChanges = true
-        }
     }
     .padding(.top, 8)
   }
@@ -273,8 +319,13 @@ struct AdvancedSettingsView: View {
   }
   
   private func loadCurrentSettings() async {
+    let expectedDID = appState.userDID
+    let expectedRevision = AppStateManager.shared.settingsAccountContextRevision
+    isLoadingProviders = true
+    defer { isLoadingProviders = false }
     guard let client = AppStateManager.shared.authentication.client,
-          let account = await client.getCurrentAccount() else {
+          let account = await client.getCurrentAccount(),
+          !Task.isCancelled, SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision) else {
       return
     }
     
@@ -296,7 +347,7 @@ struct AdvancedSettingsView: View {
       customChatDID = account.bskyChatDID
     }
     
-    hasUnsavedChanges = false
+    baseline = currentDraft
   }
   
   private func resetToDefaults() {
@@ -304,11 +355,13 @@ struct AdvancedSettingsView: View {
     selectedChatOption = .blueskyPBC
     customAppViewDID = ""
     customChatDID = ""
-    hasUnsavedChanges = true
+    publishDraftGuard()
   }
   
   private func saveChanges() async {
-    guard let client = AppStateManager.shared.authentication.client else {
+    let expectedRevision = AppStateManager.shared.settingsAccountContextRevision
+    guard let expectedDID = originDID, SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision),
+          let savedDraft = baseline, let client = AppStateManager.shared.authentication.client else {
       error = NSError(
         domain: "AdvancedSettings",
         code: -1,
@@ -355,14 +408,22 @@ struct AdvancedSettingsView: View {
     
     do {
       // Update and persist the DIDs
-      try await client.updateAndPersistServiceDIDs(
-        bskyAppViewDID: finalAppViewDID,
-        bskyChatDID: finalChatDID
-      )
+      let original = SettingsProviderServiceDIDs(appView: savedDraft.appView.did ?? savedDraft.customAppView, chat: savedDraft.chat.did ?? savedDraft.customChat)
+      let requested = SettingsProviderServiceDIDs(appView: finalAppViewDID, chat: finalChatDID)
+      try await SettingsProviderTransaction.apply(accountDID: expectedDID, requested: requested, original: original,
+        isCurrent: { SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision) },
+        persist: { values in
+          try await client.updateAndPersistServiceDIDs(bskyAppViewDID: values.appView, bskyChatDID: values.chat)
+        }, restoreRuntime: { values in
+          await client.updateServiceDIDs(bskyAppViewDID: values.appView, bskyChatDID: values.chat)
+        })
       
-      hasUnsavedChanges = false
+      guard !Task.isCancelled, SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision) else { isSaving = false; return }
+      baseline = currentDraft
+      publishDraftGuard()
       showingSaveConfirmation = true
     } catch {
+      guard SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision) else { isSaving = false; return }
       self.error = error
     }
     

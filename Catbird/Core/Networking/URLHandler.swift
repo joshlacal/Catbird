@@ -334,10 +334,10 @@ final class URLHandler {
         // Route: /settings/{subpath}
         if segments.count >= 1 && segments[0] == "settings" {
             let subpath = segments.dropFirst().joined(separator: "/")
-            if let route = SettingsRoute(routePath: subpath.isEmpty ? "account" : subpath) {
+            if let route = SettingsRoute(routePath: subpath) {
                 return .settings(route)
             }
-            return .settings(.account)
+            return .settings(.home)
         }
 
         // Route: /profile/{actor}/...
