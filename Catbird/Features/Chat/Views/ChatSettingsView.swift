@@ -52,6 +52,22 @@ struct ChatSettingsView: View {
   @State private var privacyEditor: AccountSettingsEditSession<ChatPrivacySettingsRecord>?
   private let logger = Logger(subsystem: "blue.catbird", category: "ChatSettingsView")
   
+  private var requestedFocus: SettingsControlID? {
+    guard let initialFocus else { return nil }
+    switch privacyEditor?.state {
+    case .loadFailed: return .init(rawValue: "privacy.chatRetryLoad")
+    case .saveFailed: return .init(rawValue: "privacy.chatRetrySave")
+    default: return initialFocus
+    }
+  }
+
+  private var isFocusReady: Bool {
+    switch privacyEditor?.state {
+    case .ready, .loadFailed, .saveFailed: true
+    default: false
+    }
+  }
+
   var body: some View {
     Group {
       if presentation == .modal {
@@ -63,7 +79,7 @@ struct ChatSettingsView: View {
   }
 
   private var settingsContent: some View {
-    SettingsFocusedForm(initialFocus: initialFocus, isReady: privacyEditor?.canEdit == true) {
+    SettingsFocusedForm(initialFocus: requestedFocus, isReady: isFocusReady) {
       SettingsScopeSection()
       privacySection
         Section {
@@ -198,6 +214,7 @@ struct ChatSettingsView: View {
           Text("Chat privacy settings could not be loaded.")
           Text(editor.errorMessage ?? "Try again.").font(.footnote).foregroundStyle(.secondary)
           Button("Retry") { Task { await editor.load() } }
+              .settingsControl(.init(rawValue: "privacy.chatRetryLoad"))
         case .ready, .saving, .saveFailed:
           privacyPicker("Messages from", groupInvites: false, editor: editor)
             .settingsControl(.init(rawValue: "privacy.messages"))
@@ -213,6 +230,7 @@ struct ChatSettingsView: View {
             Text("This change could not be confirmed. The last loaded rules are shown.")
             Text(editor.errorMessage ?? "Retry the change or reload the saved rules.").font(.footnote).foregroundStyle(.secondary)
             Button("Retry This Change") { editor.retrySave() }
+                .settingsControl(.init(rawValue: "privacy.chatRetrySave"))
             Button("Reload Saved Rules") { Task { await editor.load() } }
           }
         }

@@ -39,8 +39,24 @@ struct DefaultPostInteractionSettingsView: View {
     return rules.isEmpty ? .nobody : .custom
   }
 
+  private var requestedFocus: SettingsControlID? {
+    guard let initialFocus else { return nil }
+    switch editor?.state {
+    case .loadFailed: return .init(rawValue: "privacy.defaultRulesRetryLoad")
+    case .saveFailed: return .init(rawValue: "privacy.defaultRulesRetrySave")
+    default: return initialFocus
+    }
+  }
+
+  private var isFocusReady: Bool {
+    switch editor?.state {
+    case .ready, .loadFailed, .saveFailed: true
+    default: false
+    }
+  }
+
   var body: some View {
-    SettingsFocusedForm(initialFocus: initialFocus, isReady: editor?.canEdit == true) {
+    SettingsFocusedForm(initialFocus: requestedFocus, isReady: isFocusReady) {
       SettingsScopeSection(scope: "New posts for this account")
       Section {
         Text("These defaults apply when you create a post. You can still choose different replies and quotes for an individual post.")
@@ -56,6 +72,7 @@ struct DefaultPostInteractionSettingsView: View {
             Text("Default replies and quotes could not be loaded.")
             Text(editor.errorMessage ?? "Try again.").font(.footnote).foregroundStyle(.secondary)
             Button("Retry") { Task { await editor.load() } }
+              .settingsControl(.init(rawValue: "privacy.defaultRulesRetryLoad"))
           }
           .settingsControl(.init(rawValue: "privacy.defaultPostInteractions"))
         } else {
@@ -149,6 +166,7 @@ struct DefaultPostInteractionSettingsView: View {
               Text("This change could not be confirmed.")
               Text(editor.errorMessage ?? "Try again.").font(.footnote).foregroundStyle(.secondary)
               Button("Retry This Change") { editor.retrySave() }
+                .settingsControl(.init(rawValue: "privacy.defaultRulesRetrySave"))
               Button("Reload Saved Defaults") { Task { await editor.load() } }
             }
           }

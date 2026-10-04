@@ -39,8 +39,24 @@ struct ActivityPrivacySettingsView: View {
     self.initialFocus = initialFocus
   }
 
+  private var requestedFocus: SettingsControlID? {
+    guard let initialFocus else { return nil }
+    switch editor?.state {
+    case .loadFailed: return .init(rawValue: "privacy.activityRetryLoad")
+    case .saveFailed: return .init(rawValue: "privacy.activityRetrySave")
+    default: return initialFocus
+    }
+  }
+
+  private var isFocusReady: Bool {
+    switch editor?.state {
+    case .ready, .loadFailed, .saveFailed: true
+    default: false
+    }
+  }
+
   var body: some View {
-    SettingsFocusedForm(initialFocus: initialFocus, isReady: editor?.canEdit == true) {
+    SettingsFocusedForm(initialFocus: requestedFocus, isReady: isFocusReady) {
       SettingsScopeSection()
       if let editor {
         if editor.state == .unavailable {
@@ -53,6 +69,7 @@ struct ActivityPrivacySettingsView: View {
             Text(editor.errorMessage ?? "Try again.")
               .font(.footnote).foregroundStyle(.secondary)
             Button("Retry") { Task { await editor.load() } }
+              .settingsControl(.init(rawValue: "privacy.activityRetryLoad"))
           }
           .settingsControl(.init(rawValue: "privacy.activitySubscriptions"))
         } else {
@@ -95,6 +112,7 @@ struct ActivityPrivacySettingsView: View {
               Text(editor.errorMessage ?? "Retry the change or reload the saved rule.")
                 .font(.footnote).foregroundStyle(.secondary)
               Button("Retry This Change") { editor.retrySave() }
+                .settingsControl(.init(rawValue: "privacy.activityRetrySave"))
               Button("Reload Saved Rule") { Task { await editor.load() } }
             }
           }
