@@ -50,8 +50,12 @@ struct MessagesViewportValidationFixture: View {
             .background { MessagesViewportFooterMarker(measurements: measurements) }
           }
           .overlay(alignment: .topLeading) {
-            MessagesViewportNativeProbe(source: source, measurements: measurements)
-              .frame(width: 2, height: 2)
+            HStack(spacing: 0) {
+              MessagesViewportNativeProbe(source: source, measurements: measurements)
+                .frame(width: 2, height: 2)
+              MessagesViewportGestureReadout(measurements: measurements)
+                .frame(width: 2, height: 2)
+            }
           }
           .environment(account)
           .environment(sceneContext)
@@ -79,6 +83,13 @@ struct MessagesViewportValidationFixture: View {
                   to: nil, from: nil, for: nil)
               }
               .accessibilityIdentifier("messages.fixture.dismissKeyboard")
+              Menu("Record native gestures", systemImage: "waveform.path") {
+                Button("Record center drag") { measurements.requestGestureTrace(kind: "center") }
+                  .accessibilityIdentifier("messages.fixture.armCenter")
+                Button("Record gutter drag") { measurements.requestGestureTrace(kind: "gutter") }
+                  .accessibilityIdentifier("messages.fixture.armGutter")
+              }
+              .accessibilityIdentifier("messages.fixture.gesturesMenu")
             }
           }
       } else if let failure {
@@ -148,6 +159,7 @@ private struct MessagesViewportFixtureMessage: UnifiedChatMessage {
 
 @MainActor @Observable
 private final class MessagesViewportFixtureSource: UnifiedChatDataSource {
+  let instanceID = UUID().uuidString
   var messages: [MessagesViewportFixtureMessage]
   var draftText = ""
   var isLoading: Bool { false }
@@ -200,6 +212,14 @@ private final class MessagesViewportFixtureMeasurements {
   var backdrop = "cyan"
   var resetSequence = 0
   var latest: MessagesViewportFixtureSample?
+  var gestureSequence = 0
+  var gestureKind = ""
+  weak var gestureReadout: UILabel?
+
+  func requestGestureTrace(kind: String) {
+    gestureKind = kind
+    gestureSequence += 1
+  }
 }
 
 private struct MessagesViewportFixtureRect: Codable {
@@ -221,8 +241,81 @@ private struct MessagesViewportDragWitness: Codable {
   let timestamp: Double
 }
 
+private struct MessagesViewportGesturePoint: Codable {
+  let x: Double, y: Double
+  init(_ point: CGPoint) { x = Double(point.x); y = Double(point.y) }
+}
+
+private struct MessagesViewportGestureView: Codable {
+  let identity: String
+  let className: String
+  let frame: MessagesViewportFixtureRect
+}
+
+private struct MessagesViewportGestureRecognizer: Codable {
+  let identity: String
+  let className: String
+  let owner: MessagesViewportGestureView?
+  let isCollectionPan: Bool
+}
+
+private struct MessagesViewportGestureState: Codable {
+  let identity: String
+  let state: String
+  let numberOfTouches: Int
+  let location: MessagesViewportGesturePoint?
+  let translation: MessagesViewportGesturePoint?
+  let velocity: MessagesViewportGesturePoint?
+}
+
+private struct MessagesViewportGestureFrame: Codable {
+  let timestamp: Double
+  let offsetY: Double, legalTop: Double, legalBottom: Double
+  let isTracking: Bool, isDragging: Bool, isDecelerating: Bool
+  let recognizers: [MessagesViewportGestureState]
+}
+
+/// Process-local identities and public UIKit state are observations, not a
+/// declaration that any particular private SwiftUI recognizer won arbitration.
+private struct MessagesViewportGestureTrace: Codable {
+  let sequence: Int
+  let kind: String
+  let timelineLimit = 64
+  let viewLimit = 12
+  let recognizerLimit = 16
+  let byteLimit = 65_536
+  var status = "waitingForTarget"
+  var collectionIdentity: String?
+  var fixtureInstanceID: String?
+  var editorIdentity: String?
+  var finalCollectionIdentity: String?
+  var finalEditorIdentity: String?
+  var collectionFrame: MessagesViewportFixtureRect?
+  var footerFrame: MessagesViewportFixtureRect?
+  var baselineSample: MessagesViewportFixtureSample?
+  var finalSample: MessagesViewportFixtureSample?
+  var start: MessagesViewportGesturePoint?
+  var end: MessagesViewportGesturePoint?
+  var armedAt: Double?
+  var completedAt: Double?
+  var viewPath: [MessagesViewportGestureView] = []
+  var recognizers: [MessagesViewportGestureRecognizer] = []
+  var timeline: [MessagesViewportGestureFrame] = []
+  var firstInputFrame: MessagesViewportGestureFrame?
+  var firstReleasedFrame: MessagesViewportGestureFrame?
+  var observedFrameCount = 0
+  var recordedFrameCount = 0
+  var droppedRecordCount = 0
+  var viewPathTruncated = false
+  var recognizersTruncated = false
+  var inputObserved = false
+  var minimumOffsetY: Double?
+  var maximumOffsetY: Double?
+}
+
 private struct MessagesViewportFixtureSample: Codable {
   let ready: Bool
+  let fixtureInstanceID: String
   let sampleCount: Int
   let resetSequence: Int
   let messageCount: Int
@@ -230,6 +323,8 @@ private struct MessagesViewportFixtureSample: Codable {
   let sendCallbackCount: Int
   let backdrop: String
   let scale: Double
+  let collectionIdentity: String
+  let editorIdentity: String?
   let collectionFrame: MessagesViewportFixtureRect
   let footerFrame: MessagesViewportFixtureRect
   let editorFrame: MessagesViewportFixtureRect
@@ -256,6 +351,24 @@ private struct MessagesViewportFixtureSample: Codable {
   let bottomWitness: MessagesViewportDragWitness?
   let topHeldSeconds: Double
   let bottomHeldSeconds: Double
+}
+
+/// A separate, noninteractive accessibility value keeps the bounded recognizer
+/// timeline out of the ordinary geometry sample used by existing assertions.
+private struct MessagesViewportGestureReadout: UIViewRepresentable {
+  let measurements: MessagesViewportFixtureMeasurements
+  func makeUIView(context: Context) -> UILabel {
+    let view = UILabel()
+    view.isUserInteractionEnabled = false
+    view.isAccessibilityElement = true
+    view.accessibilityIdentifier = "messages.fixture.gestures"
+    view.accessibilityLabel = "Passive native gesture timeline"
+    view.accessibilityTraits = .staticText
+    view.accessibilityValue = "{\"sequence\":0,\"status\":\"idle\"}"
+    measurements.gestureReadout = view
+    return view
+  }
+  func updateUIView(_ view: UILabel, context: Context) { measurements.gestureReadout = view }
 }
 
 private struct MessagesViewportFooterMarker: UIViewRepresentable {
@@ -311,6 +424,11 @@ private struct MessagesViewportNativeProbe: UIViewRepresentable {
     private var bottomHeldSeconds = 0.0
     private var topWitness: MessagesViewportDragWitness?
     private var bottomWitness: MessagesViewportDragWitness?
+    private var gestureSequence = 0
+    private var gestureRequestedAt: TimeInterval?
+    private var gestureQuietSince: TimeInterval?
+    private var gestureRecognizers: [UIGestureRecognizer] = []
+    private var gestureTrace: MessagesViewportGestureTrace?
 
     init(source: MessagesViewportFixtureSource, measurements: MessagesViewportFixtureMeasurements) {
       self.source = source
@@ -337,6 +455,7 @@ private struct MessagesViewportNativeProbe: UIViewRepresentable {
     func stop() {
       displayLink?.invalidate()
       displayLink = nil
+      gestureRecognizers = []
     }
 
     @objc private func sample(_ link: CADisplayLink) {
@@ -403,9 +522,11 @@ private struct MessagesViewportNativeProbe: UIViewRepresentable {
       let snapshot = MessagesViewportFixtureSample(
         ready: collection.alpha > 0 && collection.contentSize.height > 0 && editor != nil
           && measurements.footerFrame.height > 0,
+        fixtureInstanceID: source.instanceID,
         sampleCount: sampleCount, resetSequence: resetSequence, messageCount: source.messages.count,
         localRevision: source.localRevision, sendCallbackCount: source.sendCallbackCount,
         backdrop: measurements.backdrop, scale: Double(scale),
+        collectionIdentity: identity(collection), editorIdentity: editor.map { self.identity($0) },
         collectionFrame: .init(collection.convert(collection.bounds, to: window)),
         footerFrame: .init(measurements.footerFrame),
         editorFrame: .init(editor.map { $0.convert($0.bounds, to: window) } ?? .zero),
@@ -429,6 +550,177 @@ private struct MessagesViewportNativeProbe: UIViewRepresentable {
       measurements.latest = snapshot
       if let data = try? JSONEncoder().encode(snapshot) {
         accessibilityValue = String(decoding: data, as: UTF8.self)
+      }
+      observeGestures(collection: collection, editor: editor, window: window,
+        top: top, bottom: bottom, time: time, quiet: quiet)
+    }
+
+    private func observeGestures(collection: ChatTranscriptCollectionView, editor: UITextView?,
+      window: UIWindow, top: CGFloat, bottom: CGFloat, time: TimeInterval, quiet: Bool) {
+      let newRequest = gestureSequence != measurements.gestureSequence
+      if newRequest {
+        gestureSequence = measurements.gestureSequence
+        gestureRequestedAt = time
+        gestureQuietSince = nil
+        gestureRecognizers = []
+        gestureTrace = .init(sequence: gestureSequence, kind: measurements.gestureKind)
+      }
+      guard var trace = gestureTrace, trace.status == "waitingForTarget" || trace.status == "recording"
+      else { return }
+      let previousStatus = trace.status
+      let previousFrameCount = trace.recordedFrameCount
+      let frame = collection.convert(collection.bounds, to: window)
+      let footer = measurements.footerFrame
+      if trace.status == "waitingForTarget" {
+        // Both native drags use the same measured vertical travel on identical
+        // launches. Hit-testing is read-only and waits for the menu to disappear.
+        let upper = frame.minY + 16
+        let lower = min(frame.maxY, footer.minY) - 16
+        let travel = min(CGFloat(200), max(0, lower - upper) * 0.4)
+        let startY = min(max(frame.midY - travel / 2, upper), lower - travel)
+        let start = CGPoint(x: frame.minX + frame.width * (trace.kind == "center" ? 0.5 : 0.97), y: startY)
+        let end = CGPoint(x: start.x, y: start.y + travel)
+        if travel > 0, let hit = window.hitTest(start, with: nil), hit.isDescendant(of: collection) {
+          trace.status = "recording"
+          trace.collectionIdentity = identity(collection)
+          trace.fixtureInstanceID = source.instanceID
+          trace.editorIdentity = editor.map { self.identity($0) }
+          trace.collectionFrame = .init(frame)
+          trace.footerFrame = .init(footer)
+          trace.baselineSample = measurements.latest
+          trace.start = .init(start); trace.end = .init(end)
+          trace.armedAt = time
+          var views: [UIView] = []
+          var ancestor: UIView? = hit
+          while let view = ancestor, views.count < trace.viewLimit {
+            views.append(view)
+            ancestor = view.superview
+          }
+          trace.viewPathTruncated = ancestor != nil
+          trace.viewPath = views.map { self.describe($0, in: window) }
+          // Keep the native collection pan first even if the hit-view ancestor
+          // path is truncated. Inspect no delegates or private recognizer APIs.
+          gestureRecognizers = [collection.panGestureRecognizer]
+          var seen: Set<ObjectIdentifier> = [ObjectIdentifier(collection.panGestureRecognizer)]
+          for view in views {
+            for recognizer in view.gestureRecognizers ?? [] where seen.insert(ObjectIdentifier(recognizer)).inserted {
+              if gestureRecognizers.count < trace.recognizerLimit { gestureRecognizers.append(recognizer) }
+              else { trace.recognizersTruncated = true }
+            }
+          }
+          trace.recognizers = gestureRecognizers.map { recognizer in
+            MessagesViewportGestureRecognizer(identity: self.identity(recognizer),
+              className: String(String(reflecting: type(of: recognizer)).prefix(96)),
+              owner: recognizer.view.map { self.describe($0, in: window) },
+              isCollectionPan: recognizer === collection.panGestureRecognizer)
+          }
+        }
+      }
+      if trace.status == "recording" {
+        let states = gestureRecognizers.map { recognizer in
+          let touches = recognizer.numberOfTouches
+          let active = recognizer.state == .began || recognizer.state == .changed
+          let pan = recognizer as? UIPanGestureRecognizer
+          return MessagesViewportGestureState(identity: self.identity(recognizer),
+            state: self.stateName(recognizer.state), numberOfTouches: touches,
+            location: touches > 0 || active ? .init(recognizer.location(in: window)) : nil,
+            translation: pan.map { .init($0.translation(in: window)) },
+            velocity: pan.map { .init($0.velocity(in: window)) })
+        }
+        let touchInTranscript = states.contains { state in
+          guard state.numberOfTouches > 0, let point = state.location else { return false }
+          return frame.contains(CGPoint(x: CGFloat(point.x), y: CGFloat(point.y))) && point.y < Double(footer.minY)
+        }
+        trace.inputObserved = trace.inputObserved || collection.isTracking || collection.isDragging || touchInTranscript
+        let offset = Double(collection.contentOffset.y)
+        trace.minimumOffsetY = min(trace.minimumOffsetY ?? offset, offset)
+        trace.maximumOffsetY = max(trace.maximumOffsetY ?? offset, offset)
+        trace.finalCollectionIdentity = identity(collection)
+        trace.finalEditorIdentity = editor.map { self.identity($0) }
+        trace.finalSample = measurements.latest
+        let observation = MessagesViewportGestureFrame(timestamp: time, offsetY: offset,
+          legalTop: Double(top), legalBottom: Double(bottom),
+          isTracking: collection.isTracking, isDragging: collection.isDragging,
+          isDecelerating: collection.isDecelerating, recognizers: states)
+        trace.observedFrameCount += 1
+        if trace.inputObserved && trace.firstInputFrame == nil { trace.firstInputFrame = observation }
+        let recognizersQuiet = states.allSatisfy { $0.numberOfTouches == 0 && $0.state != "began" && $0.state != "changed" }
+        if trace.inputObserved && trace.firstReleasedFrame == nil && recognizersQuiet
+          && !collection.isTracking && !collection.isDragging {
+          trace.firstReleasedFrame = observation
+        }
+        // Observe at display-link cadence, but retain state/offset transitions
+        // plus at most 10Hz unchanged baseline samples. Touch onset and release
+        // are separately retained even if pre-drag XCTest latency fills the ring.
+        let previous = trace.timeline.last
+        let changed = previous.map { prior in
+          abs(prior.offsetY - offset) > Double(2 / window.screen.scale)
+            || prior.isTracking != observation.isTracking || prior.isDragging != observation.isDragging
+            || prior.isDecelerating != observation.isDecelerating
+            || zip(prior.recognizers, states).contains { old, new in
+              old.state != new.state || old.numberOfTouches != new.numberOfTouches
+            }
+        } ?? true
+        if changed || time - (previous?.timestamp ?? time) >= 0.1 {
+          trace.timeline.append(observation)
+          trace.recordedFrameCount += 1
+          if trace.timeline.count > trace.timelineLimit {
+            trace.timeline.remove(at: 8) // Retain the first eight and the latest samples.
+            trace.droppedRecordCount += 1
+          }
+        }
+        gestureQuietSince = trace.inputObserved && quiet && recognizersQuiet ? (gestureQuietSince ?? time) : nil
+        if let since = gestureQuietSince, time - since >= 0.4 {
+          trace.status = "captured"
+          trace.completedAt = time
+        }
+      }
+      if time - (gestureRequestedAt ?? time) >= 8, trace.status != "captured" {
+        trace.status = "timedOut"
+        trace.completedAt = time
+      }
+      gestureTrace = trace
+      if newRequest || trace.status != previousStatus || trace.recordedFrameCount != previousFrameCount {
+        publishGestureTrace()
+      }
+      if trace.status == "captured" || trace.status == "timedOut" { gestureRecognizers = [] }
+    }
+
+    private func publishGestureTrace() {
+      guard var trace = gestureTrace, var data = try? JSONEncoder().encode(trace) else { return }
+      // Bound the actual AX payload as well as record count. Retain the first
+      // eight and the end of the native drag; account for every removed record.
+      while data.count > trace.byteLimit && trace.timeline.count > 8 {
+        trace.timeline.remove(at: 8)
+        trace.droppedRecordCount += 1
+        guard let smaller = try? JSONEncoder().encode(trace) else { return }
+        data = smaller
+      }
+      gestureTrace = trace
+      guard data.count <= trace.byteLimit else {
+        measurements.gestureReadout?.accessibilityValue =
+          "{\"sequence\":\(trace.sequence),\"status\":\"byteLimitExceeded\"}"
+        return
+      }
+      measurements.gestureReadout?.accessibilityValue = String(decoding: data, as: UTF8.self)
+    }
+
+    private func identity(_ object: AnyObject) -> String { String(describing: ObjectIdentifier(object)) }
+
+    private func describe(_ view: UIView, in window: UIWindow) -> MessagesViewportGestureView {
+      .init(identity: identity(view), className: String(String(reflecting: type(of: view)).prefix(96)),
+        frame: .init(view.convert(view.bounds, to: window)))
+    }
+
+    private func stateName(_ state: UIGestureRecognizer.State) -> String {
+      switch state {
+      case .possible: return "possible"
+      case .began: return "began"
+      case .changed: return "changed"
+      case .ended: return "ended"
+      case .cancelled: return "cancelled"
+      case .failed: return "failed"
+      @unknown default: return "unknown"
       }
     }
 

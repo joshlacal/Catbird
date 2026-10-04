@@ -261,6 +261,7 @@ private struct InlineReplyNativeProbe: UIViewRepresentable {
         "sourceReads": counts.reads, "refusedRequests": counts.refused,
         "editorCount": editors.count,
         "windowWidth": window.bounds.width, "windowHeight": window.bounds.height,
+        "interfaceOrientation": window.windowScene?.interfaceOrientation.rawValue ?? 0,
       ]
       if let editor {
         for inactive in editors where inactive !== editor && inactive.accessibilityIdentifier == "inline-reply.editor" {
@@ -273,8 +274,26 @@ private struct InlineReplyNativeProbe: UIViewRepresentable {
         data["selectionStart"] = editor.selectedRange.location
         data["selectionLength"] = editor.selectedRange.length
         data["editorFrame"] = NSCoder.string(for: editor.convert(editor.bounds, to: window))
+        let viewport = readingViewport(for: editor, window: window)
+        data["editorReadingViewport"] = NSCoder.string(for: viewport)
+        data["editorScrollInsets"] = scrollInsets(for: editor)
+
+        let wholeText = editor.textRange(from: editor.beginningOfDocument, to: editor.endOfDocument)
+        let glyphs = wholeText.map { selectionFrames($0, in: editor, window: window) } ?? []
+        let caret = editor.selectedTextRange.map { editor.convert(editor.caretRect(for: $0.end), to: window) }
+        data["editorGlyphFrames"] = glyphs.map { NSCoder.string(for: $0) }
+        data["editorCaretFrame"] = caret.map { NSCoder.string(for: $0) } ?? "none"
+        data["editorTextAndCaretVisible"] = !glyphs.isEmpty && glyphs.allSatisfy { viewport.contains($0) }
+          && caret.map { !$0.isEmpty && viewport.contains($0) } == true
+
       }
       if let original = textViews.first(where: { !$0.isEditable && ($0.text ?? "").contains(InlineReplyValidationFixture.sourceStart) }) {
+        data["sourceReadingViewport"] = NSCoder.string(for: readingViewport(for: original, window: window))
+        data["sourceScrollInsets"] = scrollInsets(for: original)
+        data["sourceStartGlyphFrames"] = markerFrames(InlineReplyValidationFixture.sourceStart, in: original, window: window)
+          .map { NSCoder.string(for: $0) }
+        data["sourceEndGlyphFrames"] = markerFrames(InlineReplyValidationFixture.sourceEnd, in: original, window: window)
+          .map { NSCoder.string(for: $0) }
         data["sourceStartVisible"] = markerVisible(InlineReplyValidationFixture.sourceStart, in: original, window: window)
         data["sourceEndVisible"] = markerVisible(InlineReplyValidationFixture.sourceEnd, in: original, window: window)
       } else {
@@ -289,34 +308,74 @@ private struct InlineReplyNativeProbe: UIViewRepresentable {
       [view] + view.subviews.flatMap { descendants(of: $0) }
     }
 
-    private func markerVisible(_ marker: String, in textView: UITextView, window: UIWindow) -> Bool {
+    private func selectionFrames(_ range: UITextRange, in textView: UITextView,
+                                 window: UIWindow) -> [CGRect] {
+      textView.selectionRects(for: range).map { textView.convert($0.rect, to: window) }
+        .filter { !$0.isEmpty && !$0.isNull && !$0.isInfinite }
+    }
+
+    private func readingViewport(for textView: UITextView, window: UIWindow) -> CGRect {
+      var visible = window.bounds
+      var responder: UIResponder? = textView
+      while responder != nil && !(responder is UIViewController) { responder = responder?.next }
+      guard let presenter = responder as? UIViewController else { return .null }
+      let surface = presenter.view!
+      let keyboard = surface.convert(surface.keyboardLayoutGuide.layoutFrame, to: window)
+      if keyboard.minY < visible.maxY { visible.size.height = max(0, keyboard.minY - visible.minY) }
+      if let bar = presenter.navigationController?.navigationBar, !bar.isHidden {
+        let bottom = bar.convert(bar.bounds, to: window).maxY
+        visible = visible.intersection(CGRect(x: visible.minX, y: bottom,
+          width: visible.width, height: max(0, visible.maxY - bottom)))
+      }
+      var ancestor: UIView? = textView
+      var observedOuterScroll = false
+      while let current = ancestor {
+        if current.isHidden || current.alpha == 0 { return .null }
+        if current.clipsToBounds { visible = visible.intersection(current.convert(current.bounds, to: window)) }
+        if let scroll = current as? UIScrollView, scroll !== textView,
+           scroll.contentSize.height > scroll.bounds.height {
+          // Record UIKit's actual receiving inset; the XCTest independently excludes
+          // measured AX sibling footer controls even if this inset is zero.
+          let inset = scroll.adjustedContentInset
+          visible = visible.intersection(scroll.convert(scroll.bounds.inset(by: inset), to: window))
+          observedOuterScroll = true
+        }
+        ancestor = current.superview
+      }
+      return observedOuterScroll ? visible : .null
+    }
+
+    private func scrollInsets(for textView: UITextView) -> [[String: Any]] {
+      var observations: [[String: Any]] = []
+      var ancestor: UIView? = textView.superview
+      while let current = ancestor {
+        if let scroll = current as? UIScrollView {
+          let inset = scroll.adjustedContentInset
+          observations.append(["bounds": NSCoder.string(for: scroll.bounds),
+            "contentSize": NSCoder.string(for: scroll.contentSize),
+            "adjustedTop": inset.top, "adjustedBottom": inset.bottom,
+            "adjustedLeft": inset.left, "adjustedRight": inset.right])
+        }
+        ancestor = current.superview
+      }
+      return observations
+    }
+
+    private func markerFrames(_ marker: String, in textView: UITextView, window: UIWindow) -> [CGRect] {
       let range = (textView.text as NSString).range(of: marker)
       guard range.location != NSNotFound,
             let start = textView.position(from: textView.beginningOfDocument, offset: range.location),
             let end = textView.position(from: start, offset: range.length),
-            let textRange = textView.textRange(from: start, to: end) else { return false }
-      let markerFrame = textView.convert(textView.firstRect(for: textRange), to: window)
-      var visible = window.bounds
-      var responder: UIResponder? = textView
-      while responder != nil && !(responder is UIViewController) { responder = responder?.next }
-      if let presenter = responder as? UIViewController {
-        let surface = presenter.view!
-        let keyboard = surface.convert(surface.keyboardLayoutGuide.layoutFrame, to: window)
-        if keyboard.minY < visible.maxY { visible.size.height = max(0, keyboard.minY - visible.minY) }
-        if let bar = presenter.navigationController?.navigationBar, !bar.isHidden {
-          let bottom = bar.convert(bar.bounds, to: window).maxY
-          visible = visible.intersection(CGRect(x: visible.minX, y: bottom,
-            width: visible.width, height: max(0, visible.maxY - bottom)))
-        }
-      }
-      var ancestor: UIView? = textView
-      while let current = ancestor {
-        if current.isHidden || current.alpha == 0 { return false }
-        if current.clipsToBounds { visible = visible.intersection(current.convert(current.bounds, to: window)) }
-        ancestor = current.superview
-      }
-      return !markerFrame.isEmpty && visible.contains(CGPoint(x: markerFrame.midX, y: markerFrame.midY))
+            let textRange = textView.textRange(from: start, to: end) else { return [] }
+      return selectionFrames(textRange, in: textView, window: window)
     }
+
+    private func markerVisible(_ marker: String, in textView: UITextView, window: UIWindow) -> Bool {
+      let glyphs = markerFrames(marker, in: textView, window: window)
+      let viewport = readingViewport(for: textView, window: window)
+      return !glyphs.isEmpty && glyphs.allSatisfy { viewport.contains($0) }
+    }
+
   }
 }
 #endif

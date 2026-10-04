@@ -26,8 +26,7 @@ final class MessagesViewportFixtureUITests: XCTestCase {
     XCTAssertEqual(coral.collectionFrame.height, original.collectionFrame.height, accuracy: coral.epsilon)
     capture("Same composer glass over contrasting coral backdrop", app: app)
 
-    let editor = app.textViews["chat.composer.textInput.viewporttest"].firstMatch
-    XCTAssertTrue(editor.isHittable)
+    let editor = productionEditor(app)
     editor.tap()
     XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), "Requires a real software keyboard")
     let focused = try waitForSample(app) { $0.editorIsFirstResponder && $0.isSettled }
@@ -111,7 +110,7 @@ final class MessagesViewportFixtureUITests: XCTestCase {
     XCTAssertEqual(released.offsetY, released.legalTop, accuracy: released.epsilon)
     capture("Short bottom held-drag evidence, native spring settled", app: app)
 
-    let editor = app.textViews["chat.composer.textInput.viewporttest"].firstMatch
+    let editor = productionEditor(app)
     editor.tap()
     XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
     let text = "Local short chat\nSecond line\nThird line\nFourth line"
@@ -142,9 +141,27 @@ final class MessagesViewportFixtureUITests: XCTestCase {
   }
 
   func testLateSuppliedLinkMetadataKeepsTheVisibleReadingAnchor() throws {
+    // A gutter control and center drag start from separate, identical fresh
+    // fixtures. The control never substitutes for the required center scroll.
+    let control = try launchFixture()
+    let controlInitial = try settled(control)
+    let gutterTrace = try recordDiagnosticDrag(.gutter, app: control)
+    let controlAfter = try settled(control)
+    assertDiagnosticIdentity(gutterTrace, before: controlInitial, after: controlAfter)
+    assertSendingBlocked(control, sample: controlAfter)
+    capture("Matched gutter native drag — passive recognition control", app: control, includeGestureTrace: true)
+
     let app = try launchFixture()
-    let collection = app.collectionViews["messages.fixture.transcript"].firstMatch
-    collection.swipeDown(velocity: .slow)
+    let centerInitial = try settled(app)
+    assertUniformFreshLaunches(controlInitial, centerInitial)
+    let centerTrace = try recordDiagnosticDrag(.center, app: app)
+    let centerAfter = try settled(app)
+    assertMatchingDragPlans(gutterTrace, centerTrace, epsilon: centerInitial.epsilon)
+    assertDiagnosticIdentity(centerTrace, before: centerInitial, after: centerAfter)
+    assertSendingBlocked(app, sample: centerAfter)
+    // Preserve the observation even when the unchanged reading-away-from-bottom
+    // predicate below fails. No offset or gesture recognizer is changed by the probe.
+    capture("Matched center native drag — passive recognition evidence", app: app, includeGestureTrace: true)
     let before = try waitForSample(app) {
       $0.isSettled && $0.legalBottom - $0.offsetY > $0.footerFrame.height && $0.anchorID != nil
     }
@@ -168,6 +185,7 @@ final class MessagesViewportFixtureUITests: XCTestCase {
   }
 
   private enum Edge { case top, bottom }
+  private enum DragSurface: String { case center, gutter }
 
   private func launchFixture(short: Bool = false) throws -> XCUIApplication {
     let app = XCUIApplication()
@@ -221,6 +239,151 @@ final class MessagesViewportFixtureUITests: XCTestCase {
     // retains the offset/legal-bound/isDragging witness from the actual hold.
   }
 
+  private func recordDiagnosticDrag(_ surface: DragSurface, app: XCUIApplication) throws -> GestureTrace {
+    let priorSequence = (try? readGestureTrace(app).sequence) ?? 0
+    app.buttons["messages.fixture.gesturesMenu"].tap()
+    let armID = surface == .center ? "messages.fixture.armCenter" : "messages.fixture.armGutter"
+    let arm = app.buttons[armID].firstMatch
+    XCTAssertTrue(arm.waitForExistence(timeout: 3))
+    arm.tap()
+    let armed = try waitForGestureTrace(app) {
+      $0.sequence == priorSequence + 1 && $0.status == "recording"
+    }
+    XCTAssertEqual(armed.kind, surface.rawValue)
+    let frame = try XCTUnwrap(armed.collectionFrame)
+    let footer = try XCTUnwrap(armed.footerFrame)
+    let start = try XCTUnwrap(armed.start)
+    let end = try XCTUnwrap(armed.end)
+    let sample = try readSample(app)
+    let collection = app.collectionViews["messages.fixture.transcript"].firstMatch
+    XCTAssertTrue(collection.exists)
+    assertRect(frame, equals: sample.collectionFrame, epsilon: sample.epsilon)
+    assertRect(frame, equals: .init(collection.frame), epsilon: sample.epsilon)
+    XCTAssertGreaterThan(frame.width, 0)
+    XCTAssertGreaterThan(frame.height, 0)
+    XCTAssertEqual(start.x, end.x, accuracy: sample.epsilon)
+    XCTAssertGreaterThan(end.y, start.y)
+    XCTAssertLessThan(end.y, footer.y)
+    let upper = collection.coordinate(withNormalizedOffset: CGVector(
+      dx: CGFloat((start.x - frame.x) / frame.width), dy: CGFloat((start.y - frame.y) / frame.height)))
+    let lower = collection.coordinate(withNormalizedOffset: CGVector(
+      dx: CGFloat((end.x - frame.x) / frame.width), dy: CGFloat((end.y - frame.y) / frame.height)))
+    upper.press(forDuration: 0.05, thenDragTo: lower, withVelocity: .slow, thenHoldForDuration: 0.2)
+    let completed = try waitForGestureTrace(app) {
+      $0.sequence == armed.sequence && ($0.status == "captured" || $0.status == "timedOut")
+    }
+    let timeline = try XCTUnwrap(completed.timeline)
+    let recognizers = try XCTUnwrap(completed.recognizers)
+    let views = try XCTUnwrap(completed.viewPath)
+    XCTAssertEqual(completed.timelineLimit, 64)
+    XCTAssertEqual(completed.viewLimit, 12)
+    XCTAssertEqual(completed.recognizerLimit, 16)
+    XCTAssertEqual(completed.byteLimit, 65_536)
+    XCTAssertFalse(timeline.isEmpty)
+    XCTAssertLessThanOrEqual(timeline.count, 64)
+    XCTAssertLessThanOrEqual(views.count, 12)
+    XCTAssertLessThanOrEqual(recognizers.count, 16)
+    XCTAssertEqual(recognizers.filter { $0.isCollectionPan }.count, 1)
+    XCTAssertTrue(timeline.allSatisfy { $0.recognizers.count <= 16 })
+    let dropped = try XCTUnwrap(completed.droppedRecordCount)
+    XCTAssertGreaterThanOrEqual(dropped, 0)
+    XCTAssertEqual(try XCTUnwrap(completed.recordedFrameCount), timeline.count + dropped)
+    XCTAssertLessThanOrEqual(try XCTUnwrap(rawGestureTrace(app)).utf8.count, 65_536)
+    if completed.status == "captured" {
+      XCTAssertEqual(completed.inputObserved, true)
+      XCTAssertNotNil(completed.firstInputFrame)
+      XCTAssertNotNil(completed.firstReleasedFrame)
+    }
+    // timedOut is retained as indeterminate input/recognition evidence; the
+    // existing center scroll and anchor predicates still determine behavior.
+    return completed
+  }
+
+  private func assertDiagnosticIdentity(_ trace: GestureTrace, before: Sample, after: Sample) {
+    XCTAssertEqual(after.fixtureInstanceID, before.fixtureInstanceID)
+    XCTAssertEqual(after.collectionIdentity, before.collectionIdentity)
+    XCTAssertEqual(after.editorIdentity, before.editorIdentity)
+    XCTAssertNotNil(before.editorIdentity)
+    XCTAssertEqual(trace.fixtureInstanceID, before.fixtureInstanceID)
+    XCTAssertEqual(trace.collectionIdentity, before.collectionIdentity)
+    XCTAssertEqual(trace.finalCollectionIdentity, after.collectionIdentity)
+    XCTAssertEqual(trace.editorIdentity, before.editorIdentity)
+    XCTAssertEqual(trace.finalEditorIdentity, after.editorIdentity)
+    XCTAssertEqual(trace.baselineSample?.fixtureInstanceID, before.fixtureInstanceID)
+    XCTAssertEqual(trace.baselineSample?.collectionIdentity, before.collectionIdentity)
+    XCTAssertEqual(trace.baselineSample?.editorIdentity, before.editorIdentity)
+    XCTAssertEqual(trace.finalSample?.collectionIdentity, after.collectionIdentity)
+    XCTAssertEqual(trace.finalSample?.editorIdentity, after.editorIdentity)
+    XCTAssertEqual(after.messageCount, before.messageCount)
+    XCTAssertEqual(after.localRevision, 0)
+    XCTAssertEqual(after.editorTextCount, 0)
+    XCTAssertFalse(after.editorIsFirstResponder)
+  }
+
+  private func assertUniformFreshLaunches(_ first: Sample, _ second: Sample) {
+    XCTAssertNotEqual(first.fixtureInstanceID, second.fixtureInstanceID, "Each control must use a fresh fixture instance")
+    XCTAssertEqual(first.messageCount, 32)
+    XCTAssertEqual(first.messageCount, second.messageCount)
+    XCTAssertEqual(first.localRevision, 0)
+    XCTAssertEqual(second.localRevision, 0)
+    XCTAssertEqual(first.backdrop, "cyan")
+    XCTAssertEqual(second.backdrop, "cyan")
+    XCTAssertEqual(first.editorTextCount, 0)
+    XCTAssertEqual(second.editorTextCount, 0)
+    XCTAssertFalse(first.editorIsFirstResponder)
+    XCTAssertFalse(second.editorIsFirstResponder)
+    XCTAssertEqual(first.scale, second.scale)
+    XCTAssertEqual(first.offsetY, first.legalBottom, accuracy: first.epsilon)
+    XCTAssertEqual(second.offsetY, second.legalBottom, accuracy: second.epsilon)
+    XCTAssertEqual(first.contentHeight, second.contentHeight, accuracy: second.epsilon)
+    XCTAssertEqual(first.legalTop, second.legalTop, accuracy: second.epsilon)
+    XCTAssertEqual(first.legalBottom, second.legalBottom, accuracy: second.epsilon)
+    XCTAssertEqual(first.insetBottom, second.insetBottom, accuracy: second.epsilon)
+    assertRect(first.collectionFrame, equals: second.collectionFrame, epsilon: second.epsilon)
+    assertRect(first.footerFrame, equals: second.footerFrame, epsilon: second.epsilon)
+    assertRect(first.editorFrame, equals: second.editorFrame, epsilon: second.epsilon)
+  }
+
+  private func assertMatchingDragPlans(_ gutter: GestureTrace, _ center: GestureTrace, epsilon: Double) {
+    guard let gutterStart = gutter.start, let gutterEnd = gutter.end,
+          let centerStart = center.start, let centerEnd = center.end else {
+      XCTFail("Both native drags must retain actual start/end points")
+      return
+    }
+    XCTAssertEqual(gutterStart.y, centerStart.y, accuracy: epsilon)
+    XCTAssertEqual(gutterEnd.y, centerEnd.y, accuracy: epsilon)
+    XCTAssertGreaterThan(gutterStart.x, centerStart.x)
+  }
+
+  private func assertRect(_ first: Rect, equals second: Rect, epsilon: Double) {
+    XCTAssertEqual(first.x, second.x, accuracy: epsilon)
+    XCTAssertEqual(first.y, second.y, accuracy: epsilon)
+    XCTAssertEqual(first.width, second.width, accuracy: epsilon)
+    XCTAssertEqual(first.height, second.height, accuracy: epsilon)
+  }
+
+  private func rawGestureTrace(_ app: XCUIApplication) -> String? {
+    let probe = app.descendants(matching: .any)["messages.fixture.gestures"].firstMatch
+    guard probe.exists else { return nil }
+    return probe.value as? String
+  }
+
+  private func readGestureTrace(_ app: XCUIApplication) throws -> GestureTrace {
+    guard let raw = rawGestureTrace(app) else { throw FixtureError.sampleMissing }
+    return try JSONDecoder().decode(GestureTrace.self, from: Data(raw.utf8))
+  }
+
+  private func waitForGestureTrace(_ app: XCUIApplication, _ predicate: (GestureTrace) -> Bool) throws -> GestureTrace {
+    let deadline = Date().addingTimeInterval(10)
+    repeat {
+      if let trace = try? readGestureTrace(app), predicate(trace) { return trace }
+      Thread.sleep(forTimeInterval: 0.08)
+    } while Date() < deadline
+    capture("Failed passive native gesture predicate", app: app, includeGestureTrace: true)
+    XCTFail("Timed out waiting for bounded passive native gesture evidence")
+    throw FixtureError.sampleTimedOut
+  }
+
   private func settled(_ app: XCUIApplication) throws -> Sample {
     try waitForSample(app) { $0.ready && $0.isSettled }
   }
@@ -270,6 +433,19 @@ final class MessagesViewportFixtureUITests: XCTestCase {
     ))
   }
 
+  private func productionEditor(_ app: XCUIApplication) -> XCUIElement {
+    // The retained native failure snapshot gives this inherited container ID
+    // to both the editor and placeholder. TextView type plus label is essential.
+    let editors = app.textViews.matching(NSPredicate(
+      format: "identifier == %@ AND label == %@", "chat.composer.viewporttest", "Local fixture text"
+    ))
+    let editor = editors.firstMatch
+    XCTAssertTrue(editor.waitForExistence(timeout: 5), "The actual production TextView must exist")
+    XCTAssertEqual(editors.count, 1, "Exactly one production TextView must match the observed ID and label")
+    XCTAssertTrue(editor.isHittable)
+    return editor
+  }
+
   private func assertSendingBlocked(_ app: XCUIApplication, sample: Sample,
     file: StaticString = #filePath, line: UInt = #line) {
     XCTAssertEqual(sample.sendCallbackCount, 0, file: file, line: line)
@@ -280,7 +456,7 @@ final class MessagesViewportFixtureUITests: XCTestCase {
     XCTAssertFalse(send.isEnabled, "Production Send must remain disabled locally", file: file, line: line)
   }
 
-  private func capture(_ name: String, app: XCUIApplication) {
+  private func capture(_ name: String, app: XCUIApplication, includeGestureTrace: Bool = false) {
     let screenshot = XCTAttachment(screenshot: app.screenshot())
     screenshot.name = name
     screenshot.lifetime = .keepAlways
@@ -289,13 +465,42 @@ final class MessagesViewportFixtureUITests: XCTestCase {
     geometry.name = name + " — UIKit geometry and held-drag witnesses"
     geometry.lifetime = .keepAlways
     add(geometry)
+    if includeGestureTrace {
+      let trace = XCTAttachment(string: rawGestureTrace(app) ?? "No passive native gesture timeline")
+      trace.name = name + " — bounded passive recognizer timeline"
+      trace.lifetime = .keepAlways
+      add(trace)
+    }
   }
 
   private enum FixtureError: Error { case edgeNotReached, sampleTimedOut, sampleMissing }
 
   private struct Rect: Decodable {
     let x: Double, y: Double, width: Double, height: Double
+    init(_ rect: CGRect) {
+      x = Double(rect.minX); y = Double(rect.minY)
+      width = Double(rect.width); height = Double(rect.height)
+    }
     var maxY: Double { y + height }
+  }
+  private struct Point: Decodable { let x: Double, y: Double }
+  private struct GestureRecognizer: Decodable { let identity: String; let isCollectionPan: Bool }
+  private struct GestureView: Decodable { let identity: String }
+  private struct GestureState: Decodable { let identity: String; let state: String }
+  private struct GestureFrame: Decodable { let timestamp: Double; let recognizers: [GestureState] }
+  private struct GestureTrace: Decodable {
+    let sequence: Int, status: String
+    let kind: String?
+    let timelineLimit: Int?, viewLimit: Int?, recognizerLimit: Int?, byteLimit: Int?
+    let fixtureInstanceID: String?, collectionIdentity: String?, editorIdentity: String?
+    let finalCollectionIdentity: String?, finalEditorIdentity: String?
+    let collectionFrame: Rect?, footerFrame: Rect?
+    let baselineSample: Sample?, finalSample: Sample?
+    let start: Point?, end: Point?
+    let viewPath: [GestureView]?, recognizers: [GestureRecognizer]?, timeline: [GestureFrame]?
+    let recordedFrameCount: Int?, droppedRecordCount: Int?
+    let firstInputFrame: GestureFrame?, firstReleasedFrame: GestureFrame?
+    let inputObserved: Bool?
   }
   private struct Witness: Decodable {
     let offsetY: Double, legalTop: Double, legalBottom: Double, timestamp: Double
@@ -303,9 +508,11 @@ final class MessagesViewportFixtureUITests: XCTestCase {
   }
   private struct Sample: Decodable {
     let ready: Bool
+    let fixtureInstanceID: String
     let sampleCount: Int, resetSequence: Int, messageCount: Int, localRevision: Int, sendCallbackCount: Int
     let backdrop: String
     let scale: Double
+    let collectionIdentity: String, editorIdentity: String?
     let collectionFrame: Rect, footerFrame: Rect, editorFrame: Rect
     let editorIsFirstResponder: Bool
     let editorTextCount: Int

@@ -18,32 +18,34 @@ final class InlineReplyComposerUITests: XCTestCase {
     XCTAssertEqual(initial["parentURI"] as? String, sourceURI)
     XCTAssertEqual(initial["sourceStartVisible"] as? Bool, false,
                    "The long reply must initially show its editor, rather than the source top")
-    capture(app, "inline-reply-01-initial-editor-keyboard")
+    try capture(app, "inline-reply-01-initial-editor-keyboard")
     editor.typeText("A typed reply survives reading its original source.")
     let before = try waitProbe(app) { ($0["text"] as? String) == "A typed reply survives reading its original source." }
     assertToolbar(app)
-    capture(app, "inline-reply-02-typed-reply-toolbar")
+    try capture(app, "inline-reply-02-typed-reply-toolbar")
 
     let scroll = app.scrollViews["reply-composer-scroll"]
     XCTAssertTrue(scroll.exists)
     try scrollUntil(app, in: scroll, down: true, key: "sourceStartVisible")
-    capture(app, "inline-reply-03-full-source-start")
+    try capture(app, "inline-reply-03-full-source-start")
     try scrollUntil(app, in: scroll, down: false, key: "sourceEndVisible")
-    capture(app, "inline-reply-04-full-source-end")
+    try capture(app, "inline-reply-04-full-source-end")
     try returnToEditor(app, scroll: scroll)
     try assertSameEditor(app, before: before)
-    capture(app, "inline-reply-05-source-return-editor-selection")
+    try capture(app, "inline-reply-05-source-return-editor-selection")
 
     XCUIDevice.shared.orientation = .landscapeLeft
     try waitOrientation(app, landscape: true)
+    try returnToEditor(app, scroll: scroll)
     try assertSameEditor(app, before: before)
     XCTAssertTrue(app.buttons["composer-close"].isHittable)
     XCTAssertTrue(app.buttons["composer-drafts"].isHittable)
-    capture(app, "inline-reply-06-landscape-editor-selection")
+    try capture(app, "inline-reply-06-landscape-editor-selection")
     XCUIDevice.shared.orientation = .portrait
     try waitOrientation(app, landscape: false)
+    try returnToEditor(app, scroll: scroll)
     try assertSameEditor(app, before: before)
-    capture(app, "inline-reply-07-portrait-return-editor-selection")
+    try capture(app, "inline-reply-07-portrait-return-editor-selection")
   }
 
   func testAccessibilityLargeHasSeparateToolbarAndReachableThreadAdd() throws {
@@ -60,12 +62,12 @@ final class InlineReplyComposerUITests: XCTestCase {
     XCTAssertGreaterThanOrEqual(add.frame.height, 44)
     XCTAssertLessThanOrEqual(add.frame.maxY, app.keyboards.firstMatch.frame.minY + 2)
     editor.typeText("First reply entry at Accessibility Large.")
-    capture(app, "inline-reply-08-accessibility-large-toolbar-thread-add")
+    try capture(app, "inline-reply-08-accessibility-large-toolbar-thread-add")
     add.tap()
     let threadEditor = try readyEditor(app)
     threadEditor.typeText("Second local thread entry.")
     _ = try waitProbe(app) { ($0["text"] as? String) == "Second local thread entry." }
-    capture(app, "inline-reply-09-accessibility-large-second-thread-entry")
+    try capture(app, "inline-reply-09-accessibility-large-second-thread-entry")
   }
 
   func testWhitespaceDismissClearsReplyReferenceBeforeNewPost() throws {
@@ -85,7 +87,7 @@ final class InlineReplyComposerUITests: XCTestCase {
     XCTAssertEqual(dismissed["savedCount"] as? Int, 1,
                    "Empty dismissal must not create a saved library row")
     XCTAssertFalse(app.buttons["inline-reply.resume"].exists)
-    capture(app, "inline-reply-10-whitespace-dismiss-no-reference")
+    try capture(app, "inline-reply-10-whitespace-dismiss-no-reference")
 
     app.buttons["inline-reply.new-post"].tap()
     _ = try readyEditor(app, title: "Post")
@@ -94,7 +96,7 @@ final class InlineReplyComposerUITests: XCTestCase {
     XCTAssertEqual(fresh["text"] as? String, "")
     XCTAssertEqual(fresh["parentURI"] as? String, "none")
     XCTAssertFalse(app.descendants(matching: .any)["reply-inline-source"].firstMatch.exists)
-    capture(app, "inline-reply-11-fresh-post-no-stale-original")
+    try capture(app, "inline-reply-11-fresh-post-no-stale-original")
   }
 
   func testMeaningfulReplyAutosavesMinimizesAndRestores() throws {
@@ -109,13 +111,13 @@ final class InlineReplyComposerUITests: XCTestCase {
     }
     XCTAssertEqual(saved["persistedParentURI"] as? String, sourceURI)
     XCTAssertEqual(saved["claim"] as? String, claim)
-    capture(app, "inline-reply-12-production-autosave-body-reference")
+    try capture(app, "inline-reply-12-production-autosave-body-reference")
     dismissNativeSheet(app)
     let minimized = try waitProbe(app) { ($0["minimized"] as? Bool) == true }
     XCTAssertEqual(minimized["claim"] as? String, claim)
     XCTAssertEqual(minimized["persistedText"] as? String, text)
     XCTAssertEqual(minimized["parentURI"] as? String, sourceURI)
-    capture(app, "inline-reply-13-native-minimize-keeps-body-reference")
+    try capture(app, "inline-reply-13-native-minimize-keeps-body-reference")
 
     let resume = app.buttons["inline-reply.resume"]
     XCTAssertTrue(resume.isHittable)
@@ -129,7 +131,7 @@ final class InlineReplyComposerUITests: XCTestCase {
     XCTAssertEqual(restored["parentURI"] as? String, sourceURI)
     XCTAssertEqual(restored["minimized"] as? Bool, false)
     XCTAssertTrue(app.descendants(matching: .any)["reply-inline-source"].firstMatch.exists)
-    capture(app, "inline-reply-14-restored-local-source-and-typed-reply")
+    try capture(app, "inline-reply-14-restored-local-source-and-typed-reply")
   }
 
   private let sourceURI = "at://did:plc:inlinereplyfixtureauthor/app.bsky.feed.post/inline-source"
@@ -207,7 +209,8 @@ final class InlineReplyComposerUITests: XCTestCase {
   private func scrollUntil(_ app: XCUIApplication, in scroll: XCUIElement,
                            down: Bool, key: String) throws {
     for _ in 0..<18 {
-      if try probe(app)[key] as? Bool == true { return }
+      let current = try probe(app)
+      if current[key] as? Bool == true, rectsVisible(app, probe: current, key: key == "sourceStartVisible" ? "sourceStartGlyphFrames" : "sourceEndGlyphFrames") { return }
       dragSource(app, scroll: scroll, down: down)
     }
     XCTFail("The inline source marker did not enter the actual clipped viewport: \(key)")
@@ -239,10 +242,44 @@ final class InlineReplyComposerUITests: XCTestCase {
       .press(forDuration: 0.1, thenDragTo: origin.withOffset(CGVector(dx: contactX, dy: endY)))
   }
 
+  // Exact production AX controls independently bound the region above the sibling footer.
+  // A zero adjustedContentInset cannot admit text behind these controls.
+  private func unobscuredReadingRegion(_ app: XCUIApplication) -> CGRect? {
+    let window = app.windows.firstMatch.frame
+    let bar = app.navigationBars["Reply"]
+    let keyboard = app.keyboards.firstMatch
+    let add = app.buttons["Add attachment or post settings"]
+    let thread = app.buttons["composer-add-thread-post"]
+    guard bar.exists, keyboard.exists, add.exists, thread.exists else { return nil }
+    let chips = app.otherElements.matching(NSPredicate(format: "label == %@", "Language English"))
+      .allElementsBoundByIndex.map { $0.frame }.filter { !$0.isEmpty && $0.intersects(window) }
+    if window.height > window.width && chips.isEmpty { return nil }
+    let footerFrames = chips + [add.frame, thread.frame]
+    guard footerFrames.allSatisfy({ !$0.isEmpty && $0.intersects(window) }) else { return nil }
+    let top = max(window.minY, bar.frame.maxY)
+    let bottom = min(keyboard.frame.minY, footerFrames.map { $0.minY }.min()!)
+    guard bottom > top else { return nil }
+    return CGRect(x: window.minX, y: top, width: window.width, height: bottom - top)
+  }
+
+  private func rectsVisible(_ app: XCUIApplication, probe: [String: Any], key: String,
+                            includeCaret: Bool = false) -> Bool {
+    guard let viewport = unobscuredReadingRegion(app), let encoded = probe[key] as? [String],
+          !encoded.isEmpty else { return false }
+    var frames = encoded.map { NSCoder.cgRect(for: $0) }
+    if includeCaret {
+      guard let caret = probe["editorCaretFrame"] as? String, caret != "none" else { return false }
+      frames.append(NSCoder.cgRect(for: caret))
+    }
+    return frames.allSatisfy { !$0.isEmpty && !$0.isNull && !$0.isInfinite && viewport.contains($0) }
+  }
+
   private func returnToEditor(_ app: XCUIApplication, scroll: XCUIElement) throws {
     let editor = app.textViews["inline-reply.editor"].firstMatch
     for _ in 0..<12 {
-      if editor.isHittable { return }
+      let current = try probe(app)
+      if editor.isHittable, current["editorTextAndCaretVisible"] as? Bool == true,
+         rectsVisible(app, probe: current, key: "editorGlyphFrames", includeCaret: true) { return }
       dragSource(app, scroll: scroll, down: false)
     }
     XCTFail("Could not return to the existing reply editor by native scrolling")
@@ -272,11 +309,75 @@ final class InlineReplyComposerUITests: XCTestCase {
     }
   }
 
-  private func capture(_ app: XCUIApplication, _ name: String) {
-    let screenshot = XCTAttachment(screenshot: app.screenshot())
+  private func capture(_ app: XCUIApplication, _ name: String) throws {
+    var previous: [String: Any]?
+    var previousFrame: CGRect?
+    var stableSamples = 0
+    _ = try waitProbe(app, timeout: 8) { current in
+      let currentFrame = app.windows.firstMatch.frame
+      let keys = ["identity", "text", "claim", "editorFrame", "editorReadingViewport"]
+      let same = previousFrame == currentFrame
+        && (previous?["interfaceOrientation"] as? Int) == (current["interfaceOrientation"] as? Int)
+        && keys.allSatisfy {
+        (previous?[$0] as? String) == (current[$0] as? String)
+      }
+      stableSamples = same ? stableSamples + 1 : 0
+      previous = current
+      previousFrame = currentFrame
+      return stableSamples >= 2
+    }
+    let before = try probe(app)
+    let frame = app.windows.firstMatch.frame
+    let orientation = XCUIDevice.shared.orientation
+    let appImage = app.screenshot()
+    let screenshot = XCTAttachment(screenshot: appImage)
     screenshot.name = name
     screenshot.lifetime = .keepAlways
     add(screenshot)
+    // XCUIScreen observes the actual device screen independently of app capture.
+    // Preserve both original images; dimension checks alone do not prove readable pixels.
+    let screen = XCUIScreen.main.screenshot()
+    let deviceImage = XCTAttachment(screenshot: screen)
+    deviceImage.name = name + "-device-screen"
+    deviceImage.lifetime = .keepAlways
+    add(deviceImage)
+    let after = try probe(app)
+    XCTAssertEqual(app.windows.firstMatch.frame, frame)
+    XCTAssertEqual(XCUIDevice.shared.orientation, orientation)
+    for key in ["identity", "text", "claim", "editorReadingViewport"] {
+      XCTAssertEqual(before[key] as? String, after[key] as? String, "Capture state changed: " + key)
+    }
+    let width = try XCTUnwrap(after["windowWidth"] as? Double)
+    let height = try XCTUnwrap(after["windowHeight"] as? Double)
+    XCTAssertEqual(Double(frame.width), width, accuracy: 1)
+    XCTAssertEqual(Double(frame.height), height, accuracy: 1)
+    let sceneOrientation = try XCTUnwrap(after["interfaceOrientation"] as? Int)
+    XCTAssertTrue((1...4).contains(sceneOrientation), "Native scene orientation must be known")
+    XCTAssertEqual(before["interfaceOrientation"] as? Int, sceneOrientation)
+    XCTAssertEqual(sceneOrientation == 3 || sceneOrientation == 4, width > height)
+    let pixels = try XCTUnwrap(screen.image.cgImage)
+    let swapsAxes = [.left, .right, .leftMirrored, .rightMirrored].contains(screen.image.imageOrientation)
+    let displayWidth = swapsAxes ? pixels.height : pixels.width
+    let displayHeight = swapsAxes ? pixels.width : pixels.height
+    XCTAssertEqual(displayWidth > displayHeight, width > height,
+                   "Actual device-screen raster orientation must match current native geometry")
+    XCTAssertEqual(Double(displayWidth) / Double(displayHeight), width / height, accuracy: 0.01)
+    let appPixels = try XCTUnwrap(appImage.image.cgImage)
+    let metadata: [String: Any] = ["windowFrame": NSCoder.string(for: frame),
+      "nativeDeviceOrientation": orientation.rawValue,
+      "appPixelWidth": appPixels.width, "appPixelHeight": appPixels.height,
+      "appImageOrientation": appImage.image.imageOrientation.rawValue,
+      "screenPixelWidth": pixels.width, "screenPixelHeight": pixels.height,
+      "screenImageOrientation": screen.image.imageOrientation.rawValue,
+      "screenDeclaredDisplayWidth": displayWidth, "screenDeclaredDisplayHeight": displayHeight,
+      "probeBefore": before, "probeAfter": after,
+      "axUnobscuredReadingRegion": unobscuredReadingRegion(app).map { NSCoder.string(for: $0) } ?? "unavailable",
+      "pixelContentRequiresIndependentVisualReview": true]
+    let captureState = XCTAttachment(data: try JSONSerialization.data(withJSONObject: metadata, options: [.sortedKeys]),
+                                     uniformTypeIdentifier: "public.json")
+    captureState.name = name + "-capture-geometry"
+    captureState.lifetime = .keepAlways
+    add(captureState)
     let tree = XCTAttachment(string: app.debugDescription)
     tree.name = "\(name)-accessibility"
     tree.lifetime = .keepAlways
