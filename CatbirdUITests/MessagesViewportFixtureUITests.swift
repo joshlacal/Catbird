@@ -210,11 +210,14 @@ final class MessagesViewportFixtureUITests: XCTestCase {
       let target = edge == .top ? sample.legalTop : sample.legalBottom
       if abs(sample.offsetY - target) <= sample.epsilon { return }
       // XCUITest's .fast swipe registers no pan at all on the iOS 27 simulator,
-      // while a gutter press-drag scrolls natively (R5 passive traces). Release
-      // without a hold so the native deceleration carries the flick.
+      // while a press-drag scrolls natively (R5 passive traces). Drag through
+      // the horizontal center: at the right edge the interactive scroll
+      // indicator claims the touch once the knob sits under it, and every
+      // later drag becomes a no-op. Release without a hold so native
+      // deceleration carries the flick.
       let usableFraction = (sample.collectionFrame.height - sample.footerFrame.height) / sample.collectionFrame.height
-      let upper = collection.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: CGFloat(0.08 * usableFraction)))
-      let lower = collection.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: CGFloat(0.92 * usableFraction)))
+      let upper = collection.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: CGFloat(0.08 * usableFraction)))
+      let lower = collection.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: CGFloat(0.92 * usableFraction)))
       let (start, end) = edge == .top ? (upper, lower) : (lower, upper)
       start.press(forDuration: 0.01, thenDragTo: end, withVelocity: XCUIGestureVelocity(2_400), thenHoldForDuration: 0)
     }
