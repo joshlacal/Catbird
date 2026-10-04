@@ -1133,9 +1133,14 @@ final class PreferencesManager {
 
   @MainActor
   func removeMutedWord(id: String, expectedAccountDID: String? = nil) async throws {
+    guard !id.isEmpty else { throw PreferencesManagerError.invalidData }
     try await updateSpecificPreferences(preferenceType: "mutedWords", expectedAccountDID: expectedAccountDID) {
       (current: [AppBskyActorDefs.MutedWord]?) -> [AppBskyActorDefs.MutedWord]? in
-      (current ?? []).filter { ($0.id ?? "") != id }
+      let words = current ?? []
+      let matchingCount = words.filter { $0.id == id }.count
+      guard matchingCount <= 1 else { throw PreferencesManagerError.invalidData }
+      guard matchingCount == 1 else { return nil }
+      return words.filter { $0.id != id }
     }
   }
 
