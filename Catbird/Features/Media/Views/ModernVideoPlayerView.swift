@@ -196,7 +196,9 @@ struct ModernVideoPlayerView: View {
         
         if let player = player {
           VideoCoordinator.shared.appSettings = appState.appSettings
-          registerPreparedPlayer(player)
+          // The existing player may be owned by PiP with a native mute change
+          // still awaiting model synchronization. Let its guard run first.
+          VideoCoordinator.shared.register(model, player: player)
         }
       }
       .onDisappear {
