@@ -289,9 +289,24 @@ final class SettingsRedesignFixtureUITests: XCTestCase {
   }
 
   private func reveal(_ element: XCUIElement, _ app: XCUIApplication, upward: Bool = true) throws {
-    for attempt in 0..<12 {
-      if element.exists && element.isHittable && receivingViewport(app).insetBy(dx: -1, dy: -1).contains(element.frame) { return }
-      if attempt < 11 { if upward { app.swipeUp() } else { app.swipeDown() } }
+    for attempt in 0..<24 {
+      let viewport = receivingViewport(app)
+      if element.exists && element.isHittable && viewport.insetBy(dx: -1, dy: -1).contains(element.frame) { return }
+      guard attempt < 23 else { break }
+      // Move toward the control's actual position in momentum-free steps, so a
+      // fling cannot carry it past the viewport and away from a one-way search.
+      var moveContentUp = upward
+      if element.exists, !element.frame.isEmpty {
+        if element.frame.maxY > viewport.maxY { moveContentUp = true }
+        else if element.frame.minY < viewport.minY { moveContentUp = false }
+      }
+      let origin = app.windows.firstMatch.coordinate(withNormalizedOffset: .zero)
+      let x = viewport.midX
+      let lower = viewport.minY + viewport.height * 0.7
+      let upper = viewport.minY + viewport.height * 0.3
+      origin.withOffset(CGVector(dx: x, dy: moveContentUp ? lower : upper))
+        .press(forDuration: 0.05, thenDragTo: origin.withOffset(CGVector(dx: x, dy: moveContentUp ? upper : lower)),
+               withVelocity: .default, thenHoldForDuration: 0.2)
     }
     XCTFail("Expected a fully reachable native control: \(element.identifier)")
     throw FixtureError.controlNotReached

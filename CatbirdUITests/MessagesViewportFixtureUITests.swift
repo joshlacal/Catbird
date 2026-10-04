@@ -233,7 +233,10 @@ final class MessagesViewportFixtureUITests: XCTestCase {
       switch character {
       case "\n": key = keyboard.buttons["Return"].exists ? keyboard.buttons["Return"] : keyboard.keys["return"]
       case " ": key = keyboard.keys["space"]
-      default: key = keyboard.keys[String(character)]
+      default:
+        // Auto-capitalization relabels letter keys (e.g. "L" at sentence start).
+        let lower = keyboard.keys[String(character)]
+        key = lower.exists ? lower : keyboard.keys[String(character).uppercased()]
       }
       XCTAssertTrue(key.waitForExistence(timeout: 2), "Missing software key for \(character.debugDescription)")
       key.tap()

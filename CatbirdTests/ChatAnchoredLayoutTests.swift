@@ -103,6 +103,9 @@ final class ChatAnchoredLayoutTests: XCTestCase {
 
     func waitForHeight(_ id: Int, expected: CGFloat, file: StaticString = #filePath, line: UInt = #line) async throws {
       try await waitForMeasuredChange(id, file: file, line: line) { abs($0 - expected) <= 2 }
+      // Reading attributes can re-prepare the layout after layoutSubviews ran;
+      // let the transcript complete its pass (as the next frame would) first.
+      collection.layoutIfNeeded()
       XCTAssertEqual(try height(id), expected, accuracy: 2, file: file, line: line)
       XCTAssertEqual(try XCTUnwrap(rows.renderedEmbedHeights[id]), try XCTUnwrap(rows.heights[id]), accuracy: 1, file: file, line: line)
       let index = try XCTUnwrap(source.indexPath(for: id))
