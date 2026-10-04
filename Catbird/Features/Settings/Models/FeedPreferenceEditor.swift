@@ -22,7 +22,14 @@ final class FeedPreferenceEditor {
 
   convenience init(appState: AppState) {
     let did = appState.userDID
-    self.init(accountDID: did, isCurrentAccount: { appState.userDID == did }, read: {
+    let revision = AppStateManager.shared.settingsAccountContextRevision
+    let clientIdentity = appState.atProtoClient.map(ObjectIdentifier.init)
+    self.init(accountDID: did, isCurrentAccount: {
+      let manager = AppStateManager.shared
+      return manager.lifecycle.isAuthenticated && manager.lifecycle.appState === appState
+        && manager.lifecycle.userDID == did && manager.settingsAccountContextRevision == revision
+        && appState.atProtoClient.map(ObjectIdentifier.init) == clientIdentity
+    }, read: {
       try await appState.preferencesManager.refreshSettingsPreferences().feedViewPref
     }, write: { edit, did in
       let manager = appState.preferencesManager

@@ -97,6 +97,7 @@ struct ThreadSettingsView: View {
   @State private var hasLoaded = false
   @State private var isSaving = false
   @State private var error: String?
+  @State private var editorContext: SettingsFeedRefreshContext?
 
   var body: some View {
     SettingsFocusedForm(initialFocus: initialFocus, isReady: !isLoading) {
@@ -144,39 +145,50 @@ struct ThreadSettingsView: View {
 
   private func loadSort() async {
     guard !isSaving, pendingSort == nil else { return }
-    let did = appState.userDID
+    let context = SettingsFeedRefreshContext(accountDID: appState.userDID,
+      accountRevision: AppStateManager.shared.settingsAccountContextRevision,
+      clientIdentity: appState.atProtoClient.map(ObjectIdentifier.init))
+    guard isCurrent(context) else { return }
+    editorContext = context
     isLoading = true
     hasLoaded = false
     defer { isLoading = false }
     do {
       let preferences = try await appState.preferencesManager.refreshSettingsPreferences()
-      guard !Task.isCancelled, appState.userDID == did else { return }
+      guard !Task.isCancelled, isCurrent(context) else { return }
       sort = preferences.threadViewPref?.sort ?? "hot"
       hasLoaded = true
       error = nil
     } catch {
-      guard !Task.isCancelled, appState.userDID == did else { return }
+      guard !Task.isCancelled, isCurrent(context) else { return }
       self.error = "Couldn’t load reply order. \(error.localizedDescription)"
     }
   }
 
   private func saveSort() {
-    guard hasLoaded, !isSaving, let pendingSort else { return }
-    let did = appState.userDID
+    guard hasLoaded, !isSaving, let pendingSort, let context = editorContext, isCurrent(context) else { return }
     isSaving = true
     Task { @MainActor in
       defer { isSaving = false }
       do {
-        try await appState.preferencesManager.setThreadViewPreferences(sort: pendingSort, expectedAccountDID: did)
-        guard !Task.isCancelled, appState.userDID == did else { return }
+        try await appState.preferencesManager.setThreadViewPreferences(sort: pendingSort, expectedAccountDID: context.accountDID)
+        guard !Task.isCancelled, isCurrent(context) else { return }
         sort = pendingSort
         appState.appSettings.threadSortOrder = pendingSort
         self.pendingSort = nil
         error = nil
       } catch {
-        guard !Task.isCancelled, appState.userDID == did else { return }
+        guard !Task.isCancelled, isCurrent(context) else { return }
         self.error = "Couldn’t save reply order. \(error.localizedDescription)"
       }
     }
+  }
+
+  private func isCurrent(_ context: SettingsFeedRefreshContext) -> Bool {
+    let manager = AppStateManager.shared
+    return manager.lifecycle.isAuthenticated && manager.lifecycle.appState === appState
+      && manager.lifecycle.userDID == context.accountDID
+      && manager.settingsAccountContextRevision == context.accountRevision
+      && appState.atProtoClient.map(ObjectIdentifier.init) == context.clientIdentity
   }
 }
