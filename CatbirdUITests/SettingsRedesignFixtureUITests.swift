@@ -65,7 +65,23 @@ final class SettingsRedesignFixtureUITests: XCTestCase {
       let back = app.navigationBars[category.title].buttons.firstMatch
       XCTAssertTrue(back.isHittable)
       back.tap()
-      XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 5))
+      // Returning to active native search can hide the root title bar. Require
+      // the real root search controls, not a hidden destination's retained tree.
+      let returnedSearch = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+        guard !app.navigationBars[category.title].exists,
+          result.exists && result.isHittable, search.exists && search.isHittable else { return false }
+        return (search.value as? String) == category.title
+          && result.label.contains(category.title) && result.label.contains("Settings")
+          && self.receivingViewport(app).insetBy(dx: -1, dy: -1).contains(result.frame)
+          && app.windows.firstMatch.frame.insetBy(dx: -1, dy: -1).contains(search.frame)
+      }, object: app)
+      XCTAssertEqual(XCTWaiter.wait(for: [returnedSearch], timeout: 5), .completed,
+        "Native Back must restore the actual root search context")
+      XCTAssertTrue(result.label.contains(category.title))
+      XCTAssertTrue(result.label.contains("Settings"), "Returning must retain the result's location context")
+      assertHitGeometry(result, app)
+      XCTAssertTrue(app.windows.firstMatch.frame.insetBy(dx: -1, dy: -1).contains(search.frame),
+        "Returning search field must fit the native window")
       XCTAssertEqual(search.value as? String, category.title, "Returning must preserve the actual query")
     }
 

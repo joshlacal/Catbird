@@ -75,7 +75,7 @@ struct InlineReplyValidationFixture: View {
         throw FixtureError.transportRegistration
       }
       await NetworkService.setNetworkTestProtocolClasses([InlineReplyLocalProtocol.self])
-      let client = await ATProtoClient(baseURL: URL(string: "https://inline-reply.invalid")!)
+      let client = await ATProtoClient(baseURL: URL(string: "https://127.0.0.1")!)
       let state = AppState(userDID: Self.accountDID, client: client,
                            regulatoryChecker: NoAgePrompt())
       state.currentUserProfile = try JSONDecoder().decode(AppBskyActorDefs.ProfileViewBasic.self, from:
@@ -162,9 +162,13 @@ private final class InlineReplyLocalProtocol: URLProtocol, @unchecked Sendable {
   override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
   override func startLoading() {
-    guard let url = request.url, url.host == "inline-reply.invalid",
-          request.httpMethod == nil || request.httpMethod == "GET",
-          url.path.hasSuffix("/app.bsky.feed.getPosts") else {
+    guard let url = request.url, url.scheme == "https", url.host == "127.0.0.1",
+          url.port == nil, url.user == nil, url.password == nil, url.fragment == nil,
+          request.httpMethod == "GET", request.httpBody == nil, request.httpBodyStream == nil,
+          url.path == "/xrpc/app.bsky.feed.getPosts",
+          let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems,
+          query == [URLQueryItem(name: "uris",
+            value: "at://did:plc:inlinereplyfixtureauthor/app.bsky.feed.post/inline-source")] else {
       Self.lock.withLock { Self.refusedRequests += 1 }
       client?.urlProtocol(self, didFailWithError: URLError(.resourceUnavailable))
       return

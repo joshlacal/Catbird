@@ -217,20 +217,26 @@ final class InlineReplyComposerUITests: XCTestCase {
     var viewport = scroll.frame.intersection(app.windows.firstMatch.frame)
     let barBottom = app.navigationBars["Reply"].frame.maxY
     let keyboardTop = app.keyboards.firstMatch.frame.minY
-    // The prediction/accessory strip is a separate AX scroll view above the keys.
+    // The keyboard strip ends at the keys; app scroll views above it are not accessories.
     let accessories = app.scrollViews.allElementsBoundByIndex.filter {
-      $0.identifier != "reply-composer-scroll" && $0.frame.maxY <= keyboardTop + 1
+      $0.identifier != "reply-composer-scroll" && abs($0.frame.maxY - keyboardTop) <= 1
         && $0.frame.minY >= barBottom && $0.frame.width > viewport.width / 2
     }
     let lower = accessories.map { $0.frame.minY }.min() ?? keyboardTop
     viewport = viewport.intersection(CGRect(x: viewport.minX, y: barBottom,
       width: viewport.width, height: max(0, lower - barBottom)))
     XCTAssertGreaterThan(viewport.height, 0)
+    // Contact the measured outer-scroll gutter, not the editor's own pan recognizer.
+    let editorFrame = app.textViews["inline-reply.editor"].firstMatch.frame
+    XCTAssertGreaterThan(editorFrame.width, 0)
+    let gutterStart = max(viewport.minX, editorFrame.maxX)
+    XCTAssertGreaterThan(viewport.maxX - gutterStart, 0)
+    let contactX = (gutterStart + viewport.maxX) / 2
     let origin = app.windows.firstMatch.coordinate(withNormalizedOffset: .zero)
     let startY = viewport.minY + viewport.height * (down ? 0.25 : 0.75)
     let endY = viewport.minY + viewport.height * (down ? 0.75 : 0.25)
-    origin.withOffset(CGVector(dx: viewport.midX, dy: startY))
-      .press(forDuration: 0.1, thenDragTo: origin.withOffset(CGVector(dx: viewport.midX, dy: endY)))
+    origin.withOffset(CGVector(dx: contactX, dy: startY))
+      .press(forDuration: 0.1, thenDragTo: origin.withOffset(CGVector(dx: contactX, dy: endY)))
   }
 
   private func returnToEditor(_ app: XCUIApplication, scroll: XCUIElement) throws {

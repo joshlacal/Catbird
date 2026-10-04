@@ -177,8 +177,10 @@ final class MessagesViewportFixtureUITests: XCTestCase {
     app.launch()
     XCTAssertTrue(app.descendants(matching: .any)["messages.fixture.geometry"].firstMatch.waitForExistence(timeout: 8))
     let sample = try waitForSample(app) { $0.ready && $0.isSettled }
-    let send = app.buttons["chat.composer.sendButton.viewporttest"].firstMatch
+    let sends = productionSendButtons(app)
+    let send = sends.firstMatch
     XCTAssertTrue(send.waitForExistence(timeout: 5), "The real production Send button must exist")
+    XCTAssertEqual(sends.count, 1, "Exactly one real production Send button must exist")
     assertSendingBlocked(app, sample: sample)
     return app
   }
@@ -261,10 +263,19 @@ final class MessagesViewportFixtureUITests: XCTestCase {
     XCTAssertLessThanOrEqual(sample.offsetY, sample.legalBottom + sample.epsilon, file: file, line: line)
   }
 
+  private func productionSendButtons(_ app: XCUIApplication) -> XCUIElementQuery {
+    app.buttons.matching(NSPredicate(
+      format: "identifier == %@ AND label == %@",
+      "chat.composer.viewporttest", "Send message"
+    ))
+  }
+
   private func assertSendingBlocked(_ app: XCUIApplication, sample: Sample,
     file: StaticString = #filePath, line: UInt = #line) {
     XCTAssertEqual(sample.sendCallbackCount, 0, file: file, line: line)
-    let send = app.buttons["chat.composer.sendButton.viewporttest"].firstMatch
+    let sends = productionSendButtons(app)
+    let send = sends.firstMatch
+    XCTAssertEqual(sends.count, 1, "Exactly one real production Send button must remain present", file: file, line: line)
     XCTAssertTrue(send.exists, "The real production Send button must remain present", file: file, line: line)
     XCTAssertFalse(send.isEnabled, "Production Send must remain disabled locally", file: file, line: line)
   }
