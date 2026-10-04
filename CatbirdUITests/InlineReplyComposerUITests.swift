@@ -160,7 +160,8 @@ final class InlineReplyComposerUITests: XCTestCase {
       XCTAssertEqual(quickPath.buttons.matching(identifier: "Continue").count, 1)
       proceed.tap()
     }
-    XCTAssertTrue(app.keyboards.keys["q"].waitForExistence(timeout: 5),
+    XCTAssertTrue(app.keyboards.keys.matching(NSPredicate(format: "label ==[c] %@", "q"))
+      .firstMatch.waitForExistence(timeout: 5),
                   "Typing requires actual alphabetic keys after keyboard onboarding")
     XCTAssertTrue(editor.isHittable, "Initial source positioning must leave the native editor reachable")
     return editor
