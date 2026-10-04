@@ -1089,7 +1089,12 @@ struct ExternalEmbedView: View {
     private var blockedMediaButtons: some View {
         HStack(spacing: 12) {
             Button("Settings") {
-                sceneContext.navigationManager.navigate(to: .settings(.contentAndMedia))
+                let mediaProvider = (destinationURL ?? external.uri.url).flatMap { provider(for: $0) }
+                let control = mediaProvider.map {
+                    SettingsControlID(rawValue: "media.provider.\($0.rawValue)")
+                } ?? SettingsControlID(rawValue: "media.providerPermissions")
+                sceneContext.navigationManager.navigate(to: .settings(
+                    SettingsRoute(target: .init(screen: .externalMedia, control: control))))
             }
             .appFont(AppTextRole.caption)
             .foregroundStyle(.blue)

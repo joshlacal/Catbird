@@ -1,4 +1,5 @@
 import SwiftUI
+import Observation
 
 /// A destination's stable category color, independent of the user's selected accent.
 enum SettingsIconFamily {
@@ -21,7 +22,7 @@ struct SettingsCategoryIcon: View {
     let systemImage: String
     let family: SettingsIconFamily
     @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.accessibilityContrast) private var contrast
+    @Environment(\.colorSchemeContrast) private var contrast
     private var color: Color { family.palette.map { colorScheme == .dark ? $0.darkColor : $0.color } ?? .secondary }
     var body: some View {
         Image(systemName: systemImage)
@@ -43,8 +44,8 @@ struct SettingsNavigationRow: View {
         HStack(alignment: .center, spacing: DesignTokens.Spacing.base) {
             SettingsCategoryIcon(systemImage: systemImage, family: family)
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
-                Text(title).foregroundStyle(.primary)
-                if let summary, !summary.isEmpty { Text(summary).font(.subheadline).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
+                Text(title).appFont(AppTextRole.body).foregroundStyle(.primary)
+                if let summary, !summary.isEmpty { Text(summary).appFont(AppTextRole.subheadline).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
             }
         }
         .accessibilityElement(children: .combine)
@@ -99,7 +100,39 @@ struct SettingsScopeSection: View {
     var body: some View {
         Section {
             LabeledContent("Applies to", value: scope)
-            if scope == "Current account" { Text(appState.userDID).font(.caption).foregroundStyle(.secondary).textSelection(.enabled) }
+            if scope == "Current account" {
+                let handle = AppStateManager.shared.authentication.getCachedProfileData(for: appState.userDID)?.handle
+                Text(handle.map { "@" + $0 } ?? appState.userDID).appFont(AppTextRole.caption).foregroundStyle(.secondary).textSelection(.enabled)
+            }
         }
+    }
+}
+
+/// Lets a staged editor participate in the Settings sheet's explicit departure flow.
+@MainActor @Observable
+final class SettingsDraftGuard {
+    var accountDID: String?
+    var hasChanges = false
+    var resolve: ((Bool) async -> Bool)?
+}
+
+private struct SettingsDraftGuardKey: EnvironmentKey {
+    static let defaultValue: SettingsDraftGuard? = nil
+}
+
+extension EnvironmentValues {
+    var settingsDraftGuard: SettingsDraftGuard? {
+        get { self[SettingsDraftGuardKey.self] }
+        set { self[SettingsDraftGuardKey.self] = newValue }
+    }
+}
+
+@MainActor enum SettingsAccountBoundary {
+    /// AppState instances survive account switches; the lifecycle is the active account authority.
+    static func isCurrent(_ did: String) -> Bool {
+        AppStateManager.shared.lifecycle.userDID == did
+    }
+    static func isCurrent(_ did: String, revision: UInt64) -> Bool {
+        isCurrent(did) && AppStateManager.shared.settingsAccountContextRevision == revision
     }
 }
