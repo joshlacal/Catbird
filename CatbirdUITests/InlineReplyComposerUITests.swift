@@ -208,7 +208,7 @@ final class InlineReplyComposerUITests: XCTestCase {
 
   private func scrollUntil(_ app: XCUIApplication, in scroll: XCUIElement,
                            down: Bool, key: String) throws {
-    for _ in 0..<18 {
+    for _ in 0..<36 {
       let current = try probe(app)
       if current[key] as? Bool == true, rectsVisible(app, probe: current, key: key == "sourceStartVisible" ? "sourceStartGlyphFrames" : "sourceEndGlyphFrames") { return }
       dragSource(app, scroll: scroll, down: down)
@@ -235,11 +235,16 @@ final class InlineReplyComposerUITests: XCTestCase {
     let gutterStart = max(viewport.minX, editorFrame.maxX)
     XCTAssertGreaterThan(viewport.maxX - gutterStart, 0)
     let contactX = (gutterStart + viewport.maxX) / 2
+    // Step within the unobscured band (above the footer), a third of it at a
+    // time, and hold before release so no fling carries content past a marker
+    // whose visible window is narrower than one half-viewport drag.
+    let band = unobscuredReadingRegion(app) ?? viewport
     let origin = app.windows.firstMatch.coordinate(withNormalizedOffset: .zero)
-    let startY = viewport.minY + viewport.height * (down ? 0.25 : 0.75)
-    let endY = viewport.minY + viewport.height * (down ? 0.75 : 0.25)
+    let startY = band.minY + band.height * (down ? 0.33 : 0.67)
+    let endY = band.minY + band.height * (down ? 0.67 : 0.33)
     origin.withOffset(CGVector(dx: contactX, dy: startY))
-      .press(forDuration: 0.1, thenDragTo: origin.withOffset(CGVector(dx: contactX, dy: endY)))
+      .press(forDuration: 0.1, thenDragTo: origin.withOffset(CGVector(dx: contactX, dy: endY)),
+             withVelocity: .slow, thenHoldForDuration: 0.3)
   }
 
   // Exact production AX controls independently bound the region above the sibling footer.
@@ -276,7 +281,7 @@ final class InlineReplyComposerUITests: XCTestCase {
 
   private func returnToEditor(_ app: XCUIApplication, scroll: XCUIElement) throws {
     let editor = app.textViews["inline-reply.editor"].firstMatch
-    for _ in 0..<12 {
+    for _ in 0..<24 {
       let current = try probe(app)
       if editor.isHittable, current["editorTextAndCaretVisible"] as? Bool == true,
          rectsVisible(app, probe: current, key: "editorGlyphFrames", includeCaret: true) { return }

@@ -30,8 +30,8 @@ final class MessagesViewportFixtureUITests: XCTestCase {
     editor.tap()
     XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), "Requires a real software keyboard")
     let focused = try waitForSample(app) { $0.editorIsFirstResponder && $0.isSettled }
-    let text = (1...8).map { "Local keyboard line \($0) wraps inside the actual editor." }.joined(separator: "\n")
-    editor.typeText(text)
+    let text = "local\nkeyboard\nlines\ngrow\nthe\nactual\neditor"
+    typeOnSoftwareKeyboard(text, app: app)
     let grown = try waitForSample(app) {
       $0.editorTextCount == text.count && $0.editorIsFirstResponder && $0.isSettled
     }
@@ -113,8 +113,8 @@ final class MessagesViewportFixtureUITests: XCTestCase {
     let editor = productionEditor(app)
     editor.tap()
     XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
-    let text = "Local short chat\nSecond line\nThird line\nFourth line"
-    editor.typeText(text)
+    let text = "local short chat\nsecond line\nthird line\nfourth line"
+    typeOnSoftwareKeyboard(text, app: app)
     let keyboard = try waitForSample(app) {
       $0.editorIsFirstResponder && $0.editorTextCount == text.count && $0.isSettled
     }
@@ -209,11 +209,36 @@ final class MessagesViewportFixtureUITests: XCTestCase {
       let sample = try settled(app)
       let target = edge == .top ? sample.legalTop : sample.legalBottom
       if abs(sample.offsetY - target) <= sample.epsilon { return }
-      if edge == .top { collection.swipeDown(velocity: .fast) }
-      else { collection.swipeUp(velocity: .fast) }
+      // XCUITest's .fast swipe registers no pan at all on the iOS 27 simulator,
+      // while a gutter press-drag scrolls natively (R5 passive traces). Release
+      // without a hold so the native deceleration carries the flick.
+      let usableFraction = (sample.collectionFrame.height - sample.footerFrame.height) / sample.collectionFrame.height
+      let upper = collection.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: CGFloat(0.15 * usableFraction)))
+      let lower = collection.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: CGFloat(0.85 * usableFraction)))
+      let (start, end) = edge == .top ? (upper, lower) : (lower, upper)
+      start.press(forDuration: 0.01, thenDragTo: end, withVelocity: XCUIGestureVelocity(2_400), thenHoldForDuration: 0)
     }
     XCTFail("Native gestures did not reach the requested legal edge")
     throw FixtureError.edgeNotReached
+  }
+
+  /// Types with the real software keyboard's keys. XCUITest `typeText` sends
+  /// hardware key events on the iOS 27 simulator, which collapses the software
+  /// keyboard and invalidates every keyboard-avoidance assertion.
+  private func typeOnSoftwareKeyboard(_ text: String, app: XCUIApplication) {
+    let keyboard = app.keyboards.firstMatch
+    XCTAssertTrue(keyboard.waitForExistence(timeout: 5), "Requires a real software keyboard")
+    for character in text {
+      let key: XCUIElement
+      switch character {
+      case "\n": key = keyboard.buttons["Return"].exists ? keyboard.buttons["Return"] : keyboard.keys["return"]
+      case " ": key = keyboard.keys["space"]
+      default: key = keyboard.keys[String(character)]
+      }
+      XCTAssertTrue(key.waitForExistence(timeout: 2), "Missing software key for \(character.debugDescription)")
+      key.tap()
+    }
+    XCTAssertTrue(keyboard.exists, "The software keyboard must remain presented after typing")
   }
 
   private func resetDragWitnesses(_ app: XCUIApplication) throws {
