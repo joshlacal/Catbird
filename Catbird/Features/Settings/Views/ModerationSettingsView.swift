@@ -3,7 +3,11 @@ import Petrel
 
 struct ModerationSettingsView: View {
     @Environment(AppState.self) private var appState
+    let initialFocus: SettingsControlID?
     @State private var isLoading = true
+    @State private var hasConfirmedPreferences = false
+    @State private var isSavingPreferences = false
+    @State private var loadRequest = UUID()
     @State private var errorMessage: String?
     
     // Adult content toggle
@@ -53,15 +57,30 @@ struct ModerationSettingsView: View {
         let isEnabled: Bool
     }
     
+    init(initialFocus: SettingsControlID? = nil) {
+        self.initialFocus = initialFocus
+    }
+
     var body: some View {
-        Form {
+        SettingsFocusedForm(initialFocus: hasConfirmedPreferences ? initialFocus
+          : initialFocus.map { _ in SettingsControlID(rawValue: "moderation.retryLoad") }, isReady: !isLoading) {
             if isLoading {
                 Section {
                     ProgressView()
                         .frame(maxWidth: .infinity, alignment: .center)
                         .listRowBackground(Color.clear)
                 }
+            } else if !hasConfirmedPreferences {
+                Section {
+                    Text(errorMessage ?? "Content preferences could not be loaded.")
+                        .foregroundStyle(.secondary)
+                    Button("Retry") { Task { await loadPreferences() } }
+                        .settingsControl(.init(rawValue: "moderation.retryLoad"))
+                }
             } else {
+                if isSavingPreferences {
+                    Section { ProgressView("Saving moderation preferences…") }
+                }
                 // Moderation Tools Section
                 Section("Moderation Tools") {
                     NavigationLink(destination: DefaultPostInteractionSettingsView()) {
@@ -101,6 +120,8 @@ struct ModerationSettingsView: View {
                         }
                     }
 
+                    .settingsControl(.init(rawValue: "moderation.mutedWords"))
+
                     NavigationLink(destination: ListsManagerView()) {
                         Label {
                             VStack(alignment: .leading, spacing: 4) {
@@ -115,7 +136,7 @@ struct ModerationSettingsView: View {
                         }
                     }
                     
-                    NavigationLink(destination: ModerationListView(accounts: $mutedAccounts, isLoading: $isLoadingMutedAccounts, title: "Muted Accounts", isBlocked: false)) {
+                    NavigationLink(destination: ModeratedAccountsSettingsView(kind: .muted)) {
                         Label {
                             Text("Muted Accounts")
                         } icon: {
@@ -123,15 +144,9 @@ struct ModerationSettingsView: View {
                                 .foregroundStyle(.gray)
                         }
                     }
-                    .task {
-                        if showMutedAccounts {
-                            await loadMutedAccounts()
-                        } else {
-                            showMutedAccounts = true
-                        }
-                    }
+                    .settingsControl(.init(rawValue: "moderation.mutedAccounts"))
                     
-                    NavigationLink(destination: ModerationListView(accounts: $blockedAccounts, isLoading: $isLoadingBlockedAccounts, title: "Blocked Accounts", isBlocked: true)) {
+                    NavigationLink(destination: ModeratedAccountsSettingsView(kind: .blocked)) {
                         Label {
                             Text("Blocked Accounts")
                         } icon: {
@@ -139,25 +154,17 @@ struct ModerationSettingsView: View {
                                 .foregroundStyle(.red)
                         }
                     }
-                    .task {
-                        if showBlockedAccounts {
-                            await loadBlockedAccounts()
-                        } else {
-                            showBlockedAccounts = true
-                        }
-                    }
+                    .settingsControl(.init(rawValue: "moderation.blockedAccounts"))
                 }
                 
                 
                 // Content Filters Section
                 Section("Content Filters") {
-                        Toggle("Adult Content", isOn: $adultContentEnabled)
+                        Toggle("Adult Content", isOn: adultContentBinding)
                             .tint(.blue)
                             // Only allow turning it off here. Enabling must be done in Bluesky.
-                            .disabled(!adultContentEnabled)
-                            .onChange(of: adultContentEnabled) {
-                                updateAdultContentSetting()
-                            }
+                            .disabled(!adultContentEnabled || isSavingPreferences)
+                            .settingsControl(.init(rawValue: "moderation.adultContent"))
                         if !adultContentEnabled {
                             HStack(spacing: 8) {
                                 Image(systemName: "info.circle.fill")
@@ -169,45 +176,51 @@ struct ModerationSettingsView: View {
                             }
                         }
                     
+                    if !adultContentEnabled {
+                        ForEach([ContentCategory.adult, .suggestive, .nudity]) { category in
+                            Label(category.name, systemImage: "lock.fill")
+                                .foregroundStyle(.secondary)
+                                .settingsControl(.init(rawValue: "moderation.\(category.visibilityKey)"))
+                        }
+                    }
                     if adultContentEnabled {
                         ContentVisibilitySelector(
                             title: "Adult Content",
                             description: "Explicit sexual images, videos, text, or audio",
-                            selection: $adultContentVisibility
+                            selection: visibilityBinding(label: "nsfw", value: $adultContentVisibility)
                         )
-                        .onChange(of: adultContentVisibility) {
-                            updateContentLabelPreference()
-                        }
+                        .disabled(isSavingPreferences)
+                        .settingsControl(.init(rawValue: "moderation.nsfw"))
                         
                         ContentVisibilitySelector(
                             title: "Sexually Suggestive",
                             description: "Sexualized content that doesn't show explicit sexual activity",
-                            selection: $suggestiveContentVisibility
+                            selection: visibilityBinding(label: "suggestive", value: $suggestiveContentVisibility)
                         )
-                        .onChange(of: suggestiveContentVisibility) {
-                            updateContentLabelPreference()
-                        }
-                        
-                        ContentVisibilitySelector(
-                            title: "Graphic Content",
-                            description: "Images, videos, or text describing violence, blood, or injury",
-                            selection: $violentContentVisibility
-                        )
-                        .onChange(of: violentContentVisibility) {
-                            updateContentLabelPreference()
-                        }
+                        .disabled(isSavingPreferences)
+                        .settingsControl(.init(rawValue: "moderation.suggestive"))
                         
                         ContentVisibilitySelector(
                             title: "Non-Sexual Nudity",
                             description: "Artistic, educational, or non-sexualized images of nudity",
-                            selection: $nudityContentVisibility
+                            selection: visibilityBinding(label: "nudity", value: $nudityContentVisibility)
                         )
-                        .onChange(of: nudityContentVisibility) {
-                            updateContentLabelPreference()
-                        }
+                        .disabled(isSavingPreferences)
+                        .settingsControl(.init(rawValue: "moderation.nudity"))
                     }
                 }
                 
+                Section("Graphic Content") {
+                        ContentVisibilitySelector(
+                            title: "Graphic Content",
+                            description: "Images, videos, or text describing violence, blood, or injury",
+                            selection: visibilityBinding(label: "graphic", value: $violentContentVisibility)
+                        )
+                        .disabled(isSavingPreferences)
+                        .settingsControl(.init(rawValue: "moderation.graphic"))
+                        
+                }
+
                 // Content Preview Section
                 ContentPreviewSection(
                     adultContentEnabled: adultContentEnabled,
@@ -217,94 +230,11 @@ struct ModerationSettingsView: View {
                     nudityContentVisibility: nudityContentVisibility
                 )
                 
-                // Content Labelers Section
-                Section("Content Labelers") {
+                Section("Moderation Services") {
                     NavigationLink(destination: LabelerSettingsView()) {
-                        Label {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Labeler Preferences")
-                                Text("Configure per-labeler content settings")
-                                    .appFont(AppTextRole.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        } icon: {
-                            Image(systemName: "slider.horizontal.3")
-                                .foregroundStyle(.blue)
-                        }
+                        Label("Moderation Services", systemImage: "checklist")
                     }
-                    
-                    if isLoadingLabelers {
-                        ProgressView()
-                    } else if labelers.isEmpty {
-                        Text("No labeler subscriptions to show")
-                            .foregroundStyle(.secondary)
-                    } else {
-                        ForEach(labelers) { labeler in
-                            NavigationLink {
-                                LabelerDetailView(labeler: labeler)
-                            } label: {
-                                HStack {
-                                    VStack(alignment: .leading) {
-                                        Text(labeler.name)
-                                        
-                                        if let description = labeler.description {
-                                            Text(description)
-                                                .appFont(AppTextRole.caption)
-                                                .foregroundStyle(.secondary)
-                                        }
-                                    }
-                                    
-                                    Spacer()
-                                    
-                                    if labeler.isEnabled {
-                                        Text("Enabled")
-                                            .appFont(AppTextRole.caption)
-                                            .fontWeight(.medium)
-                                            .padding(.horizontal, 8)
-                                            .padding(.vertical, 4)
-                                            .background(Color.green.opacity(0.2))
-                                            .foregroundStyle(.green)
-                                            .cornerRadius(4)
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    NavigationLink("Add Labeler", destination: AddLabelerView())
-                }
-                
-                // Unavailable Labelers Warning & Cleanup
-                if !unavailableLabelers.isEmpty {
-                    Section("Unavailable Labelers") {
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack(alignment: .top, spacing: 10) {
-                                Image(systemName: "exclamationmark.triangle.fill")
-                                    .foregroundStyle(.orange)
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text("\(unavailableLabelers.count) Subscribed Labeler(s) Unavailable")
-                                        .font(.subheadline)
-                                        .fontWeight(.semibold)
-                                    Text("These moderation services are offline or no longer exist. You can remove them from your subscriptions.")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                            
-                            Button(role: .destructive) {
-                                showingCleanupConfirmation = true
-                            } label: {
-                                if isCleaningUpLabelers {
-                                    ProgressView()
-                                } else {
-                                    Text("Remove Unavailable Labelers")
-                                }
-                            }
-                            .buttonStyle(.bordered)
-                            .disabled(isCleaningUpLabelers)
-                        }
-                        .padding(.vertical, 4)
-                    }
+                    .settingsControl(.init(rawValue: "moderation.labelers"))
                 }
                 if let error = errorMessage {
                     Section {
@@ -344,56 +274,37 @@ struct ModerationSettingsView: View {
         } message: {
             Text("Remove \(unavailableLabelers.count) unavailable labeler(s) from your subscribed moderation services?")
         }
-        .task {
-            await loadPreferences()
-            await loadLabelers()
-        }
-        .refreshable {
-            await loadPreferences()
-            await loadLabelers()
-            
-            if showMutedAccounts {
-                await loadMutedAccounts()
-            }
-            
-            if showBlockedAccounts {
-                await loadBlockedAccounts()
-            }
-        }
+        .task(id: appState.userDID) { await loadPreferences() }
+        .refreshable { await loadPreferences() }
     }
     
     private func loadPreferences() async {
+        let request = UUID()
+        let account = appState.userDID
+        let manager = appState.preferencesManager
+        loadRequest = request
         isLoading = true
-        defer { isLoading = false }
-        
+        isSavingPreferences = false
+        hasConfirmedPreferences = false
+        errorMessage = nil
+        defer { if loadRequest == request { isLoading = false } }
         do {
-            let preferences = try await appState.preferencesManager.getPreferences()
-            
-            // Get adult content setting
+            let preferences = try await manager.refreshSettingsPreferences(expectedAccountDID: account)
+            guard loadRequest == request, manager.accountDID == account, appState.userDID == account else { return }
             adultContentEnabled = preferences.adultContentEnabled
             appState.isAdultContentEnabled = adultContentEnabled
-            
-            // Get content label preferences
-            let contentLabelPrefs = preferences.contentLabelPrefs
-            
-            // Map content label preferences to our UI state
-            adultContentVisibility = ContentFilterManager.getVisibilityForLabel(
-                label: "nsfw", preferences: contentLabelPrefs)
-            
-            suggestiveContentVisibility = ContentFilterManager.getVisibilityForLabel(
-                label: "suggestive", preferences: contentLabelPrefs)
-            
-            violentContentVisibility = ContentFilterManager.getVisibilityForLabel(
-                label: "graphic", preferences: contentLabelPrefs)
-            
-            nudityContentVisibility = ContentFilterManager.getVisibilityForLabel(
-                label: "nudity", preferences: contentLabelPrefs)
-            
+            let labels = preferences.contentLabelPrefs
+            adultContentVisibility = ContentFilterManager.getVisibilityForLabel(label: "nsfw", preferences: labels)
+            suggestiveContentVisibility = ContentFilterManager.getVisibilityForLabel(label: "suggestive", preferences: labels)
+            violentContentVisibility = ContentFilterManager.getVisibilityForLabel(label: "graphic", preferences: labels)
+            nudityContentVisibility = ContentFilterManager.getVisibilityForLabel(label: "nudity", preferences: labels)
+            hasConfirmedPreferences = true
         } catch {
+            guard loadRequest == request, manager.accountDID == account else { return }
             errorMessage = "Failed to load content preferences: \(error.localizedDescription)"
         }
     }
-    
+
     private func loadLabelers() async {
         isLoadingLabelers = true
         defer { isLoadingLabelers = false }
@@ -468,17 +379,14 @@ struct ModerationSettingsView: View {
         defer { isCleaningUpLabelers = false }
         
         do {
-            let preferences = try await appState.preferencesManager.getPreferences()
+            let account = appState.userDID
+            let manager = appState.preferencesManager
             let unavailableSet = Set(unavailableLabelers)
-            for didStr in unavailableSet {
-                if let did = try? DID(didString: didStr) {
-                    preferences.removeLabeler(did)
-                }
-            }
-            try await appState.preferencesManager.saveAndSyncPreferences(preferences)
+            try await manager.removeLabelers(unavailableSet, expectedAccountDID: account)
+            guard manager.accountDID == account else { return }
             unavailableLabelers = []
             // Refresh hub
-            await loadLabelers()
+
         } catch {
             errorMessage = "Error cleaning up labelers: \(error.localizedDescription)"
         }
@@ -562,49 +470,56 @@ struct ModerationSettingsView: View {
         }
     }
     
-    private func updateAdultContentSetting() {
-        Task {
-            do {
-                // Update both local app state and app settings
-                appState.isAdultContentEnabled = adultContentEnabled
-                
-                // Store in UserDefaults for consistency with AppSettings (per-account key)
-                UserDefaults(suiteName: "group.blue.catbird.shared")?.set(adultContentEnabled, forKey: "isAdultContentEnabled.\(appState.userDID)")
-                
-                // Update preferences on server
-                try await appState.preferencesManager.updateAdultContentEnabled(adultContentEnabled)
-            } catch {
-                errorMessage = "Failed to update adult content setting: \(error.localizedDescription)"
+    private var adultContentBinding: Binding<Bool> {
+        Binding(get: { adultContentEnabled }, set: { enabled in
+            guard hasConfirmedPreferences, !isLoading, !isSavingPreferences,
+                  adultContentEnabled, !enabled else { return }
+            let account = appState.userDID
+            let manager = appState.preferencesManager
+            let request = loadRequest
+            isSavingPreferences = true
+            errorMessage = nil
+            Task { @MainActor in
+                defer { if loadRequest == request, manager.accountDID == account, appState.userDID == account { isSavingPreferences = false } }
+                do {
+                    try await manager.updateAdultContentEnabled(enabled, expectedAccountDID: account)
+                    guard loadRequest == request, manager.accountDID == account, appState.userDID == account else { return }
+                    adultContentEnabled = enabled
+                    appState.isAdultContentEnabled = enabled
+                } catch {
+                    guard loadRequest == request, manager.accountDID == account, appState.userDID == account else { return }
+                    hasConfirmedPreferences = false
+                    errorMessage = "Failed to update adult content setting: \(error.localizedDescription)"
+                }
             }
-        }
+        })
     }
-    
-    private func updateContentLabelPreference() {
-        Task {
-            do {
-                // Create content label preferences array
-                var contentLabelPrefs: [ContentLabelPreference] = []
-                
-                // Add preferences for each content type
-                contentLabelPrefs.append(ContentFilterManager.createPreferenceForLabel(
-                    label: "nsfw", visibility: adultContentVisibility))
-                
-                contentLabelPrefs.append(ContentFilterManager.createPreferenceForLabel(
-                    label: "suggestive", visibility: suggestiveContentVisibility))
-                
-                contentLabelPrefs.append(ContentFilterManager.createPreferenceForLabel(
-                    label: "graphic", visibility: violentContentVisibility))
-                
-                contentLabelPrefs.append(ContentFilterManager.createPreferenceForLabel(
-                    label: "nudity", visibility: nudityContentVisibility))
-                
-                // Update preferences on server
-                try await appState.preferencesManager.updateContentLabelPreferences(contentLabelPrefs)
-            } catch {
-                errorMessage = "Failed to save content label preferences: \(error.localizedDescription)"
+
+    private func visibilityBinding(label: String, value: Binding<ContentVisibility>) -> Binding<ContentVisibility> {
+        Binding(get: { value.wrappedValue }, set: { selected in
+            guard hasConfirmedPreferences, !isLoading, !isSavingPreferences,
+                  selected != value.wrappedValue else { return }
+            let account = appState.userDID
+            let manager = appState.preferencesManager
+            let request = loadRequest
+            isSavingPreferences = true
+            errorMessage = nil
+            Task { @MainActor in
+                defer { if loadRequest == request, manager.accountDID == account, appState.userDID == account { isSavingPreferences = false } }
+                do {
+                    try await manager.setContentLabelVisibility(label: label, visibility: selected.preferenceValue,
+                                                                 expectedAccountDID: account)
+                    guard loadRequest == request, manager.accountDID == account, appState.userDID == account else { return }
+                    value.wrappedValue = selected
+                } catch {
+                    guard loadRequest == request, manager.accountDID == account, appState.userDID == account else { return }
+                    hasConfirmedPreferences = false
+                    errorMessage = "Failed to save content label preference: \(error.localizedDescription)"
+                }
             }
-        }
+        })
     }
+
 }
 
 // Note: ProfileBasicInfo protocol is defined in PrivacySecuritySettingsView.swift
@@ -846,11 +761,14 @@ struct AddLabelerView: View {
         errorMessage = nil
         successMessage = nil
         
-        Task {
+        let account = appState.userDID
+        let manager = appState.preferencesManager
+        let requestedDID = labelerDID
+        Task { @MainActor in
             do {
-                let did = try DID(didString: labelerDID)
-                let labelerPreference = LabelerPreference(did: did)
-                try await appState.preferencesManager.addLabeler(did)
+                let did = try DID(didString: requestedDID)
+                try await manager.addLabeler(did, expectedAccountDID: account)
+                guard manager.accountDID == account, appState.userDID == account else { return }
                 
                 successMessage = "Labeler added successfully"
                 
@@ -859,9 +777,10 @@ struct AddLabelerView: View {
                 
                 // Dismiss after a short delay
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                    dismiss()
+                    if appState.userDID == account, manager.accountDID == account { dismiss() }
                 }
             } catch {
+                guard manager.accountDID == account, appState.userDID == account else { return }
                 errorMessage = "Failed to add labeler: \(error.localizedDescription)"
             }
             

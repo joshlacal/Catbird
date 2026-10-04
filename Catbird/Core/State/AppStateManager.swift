@@ -84,6 +84,9 @@ final class AppStateManager {
   /// Current application lifecycle state
   private(set) var lifecycle: AppLifecycle = .launching {
     didSet {
+      if lifecycle.userDID != oldValue.userDID || lifecycle.isAuthenticated != oldValue.isAuthenticated {
+        settingsAccountContextRevision &+= 1
+      }
       if !composerSwitchQueue.isSwitching,
          !lifecycle.isAuthenticated || lifecycle.userDID != oldValue.userDID {
         composerSwitchQueue.invalidate()
@@ -105,6 +108,8 @@ final class AppStateManager {
   /// NO GUEST STATES - only authenticated accounts are cached
   private var authenticatedStates: [String: AppState] = [:]
 
+  /// Fences Settings callbacks when an account leaves and later returns.
+  private(set) var settingsAccountContextRevision: UInt64 = 0
   private let composerSwitchQueue = ComposerAccountSwitchQueue()
   private let accountSwitchOperationBarrier = AccountSwitchOperationBarrier()
   private var isLoggingOut = false
@@ -833,6 +838,8 @@ final class AppStateManager {
       return .failed(AccountSwitchError.invalidDID.localizedDescription)
     }
 
+    guard SettingsAccountOperationGate.activeAccountDID == nil else { return .busy }
+
     let admission = composerSwitchQueue.begin(
       to: userDID,
       transfer: composerTransfer,
@@ -888,6 +895,9 @@ final class AppStateManager {
       composerSwitchQueue.fail(id: attempt.id)
       if accountSwitchRequiresRestart {
         return .failed("Catbird could not restore the previous account safely. Restart the app; your draft has been preserved.")
+      }
+      if error is SettingsAccountSwitchError {
+        return .blockedBySettings(error.localizedDescription)
       }
       return error is CancellationError ? .cancelled : .failed(error.localizedDescription)
     }

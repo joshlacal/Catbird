@@ -3,6 +3,11 @@ import SwiftUI
 import SwiftData
 import Observation
 import OSLog
+#if os(iOS)
+import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
 
 /// AppSettings manages all app-specific settings that aren't synced with the Bluesky server
 @Observable final class AppSettings {
@@ -25,6 +30,10 @@ import OSLog
         var scheduleSave: (@escaping () -> Void) -> Timer? = { action in
             Timer.scheduledTimer(withTimeInterval: 0.1, repeats: false) { _ in action() }
         }
+        var standardDefaults: UserDefaults = .standard
+        var sharedDefaults: UserDefaults = AppSettingsModel.sharedDefaults()
+        // Production binds the account's drained work queue. Rejection keeps the effect pending.
+        var startEffect: @MainActor (@escaping @MainActor () async -> Void) -> Bool = { _ in false }
 
         static let live = Persistence(
             fetch: { context, accountDID in
@@ -40,29 +49,42 @@ import OSLog
     private var modelContext: ModelContext?
     // These are detached copies. Failed writes cannot be autosaved by the shared context.
     private var settingsModel: AppSettingsModel?
-    private var savedSettings: AppSettingsModel?
+    private var savedSettings: AppSettingsModel? {
+        didSet { confirmedReadingSnapshotIdentity = UUID() }
+    }
+    private var confirmedReadingSnapshotIdentity = UUID()
     private var pendingDrafts: [String: AppSettingsModel] = [:]
     private var pendingBaselines: [String: AppSettingsModel] = [:]
     private struct PendingEffect {
         let identity = UUID()
+        let description: String?
         let action: @MainActor () async -> Void
     }
     private var pendingEffects: [String: [String: PendingEffect]] = [:]
+    private var admittedEffectIdentities: Set<UUID> = []
+    private var startedEffectIdentities: [String: Set<UUID>] = [:]
     private var accountDID: String?
+    private var suspendedAccountDID: String?
     private var generation: UInt64 = 0
     private var defaults = AppSettingsModel()
     private var isInitializing = true
     private var notificationDebounceTimer: Timer?
+    private var accessibilityObservers: [(NotificationCenter, NSObjectProtocol)] = []
+    private(set) var systemAccessibility = SystemAccessibilitySnapshot()
     var persistence = Persistence.live
     private(set) var persistenceState: PersistenceState = .unavailable
 
     var canEditPersistedSettings: Bool {
-        persistenceState == .ready || persistenceState == .saving
+        !isLocalChangesSuspended && (persistenceState == .ready || persistenceState == .saving)
     }
+
+    var isLocalChangesSuspended: Bool { suspendedAccountDID != nil }
 
     /// Describes the retained attempt while controls show the last confirmed values.
     var pendingChangesDescription: String {
-        guard let accountDID, let pending = pendingDrafts[accountDID], let savedSettings = pendingBaselines[accountDID] else {
+        guard let accountDID,
+              let pending = pendingDrafts[accountDID] ?? settingsModel ?? savedSettings,
+              let savedSettings = pendingBaselines[accountDID] ?? savedSettings else {
             return "Pending changes will be available after your saved settings load."
         }
         var changes: [String] = []
@@ -86,7 +108,7 @@ import OSLog
         string("Line Spacing", \.lineSpacing, ["tight": "Tight", "normal": "Normal", "relaxed": "Relaxed"])
         string("Letter Spacing", \.letterSpacing, ["tight": "Tight", "normal": "Normal", "loose": "Loose"])
         bool("Use System Text Size", \.dynamicTypeEnabled)
-        string("Maximum Text Size", \.maxDynamicTypeSize, ["xxLarge": "Extra Extra Large", "xxxLarge": "Extra Extra Extra Large", "accessibility1": "Accessibility Medium", "accessibility2": "Accessibility Large", "accessibility3": "Accessibility Extra Large", "accessibility4": "Accessibility Extra Extra Large", "accessibility5": "Accessibility Extra Extra Extra Large"])
+        string("Maximum Text Size", \.maxDynamicTypeSize, ["system": "Full System Range", "xxLarge": "Extra Extra Large", "xxxLarge": "Extra Extra Extra Large", "accessibility1": "Accessibility Medium", "accessibility2": "Accessibility Large", "accessibility3": "Accessibility Extra Large", "accessibility4": "Accessibility Extra Extra Large", "accessibility5": "Accessibility Extra Extra Extra Large"])
         bool("Require Alt Text", \.requireAltText)
         bool("Larger Alt Text Badges", \.largerAltTextBadges)
         bool("Disable Haptics", \.disableHaptics)
@@ -131,19 +153,204 @@ import OSLog
         bool("Hide Other Languages", \.hideNonPreferredLanguages)
         bool("Show Language Indicators", \.showLanguageIndicators)
         bool("Logged-out Visibility", \.loggedOutVisibility)
+        changes.append(contentsOf: (pendingEffects[accountDID] ?? [:]).sorted { $0.key < $1.key }.compactMap { $0.value.description })
         return changes.isEmpty ? "Your selected settings are waiting to be saved." : changes.joined(separator: "\n")
     }
 
-    init() {}
+    struct PendingChangesSummary: Equatable {
+        let accountDID: String
+        let description: String
+        let persistenceState: PersistenceState
+    }
+
+    enum PendingDecision { case save, discard }
+    enum PendingResolution: Equatable { case resolved, saveFailed, accountChanged, unavailable }
+
+    enum AccountSwitchFlushFailure: LocalizedError, Equatable {
+        case accountChanged, saveFailed, unfinishedChanges
+
+        var errorDescription: String? {
+            switch self {
+            case .accountChanged:
+                return "The original account could not be verified for its settings changes."
+            case .saveFailed:
+                return "Your local settings could not be saved. Retry saving or discard the pending changes before switching accounts."
+            case .unfinishedChanges:
+                return "Some settings changes still need to finish before you switch accounts. Return to Settings on the current account and try again."
+            }
+        }
+    }
+
+    private(set) var accountSwitchFlushFailure: AccountSwitchFlushFailure?
+
+    struct ConfirmedReadingLanguages: Equatable, Sendable {
+        fileprivate let identity: UUID
+        let accountDID: String
+        let primaryLanguage: String
+        let contentLanguages: [String]
+    }
+
+    /// Explicit compatibility Retry may use only this account's immutable confirmed choice.
+    @MainActor
+    func confirmedReadingLanguages(for accountDID: String) -> ConfirmedReadingLanguages? {
+        guard self.accountDID == accountDID, persistenceState == .ready,
+              !isLocalChangesSuspended, pendingDrafts[accountDID] == nil,
+              persistence.isActiveAccount(accountDID, self), let savedSettings else { return nil }
+        return ConfirmedReadingLanguages(identity: confirmedReadingSnapshotIdentity, accountDID: accountDID,
+            primaryLanguage: savedSettings.primaryLanguage, contentLanguages: savedSettings.contentLanguages)
+    }
+
+    var hasPendingChanges: Bool {
+        guard let accountDID else { return false }
+        return pendingDrafts[accountDID] != nil || !(pendingEffects[accountDID] ?? [:]).isEmpty
+    }
+
+    var pendingChangesSummary: PendingChangesSummary? {
+        guard let accountDID, hasPendingChanges else { return nil }
+        return PendingChangesSummary(accountDID: accountDID, description: pendingChangesDescription, persistenceState: persistenceState)
+    }
+
+    var effectiveReduceMotion: Bool {
+        AccessibilityAccommodationPolicy.isEnabled(system: systemAccessibility.reduceMotion, app: reduceMotion)
+    }
+
+    var effectivePrefersCrossfade: Bool {
+        AccessibilityAccommodationPolicy.usesCrossfade(system: systemAccessibility, reduceMotion: reduceMotion, prefersCrossfade: prefersCrossfade)
+    }
+
+    var effectiveIncreaseContrast: Bool {
+        AccessibilityAccommodationPolicy.isEnabled(system: systemAccessibility.increaseContrast, app: increaseContrast)
+    }
+
+    var effectiveBoldText: Bool {
+        AccessibilityAccommodationPolicy.isEnabled(system: systemAccessibility.boldText, app: boldText)
+    }
+
+    init() {
+        #if os(iOS)
+        let center = NotificationCenter.default
+        let names = [UIAccessibility.reduceMotionStatusDidChangeNotification,
+                     UIAccessibility.prefersCrossFadeTransitionsStatusDidChangeNotification,
+                     UIAccessibility.darkerSystemColorsStatusDidChangeNotification,
+                     UIAccessibility.boldTextStatusDidChangeNotification]
+        #elseif os(macOS)
+        let center = NSWorkspace.shared.notificationCenter
+        let names = [NSWorkspace.accessibilityDisplayOptionsDidChangeNotification]
+        #endif
+        for name in names {
+            let observer = center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor [weak self] in self?.refreshSystemAccessibility() }
+            }
+            accessibilityObservers.append((center, observer))
+        }
+        Task { @MainActor [weak self] in self?.refreshSystemAccessibility() }
+    }
+
+    deinit {
+        for (center, observer) in accessibilityObservers { center.removeObserver(observer) }
+        notificationDebounceTimer?.invalidate()
+    }
+
+    @MainActor func refreshSystemAccessibility(_ snapshot: SystemAccessibilitySnapshot? = nil) {
+        systemAccessibility = snapshot ?? .current
+    }
+
+    @MainActor
+    func resolvePendingChanges(for accountDID: String, decision: PendingDecision) async -> PendingResolution {
+        guard self.accountDID == accountDID else { return .accountChanged }
+        guard !isLocalChangesSuspended else { return .unavailable }
+        switch decision {
+        case .save:
+            guard modelContext != nil, savedSettings != nil else { return .unavailable }
+            return persistPendingChanges(for: accountDID) ? .resolved : .saveFailed
+        case .discard:
+            guard hasPendingChanges else { return persistenceState == .ready ? .resolved : .unavailable }
+            let confirmedDisplay = savedSettings ?? pendingBaselines[accountDID]
+            generation &+= 1
+            notificationDebounceTimer?.invalidate()
+            notificationDebounceTimer = nil
+            pendingDrafts.removeValue(forKey: accountDID)
+            pendingBaselines.removeValue(forKey: accountDID)
+            pendingEffects.removeValue(forKey: accountDID)
+            settingsModel = confirmedDisplay.map { snapshot($0, accountDID: accountDID) }
+            persistenceState = savedSettings == nil ? .unavailable : .ready
+            return .resolved
+        }
+    }
+
+    @discardableResult
+    func persistPendingChanges(for accountDID: String) -> Bool {
+        guard self.accountDID == accountDID, !isLocalChangesSuspended else { return false }
+        return persistPendingChanges()
+    }
+
+    /// Close every ordinary edit path before the account switch's first suspension point.
+    @MainActor @discardableResult
+    func suspendLocalChanges(for accountDID: String) -> Bool {
+        guard self.accountDID == accountDID,
+              suspendedAccountDID == nil || suspendedAccountDID == accountDID else { return false }
+        suspendedAccountDID = accountDID
+        accountSwitchFlushFailure = nil
+        generation &+= 1
+        notificationDebounceTimer?.invalidate()
+        notificationDebounceTimer = nil
+        admittedEffectIdentities.removeAll()
+        return true
+    }
+
+    /// The switch owner calls this synchronously after draining the account's actual work.
+    @MainActor @discardableResult
+    func flushPendingChangesForAccountSwitch(for accountDID: String) -> Bool {
+        guard self.accountDID == accountDID, suspendedAccountDID == accountDID else {
+            accountSwitchFlushFailure = .accountChanged
+            return false
+        }
+        if pendingDrafts[accountDID] != nil, !persistPendingChanges(allowSuspended: true) {
+            accountSwitchFlushFailure = .saveFailed
+            return false
+        }
+        // Retirement would destroy this manager. A committed row alone cannot replace
+        // a retained compatibility action, such as clearing the legacy language filter.
+        guard (pendingEffects[accountDID] ?? [:]).isEmpty,
+              (startedEffectIdentities[accountDID] ?? []).isEmpty else {
+            accountSwitchFlushFailure = .unfinishedChanges
+            return false
+        }
+        accountSwitchFlushFailure = nil
+        return true
+    }
+
+    /// Reopen only the retained source that the lifecycle owner has verified as active.
+    @MainActor @discardableResult
+    func resumeLocalChanges(for accountDID: String) -> Bool {
+        guard self.accountDID == accountDID, suspendedAccountDID == accountDID,
+              persistence.isActiveAccount(accountDID, self) else { return false }
+        suspendedAccountDID = nil
+        generation &+= 1
+        admittedEffectIdentities.removeAll()
+        if pendingDrafts[accountDID] != nil, persistenceState == .saving {
+            settingsModel = savedSettings.map { snapshot($0, accountDID: accountDID) }
+            persistenceState = .saveFailed
+        }
+        publishSavedSettings(accountDID: accountDID, generation: generation, notify: true, allowPendingDraft: true)
+        return true
+    }
+
+    /// A player may open only after the complete provider choice is committed.
+    @MainActor @discardableResult
+    func applyExternalMediaConsent(_ consent: ExternalMediaConsent, providers: [ExternalMediaProvider]) -> Bool {
+        guard canEditPersistedSettings, let settingsModel, let accountDID,
+              persistence.isActiveAccount(accountDID, self) else { return false }
+        for provider in providers { settingsModel.setConsent(consent, for: provider) }
+        saveChanges()
+        return persistPendingChanges()
+    }
 
     func configure(accountDID: String) {
+        guard !isLocalChangesSuspended else { return }
         guard self.accountDID != accountDID else { return }
         generation &+= 1
-        if let previousAccount = self.accountDID {
-            pendingDrafts.removeValue(forKey: previousAccount)
-            pendingBaselines.removeValue(forKey: previousAccount)
-            pendingEffects.removeValue(forKey: previousAccount)
-        }
+        // Retain the originating account's attempt until Save or Discard resolves it.
         notificationDebounceTimer?.invalidate()
         notificationDebounceTimer = nil
         self.accountDID = accountDID
@@ -155,6 +362,7 @@ import OSLog
     }
 
     func initialize(with modelContext: ModelContext, accountDID: String, notifyOnSuccess: Bool = false) {
+        guard !isLocalChangesSuspended else { return }
         configure(accountDID: accountDID)
         generation &+= 1
         let attemptGeneration = generation
@@ -177,7 +385,7 @@ import OSLog
                     context.delete(legacy)
                 } else {
                     let allowLegacyFallback = try !AppSettingsModel.hasPerAccountSettings(in: context)
-                    row.migrateFromUserDefaults(accountDID: accountDID, includeLegacyFallback: allowLegacyFallback, writeWidgetBackup: false)
+                    row.migrateFromUserDefaults(accountDID: accountDID, includeLegacyFallback: allowLegacyFallback, writeWidgetBackup: false, defaults: standardDefaults)
                 }
                 context.insert(row)
                 try persistence.save(context)
@@ -204,7 +412,7 @@ import OSLog
     }
 
     func retryPersistence() {
-        guard let accountDID, let modelContext else { return }
+        guard !isLocalChangesSuspended, let accountDID, let modelContext else { return }
         switch persistenceState {
         case .unavailable:
             initialize(with: modelContext, accountDID: accountDID, notifyOnSuccess: true)
@@ -216,9 +424,9 @@ import OSLog
     }
 
     /// Coalesce effects by purpose; retries apply only the effect belonging to the retained draft.
-    func afterPendingSave(key: String = "settings", _ action: @escaping @MainActor () async -> Void) {
-        guard let accountDID, pendingDrafts[accountDID] != nil else { return }
-        pendingEffects[accountDID, default: [:]][key] = PendingEffect(action: action)
+    func afterPendingSave(key: String = "settings", description: String? = nil, _ action: @escaping @MainActor () async -> Void) {
+        guard !isLocalChangesSuspended, let accountDID, pendingDrafts[accountDID] != nil else { return }
+        pendingEffects[accountDID, default: [:]][key] = PendingEffect(description: description, action: action)
     }
 
     private func publishSavedSettings(
@@ -227,6 +435,7 @@ import OSLog
         let confirmed = savedSettings
         Task { @MainActor [weak self] in
             guard let self, self.isCurrent(accountDID, generation: generation),
+                  !self.isLocalChangesSuspended,
                   self.savedSettings === confirmed,
                   self.persistenceState == .ready || (allowPendingDraft && self.persistenceState == .saveFailed)
             else { return }
@@ -244,23 +453,44 @@ import OSLog
         }
     }
 
+    @MainActor
     private func applyPendingEffects(accountDID: String, generation: UInt64) {
         for (key, effect) in pendingEffects[accountDID] ?? [:] {
-            Task { @MainActor [weak self] in
+            guard !isLocalChangesSuspended, isCurrent(accountDID, generation: generation),
+                  persistenceState == .ready, persistence.isActiveAccount(accountDID, self),
+                  !admittedEffectIdentities.contains(effect.identity) else { continue }
+            admittedEffectIdentities.insert(effect.identity)
+            let admitted = persistence.startEffect { @MainActor [weak self] in
+                defer {
+                    self?.admittedEffectIdentities.remove(effect.identity)
+                    self?.startedEffectIdentities[accountDID]?.remove(effect.identity)
+                }
                 guard let self, self.isCurrent(accountDID, generation: generation),
+                      !self.isLocalChangesSuspended,
                       self.persistenceState == .ready,
                       self.persistence.isActiveAccount(accountDID, self),
                       self.pendingEffects[accountDID]?[key]?.identity == effect.identity else { return }
                 self.pendingEffects[accountDID]?.removeValue(forKey: key)
+                self.startedEffectIdentities[accountDID, default: []].insert(effect.identity)
                 await effect.action()
             }
+            if !admitted { admittedEffectIdentities.remove(effect.identity) }
         }
     }
 
     /// Flush the current account's pending edit. Returns true only after a successful save.
     @discardableResult
     func persistPendingChanges() -> Bool {
+        guard !isLocalChangesSuspended else { return false }
+        return persistPendingChanges(allowSuspended: false)
+    }
+
+    private func persistPendingChanges(allowSuspended: Bool) -> Bool {
+        guard allowSuspended || !isLocalChangesSuspended else { return false }
         guard let accountDID, let modelContext, let draft = pendingDrafts[accountDID] else {
+            if !isLocalChangesSuspended, persistenceState == .ready, let accountDID {
+                publishSavedSettings(accountDID: accountDID, generation: generation, notify: false)
+            }
             return persistenceState == .ready
         }
         let attemptGeneration = generation
@@ -304,7 +534,7 @@ import OSLog
         self.accountDID == accountDID && self.generation == generation
     }
 
-    private var standardDefaults: UserDefaults { .standard }
+    private var standardDefaults: UserDefaults { persistence.standardDefaults }
     private var accountScopedDefaultsDID: String? { accountDID }
     private var shouldUseRuntimeLegacyFallback: Bool {
         AppSettingsModel.shouldUseLegacyFallback(for: accountScopedDefaultsDID, defaults: standardDefaults)
@@ -328,6 +558,7 @@ import OSLog
 
     /// Save critical settings to UserDefaults as backup
     private func saveThemeSettingsToUserDefaults(writesActiveBackup: Bool = false, allowPendingDraft: Bool = false) {
+        guard !writesActiveBackup || !isLocalChangesSuspended else { return }
         guard persistenceState == .ready || (allowPendingDraft && persistenceState == .saveFailed),
               let confirmed = savedSettings else { return }
         let theme = confirmed.theme
@@ -402,7 +633,7 @@ import OSLog
         
         // Also save to app group for widgets
         if writesActiveBackup {
-            let groupDefaults = AppSettingsModel.sharedDefaults()
+            let groupDefaults = persistence.sharedDefaults
             groupDefaults.set(theme, forKey: "theme")
             groupDefaults.set(darkThemeMode, forKey: "darkThemeMode")
         }

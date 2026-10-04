@@ -29,7 +29,7 @@ final class SettingsLayoutRenderingTests: XCTestCase {
   func testSettingsFormsFitReceivingContainersAndReachTheirLastRow() async throws {
     let fixture = try await Fixture()
     defer { fixture.restoreDefaults() }
-    for screen in [Screen.root, .appearance, .accessibility, .content] {
+    for screen in [Screen.root, .appearance, .accessibility, .textReadability, .language, .content] {
       for viewport in viewports {
         try await inspect(screen: screen, viewport: viewport, fixture: fixture)
       }
@@ -54,8 +54,22 @@ final class SettingsLayoutRenderingTests: XCTestCase {
     XCTAssertEqual(fixture.tipClient.purchaseAttempts, 0)
   }
 
+  func testReadabilityAndLanguagesFitFullSystemAccessibilityRange() async throws {
+    let fixture = try await Fixture()
+    defer { fixture.restoreDefaults() }
+    fixture.appState.appSettings.maxDynamicTypeSize = AppTextSizeLimit.fullSystemRange
+    XCTAssertTrue(fixture.appState.appSettings.persistPendingChanges())
+    fixture.appState.fontManager.maxDynamicTypeSize = AppTextSizeLimit.fullSystemRange
+    for screen in [Screen.textReadability, .language] {
+      for viewport in viewports {
+        try await inspect(screen: screen, viewport: viewport, fixture: fixture,
+          largeText: true, systemCategory: .accessibilityExtraExtraExtraLarge)
+      }
+    }
+  }
+
   private enum Screen: String {
-    case root, appearance, accessibility, content, about, aboutUnavailable
+    case root, appearance, accessibility, textReadability, language, content, about, aboutUnavailable
   }
 
   @ViewBuilder
@@ -64,6 +78,8 @@ final class SettingsLayoutRenderingTests: XCTestCase {
     case .root: SettingsView()
     case .appearance: NavigationStack { AppearanceSettingsView() }
     case .accessibility: NavigationStack { AccessibilitySettingsView() }
+    case .textReadability: NavigationStack { TextReadabilitySettingsView() }
+    case .language: NavigationStack { LanguageSettingsView() }
     case .content: NavigationStack { ContentMediaSettingsView() }
     case .about, .aboutUnavailable:
       NavigationStack { AboutSettingsView(supportStore: fixture.supportStore) }
@@ -71,9 +87,9 @@ final class SettingsLayoutRenderingTests: XCTestCase {
   }
 
   private func inspect(screen: Screen, viewport: Viewport, fixture: Fixture,
-                       largeText: Bool = false) async throws {
+                       largeText: Bool = false, systemCategory: UIContentSizeCategory? = nil) async throws {
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
-    let category: UIContentSizeCategory = largeText ? .accessibilityExtraLarge : .large
+    let category: UIContentSizeCategory = systemCategory ?? (largeText ? .accessibilityExtraLarge : .large)
     guard UIApplication.shared.preferredContentSizeCategory == category,
       fixture.appState.fontManager.currentContentSizeCategory.uiContentSizeCategory == category else {
       XCTFail("Set the simulator to \(category.rawValue) and launch a fresh test host; a host trait override alone does not qualify production font scaling")
@@ -83,7 +99,7 @@ final class SettingsLayoutRenderingTests: XCTestCase {
     let content = self.screen(screen, fixture: fixture)
       .environment(fixture.appState)
       .environment(\.fontManager, fixture.appState.fontManager)
-      .environment(\.dynamicTypeSize, largeText ? .accessibility3 : .large)
+      .environment(\.dynamicTypeSize, category == .accessibilityExtraExtraExtraLarge ? .accessibility5 : (largeText ? .accessibility3 : .large))
       .environment(\.colorScheme, largeText ? .dark : .light)
       .modelContainer(fixture.container)
     let host = UIHostingController(rootView: content)

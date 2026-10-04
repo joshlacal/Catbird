@@ -1,9 +1,10 @@
 import CoreGraphics
 import Foundation
+import UIKit
 import XCTest
 
-/// Source staging against sealed bf6 navigation interfaces. Final feature APIs,
-/// exact compiled IDs and rendered controls require Root's later acceptance.
+/// Source-compatible with Root-accepted Settings. Compilation, exact compiled
+/// identifiers and rendered controls require Root's later native qualification.
 @MainActor
 final class SettingsRedesignFixtureUITests: XCTestCase {
   private let categories: [(id: String, title: String)] = [
@@ -13,9 +14,13 @@ final class SettingsRedesignFixtureUITests: XCTestCase {
     ("appearance", "Appearance"), ("accessibility", "Accessibility"),
     ("helpAbout", "Help & About"), ("advanced", "Advanced")
   ]
-  private let textChoices = ["Extra Extra Large", "Extra Extra Extra Large", "Accessibility Medium",
-    "Accessibility Large", "Accessibility Extra Large", "Accessibility Extra Extra Large",
-    "Accessibility Extra Extra Extra Large"]
+  private let textOptions: [(raw: String, title: String)] = [
+    ("system", "Full System Range"), ("xxLarge", "Extra Extra Large"),
+    ("xxxLarge", "Extra Extra Extra Large"), ("accessibility1", "Accessibility Medium"),
+    ("accessibility2", "Accessibility Large"), ("accessibility3", "Accessibility Extra Large"),
+    ("accessibility4", "Accessibility Extra Extra Large"),
+    ("accessibility5", "Accessibility Extra Extra Extra Large")]
+  private var textChoices: [String] { textOptions.map(\.title) }
 
   override func setUpWithError() throws {
     continueAfterFailure = false
@@ -110,44 +115,66 @@ final class SettingsRedesignFixtureUITests: XCTestCase {
       witnesses: [("autoplay control", autoplay), ("local retry", retry)])
   }
 
-  func testRemoteReadFailureRetryCannotConfirmOrWritePreferences() throws {
-    // HELD: account admission rejects this unauthenticated fixture before a read.
-    // Timer progress/equal transport counts below cannot prove Retry was called.
-    // Keep this staged method out of any execution grant until Root approves a
-    // finite production-editor fixture seam and a positive invocation oracle.
-    // The canonical destination and retained Retry copy must be checked against
-    // accepted final feature source; no legacy-form fallback or runtime skip.
+  func testFeedPreferenceRetryIsRejectedWithoutAuthenticatedOwnership() throws {
+    // This actual production-configured editor rejects before read; remote
+    // read failure/recovery requires separate admitted component/service proof.
     let app = try launch(screen: "feedFiltering", extra: ["--settings-server-unavailable"])
     XCTAssertTrue(app.navigationBars["Feed Filtering"].waitForExistence(timeout: 8))
-    let retry = app.buttons["Retry Loading Preferences"].firstMatch
+    let retry = app.buttons["Retry Loading"].firstMatch
     try reveal(retry, app)
     XCTAssertTrue(retry.isEnabled)
     let remote = app.switches["feed.replies"].firstMatch
     XCTAssertTrue(!remote.exists || !remote.isEnabled, "Unknown remote values must not be editable")
-    let before = try sample(app)
+    let before = try waitSample(app) { $0.feedLoad.finishedAttempts >= 1 }
+    XCTAssertNotNil(UUID(uuidString: before.feedLoad.editorID))
+    XCTAssertEqual(before.feedLoad.sceneID, before.sceneID)
+    XCTAssertFalse(before.feedLoad.editorChanged)
+    XCTAssertEqual(before.feedLoad.entries, 1)
+    XCTAssertEqual(before.feedLoad.refusals, 1)
+    XCTAssertEqual(before.feedLoad.notCurrentAccountRefusals, 1)
+    XCTAssertEqual(before.feedLoad.readEntries, 0)
+    XCTAssertEqual(before.feedLoad.finishedAttempts, 1)
+    XCTAssertEqual(before.feedLoad.lastEnteredAttempt, 1)
+    XCTAssertEqual(before.feedLoad.lastRefusedAttempt, 1)
+    XCTAssertEqual(before.feedLoad.lastFinishedAttempt, 1)
+    XCTAssertEqual(before.feedLoad.lastRefusalReason, "notCurrentAccount")
+    XCTAssertEqual(before.feedLoad.lastFinishedRefusalReason, "notCurrentAccount")
     assertIsolation(before)
-    capture("settings-30-remote-values-unconfirmed-and-retry-reachable", app,
-      witnesses: [("remote retry (held)", retry), ("unconfirmed remote control", remote)])
+    capture("settings-30-opening-feed-account-refusal", app,
+      witnesses: [("feed retry", retry), ("unconfirmed feed control", remote)])
     retry.tap()
-    _ = try waitSample(app) { $0.sampleCount >= before.sampleCount + 3 }
-    let completed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND enabled == true"), object: retry)
-    XCTAssertEqual(XCTWaiter.wait(for: [completed], timeout: 5), .completed)
+    let after = try waitSample(app) { $0.feedLoad.finishedAttempts > before.feedLoad.finishedAttempts }
+    XCTAssertEqual(after.feedLoad.editorID, before.feedLoad.editorID)
+    XCTAssertEqual(after.feedLoad.sceneID, before.feedLoad.sceneID)
+    XCTAssertEqual(after.sceneID, before.sceneID)
+    XCTAssertFalse(after.feedLoad.editorChanged)
+    XCTAssertEqual(after.feedLoad.entries, before.feedLoad.entries + 1)
+    XCTAssertEqual(after.feedLoad.refusals, before.feedLoad.refusals + 1)
+    XCTAssertEqual(after.feedLoad.notCurrentAccountRefusals, before.feedLoad.notCurrentAccountRefusals + 1)
+    XCTAssertEqual(after.feedLoad.finishedAttempts, before.feedLoad.finishedAttempts + 1)
+    XCTAssertEqual(after.feedLoad.lastEnteredAttempt, before.feedLoad.lastEnteredAttempt + 1)
+    XCTAssertEqual(after.feedLoad.lastRefusedAttempt, after.feedLoad.lastEnteredAttempt)
+    XCTAssertEqual(after.feedLoad.lastFinishedAttempt, after.feedLoad.lastEnteredAttempt)
+    XCTAssertEqual(after.feedLoad.lastRefusalReason, "notCurrentAccount")
+    XCTAssertEqual(after.feedLoad.lastFinishedRefusalReason, "notCurrentAccount")
+    XCTAssertEqual(after.feedLoad.readEntries, 0)
+    XCTAssertTrue(retry.isEnabled)
     XCTAssertTrue(!remote.exists || !remote.isEnabled)
-    let after = try sample(app)
+    XCTAssertEqual(before.localSaveCalls, 0)
     XCTAssertEqual(after.localSaveCalls, before.localSaveCalls)
-    XCTAssertGreaterThanOrEqual(after.transport.refusedRequests, before.transport.refusedRequests)
+    XCTAssertEqual(after.localFetchCalls, before.localFetchCalls)
+    XCTAssertEqual(after.transport.refusedRequests, before.transport.refusedRequests,
+      "Account refusal occurs before the editor's read; HTTP is not the Retry oracle")
     assertIsolation(after)
-    capture("settings-31-local-remote-retry-remains-unconfirmed", app,
-      witnesses: [("remote retry (held)", retry), ("unconfirmed remote control", remote)])
-    // Zero HTTP calls is legitimate for a nil-client/admission rejection. The
-    // attached before/after records do not claim successful service retry.
+    capture("settings-31-single-feed-retry-account-refusal", app,
+      witnesses: [("feed retry", retry), ("unconfirmed feed control", remote)])
   }
 
   func testFullMaximumTextSizeChoicesUseActualCategoryAcrossRotation() throws {
     let app = try launch(screen: "textReadability", extra: ["--settings-large-text", "--settings-dark"])
     XCTAssertTrue(app.navigationBars["Text & Readability"].waitForExistence(timeout: 8))
     let native = try sample(app)
-    XCTAssertEqual(native.systemTextCategory, "UICTContentSizeCategoryAccessibilityXL")
+    XCTAssertEqual(native.systemTextCategory, UIContentSizeCategory.accessibilityExtraExtraExtraLarge.rawValue)
     XCTAssertEqual(native.fontManagerTextCategory, native.systemTextCategory)
     XCTAssertEqual(native.nativeWindowStyle, 2)
     let picker = app.buttons["text.maxSize"].firstMatch
@@ -155,18 +182,29 @@ final class SettingsRedesignFixtureUITests: XCTestCase {
     XCTAssertEqual(picker.value as? String, textChoices.last)
     capture("settings-32-native-accessibility-category-and-full-current-cap", app,
       witnesses: [("current text cap", picker)])
-    for (index, choice) in textChoices.enumerated() {
+    for (index, option) in textOptions.enumerated() {
+      let choice = option.title
       try reveal(picker, app)
       picker.tap()
       let menu = try waitMenu(app)
       let button = menu.buttons[choice].firstMatch
       try revealMenuChoice(button, menu: menu, app: app)
       XCTAssertEqual(button.label, choice)
-      capture("settings-\(33 + index)-full-text-cap-choice-\(index + 1)", app,
+      let checkpoint = option.raw == "system" ? "settings-42-full-system-range-choice"
+        : "settings-\(32 + index)-full-text-cap-choice-\(index)"
+      capture(checkpoint, app,
         witnesses: [("text cap choice", button), ("text cap menu", menu), ("current text cap", picker)])
       button.tap()
       let selected = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", choice), object: picker)
       XCTAssertEqual(XCTWaiter.wait(for: [selected], timeout: 5), .completed)
+      let confirmed = try waitSample(app) { $0.maxTextSize == option.raw && $0.persistenceState == "ready" }
+      XCTAssertEqual(confirmed.systemTextCategory, native.systemTextCategory)
+      XCTAssertEqual(confirmed.fontManagerTextCategory, confirmed.systemTextCategory)
+      assertIsolation(confirmed)
+      if option.raw == "system" {
+        capture("settings-43-full-system-range-confirmed-native-category", app,
+          witnesses: [("full system range selected", picker)])
+      }
     }
     let saved = try waitSample(app) { $0.maxTextSize == "accessibility5" && $0.persistenceState == "ready" }
     assertIsolation(saved)
@@ -199,14 +237,14 @@ final class SettingsRedesignFixtureUITests: XCTestCase {
     app.launchArguments = ["--settings-ui-fixture", "--settings-screen=" + screen,
       "-defaultComposerLanguage", "en", "-AppleLanguages", "(en)", "-AppleLocale", "en_US",
       "-UIPreferredContentSizeCategoryName", extra.contains("--settings-large-text")
-        ? "UICTContentSizeCategoryAccessibilityXL" : "UICTContentSizeCategoryL"] + extra
+        ? UIContentSizeCategory.accessibilityExtraExtraExtraLarge.rawValue : UIContentSizeCategory.large.rawValue] + extra
     app.launch()
     let probe = app.descendants(matching: .any)["settings.fixture.counters"].firstMatch
     XCTAssertTrue(probe.waitForExistence(timeout: 8), "A setup failure cannot be treated as an unavailable destination")
     let value = try waitSample(app) { $0.ready }
     assertIsolation(value)
     XCTAssertEqual(value.systemTextCategory, extra.contains("--settings-large-text")
-      ? "UICTContentSizeCategoryAccessibilityXL" : "UICTContentSizeCategoryL")
+      ? UIContentSizeCategory.accessibilityExtraExtraExtraLarge.rawValue : UIContentSizeCategory.large.rawValue)
     XCTAssertEqual(value.fontManagerTextCategory, value.systemTextCategory)
     return app
   }
@@ -310,6 +348,7 @@ final class SettingsRedesignFixtureUITests: XCTestCase {
     XCTAssertEqual(sample.transport.unexpectedRequests, 0, file: file, line: line)
     XCTAssertEqual(sample.fakeSupportPurchaseAttempts, 0, file: file, line: line)
     XCTAssertTrue(sample.globalOrGroupDefaultsChangedKeys.isEmpty, file: file, line: line)
+    XCTAssertFalse(sample.feedLoad.editorChanged, file: file, line: line)
     // Scoped default changes are expected AppSettings behavior within Root's
     // disposable domains; this is not a zero-defaults-write assertion.
   }
@@ -375,13 +414,21 @@ final class SettingsRedesignFixtureUITests: XCTestCase {
   }
   private enum FixtureError: Error { case controlNotReached, sampleMissing }
   private struct Transport: Decodable { let refusedRequests: Int, attemptedWrites: Int, unexpectedRequests: Int }
+  private struct FeedLoad: Decodable {
+    let editorID: String, editorChanged: Bool, sceneID: String
+    let entries: Int, refusals: Int, notCurrentAccountRefusals: Int, readEntries: Int, finishedAttempts: Int
+    let lastEnteredAttempt: UInt64, lastRefusedAttempt: UInt64, lastFinishedAttempt: UInt64
+    let lastRefusalReason: String, lastFinishedRefusalReason: String
+  }
   private struct Sample: Decodable {
     let ready: Bool, sampleCount: Int, noAuthenticatedHost: Bool
     let draftTestingConfigurationApplied: Bool, currentDraftAbsent: Bool
     let editingDefaultsSuite: String, persistenceState: String, canEditLocalSettings: Bool
+    let sceneID: String
     let localFetchCalls: Int, localSaveCalls: Int, fakeSupportPurchaseAttempts: Int
     let maxTextSize: String, globalOrGroupDefaultsChangedKeys: [String]
     let transport: Transport
+    let feedLoad: FeedLoad
     let systemTextCategory: String, fontManagerTextCategory: String, nativeWindowStyle: Int
     let nativeWindowWidth: Double, nativeWindowHeight: Double
   }

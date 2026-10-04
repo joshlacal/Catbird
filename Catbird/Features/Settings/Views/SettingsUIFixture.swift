@@ -9,7 +9,7 @@ import UIKit
 
 /// Production Settings, only on a fresh Root-owned simulator with disposable app
 /// and app-group domains. AppSettings still mirrors confirmed scoped defaults.
-/// The accepted final Settings module must supply the provisional bf6 route APIs.
+/// Uses Root-accepted final Settings views without authenticated account adoption.
 @MainActor
 struct SettingsUIFixture: View {
   @State private var appState: AppState?
@@ -50,6 +50,9 @@ struct SettingsUIFixture: View {
         .environment(sceneContext)
         .environment(AppStateManager.shared)
         .environment(\.fontManager, appState.fontManager)
+        .environment(\.feedPreferenceLoadObserver, { [weak evidence] event in
+          evidence?.observeFeedLoad(event)
+        })
         .modelContainer(container)
         .preferredColorScheme(arguments.contains("--settings-dark") ? .dark : .light)
         .overlay(alignment: .bottomLeading) {
@@ -299,10 +302,45 @@ private final class SettingsFixtureEvidence {
   let baseline: [String: String]
   let persistence: SettingsPersistenceFixture
   let tipClient: SettingsTipFixtureClient
+  private var feedEditorID: UUID?
+  private var feedEditorChanged = false
+  private var feedEntries = 0
+  private var feedRefusals = 0
+  private var feedNotCurrentRefusals = 0
+  private var feedReadEntries = 0
+  private var feedFinishedAttempts = 0
+  private var feedLastEnteredAttempt: UInt64 = 0
+  private var feedLastRefusedAttempt: UInt64 = 0
+  private var feedLastRefusalReason = ""
+  private var feedLastFinishedAttempt: UInt64 = 0
+  private var feedLastFinishedRefusalReason = ""
   init(appState: AppState, session: SceneComposerEditingSession, suiteName: String,
     baseline: [String: String], persistence: SettingsPersistenceFixture, tipClient: SettingsTipFixtureClient) {
     self.appState = appState; self.session = session; self.suiteName = suiteName
     self.baseline = baseline; self.persistence = persistence; self.tipClient = tipClient
+  }
+  func observeFeedLoad(_ event: FeedPreferenceEditor.DebugLoadEvent) {
+    if let feedEditorID {
+      guard feedEditorID == event.editorID else { feedEditorChanged = true; return }
+    } else {
+      feedEditorID = event.editorID
+    }
+    switch event.phase {
+    case .entered:
+      feedEntries += 1
+      feedLastEnteredAttempt = event.attemptSequence
+    case .refused(let reason):
+      feedRefusals += 1
+      if reason == .notCurrentAccount { feedNotCurrentRefusals += 1 }
+      feedLastRefusedAttempt = event.attemptSequence
+      feedLastRefusalReason = reason.rawValue
+    case .readEntered:
+      feedReadEntries += 1
+    case .finished(let reason):
+      feedFinishedAttempts += 1
+      feedLastFinishedAttempt = event.attemptSequence
+      feedLastFinishedRefusalReason = reason?.rawValue ?? ""
+    }
   }
   static func defaultsSnapshot(accountDID: String) -> [String: String] {
     let keys = ["theme", "darkThemeMode", "accentColor", "fontStyle", "fontSize", "lineSpacing",
@@ -340,6 +378,12 @@ private final class SettingsFixtureEvidence {
       "globalOrGroupDefaultsChangedKeys": changed.filter { !$0.hasPrefix("scoped.") },
       "defaultsBoundary": "Actual AppSettings scoped writes in disposable domains; session recovery uses UUID suite.",
       "transport": SettingsFixtureRefusalProtocol.snapshot,
+      "feedLoad": ["editorID": feedEditorID?.uuidString ?? "", "editorChanged": feedEditorChanged,
+        "sceneID": session.sceneID.uuidString, "entries": feedEntries, "refusals": feedRefusals,
+        "notCurrentAccountRefusals": feedNotCurrentRefusals, "readEntries": feedReadEntries,
+        "finishedAttempts": feedFinishedAttempts, "lastEnteredAttempt": feedLastEnteredAttempt,
+        "lastRefusedAttempt": feedLastRefusedAttempt, "lastRefusalReason": feedLastRefusalReason,
+        "lastFinishedAttempt": feedLastFinishedAttempt, "lastFinishedRefusalReason": feedLastFinishedRefusalReason],
       "fakeSupportLoads": tipClient.loadCount, "fakeSupportPurchaseAttempts": tipClient.purchaseAttempts,
       "systemTextCategory": UIApplication.shared.preferredContentSizeCategory.rawValue,
       "fontManagerTextCategory": appState.fontManager.currentContentSizeCategory.uiContentSizeCategory.rawValue,

@@ -544,6 +544,9 @@ struct AccountSwitcherView: View {
         return
       case .busy:
         error = "Another account switch is already in progress. Please try again."
+      case .blockedBySettings(let message):
+        // A local save refusal has already recovered the source; it needs no target reauthentication.
+        error = message
       case .failed(let message):
         error = message
         if composerTransfer == nil,

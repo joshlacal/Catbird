@@ -205,30 +205,8 @@ struct NavigationHandler {
 
   @ViewBuilder
   private static func settingsView(for route: SettingsRoute) -> some View {
-    switch route {
-    case .language:
-      LanguageSettingsView()
-    case .accessibility:
-      AccessibilitySettingsView()
-    case .appearance, .appIcon:
-      AppearanceSettingsView()
-    case .account, .appPasswords:
-      AccountSettingsView()
-    case .privacyAndSecurity:
-      PrivacySecuritySettingsView()
-    case .contentAndMedia, .followingFeed, .interests:
-      ContentMediaSettingsView()
-    case .about:
-      AboutSettingsView()
-    case .notifications:
-      NotificationSettingsView()
-    case .moderation:
-      ModerationSettingsView()
-    case .savedFeeds:
-      ListsManagerView()
-    case .intentControls:
-      SettingsView()
-    }
+    SettingsDestinationView(target: route.target)
+      .navigationDestination(for: SettingsTarget.self) { target in SettingsDestinationView(target: target) }
   }
 
   /// Returns the title string for a navigation destination
@@ -265,23 +243,7 @@ struct NavigationHandler {
     case .videoFeed, .videoFeedStartingAt:
       return "Videos"
     case .settings(let route):
-      switch route {
-      case .language: return "Language"
-      case .accessibility: return "Accessibility"
-      case .appearance: return "Appearance"
-      case .account: return "Account"
-      case .privacyAndSecurity: return "Privacy & Security"
-      case .contentAndMedia: return "Content & Media"
-      case .about: return "About"
-      case .notifications: return "Notifications"
-      case .moderation: return "Moderation"
-      case .followingFeed: return "Following Feed"
-      case .savedFeeds: return "Saved Feeds"
-      case .appPasswords: return "App Passwords"
-      case .interests: return "Interests"
-      case .appIcon: return "App Icon"
-      case .intentControls: return "Intent Controls"
-      }
+      return route.target.screen.title
     #if os(iOS)
     case .conversation:
       return "Conversation"

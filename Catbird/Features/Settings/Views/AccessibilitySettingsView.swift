@@ -2,387 +2,97 @@ import SwiftUI
 
 struct AccessibilitySettingsView: View {
   @Environment(AppState.self) private var appState
+  @Environment(\.colorScheme) private var colorScheme
+  @Environment(\.legibilityWeight) private var legibilityWeight
+  @Environment(\.colorSchemeContrast) private var accessibilityContrast
+  var initialFocus: SettingsControlID? = nil
+  private var canEdit: Bool { appState.appSettings.canEditPersistedSettings }
+  private var accent: Color {
+    let palette = AccentColorOption(rawValue: appState.appSettings.accentColor) ?? .catbird
+    return colorScheme == .dark ? palette.darkColor : palette.color
+  }
 
-  private static let maximumTextSizeOptions: [(value: String, title: String)] = [
-    ("xxLarge", "Extra Extra Large"),
-    ("xxxLarge", "Extra Extra Extra Large"),
-    ("accessibility1", "Accessibility Medium"),
-    ("accessibility2", "Accessibility Large"),
-    ("accessibility3", "Accessibility Extra Large"),
-    ("accessibility4", "Accessibility Extra Extra Large"),
-    ("accessibility5", "Accessibility Extra Extra Extra Large")
-  ]
+  private func bool(_ path: ReferenceWritableKeyPath<AppSettings, Bool>) -> Binding<Bool> {
+    Binding(get: { appState.appSettings[keyPath: path] }, set: { appState.appSettings[keyPath: path] = $0 })
+  }
 
   var body: some View {
-    Form {
+    SettingsFocusedForm(initialFocus: initialFocus, isReady: appState.appSettings.persistenceState != .unavailable) {
       SettingsPersistenceStatusSection(settings: appState.appSettings)
-
-      // Alt Text Section
-      Section("Alt Text") {
-        Toggle("Require Alt Text Before Posting", isOn: Binding(
-          get: { appState.appSettings.requireAltText },
-          set: { appState.appSettings.requireAltText = $0 }
-        ))
-        .tint(.blue)
-        .disabled(!appState.appSettings.canEditPersistedSettings)
-
-        Toggle("Display Larger Alt Text Badges", isOn: Binding(
-          get: { appState.appSettings.largerAltTextBadges },
-          set: { appState.appSettings.largerAltTextBadges = $0 }
-        ))
-        .tint(.blue)
-        .disabled(!appState.appSettings.canEditPersistedSettings)
-      }
-      .listRowBackground(Color.systemGroupedBackground)
-
-      // Motion Settings Section
       Section {
-        Toggle("Reduce Motion", isOn: Binding(
-          get: { appState.appSettings.reduceMotion },
-          set: { appState.appSettings.reduceMotion = $0 }
-        ))
-        .tint(.blue)
-        .disabled(!appState.appSettings.canEditPersistedSettings)
-
-        NavigationLink("Video Autoplay") {
-          ContentMediaSettingsView()
+        NavigationLink {
+          TextReadabilitySettingsView()
+        } label: {
+          SettingsNavigationRow(title: "Text & Readability", summary: "Font, spacing, system text size and reading aids", systemImage: "textformat.size", family: .accessibility)
         }
-
-        Toggle("Prefer Cross-fade Transitions", isOn: Binding(
-          get: { appState.appSettings.prefersCrossfade },
-          set: { appState.appSettings.prefersCrossfade = $0 }
-        ))
-        .tint(.blue)
-        .disabled(!appState.appSettings.canEditPersistedSettings || !appState.appSettings.reduceMotion)
-      } header: {
-        Text("Motion Settings")
       } footer: {
-        Text("Reduce Motion limits supported interface animations. Cross-fade transitions replace supported sliding transitions when Reduce Motion is on.")
-          .appFont(AppTextRole.footnote)
-          .foregroundStyle(.secondary)
+        Text("Catbird follows system accessibility accommodations. These account choices add accommodations in Catbird on this device.")
       }
 
-      // Display Settings Section
       Section {
-        Toggle("Increase Contrast", isOn: Binding(
-          get: { appState.appSettings.increaseContrast },
-          set: { appState.appSettings.increaseContrast = $0 }
-        ))
-        .tint(.blue)
-        .disabled(!appState.appSettings.canEditPersistedSettings)
-
-        Toggle("Bold Text", isOn: Binding(
-          get: { appState.appSettings.boldText },
-          set: { appState.appSettings.boldText = $0 }
-        ))
-        .tint(.blue)
-        .disabled(!appState.appSettings.canEditPersistedSettings)
-
-        // Preview component
-        DisplayPreviewView(
-          increaseContrast: appState.appSettings.increaseContrast,
-          boldText: appState.appSettings.boldText
-        )
-        .padding(.vertical, 8)
-      } header: {
-        Text("Display Settings")
-      } footer: {
-        Text("These settings affect contrast and text weight in Catbird. Choose how Catbird follows your system text size below.")
-          .appFont(AppTextRole.footnote)
-          .foregroundStyle(.secondary)
+        Toggle("Require Alt Text Before Posting", isOn: bool(\.requireAltText))
+          .settingsControl(.init(rawValue: "accessibility.altText"))
+        Toggle("Display Larger Alt Text Badges", isOn: bool(\.largerAltTextBadges))
+          .settingsControl(.init(rawValue: "accessibility.altBadges"))
+      } header: { Text("Alt Text") } footer: {
+        Text("Alt text describes an image for people who cannot see it. Requiring it applies to image posts you create in Catbird.")
       }
+      .disabled(!canEdit)
 
-      // Font & Typography Section
       Section {
-        NavigationLink("Font Style, Size & Spacing") {
-          AppearanceSettingsView()
+        Toggle("Reduce Motion in Catbird", isOn: bool(\.reduceMotion))
+          .settingsControl(.init(rawValue: "accessibility.reduceMotion"))
+        if appState.appSettings.systemAccessibility.reduceMotion {
+          Label("Reduce Motion is on in system settings.", systemImage: "checkmark.circle")
+            .foregroundStyle(.secondary)
         }
-
-        #if !targetEnvironment(macCatalyst)
-          Toggle("Dynamic Type", isOn: Binding(
-            get: { appState.appSettings.dynamicTypeEnabled },
-            set: { appState.appSettings.dynamicTypeEnabled = $0 }
-          ))
-          .tint(.blue)
-          .disabled(!appState.appSettings.canEditPersistedSettings)
-
-          if appState.appSettings.dynamicTypeEnabled {
-            maximumTextSizePicker
-          }
-
-        #endif
-      } header: {
-        Text("Text Size")
-      } footer: {
-        Text("Font settings affect text readability throughout the app. Dynamic Type allows the app to scale with your system accessibility settings.")
-          .appFont(AppTextRole.footnote)
-          .foregroundStyle(.secondary)
-      }
-
-      // Reading Settings Section
-      Section {
-        Toggle("Show Reading Time Estimates", isOn: Binding(
-          get: { appState.appSettings.showReadingTimeEstimates },
-          set: { appState.appSettings.showReadingTimeEstimates = $0 }
-        ))
-        .tint(.blue)
-        .disabled(!appState.appSettings.canEditPersistedSettings)
-
-        Toggle("Highlight Links", isOn: Binding(
-          get: { appState.appSettings.highlightLinks },
-          set: { appState.appSettings.highlightLinks = $0 }
-        ))
-        .tint(.blue)
-        .disabled(!appState.appSettings.canEditPersistedSettings)
-
-        Picker("Link Style", selection: Binding(
-          get: { appState.appSettings.linkStyle },
-          set: { appState.appSettings.linkStyle = $0 }
-        )) {
-          Text("Color Only").tag("color")
-          Text("Underline Only").tag("underline")
-          Text("Color & Underline").tag("both")
+        Toggle("Prefer Crossfade Transitions", isOn: bool(\.prefersCrossfade))
+          .disabled(!appState.appSettings.effectiveReduceMotion)
+          .settingsControl(.init(rawValue: "accessibility.crossfade"))
+        if appState.appSettings.systemAccessibility.prefersCrossfade {
+          Text("The system also prefers crossfade transitions.").foregroundStyle(.secondary)
         }
-        .disabled(!appState.appSettings.canEditPersistedSettings || !appState.appSettings.highlightLinks)
-
-        // Link preview
-        LinkPreviewView(
-          highlightLinks: appState.appSettings.highlightLinks,
-          linkStyle: appState.appSettings.linkStyle
-        )
-        .padding(.vertical, 8)
-      } header: {
-        Text("Reading Settings")
-      } footer: {
-        Text("Reading time estimates appear on posts with at least 100 words. Link highlighting makes links easier to identify.")
-          .appFont(AppTextRole.footnote)
-          .foregroundStyle(.secondary)
+      } header: { Text("Motion") } footer: {
+        Text("Reduce Motion limits supported interface animations. Turning this app choice off keeps the system accommodation. Crossfade replaces supported sliding transitions; video autoplay is managed in Media & Links.")
       }
+      .disabled(!canEdit)
 
-      // Interaction Settings Section
       Section {
-        Toggle("Confirm Social Actions", isOn: Binding(
-          get: { appState.appSettings.confirmBeforeActions },
-          set: { appState.appSettings.confirmBeforeActions = $0 }
-        ))
-        .tint(.blue)
-        .disabled(!appState.appSettings.canEditPersistedSettings)
+        Toggle("Increase Contrast in Catbird", isOn: bool(\.increaseContrast))
+          .settingsControl(.init(rawValue: "accessibility.increaseContrast"))
+        if accessibilityContrast == .increased || appState.appSettings.systemAccessibility.increaseContrast {
+          Label("Increase Contrast is on in system settings.", systemImage: "checkmark.circle").foregroundStyle(.secondary)
+        }
+        Toggle("Bold Text in Catbird", isOn: bool(\.boldText))
+          .settingsControl(.init(rawValue: "accessibility.boldText"))
+        if legibilityWeight == .bold || appState.appSettings.systemAccessibility.boldText {
+          Label("Bold Text is on in system settings.", systemImage: "checkmark.circle").foregroundStyle(.secondary)
+        }
+        FontPreviewRow()
+      } header: { Text("Contrast & Text Weight") } footer: {
+        Text("These choices add contrast and text weight. System contrast and Bold Text remain active when the app choices are off.")
+      }
+      .disabled(!canEdit)
 
-      } header: {
-        Text("Interaction Settings")
-      } footer: {
+      Section {
+        Toggle("Confirm Social Actions", isOn: bool(\.confirmBeforeActions))
+          .settingsControl(.init(rawValue: "accessibility.confirmActions"))
+      } header: { Text("Interactions") } footer: {
         Text("Ask before muting an account or thread, or unfollowing someone. Deleting posts and blocking accounts always require confirmation.")
-          .appFont(AppTextRole.footnote)
-          .foregroundStyle(.secondary)
       }
+      .disabled(!canEdit)
 
-      // Haptics Section
       Section("Haptics") {
-        Toggle("Disable Haptic Feedback", isOn: Binding(
-          get: { appState.appSettings.disableHaptics },
-          set: { appState.appSettings.disableHaptics = $0 }
-        ))
-        .tint(.blue)
-        .disabled(!appState.appSettings.canEditPersistedSettings)
+        Toggle("Disable Haptic Feedback", isOn: bool(\.disableHaptics))
+          .settingsControl(.init(rawValue: "accessibility.haptics"))
       }
-
-      // Info Section
-      Section {
-        VStack(alignment: .leading, spacing: 8) {
-          Text("Accessibility settings help make the app more usable for everyone.")
-            .appFont(AppTextRole.footnote)
-            .foregroundStyle(.secondary)
-
-          Text("Adult content and label filtering are managed in Moderation. Video autoplay is managed in Content & Media.")
-            .appFont(AppTextRole.footnote)
-            .foregroundStyle(.secondary)
-            .padding(.top, 4)
-        }
-        .padding(.vertical, 4)
-        .listRowBackground(Color.clear)
-      }
+      .disabled(!canEdit)
     }
     .navigationTitle("Accessibility")
+    .tint(accent)
+    .contrastAwareBackground(appState: appState, defaultColor: Color.systemBackground)
     #if os(iOS)
-      .toolbarTitleDisplayMode(.inline)
+    .toolbarTitleDisplayMode(.inline)
     #endif
-  }
-
-  private var maximumTextSizeTitle: String {
-    Self.maximumTextSizeOptions.first {
-      $0.value == appState.appSettings.maxDynamicTypeSize
-    }?.title ?? appState.appSettings.maxDynamicTypeSize
-  }
-
-  private var maximumTextSizePicker: some View {
-    Menu {
-      Picker("Maximum Text Size", selection: Binding(
-        get: { appState.appSettings.maxDynamicTypeSize },
-        set: { appState.appSettings.maxDynamicTypeSize = $0 }
-      )) {
-        ForEach(Self.maximumTextSizeOptions, id: \.value) { option in
-          Text(LocalizedStringKey(option.title)).tag(option.value)
-        }
-      }
-    } label: {
-      HStack(spacing: 12) {
-        VStack(alignment: .leading, spacing: 4) {
-          Text("Maximum Text Size")
-            .appFont(AppTextRole.body)
-            .foregroundStyle(.primary)
-          Text(LocalizedStringKey(maximumTextSizeTitle))
-            .appFont(AppTextRole.body)
-            .foregroundStyle(.secondary)
-        }
-        .lineLimit(nil)
-        .multilineTextAlignment(.leading)
-        .fixedSize(horizontal: false, vertical: true)
-        .frame(maxWidth: .infinity, alignment: .leading)
-
-        Image(systemName: "chevron.up.chevron.down")
-          .appFont(AppTextRole.caption)
-          .foregroundStyle(.secondary)
-          .accessibilityHidden(true)
-      }
-    }
-    .menuIndicator(.hidden)
-    .accessibilityLabel("Maximum Text Size")
-    .accessibilityValue(Text(LocalizedStringKey(maximumTextSizeTitle)))
-    .accessibilityIdentifier("MaximumTextSizePicker")
-    .disabled(!appState.appSettings.canEditPersistedSettings)
-  }
-}
-
-// MARK: - Preview Components
-
-private struct DisplayPreviewView: View {
-  let increaseContrast: Bool
-  let boldText: Bool
-
-  @Environment(AppState.self) private var appState
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: 12) {
-      Text("Preview")
-        .appFont(AppTextRole.caption)
-        .foregroundStyle(.secondary)
-
-      VStack(alignment: .leading, spacing: 12) {
-        // Sample post with accessibility settings applied
-        VStack(alignment: .leading, spacing: 8) {
-          HStack {
-            Circle()
-              .fill(Color.blue)
-              .frame(width: 40, height: 40)
-
-            VStack(alignment: .leading, spacing: 2) {
-              Text("Sample User")
-                .appFont(AppTextRole.headline)
-                .foregroundStyle(Color.adaptiveText(appState: appState, themeManager: appState.themeManager, style: .primary, currentScheme: .light))
-              Text("@sampleuser")
-                .appFont(AppTextRole.caption)
-                .foregroundStyle(Color.adaptiveText(appState: appState, themeManager: appState.themeManager, style: .secondary, currentScheme: .light))
-            }
-
-            Spacer()
-          }
-
-          Text("This is how text will appear with your current accessibility settings. You can adjust the display scale, contrast, and bold text options above.")
-            .appFont(AppTextRole.body)
-            .foregroundStyle(Color.adaptiveText(appState: appState, themeManager: appState.themeManager, style: .primary, currentScheme: .light))
-
-          HStack(spacing: 20) {
-            Button {} label: {
-              Label("Like", systemImage: "heart")
-                .appFont(AppTextRole.caption)
-            }
-            .buttonStyle(AccessibleButtonStyle(appState: appState))
-
-            Button {} label: {
-              Label("Reply", systemImage: "bubble.left")
-                .appFont(AppTextRole.caption)
-            }
-            .buttonStyle(AccessibleButtonStyle(appState: appState))
-          }
-        }
-        .padding()
-        .contrastAwareBackground(appState: appState, defaultColor: Color.systemGray6)
-        .overlay(
-          RoundedRectangle(cornerRadius: 8)
-            .stroke(Color.adaptiveBorder(appState: appState, themeManager: appState.themeManager, currentScheme: .light), lineWidth: appState.appSettings.increaseContrast ? 2 : 1)
-        )
-      }
-    }
-  }
-}
-
-private struct LinkPreviewView: View {
-  let highlightLinks: Bool
-  let linkStyle: String
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: 8) {
-      Text("Link Preview")
-        .appFont(AppTextRole.caption)
-        .foregroundStyle(.secondary)
-
-      (Text("Check out this ") +
-        linkTextConcatenated("example link") +
-        Text(" in a post."))
-        .appFont(AppTextRole.subheadline)
-    }
-    .padding(12)
-    .background(
-      RoundedRectangle(cornerRadius: 8)
-        .fill(Color.systemGray6)
-    )
-  }
-
-  @ViewBuilder
-  private func linkText(_ text: String) -> some View {
-    let result = Text(text)
-      .appFont(AppTextRole.subheadline)
-
-    if highlightLinks {
-      switch linkStyle {
-      case "underline":
-        result.underline()
-      case "color":
-        result.foregroundStyle(.blue)
-      case "both":
-        result.foregroundStyle(.blue).underline()
-      default:
-        result.foregroundStyle(.blue)
-      }
-    } else {
-      result
-    }
-  }
-
-  private func linkTextConcatenated(_ text: String) -> Text {
-    var result = Text(text)
-
-    if highlightLinks {
-      switch linkStyle {
-      case "underline":
-        result = result.underline()
-      case "color":
-        result = result.foregroundStyle(.blue)
-      case "both":
-        result = result.foregroundStyle(.blue).underline()
-      default:
-        result = result.foregroundStyle(.blue)
-      }
-    }
-
-    return result
-  }
-}
-
-#Preview {
-  AsyncPreviewContent { appState in
-    NavigationStack {
-      AccessibilitySettingsView()
-    }
   }
 }

@@ -161,7 +161,7 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
         let design: Font.Design
         let textStyle: Font.TextStyle?
         let sizeScale: CGFloat
-        let maxContentSizeCategory: CrossPlatformContentSizeCategory
+        let maxContentSizeCategory: CrossPlatformContentSizeCategory?
         let contentSizeCategory: CrossPlatformContentSizeCategory
     }
 
@@ -197,7 +197,7 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
     ) -> Font {
         let design = fontDesign
         let scale = sizeScale
-        let maxCategory = maxContentSizeCategory
+        let maxCategory = dynamicTypeLimit
         let key = FontCacheKey(
             baseSize: baseSize,
             weight: weight,
@@ -390,13 +390,18 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
             return .accessibilityExtraLarge
         case "accessibility4":
             return .accessibilityExtraExtraLarge
-        case "accessibility5":
+        case "accessibility5", AppTextSizeLimit.fullSystemRange:
             return .accessibilityExtraExtraExtraLarge
         default:
             return .accessibilityMedium
         }
     }
     
+    /// Nil removes the limit without altering any existing saved cap.
+    var dynamicTypeLimit: CrossPlatformContentSizeCategory? {
+        maxDynamicTypeSize == AppTextSizeLimit.fullSystemRange ? nil : maxContentSizeCategory
+    }
+
     // MARK: - Methods
     
     /// Apply font settings from AppSettings
@@ -466,10 +471,8 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
             }
         }
         
-        // Apply Dynamic Type constraints if enabled
-        if dynamicTypeEnabled {
-            applyDynamicTypeConstraints()
-        }
+        // Also remove an earlier override when system scaling is turned off.
+        applyDynamicTypeConstraints()
         
         // Post notification for any components that need manual updates
         Task { @MainActor in
@@ -493,12 +496,21 @@ enum CrossPlatformContentSizeCategory: String, CaseIterable, Sendable {
     /// Apply Dynamic Type size constraints at the app level
     private func applyDynamicTypeConstraints() {
         guard dynamicTypeEnabled else {
+            #if os(iOS)
+            removeContentSizeCategoryOverride()
+            #endif
             logger.debug("Dynamic Type disabled, no constraints to apply")
             return
         }
         
         let currentCategory = CrossPlatformContentSizeCategory.current
-        let maxCategory = maxContentSizeCategory
+        guard let maxCategory = dynamicTypeLimit else {
+            #if os(iOS)
+            removeContentSizeCategoryOverride()
+            #endif
+            currentContentSizeCategory = currentCategory
+            return
+        }
         
         logger.info("Applying Dynamic Type constraints - current: \(currentCategory.rawValue), max allowed: \(maxCategory.rawValue)")
         
@@ -818,12 +830,13 @@ struct AppFontModifier: ViewModifier {
     @Environment(\.fontManager) private var fontManager
     @Environment(AppState.self) private var appState: AppState?
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.legibilityWeight) private var legibilityWeight
 
     let role: AppTextRole
 
     func body(content: Content) -> some View {
         let baseWeight = getBaseWeight(for: role)
-        let adjustedWeight = adjustFontWeight(baseWeight: baseWeight, boldText: appState?.appSettings.boldText ?? false)
+        let adjustedWeight = adjustFontWeight(baseWeight: baseWeight, boldText: legibilityWeight == .bold || (appState?.appSettings.effectiveBoldText ?? false))
         
         content
             .font(fontManager.fontForTextRole(role).weight(adjustedWeight))
@@ -833,7 +846,7 @@ struct AppFontModifier: ViewModifier {
     
     private func getAccessibleTextColor() -> Color {
         // Apply high contrast if enabled
-        if let appState = appState, appState.appSettings.increaseContrast {
+        if let appState = appState, appState.appSettings.effectiveIncreaseContrast {
             return Color.adaptiveForeground(appState: appState, defaultColor: .primary)
         } else {
             return Color.primary
@@ -877,13 +890,14 @@ struct CustomAppFontModifier: ViewModifier {
     @Environment(\.fontManager) private var fontManager
     @Environment(AppState.self) private var appState: AppState?
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.legibilityWeight) private var legibilityWeight
 
     let size: CGFloat
     let weight: Font.Weight
     let textStyle: Font.TextStyle?
 
     func body(content: Content) -> some View {
-        let adjustedWeight = adjustFontWeight(baseWeight: weight, boldText: appState?.appSettings.boldText ?? false)
+        let adjustedWeight = adjustFontWeight(baseWeight: weight, boldText: legibilityWeight == .bold || (appState?.appSettings.effectiveBoldText ?? false))
         
         content
             .font(fontManager.scaledFont(
@@ -897,7 +911,7 @@ struct CustomAppFontModifier: ViewModifier {
     
     private func getAccessibleTextColor() -> Color {
         // Apply high contrast if enabled
-        if let appState = appState, appState.appSettings.increaseContrast {
+        if let appState = appState, appState.appSettings.effectiveIncreaseContrast {
             return Color.adaptiveForeground(appState: appState, defaultColor: .primary)
         } else {
             return Color.primary
