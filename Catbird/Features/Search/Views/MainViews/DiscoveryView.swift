@@ -379,7 +379,7 @@ private struct InlineTopicSummaryLine: View {
                 .background(
                     Capsule()
                         .fill(selectedCategory == category ?
-                              categoryColor(for: category) :
+                              TrendingTopicCategoryStyle.color(for: category) :
                               Color.dynamicSecondaryBackground(appState.themeManager, currentScheme: colorScheme))
                 )
                 .foregroundColor(selectedCategory == category ?
