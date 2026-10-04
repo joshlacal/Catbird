@@ -180,6 +180,17 @@ final class ChatAnchoredLayoutTests: XCTestCase {
     XCTAssertEqual(fixture.collection.contentOffset.y, fixture.bottom, accuracy: 2)
     fixture.rows.heights[29] = 40
     try await fixture.waitForHeight(29, expected: height29 - 40)
+    let gap = fixture.bottom - fixture.collection.contentOffset.y
+    if abs(gap) > 2 {
+      let content = fixture.collection.contentSize.height
+      try await fixture.settle()
+      XCTFail("""
+        Bottom gap diagnostic: gap \(gap) content \(content); after settle gap \
+        \(fixture.bottom - fixture.collection.contentOffset.y) content \(fixture.collection.contentSize.height) \
+        tracking \(fixture.collection.isTracking) decelerating \(fixture.collection.isDecelerating) \
+        heights28/29 \((try? fixture.height(28)) ?? -1)/\((try? fixture.height(29)) ?? -1)
+        """)
+    }
     XCTAssertEqual(fixture.collection.contentOffset.y, fixture.bottom, accuracy: 2)
   }
 

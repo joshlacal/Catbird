@@ -218,7 +218,7 @@ final class MessagesViewportFixtureUITests: XCTestCase {
       let (start, end) = edge == .top ? (upper, lower) : (lower, upper)
       start.press(forDuration: 0.01, thenDragTo: end, withVelocity: XCUIGestureVelocity(2_400), thenHoldForDuration: 0)
     }
-    XCTFail("Native gestures did not reach the requested legal edge")
+    XCTFail("Native gestures did not reach the requested legal edge: \(rawSample(app) ?? "missing probe")")
     throw FixtureError.edgeNotReached
   }
 
