@@ -339,7 +339,7 @@ final class FeedLoadPerformanceTests: XCTestCase {
       try attachJSON(probe.frames, named: "\(variant)-frames.json")
       try attachScreenshot(fixture, named: "\(variant)-after", requireTrending: false)
       XCTAssertEqual(fixture.state.posts.map(\.id), fixture.posts.map(\.id))
-      XCTAssertEqual(fixture.controller.collectionView.numberOfItems(inSection: 0), 74)
+      XCTAssertEqual(fixture.controller.collectionView.numberOfItems(inSection: 0), 75)
       XCTAssertFalse(probe.frames.isEmpty, "The simulator must deliver display callbacks")
     }
   }

@@ -52,7 +52,7 @@ struct UnifiedProfileContentRenderTests {
       navigationPath: .constant(NavigationPath()),
       refreshAllContent: {},
       onTabChange: { _ in },
-      prepareBlockConfirmation: {}
+      requestUnblock: {}
     )
     let controller = UIHostingController(rootView: content.environment(appState).environment(SceneNavigationContext(appState: appState, sceneID: UUID())))
     controller.loadViewIfNeeded()

@@ -92,8 +92,8 @@ struct FeedHeaderEnvironmentTests {
     #expect(receipt.appState === appState)
     #expect(receipt.sceneContext === sceneContext)
     #expect(receipt.fontManager === appState.fontManager)
-    #expect(controller.collectionView.numberOfItems(inSection: 0) == 2,
-      "The production snapshot must contain the header and one local post")
+    #expect(controller.collectionView.numberOfItems(inSection: 0) == 3,
+      "The production snapshot must contain the header, one local post and the pagination footer")
     let headerCell = try #require(controller.collectionView.cellForItem(at: headerIndex))
     #expect(headerCell.contentConfiguration != nil)
     #expect(headerCell.window === window)
