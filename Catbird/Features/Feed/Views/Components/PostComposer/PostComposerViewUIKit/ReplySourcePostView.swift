@@ -27,7 +27,7 @@ struct ReplySourcePostView: View {
           Label(relationship.statusText, systemImage: "hand.raised")
             .foregroundStyle(.secondary)
           if relationship.canReveal {
-            Button("Show original post") { revealsBlockedSource = true }
+            Button("Show Original Post") { revealsBlockedSource = true }
               .frame(minHeight: 44)
               .accessibilityIdentifier("reply-blocked-source-reveal")
           }

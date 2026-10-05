@@ -96,7 +96,7 @@ struct DraftsListView: View {
         Text("Catbird will first download your Bluesky drafts, then sync supported saved drafts for the active account. Existing drafts stay recoverable on this device. Photos and videos remain in the app where they were added.")
       }
       .confirmationDialog(
-        "Media is unavailable in Catbird",
+        "Media Unavailable in Catbird",
         isPresented: Binding(get: { draftWithUnavailableMedia != nil }, set: { if !$0 { draftWithUnavailableMedia = nil } }),
         titleVisibility: .visible,
         presenting: draftWithUnavailableMedia

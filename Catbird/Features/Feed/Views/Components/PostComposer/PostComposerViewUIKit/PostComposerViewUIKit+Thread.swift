@@ -71,9 +71,13 @@ extension PostComposerViewUIKit {
                   Image(systemName: "xmark.circle.fill")
                     .appFont(size: 20)
                     .foregroundStyle(.white, Color.systemGray3)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .padding(.top, 2)
+                .padding(.top, -10)
+                .padding(.trailing, -12)
+                .accessibilityLabel("Remove Post \(index + 1)")
                 .disabled(hasPendingMediaIntent)
               }
             }
@@ -93,10 +97,12 @@ extension PostComposerViewUIKit {
             if index == vm.currentThreadIndex {
               mentionSuggestionsSection(vm: vm)
               activeEntryMediaSection(vm: vm)
+              activeEntryEmbedSection(vm: vm)
               submitValidationMessageView(vm: vm)
                 .padding(.horizontal, 16)
             } else {
               inactiveEntryMediaSection(entry: entry)
+              inactiveEntryEmbedSummary(entry: entry)
             }
           }
           .background(alignment: .topLeading) {
@@ -130,7 +136,7 @@ extension PostComposerViewUIKit {
         ),
         linkFacets: $linkFacets,
         pendingSelectionRange: $pendingSelectionRange,
-        placeholder: "What's on your mind?",
+        placeholder: "What’s on your mind?",
         onImagePasted: { image in
           #if os(iOS)
           pendingPasteCount += 1
@@ -184,7 +190,7 @@ extension PostComposerViewUIKit {
       onLinkAction: {
         presentLinkCreation(vm: vm)
       },
-      		allowTenor: appState.appSettings.externalMediaConsent(for: .tenor) != .hide,
+      		allowTenor: appState.appSettings.externalMediaConsent(for: .klipy) != .hide,
       onTextViewCreated: { textView in
         pcThreadLogger.debug("PostComposerThread: Text view created for active thread entry")
         #if os(iOS)
@@ -216,6 +222,13 @@ extension PostComposerViewUIKit {
         .multilineTextAlignment(.leading)
         .lineLimit(6)
         .frame(maxWidth: .infinity, minHeight: 60, alignment: .topLeading)
+
+      if entry.text.count > vm.maxCharacterCount {
+        let over = entry.text.count - vm.maxCharacterCount
+        Text("\(over) character\(over == 1 ? "" : "s") over the limit")
+          .appFont(AppTextRole.caption)
+          .foregroundStyle(Color.red)
+      }
     }
     .padding(.vertical, 12)
     .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -301,6 +314,46 @@ extension PostComposerViewUIKit {
 #endif
       }
     }
+  }
+
+  /// The quote and link card for the entry being edited, which thread mode would otherwise hide.
+  @ViewBuilder
+  private func activeEntryEmbedSection(vm: PostComposerViewModel) -> some View {
+    if let quoted = vm.quotedPost {
+      quotedPostView(quoted: quoted, vm: vm)
+        .padding(.horizontal, 16)
+    }
+    if let embedURL = vm.selectedEmbedURL, let card = vm.urlCards[embedURL] {
+      ComposeURLCardView(
+        card: card,
+        onRemove: { vm.removeURLCard(for: embedURL) },
+        willBeUsedAsEmbed: vm.willBeUsedAsEmbed(for: embedURL),
+        onRemoveURLFromText: { vm.removeURLFromText(for: embedURL) }
+      )
+      .padding(.horizontal, 16)
+    }
+  }
+
+  /// A compact summary of the quote or link card attached to an entry that isn't being edited.
+  @ViewBuilder
+  private func inactiveEntryEmbedSummary(entry: ThreadEntry) -> some View {
+    VStack(alignment: .leading, spacing: 4) {
+      if let quoted = entry.quotedPost {
+        Label("Quoting @\(quoted.author.handle.description)", systemImage: "quote.bubble")
+      } else if entry.draftQuotedPostURI != nil {
+        Label("Quoting a post", systemImage: "quote.bubble")
+      }
+      if entry.mediaItems.isEmpty, entry.videoItem == nil, entry.selectedGif == nil,
+         let embedURL = entry.selectedEmbedURL, let card = entry.urlCards[embedURL] {
+        Label(card.title.isEmpty ? embedURL : card.title, systemImage: "link")
+          .lineLimit(1)
+      }
+    }
+    .appFont(AppTextRole.caption)
+    .foregroundStyle(Color.secondary)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .padding(.leading, 16 + Self.composerAvatarSize + 12)
+    .padding(.trailing, 16)
   }
 
   @ViewBuilder

@@ -198,13 +198,13 @@ extension PostComposerViewUIKit {
   }
   
   @ViewBuilder
-  private func quotedPostView(quoted: AppBskyFeedDefs.PostView, vm: PostComposerViewModel) -> some View {
+  func quotedPostView(quoted: AppBskyFeedDefs.PostView, vm: PostComposerViewModel) -> some View {
     VStack(alignment: .leading, spacing: 8) {
       HStack(spacing: 8) {
         Image(systemName: "quote.bubble")
           .foregroundColor(.secondary)
           .appFont(AppTextRole.subheadline)
-        Text("Quoting post")
+        Text("Quoting Post")
           .appFont(AppTextRole.caption)
           .foregroundColor(.secondary)
         Spacer(minLength: 0)
@@ -222,7 +222,7 @@ extension PostComposerViewUIKit {
             .contentShape(Rectangle())
         }
         .buttonStyle(PlainButtonStyle())
-        .accessibilityLabel("Remove quoted post")
+        .accessibilityLabel("Remove Quoted Post")
       }
 
       VStack(alignment: .leading, spacing: 4) {

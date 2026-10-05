@@ -112,7 +112,7 @@ final class PostManager {
         facets: facets.isEmpty ? nil : facets,
         reply: reply,
         embed: embed,
-        langs: languages,
+        langs: Array(languages.prefix(3)),
         labels: postLabels,
         tags: hashtags.isEmpty ? nil : hashtags,
         createdAt: currentATProtocolDate
@@ -227,14 +227,16 @@ final class PostManager {
       // Create a temporary post for optimistic updates
       if let appState = appState {
         Task { @MainActor in
-          // Create a temporary PostView for optimistic updates
-          let tempPost = try createTemporaryPost(
+          // Create a temporary PostView for optimistic updates. It is skipped when the
+          // profile isn't loaded yet; the feed refresh brings in the real post.
+          let tempPost = try? createTemporaryPost(
             text: postText,
             did: did,
             uri: postURI,
             cid: cid,
             parentPost: parentPost,
             embed: embed,
+            facets: facets,
             languages: languages,
             labels: selfLabels,
             createdAt: currentATProtocolDate
@@ -243,7 +245,9 @@ final class PostManager {
           if let parentPost = parentPost {
             // This is a reply - send proper reply created event
             let parentUriString = parentPost.uri.uriString()
-            appState.stateInvalidationBus.notify(.replyCreated(tempPost, parentUri: parentUriString))
+            if let tempPost {
+              appState.stateInvalidationBus.notify(.replyCreated(tempPost, parentUri: parentUriString))
+            }
             
             // Also notify thread update for the root post
             let rootUri = getRootUri(from: parentPost)
@@ -260,7 +264,9 @@ final class PostManager {
             )
           } else {
             // This is a new post - send post created event
-            appState.stateInvalidationBus.notify(.postCreated(tempPost))
+            if let tempPost {
+              appState.stateInvalidationBus.notify(.postCreated(tempPost))
+            }
             
             // Show post success toast with tap to view
             appState.toastManager.show(
@@ -332,6 +338,7 @@ final class PostManager {
     cid: CID,
     parentPost: AppBskyFeedDefs.PostView?,
     embed: AppBskyFeedPost.AppBskyFeedPostEmbedUnion?,
+    facets: [AppBskyRichtextFacet]?,
     languages: [LanguageCodeContainer],
     labels: ComAtprotoLabelDefs.SelfLabels,
     createdAt: ATProtocolDate
@@ -355,32 +362,8 @@ final class PostManager {
         debug: nil
       )
     } else {
-      // Fallback to minimal profile
-      author = AppBskyActorDefs.ProfileViewBasic(
-        did: try DID(didString: did),
-        handle: try Handle(handleString: "temp.handle"), // This will be updated when the real post loads
-        displayName: nil,
-        pronouns: nil, avatar: nil,
-        associated: nil,
-        viewer: AppBskyActorDefs.ViewerState(
-            muted: false,
-            mutedOnlyReposts: nil,
-            mutedOnlyQuoteposts: nil,
-            mutedByList: nil,
-            blockedBy: false,
-            blocking: nil,
-            blockingByList: nil,
-            following: nil,
-            followedBy: nil,
-            knownFollowers: nil,
-            activitySubscription: nil
-        ),
-        labels: [],
-        createdAt: nil,
-        verification: nil,
-        status: nil,
-        debug: nil
-      )
+      // Without the profile the post would show a placeholder handle and no avatar.
+      throw PostManagerError.profileUnavailable
     }
     
     // Create post labels only if labels has content
@@ -395,7 +378,7 @@ final class PostManager {
     let postRecord = AppBskyFeedPost(
       text: text,
       entities: nil,
-      facets: nil,
+      facets: facets?.isEmpty == true ? nil : facets,
       reply: parentPost != nil ? Self.createReplyRef(for: parentPost!) : nil,
       embed: embed,
       langs: languages,
@@ -601,6 +584,8 @@ final class PostManager {
       // Keep track of root and parent references
       var rootRef: ComAtprotoRepoStrongRef?
       var parentRef: ComAtprotoRepoStrongRef?
+      // The thread's own first post, which differs from rootRef when replying.
+      var firstPostRef: ComAtprotoRepoStrongRef?
       
       // If this thread is a reply, set up initial reply references from parentPost
       if let parentPost = parentPost {
@@ -668,7 +653,7 @@ final class PostManager {
           facets: postFacets?.isEmpty == true ? nil : postFacets,
           reply: reply,
           embed: postEmbed,
-          langs: languages,
+          langs: Array(languages.prefix(3)),
           labels: postLabels,
           tags: hashtags.isEmpty ? nil : hashtags,
           createdAt: postATProtocolDate
@@ -680,6 +665,10 @@ final class PostManager {
         let postData = try post.encodedDAGCBOR()
         let cid = CID.fromDAGCBOR(postData)
         logger.debug("Post #\(index+1) CID: \(cid)")
+
+        if index == 0 {
+          firstPostRef = ComAtprotoRepoStrongRef(uri: postURI, cid: cid)
+        }
 
         // If this is the first post and not a reply thread, set it as the root
         if index == 0 && rootRef == nil {
@@ -764,32 +753,43 @@ final class PostManager {
       logger.info("Thread with \(posts.count) posts created successfully")
       
       // Trigger state invalidation for thread creation
-      if let appState = appState, let rootRef = rootRef {
+      if let appState = appState, let rootRef = rootRef, let firstPostRef = firstPostRef {
         Task { @MainActor [weak self] in
           guard let self = self else { return }
-          
-          do {
-            // Create a temporary post for the root of the thread
-            let tempPost = try self.createTemporaryPost(
-              text: posts[0],
-              did: did,
-              uri: rootRef.uri,
-              cid: rootRef.cid,
-              parentPost: nil,
-              embed: embeds?.first ?? nil,
-              languages: languages,
-              labels: selfLabels,
-              createdAt: ATProtocolDate(date: currentDate)
-            )
-          
-            // Notify that a new post (thread root) was created
-            appState.stateInvalidationBus.notify(.postCreated(tempPost))
-            
-            // Also notify thread update for the new thread
+
+          // Optimistic copy of the thread's first post, using its own identity (never the
+          // root's when replying, which would duplicate the root's feed entry).
+          let tempPost = try? self.createTemporaryPost(
+            text: posts[0],
+            did: did,
+            uri: firstPostRef.uri,
+            cid: firstPostRef.cid,
+            parentPost: parentPost,
+            embed: embeds?.first ?? nil,
+            facets: facets?.first ?? nil,
+            languages: languages,
+            labels: selfLabels,
+            createdAt: ATProtocolDate(date: currentDate)
+          )
+
+          if let parentPost = parentPost {
+            if let tempPost {
+              appState.stateInvalidationBus.notify(.replyCreated(tempPost, parentUri: parentPost.uri.uriString()))
+            }
             appState.stateInvalidationBus.notify(.threadUpdated(rootUri: rootRef.uri.uriString()))
-          } catch {
-            self.logger.error("Failed to create temporary post for thread notification: \(error)")
+            appState.toastManager.show(
+              ToastItem(message: "Replies posted", icon: "bubble.left.and.bubble.right.fill", duration: 3.0)
+            )
+          } else {
+            if let tempPost {
+              appState.stateInvalidationBus.notify(.postCreated(tempPost))
+            }
+            appState.stateInvalidationBus.notify(.threadUpdated(rootUri: rootRef.uri.uriString()))
+            appState.toastManager.show(
+              ToastItem(message: "Thread published", icon: "paperplane.fill", duration: 3.0)
+            )
           }
+          appState.stateInvalidationBus.notify(.profileUpdated(did: did))
         }
       }
 
@@ -820,11 +820,7 @@ final class PostManager {
   }
   /// Fetches the authenticated user's profile record and writes back a copy
   /// with the given pinned post applied.
-  private func updatePinnedPost(
-    _ pinnedPost: ComAtprotoRepoStrongRef?,
-    fetchErrorMessage: String,
-    writeErrorMessage: String
-  ) async throws {
+  private func updatePinnedPost(_ pinnedPost: ComAtprotoRepoStrongRef?) async throws {
     guard let client = client else { throw AuthError.clientNotInitialized }
     let did = try await client.getDid()
 
@@ -838,11 +834,8 @@ final class PostManager {
     guard getRecordCode == 200, let existingRecord = getRecordOutput,
           case let .knownType(value) = existingRecord.value,
           let existingProfile = value as? AppBskyActorProfile else {
-      throw NSError(
-        domain: "ProfilePinning",
-        code: getRecordCode,
-        userInfo: [NSLocalizedDescriptionKey: fetchErrorMessage]
-      )
+      logger.error("Failed to fetch profile record for pinning: \(getRecordCode)")
+      throw AuthError.badResponse(getRecordCode)
     }
 
     let updatedProfile = AppBskyActorProfile(
@@ -868,31 +861,20 @@ final class PostManager {
 
     let (putRecordCode, _) = try await client.com.atproto.repo.putRecord(input: putRecordInput)
     if putRecordCode != 200 {
-      throw NSError(
-        domain: "ProfilePinning",
-        code: putRecordCode,
-        userInfo: [NSLocalizedDescriptionKey: "\(writeErrorMessage) \(putRecordCode)"]
-      )
+      logger.error("Failed to update pinned post: \(putRecordCode)")
+      throw AuthError.badResponse(putRecordCode)
     }
   }
 
   /// Pins a post to the authenticated user's profile.
   func pinPost(uri: ATProtocolURI, cid: String) async throws {
     let strongRef = ComAtprotoRepoStrongRef(uri: uri, cid: try CID.parse(cid))
-    try await updatePinnedPost(
-      strongRef,
-      fetchErrorMessage: "Failed to fetch actor profile for pinning",
-      writeErrorMessage: "Error updating pinned post: Unexpected response code"
-    )
+    try await updatePinnedPost(strongRef)
   }
 
   /// Unpins any currently pinned post from the authenticated user's profile.
   func unpinPost() async throws {
-    try await updatePinnedPost(
-      nil,
-      fetchErrorMessage: "Failed to fetch actor profile for unpinning",
-      writeErrorMessage: "Error unpinning post: Unexpected response code"
-    )
+    try await updatePinnedPost(nil)
   }
 
   // MARK: - Post Interaction Settings & Moderation
@@ -1178,27 +1160,40 @@ final class PostManager {
   }
 
   // Post Manager Errors
-  enum AuthError: Error {
+  enum AuthError: LocalizedError, HTTPStatusCarrying {
     case clientNotInitialized
     case badResponse(Int)
 
-    var localizedDescription: String {
+    var errorDescription: String? {
       switch self {
       case .clientNotInitialized:
-        return "Client not initialized"
-      case .badResponse(let code):
-        return "Bad response: \(code)"
+        return "You’re signed out. Sign in again and try again."
+      case .badResponse(429):
+        return "Too many requests. Wait a moment and try again."
+      case .badResponse:
+        return "Something went wrong. Try again."
+      }
+    }
+
+    /// Lets `UserFacingError` classify these failures; a missing client means the user must sign in.
+    var httpStatusCode: Int {
+      switch self {
+      case .clientNotInitialized: return 401
+      case .badResponse(let code): return code
       }
     }
   }
-  
-  enum PostManagerError: Error {
+
+  enum PostManagerError: LocalizedError {
     case invalidImageURI
-    
-    var localizedDescription: String {
+    case profileUnavailable
+
+    var errorDescription: String? {
       switch self {
       case .invalidImageURI:
-        return "Failed to create valid image URIs"
+        return "This image couldn’t be attached."
+      case .profileUnavailable:
+        return "Your profile hasn’t loaded yet."
       }
     }
   }

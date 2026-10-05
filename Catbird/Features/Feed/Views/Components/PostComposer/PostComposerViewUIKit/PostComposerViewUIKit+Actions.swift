@@ -56,7 +56,13 @@ extension PostComposerViewUIKit {
         dismiss()
       } catch {
         isSubmitting = false
-        pcActionsLogger.error("PostComposerActions: Submit failed - error: \(error.localizedDescription)")
+        pcActionsLogger.error("PostComposerActions: Submit failed - error: \(String(describing: error), privacy: .public)")
+        vm.saveDraftIfNeeded()
+        if let message = PostComposerErrorCopy.message(for: error, isThread: vm.isThreadMode) {
+          appState.toastManager.show(ToastItem(
+            message: message, icon: "exclamationmark.triangle.fill", duration: 4
+          ))
+        }
       }
     }
   }

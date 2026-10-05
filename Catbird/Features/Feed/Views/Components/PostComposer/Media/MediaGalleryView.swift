@@ -72,16 +72,19 @@ struct MediaGalleryView: View {
                             #if os(iOS)
                             .onDrop(of: [UTType.image], isTargeted: $isExternalTargeted) { providers in
                                 guard let onExternalImageDrop = onExternalImageDrop else { return false }
-                                var datas: [Data] = []
+                                // Completion handlers run on arbitrary queues, so collect behind a lock.
+                                let collected = DroppedImageDataCollector()
                                 let group = DispatchGroup()
                                 for p in providers {
                                     group.enter()
                                     p.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, _ in
-                                        if let data = data { datas.append(data) }
+                                        if let data = data { collected.append(data) }
                                         group.leave()
                                     }
                                 }
                                 group.notify(queue: .main) {
+                                    let room = max(0, maxImagesAllowed - mediaItems.count)
+                                    let datas = Array(collected.values.prefix(room))
                                     if !datas.isEmpty { onExternalImageDrop(datas) }
                                 }
                                 return true
@@ -94,10 +97,19 @@ struct MediaGalleryView: View {
                                 }
                             }
                             #endif
-                            HStack(spacing: 8) {
-                                if let onMoveLeft = onMoveLeft { Button(action: { onMoveLeft(item.id) }) { Image(systemName: "arrow.left") } }
-                                if let onMoveRight = onMoveRight { Button(action: { onMoveRight(item.id) }) { Image(systemName: "arrow.right") } }
-                                if let onCropSquare = onCropSquare { Button(action: { onCropSquare(item.id) }) { Image(systemName: "crop") } }
+                            HStack(spacing: 0) {
+                                if let onMoveLeft = onMoveLeft {
+                                    Button(action: { onMoveLeft(item.id) }) { galleryControlIcon("arrow.left") }
+                                        .accessibilityLabel("Move Left")
+                                }
+                                if let onMoveRight = onMoveRight {
+                                    Button(action: { onMoveRight(item.id) }) { galleryControlIcon("arrow.right") }
+                                        .accessibilityLabel("Move Right")
+                                }
+                                if let onCropSquare = onCropSquare {
+                                    Button(action: { onCropSquare(item.id) }) { galleryControlIcon("crop") }
+                                        .accessibilityLabel("Crop to Square")
+                                }
                             }
                             .buttonStyle(.borderless)
                             .appFont(AppTextRole.caption2)
@@ -173,6 +185,13 @@ struct MediaGalleryView: View {
         isAltTextEditorPresented = true
     }
 
+    private func galleryControlIcon(_ systemName: String) -> some View {
+        // Three controls share the 100 pt thumbnail width; keep each a full 44 pt tall.
+        Image(systemName: systemName)
+            .frame(minWidth: 33, minHeight: 44)
+            .contentShape(Rectangle())
+    }
+
     private func reorderLocal(from sourceIndex: Int, to destinationIndex: Int) {
         guard sourceIndex != destinationIndex,
               mediaItems.indices.contains(sourceIndex),
@@ -181,6 +200,26 @@ struct MediaGalleryView: View {
         mediaItems.insert(item, at: destinationIndex)
     }
 }
+
+#if os(iOS)
+/// Thread-safe buffer for image data loaded from dropped item providers.
+private final class DroppedImageDataCollector: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [Data] = []
+
+    func append(_ data: Data) {
+        lock.lock()
+        storage.append(data)
+        lock.unlock()
+    }
+
+    var values: [Data] {
+        lock.lock()
+        defer { lock.unlock() }
+        return storage
+    }
+}
+#endif
 
 #Preview {
     @ObservationIgnored @Previewable @ObservationIgnored @Environment(AppState.self) var appState

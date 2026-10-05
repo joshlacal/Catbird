@@ -70,7 +70,7 @@ struct TabViewBottomAccessoryWrapper: View {
       HStack(spacing: 8) {
         Image(systemName: "square.and.pencil")
           .font(.system(size: 16, weight: .medium))
-        Text("What's on your mind?")
+        Text("What’s on your mind?")
           .font(.system(size: 15))
           .foregroundColor(.secondary)
         Spacer()
@@ -107,8 +107,8 @@ struct TabViewBottomAccessoryWrapper: View {
         }
         
         // Draft content preview
-        let previewText = draft.postText.isEmpty ? "Draft in progress..." : draft.postText
-        Text("Draft: \(String(previewText.prefix(30)))\(previewText.count > 30 ? "..." : "")")
+        let previewText = draft.postText.isEmpty ? "Draft in progress…" : draft.postText
+        Text("Draft: \(String(previewText.prefix(30)))\(previewText.count > 30 ? "…" : "")")
           .font(.system(size: 14))
           .foregroundColor(.primary)
           .lineLimit(1)

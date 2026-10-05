@@ -56,10 +56,10 @@ struct PhotoEditorSheet: View {
           }) {
             HStack(spacing: 8) {
               Image(systemName: "xmark")
-                .font(.system(size: 16, weight: .semibold))
               Text("Cancel")
-                .font(.system(size: 16, weight: .semibold))
             }
+            .appFont(AppTextRole.body)
+            .fontWeight(.semibold)
             .foregroundStyle(.white)
             .padding(.horizontal, 20)
             .padding(.vertical, 12)
@@ -75,10 +75,10 @@ struct PhotoEditorSheet: View {
           }) {
             HStack(spacing: 8) {
               Image(systemName: "checkmark")
-                .font(.system(size: 16, weight: .semibold))
               Text("Done")
-                .font(.system(size: 16, weight: .semibold))
             }
+            .appFont(AppTextRole.body)
+            .fontWeight(.semibold)
             .foregroundStyle(.white)
             .padding(.horizontal, 24)
             .padding(.vertical, 12)

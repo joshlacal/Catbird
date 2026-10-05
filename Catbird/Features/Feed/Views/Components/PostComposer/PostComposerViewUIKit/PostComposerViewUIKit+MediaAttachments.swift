@@ -42,7 +42,7 @@ extension PostComposerViewUIKit {
         Button {
           showingAudioVisualizerPreview = true
         } label: {
-          Label("Finish audio attachment", systemImage: "waveform")
+          Label("Finish Audio Attachment", systemImage: "waveform")
             .multilineTextAlignment(.leading)
         }
         .accessibilityHint("Opens your saved recording to create a video attachment.")
@@ -53,7 +53,7 @@ extension PostComposerViewUIKit {
           Image(systemName: "xmark.circle.fill")
             .frame(minWidth: 44, minHeight: 44)
         }
-        .accessibilityLabel("Remove audio attachment")
+        .accessibilityLabel("Remove Audio Attachment")
       }
       .disabled(vm.isPreparingPendingAudio)
     }
@@ -103,9 +103,11 @@ extension PostComposerViewUIKit {
           Image(systemName: "xmark.circle.fill")
             .foregroundColor(.white)
             .background(Circle().fill(Color.black.opacity(0.5)))
+            .frame(minWidth: 44, minHeight: 44)
+            .contentShape(Rectangle())
         }
         .buttonStyle(PlainButtonStyle())
-        .padding(8)
+        .accessibilityLabel("Remove GIF")
       }
     }
     .padding(.horizontal, 16)
@@ -144,12 +146,12 @@ private struct PostComposerUIKitVideoAttachmentView: View {
           } label: {
             HStack(spacing: 4) {
               Image(systemName: "captions.bubble.fill")
-                .font(.system(size: 11))
                 .foregroundStyle(.tint)
               Text("\(langName) (\(caption.filename))")
-                .font(.system(size: 11, weight: .medium))
+                .fontWeight(.medium)
                 .lineLimit(1)
             }
+            .appFont(AppTextRole.caption2)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
             .background(Color(platformColor: .platformSystemGray6))
@@ -161,23 +163,24 @@ private struct PostComposerUIKitVideoAttachmentView: View {
             vm.updateVideoCaption(nil)
           } label: {
             Image(systemName: "xmark.circle.fill")
-              .font(.system(size: 11))
+              .appFont(AppTextRole.caption2)
               .foregroundStyle(.secondary)
+              .frame(minWidth: 44, minHeight: 44)
+              .contentShape(Rectangle())
           }
           .buttonStyle(.plain)
-          .accessibilityLabel("Remove caption")
+          .accessibilityLabel("Remove Captions")
         } else {
           Button {
             showingCaptionEditor = true
           } label: {
             HStack(spacing: 4) {
               Image(systemName: "captions.bubble")
-                .font(.system(size: 11))
                 .foregroundStyle(.secondary)
               Text("Captions (.vtt)")
-                .font(.system(size: 11))
                 .foregroundColor(.secondary)
             }
+            .appFont(AppTextRole.caption2)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
             .background(Color(platformColor: .platformSystemGray6))

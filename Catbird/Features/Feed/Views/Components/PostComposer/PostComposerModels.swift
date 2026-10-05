@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Petrel
 import SwiftUI
@@ -85,11 +86,13 @@ struct PostComposerSubmitValidationState: Equatable {
     enum Reason: Equatable {
         case emptyContent
         case overCharacterLimit(current: Int, max: Int)
+        case threadPostOverCharacterLimit(postNumber: Int, over: Int)
         case posting
         case videoPreparing
         case videoBlocked(String)
         case missingAltText
         case replyLoading
+        case replyUnavailable
         case quoteLoading
         case pendingAudio
     }
@@ -102,9 +105,12 @@ struct PostComposerSubmitValidationState: Equatable {
         case .emptyContent:
             return "Add text or media before posting."
         case .overCharacterLimit(let current, let max):
-            return "\(current - max) characters over the limit."
+            let over = current - max
+            return "\(over) character\(over == 1 ? "" : "s") over the limit."
+        case .threadPostOverCharacterLimit(let postNumber, let over):
+            return "Post \(postNumber) is \(over) character\(over == 1 ? "" : "s") over the limit."
         case .posting:
-            return "Posting..."
+            return "Posting…"
         case .videoPreparing:
             return "Video is still preparing."
         case .videoBlocked(let reason):
@@ -112,7 +118,9 @@ struct PostComposerSubmitValidationState: Equatable {
         case .missingAltText:
             return "Add alt text to every media attachment before posting."
         case .replyLoading:
-            return "The original post must load before this reply can be posted."
+            return "Loading the original post…"
+        case .replyUnavailable:
+            return "The post you’re replying to is unavailable."
         case .quoteLoading:
             return "The quoted post must load before this draft can be posted."
         case .pendingAudio:
@@ -124,7 +132,7 @@ struct PostComposerSubmitValidationState: Equatable {
 
     var shouldShowInlineMessage: Bool {
         switch reason {
-        case .overCharacterLimit, .videoPreparing, .videoBlocked, .missingAltText, .replyLoading, .quoteLoading, .pendingAudio:
+        case .overCharacterLimit, .threadPostOverCharacterLimit, .videoPreparing, .videoBlocked, .missingAltText, .replyLoading, .replyUnavailable, .quoteLoading, .pendingAudio:
             return true
         case .emptyContent, .posting, nil:
             return false
@@ -206,17 +214,22 @@ struct CodableMediaItem: Codable, Hashable {
     }
   }
 
-  /// Write image data to a temp file in the shared drafts directory, returning the file URL string
+  /// Write image data to a file in the shared drafts directory, returning the file URL string.
+  /// Files are named by content, so autosaves and thread copies of the same image reuse one file.
   private static func persistImageData(_ data: Data) -> String? {
     guard let container = FileManager.default.containerURL(
       forSecurityApplicationGroupIdentifier: "group.blue.catbird.shared"
     ) else { return nil }
     let draftsDir = container.appendingPathComponent("SharedDrafts", isDirectory: true)
     try? FileManager.default.createDirectory(at: draftsDir, withIntermediateDirectories: true)
-    let filename = "draft_image_\(UUID().uuidString).jpg"
+    let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    let filename = "draft_image_\(digest).jpg"
     let fileURL = draftsDir.appendingPathComponent(filename)
+    if FileManager.default.fileExists(atPath: fileURL.path) {
+      return fileURL.absoluteString
+    }
     do {
-      try data.write(to: fileURL)
+      try data.write(to: fileURL, options: .atomic)
       return fileURL.absoluteString
     } catch {
       return nil

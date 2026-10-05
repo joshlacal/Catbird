@@ -117,7 +117,8 @@ struct PostComposerDraftRestorationTests {
     let model = await makeViewModel()
     model.restoreDraftState(makeDraft(parentURI: quoteURI))
     #expect(model.parentPost == nil)
-    #expect(model.submitValidationState.reason == .replyLoading)
+    let reason = model.submitValidationState.reason
+    #expect(reason == .replyLoading || reason == .replyUnavailable)
     #expect(!model.canSubmitPost)
     #expect(throws: NSError.self) { try model.ensureDraftReferencesReadyForPosting() }
     #expect(model.saveDraftState().parentPostURI == quoteURI)

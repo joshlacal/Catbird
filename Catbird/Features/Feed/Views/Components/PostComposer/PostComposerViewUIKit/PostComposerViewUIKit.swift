@@ -142,7 +142,14 @@ struct PostComposerViewUIKit: View {
             }
         }
       } else if let initializationError {
-        ContentUnavailableView("Draft Unavailable", systemImage: "doc.text", description: Text(initializationError))
+        ContentUnavailableView {
+          Label("Draft Unavailable", systemImage: "doc.text")
+        } description: {
+          Text(initializationError)
+        } actions: {
+          Button("Close") { dismiss() }
+            .buttonStyle(.borderedProminent)
+        }
       } else {
           ProgressView().progressViewStyle(.circular)
               .onAppear {
@@ -152,7 +159,7 @@ struct PostComposerViewUIKit: View {
     }
     // Identity belongs to the injected origin scene.
     .id(editingSession.sceneID)
-    .interactiveDismissDisabled(hasPendingMediaIntent)
+    .interactiveDismissDisabled(hasPendingMediaIntent || isSubmitting)
     .task {
       guard viewModel == nil else { 
         pcUIKitLogger.debug("PostComposerViewUIKit: Task skipped, viewModel already exists")
@@ -193,7 +200,9 @@ struct PostComposerViewUIKit: View {
       }
       
       guard !Task.isCancelled, vm.ownsEditingDraft else { return }
-      await vm.loadUserLanguagePreference()
+      if restoringDraftParam == nil && initialEditingClaim == nil && vm.selectedLanguages.isEmpty {
+        await vm.loadUserLanguagePreference()
+      }
       guard !Task.isCancelled, vm.ownsEditingDraft else { return }
       
       startAutoSave()
@@ -240,7 +249,7 @@ struct PostComposerViewUIKit: View {
             .accessibilityLabel("Cancel")
             .accessibilityIdentifier("composer-close")
             .confirmationDialog(
-              "Discard post?",
+              "Discard Post?",
               isPresented: $showingDismissAlert,
               titleVisibility: .visible
             ) {
@@ -267,7 +276,7 @@ struct PostComposerViewUIKit: View {
               }
               Button("Keep Editing", role: .cancel) { }
             } message: {
-              Text("You'll lose your post if you discard now.")
+              Text("You’ll lose your post if you discard now.")
             }
           }
 
@@ -322,15 +331,16 @@ struct PostComposerViewUIKit: View {
                   ProgressView()
                     .progressViewStyle(.circular)
                     .tint(.white)
-                    .foregroundStyle(Color.white)
                 } else {
                   Image(systemName: "arrow.up")
-                    .foregroundStyle(Color.white)
                 }
               }
               .disabled(!canSubmit(vm: vm) || isSubmitting)
               .opacity(isSubmitting ? 0.7 : 1)
+              .buttonStyle(.borderedProminent)
+              .buttonBorderShape(.capsule)
               .keyboardShortcut(.return, modifiers: .command)
+              .accessibilityLabel(vm.isThreadMode ? "Post All" : "Post")
             }
 #else
             Button(action: {
@@ -341,15 +351,16 @@ struct PostComposerViewUIKit: View {
                 ProgressView()
                   .progressViewStyle(.circular)
                   .tint(.white)
-                  .foregroundStyle(Color.white)
               } else {
                 Image(systemName: "arrow.up")
-                  .foregroundStyle(Color.white)
               }
             }
             .disabled(!canSubmit(vm: vm) || isSubmitting)
             .opacity(isSubmitting ? 0.7 : 1)
+            .buttonStyle(.borderedProminent)
+            .buttonBorderShape(.capsule)
             .keyboardShortcut(.return, modifiers: .command)
+            .accessibilityLabel(vm.isThreadMode ? "Post All" : "Post")
 #endif
           }
         }
@@ -375,7 +386,7 @@ struct PostComposerViewUIKit: View {
               }
             }
             .confirmationDialog(
-              "Discard post?",
+              "Discard Post?",
               isPresented: $showingDismissAlert,
               titleVisibility: .visible
             ) {
@@ -387,7 +398,7 @@ struct PostComposerViewUIKit: View {
               }
               Button("Keep Editing", role: .cancel) { }
             } message: {
-              Text("You'll lose your post if you discard now.")
+              Text("You’ll lose your post if you discard now.")
             }
           }
           ToolbarItem(placement: .primaryAction) {
@@ -446,12 +457,7 @@ struct PostComposerViewUIKit: View {
                       .accessibilityHidden(true)
                   }
               } else if vm.isReply {
-                Text("Original post not loaded")
-                  .appFont(AppTextRole.caption)
-                  .foregroundStyle(.secondary)
-                  .frame(maxWidth: .infinity, alignment: .leading)
-                  .padding(16)
-                  .accessibilityIdentifier("reply-source-loading")
+                ReplySourceUnavailableView(vm: vm)
               }
 
               VStack(spacing: 16) {
@@ -574,15 +580,17 @@ struct PostComposerViewUIKit: View {
         onEditLabels: {
           closePlusMenu()
           showingLabelSelector = true
-        }
+        },
+        showsInteractionSettings: !vm.isReply
       )
       .frame(maxWidth: compactReply ? .infinity : nil, alignment: .leading)
 
       ComposerAccessoryBar(
         isPlusMenuOpen: $showingPlusMenu,
         characterCount: vm.postText.count,
-        allowTenor: appState.appSettings.externalMediaConsent(for: .tenor) != .hide,
+        allowTenor: appState.appSettings.externalMediaConsent(for: .klipy) != .hide,
         isAddToThreadDisabled: hasPendingMediaIntent,
+        showsThreadgate: !vm.isReply,
         threadgateValue: vm.interactionSettings.summary,
         languageValue: languageSummary(vm: vm),
         actions: ComposerBarActions(
@@ -702,7 +710,7 @@ struct PostComposerViewUIKit: View {
         ),
         linkFacets: $linkFacets,
         pendingSelectionRange: $pendingSelectionRange,
-        placeholder: vm.isReply ? "Write your reply..." : "What's on your mind?",
+        placeholder: vm.isReply ? "Write your reply…" : "What’s on your mind?",
         onImagePasted: { image in
           pcUIKitLogger.info("PostComposerViewUIKit: Image pasted into editor")
           #if os(iOS)
@@ -781,7 +789,7 @@ struct PostComposerViewUIKit: View {
           pcUIKitLogger.info("PostComposerViewUIKit: Link action triggered")
           presentLinkCreation(vm: vm)
         },
-        		allowTenor: appState.appSettings.externalMediaConsent(for: .tenor) != .hide,
+        		allowTenor: appState.appSettings.externalMediaConsent(for: .klipy) != .hide,
         onTextViewCreated: { textView in
           pcUIKitLogger.debug("PostComposerViewUIKit: Text view created")
           #if os(iOS)

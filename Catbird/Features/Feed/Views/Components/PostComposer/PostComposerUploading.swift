@@ -42,7 +42,7 @@ extension PostComposerViewModel {
             )
             guard responseCode == 200, let uploadedBlob = blobOutput?.blob else {
                 logger.error("PostComposerUploading: Blob upload failed - response code: \(responseCode)")
-                throw NSError(domain: "BlobUploadError", code: responseCode, userInfo: nil)
+                throw PostComposerUploadError.badResponse(responseCode)
             }
             let blob = uploadedBlob
             
@@ -142,11 +142,7 @@ extension PostComposerViewModel {
             } else {
                 logger.error("ERROR: No video source available for upload")
                 isVideoUploading = false
-                throw NSError(
-                    domain: "VideoUploadError",
-                    code: 8,
-                    userInfo: [NSLocalizedDescriptionKey: "No video data available for upload. Please try again."]
-                )
+                throw VideoUploadError.uploadFailed
             }
 
             logger.debug("DEBUG: Video upload successful, creating embed")
@@ -162,26 +158,8 @@ extension PostComposerViewModel {
         } catch {
             isVideoUploading = false
             logger.error("ERROR: Video upload failed: \(error)")
-
-            let errorMessage: String
-            switch error {
-            case VideoUploadError.processingFailed(let reason):
-                errorMessage = reason
-            case VideoUploadError.uploadFailed:
-                errorMessage = "Video upload failed"
-            case VideoUploadError.processingTimeout:
-                errorMessage = "Video processing timed out"
-            case VideoUploadError.authenticationFailed:
-                errorMessage = "Authentication error during upload"
-            default:
-                errorMessage = error.localizedDescription
-            }
-
-            throw NSError(
-                domain: "VideoUploadError",
-                code: 0,
-                userInfo: [NSLocalizedDescriptionKey: errorMessage]
-            )
+            // Rethrow unchanged so the composer can explain the failure to the user.
+            throw error
         }
     }
 

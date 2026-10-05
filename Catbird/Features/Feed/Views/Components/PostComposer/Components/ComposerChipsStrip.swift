@@ -19,6 +19,8 @@ struct ComposerChipsStrip: View {
   let onApplySuggestedLanguage: () -> Void
   let onEditInteractionSettings: () -> Void
   let onEditLabels: () -> Void
+  /// Reply settings only apply to the first post of a thread, so replies hide them.
+  let showsInteractionSettings: Bool
 
   init(
     outlineTags: [String],
@@ -31,7 +33,8 @@ struct ComposerChipsStrip: View {
     onToggleLanguage: @escaping (LanguageCodeContainer) -> Void,
     onApplySuggestedLanguage: @escaping () -> Void,
     onEditInteractionSettings: @escaping () -> Void,
-    onEditLabels: @escaping () -> Void
+    onEditLabels: @escaping () -> Void,
+    showsInteractionSettings: Bool = true
   ) {
     self.outlineTags = outlineTags
     self.selectedLanguages = selectedLanguages
@@ -44,6 +47,7 @@ struct ComposerChipsStrip: View {
     self.onApplySuggestedLanguage = onApplySuggestedLanguage
     self.onEditInteractionSettings = onEditInteractionSettings
     self.onEditLabels = onEditLabels
+    self.showsInteractionSettings = showsInteractionSettings
   }
 
   init(
@@ -85,7 +89,7 @@ struct ComposerChipsStrip: View {
   }
 
   private var interactionSettingsIsCustom: Bool {
-    interactionSettings.isCustom
+    showsInteractionSettings && interactionSettings.isCustom
   }
 
   private var showsLanguageSuggestion: Bool {

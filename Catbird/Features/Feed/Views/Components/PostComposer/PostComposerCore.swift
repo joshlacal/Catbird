@@ -129,15 +129,36 @@ extension PostComposerViewModel {
             return PostComposerSubmitValidationState(canSubmit: false, reason: .videoPreparing)
         }
 
-        if !hasContent {
+        // In thread mode the entries that aren't being edited keep their content in threadEntries.
+        let otherEntries: [(number: Int, entry: ThreadEntry)] = isThreadMode
+            ? threadEntries.enumerated()
+                .filter { $0.offset != currentThreadIndex }
+                .map { (number: $0.offset + 1, entry: $0.element) }
+            : []
+
+        let otherEntriesHaveContent = otherEntries.contains { item in
+            !item.entry.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+            !item.entry.mediaItems.isEmpty ||
+            item.entry.videoItem != nil ||
+            item.entry.selectedGif != nil ||
+            postingQuoteReference(for: item.entry) != nil
+        }
+        if !hasContent && !otherEntriesHaveContent {
             return PostComposerSubmitValidationState(canSubmit: false, reason: .emptyContent)
         }
 
         if appState.appSettings.requireAltText {
-            if PostComposerAltTextRequirement.hasMissingAltText(
+            let currentMissing = PostComposerAltTextRequirement.hasMissingAltText(
                 imageAltTexts: mediaItems.map(\.altText),
                 videoAltText: videoItem?.altText
-            ) {
+            )
+            let otherMissing = otherEntries.contains { item in
+                PostComposerAltTextRequirement.hasMissingAltText(
+                    imageAltTexts: item.entry.mediaItems.map(\.altText),
+                    videoAltText: item.entry.videoItem?.altText
+                )
+            }
+            if currentMissing || otherMissing {
                 return PostComposerSubmitValidationState(canSubmit: false, reason: .missingAltText)
             }
         }
@@ -146,6 +167,16 @@ extension PostComposerViewModel {
             return PostComposerSubmitValidationState(
                 canSubmit: false,
                 reason: .overCharacterLimit(current: postText.count, max: maxCharacterCount)
+            )
+        }
+
+        if let overLimit = otherEntries.first(where: { $0.entry.text.count > maxCharacterCount }) {
+            return PostComposerSubmitValidationState(
+                canSubmit: false,
+                reason: .threadPostOverCharacterLimit(
+                    postNumber: overLimit.number,
+                    over: overLimit.entry.text.count - maxCharacterCount
+                )
             )
         }
 
@@ -184,7 +215,8 @@ extension PostComposerViewModel {
     }
 
     func willBeUsedAsEmbed(for url: String) -> Bool {
-        // Return true if this URL is the selected embed URL
+        // A link card is only published when the post has no media attached.
+        guard mediaItems.isEmpty, videoItem == nil, selectedGif == nil else { return false }
         return selectedEmbedURL == url && urlCards[url] != nil
     }
 
@@ -326,7 +358,18 @@ extension PostComposerViewModel {
 
     @MainActor
     func handleMediaPaste(_ items: [NSItemProvider]) async {
+        guard videoItem == nil, selectedGif == nil else {
+            alertItem = AlertItem(title: "Can’t Add Image", message: "Remove the video or GIF to add images.")
+            return
+        }
         for item in items {
+            guard mediaItems.count < maxImagesAllowed else {
+                alertItem = AlertItem(
+                    title: "Image Limit Reached",
+                    message: "A post can have up to \(maxImagesAllowed) images."
+                )
+                return
+            }
             if item.hasItemConformingToTypeIdentifier("public.image") {
                 do {
                     if let data = try await item.loadItem(forTypeIdentifier: "public.image", options: nil) as? Data {
@@ -410,22 +453,13 @@ extension PostComposerViewModel {
     // MARK: - Language Management
 
     func toggleLanguage(_ language: LanguageCodeContainer) {
+        // A per-post choice; the default only changes from the language sheet's explicit action.
         if selectedLanguages.contains(language) {
             // Allow removing all languages - it's optional
             selectedLanguages.removeAll { $0 == language }
-            // Update saved preference
-            if selectedLanguages.isEmpty {
-                // Clear the saved default if user removed all languages
-                UserDefaults.standard.removeObject(forKey: "defaultComposerLanguage")
-                logger.info("PostComposerCore: Cleared default language preference")
-            } else {
-                // Save the first remaining language as the new default
-                saveDefaultLanguagePreference()
-            }
         } else {
+            guard selectedLanguages.count < LanguagePickerSheet.maxLanguages else { return }
             selectedLanguages.append(language)
-            // Save this language as the default preference
-            saveDefaultLanguagePreference()
         }
         saveDraftIfNeeded()
     }
@@ -435,7 +469,7 @@ extension PostComposerViewModel {
         guard let suggested = suggestedLanguage else { return }
         logger.info("PostComposerCore: Applying suggested language: \(suggested.lang.minimalIdentifier)")
         selectedLanguages = [suggested]
-        saveDefaultLanguagePreference()
+        saveDraftIfNeeded()
     }
 
     // MARK: - Thread Creation
@@ -473,10 +507,14 @@ extension PostComposerViewModel {
         // Extract just the text from each entry for the batch thread creation
         let postTexts = validEntries.map { $0.text }
 
-        // Process facets for each post
+        // Process facets for each post. Manual inline links belong to the entry being edited.
+        let currentEntryID = threadEntries.indices.contains(currentThreadIndex) ? threadEntries[currentThreadIndex].id : nil
         var allFacets: [[AppBskyRichtextFacet]] = []
         for entry in validEntries {
-            let facets = await processFacetsForText(entry.text)
+            let facets = await processFacets(
+                for: entry.text,
+                manualLinkFacets: entry.id == currentEntryID ? manualLinkFacets : []
+            )
             allFacets.append(facets)
         }
 
@@ -518,12 +556,9 @@ extension PostComposerViewModel {
                 embed = try await createImagesEmbedForEntry(entry)
             } else if entry.videoItem != nil {
                 embed = try await createVideoEmbedForEntry(entry)
-            } else if !entry.urlCards.isEmpty {
-                // Use the first URL card from the entry for the embed
-                // In thread mode, each entry tracks its own URL cards
-                if let urlCard = entry.urlCards.values.first {
-                    embed = await createExternalEmbedWithThumbnail(urlCard)
-                }
+            } else if let embedURL = entry.selectedEmbedURL, let urlCard = entry.urlCards[embedURL] {
+                // Each entry tracks its own link card; use the one shown as the embed.
+                embed = await createExternalEmbedWithThumbnail(urlCard)
             }
             allEmbeds.append(embed)
         }
@@ -543,43 +578,21 @@ extension PostComposerViewModel {
         let threadgateRules = postingThreadgateRules()
         let postgateRules = postingPostgateRules()
 
-        // Create the entire thread in one batch operation
-        do {
-            try await postManager.createThread(
-                posts: postTexts,
-                languages: selectedLanguages,
-                selfLabels: selfLabels,
-                hashtags: outlineTags,
-                facets: allFacets,
-                embeds: allEmbeds,
-                parentPost: parentPost,
-                threadgateAllowRules: threadgateRules,
-                postgateEmbeddingRules: postgateRules
-            )
-        } catch {
-            let nsErr = error as NSError
-            if nsErr.domain == NSURLErrorDomain && (nsErr.code == NSURLErrorNotConnectedToInternet || nsErr.code == NSURLErrorTimedOut) {
-                ComposerOutbox.shared.enqueueThread(texts: postTexts, languages: selectedLanguages, labels: selectedLabels, hashtags: outlineTags)
-                logger.info("Thread queued offline")
-                return completeEditingSubmission(submissionSnapshot, content: submittedContent)
-            }
-            throw error
-        }
+        // Create the entire thread in one batch operation. Failures propagate so the
+        // composer stays open with the draft intact and the user is told what happened.
+        try await postManager.createThread(
+            posts: postTexts,
+            languages: selectedLanguages,
+            selfLabels: selfLabels,
+            hashtags: outlineTags,
+            facets: allFacets,
+            embeds: allEmbeds,
+            parentPost: parentPost,
+            threadgateAllowRules: threadgateRules,
+            postgateEmbeddingRules: postgateRules
+        )
 
         return completeEditingSubmission(submissionSnapshot, content: submittedContent)
-    }
-
-    private func processFacetsForText(_ text: String) async -> [AppBskyRichtextFacet] {
-        // Temporarily set postText for facet processing
-        let originalText = postText
-        postText = text
-        var facets = await processFacets()
-        // Merge in manual inline link facets (legacy path support)
-        if !manualLinkFacets.isEmpty {
-            facets.append(contentsOf: manualLinkFacets)
-        }
-        postText = originalText
-        return facets
     }
 
     private func createImagesEmbedForEntry(_ entry: ThreadEntry) async throws -> AppBskyFeedPost.AppBskyFeedPostEmbedUnion? {
@@ -720,27 +733,7 @@ extension PostComposerViewModel {
                 postgateEmbeddingRules: postgateRules
             )
         } catch {
-            let nsErr = error as NSError
-            if nsErr.domain == NSURLErrorDomain
-                && (nsErr.code == NSURLErrorNotConnectedToInternet
-                    || nsErr.code == NSURLErrorTimedOut)
-            {
-                ComposerOutbox.shared.enqueuePost(
-                    text: postText,
-                    languages: selectedLanguages,
-                    labels: selectedLabels,
-                    hashtags: outlineTags
-                )
-                logger.info("Post queued offline")
-                if #available(iOS 26, macOS 26, *) {
-                    await MetricKitSignposts.endPostComposition(
-                        posted: false,
-                        mediaCount: mediaItems.count,
-                        characterCount: postText.count
-                    )
-                }
-                return completeEditingSubmission(submissionSnapshot, content: submittedContent)
-            }
+            // Failures propagate so the composer stays open with the draft intact.
             if #available(iOS 26, macOS 26, *) {
                 await MetricKitSignposts.endPostComposition(
                     posted: false,
@@ -935,12 +928,24 @@ extension PostComposerViewModel {
     }
 
     func removeThreadEntry(at index: Int) {
-        removeThreadPost(at: index)
-        // If only one entry remains, automatically revert to single-post mode
+        guard threadEntries.count > 1, threadEntries.indices.contains(index) else { return }
+        // The live editor holds the active entry's text; save it before indices shift.
+        updateCurrentThreadEntry()
+        threadEntries.remove(at: index)
+        if index < currentThreadIndex {
+            currentThreadIndex -= 1
+        }
+        currentThreadIndex = min(currentThreadIndex, threadEntries.count - 1)
+        isThread = threadEntries.count > 1
+
         if isThreadMode && threadEntries.count <= 1 {
+            // Only one entry remains, so revert to single-post mode.
             currentThreadIndex = 0
             exitThreadMode()
+        } else {
+            loadEntryState()
         }
+        saveDraftIfNeeded()
     }
 
     func moveThreadEntry(from index: Int, direction: Int) {
@@ -1033,7 +1038,7 @@ extension PostComposerViewModel {
 
         // Use proper title and description
         let title = gif.content_description.isEmpty ? gif.title : gif.content_description
-        let description = gif.content_description.isEmpty ? "via Tenor" : "ALT: \(gif.content_description)"
+        let description = gif.content_description.isEmpty ? "via KLIPY" : "ALT: \(gif.content_description)"
 
         let external = AppBskyEmbedExternal.External(
             uri: URI(uriString: gifURL),
@@ -1258,25 +1263,33 @@ extension PostComposerViewModel {
     // MARK: - Facet Processing
 
     private func processFacets() async -> [AppBskyRichtextFacet] {
+        await processFacets(for: postText, manualLinkFacets: manualLinkFacets)
+    }
+
+    /// Builds the facets for `text` without touching the live editor state.
+    private func processFacets(
+        for text: String,
+        manualLinkFacets linkFacets: [AppBskyRichtextFacet]
+    ) async -> [AppBskyRichtextFacet] {
         // Use the same PostParser logic that's used for real-time parsing to ensure consistency
-        logger.debug("PostComposer: processFacets called with postText='\(self.postText)' (length=\(self.postText.count))")
-        let (_, _, facets, _, _) = PostParser.parsePostContent(postText, resolvedProfiles: resolvedProfiles)
+        logger.debug("PostComposer: processFacets called with text length=\(text.count)")
+        let (_, _, facets, _, _) = PostParser.parsePostContent(text, resolvedProfiles: resolvedProfiles)
 
         // Try to resolve any unresolved mentions for posting
         var enhancedFacets = facets
-        let unresolvedMentions = extractUnresolvedMentions(from: postText)
+        let unresolvedMentions = extractUnresolvedMentions(from: text)
 
         if !unresolvedMentions.isEmpty {
             logger.debug("PostComposer: Found \(unresolvedMentions.count) unresolved mentions, attempting to resolve")
-            let resolvedMentionFacets = await resolveAndCreateMentionFacets(for: unresolvedMentions)
+            let resolvedMentionFacets = await resolveAndCreateMentionFacets(for: unresolvedMentions, in: text)
             enhancedFacets.append(contentsOf: resolvedMentionFacets)
         }
 
         // Merge in manual inline link facets (from UIKit editor)
-        logger.debug("PostComposer: Checking manualLinkFacets: count=\(self.manualLinkFacets.count), isEmpty=\(self.manualLinkFacets.isEmpty)")
-        if !manualLinkFacets.isEmpty {
-            logger.debug("PostComposer: Adding \(self.manualLinkFacets.count) manual link facets: \(self.manualLinkFacets)")
-            enhancedFacets.append(contentsOf: manualLinkFacets)
+        logger.debug("PostComposer: Checking manualLinkFacets: count=\(linkFacets.count)")
+        if !linkFacets.isEmpty {
+            logger.debug("PostComposer: Adding \(linkFacets.count) manual link facets")
+            enhancedFacets.append(contentsOf: linkFacets)
         } else {
             logger.debug("PostComposer: No manual link facets to add")
         }
@@ -1302,9 +1315,10 @@ extension PostComposerViewModel {
     private func extractUnresolvedMentions(from text: String) -> [(handle: String, range: NSRange)] {
         var unresolved: [(String, NSRange)] = []
 
-        let mentionPattern = #"@([a-zA-Z0-9.-]+)"#
+        // Handles need at least one dot; a trailing "." or "-" ends the sentence, not the handle.
+        let mentionPattern = #"(?<![\w.])@([a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-]+)+)"#
         if let regex = try? NSRegularExpression(pattern: mentionPattern, options: []) {
-            let matches = regex.matches(in: text, options: [], range: NSRange(location: 0, length: text.count))
+            let matches = regex.matches(in: text, options: [], range: NSRange(text.startIndex..., in: text))
 
             for match in matches {
                 if let range = Range(match.range, in: text) {
@@ -1322,7 +1336,10 @@ extension PostComposerViewModel {
     }
 
     /// Attempt to resolve mentions and create facets for them
-    private func resolveAndCreateMentionFacets(for mentions: [(handle: String, range: NSRange)]) async -> [AppBskyRichtextFacet] {
+    private func resolveAndCreateMentionFacets(
+        for mentions: [(handle: String, range: NSRange)],
+        in text: String
+    ) async -> [AppBskyRichtextFacet] {
         guard let client = appState.atProtoClient else { return [] }
 
         var newFacets: [AppBskyRichtextFacet] = []
@@ -1359,7 +1376,7 @@ extension PostComposerViewModel {
                     }
 
                     // Create mention facet
-                    let byteRange = calculateByteRange(for: range, in: postText)
+                    let byteRange = calculateByteRange(for: range, in: text)
                     let mention = AppBskyRichtextFacet.Mention(did: profile.did)
                     let feature = AppBskyRichtextFacet.AppBskyRichtextFacetFeaturesUnion.appBskyRichtextFacetMention(mention)
 

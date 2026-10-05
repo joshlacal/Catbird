@@ -17,15 +17,24 @@ extension PostComposerViewUIKit {
   @ViewBuilder
   func sheetModifiers<Content: View>(vm: PostComposerViewModel, _ content: Content) -> some View {
     let photoPickerContent = content
-      .photosPicker(isPresented: $photoPickerVisible, selection: $photoPickerItems, matching: .images, preferredItemEncoding: .current, photoLibrary: .shared())
+      .photosPicker(isPresented: $photoPickerVisible, selection: $photoPickerItems,
+                    maxSelectionCount: max(1, vm.maxImagesAllowed - vm.mediaItems.count),
+                    matching: .images, preferredItemEncoding: .current, photoLibrary: .shared())
       .onChange(of: photoPickerItems) { _, items in
         pcSheetsLogger.info("PostComposerSheets: Photo picker items changed - count: \(items.count)")
         handleMediaSelection(from: items, isVideo: false, vm: vm)
       }
-      .photosPicker(isPresented: $videoPickerVisible, selection: $videoPickerItems, matching: .videos, photoLibrary: .shared())
+      .photosPicker(isPresented: $videoPickerVisible, selection: $videoPickerItems,
+                    maxSelectionCount: 1, matching: .videos, photoLibrary: .shared())
       .onChange(of: videoPickerItems) { _, items in
         pcSheetsLogger.info("PostComposerSheets: Video picker items changed - count: \(items.count)")
         handleMediaSelection(from: items, isVideo: true, vm: vm)
+      }
+      .alert(item: Binding(
+        get: { vm.alertItem },
+        set: { vm.alertItem = $0 }
+      )) { item in
+        Alert(title: Text(item.title), message: Text(item.message), dismissButton: .default(Text("OK")))
       }
     
     let audioSheetContent = photoPickerContent
@@ -66,15 +75,18 @@ extension PostComposerViewUIKit {
                   if !attached, viewModel === vm, vm.ownsEditingDraft, vm.editingClaim == previewClaim,
                      vm.pendingAudioURL == audioURL {
                     appState.toastManager.show(ToastItem(
-                      message: "Your draft changed. Your recording has been kept; choose Finish audio to try again.",
+                      message: "Your draft changed. Your recording was kept; tap Finish Audio Attachment to try again.",
                       icon: "waveform"
                     ))
                   }
                 } catch {
                   guard !Task.isCancelled, viewModel === vm, vm.ownsEditingDraft,
                         vm.editingClaim == previewClaim, vm.pendingAudioURL == audioURL else { return }
+                  pcSheetsLogger.error("PostComposerSheets: Audio attachment failed - \(String(describing: error), privacy: .public)")
+                  let reason = UserFacingError.message(for: error, action: "attach your recording")
+                    ?? "Couldn’t attach your recording."
                   appState.toastManager.show(ToastItem(
-                    message: "Your recording has been kept. \(error.localizedDescription)",
+                    message: "\(reason) Your recording was kept.",
                     icon: "exclamationmark.triangle.fill"
                   ))
                 }
@@ -87,10 +99,10 @@ extension PostComposerViewUIKit {
           NavigationStack {
             ScrollView {
               VStack(spacing: 20) {
-                Text("Original post unavailable").font(.headline)
+                Text("Original Post Unavailable").appFont(AppTextRole.headline)
                 Text("This recording belongs to a post that is no longer in this draft. Save the recording before removing the attachment.")
-                ShareLink("Save recording", item: audioURL)
-                Button("Remove audio attachment", role: .destructive) {
+                ShareLink("Save Recording", item: audioURL)
+                Button("Remove Audio Attachment", role: .destructive) {
                   vm.removePendingAudio()
                   showingAudioVisualizerPreview = false
                 }
@@ -145,12 +157,12 @@ extension PostComposerViewUIKit {
             get: { vm.outlineTags },
             set: { vm.outlineTags = $0 }
           ))
-          .navigationTitle("Outline Hashtags")
+          .navigationTitle("Hashtags")
           #if os(iOS)
           .navigationBarTitleDisplayMode(.inline)
           #endif
           .toolbar {
-            ToolbarItem(placement: .cancellationAction) {
+            ToolbarItem(placement: .confirmationAction) {
               Button("Done") { showingOutlineTagsEditor = false }
             }
           }
@@ -258,6 +270,9 @@ extension PostComposerViewUIKit {
             pcSheetsLogger.info("PostComposerSheets: Photo edit completed for image at index \(index)")
             vm.updateEditedImage(editedImage, at: index)
           }
+        } else {
+          // The photo is gone or not loaded yet; a full-screen cover can't be swiped away.
+          Color.clear.onAppear { vm.isPhotoEditorPresented = false }
         }
       }
       #elseif os(macOS)
@@ -302,7 +317,7 @@ private struct PendingComposerAudioPreview: View {
               ContentUnavailableView("Audio Unavailable", systemImage: "waveform",
                                      description: Text(loadingError))
             } else {
-              ProgressView("Loading recording")
+              ProgressView("Loading recording…")
             }
           }
           .navigationTitle("Audio Visualizer")
@@ -325,7 +340,7 @@ private struct PendingComposerAudioPreview: View {
         duration = loadedDuration
       } catch {
         guard !Task.isCancelled else { return }
-        loadingError = error.localizedDescription
+        loadingError = "This recording couldn’t be loaded."
       }
     }
   }

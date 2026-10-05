@@ -89,6 +89,7 @@ struct ComposeURLCardView: View {
             )
         }
         .padding(8)
+        .accessibilityLabel("Remove Link Preview")
       }
       .padding(4)
     }

@@ -55,15 +55,14 @@ struct LabelSelectorView: View {
             }
           }
         }
+        .accessibilityAddTraits(selectedLabels.contains(label) ? .isSelected : [])
       }
       .navigationTitle("Content Labels")
       .toolbar {
         ToolbarItem(placement: .confirmationAction) {
-            Button {
-                dismiss()
-            } label: {
-                Image(systemName: "checkmark")
-            }
+          Button("Done") {
+            dismiss()
+          }
         }
       }
       .overlay(alignment: .bottomLeading) {

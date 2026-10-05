@@ -42,6 +42,9 @@ struct GifPickerView: View {
     @State private var showingSearch = false
     @State private var showingSuggestions = false
     @State private var searchTask: Task<Void, Never>?
+    @State private var isLoadingCategories = false
+    @State private var categoriesFailed = false
+    @State private var searchFailed = false
 
     let onGifSelected: (TenorGif) -> Void
     
@@ -92,7 +95,7 @@ struct GifPickerView: View {
                 Image(systemName: "magnifyingglass")
                     .foregroundColor(.secondary)
                 
-                TextField("Search GIFs...", text: $searchText)
+                TextField("Search GIFs…", text: $searchText)
                     .textFieldStyle(PlainTextFieldStyle())
                     .onSubmit {
                         showingSuggestions = false
@@ -177,7 +180,21 @@ struct GifPickerView: View {
 
     // MARK: - Categories Section
     
+    @ViewBuilder
     private var categoriesSection: some View {
+        if categories.isEmpty && categoriesFailed {
+            loadErrorView {
+                await loadCategories()
+            }
+        } else if categories.isEmpty && isLoadingCategories {
+            ProgressView()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            categoriesGrid
+        }
+    }
+
+    private var categoriesGrid: some View {
         ScrollView {
             LazyVGrid(
                 columns: gridColumns,
@@ -197,6 +214,19 @@ struct GifPickerView: View {
         }
     }
     
+    private func loadErrorView(retry: @escaping @MainActor () async -> Void) -> some View {
+        ContentUnavailableView {
+            Label("Couldn’t Load GIFs", systemImage: "wifi.exclamationmark")
+        } description: {
+            Text("Check your connection and try again.")
+        } actions: {
+            Button("Try Again") {
+                Task { await retry() }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
     // MARK: - Suggestions Section
     
     private var suggestionsSection: some View {
@@ -244,21 +274,27 @@ struct GifPickerView: View {
             if isLoading {
                 VStack {
                     ProgressView()
-                    Text("Searching GIFs...")
+                    Text("Searching GIFs…")
                         .appFont(AppTextRole.caption)
                         .foregroundColor(.secondary)
                         .padding(.top, 8)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if searchFailed {
+                loadErrorView {
+                    if let query = currentQuery {
+                        await searchGifs(query: query)
+                    }
+                }
             } else if gifs.isEmpty && !searchText.isEmpty {
                 VStack {
                     Image(systemName: "magnifyingglass")
                         .appFont(size: 48)
                         .foregroundColor(.secondary)
-                    Text("No GIFs found")
+                    Text("No GIFs Found")
                         .appFont(AppTextRole.headline)
                         .padding(.top, 8)
-                    Text("Try a different search term")
+                    Text("Try a different search.")
                         .appFont(AppTextRole.caption)
                         .foregroundColor(.secondary)
                 }
@@ -307,17 +343,40 @@ struct GifPickerView: View {
     
     // MARK: - API Calls
     
+    /// Builds a GIF proxy URL with properly escaped query values (so "&", "+" and "=" survive).
+    private func klipyURL(_ path: String, query: [URLQueryItem] = []) -> URL? {
+        guard var components = URLComponents(string: "https://catbird.blue/klipy/v2/\(path)") else {
+            return nil
+        }
+        if !query.isEmpty {
+            components.queryItems = query
+            let encodedQuery = components.percentEncodedQuery?
+                .replacingOccurrences(of: "+", with: "%2B")
+            components.percentEncodedQuery = encodedQuery
+        }
+        return components.url
+    }
+
     private func loadCategories() async {
+        await MainActor.run {
+            isLoadingCategories = true
+            categoriesFailed = false
+        }
         do {
-            let url = URL(string: "https://catbird.blue/klipy/v2/categories")!
+            guard let url = klipyURL("categories") else { throw URLError(.badURL) }
             let (data, _) = try await URLSession.shared.data(from: url)
             let response = try JSONDecoder().decode(TenorCategoriesResponse.self, from: data)
             
             await MainActor.run {
                 self.categories = response.tags
+                self.isLoadingCategories = false
             }
         } catch {
             logger.debug("Failed to load categories: \(error)")
+            await MainActor.run {
+                self.isLoadingCategories = false
+                self.categoriesFailed = true
+            }
         }
     }
     
@@ -325,8 +384,10 @@ struct GifPickerView: View {
         guard !query.isEmpty else { return }
         
         do {
-            let encodedQuery = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-            let url = URL(string: "https://catbird.blue/klipy/v2/autocomplete?q=\(encodedQuery)&limit=8")!
+            guard let url = klipyURL("autocomplete", query: [
+                URLQueryItem(name: "q", value: query),
+                URLQueryItem(name: "limit", value: "8")
+            ]) else { throw URLError(.badURL) }
             let (data, response) = try await URLSession.shared.data(from: url)
             
             // Check for HTTP errors
@@ -369,6 +430,7 @@ struct GifPickerView: View {
         
         await MainActor.run {
             isLoading = true
+            searchFailed = false
             showingSuggestions = false
             isLoadingMore = false
             nextCursor = nil // Reset cursor for new search
@@ -376,8 +438,10 @@ struct GifPickerView: View {
         }
         
         do {
-            let encodedQuery = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-            let url = URL(string: "https://catbird.blue/klipy/v2/search?q=\(encodedQuery)&limit=20")!
+            guard let url = klipyURL("search", query: [
+                URLQueryItem(name: "q", value: query),
+                URLQueryItem(name: "limit", value: "20")
+            ]) else { throw URLError(.badURL) }
             let (data, _) = try await URLSession.shared.data(from: url)
             let response = try JSONDecoder().decode(TenorSearchResponse.self, from: data)
             
@@ -390,6 +454,8 @@ struct GifPickerView: View {
         } catch {
             await MainActor.run {
                 self.isLoading = false
+                self.searchFailed = true
+                self.showingSearch = true
             }
             logger.debug("Failed to search GIFs: \(error)")
         }
@@ -405,8 +471,11 @@ struct GifPickerView: View {
         }
         
         do {
-            let encodedQuery = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-            let url = URL(string: "https://catbird.blue/klipy/v2/search?q=\(encodedQuery)&limit=20&pos=\(cursor)")!
+            guard let url = klipyURL("search", query: [
+                URLQueryItem(name: "q", value: query),
+                URLQueryItem(name: "limit", value: "20"),
+                URLQueryItem(name: "pos", value: cursor)
+            ]) else { throw URLError(.badURL) }
             let (data, _) = try await URLSession.shared.data(from: url)
             let response = try JSONDecoder().decode(TenorSearchResponse.self, from: data)
             

@@ -174,6 +174,8 @@ final class PostComposerViewModel {
 
   private var draftRestorationGeneration = UUID()
   private var pendingParentPostURI: String?
+  /// True when a restored reply's original post couldn't be loaded.
+  private(set) var parentRestoreFailed = false
   private var parentRestorationTask: Task<Void, Never>?
   private var quoteRestorationTasks: [UUID: Task<Void, Never>] = [:]
   private var interactionDefaultsTask: Task<Void, Never>?
@@ -802,6 +804,7 @@ final class PostComposerViewModel {
     // Retain strong refs before fetching display metadata, so autosave is lossless.
     if let parentURI = draft.parentPostURI {
       parentRestorationTask = restorePostFromURI(parentURI, entryID: nil)
+      parentRestoreFailed = parentRestorationTask == nil
     }
     for entry in threadEntries {
       if let quotedURI = entry.draftQuotedPostURI {
@@ -826,6 +829,7 @@ final class PostComposerViewModel {
 
   private func invalidateDraftRestoration() {
     draftRestorationGeneration = UUID()
+    parentRestoreFailed = false
     parentRestorationTask?.cancel()
     parentRestorationTask = nil
     quoteRestorationTasks.values.forEach { $0.cancel() }
@@ -874,9 +878,13 @@ final class PostComposerViewModel {
               self.draftRestorationGeneration == generation,
               self.appState.userDID == accountDID,
               AppStateManager.shared.lifecycle.userDID == activeAccountDID,
-              self.appState.atProtoClient === client,
-              (200..<300).contains(responseCode),
-              let post = response?.posts.first(where: { $0.uri.uriString() == uriString }) else { return }
+              self.appState.atProtoClient === client else { return }
+        guard (200..<300).contains(responseCode),
+              let post = response?.posts.first(where: { $0.uri.uriString() == uriString }) else {
+          self.logger.error("Draft post unavailable - response code: \(responseCode)")
+          self.markParentRestoreFailed(uriString, entryID: entryID)
+          return
+        }
         if let entryID {
           guard let index = self.threadEntries.firstIndex(where: { $0.id == entryID }),
                 self.threadEntries[index].draftQuotedPostURI == uriString else { return }
@@ -899,10 +907,37 @@ final class PostComposerViewModel {
           self.replyTo = post
         }
       } catch {
-        guard !Task.isCancelled else { return }
-        self?.logger.error("Failed to restore draft post: \(error.localizedDescription)")
+        guard !Task.isCancelled, let self else { return }
+        self.logger.error("Failed to restore draft post: \(error.localizedDescription)")
+        guard self.draftRestorationGeneration == generation else { return }
+        self.markParentRestoreFailed(uriString, entryID: entryID)
       }
     }
+  }
+
+  private func markParentRestoreFailed(_ uriString: String, entryID: UUID?) {
+    guard entryID == nil, pendingParentPostURI == uriString, parentPost == nil else { return }
+    parentRestorationTask = nil
+    parentRestoreFailed = true
+  }
+
+  /// Tries again to load the original post of a restored reply draft.
+  func retryParentRestore() {
+    guard let uriString = pendingParentPostURI, parentPost == nil else { return }
+    parentRestorationTask?.cancel()
+    parentRestoreFailed = false
+    parentRestorationTask = restorePostFromURI(uriString, entryID: nil)
+    parentRestoreFailed = parentRestorationTask == nil
+  }
+
+  /// Turns a reply draft whose original post is unavailable into a new top-level post.
+  func detachUnavailableParent() {
+    guard parentPost == nil, pendingParentPostURI != nil else { return }
+    parentRestorationTask?.cancel()
+    parentRestorationTask = nil
+    pendingParentPostURI = nil
+    parentRestoreFailed = false
+    saveDraftIfNeeded()
   }
 
   isolated deinit {
@@ -932,7 +967,7 @@ final class PostComposerViewModel {
 
   var draftReferenceLoadingReason: PostComposerSubmitValidationState.Reason? {
     if pendingAudioURL != nil { return .pendingAudio }
-    if pendingParentPostURI != nil && parentPost == nil { return .replyLoading }
+    if pendingParentPostURI != nil && parentPost == nil { return parentRestoreFailed ? .replyUnavailable : .replyLoading }
     let entries = isThreadMode ? threadEntries : Array(threadEntries.prefix(1))
     if entries.contains(where: { $0.draftQuotedPostURI != nil && postingQuoteReference(for: $0) == nil }) {
       return .quoteLoading
@@ -964,7 +999,9 @@ final class PostComposerViewModel {
   }
 
   func postingThreadgateRules() -> [AppBskyFeedThreadgate.AppBskyFeedThreadgateAllowUnion]? {
-    effectiveDraftInteractionRules().threadgate?.map { rule in
+    // Bluesky only honors reply settings on the thread's root post.
+    guard !isReply else { return nil }
+    return effectiveDraftInteractionRules().threadgate?.map { rule in
       switch rule {
       case .appBskyFeedThreadgateMentionRule(let value): return .appBskyFeedThreadgateMentionRule(value)
       case .appBskyFeedThreadgateFollowerRule(let value): return .appBskyFeedThreadgateFollowerRule(value)
