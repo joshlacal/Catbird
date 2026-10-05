@@ -5,6 +5,7 @@ struct ProfileCachedPostsList: View {
     let feedKey: String
     let contentMaxWidth: CGFloat
     let isLoadingMore: Bool
+    let hasMore: Bool
     let loadMore: @MainActor () async -> Void
     @Binding var path: NavigationPath
 
@@ -14,12 +15,14 @@ struct ProfileCachedPostsList: View {
         feedKey: String,
         contentMaxWidth: CGFloat,
         isLoadingMore: Bool,
+        hasMore: Bool,
         loadMore: @escaping @MainActor () async -> Void,
         path: Binding<NavigationPath>
     ) {
         self.feedKey = feedKey
         self.contentMaxWidth = contentMaxWidth
         self.isLoadingMore = isLoadingMore
+        self.hasMore = hasMore
         self.loadMore = loadMore
         _path = path
         _cached = Query(
@@ -45,8 +48,11 @@ struct ProfileCachedPostsList: View {
     }
 
     var body: some View {
+        // Sort once per render; rows only need the last ID to trigger pagination.
+        let posts = sortedCached
+        let lastPostID = posts.last?.id
         Group {
-            ForEach(sortedCached) { cachedPost in
+            ForEach(posts) { cachedPost in
                 VStack(spacing: 0) {
                     EnhancedFeedPost(
                         cachedPost: cachedPost,
@@ -60,13 +66,13 @@ struct ProfileCachedPostsList: View {
                 }
                 .contentShape(Rectangle())
                 .onAppear {
-                    if cachedPost == sortedCached.last && !isLoadingMore {
+                    if hasMore && cachedPost.id == lastPostID && !isLoadingMore {
                         Task { await loadMore() }
                     }
                 }
             }
 
-            if isLoadingMore {
+            if isLoadingMore && hasMore {
                 ProgressView()
                     .padding()
                     .frame(maxWidth: contentMaxWidth, alignment: .center)

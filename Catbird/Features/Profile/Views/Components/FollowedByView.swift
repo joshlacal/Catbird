@@ -4,6 +4,8 @@ import Petrel
 
 struct FollowedByView: View {
     let knownFollowers: [AppBskyActorDefs.ProfileView]
+    /// Total number of followers the viewer also follows (may exceed the loaded page).
+    let knownFollowersTotal: Int
     let totalFollowersCount: Int
     let profileDID: String
     @Environment(AppState.self) private var appState
@@ -15,65 +17,78 @@ struct FollowedByView: View {
     
     var body: some View {
         if !knownFollowers.isEmpty {
-            VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
-                HStack(spacing: DesignTokens.Spacing.xs) {
-                    // Avatar stack
-                    HStack(spacing: -8) {
-                        ForEach(Array(knownFollowers.prefix(maxAvatarsToShow).enumerated()), id: \.element.did) { index, follower in
-                            LazyImage(url: URL(string: follower.avatar?.uriString() ?? "")) { state in
-                                if let image = state.image {
-                                    image.resizable().aspectRatio(contentMode: .fill)
-                                } else {
-                                    Circle().fill(Color.secondary.opacity(0.3))
-                                }
-                            }
-                            .frame(width: avatarSize, height: avatarSize)
-                            .clipShape(Circle())
-                            .background(
-                                Circle()
-                                    .stroke(Color.systemBackground, lineWidth: 2)
-                                    .scaleEffect((avatarSize + 2) / avatarSize)
-                            )
-                            .zIndex(Double(maxAvatarsToShow - index))
-                        }
-                    }
-                    .padding(.trailing, DesignTokens.Spacing.xs)
-                    
-                    // Text description
-                    Text(followedByText)
-                        .appFont(AppTextRole.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
-                    
-                    Spacer()
-                }
-                .padding(.top, DesignTokens.Spacing.base)
-            }
-            .contentShape(Rectangle())
-            .onTapGesture {
+            Button {
                 // Navigate to known followers list when tapped
                 path.append(ProfileNavigationDestination.knownFollowers(profileDID))
+            } label: {
+                VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+                    HStack(spacing: DesignTokens.Spacing.xs) {
+                        // Avatar stack
+                        HStack(spacing: -8) {
+                            ForEach(Array(knownFollowers.prefix(maxAvatarsToShow).enumerated()), id: \.element.did) { index, follower in
+                                LazyImage(url: URL(string: follower.avatar?.uriString() ?? "")) { state in
+                                    if let image = state.image {
+                                        image.resizable().aspectRatio(contentMode: .fill)
+                                    } else {
+                                        Circle().fill(Color.secondary.opacity(0.3))
+                                    }
+                                }
+                                .frame(width: avatarSize, height: avatarSize)
+                                .clipShape(Circle())
+                                .background(
+                                    Circle()
+                                        .stroke(Color.systemBackground, lineWidth: 2)
+                                        .scaleEffect((avatarSize + 2) / avatarSize)
+                                )
+                                .zIndex(Double(maxAvatarsToShow - index))
+                            }
+                        }
+                        .padding(.trailing, DesignTokens.Spacing.xs)
+                        .accessibilityHidden(true)
+                        
+                        // Text description
+                        Text(followedByText)
+                            .appFont(AppTextRole.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                        
+                        Spacer()
+                    }
+                    .padding(.top, DesignTokens.Spacing.base)
+                }
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .accessibilityHint("Shows followers you know")
         }
     }
     
     private var followedByText: String {
-        let namedFollowers = knownFollowers.prefix(2)
-        // The remaining count should be based on total known followers we have, not total followers
-        let additionalKnownFollowers = max(0, knownFollowers.count - 2)
-        
-        if knownFollowers.count == 1 {
-            let name = namedFollowers.first?.displayName ?? namedFollowers.first?.handle.description ?? "Someone"
-            return "Followed by \(name)"
-        } else if knownFollowers.count == 2 {
-            let firstName = namedFollowers.first?.displayName ?? namedFollowers.first?.handle.description ?? "Someone"
-            let secondName = Array(namedFollowers)[1].displayName ?? Array(namedFollowers)[1].handle.description ?? "Someone"
-            return "Followed by \(firstName) and \(secondName)"
-        } else {
-            let firstName = namedFollowers.first?.displayName ?? namedFollowers.first?.handle.description ?? "Someone"
-            return "Followed by \(firstName) and \(additionalKnownFollowers.formatted()) other\(additionalKnownFollowers == 1 ? "" : "s") you follow"
+        let total = max(knownFollowersTotal, knownFollowers.count)
+        let names = knownFollowers.prefix(2).map(name(for:))
+
+        switch total {
+        case 1:
+            return "Followed by \(names.first ?? "someone you follow")"
+        case 2 where names.count == 2:
+            return "Followed by \(names[0]) and \(names[1])"
+        default:
+            if names.count == 2 {
+                let others = total - 2
+                return "Followed by \(names[0]), \(names[1]) and \(others.formatted()) other\(others == 1 ? "" : "s") you follow"
+            }
+            let others = max(0, total - names.count)
+            let first = names.first ?? "someone"
+            return "Followed by \(first) and \(others.formatted()) other\(others == 1 ? "" : "s") you follow"
         }
+    }
+
+    private func name(for follower: AppBskyActorDefs.ProfileView) -> String {
+        if let displayName = follower.displayName?.trimmingCharacters(in: .whitespacesAndNewlines), !displayName.isEmpty {
+            return displayName
+        }
+        return "@\(follower.handle.description)"
     }
 }
 

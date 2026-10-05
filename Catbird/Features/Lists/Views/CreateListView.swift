@@ -83,7 +83,7 @@ final class CreateListViewModel {
   @discardableResult
   func createList() async -> AppBskyGraphDefs.ListView? {
     guard isValid else {
-      errorMessage = "Please enter a name for your list"
+      errorMessage = "Enter a name for your list."
       showingError = true
       return nil
     }
@@ -193,7 +193,7 @@ struct CreateListView: View {
       .onAppear {
         isNameFieldFocused = true
       }
-      .alert("Error", isPresented: Binding(
+      .alert("Couldn’t Create List", isPresented: Binding(
         get: { viewModel?.showingError ?? false },
         set: { if !$0 { viewModel?.showingError = false } }
       )) {
@@ -241,9 +241,8 @@ struct CreateListView: View {
           get: { viewModel.purpose },
           set: { viewModel.purpose = $0 }
         )) {
-          Text("Curated List").tag(AppBskyGraphDefs.ListPurpose.appbskygraphdefscuratelist)
+          Text("People List").tag(AppBskyGraphDefs.ListPurpose.appbskygraphdefscuratelist)
           Text("Moderation List").tag(AppBskyGraphDefs.ListPurpose.appbskygraphdefsmodlist)
-          Text("Reference List").tag(AppBskyGraphDefs.ListPurpose.appbskygraphdefsreferencelist)
         }
         .pickerStyle(.menu)
         
@@ -357,7 +356,7 @@ struct CreateListView: View {
           VStack(spacing: 16) {
             ProgressView()
               .scaleEffect(1.5)
-            Text("Creating list...")
+            Text("Creating list…")
               .font(.headline)
               .foregroundStyle(.white)
           }
@@ -465,11 +464,9 @@ struct CreateListView: View {
     VStack(alignment: .leading, spacing: 4) {
       switch viewModel.purpose {
       case .appbskygraphdefscuratelist:
-        listTypeDescription(title: "Curated List", subtitle: "A list of accounts you find interesting or want to follow as a group")
+        listTypeDescription(title: "People List", subtitle: "A list of accounts you find interesting or want to follow as a group")
       case .appbskygraphdefsmodlist:
         listTypeDescription(title: "Moderation List", subtitle: "A list used for blocking or muting multiple accounts at once")
-      case .appbskygraphdefsreferencelist:
-        listTypeDescription(title: "Reference List", subtitle: "A list used as a reference for other features")
       default:
         EmptyView()
       }

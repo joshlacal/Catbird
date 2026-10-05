@@ -29,6 +29,7 @@ struct ProfileHeader: View {
     @State private var verificationInfoKind: VerificationBadgeKind?
     @State private var showUnfollowConfirmation = false
     @State private var showingSuggestedFollows = false
+    @State private var suggestedFollows: [AppBskyActorDefs.ProfileView] = []
     @State private var showingAccountLabels = false
     @State private var selectedAccountLabelID: String?
     @State private var pendingGermAction: GermProfileAction?
@@ -55,9 +56,9 @@ struct ProfileHeader: View {
         }
 #if os(iOS)
         .fullScreenCover(isPresented: $isShowingProfileImageViewer) {
-            if let profile = viewModel.profile, let avatarURI = profile.avatar?.uriString() {
+            if let profile = viewModel.profile {
                 ProfileImageViewerView(avatar: profile.avatar, isPresented: $isShowingProfileImageViewer, namespace: imageTransition)
-                    .navigationTransition(.zoom(sourceID: avatarURI, in: imageTransition))
+                    .navigationTransition(.zoom(sourceID: profile.avatar?.uriString() ?? "", in: imageTransition))
             }
         }
         .presentationBackground(.black)
@@ -137,7 +138,8 @@ struct ProfileHeader: View {
             ContextualSuggestedFollowsSheet(
                 actorDID: profile.did.didString(),
                 actorHandle: profile.handle.description,
-                path: $path
+                path: $path,
+                initialSuggestions: suggestedFollows
             )
         }
     }
@@ -316,7 +318,7 @@ struct ProfileHeader: View {
             } catch {
                 logger.error("Failed to update activity subscription: \(error.localizedDescription)")
                 await MainActor.run {
-                    activitySubscriptionError = error.localizedDescription
+                    activitySubscriptionError = "Couldn’t update notifications for this account."
                 }
             }
 
@@ -346,6 +348,23 @@ struct ProfileHeader: View {
         }
     }
 
+    /// Shows similar accounts after a follow, but only when there is something to suggest.
+    private func presentSuggestedFollowsIfAvailable() async {
+        guard let client = appState.atProtoClient else { return }
+        do {
+            let suggestions = try await ContextualSuggestedFollowsSheet.fetchSuggestions(
+                client: client,
+                actorDID: profile.did.didString(),
+                currentUserDID: appState.userDID
+            )
+            guard !suggestions.isEmpty else { return }
+            suggestedFollows = suggestions
+            showingSuggestedFollows = true
+        } catch {
+            logger.debug("Suggested follows unavailable: \(error.localizedDescription)")
+        }
+    }
+
     private func updateLocalActivitySubscription() {
         let did = profile.did.didString()
         if let subscription = profile.viewer?.activitySubscription {
@@ -371,6 +390,7 @@ struct ProfileHeader: View {
     private var avatarView: some View {
         let moderationState = getAvatarModerationState(profile.labels)
         let shouldDisableTap = (moderationState == .hide)
+        let canOpenAvatarViewer = !shouldDisableTap && profile.avatar != nil
         
         return Group {
             if isLabeler {
@@ -400,10 +420,11 @@ struct ProfileHeader: View {
                     }
                 }
                 .onTapGesture {
-                    if !shouldDisableTap {
+                    if canOpenAvatarViewer {
                         isShowingProfileImageViewer = true
                     }
                 }
+                .modifier(AvatarViewerAccessibility(isEnabled: canOpenAvatarViewer))
                 .frame(width: avatarSize, height: avatarSize)
                 .clipShape(RoundedRectangle(cornerRadius: 12))
                 .background(
@@ -439,10 +460,11 @@ struct ProfileHeader: View {
                     }
                 }
                 .onTapGesture {
-                    if !shouldDisableTap {
+                    if canOpenAvatarViewer {
                         isShowingProfileImageViewer = true
                     }
                 }
+                .modifier(AvatarViewerAccessibility(isEnabled: canOpenAvatarViewer))
                 .frame(width: avatarSize, height: avatarSize)
                 .clipShape(Circle())
                 .background(
@@ -546,6 +568,18 @@ struct ProfileHeader: View {
 
                     if profile.viewer?.followedBy != nil {
                         FollowsBadgeView()
+                    }
+
+                    if !viewModel.isCurrentUser && profile.viewer?.muted == true {
+                        Label("Muted", systemImage: "speaker.slash")
+                            .appFont(AppTextRole.caption)
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(
+                                RoundedRectangle(cornerRadius: 4)
+                                    .fill(Color.secondary.opacity(0.15))
+                            )
                     }
                 }
             }
@@ -880,48 +914,22 @@ struct ProfileHeader: View {
             // Show blocked state instead of follow button. Neutral styling —
             // direction (you blocked them / they blocked you / mutual) is
             // carried by the block relationship banner's text, not this pill.
-            Button(action: {
-                // Do nothing - blocking handled in parent view
-            }) {
-                HStack {
-                    Image(systemName: "person.crop.circle.badge.xmark")
-                        .appFont(AppTextRole.footnote)
-                    Text("Blocked")
-                        .fixedSize(horizontal: true, vertical: false)
-                }
-                .appFont(AppTextRole.subheadline)
-                .fontWeight(.medium)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .foregroundColor(.secondary)
-                .cornerRadius(16)
+            HStack {
+                Image(systemName: "person.crop.circle.badge.xmark")
+                    .appFont(AppTextRole.footnote)
+                Text("Blocked")
+                    .fixedSize(horizontal: true, vertical: false)
             }
+            .appFont(AppTextRole.subheadline)
+            .fontWeight(.medium)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .foregroundColor(.secondary)
             .background(
                 Capsule()
                     .stroke(Color.secondary, lineWidth: 1.5)
             )
-        } else if profile.viewer?.muted == true {
-            // Show muted state
-            Button(action: {
-                // Do nothing - muting handled in parent view
-            }) {
-                HStack {
-                    Image(systemName: "speaker.slash")
-                        .appFont(AppTextRole.footnote)
-                    Text("Muted")
-                        .fixedSize(horizontal: true, vertical: false)
-                }
-                .appFont(AppTextRole.subheadline)
-                .fontWeight(.medium)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
-                .foregroundColor(.orange)
-                .cornerRadius(16)
-            }
-            .background(
-                Capsule()
-                    .stroke(Color.orange, lineWidth: 1.5)
-            )
+            .accessibilityElement(children: .combine)
         } else if localIsFollowing {
             Button(action: {
                 if DestructiveActionConfirmation.shouldConfirm(
@@ -963,7 +971,7 @@ struct ProfileHeader: View {
                         let success = try await appState.follow(did: profile.did.didString())
                         
                         if success {
-                            showingSuggestedFollows = true
+                            await presentSuggestedFollowsIfAvailable()
                             // Add a small delay before reloading
                             try? await Task.sleep(for: .seconds(0.5))
                             await viewModel.loadProfile()
@@ -1015,6 +1023,9 @@ struct ProfileHeader: View {
                             try await viewModel.unsubscribeFromLabeler()
                         } catch {
                             logger.error("Error unsubscribing from labeler: \(error.localizedDescription)")
+                            appState.toastManager.show(
+                                ToastItem(message: "Couldn’t unsubscribe. Try again.", icon: "exclamationmark.triangle.fill")
+                            )
                         }
                         isSubscribeButtonLoading = false
                     }
@@ -1044,6 +1055,9 @@ struct ProfileHeader: View {
                             try await viewModel.subscribeToLabeler()
                         } catch {
                             logger.error("Error subscribing to labeler: \(error.localizedDescription)")
+                            appState.toastManager.show(
+                                ToastItem(message: "Couldn’t subscribe. Try again.", icon: "exclamationmark.triangle.fill")
+                            )
                         }
                         isSubscribeButtonLoading = false
                     }
@@ -1078,6 +1092,9 @@ struct ProfileHeader: View {
                         }
                     } catch {
                         logger.error("Error toggling labeler like: \(error.localizedDescription)")
+                        appState.toastManager.show(
+                            ToastItem(message: "Couldn’t update like. Try again.", icon: "exclamationmark.triangle.fill")
+                        )
                     }
                     isLikeButtonLoading = false
                 }
@@ -1191,3 +1208,19 @@ struct ProfileHeader: View {
     }
 }
 
+
+// MARK: - Avatar Accessibility
+
+private struct AvatarViewerAccessibility: ViewModifier {
+    let isEnabled: Bool
+
+    func body(content: Content) -> some View {
+        if isEnabled {
+            content
+                .accessibilityAddTraits(.isButton)
+                .accessibilityLabel("View Profile Picture")
+        } else {
+            content
+        }
+    }
+}

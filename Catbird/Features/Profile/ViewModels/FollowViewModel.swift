@@ -27,13 +27,32 @@ import OSLog
     private(set) var hasMoreFollows = false
     private(set) var hasMoreFollowers = false
 
+    /// Set after the first page responds (successfully or not), so empty states never show
+    /// before anything has loaded.
+    private(set) var hasLoadedFollows = false
+    private(set) var hasLoadedFollowers = false
+
     init(client: ATProtoClient?, userDID: String) {
       self.client = client
       self.userDID = userDID
     }
     
+    /// Reloads following from the first page.
+    func refreshFollowing() async {
+        guard !isLoadingMore else { return }
+        followsCursor = nil
+        await loadFollowing(replacing: true)
+    }
+
+    /// Reloads followers from the first page.
+    func refreshFollowers() async {
+        guard !isLoadingMore else { return }
+        followersCursor = nil
+        await loadFollowers(replacing: true)
+    }
+
     /// Load user following
-      func loadFollowing() async {
+      func loadFollowing(replacing: Bool = false) async {
           guard let client = client, !isLoadingMore else { return }
 
           isLoadingMore = true
@@ -50,7 +69,7 @@ import OSLog
 
             if responseCode == 200, let follows = output?.follows {
               await MainActor.run {
-                if self.follows.isEmpty {
+                if replacing || self.follows.isEmpty {
                   self.follows = follows
                 } else {
                   self.follows.append(contentsOf: follows)
@@ -58,26 +77,28 @@ import OSLog
                 self.followsCursor = output?.cursor
                 self.hasMoreFollows = output?.cursor != nil
                 self.isLoadingMore = false
+                self.hasLoadedFollows = true
               }
             } else {
-              let errorMessage = "Failed to load following (HTTP \(responseCode))"
               logger.warning("Failed to load follows: HTTP \(responseCode)")
               await MainActor.run { 
                 self.isLoadingMore = false 
-                self.error = NSError(domain: "FollowError", code: responseCode, userInfo: [NSLocalizedDescriptionKey: errorMessage])
+                self.hasLoadedFollows = true
+                self.error = NSError(domain: "FollowError", code: responseCode, userInfo: [NSLocalizedDescriptionKey: "Couldn’t load following."])
               }
             }
           } catch {
             logger.error("Error loading follows: \(error.localizedDescription)")
             await MainActor.run { 
               self.isLoadingMore = false 
+              self.hasLoadedFollows = true
               self.error = error
             }
           }
       }
       
       /// Load user followers
-      func loadFollowers() async {
+      func loadFollowers(replacing: Bool = false) async {
           guard let client = client, !isLoadingMore else { return }
 
           isLoadingMore = true
@@ -96,7 +117,7 @@ import OSLog
                   await MainActor.run {
                       self.isLoadingMore = false
                       // Handle followers data here
-                      if self.followers.isEmpty {
+                      if replacing || self.followers.isEmpty {
                           self.followers = followers
                       } else {
                           self.followers.append(contentsOf: followers)
@@ -104,20 +125,22 @@ import OSLog
                       self.followersCursor = output?.cursor
                       self.hasMoreFollowers = output?.cursor != nil
                       self.isLoadingMore = false
+                      self.hasLoadedFollowers = true
 
                   }
               } else {
-                  let errorMessage = "Failed to load followers (HTTP \(responseCode))"
                   logger.warning("Failed to load followers: HTTP \(responseCode)")
                   await MainActor.run { 
                     self.isLoadingMore = false 
-                    self.error = NSError(domain: "FollowError", code: responseCode, userInfo: [NSLocalizedDescriptionKey: errorMessage])
+                    self.hasLoadedFollowers = true
+                    self.error = NSError(domain: "FollowError", code: responseCode, userInfo: [NSLocalizedDescriptionKey: "Couldn’t load followers."])
                   }
               }
           } catch {
               logger.error("Error loading followers: \(error.localizedDescription)")
               await MainActor.run { 
                 self.isLoadingMore = false 
+                self.hasLoadedFollowers = true
                 self.error = error
               }
           }

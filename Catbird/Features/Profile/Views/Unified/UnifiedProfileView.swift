@@ -25,6 +25,7 @@ struct UnifiedProfileView: View {
   @State private var isShowingBlockSheet = false
   @State private var isShowingLabelsOnMe = false
   @State private var isShowingMuteConfirmation = false
+  @State private var isShowingSignOutConfirmation = false
   @State private var isShowingAddToListSheet = false
   @State private var isShowingCopilot = false
   @State private var pendingDedicatedProposal: CopilotProposal?
@@ -145,182 +146,6 @@ struct UnifiedProfileView: View {
   
 
 
-  // MARK: - Lists Content Section
-  @ViewBuilder
-  private var listsContentSection: some View {
-    if viewModel.isLoading && viewModel.lists.isEmpty {
-      ProgressView("Loading lists...")
-        .frame(maxWidth: .infinity, minHeight: 100)
-        .padding()
-        .listRowSeparator(.hidden)
-    } else if viewModel.lists.isEmpty {
-      ProfileEmptyStateView(
-        title: "No Lists",
-        message: "This user hasn't created any lists yet.",
-        isCurrentUser: viewModel.isCurrentUser
-      )
-        .padding(.top, 40)
-        .listRowSeparator(.hidden)
-        .onAppear {
-          Task { await viewModel.loadLists() }
-        }
-    } else {
-      ForEach(viewModel.lists, id: \.uri) { list in
-        Button {
-          navigationPath.append(NavigationDestination.list(list.uri))
-        } label: {
-          ListRow(list: list)
-        }
-        .buttonStyle(.plain)
-        .onAppear {
-          // Load more when reaching the end
-          if list == viewModel.lists.last && !viewModel.isLoadingMorePosts {
-            Task { await viewModel.loadLists() }
-          }
-        }
-      }
-        
-      // Loading indicator for pagination
-      if viewModel.isLoadingMorePosts {
-        ProgressView()
-          .padding()
-          .frame(maxWidth: .infinity)
-          .listRowSeparator(.hidden)
-      }
-    }
-  }
-
-  // MARK: - Starter Packs Content Section
-  @ViewBuilder
-  private var starterPacksContentSection: some View {
-    if viewModel.isLoading && viewModel.starterPacks.isEmpty {
-      ProgressView("Loading starter packs...")
-        .frame(maxWidth: .infinity, minHeight: 100)
-        .padding()
-        .listRowSeparator(.hidden)
-    } else if viewModel.starterPacks.isEmpty {
-      ProfileEmptyStateView(
-        title: "No Starter Packs",
-        message: "This user hasn't created any starter packs yet.",
-        isCurrentUser: viewModel.isCurrentUser
-      )
-        .padding(.top, 40)
-        .listRowSeparator(.hidden)
-        .onAppear {
-          Task { await viewModel.loadStarterPacks() }
-        }
-    } else {
-      ForEach(viewModel.starterPacks, id: \.uri) { pack in
-        StarterPackRowView(pack: pack)
-          .onAppear {
-            // Load more when reaching the end
-            if pack == viewModel.starterPacks.last && !viewModel.isLoadingMorePosts {
-              Task { await viewModel.loadStarterPacks() }
-            }
-          }
-      }
-        
-      // Loading indicator for pagination
-      if viewModel.isLoadingMorePosts {
-        ProgressView()
-          .padding()
-          .frame(maxWidth: .infinity)
-          .listRowSeparator(.hidden)
-      }
-    }
-  }
-
-  // MARK: - Feeds Content Section
-  @ViewBuilder
-  private var feedsContentSection: some View {
-    if viewModel.isLoading && viewModel.feeds.isEmpty {
-      ProgressView("Loading feeds...")
-        .frame(maxWidth: .infinity, minHeight: 100)
-        .padding()
-        .listRowSeparator(.hidden)
-    } else if viewModel.feeds.isEmpty {
-      ProfileEmptyStateView(
-        title: "No Feeds",
-        message: "This user hasn't created any feeds yet.",
-        isCurrentUser: viewModel.isCurrentUser
-      )
-        .padding(.top, 40)
-        .listRowSeparator(.hidden)
-        .onAppear {
-          Task { await viewModel.loadFeeds() }
-        }
-    } else {
-      ForEach(viewModel.feeds, id: \.uri) { feed in
-        Button {
-          navigationPath.append(NavigationDestination.feed(feed.uri))
-        } label: {
-          FeedRowView(feed: feed)
-        }
-        .buttonStyle(.plain)
-        .onAppear {
-          // Load more when reaching the end
-          if feed == viewModel.feeds.last && !viewModel.isLoadingMorePosts {
-            Task { await viewModel.loadFeeds() }
-          }
-        }
-      }
-        
-      // Loading indicator for pagination
-      if viewModel.isLoadingMorePosts {
-        ProgressView()
-          .padding()
-          .frame(maxWidth: .infinity)
-          .listRowSeparator(.hidden)
-      }
-    }
-  }
-
-  // MARK: - Context Menu for Profile
-  @ViewBuilder
-  private func profileContextMenu(_ profile: AppBskyActorDefs.ProfileViewDetailed) -> some View {
-    if !viewModel.isCurrentUser {
-      Button {
-        showAddToListSheet(profile)
-      } label: {
-        Label("Add to List", systemImage: "list.bullet.rectangle")
-      }
-
-      Button {
-        searchPostsForProfile(profile)
-      } label: {
-        Label("Search This Profile", systemImage: "magnifyingglass")
-      }
-
-      Divider()
-
-      Button {
-        showReportProfileSheet()
-      } label: {
-        Label("Report User", systemImage: "flag")
-      }
-
-      Button {
-        requestMuteToggle()
-      } label: {
-        if isMuting {
-          Label("Unmute User", systemImage: "speaker.wave.2")
-        } else {
-          Label("Mute User", systemImage: "speaker.slash")
-        }
-      }
-
-      Button(role: .destructive) {
-        Task { await prepareBlockConfirmation() }
-      } label: {
-        if isBlocking {
-          Label("Unblock User", systemImage: "person.crop.circle.badge.checkmark")
-        } else {
-          Label("Block User", systemImage: "person.crop.circle.badge.xmark")
-        }
-      }
-    }
-  }
-
   // MARK: - Alert Content
   @ViewBuilder
   private var unblockAlertButtons: some View {
@@ -358,14 +183,33 @@ struct UnifiedProfileView: View {
     isBlocking = blocking
     do {
       let success = blocking ? try await appState.block(did: did) : try await appState.unblock(did: did)
-      if !success {
+      if success {
+        await reloadRelationshipState()
+      } else {
         isBlocking = previousState
       }
       return success
     } catch {
       isBlocking = previousState
       logger.error("Failed to \(blocking ? "block" : "unblock") user: \(error.localizedDescription)")
+      // Callers surface the failure (BlockAccountView for block, a toast for unblock).
       return false
+    }
+  }
+
+  /// Reloads the profile after a block or mute change so the header, banner and posts match
+  /// what the user just did.
+  private func reloadRelationshipState() async {
+    await viewModel.loadProfile()
+    if let viewer = viewModel.profile?.viewer {
+      isBlocking = viewer.blocking != nil
+      isMuting = viewer.muted == true
+    }
+    await viewModel.loadPosts()
+    if viewModel.selectedProfileTab == .replies {
+      await viewModel.loadReplies()
+    } else if viewModel.selectedProfileTab == .media {
+      await viewModel.loadMediaPosts()
     }
   }
 
@@ -392,7 +236,7 @@ struct UnifiedProfileView: View {
       } catch {
         logger.error("Failed to verify block state before confirmation: \(error.localizedDescription)")
         appState.toastManager.show(
-          ToastItem(message: "Failed to verify block status", icon: "exclamationmark.triangle.fill")
+          ToastItem(message: "Couldn’t check whether this account is blocked. Try again.", icon: "exclamationmark.triangle.fill")
         )
       }
     }
@@ -480,7 +324,7 @@ struct UnifiedProfileView: View {
       }
     case .likes:
       if viewModel.likes.isEmpty {
-        await viewModel.loadLikes()
+        try? await viewModel.refreshLikes()
       }
     default:
       break
@@ -546,7 +390,9 @@ struct UnifiedProfileView: View {
           success = try await appState.mute(did: did)
         }
 
-        if !success {
+        if success {
+          await reloadRelationshipState()
+        } else {
           // Revert if unsuccessful
           isMuting = previousState
         }
@@ -554,6 +400,9 @@ struct UnifiedProfileView: View {
         // Revert on error
         isMuting = !isMuting
         logger.error("Failed to toggle mute: \(error.localizedDescription)")
+        appState.toastManager.show(
+          ToastItem(message: "Couldn’t update mute settings. Try again.", icon: "exclamationmark.triangle.fill")
+        )
       }
     }
   }
@@ -575,7 +424,7 @@ struct UnifiedProfileView: View {
       ProgressView()
         .scaleEffect(1.5)
         .tint(Color.adaptiveText(appState: appState, themeManager: appState.themeManager, style: .primary, currentScheme: currentColorScheme))
-      Text("Loading profile...")
+      Text("Loading profile…")
         .foregroundStyle(Color.adaptiveText(appState: appState, themeManager: appState.themeManager, style: .secondary, currentScheme: currentColorScheme))
         .padding(.top)
     }
@@ -586,7 +435,15 @@ struct UnifiedProfileView: View {
   @ViewBuilder
   private var errorView: some View {
       Group {
-          if let error = viewModel.error {
+          if case ProfileError.unavailable? = viewModel.error as? ProfileError {
+              ContentUnavailableView(
+                  "Account Unavailable",
+                  systemImage: "person.crop.circle.badge.exclamationmark",
+                  description: Text("This account may have been deactivated, suspended or deleted.")
+              )
+              .frame(maxWidth: .infinity, maxHeight: .infinity)
+              .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
+          } else if let error = viewModel.error {
               ErrorStateView(
                 error: error,
                 context: "Failed to load profile",
@@ -603,7 +460,7 @@ struct UnifiedProfileView: View {
                       .fontWeight(.semibold)
                       .foregroundStyle(Color.adaptiveText(appState: appState, themeManager: appState.themeManager, style: .primary, currentScheme: currentColorScheme))
                   
-                  Text("This profile may not exist or is not accessible")
+                  Text("This profile may not exist, or you may not be able to view it.")
                       .appFont(AppTextRole.subheadline)
                       .foregroundStyle(Color.adaptiveText(appState: appState, themeManager: appState.themeManager, style: .secondary, currentScheme: currentColorScheme))
                       .multilineTextAlignment(.center)
@@ -635,7 +492,7 @@ struct UnifiedProfileView: View {
           navigationPath: $navigationPath,
           refreshAllContent: refreshAllContent,
           onTabChange: handleTabChange,
-          prepareBlockConfirmation: prepareBlockConfirmation
+          requestUnblock: { isShowingUnblockConfirmation = true }
         )
       } else {
         errorView
@@ -652,9 +509,16 @@ struct UnifiedProfileView: View {
     .ensureDeepNavigationFonts()
     .navigationDestination(for: ProfileNavigationDestination.self) { destination in
       switch destination {
-      case .section(let tab):
-        ProfileSectionView(viewModel: viewModel, tab: tab, path: $navigationPath)
-          .id("\(viewModel.userDID)_\(tab.rawValue)") // Stable composite ID
+      case .section(let tab, let did):
+        // SwiftUI resolves this destination with whichever profile on the stack declared it
+        // first, so only reuse this view model when it belongs to the requested profile.
+        if did == viewModel.userDID || did == viewModel.profile?.did.didString() {
+          ProfileSectionView(viewModel: viewModel, tab: tab, path: $navigationPath)
+            .id("\(did)_\(tab.rawValue)")
+        } else {
+          ProfileSectionHostView(did: did, tab: tab, appState: appState, path: $navigationPath)
+            .id("\(did)_\(tab.rawValue)")
+        }
       case .followers(let did):
         FollowersView(userDID: did, client: appState.atProtoClient, path: $navigationPath)
           .id(did)
@@ -808,8 +672,27 @@ struct UnifiedProfileView: View {
         Button("Mute", role: .destructive) { toggleMute() }
       } message: {
         if let profile = viewModel.profile {
-          Text("Mute @\(profile.handle)? You won't see their posts and replies in your feeds.")
+          Text("Mute @\(profile.handle)? You won’t see their posts and replies in your feeds.")
         }
+      }
+      .confirmationDialog(
+        signOutConfirmationTitle,
+        isPresented: $isShowingSignOutConfirmation,
+        titleVisibility: .visible
+      ) {
+        Button("Sign Out", role: .destructive) {
+          Task {
+            do {
+              try await appState.handleLogout()
+            } catch {
+              logger.error("Sign out failed: \(error.localizedDescription)")
+              appState.toastManager.show(
+                ToastItem(message: "Couldn’t sign out. Try again.", icon: "exclamationmark.triangle.fill")
+              )
+            }
+          }
+        }
+        Button("Cancel", role: .cancel) {}
       }
       .onChange(of: lastTappedTab) { _, newValue in
         handleTabChange(newValue)
@@ -835,7 +718,7 @@ struct UnifiedProfileView: View {
       Button {
         isShowingLabelsOnMe = true
       } label: {
-        Label("Labels on your account", systemImage: "tag")
+        Label("Labels on Your Account", systemImage: "tag")
       }
 
       Button {
@@ -844,14 +727,22 @@ struct UnifiedProfileView: View {
         Label("Switch Account", systemImage: "person.crop.circle.badge.plus")
       }
       
-      Button {
-        Task { try? await appState.handleLogout() }
+      Button(role: .destructive) {
+        isShowingSignOutConfirmation = true
       } label: {
         Label("Sign Out", systemImage: "rectangle.portrait.and.arrow.right")
       }
     } label: {
       Image(systemName: "ellipsis.circle")
+        .accessibilityLabel("More Options")
     }
+  }
+
+  private var signOutConfirmationTitle: String {
+    if let handle = viewModel.profile?.handle.description {
+      return "Sign out of @\(handle)?"
+    }
+    return "Sign out?"
   }
   
   @ViewBuilder
@@ -877,7 +768,7 @@ struct UnifiedProfileView: View {
               }
             }
           } label: {
-            Label(viewModel.isSubscribedToLabeler ? "Unsubscribe from labeler" : "Subscribe to labeler",
+            Label(viewModel.isSubscribedToLabeler ? "Unsubscribe from Labeler" : "Subscribe to Labeler",
                   systemImage: viewModel.isSubscribedToLabeler ? "checkmark.circle.fill" : "checkmark.circle")
           }
           
@@ -886,7 +777,7 @@ struct UnifiedProfileView: View {
           Button {
             showReportProfileSheet()
           } label: {
-            Label("Report labeler", systemImage: "flag")
+            Label("Report Labeler", systemImage: "flag")
           }
         } else {
           // Regular user options
@@ -937,6 +828,7 @@ struct UnifiedProfileView: View {
       }
     } label: {
       Image(systemName: "ellipsis.circle")
+        .accessibilityLabel("More Options")
     }
   }
   

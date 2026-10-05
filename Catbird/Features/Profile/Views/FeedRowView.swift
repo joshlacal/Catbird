@@ -45,7 +45,7 @@ struct FeedRowView: View {
                 }
 
                 if let likeCount = feed.likeCount, likeCount > 0 {
-                    Text("\(likeCount) likes")
+                    Text("^[\(likeCount) like](inflect: true)")
                         .appFont(AppTextRole.caption)
                         .foregroundStyle(.secondary)
                 }

@@ -64,16 +64,6 @@ struct LabelerInfoTab: View {
                     descriptionSection(description)
                 }
                 
-                // Policies section
-                policiesSection
-                
-                // Available labels section
-                labelsSection
-                
-                // Divider
-                Divider()
-                    .padding(.vertical, 8)
-                
                 // Label settings
                 labelSettingsSection
                 
@@ -81,7 +71,7 @@ struct LabelerInfoTab: View {
                     HStack {
                         ProgressView()
                             .padding(.trailing, 8)
-                        Text("Saving preferences...")
+                        Text("Saving…")
                             .appBody()
                             .foregroundStyle(.secondary)
                     }
@@ -93,7 +83,7 @@ struct LabelerInfoTab: View {
                         .appCaption()
                         .foregroundStyle(.red)
                         .padding()
-                    Button("Retry") { Task { await loadLabelPreferences() } }
+                    Button("Try Again") { Task { await loadLabelPreferences() } }
                         .disabled(isSaving)
                         .accessibilityIdentifier("profile.labeler.settings.retry")
                 }
@@ -125,95 +115,21 @@ struct LabelerInfoTab: View {
     }
     
     @ViewBuilder
-    private var policiesSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Policies")
-                .appFont(AppTextRole.headline)
-                .fontWeight(.semibold)
-            
-            if !labelerDetails.policies.labelValues.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(labelerDetails.policies.labelValues, id: \.self) { value in
-                            Text(friendlyLabelName(value.rawValue))
-                                .appCaption()
-                                .fontWeight(.medium)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 6)
-                                .background(
-                                    Capsule()
-                                        .fill(Color.blue.opacity(0.15))
-                                )
-                                .foregroundStyle(Color.blue)
-                        }
-                    }
-                }
-            } else {
-                Text("No policies defined")
-                    .appCaption()
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding()
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color.systemBackground)
-        )
-    }
-    
-    @ViewBuilder
-    private var labelsSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Available Labels")
-                .appFont(AppTextRole.headline)
-                .fontWeight(.semibold)
-            
-            // Show simple label values if no detailed definitions available
-            if !labelerDetails.policies.labelValues.isEmpty {
-                VStack(alignment: .leading, spacing: 12) {
-                    ForEach(labelerDetails.policies.labelValues, id: \.self) { labelValue in
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(friendlyLabelName(labelValue.rawValue))
-                                .appFont(AppTextRole.subheadline)
-                                .fontWeight(.medium)
-                            
-                            let description = labelDescription(labelValue.rawValue)
-                            if !description.isEmpty {
-                                Text(description)
-                                    .appCaption()
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                        .padding(.vertical, 8)
-                    }
-                }
-            } else {
-                Text("No labels available")
-                    .appCaption()
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding()
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color.systemBackground)
-        )
-    }
-    
-    @ViewBuilder
     private var labelSettingsSection: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Label Settings")
                 .appFont(AppTextRole.headline)
                 .fontWeight(.semibold)
             
-            Text("Configure how you want to see content labeled by this service")
+            Text("Choose how content labeled by this service appears to you.")
                 .appCaption()
                 .foregroundStyle(.secondary)
             
-            if !labelerDetails.policies.labelValues.isEmpty {
+            if labelerDetails.policies.labelValues.isEmpty {
+                Text("This service doesn’t publish any labels.")
+                    .appCaption()
+                    .foregroundStyle(.secondary)
+            } else {
                 VStack(spacing: 16) {
                     ForEach(labelerDetails.policies.labelValues, id: \.self) { labelValue in
                         labelSettingControl(
@@ -269,8 +185,25 @@ struct LabelerInfoTab: View {
     
     // MARK: - Helper Functions
     
+    /// The labeler's own name and description for a label, in the user's language when available.
+    private func localizedStrings(for labelKey: String) -> ComAtprotoLabelDefs.LabelValueDefinitionStrings? {
+        guard let locales = labelerDetails.policies.labelValueDefinitions?
+            .first(where: { $0.identifier == labelKey })?.locales, !locales.isEmpty else { return nil }
+        func primaryLanguage(_ tag: String) -> String {
+            String(tag.split(separator: "-").first ?? Substring(tag)).lowercased()
+        }
+        let preferred = primaryLanguage(Locale.preferredLanguages.first ?? "en")
+        return locales.first { primaryLanguage($0.lang.languageTag) == preferred }
+            ?? locales.first { primaryLanguage($0.lang.languageTag) == "en" }
+            ?? locales.first
+    }
+
     /// Converts label keys to user-friendly names
     private func friendlyLabelName(_ labelKey: String) -> String {
+        if let name = localizedStrings(for: labelKey)?.name.trimmingCharacters(in: .whitespacesAndNewlines),
+           !name.isEmpty {
+            return name
+        }
         switch labelKey.lowercased() {
         case "nsfw", "porn":
             return "Adult Content"
@@ -308,6 +241,10 @@ struct LabelerInfoTab: View {
     
     /// Provides descriptions for common labels
     private func labelDescription(_ labelKey: String) -> String {
+        if let description = localizedStrings(for: labelKey)?.description.trimmingCharacters(in: .whitespacesAndNewlines),
+           !description.isEmpty {
+            return description
+        }
         switch labelKey.lowercased() {
         case "nsfw", "porn":
             return "Explicit sexual images, videos, or text"
@@ -369,7 +306,7 @@ struct LabelerInfoTab: View {
             hasConfirmedPreferences = true
         } catch {
             guard loadRequest == request, manager.accountDID == account, appState.userDID == account else { return }
-            errorMessage = "Failed to load preferences: \(error.localizedDescription)"
+            errorMessage = "Couldn’t load your label settings."
         }
     }
 
@@ -388,7 +325,7 @@ struct LabelerInfoTab: View {
         } catch {
             guard loadRequest == request, manager.accountDID == account, appState.userDID == account else { return }
             hasConfirmedPreferences = false
-            errorMessage = "Failed to save preference: \(error.localizedDescription)"
+            errorMessage = "Couldn’t save that setting. Try again."
         }
     }
 

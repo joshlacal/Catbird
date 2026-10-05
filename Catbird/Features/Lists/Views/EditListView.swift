@@ -26,11 +26,11 @@ final class EditListViewModel {
   var description: String = ""
   var selectedImage: PhotosPickerItem?
   var avatarData: Data?
-  var listType: AppBskyGraphDefs.ListPurpose = .appbskygraphdefscuratelist
   
   // State
   var isLoading = false
   var isSaving = false
+  var errorTitle = "Couldn’t Load List"
   var errorMessage: String?
   var showingError = false
   var hasUnsavedChanges = false
@@ -82,13 +82,13 @@ final class EditListViewModel {
       if let list = listDetails {
         name = list.name
         description = list.description ?? ""
-        listType = list.purpose
       }
       
       logger.info("Loaded list data for editing: \(self.name)")
       
     } catch {
       logger.error("Failed to load list data: \(error.localizedDescription)")
+      errorTitle = "Couldn’t Load List"
       errorMessage = error.localizedDescription
       showingError = true
     }
@@ -117,7 +117,8 @@ final class EditListViewModel {
       }
     } catch {
       logger.error("Failed to process selected image: \(error.localizedDescription)")
-      errorMessage = "Failed to process selected image"
+      errorTitle = "Couldn’t Use Image"
+      errorMessage = "Try a different image."
       showingError = true
     }
   }
@@ -135,7 +136,7 @@ final class EditListViewModel {
       _ = try await appState.listManager.updateList(
         listURI: listURI,
         name: name.trimmingCharacters(in: .whitespacesAndNewlines),
-        description: description.isEmpty ? nil : description,
+        description: description.trimmingCharacters(in: .whitespacesAndNewlines),
         avatar: avatarData
       )
       
@@ -144,6 +145,7 @@ final class EditListViewModel {
       
     } catch {
       logger.error("Failed to update list: \(error.localizedDescription)")
+      errorTitle = "Couldn’t Save List"
       errorMessage = error.localizedDescription
       showingError = true
     }
@@ -190,7 +192,7 @@ struct EditListView: View {
       } message: {
         Text("You have unsaved changes. Are you sure you want to discard them?")
       }
-      .alert("Error", isPresented: errorAlertBinding) {
+      .alert(viewModel?.errorTitle ?? "Couldn’t Save List", isPresented: errorAlertBinding) {
         Button("OK") {
           viewModel?.showingError = false
         }
@@ -254,7 +256,7 @@ struct EditListView: View {
     VStack(spacing: 16) {
       ProgressView()
         .scaleEffect(1.5)
-      Text("Loading list details...")
+      Text("Loading list details…")
         .font(.headline)
         .foregroundStyle(.secondary)
     }
@@ -278,15 +280,6 @@ struct EditListView: View {
       } header: {
         Text("List Information")
       }
-      
-      // List Type Section
-      Section {
-        listTypeSection(viewModel: viewModel)
-      } header: {
-        Text("List Type")
-      } footer: {
-        Text("The list type determines how the list can be used and discovered by others.")
-      }
     }
     .onChange(of: viewModel.selectedImage) { _, _ in
       Task {
@@ -297,9 +290,6 @@ struct EditListView: View {
       viewModel.markAsChanged()
     }
     .onChange(of: viewModel.description) { _, _ in
-      viewModel.markAsChanged()
-    }
-    .onChange(of: viewModel.listType) { _, _ in
       viewModel.markAsChanged()
     }
   }
@@ -407,7 +397,7 @@ struct EditListView: View {
         }
         
         TextField(
-          "A curated collection of accounts...",
+          "A curated collection of accounts…",
           text: viewModel.description,
           axis: .vertical
         )
@@ -418,104 +408,6 @@ struct EditListView: View {
             .stroke(viewModel.wrappedValue.isDescriptionValid ? Color.clear : Color.red, lineWidth: 1)
         )
       }
-    }
-  }
-  
-  @ViewBuilder
-  private func listTypeSection(viewModel: EditListViewModel) -> some View {
-    VStack(spacing: 12) {
-      ForEach([
-        AppBskyGraphDefs.ListPurpose.appbskygraphdefscuratelist,
-        AppBskyGraphDefs.ListPurpose.appbskygraphdefsmodlist,
-        AppBskyGraphDefs.ListPurpose.appbskygraphdefsreferencelist
-      ], id: \.self) { purpose in
-        ListTypeSelectionRow(
-          purpose: purpose,
-          isSelected: viewModel.listType == purpose
-        ) {
-          viewModel.listType = purpose
-          viewModel.markAsChanged()
-        }
-      }
-    }
-  }
-}
-
-// MARK: - Supporting Views
-
-struct ListTypeSelectionRow: View {
-  let purpose: AppBskyGraphDefs.ListPurpose
-  let isSelected: Bool
-  let onTap: () -> Void
-  
-  var body: some View {
-    Button(action: onTap) {
-      HStack(spacing: 12) {
-        Image(systemName: iconForPurpose(purpose))
-          .font(.title2)
-          .foregroundStyle(isSelected ? .blue : .secondary)
-          .frame(width: 24)
-        
-        VStack(alignment: .leading, spacing: 2) {
-          Text(titleForPurpose(purpose))
-            .font(.subheadline)
-            .fontWeight(.medium)
-            .foregroundStyle(.primary)
-          
-          Text(descriptionForPurpose(purpose))
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .multilineTextAlignment(.leading)
-        }
-        
-        Spacer()
-        
-        if isSelected {
-          Image(systemName: "checkmark.circle.fill")
-            .foregroundStyle(.blue)
-        }
-      }
-      .padding(.vertical, 8)
-    }
-    .buttonStyle(.plain)
-  }
-  
-  private func iconForPurpose(_ purpose: AppBskyGraphDefs.ListPurpose) -> String {
-    switch purpose {
-    case .appbskygraphdefscuratelist:
-      return "star.circle"
-    case .appbskygraphdefsmodlist:
-      return "shield.lefthalf.filled"
-    case .appbskygraphdefsreferencelist:
-      return "bookmark.circle"
-    default:
-      return "questionmark.circle"
-    }
-  }
-  
-  private func titleForPurpose(_ purpose: AppBskyGraphDefs.ListPurpose) -> String {
-    switch purpose {
-    case .appbskygraphdefscuratelist:
-      return "Curated List"
-    case .appbskygraphdefsmodlist:
-      return "Moderation List"
-    case .appbskygraphdefsreferencelist:
-      return "Reference List"
-    default:
-      return "Unknown"
-    }
-  }
-  
-  private func descriptionForPurpose(_ purpose: AppBskyGraphDefs.ListPurpose) -> String {
-    switch purpose {
-    case .appbskygraphdefscuratelist:
-      return "A collection of accounts you recommend to others"
-    case .appbskygraphdefsmodlist:
-      return "A list used for moderation and filtering content"
-    case .appbskygraphdefsreferencelist:
-      return "A personal reference collection for your own use"
-    default:
-      return "Unknown list type"
     }
   }
 }

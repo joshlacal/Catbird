@@ -11,6 +11,8 @@ import SwiftUI
 struct MoreView: View {
     @Environment(AppState.self) private var appState
     @Environment(\.colorScheme) private var colorScheme
+    /// The profile whose sections these rows open.
+    let profileDID: String
     @Binding var path: NavigationPath
     @State private var isNavigating = false
 
@@ -23,7 +25,7 @@ struct MoreView: View {
                 Button {
                     guard !isNavigating else { return }
                     isNavigating = true
-                    path.append(ProfileNavigationDestination.section(tab))
+                    path.append(ProfileNavigationDestination.section(tab, did: profileDID))
                 } label: {
                     HStack(spacing: 16) {
                         // Tab icon
@@ -81,7 +83,7 @@ struct MoreView: View {
 #Preview("MoreView") {
   @Previewable @State var path = NavigationPath()
   NavigationStack(path: $path) {
-    MoreView(path: $path)
+    MoreView(profileDID: "did:plc:preview", path: $path)
   }
   .previewWithAuthenticatedState()
 }

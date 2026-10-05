@@ -71,6 +71,15 @@ final class ListDetailViewModel {
     isLoading = false
   }
   
+  /// Re-reads cached details so edits made on a pushed screen show up when returning.
+  @MainActor
+  func reloadDetailsFromCache() async {
+    guard !isLoading, listDetails != nil else { return }
+    if let details = try? await appState.listManager.getListDetails(listURI.description) {
+      listDetails = details
+    }
+  }
+
   @MainActor
   func refreshData() async {
     do {
@@ -100,7 +109,7 @@ final class ListDetailViewModel {
       await refreshData()
     } catch {
       logger.error("Failed to block list accounts: \(error.localizedDescription)")
-      errorMessage = error.localizedDescription
+      errorMessage = UserFacingError.message(for: error, action: "block these accounts") ?? "Try again."
       showingError = true
     }
   }
@@ -113,7 +122,7 @@ final class ListDetailViewModel {
       await refreshData()
     } catch {
       logger.error("Failed to unblock list accounts: \(error.localizedDescription)")
-      errorMessage = error.localizedDescription
+      errorMessage = UserFacingError.message(for: error, action: "unblock these accounts") ?? "Try again."
       showingError = true
     }
   }
@@ -122,7 +131,10 @@ final class ListDetailViewModel {
 struct ListDetailView: View {
   @Environment(AppState.self) private var appState
   @Environment(\.dismiss) private var dismiss
+  @Environment(\.listsUseLocalNavigation) private var usesLocalNavigation
   @State private var vm: ListDetailViewModel?
+  @State private var didAttemptInit = false
+  @State private var localDestination: ListLocalDestination?
   @State private var feedSelectedTab: Int = 0
   @State private var isConfirmingListBlock = false
   @State private var isConfirmingListUnblock = false
@@ -140,18 +152,44 @@ struct ListDetailView: View {
     Group {
       if let viewModel = vm {
         contentView(viewModel: viewModel)
+      } else if !didAttemptInit {
+        ProgressView()
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
       } else {
         errorView
       }
     }
     .themedGroupedBackground(appState.themeManager, appSettings: appState.appSettings)
+    .listLocalNavigationDestination($localDestination)
     .task {
       if vm == nil {
-        if let listDetailViewModel = ListDetailViewModel(listURIString: listURIString, appState: appState) {
-          vm = listDetailViewModel
-          await listDetailViewModel.loadInitialData()
-        }
+        let listDetailViewModel = ListDetailViewModel(listURIString: listURIString, appState: appState)
+        vm = listDetailViewModel
+        didAttemptInit = true
+        await listDetailViewModel?.loadInitialData()
       }
+    }
+    .onAppear {
+      // Pick up edits made on the Edit List screen.
+      if let vm {
+        Task { await vm.reloadDetailsFromCache() }
+      }
+    }
+  }
+
+  /// Pushes list screens with the tab's path, or locally when hosted in Settings.
+  private func navigate(to destination: ListLocalDestination) {
+    if usesLocalNavigation {
+      localDestination = destination
+      return
+    }
+    switch destination {
+    case .detail(let uri):
+      path.append(NavigationDestination.listFeed(uri))
+    case .edit(let uri):
+      path.append(NavigationDestination.editList(uri))
+    case .members(let uri):
+      path.append(NavigationDestination.listMembers(uri))
     }
   }
   
@@ -168,28 +206,33 @@ struct ListDetailView: View {
           .padding()
       }
       
-      // Tab Picker
-      Picker("View", selection: $viewModel.selectedTab) {
-        ForEach(ListDetailTab.allCases, id: \.self) { tab in
-          Text(tab.rawValue).tag(tab)
-        }
-      }
-      .pickerStyle(.segmented)
-      .padding(.horizontal, 16)
-      .padding(.vertical, 8)
-      .background(Color(platformColor: PlatformColor.platformSystemGroupedBackground))
-      
-      // Tab Content
-      TabView(selection: $viewModel.selectedTab) {
+      if usesLocalNavigation {
+        // In Settings this screen manages the list; reading its feed happens in the main app.
         membersView(viewModel: viewModel)
-          .tag(ListDetailTab.members)
+      } else {
+        // Tab Picker
+        Picker("View", selection: $viewModel.selectedTab) {
+          ForEach(ListDetailTab.allCases, id: \.self) { tab in
+            Text(tab.rawValue).tag(tab)
+          }
+        }
+        .pickerStyle(.segmented)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(Color(platformColor: PlatformColor.platformSystemGroupedBackground))
         
-        feedView(viewModel: viewModel)
-          .tag(ListDetailTab.feed)
+        // Tab Content
+        TabView(selection: $viewModel.selectedTab) {
+          membersView(viewModel: viewModel)
+            .tag(ListDetailTab.members)
+          
+          feedView(viewModel: viewModel)
+            .tag(ListDetailTab.feed)
+        }
+        #if os(iOS)
+        .tabViewStyle(.page(indexDisplayMode: .never))
+        #endif
       }
-      #if os(iOS)
-      .tabViewStyle(.page(indexDisplayMode: .never))
-      #endif
     }
     .navigationTitle(viewModel.listDetails?.name ?? "List")
     #if os(iOS)
@@ -201,13 +244,14 @@ struct ListDetailView: View {
           listToolbarMenu(viewModel: viewModel)
         } label: {
           Image(systemName: "ellipsis.circle")
+            .accessibilityLabel("More Options")
         }
       }
     }
     .refreshable {
       await viewModel.refreshData()
     }
-    .alert("Error", isPresented: $viewModel.showingError) {
+    .alert("Something Went Wrong", isPresented: $viewModel.showingError) {
       Button("OK") {
         viewModel.showingError = false
       }
@@ -243,13 +287,13 @@ struct ListDetailView: View {
   private func listToolbarMenu(viewModel: ListDetailViewModel) -> some View {
     if viewModel.isOwnList {
       Button {
-        path.append(NavigationDestination.editList(viewModel.listURI))
+        navigate(to: .edit(viewModel.listURI))
       } label: {
         Label("Edit List", systemImage: "pencil")
       }
       
       Button {
-        path.append(NavigationDestination.listMembers(viewModel.listURI))
+        navigate(to: .members(viewModel.listURI))
       } label: {
         Label("Manage Members", systemImage: "person.2.badge.gearshape")
       }
@@ -299,9 +343,9 @@ struct ListDetailView: View {
   
   private var errorView: some View {
     ContentUnavailableView(
-      "Invalid List",
+      "List Not Found",
       systemImage: "exclamationmark.triangle",
-      description: Text("This list URI is invalid or cannot be loaded.")
+      description: Text("This list couldn’t be found.")
     )
   }
   
@@ -340,7 +384,7 @@ struct ListDetailView: View {
           }
           
           HStack(spacing: 16) {
-            Text("\(viewModel.members.count) members")
+            Text("^[\(listDetails.listItemCount ?? viewModel.members.count) member](inflect: true)")
               .font(.caption)
               .foregroundStyle(.tertiary)
             
@@ -363,11 +407,16 @@ struct ListDetailView: View {
   @ViewBuilder
   private func membersView(viewModel: ListDetailViewModel) -> some View {
     List {
-      if viewModel.members.isEmpty {
+      if viewModel.isLoading && viewModel.members.isEmpty {
+        ProgressView()
+          .frame(maxWidth: .infinity, minHeight: 120)
+          .listRowBackground(Color.clear)
+          .listRowSeparator(.hidden)
+      } else if viewModel.members.isEmpty {
         ContentUnavailableView(
           "No Members",
           systemImage: "person.2.slash",
-          description: Text("This list doesn't have any members yet.")
+          description: Text("This list doesn’t have anyone on it yet.")
         )
         .listRowBackground(Color.clear)
         .listRowSeparator(.hidden)
@@ -405,6 +454,9 @@ struct ListDetailView: View {
             }
           }
           .buttonStyle(.plain)
+          // Profiles open in the main app, not inside Settings.
+          .allowsHitTesting(!usesLocalNavigation)
+          .accessibilityRemoveTraits(usesLocalNavigation ? .isButton : [])
         }
       }
     }
