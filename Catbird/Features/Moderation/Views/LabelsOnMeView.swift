@@ -95,7 +95,7 @@ struct LabelsOnMeView: View {
       if info.severity == .information {
         Text("Informational label").font(.caption).foregroundStyle(.secondary)
       }
-      Text(label.uri.uriString().hasSuffix("/app.bsky.actor.profile/self") ? "Profile" : (label.cid == nil ? "Whole account" : "Record")).font(.caption).foregroundStyle(.secondary)
+      Text(label.subjectSummary).font(.caption).foregroundStyle(.secondary)
       Text("Applied \(label.cts.date, style: .date)").font(.caption).foregroundStyle(.secondary)
       if let expiration = label.exp?.date {
         Text("Expires \(expiration, style: .date)").font(.caption).foregroundStyle(.secondary)
@@ -189,7 +189,7 @@ private struct AppealLabelSheet: View {
           Section("Label Details") {
             Text(info.name).font(.headline)
             Text("Issued by \(info.issuer)").font(.subheadline)
-            Text("Subject: \(label.uri.uriString())").font(.caption).textSelection(.enabled)
+            Text("Applies to: \(label.subjectSummary.lowercased())").font(.caption)
           }
           Section {
             TextField("Explain why this label was applied in error", text: $appealDetails, axis: .vertical)
@@ -248,6 +248,17 @@ private struct AppealLabelSheet: View {
   private var appealSubmissionTitle: LocalizedStringKey {
     if submission.isSubmitting { return "Submitting…" }
     return submission.errorMessage == nil ? "Submit Appeal" : "Retry Appeal"
+  }
+}
+
+private extension ComAtprotoLabelDefs.Label {
+  /// What the label is attached to, in plain words.
+  var subjectSummary: String {
+    let subjectURI = uri.uriString()
+    if subjectURI.hasSuffix("/app.bsky.actor.profile/self") { return "Profile" }
+    if cid == nil { return "Whole account" }
+    if subjectURI.contains("/app.bsky.feed.post/") { return "Post" }
+    return "Content"
   }
 }
 

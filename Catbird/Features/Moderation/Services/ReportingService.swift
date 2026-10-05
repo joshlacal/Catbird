@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 import Petrel
 
 /// Errors that can occur during label appeal submission
@@ -98,6 +99,7 @@ actor ReportDispatcher {
 @Observable
 final class ReportingService {
     public static let officialBlueskyDID = "did:plc:ar7c4by46qjdydhdevvrndac"
+    private static let logger = Logger(subsystem: "blue.catbird", category: "ReportingService")
     
     typealias ReportTransport = @Sendable (ComAtprotoModerationCreateReport.Input, String) async throws -> Bool
     private let client: ATProtoClient
@@ -375,44 +377,50 @@ final class ReportingService {
         return reason == .toolsozonereportdefsreasonsexualncii
     }
     /// Get available labelers the user is subscribed to
-    /// - Returns: Array of detailed labeler information, always including Bluesky moderation service first
+    /// - Returns: Detailed labeler information with the Bluesky moderation service first. A lookup
+    ///   that fails is logged and skipped, so one unreachable service never hides the others; the
+    ///   result is empty only when nothing could be loaded.
     func getSubscribedLabelers() async throws -> [AppBskyLabelerDefs.LabelerViewDetailed] {
         var labelers: [AppBskyLabelerDefs.LabelerViewDetailed] = []
         
-        // ALWAYS include Bluesky moderation service first - this is guaranteed to be available
-        let blueskyMod = try await getBlueskyModerationService()
-        labelers.append(blueskyMod)
+        // Always include the Bluesky moderation service first
+        do {
+            labelers.append(try await getBlueskyModerationService())
+        } catch {
+            Self.logger.error("Failed to load the Bluesky moderation service: \(error.localizedDescription, privacy: .public)")
+        }
         
-        // Then get the user's preferences to find which labelers they're subscribed to
-        let response = try await client.app.bsky.actor.getPreferences(input: AppBskyActorGetPreferences.Parameters())
-        
-        // Extract labeler DIDs from preferences
-        let labelerPrefs = response.data?.preferences.items.compactMap { item -> [DID]? in
-            if case let .labelersPref(pref) = item {
-                return pref.labelers.map { $0.did }
-            }
-            return nil
-        }.flatMap { $0 } ?? []
-        
-        // If there are subscribed labelers, fetch their details
-        if !labelerPrefs.isEmpty {
-            let params = AppBskyLabelerGetServices.Parameters(dids: labelerPrefs, detailed: true)
-            let labelerResponse = try await client.app.bsky.labeler.getServices(input: params)
+        do {
+            // Find which labelers the user is subscribed to
+            let response = try await client.app.bsky.actor.getPreferences(input: AppBskyActorGetPreferences.Parameters())
             
-            // Extract the detailed labeler views, excluding Bluesky moderation (already added first)
-            let blueskyDid = try DID(didString: "did:plc:ar7c4by46qjdydhdevvrndac")
-            let subscribedLabelers = labelerResponse.data?.views.compactMap { view -> AppBskyLabelerDefs.LabelerViewDetailed? in
-                if case let .appBskyLabelerDefsLabelerViewDetailed(detailed) = view {
-                    // Skip Bluesky moderation service (already at top of list)
-                    if detailed.creator.did == blueskyDid {
-                        return nil
-                    }
-                    return detailed
+            let labelerPrefs = response.data?.preferences.items.compactMap { item -> [DID]? in
+                if case let .labelersPref(pref) = item {
+                    return pref.labelers.map { $0.did }
                 }
                 return nil
-            } ?? []
+            }.flatMap { $0 } ?? []
             
-            labelers.append(contentsOf: subscribedLabelers)
+            // If there are subscribed labelers, fetch their details
+            if !labelerPrefs.isEmpty {
+                let params = AppBskyLabelerGetServices.Parameters(dids: labelerPrefs, detailed: true)
+                let labelerResponse = try await client.app.bsky.labeler.getServices(input: params)
+                
+                // Extract the detailed labeler views, excluding Bluesky moderation (already added first)
+                let subscribedLabelers = labelerResponse.data?.views.compactMap { view -> AppBskyLabelerDefs.LabelerViewDetailed? in
+                    if case let .appBskyLabelerDefsLabelerViewDetailed(detailed) = view {
+                        if detailed.creator.did.didString() == Self.officialBlueskyDID {
+                            return nil
+                        }
+                        return detailed
+                    }
+                    return nil
+                } ?? []
+                
+                labelers.append(contentsOf: subscribedLabelers)
+            }
+        } catch {
+            Self.logger.error("Failed to load subscribed moderation services: \(error.localizedDescription, privacy: .public)")
         }
         
         return labelers

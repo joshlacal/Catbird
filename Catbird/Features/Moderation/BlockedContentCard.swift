@@ -317,6 +317,8 @@ struct BlockedContentCard: View {
         unblockSucceeded = true
       } catch {
         logger.error("unblock failed: \(error.localizedDescription)")
+        appState.toastManager.show(ToastItem(
+          message: "Couldn’t unblock this account. Try again.", icon: "exclamationmark.triangle.fill"))
       }
     }
   }

@@ -338,16 +338,21 @@ struct UnifiedProfileView: View {
     }
   }
 
-  private func performBlock() async {
+  private func performBlock() async -> Bool {
     await performBlockMutation(blocking: true)
   }
 
   private func performUnblock() async {
-    await performBlockMutation(blocking: false)
+    guard await performBlockMutation(blocking: false) else {
+      appState.toastManager.show(ToastItem(
+        message: "Couldn’t unblock this account. Try again.", icon: "exclamationmark.triangle.fill"))
+      return
+    }
   }
 
-  private func performBlockMutation(blocking: Bool) async {
-    guard let profile = viewModel.profile, !viewModel.isCurrentUser else { return }
+  /// Returns whether the block or unblock was saved.
+  private func performBlockMutation(blocking: Bool) async -> Bool {
+    guard let profile = viewModel.profile, !viewModel.isCurrentUser else { return false }
     let did = profile.did.didString()
     let previousState = isBlocking
     isBlocking = blocking
@@ -356,9 +361,11 @@ struct UnifiedProfileView: View {
       if !success {
         isBlocking = previousState
       }
+      return success
     } catch {
       isBlocking = previousState
       logger.error("Failed to \(blocking ? "block" : "unblock") user: \(error.localizedDescription)")
+      return false
     }
   }
 

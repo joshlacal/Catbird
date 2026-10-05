@@ -1868,7 +1868,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   }
 
   private func createNavigationDestination(from uriString: String, type: String) throws -> NavigationDestination {
-    switch type {
+    switch type.lowercased() {
     case "follow":
       if uriString.hasPrefix("at://") {
         let uri = try ATProtocolURI(uriString: uriString)
@@ -2045,6 +2045,37 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
       return
     }
 
+    // Social pushes from the push gateway identify the event with `reason`, `actorDid`,
+    // `subjectUri` and `eventPath` rather than `uri`/`type`.
+    if let reason = userInfo["reason"] as? String, let actorDid = userInfo["actorDid"] as? String {
+      let destination = Self.socialPushDestination(
+        reason: reason,
+        actorDid: actorDid,
+        subjectUri: userInfo["subjectUri"] as? String,
+        eventPath: userInfo["eventPath"] as? String)
+      let recipientDid =
+        (userInfo["recipientDid"] as? String) ?? resolveRecipientDID(from: userInfo)
+
+      Task { @MainActor in
+        defer { completionHandler() }
+        guard let target = captureNavigationTarget(accountDID: recipientDid) else { return }
+        await ensureActiveAccount(for: target.accountDID)
+        guard AppStateManager.shared.lifecycle.userDID == target.accountDID else { return }
+
+        let command: SceneRouteCommand
+        if let destination {
+          notificationLogger.info("Social notification tapped (\(reason, privacy: .public)) - opening its subject")
+          command = .navigate(destination, tabIndex: 2)
+        } else {
+          notificationLogger.info("Social notification tapped (\(reason, privacy: .public)) - opening Notifications")
+          command = .showTab(2, resetPath: false)
+        }
+        SceneRouteCoordinator.shared.submit(SceneRouteRequest(accountDID: target.accountDID,
+          command: command, preferredSceneID: target.preferredSceneID))
+      }
+      return
+    }
+
     if targetDid != nil || (uriString != nil && typeString != nil) {
       Task { @MainActor in
         guard let target = captureNavigationTarget(accountDID: targetDid) else { return }
@@ -2091,6 +2122,35 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
       return nil
     }
     return (userInfo["convoId"] as? String) ?? (userInfo["conversationID"] as? String)
+  }
+
+  /// Where a tap on a social push should go. Follows open the follower's profile; likes and
+  /// reposts open the post they were about; replies, mentions, quotes and subscribed posts
+  /// open the new post itself. Returns nil when the payload does not identify a destination.
+  nonisolated static func socialPushDestination(
+    reason: String,
+    actorDid: String,
+    subjectUri: String?,
+    eventPath: String?
+  ) -> NavigationDestination? {
+    let eventURI = eventPath.flatMap { path -> ATProtocolURI? in
+      guard !path.isEmpty else { return nil }
+      return try? ATProtocolURI(uriString: "at://\(actorDid)/\(path)")
+    }
+    let subjectURI = subjectUri.flatMap { try? ATProtocolURI(uriString: $0) }
+
+    switch reason.lowercased() {
+    case "follow":
+      return .profile(actorDid)
+    case "like", "repost", "via_like", "via_repost", "like-via-repost", "repost-via-repost":
+      return subjectURI.map { .post($0) }
+    case "reply", "mention", "quote", "activity_post", "activity_reply", "subscribed-post":
+      return (eventURI ?? subjectURI).map { .post($0) }
+    case "starterpack-joined":
+      return subjectURI.map { .starterPack($0) }
+    default:
+      return nil
+    }
   }
 
   // MARK: - Notification Navigation Handling

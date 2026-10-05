@@ -157,6 +157,7 @@ struct ReportFormView: View {
     @State private var customReason: String = ""
     @State private var selectedLabeler: AppBskyLabelerDefs.LabelerViewDetailed?
     @State private var availableLabelers: [AppBskyLabelerDefs.LabelerViewDetailed] = []
+    @State private var isLoadingLabelers = false
     @State private var includeVideoTimestamp: Bool = false
     
     // UI state
@@ -209,7 +210,7 @@ struct ReportFormView: View {
                 }
                 .sheet(isPresented: $showingLabelerPicker) {
                     LabelerPickerView(
-                        availableLabelers: availableLabelers,
+                        availableLabelers: eligibleLabelers,
                         selectedLabeler: $selectedLabeler
                     )
                     #if os(iOS)
@@ -237,7 +238,7 @@ struct ReportFormView: View {
         case .selectReason:
             return "Select Reason"
         case .nciiBranch:
-            return "NCII Removal"
+            return "Intimate Imagery Report"
         case .reviewAndSubmit:
             return "Review & Submit"
         }
@@ -314,7 +315,7 @@ struct ReportFormView: View {
                 Button {
                     currentStep = .selectCategory
                 } label: {
-                    Label("Back to categories", systemImage: "chevron.left")
+                    Label("Back to Categories", systemImage: "chevron.left")
                         .font(.subheadline)
                 }
             }
@@ -324,6 +325,10 @@ struct ReportFormView: View {
                     Button {
                         selectedReason = item.reason
                         selectedReasonTitle = item.title
+                        // Keep the chosen service only if it reviews this kind of report
+                        if let labeler = selectedLabeler, !isEligible(labeler, for: item.reason) {
+                            selectedLabeler = availableLabelers.first { isEligible($0, for: item.reason) }
+                        }
                         
                         if ReportingService.isNCIIReason(item.reason) {
                             currentStep = .nciiBranch
@@ -358,7 +363,7 @@ struct ReportFormView: View {
     private var nciiBranchView: some View {
         Form {
             Section("Non-Consensual Intimate Imagery") {
-                Text("Are you depicted in this image/video, or are you an authorized representative of the person depicted?")
+                Text("Are you shown in this image or video, or are you an authorized representative of the person shown?")
                     .font(.subheadline)
                     .padding(.vertical, 4)
                 
@@ -444,11 +449,23 @@ struct ReportFormView: View {
                             .foregroundStyle(.secondary)
                     }
                     .padding(.vertical, 2)
-                } else if availableLabelers.isEmpty {
+                } else if isLoadingLabelers && availableLabelers.isEmpty {
                     HStack {
-                        Text("Loading moderation services...")
+                        Text("Loading moderation services…")
                         Spacer()
                         ProgressView()
+                    }
+                } else if eligibleLabelers.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Official Bluesky Moderation")
+                            .fontWeight(.medium)
+                        Text("Your other moderation services couldn’t be loaded, so this report will go to Bluesky.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 2)
+                    Button("Try Again") {
+                        Task { await loadLabelers() }
                     }
                 } else {
                     Button {
@@ -505,7 +522,7 @@ struct ReportFormView: View {
                             Spacer()
                             ProgressView()
                                 .padding(.horizontal, 8)
-                            Text("Submitting...")
+                            Text("Submitting…")
                             Spacer()
                         }
                     } else {
@@ -513,12 +530,12 @@ struct ReportFormView: View {
                             .frame(maxWidth: .infinity)
                     }
                 }
-                .disabled(isSubmitting || selectedLabeler == nil)
+                .disabled(isSubmitting || (!isBlueskyOnly && isLoadingLabelers))
                 .buttonStyle(.borderedProminent)
             }
             
             Section {
-                Button("Back to reasons") {
+                Button("Back to Reasons") {
                     if let cat = selectedCategory {
                         currentStep = .selectReason(cat)
                     } else {
@@ -538,29 +555,71 @@ struct ReportFormView: View {
         return String(format: "%d:%02d", minutes, remainingSeconds)
     }
     
+    /// Services that accept this kind of report for this subject. The official Bluesky service
+    /// accepts every report; for others, missing `reasonTypes`/`subjectTypes`/`subjectCollections`
+    /// means no restriction.
+    private var eligibleLabelers: [AppBskyLabelerDefs.LabelerViewDetailed] {
+        availableLabelers.filter { isEligible($0, for: selectedReason) }
+    }
+    
+    private func isEligible(
+        _ labeler: AppBskyLabelerDefs.LabelerViewDetailed,
+        for reason: ComAtprotoModerationDefs.ReasonType
+    ) -> Bool {
+        if labeler.creator.did.didString() == ReportingService.officialBlueskyDID {
+            return true
+        }
+        if let reasonTypes = labeler.reasonTypes,
+           !reasonTypes.contains(where: { $0.rawValue == reason.rawValue }) {
+            return false
+        }
+        
+        let subjectType: ComAtprotoModerationDefs.SubjectType
+        var collection: String?
+        switch subject {
+        case .comAtprotoAdminDefsRepoRef:
+            subjectType = .account
+        case .comAtprotoRepoStrongRef(let strongRef):
+            subjectType = .record
+            collection = strongRef.uri.collection
+        case .unexpected:
+            return true
+        }
+        
+        if let subjectTypes = labeler.subjectTypes,
+           !subjectTypes.contains(where: { $0.rawValue == subjectType.rawValue }) {
+            return false
+        }
+        if let collections = labeler.subjectCollections, let collection,
+           !collections.contains(where: { $0.description == collection }) {
+            return false
+        }
+        return true
+    }
+    
     private func loadLabelers() async {
-        do {
-            availableLabelers = try await reportingService.getSubscribedLabelers()
-            
-            if selectedLabeler == nil, let firstLabeler = availableLabelers.first {
-                selectedLabeler = firstLabeler
-            }
-        } catch {
-            errorMessage = "Failed to load available moderation services: \(error.localizedDescription)"
+        isLoadingLabelers = true
+        defer { isLoadingLabelers = false }
+        
+        availableLabelers = (try? await reportingService.getSubscribedLabelers()) ?? []
+        
+        if selectedLabeler.map({ !isEligible($0, for: selectedReason) }) ?? true {
+            selectedLabeler = eligibleLabelers.first
         }
     }
     
     private func submitReport() async {
-        guard let labeler = selectedLabeler else {
-            errorMessage = "Please select a moderation service"
-            return
-        }
-        
         isSubmitting = true
         errorMessage = nil
         
         let timestampSeconds: Int? = (includeVideoTimestamp && videoTimestamp != nil) ? Int(floor(videoTimestamp!)) : nil
-        let targetLabelerDid = isBlueskyOnly ? ReportingService.officialBlueskyDID : labeler.creator.did.didString()
+        // Bluesky-only reasons, or no reachable alternative service, go to Bluesky's moderators
+        let targetLabelerDid: String
+        if !isBlueskyOnly, let labeler = selectedLabeler, isEligible(labeler, for: selectedReason) {
+            targetLabelerDid = labeler.creator.did.didString()
+        } else {
+            targetLabelerDid = ReportingService.officialBlueskyDID
+        }
         
         do {
             let success = try await reportingService.submitReport(
@@ -584,10 +643,10 @@ struct ReportFormView: View {
                     )
                 }
             } else {
-                errorMessage = "Failed to submit report. Please try again."
+                errorMessage = "Couldn’t send your report. Try again."
             }
         } catch {
-            errorMessage = "Error: \(error.localizedDescription)"
+            errorMessage = UserFacingError.message(for: error, action: "send your report")
         }
         
         isSubmitting = false

@@ -165,23 +165,27 @@ final class PostContextMenuViewModel {
 
     func hidePost() async {
         let postURI = post.uri.uriString()
-        await appState.postHidingManager.hidePost(postURI)
-        logger.debug("Post hidden: \(postURI)")
+        let saved = await appState.postHidingManager.hidePost(postURI)
+        logger.debug("Post hidden: \(postURI), saved: \(saved)")
         
         // Show confirmation toast
         await MainActor.run {
-            appState.toastManager.show(ToastItem(message: "Post hidden", icon: "checkmark.circle.fill"))
+            appState.toastManager.show(saved
+                ? ToastItem(message: "Post hidden", icon: "checkmark.circle.fill")
+                : ToastItem(message: "Couldn’t hide post. Try again.", icon: "exclamationmark.triangle.fill"))
         }
     }
     
     func unhidePost() async {
         let postURI = post.uri.uriString()
-        await appState.postHidingManager.unhidePost(postURI)
-        logger.debug("Post unhidden: \(postURI)")
+        let saved = await appState.postHidingManager.unhidePost(postURI)
+        logger.debug("Post unhidden: \(postURI), saved: \(saved)")
         
         // Show confirmation toast
         await MainActor.run {
-            appState.toastManager.show(ToastItem(message: "Post unhidden", icon: "checkmark.circle.fill"))
+            appState.toastManager.show(saved
+                ? ToastItem(message: "Post unhidden", icon: "checkmark.circle.fill")
+                : ToastItem(message: "Couldn’t unhide post. Try again.", icon: "exclamationmark.triangle.fill"))
         }
     }
     

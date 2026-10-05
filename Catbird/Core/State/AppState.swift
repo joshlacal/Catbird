@@ -387,7 +387,7 @@ final class AppState {
         // Initialize list manager with authenticated client
         listManager = ListManager(client: client, appState: nil)
 
-        // Initialize post hiding manager (preferences manager will be set after auth)
+        // Initialize post hiding manager (connected to preferences after initialization)
         postHidingManager = PostHidingManager()
 
         // Initialize chat manager with authenticated client
@@ -428,6 +428,7 @@ final class AppState {
         preferencesManager.endSettingsAccountOperation = { [weak self] token in
             self?.accountServiceWork.endOperation(token)
         }
+        postHidingManager.updatePreferencesManager(preferencesManager, accountDID: userDID)
         appSettings.persistence.startEffect = { [weak self] action in
             guard let self else { return false }
             return self.accountServiceWork.start(operation: action) != nil
@@ -706,6 +707,7 @@ final class AppState {
                 // Synchronize server preferences with app settings
                 do {
                     try await preferencesManager.fetchPreferences(forceRefresh: true)
+                    await postHidingManager.loadFromPreferences()
                     try await preferencesManager.syncPreferencesWithAppSettings(self)
                     logger.info("Successfully synchronized server preferences with app settings")
                 } catch {
@@ -816,6 +818,7 @@ final class AppState {
         defer { accountServiceWork.endOperation(operation) }
         do {
             try await preferencesManager.fetchPreferences(forceRefresh: true)
+            await postHidingManager.loadFromPreferences()
             logger.info("Successfully refreshed preferences after account switch")
 
             try await preferencesManager.syncPreferencesWithAppSettings(self)
