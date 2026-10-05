@@ -2,7 +2,9 @@ import NukeUI
 import Petrel
 import SwiftUI
 
-/// Source context omits social actions and retains existing content and moderation behavior.
+/// Reply source built from the same pieces as `PostView` (`PostHeaderView`, `Post`, `PostEmbed`,
+/// `ContentLabelManager`) so pronouns, verification, labels and embeds match the feed.
+/// Omits action buttons and the ellipsis menu; links push onto the composer's own stack.
 struct ReplySourcePostView: View {
   let post: AppBskyFeedDefs.PostView
   var avatarSize: CGFloat = DesignTokens.Size.avatarLG
@@ -82,39 +84,60 @@ struct ReplySourcePostView: View {
   @ViewBuilder
   private var sourceText: some View {
     HStack(alignment: .top, spacing: 12) {
-      LazyImage(url: post.author.finalAvatarURL()) { state in
-        if let image = state.image {
-          image.resizable().scaledToFill()
-        } else {
-          Image(systemName: "person.circle.fill")
-            .resizable()
-            .scaledToFit()
-            .foregroundStyle(.secondary)
-        }
-      }
-      .frame(width: avatarSize, height: avatarSize)
-      .clipShape(Circle())
-      .accessibilityHidden(true)
+      sourceAvatar
 
-      VStack(alignment: .leading, spacing: 8) {
-        VStack(alignment: .leading, spacing: 2) {
-          Text(post.author.displayName ?? post.author.handle.description)
-            .appHeadline()
-          Text(verbatim: "@\(post.author.handle.description)")
-            .appSubheadline()
-            .foregroundStyle(.secondary)
-        }
-        .accessibilityElement(children: .combine)
-
+      VStack(alignment: .leading, spacing: 6) {
         if case .knownType(let record) = post.record,
            let feedPost = record as? AppBskyFeedPost {
+          // Same header the feed and thread use: name, verification, pronouns, handle, time.
+          PostHeaderView(
+            displayName: post.author.displayName ?? post.author.handle.description,
+            handle: post.author.handle.description,
+            timeAgo: feedPost.createdAt.date,
+            pronouns: post.author.pronouns,
+            verificationKind: VerificationBadge.kind(for: post.author.verification,
+                                                     did: post.author.did)
+          )
+          .frame(maxWidth: .infinity, alignment: .leading)
           Post(post: feedPost, isSelectable: true, path: $path, useUIKitSelectableText: true)
         } else {
+          VStack(alignment: .leading, spacing: 2) {
+            EmbeddedAuthorNameView(
+              name: post.author.displayName ?? post.author.handle.description,
+              verification: post.author.verification
+            )
+            .appHeadline()
+            Text(verbatim: "@\(post.author.handle.description)")
+              .appSubheadline()
+              .foregroundStyle(.secondary)
+          }
+          .accessibilityElement(children: .combine)
           Text("Original post text is unavailable.")
             .foregroundStyle(.secondary)
         }
       }
       .frame(maxWidth: .infinity, alignment: .leading)
     }
+  }
+
+  private var sourceAvatar: some View {
+    LazyImage(url: post.author.finalAvatarURL()) { state in
+      if let image = state.image {
+        image.resizable().scaledToFill()
+      } else {
+        Image(systemName: "person.circle.fill")
+          .resizable()
+          .scaledToFit()
+          .foregroundStyle(.secondary)
+      }
+    }
+    .frame(width: avatarSize, height: avatarSize)
+    .clipShape(Circle())
+    .overlay {
+      if post.author.status?.isLiveNow == true {
+        Circle().strokeBorder(Color.red, lineWidth: 2)
+      }
+    }
+    .accessibilityHidden(true)
   }
 }

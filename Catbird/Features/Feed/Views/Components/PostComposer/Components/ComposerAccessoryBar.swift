@@ -79,12 +79,12 @@ struct ComposerAccessoryBar: View {
         Divider()
         settingsMenuItems
       } label: {
-        Image(systemName: "plus")
+        Image(systemName: "paperclip")
           .font(.system(size: 17, weight: .semibold))
           .frame(width: 44, height: 44)
       }
       .background(Circle().fill(.ultraThinMaterial))
-      .accessibilityLabel("Add attachment or post settings")
+      .accessibilityLabel("Attachments and post settings")
 
       Spacer()
 
@@ -95,14 +95,14 @@ struct ComposerAccessoryBar: View {
 
   private var plusButton: some View {
     Button(action: { setMenu(!isPlusMenuOpen) }) {
-      Image(systemName: "plus")
+      Image(systemName: isPlusMenuOpen ? "xmark" : "paperclip")
         .font(.system(size: 17, weight: .semibold))
         .frame(width: 36, height: 36)
-        .rotationEffect(.degrees(isPlusMenuOpen ? 45 : 0))
+        .contentTransition(.symbolEffect(.replace))
         .contentShape(Circle())
     }
     .buttonStyle(.plain)
-    .accessibilityLabel(isPlusMenuOpen ? "Close menu" : "Add attachment or post settings")
+    .accessibilityLabel(isPlusMenuOpen ? "Close menu" : "Attachments and post settings")
     .accessibilityValue(isPlusMenuOpen ? "Expanded" : "Collapsed")
   }
 
@@ -113,10 +113,9 @@ struct ComposerAccessoryBar: View {
         setMenu(false)
         actions.onAddToThread()
       } label: {
-        Image(systemName: "text.badge.plus")
-          .font(.system(size: 32))
-          .frame(width: 44, height: 36)
-          .padding(4)
+        Image(systemName: "plus")
+          .font(.system(size: 17, weight: .semibold))
+          .frame(width: 44, height: 44)
           .contentShape(Rectangle())
       }
       .buttonStyle(.plain)
