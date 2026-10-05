@@ -142,13 +142,13 @@ struct LinkStatePersistence {
             switch feature {
             case .appBskyRichtextFacetLink(let link):
                 self.type = "link"
-                self.data = try! JSONEncoder().encode(link.uri.uriString())
+                self.data = (try? JSONEncoder().encode(link.uri.uriString())) ?? Data()
             case .appBskyRichtextFacetMention(let mention):
                 self.type = "mention"
-                self.data = try! JSONEncoder().encode(mention.did.didString())
+                self.data = (try? JSONEncoder().encode(mention.did.didString())) ?? Data()
             case .appBskyRichtextFacetTag(let tag):
                 self.type = "tag"
-                self.data = try! JSONEncoder().encode(tag.tag)
+                self.data = (try? JSONEncoder().encode(tag.tag)) ?? Data()
             @unknown default:
                 self.type = "unknown"
                 self.data = Data()

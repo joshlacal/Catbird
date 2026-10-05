@@ -842,11 +842,11 @@ var id: String {
     if let error = postError {
       switch error {
       case .blocked(let blockedPost):
-        // Create placeholder from blocked author
-        let placeholderHandle = try! Handle(handleString: "blocked.user")
+        // Create placeholder from blocked author. The literal handle is always
+        // valid today; never trap the feed if validation ever tightens.
         return AppBskyActorDefs.ProfileViewBasic(
           did: blockedPost.author.did,
-          handle: placeholderHandle,
+          handle: PlaceholderAuthors.blockedHandle ?? postState.currentPost.author.handle,
           displayName: nil,
           pronouns: nil, avatar: nil,
           associated: nil,
@@ -860,21 +860,7 @@ var id: String {
         )
       case .notFound, .parseError, .permissionDenied:
         // Generic placeholder for deleted/not found posts
-        let placeholderDID = try! DID(didString: "did:plc:unknown")
-        let placeholderHandle = try! Handle(handleString: "deleted.user")
-        return AppBskyActorDefs.ProfileViewBasic(
-          did: placeholderDID,
-          handle: placeholderHandle,
-          displayName: nil,
-          pronouns: nil, avatar: nil,
-          associated: nil,
-          viewer: nil,
-          labels: nil,
-          createdAt: nil,
-          verification: nil,
-          status: nil,
-          debug: nil
-        )
+        return PlaceholderAuthors.deleted ?? postState.currentPost.author
       }
     }
 
@@ -1431,4 +1417,20 @@ enum PostViewError {
       )
     }
   }
+}
+
+/// Placeholder authors for blocked and deleted posts, built without `try!` so a
+/// stricter identifier validator can never crash feed rendering.
+enum PlaceholderAuthors {
+  static let blockedHandle = try? Handle(handleString: "blocked.user")
+
+  static let deleted: AppBskyActorDefs.ProfileViewBasic? = {
+    guard let did = try? DID(didString: "did:plc:unknown"),
+      let handle = try? Handle(handleString: "deleted.user") else { return nil }
+    return AppBskyActorDefs.ProfileViewBasic(
+      did: did, handle: handle, displayName: nil, pronouns: nil, avatar: nil,
+      associated: nil, viewer: nil, labels: nil, createdAt: nil,
+      verification: nil, status: nil, debug: nil
+    )
+  }()
 }

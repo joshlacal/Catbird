@@ -120,10 +120,16 @@ actor PersistentFeedStateManager {
                     isStoredInMemoryOnly: true,
                     cloudKitDatabase: .none
                 )
-                let container = try! ModelContainer(for: minSchema, configurations: [minConfig])
-                let instance = PersistentFeedStateManager(modelContainer: container)
-                _shared = instance
-                return instance
+                do {
+                    let container = try ModelContainer(for: minSchema, configurations: [minConfig])
+                    let instance = PersistentFeedStateManager(modelContainer: container)
+                    _shared = instance
+                    return instance
+                } catch let minimalError {
+                    // Even an in-memory store for three models failed; there is no
+                    // usable state manager to return. Fail with the actual causes.
+                    fatalError("PersistentFeedStateManager: in-memory fallback failed (\(minimalError)) after full schema failed (\(error))")
+                }
             }
         }
     }

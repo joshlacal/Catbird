@@ -299,12 +299,14 @@ struct EnhancedFeedPost: View {
       }
     case .appBskyFeedDefsNotFoundPost(let notFound):
       HStack(alignment: .top, spacing: DesignTokens.Spacing.xs) {
-        AuthorAvatarColumn(
-          author: createPlaceholderAuthor(for: notFound.uri),
-          isParentPost: true,
-          isAvatarLoaded: .constant(false),
-          path: $path
-        )
+        if let placeholder = PlaceholderAuthors.deleted {
+          AuthorAvatarColumn(
+            author: placeholder,
+            isParentPost: true,
+            isAvatarLoaded: .constant(false),
+            path: $path
+          )
+        }
 
         VStack(alignment: .leading, spacing: 0) {
           PostNotFoundView(uri: notFound.uri, reason: .notFound, path: $path)
@@ -357,27 +359,5 @@ struct EnhancedFeedPost: View {
     .onTapGesture {
       path.append(NavigationDestination.post(feedViewPost.post.uri))
     }
-  }
-
-  // MARK: - Placeholder Author Helpers
-  private func createPlaceholderAuthor(
-    for uri: ATProtocolURI
-  ) -> AppBskyActorDefs.ProfileViewBasic {
-    let placeholderDID = try! DID(didString: "did:plc:unknown")
-    let placeholderHandle = try! Handle(handleString: "deleted.user")
-    return AppBskyActorDefs.ProfileViewBasic(
-      did: placeholderDID,
-      handle: placeholderHandle,
-      displayName: nil,
-      pronouns: nil, avatar: nil,
-      associated: nil,
-      viewer: nil,
-      labels: nil,
-      createdAt: nil,
-      verification: nil,
-      status: nil,
-      debug: nil
-
-    )
   }
 }
