@@ -20,9 +20,15 @@ struct HelpAboutSettingsView: View {
             }
         }
         .navigationTitle("Help & About")
-        .confirmationDialog("Replay tips?", isPresented: $confirmingReplay, titleVisibility: .visible) {
-            Button("Replay Tips") { appState.onboardingManager.resetAllOnboarding(for: appState.userDID) }
+        .confirmationDialog("Replay Tips?", isPresented: $confirmingReplay, titleVisibility: .visible) {
+            Button("Replay Tips") {
+                appState.onboardingManager.resetAllOnboarding(for: appState.userDID)
+                appState.toastManager.show(ToastItem(
+                    message: "Tips will appear again the next time you open Catbird.",
+                    icon: "lightbulb.fill"
+                ))
+            }
             Button("Cancel", role: .cancel) { }
-        } message: { Text("This resets this account’s onboarding and Catbird tips on this device.") }
+        } message: { Text("Onboarding for this account and Catbird tips on this device will appear again the next time you open Catbird.") }
     }
 }

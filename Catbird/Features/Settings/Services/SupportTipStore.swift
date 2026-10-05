@@ -44,6 +44,8 @@ protocol SupportTipClient {
 @Observable
 final class SupportTipStore {
   static let shared = SupportTipStore(client: StoreKitTipClient())
+  /// Shown once a tip has been delivered and finished.
+  static let thanksMessage = "Thanks for your support!"
   static let productIDs: Set<String> = [
     "blue.catbird.support.onetime.small",
     "blue.catbird.support.onetime.medium",
@@ -68,7 +70,8 @@ final class SupportTipStore {
   @ObservationIgnored private var unfinishedTask: Task<Void, Never>?
   @ObservationIgnored private var storefrontTask: Task<Void, Never>?
   @ObservationIgnored private var productLoadTask: Task<Void, Never>?
-  @ObservationIgnored private var handledTransactionIDs: Set<UInt64> = []
+  /// Transactions this store has finished and acknowledged; a later delivery of one is not a new tip.
+  @ObservationIgnored private(set) var handledTransactionIDs: Set<UInt64> = []
   @ObservationIgnored private var transactionCompletionTasks: [UInt64: Task<Void, Never>] = [:]
   @ObservationIgnored private var reloadRequested = false
   private static let logger = Logger(subsystem: "blue.catbird", category: "SupportTipStore")
@@ -176,7 +179,7 @@ final class SupportTipStore {
       // Dismissing the App Store sheet is an ordinary exit, not a purchase failure.
     } catch {
       Self.logger.error("Tip purchase failed: \(String(describing: error), privacy: .public)")
-      purchaseMessage = "Your tip couldn't be completed. Please try again."
+      purchaseMessage = "Your tip couldn’t be completed. Please try again."
     }
   }
 
@@ -218,7 +221,7 @@ final class SupportTipStore {
         self.transactionCompletionTasks[transaction.id] = nil
         self.purchaseMessage = transaction.isRevoked
           ? "The App Store updated your tip."
-          : "Thanks for your support!"
+          : SupportTipStore.thanksMessage
         #if DEBUG && os(iOS) && targetEnvironment(simulator)
         self.receipt("completion", origin: origin, transaction: transaction)
         #endif
@@ -234,7 +237,7 @@ final class SupportTipStore {
       #endif
       guard Self.productIDs.contains(productID) else { return }
       Self.logger.error("Tip transaction could not be verified for \(productID, privacy: .public)")
-      purchaseMessage = "Your tip couldn't be verified. Please try again later."
+      purchaseMessage = "Your tip couldn’t be verified. Please try again later."
     }
   }
 

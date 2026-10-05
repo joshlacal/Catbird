@@ -1373,6 +1373,10 @@ private extension CatbirdApp {
 #if DEBUG
       try? Tips.resetDatastore()
 #endif
+      if UserDefaults.standard.bool(forKey: OnboardingManager.resetTipsOnNextLaunchKey) {
+        UserDefaults.standard.removeObject(forKey: OnboardingManager.resetTipsOnNextLaunchKey)
+        try? Tips.resetDatastore()
+      }
       try? Tips.configure([
         .displayFrequency(.immediate),
         .datastoreLocation(.applicationDefault)

@@ -102,9 +102,9 @@ final class SettingsSupportJourneyTests: XCTestCase {
 
   func testSupportCopyAndLargeText() {
     let app = launch(screen: "about", extra: ["--settings-large-text"])
-    XCTAssertTrue(app.navigationBars["About"].waitForExistence(timeout: 10))
+    XCTAssertTrue(app.navigationBars["About & Support"].waitForExistence(timeout: 10))
     let copy = app.staticTexts.matching(NSPredicate(
-      format: "label BEGINSWITH %@", "Leave an optional tip to support Catbird's development."
+      format: "label BEGINSWITH %@", "Leave an optional tip to support Catbird’s development."
     )).firstMatch
     reveal(copy, in: app)
     capture(app, "Support Catbird large text")
@@ -128,12 +128,12 @@ final class SettingsSupportJourneyTests: XCTestCase {
   func testRemovedControlsAreAbsentThroughoutForms() {
     for screen in ["accessibility", "content", "about"] {
       let app = launch(screen: screen)
-      let title = ["accessibility": "Accessibility", "content": "Content & Media", "about": "About"][screen]!
+      let title = ["accessibility": "Accessibility", "content": "Content & Media", "about": "About & Support"][screen]!
       XCTAssertTrue(app.navigationBars[title].waitForExistence(timeout: 10))
       let endMarker = [
         "accessibility": "Adult content and label filtering are managed in Moderation. Video autoplay is managed in Content & Media.",
         "content": "External Media Preferences",
-        "about": "Build"
+        "about": "Version"
       ][screen]!
       var reachedFinalSection = false
       // Native Form rows are lazy. Check each viewport while traversing the complete form,
@@ -158,7 +158,7 @@ final class SettingsSupportJourneyTests: XCTestCase {
 
   func testSupportUnavailableCanRetry() {
     let app = launch(screen: "about", extra: ["--settings-support-retry"])
-    XCTAssertTrue(app.navigationBars["About"].waitForExistence(timeout: 10))
+    XCTAssertTrue(app.navigationBars["About & Support"].waitForExistence(timeout: 10))
     let retry = app.buttons["SupportProductsRetry"].firstMatch
     reveal(retry, in: app)
     capture(app, "Support products unavailable with retry")
@@ -189,7 +189,7 @@ final class SettingsSupportJourneyTests: XCTestCase {
     reveal(about, in: app)
     XCTAssertTrue(about.isEnabled)
     about.tap()
-    XCTAssertTrue(app.navigationBars["About"].waitForExistence(timeout: 5))
+    XCTAssertTrue(app.navigationBars["About & Support"].waitForExistence(timeout: 5))
     // Navigation is independent of local preference storage; no tip action is selected.
     capture(app, "Support remains accessible when local settings cannot load")
   }

@@ -61,7 +61,7 @@ struct SupportTipStoreTests {
     #expect(store.purchaseMessage == nil)
     client.purchaseError = TipFixtureError.unavailable
     await store.purchase(TipClientFixture.product)
-    #expect(store.purchaseMessage == "Your tip couldn't be completed. Please try again.")
+    #expect(store.purchaseMessage == "Your tip couldn’t be completed. Please try again.")
     #expect(!store.isPurchasing)
     client.purchaseError = nil
     client.purchaseResult = .cancelled
@@ -158,7 +158,7 @@ struct SupportTipStoreTests {
     await store.loadProducts()
     client.purchaseResult = .success(.unverified(productID: TipClientFixture.product.id))
     await store.purchase(TipClientFixture.product)
-    #expect(store.purchaseMessage == "Your tip couldn't be verified. Please try again later.")
+    #expect(store.purchaseMessage == "Your tip couldn’t be verified. Please try again later.")
     client.purchaseResult = .success(.verified(transaction(6, productID: "another.product", recorder: recorder)))
     await store.purchase(TipClientFixture.product)
     #expect(await recorder.ids.isEmpty)
