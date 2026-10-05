@@ -298,21 +298,9 @@ struct EnhancedFeedPost: View {
         path.append(NavigationDestination.post(postView.uri))
       }
     case .appBskyFeedDefsNotFoundPost(let notFound):
-      HStack(alignment: .top, spacing: DesignTokens.Spacing.xs) {
-        if let placeholder = PlaceholderAuthors.deleted {
-          AuthorAvatarColumn(
-            author: placeholder,
-            isParentPost: true,
-            isAvatarLoaded: .constant(false),
-            path: $path
-          )
-        }
-
-        VStack(alignment: .leading, spacing: 0) {
-          PostNotFoundView(uri: notFound.uri, reason: .notFound, path: $path)
-            .padding(.top, Self.baseUnit)
-        }
-      }
+      PostNotFoundView(uri: notFound.uri, reason: .notFound, path: $path)
+        .padding(.top, Self.baseUnit)
+        .padding(.bottom, Self.baseUnit * 2)
 
     case .appBskyFeedDefsBlockedPost(let blocked):
       BlockedContentCard(
@@ -325,7 +313,7 @@ struct EnhancedFeedPost: View {
       .padding(.top, Self.baseUnit)
 
     case .unexpected:
-      Text("Unexpected post type")
+      Text("Post unavailable")
         .appFont(AppTextRole.caption)
         .foregroundColor(.secondary)
         .padding(.vertical, Self.baseUnit * 2)

@@ -196,9 +196,12 @@ enum FeedError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .clientNotAvailable:
-            return "ATProto client is not available"
+            return "You’re signed out. Sign in again to see this feed."
         case .requestFailed(let statusCode):
-            return "Feed request failed with status code: \(statusCode)"
+            if statusCode == 429 {
+                return "Too many requests. Try again in a moment."
+            }
+            return "This feed couldn’t be loaded. Try again."
         }
     }
 }

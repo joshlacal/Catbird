@@ -45,8 +45,10 @@ actor ImageLoadingManager {
         // Initialize pipeline first with our custom configuration
         pipeline = Self.createConfiguredPipeline()
         
-        // Configure prefetcher with this pipeline
-        prefetcher = ImagePrefetcher(pipeline: pipeline)
+        // Prefetch into the disk cache only. Display requests resize, so a full-size
+        // decoded image in the memory cache would never be hit and would evict the
+        // resized images actually on screen.
+        prefetcher = ImagePrefetcher(pipeline: pipeline, destination: .diskCache)
     }
     
     // MARK: - Public Methods
@@ -94,8 +96,8 @@ actor ImageLoadingManager {
         prefetcher.stopPrefetching()
         prefetchedURLs.removeAll()
         
-        // Clear memory cache
-        ImageCache.shared.removeAll()
+        // Clear this pipeline's memory cache (not the unused shared one)
+        pipeline.cache.removeAll(caches: [.memory])
     }
     
     /// Prefetch images from an embed

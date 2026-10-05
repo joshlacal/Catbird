@@ -70,6 +70,7 @@ import os
       case header
       case trendingInterstitial
       case post(account: String, feed: String, id: String)
+      case footer
     }
 
     // MARK: - Properties
@@ -151,6 +152,7 @@ import os
     private var postsByID: [String: CachedFeedViewPost] = [:]
     private var trendingContent = TrendingFeedContent()
     private var appliedTrendingContent = TrendingFeedContent()
+    private var appliedFooterState: FeedPaginationFooterState?
     private var appliedPostSignatures: [String: FeedPostContentSignature] = [:]
     private var viewportInteractionGeneration = 0
     private var feedGeneration = 0
@@ -477,9 +479,9 @@ import os
           return nil
         }
 
-        // Get the post for this index
-        guard indexPath.item < self.stateManager.posts.count else { return nil }
-        let post = self.stateManager.posts[indexPath.item]
+        // Map the row to its post; header and interstitial rows shift item indexes.
+        guard let postIndex = self.postIndexForRow(at: indexPath) else { return nil }
+        let post = self.stateManager.posts[postIndex]
 
         // Create Show More action
         let showMoreAction = UIContextualAction(style: .normal, title: nil) {
@@ -506,6 +508,7 @@ import os
         }
         showMoreAction.backgroundColor = .systemGreen
         showMoreAction.image = UIImage(systemName: "hand.thumbsup.fill")
+        showMoreAction.accessibilityLabel = "Show More Like This"
 
         // Create Show Less action
         let showLessAction = UIContextualAction(style: .normal, title: nil) {
@@ -532,6 +535,7 @@ import os
         }
         showLessAction.backgroundColor = .systemRed
         showLessAction.image = UIImage(systemName: "hand.thumbsdown.fill")
+        showLessAction.accessibilityLabel = "Show Less Like This"
 
         let configuration = UISwipeActionsConfiguration(actions: [showLessAction, showMoreAction])
         configuration.performsFirstActionWithFullSwipe = false
@@ -650,6 +654,32 @@ import os
         .margins(.all, 0)
       }
 
+      // Registration for the pagination footer
+      let footerRegistration = UICollectionView.CellRegistration<UICollectionViewListCell, Void> {
+        [weak self] cell, indexPath, _ in
+        guard let self = self else {
+          cell.contentConfiguration = nil
+          return
+        }
+        let appState = self.stateManager.appState
+        cell.layoutMargins = .zero
+        cell.directionalLayoutMargins = NSDirectionalEdgeInsets.zero
+        cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
+        cell.selectedBackgroundView = nil
+
+        let state = self.currentFooterState
+        cell.contentConfiguration = UIHostingConfiguration {
+          FeedPaginationFooterView(state: state) { [weak self] in
+            guard let self else { return }
+            Task { @MainActor in
+              await self.stateManager.loadMore()
+            }
+          }
+          .applyAppStateEnvironment(appState)
+          .environment(\.fontManager, appState.fontManager)
+        }
+        .margins(.all, 0)
+      }
 
       dataSource = UICollectionViewDiffableDataSource<Section, Item>(
         collectionView: collectionView
@@ -664,6 +694,9 @@ import os
         case .post(_, _, let id):
           return collectionView.dequeueConfiguredReusableCell(
             using: postRegistration, for: indexPath, item: id)
+        case .footer:
+          return collectionView.dequeueConfiguredReusableCell(
+            using: footerRegistration, for: indexPath, item: ())
         }
       }
       // Defensive: provide a no-op supplementary provider to satisfy any unexpected requests
@@ -705,6 +738,14 @@ import os
         // User-initiated refresh should override background flag
         // This ensures pull-to-refresh works even if background flag is stuck
         await stateManager.refreshUserInitiated()
+        if case .error = stateManager.loadingState, !stateManager.posts.isEmpty {
+          stateManager.appState.toastManager.show(
+            ToastItem(
+              message: "Couldn’t refresh. Check your connection and try again.",
+              icon: "wifi.exclamationmark"
+            )
+          )
+        }
         await performUpdate()
       }
     }
@@ -744,6 +785,7 @@ import os
         capturedPosts.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
       let capturedSignatures = capturedPostsByID.mapValues(FeedPostContentSignature.init)
       let capturedTrendingContent = trendingContent
+      let capturedFooterState = currentFooterState
       let capturedHeaderPresent = FeedDiscoveryHeaderVisibility.shouldShowHeader(
         headerIsPresent: headerView != nil, postCount: capturedPosts.count)
       let accountID = manager.appState.userDID ?? "unknown-account"
@@ -761,6 +803,9 @@ import os
         }
         items.append(.post(account: accountID, feed: feedID, id: post.id))
       }
+      if !capturedPosts.isEmpty {
+        items.append(.footer)
+      }
       snapshot.appendItems(items, toSection: .main)
 
       let currentItems = dataSource.snapshot().itemIdentifiers
@@ -773,6 +818,8 @@ import os
           return appliedPostSignatures[id] != capturedSignatures[id]
         case .trendingInterstitial:
           return appliedTrendingContent != capturedTrendingContent
+        case .footer:
+          return appliedFooterState != capturedFooterState
         case .header:
           return false
         }
@@ -817,6 +864,7 @@ import os
 
       appliedPostSignatures = capturedSignatures
       appliedTrendingContent = capturedTrendingContent
+      appliedFooterState = capturedFooterState
       appliedSnapshotGeneration = generation
       collectionView.layoutIfNeeded()
       if let readingAnchor,
@@ -1033,6 +1081,22 @@ import os
     }
     
     private func triggerLoadMoreIfNeeded(at indexPath: IndexPath) {
+      // Reaching the footer while more pages exist means an earlier page
+      // request finished without filling the screen; ask for the next one.
+      if case .footer = dataSource.itemIdentifier(for: indexPath) {
+        guard currentFooterState == .loading, !isLoadMoreRequestInFlight else { return }
+        isLoadMoreRequestInFlight = true
+        loadMoreTask = Task { @MainActor [weak self] in
+          guard let self else { return }
+          defer {
+            self.loadMoreTask = nil
+            self.isLoadMoreRequestInFlight = false
+          }
+          guard !self.stateManager.posts.isEmpty, !self.isAppInBackground else { return }
+          await self.stateManager.loadMore()
+        }
+        return
+      }
       guard let postIndex = postIndexForRow(at: indexPath) else { return }
       let totalItems = stateManager.posts.count
       guard totalItems > .zero else { return }
@@ -1230,8 +1294,9 @@ import os
   enum FeedBackgroundState {
     case content
     case loading(message: String)
+    case error(message: String, retry: () -> Void)
     case emptyTimeline(action: () -> Void)
-    case emptyFeed(feedName: String, action: () -> Void)
+    case emptyFeed(action: () -> Void)
 
     var isContent: Bool {
       if case .content = self {
@@ -1244,7 +1309,16 @@ import os
   @available(iOS 16.0, *)
   extension FeedCollectionViewControllerIntegrated {
     private var currentBackgroundState: FeedBackgroundState {
-      if stateManager.posts.isEmpty && stateManager.isLoading {
+      if stateManager.posts.isEmpty, case .error(let error) = stateManager.loadingState {
+        let message = UserFacingError.message(for: error, action: "load this feed")
+          ?? "Couldn’t load this feed. Try again."
+        return .error(message: message) { [weak self] in
+          guard let self else { return }
+          Task { @MainActor in
+            await self.stateManager.retry()
+          }
+        }
+      } else if stateManager.posts.isEmpty && stateManager.isLoading {
         return .loading(message: "Loading feed…")
       } else if stateManager.posts.isEmpty && !stateManager.isLoading {
         switch stateManager.currentFeedType {
@@ -1253,7 +1327,7 @@ import os
             self?.sceneContext.navigationManager.tabSelection?(1)
           }
         default:
-          return .emptyFeed(feedName: stateManager.currentFeedType.displayName) { [weak self] in
+          return .emptyFeed { [weak self] in
             guard let self else { return }
             Task { @MainActor in
               await self.stateManager.refreshUserInitiated()
@@ -1273,13 +1347,36 @@ import os
       case .loading(let message):
         LoadingStateView(message: message)
           .background(Color.clear)
+      case .error(let message, let retry):
+        ContentUnavailableStateView(
+          title: "Couldn’t Load Feed",
+          description: message,
+          systemImage: "wifi.exclamationmark",
+          actionTitle: "Try Again",
+          action: retry
+        )
+        .background(Color.clear)
       case .emptyTimeline(let action):
         ContentUnavailableStateView.emptyFollowingFeed(onDiscover: action)
           .background(Color.clear)
-      case .emptyFeed(let feedName, let action):
-        ContentUnavailableStateView.emptyFeed(feedName: feedName, onRefresh: action, onExplore: nil)
-          .background(Color.clear)
+      case .emptyFeed(let action):
+        ContentUnavailableStateView(
+          title: "No Posts Yet",
+          description: "There’s nothing in this feed right now. Pull down to refresh or try again later.",
+          systemImage: "tray",
+          actionTitle: "Refresh",
+          action: action
+        )
+        .background(Color.clear)
       }
+    }
+
+    /// What the end of a non-empty feed shows: a spinner while more pages may load,
+    /// a retry after a failed page, or a quiet end-of-feed line.
+    private var currentFooterState: FeedPaginationFooterState {
+      if stateManager.paginationError != nil { return .failed }
+      if stateManager.hasReachedEnd { return .end }
+      return .loading
     }
 
     private func updateBackgroundState() {
@@ -1314,6 +1411,44 @@ import os
       }
     }
 
+  }
+
+  // MARK: - Pagination Footer
+
+  enum FeedPaginationFooterState: Equatable {
+    case loading
+    case failed
+    case end
+  }
+
+  struct FeedPaginationFooterView: View {
+    let state: FeedPaginationFooterState
+    let onRetry: () -> Void
+
+    var body: some View {
+      Group {
+        switch state {
+        case .loading:
+          ProgressView()
+            .accessibilityLabel("Loading more posts")
+        case .failed:
+          VStack(spacing: 8) {
+            Text("Couldn’t load more posts.")
+              .appFont(AppTextRole.subheadline)
+              .foregroundStyle(Color.secondary)
+              .multilineTextAlignment(.center)
+            Button("Try Again", action: onRetry)
+              .buttonStyle(.bordered)
+          }
+        case .end:
+          Text("You’re all caught up")
+            .appFont(AppTextRole.footnote)
+            .foregroundStyle(Color.secondary)
+        }
+      }
+      .frame(maxWidth: .infinity)
+      .padding(.vertical, 24)
+    }
   }
 
 #else

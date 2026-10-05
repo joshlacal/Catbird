@@ -68,6 +68,7 @@ final class FeedStateStore: StateInvalidationSubscriber {
           }
         }
 
+        makeActive(existing)
         return existing
       } else {
         // AppState mismatch - this is a stale cached manager from a different account
@@ -97,6 +98,7 @@ final class FeedStateStore: StateInvalidationSubscriber {
     )
 
     stateManagers[cacheKey] = stateManager
+    makeActive(stateManager)
     logger.debug("📦 Stored new state manager for \(cacheKey) in cache")
 
     // Attempt to restore persisted data
@@ -107,6 +109,14 @@ final class FeedStateStore: StateInvalidationSubscriber {
     return stateManager
   }
   
+  /// Feeds the user has moved away from keep their posts for a quick return but
+  /// stop auto-refreshing, so only the feed on screen polls the network.
+  private func makeActive(_ active: FeedStateManager) {
+    for manager in stateManagers.values {
+      manager.setAutomaticRefreshEligible(manager === active)
+    }
+  }
+
   private func restorePersistedData(for stateManager: FeedStateManager, feedIdentifier: String) async {
     // Try to load persisted feed data
     if let bundle = await PersistentFeedStateManager.shared.loadFeedBundle(for: feedIdentifier),

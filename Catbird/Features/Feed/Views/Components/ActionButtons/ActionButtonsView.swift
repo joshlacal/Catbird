@@ -117,7 +117,7 @@ struct ActionButtonsView: View {
         handleReplyTap()
       }
       .accessibilityIdentifier("replyButton")
-        .accessibilityLabel("Reply. Replies count: \(interactionState.replyCount)")
+        .accessibilityLabel(countedLabel("Reply", count: interactionState.replyCount, singular: "reply", plural: "replies"))
       .disabled(post.viewer?.replyDisabled ?? false)
       // Subtle glass and mark as the matched transition source for this post
       .padding(.vertical, isBig ? 3 : 2)
@@ -146,8 +146,15 @@ struct ActionButtonsView: View {
         // Set animation flag to true
         interactionState.animateLike = true
 
+        let wasLiked = interactionState.isLiked
         Task {
-          try? await viewModel.toggleLike()
+          do {
+            try await viewModel.toggleLike()
+          } catch {
+            logger.error("Error toggling like: \(error)")
+            showFailureToast(
+              for: error, action: wasLiked ? "remove your like" : "like this post")
+          }
           // UI state will be updated via the shadow manager and refreshState
           // Reset animation flag after a short delay if needed
           try? await Task.sleep(for: .milliseconds(500))  // Adjust delay as needed
@@ -155,7 +162,9 @@ struct ActionButtonsView: View {
         }
       }
       .accessibilityIdentifier("likeButton")
-      .accessibilityLabel(interactionState.isLiked ? "Unlike. Like count: \(interactionState.likeCount)" : "Like. Like count: \(interactionState.likeCount)")
+      .accessibilityLabel(countedLabel(
+        interactionState.isLiked ? "Unlike" : "Like",
+        count: interactionState.likeCount, singular: "like", plural: "likes"))
 
       Spacer()
 
@@ -268,9 +277,20 @@ struct ActionButtonsView: View {
   }
 
   private var repostAccessibilityLabel: String {
-    interactionState.isReposted
-      ? "Remove Repost. Repost count: \(interactionState.repostCount)"
-      : "Repost or Quote Post. Repost count: \(interactionState.repostCount)"
+    countedLabel(
+      interactionState.isReposted ? "Remove Repost" : "Repost or Quote Post",
+      count: interactionState.repostCount, singular: "repost", plural: "reposts")
+  }
+
+  /// VoiceOver label such as "Like, 3 likes".
+  private func countedLabel(_ action: String, count: Int, singular: String, plural: String) -> String {
+    "\(action), \(count) \(count == 1 ? singular : plural)"
+  }
+
+  private func showFailureToast(for error: Error, action: String) {
+    guard let message = UserFacingError.message(for: error, action: action) else { return }
+    appState.toastManager.show(
+      ToastItem(message: message, icon: "exclamationmark.triangle.fill"))
   }
 
   private var repostMenuMinWidth: CGFloat {
@@ -291,11 +311,14 @@ struct ActionButtonsView: View {
   private func handleRepostToggle() {
     PlatformHaptics.medium()
 
+    let wasReposted = interactionState.isReposted
     Task {
       do {
         try await viewModel.toggleRepost()
       } catch {
-        logger.debug("Error toggling repost: \(error)")
+        logger.error("Error toggling repost: \(error)")
+        showFailureToast(
+          for: error, action: wasReposted ? "remove your repost" : "repost this post")
       }
     }
   }
@@ -434,7 +457,7 @@ struct PostShareMenu: View {
           destination = Destination(kind: .chat, sceneContext: sceneContext)
         }
       } label: {
-        Label("Send to Bluesky chat", systemImage: "bubble.left.and.bubble.right")
+        Label("Send via Chat", systemImage: "bubble.left.and.bubble.right")
       }
       .disabled(!appState.isAuthenticated && onChooseChat == nil)
       .accessibilityIdentifier("shareToBlueskyChat")
@@ -533,5 +556,6 @@ struct PostShareMenu: View {
     NSPasteboard.general.writeObjects([url as NSURL])
     #endif
     PlatformHaptics.light()
+    appState.toastManager.show(ToastItem(message: "Link copied", icon: "link"))
   }
 }

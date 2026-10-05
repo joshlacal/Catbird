@@ -43,7 +43,7 @@ struct NavigationHandler {
         .id(tag)
 
     case .topic(let topic):
-      TopicFeedView(topic: topic)
+      TopicFeedView(topic: topic, path: path)
         .navigationTitle(topic)
         #if os(iOS)
         .toolbarTitleDisplayMode(.inline)
@@ -106,17 +106,12 @@ struct NavigationHandler {
         .id(postUri)
 
     case .bookmarks:
-      if #available(iOS 26.0, macOS 26.0, *) {
-        BookmarksView(path: path)
-          .navigationTitle("Bookmarks")
-          #if os(iOS)
-          .toolbarTitleDisplayMode(.large)
-          #endif
-          .id("bookmarks")
-      } else {
-        Text("Bookmarks require iOS 26.0 or macOS 26.0")
-          .navigationTitle("Bookmarks")
-      }
+      BookmarksView(path: path)
+        .navigationTitle("Bookmarks")
+        #if os(iOS)
+        .toolbarTitleDisplayMode(.large)
+        #endif
+        .id("bookmarks")
 
     case .activitySubscriptions:
       ActivitySubscriptionsView()

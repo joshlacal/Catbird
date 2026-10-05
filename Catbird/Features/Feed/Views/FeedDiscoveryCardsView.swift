@@ -131,7 +131,7 @@ struct FeedDiscoveryCardsView: View {
     VStack(spacing: 20) {
       ProgressView()
         .scaleEffect(1.5)
-      Text("Loading feeds...")
+      Text("Loading feeds…")
         .appFont(AppTextRole.headline)
         .foregroundColor(.secondary)
     }

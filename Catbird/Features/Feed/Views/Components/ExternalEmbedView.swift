@@ -1143,7 +1143,7 @@ private struct ExternalEmbedPreviewLoader: View {
         )
         .padding()
       } else {
-        ProgressView("Loading embed...")
+        ProgressView("Loading embed…")
       }
     }
     .task {

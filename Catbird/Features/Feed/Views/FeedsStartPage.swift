@@ -258,7 +258,7 @@ struct FeedsStartPage: View {
       let uri = try? ATProtocolURI(uriString: feed)
     {
       defaultFeedName =
-        viewModel.feedGenerators[uri]?.displayName ?? viewModel.extractTitle(from: uri)
+        viewModel.displayName(for: uri)
     } else if defaultFeed != nil && SystemFeedTypes.isTimelineFeed(defaultFeed!) {
       defaultFeedName = "Timeline"
     } else {
@@ -591,12 +591,7 @@ struct FeedsStartPage: View {
               iconView: AnyView(timelineListIcon())
             )
           } else if let uri = try? ATProtocolURI(uriString: feed) {
-            let title: String = {
-              if uri.uriString().contains("/app.bsky.graph.list/") {
-                return viewModel.listDetails[uri]?.name ?? viewModel.extractTitle(from: uri)
-              }
-              return viewModel.feedGenerators[uri]?.displayName ?? viewModel.extractTitle(from: uri)
-            }()
+            let title = viewModel.displayName(for: uri)
             let subtitle: String? = {
               if uri.uriString().contains("/app.bsky.graph.list/") {
                 return viewModel.listDetails[uri]?.description
@@ -796,13 +791,11 @@ struct FeedsStartPage: View {
         selectedFeed = .feed(uri)
       }
       currentFeedName =
-        viewModel.feedGenerators[uri]?.displayName ?? viewModel.extractTitle(from: uri)
+        viewModel.displayName(for: uri)
       isDrawerOpen = false
     } label: {
       FeedsGridFeedLabel(
-        title: uri.uriString().contains("/app.bsky.graph.list/")
-          ? (viewModel.listDetails[uri]?.name ?? viewModel.extractTitle(from: uri))
-          : (viewModel.feedGenerators[uri]?.displayName ?? viewModel.extractTitle(from: uri)),
+        title: viewModel.displayName(for: uri),
         isSelected: isSelected(feedURI: feedURI),
         iconSize: iconSize,
         itemWidth: itemWidth
@@ -890,7 +883,7 @@ struct FeedsStartPage: View {
       )
     }
     .accessibility(
-      label: Text(viewModel.feedGenerators[uri]?.displayName ?? viewModel.extractTitle(from: uri))
+      label: Text(viewModel.displayName(for: uri))
     )
     .accessibilityValue(isSelected(feedURI: feedURI) ? "Selected" : "")
     .accessibility(hint: Text("Double tap to open this feed"))
@@ -1414,7 +1407,7 @@ struct FeedsStartPage: View {
                   currentFeedName = "Timeline"
                 } else if let uri = try? ATProtocolURI(uriString: feed) {
                   selectedFeed = feed.contains("/app.bsky.graph.list/") ? .list(uri) : .feed(uri)
-                  currentFeedName = viewModel.feedGenerators[uri]?.displayName ?? viewModel.extractTitle(from: uri)
+                  currentFeedName = viewModel.displayName(for: uri)
                 }
               }
             }
@@ -1441,7 +1434,7 @@ struct FeedsStartPage: View {
         : Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))
         .ignoresSafeArea()
         .overlay {
-          ProgressView("Loading feeds...")
+          ProgressView("Loading feeds…")
         }
         .contentShape(Rectangle())
         .allowsHitTesting(true)
@@ -1456,7 +1449,7 @@ struct FeedsStartPage: View {
         : Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))
         .ignoresSafeArea()
         .overlay {
-          ProgressView("Loading your feeds...")
+          ProgressView("Loading your feeds…")
         }
         .contentShape(Rectangle())
         .allowsHitTesting(true)
@@ -1832,7 +1825,7 @@ private extension View {
                     onAccountSwitch()
                 }
             }
-            .alert("Error", isPresented: showErrorAlert) {
+            .alert("Something Went Wrong", isPresented: showErrorAlert) {
                 Button("OK", role: .cancel) {}
             } message: {
                 Text(errorAlertMessage.wrappedValue)

@@ -52,7 +52,7 @@ struct FeedView: View {
         .opacity(appState.isTransitioningAccounts ? 0.0 : 1.0)
         .animation(.easeInOut(duration: 0.3), value: appState.isTransitioningAccounts)
       } else {
-        ProgressView("Loading feed...")
+        ProgressView("Loading feed…")
       }
     }
     // Search UI removed

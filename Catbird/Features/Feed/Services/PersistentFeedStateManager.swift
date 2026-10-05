@@ -361,7 +361,17 @@ actor PersistentFeedStateManager {
 
       let cachedPosts = try modelContext.fetch(postsDescriptor)
 
-      return (cachedPosts, feedState.cursor)
+      // Restore the feed's own order (reposts and algorithmic feeds aren't
+      // chronological). Posts missing from the saved order keep date order after it.
+      let positions = Dictionary(
+        feedState.postIds.enumerated().map { ($0.element, $0.offset) }, uniquingKeysWith: { first, _ in first })
+      let orderedPosts = cachedPosts.enumerated().sorted { lhs, rhs in
+        let lhsPosition = positions[lhs.element.id] ?? Int.max
+        let rhsPosition = positions[rhs.element.id] ?? Int.max
+        return lhsPosition == rhsPosition ? lhs.offset < rhs.offset : lhsPosition < rhsPosition
+      }.map(\.element)
+
+      return (orderedPosts, feedState.cursor)
     } catch {
       logger.error("Failed to load feed data: \(error)")
       return nil

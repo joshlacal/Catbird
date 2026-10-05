@@ -576,7 +576,7 @@ var id: String {
             }
           }) {
             Label(
-              contextMenuViewModel.isReplyHiddenByThreadgate ? "Show reply for everyone" : "Hide reply for everyone",
+              contextMenuViewModel.isReplyHiddenByThreadgate ? "Show Reply for Everyone" : "Hide Reply for Everyone",
               systemImage: contextMenuViewModel.isReplyHiddenByThreadgate ? "eye" : "eye.slash"
             )
           }
@@ -594,7 +594,7 @@ var id: String {
             }
           }) {
             Label(
-              contextMenuViewModel.isQuoteDetached ? "Re-attach quote" : "Detach quote",
+              contextMenuViewModel.isQuoteDetached ? "Re-attach Quote" : "Detach Quote",
               systemImage: contextMenuViewModel.isQuoteDetached ? "link" : "arrow.branch"
             )
           }
@@ -606,22 +606,22 @@ var id: String {
           Task { await contextMenuViewModel.togglePin() }
         }) {
           if contextMenuViewModel.isPinned {
-            Label("Unpin from profile", systemImage: "pin.slash")
+            Label("Unpin from Profile", systemImage: "pin.slash")
           } else {
-            Label("Pin to your profile", systemImage: "pin")
+            Label("Pin to Profile", systemImage: "pin")
           }
         }
 
         Button(action: {
           showingInteractionSettings = true
         }) {
-          Label("Edit interaction settings", systemImage: "slider.horizontal.3")
+          Label("Edit Interaction Settings", systemImage: "slider.horizontal.3")
         }
 
         Button(action: {
           showingLabelsOnPost = true
         }) {
-          Label("Labels applied to this post", systemImage: "tag")
+          Label("View Labels", systemImage: "tag")
         }
         Button(role: .destructive, action: {
           showDeleteConfirmation = true
@@ -814,6 +814,7 @@ var id: String {
             .onTapGesture {
               path.append(NavigationDestination.profile(grandparentAuthor.did.didString()))
             }
+            .accessibilityAddTraits(.isButton)
         }
       }
     }
@@ -910,8 +911,11 @@ var id: String {
         do {
           try await viewModel.toggleBookmark()
         } catch {
-          // Handle bookmark error if needed
           logger.error("Failed to toggle bookmark: \(error)")
+          if let message = UserFacingError.message(for: error, action: "update your bookmarks") {
+            appState.toastManager.show(
+              ToastItem(message: message, icon: "exclamationmark.triangle.fill"))
+          }
         }
       }
     }
@@ -998,7 +1002,7 @@ var id: String {
               .replacingOccurrences(of: #"\s+"#, with: "", options: .regularExpression)
 
             if cleaned.isEmpty || squashed.range(of: #"^(null)+$"#, options: .regularExpression) != nil {
-              self.threadSummaryError = "The model couldn't generate a summary for this thread."
+              self.threadSummaryError = "The model couldn’t generate a summary for this thread."
               self.isThreadSummaryLoading = false
               self.canRetryThreadSummary = true
             } else {
@@ -1030,13 +1034,13 @@ var id: String {
       case .missingClient:
         return ("Sign in to summarize threads.", false)
       case .notAThread:
-        return ("There isn't enough conversation to summarize yet.", false)
+        return ("There isn’t enough conversation to summarize yet.", false)
       case .modelUnavailable:
         return ("Apple Intelligence is still preparing. Try again in a moment.", true)
       case .foundationModelsUnavailable:
-        return ("Thread summarization isn't available on this device.", false)
-      case .invalidThreadURI(let value):
-        return ("The thread identifier \(value) is invalid.", false)
+        return ("Thread summarization isn’t available on this device.", false)
+      case .invalidThreadURI:
+        return ("This thread can’t be summarized.", false)
       case .emptyResult(let context):
         if context.contains("post may be deleted") {
           return ("That post isn’t available anymore, so this thread can’t be summarized.", false)
@@ -1045,7 +1049,7 @@ var id: String {
           return ("Couldn’t load this thread to summarize. Try again.", true)
         }
         if context.contains("no valid posts") {
-          return ("There isn't enough conversation to summarize yet.", false)
+          return ("There isn’t enough conversation to summarize yet.", false)
         }
         return ("Couldn’t generate a summary for this thread. Try again.", true)
       case .contextLimitExceeded:
@@ -1321,7 +1325,7 @@ struct AuthorAvatarColumn: View {
         .pipeline(ImageLoadingManager.shared.pipeline)
         // Placeholder is handled inside the content closure now
         .onTapGesture {
-          path.append(NavigationDestination.profile(author.did.didString()))
+          openProfile()
         }
       } else {
         noAvatarView
@@ -1332,10 +1336,31 @@ struct AuthorAvatarColumn: View {
     .padding(.horizontal, Self.baseUnit)
     .padding(.top, Self.baseUnit)
     .background(parentPostIndicator)
+    .modifier(AuthorAvatarAccessibility(
+      label: "\(authorName), view profile",
+      isEnabled: !isPlaceholderAuthor,
+      action: openProfile))
     // Do not add a ProfileEntity context inside a PostEntity-annotated post.
     // iOS 27 can flatten nested entity contexts during view annotation
     // collection and hydrate the author's DID as the surrounding PostEntity.
     // Dedicated profile/search surfaces donate ProfileEntity context instead.
+  }
+
+  /// Deleted and unavailable posts carry a stand-in author with no real profile.
+  private var isPlaceholderAuthor: Bool {
+    author.did.didString() == "did:plc:unknown"
+  }
+
+  private var authorName: String {
+    if let displayName = author.displayName, !displayName.isEmpty {
+      return displayName
+    }
+    return "@\(author.handle.description)"
+  }
+
+  private func openProfile() {
+    guard !isPlaceholderAuthor else { return }
+    path.append(NavigationDestination.profile(author.did.didString()))
   }
 
   // Default avatar placeholder
@@ -1347,7 +1372,7 @@ struct AuthorAvatarColumn: View {
       .foregroundColor(.gray)
       .overlay(liveStatusRing)
       .onTapGesture {
-        path.append(NavigationDestination.profile(author.did.didString()))
+        openProfile()
       }
   }
 
@@ -1423,6 +1448,27 @@ enum PostViewError {
 
 /// Placeholder authors for blocked and deleted posts, built without `try!` so a
 /// stricter identifier validator can never crash feed rendering.
+/// Exposes the avatar column as one "view profile" button to VoiceOver, or hides
+/// it when there is no profile to open.
+private struct AuthorAvatarAccessibility: ViewModifier {
+  let label: String
+  let isEnabled: Bool
+  let action: () -> Void
+
+  @ViewBuilder
+  func body(content: Content) -> some View {
+    if isEnabled {
+      content
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(label)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { action() }
+    } else {
+      content.accessibilityHidden(true)
+    }
+  }
+}
+
 enum PlaceholderAuthors {
   static let blockedHandle = try? Handle(handleString: "blocked.user")
 

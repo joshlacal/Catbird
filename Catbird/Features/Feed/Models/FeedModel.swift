@@ -49,6 +49,8 @@ final class FeedModel: StateInvalidationSubscriber {
   @MainActor private(set) var isBackgroundRefreshing = false
   @MainActor private(set) var hasMore = true
   @MainActor private(set) var error: Error?
+  /// The failure of the most recent page request, cleared when the next one starts.
+  @MainActor private(set) var loadMoreError: Error?
   @MainActor private(set) var lastRefreshTime = Date.distantPast
 
   // Pagination
@@ -532,6 +534,7 @@ final class FeedModel: StateInvalidationSubscriber {
       if publication.generation == publicationGeneration { isLoadingMore = false }
     }
     isLoadingMore = true
+    loadMoreError = nil
       logger.debug("🔍 Starting loadMore with cursor: \(self.cursor ?? "nil")")
 
     guard appState.atProtoClient != nil else {
@@ -576,6 +579,7 @@ final class FeedModel: StateInvalidationSubscriber {
       // Only show errors to user if they're not cancellations
       if publication.generation == publicationGeneration && error.shouldShowToUser {
         self.error = error
+        self.loadMoreError = error
       }
     }
 

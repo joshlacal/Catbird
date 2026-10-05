@@ -25,8 +25,9 @@ final class FeedFeedbackManager {
   /// Current feed type being tracked
   private(set) var currentFeedType: FetchType?
   
-  /// Queue of interactions to send
-  private var interactionQueue: Set<String> = []
+  /// Interactions waiting to be sent, keyed by the feed generator DID they belong to,
+  /// so reconfiguring for another feed never redirects queued items.
+  private var interactionQueue: [String: Set<String>] = [:]
   
   /// History of sent interactions
   private var sentInteractions: Set<String> = []
@@ -145,7 +146,7 @@ final class FeedFeedbackManager {
     }
     
     // CRITICAL: We must have a feed generator DID to route interactions
-    guard feedGeneratorDID != nil else {
+    guard let feedGeneratorDID else {
       logger.debug("No feed generator DID available, cannot queue interaction")
       return
     }
@@ -168,7 +169,7 @@ final class FeedFeedbackManager {
       return
     }
     
-    interactionQueue.insert(key)
+    interactionQueue[feedGeneratorDID, default: []].insert(key)
     sentInteractions.insert(key)
     
     // Schedule throttled send
@@ -245,62 +246,63 @@ final class FeedFeedbackManager {
     )
   }
   
-  /// Schedule a throttled send of interactions
+  /// Schedule a throttled send of interactions. The first queued interaction starts
+  /// the timer; later ones join that batch instead of postponing it.
   private func scheduleThrottledSend() {
-    // Cancel existing timer
-    sendTimer?.invalidate()
-    
-    // Create new timer
+    guard sendTimer == nil else { return }
     sendTimer = Timer.scheduledTimer(
       withTimeInterval: Self.sendThrottleInterval,
       repeats: false
     ) { [weak self] _ in
-      Task {
+      Task { @MainActor in
         await self?.flushInteractions()
       }
     }
   }
   
   /// Immediately flush all queued interactions
+  @MainActor
   func flushInteractions() async {
+    sendTimer?.invalidate()
+    sendTimer = nil
     guard !interactionQueue.isEmpty else { return }
     guard let client = client else {
       logger.warning("No client available to send interactions")
       return
     }
     
-    // CRITICAL: We must have a feed generator DID to route the request
-    guard let feedDID = feedGeneratorDID else {
-        logger.warning("No feed generator DID available, cannot send interactions. Discarding \(self.interactionQueue.count) queued interactions.")
-      interactionQueue.removeAll()
-      return
-    }
-    
-    let interactions = interactionQueue.map { parseInteractionKey($0) }
+    let batches = interactionQueue
     interactionQueue.removeAll()
     
-    do {
-      let input = AppBskyFeedSendInteractions.Input(interactions: interactions)
-      
-      // Set the atproto-proxy header to route request to the feed generator
-      // Format: {feedGeneratorDID}#bsky_fg
-      await client.setHeader(name: "atproto-proxy", value: "\(feedDID)#bsky_fg")
-      
-      // Send the interactions
-      let (responseCode, _) = try await client.app.bsky.feed.sendInteractions(input: input)
-      
-      // CRITICAL: Remove the proxy header after the request to prevent header pollution
-      await client.removeHeader(name: "atproto-proxy")
-      
-      if responseCode == 200 {
-        logger.info("Successfully sent \(interactions.count) interactions to feed generator \(feedDID)")
-      } else {
-        logger.warning("Failed to send interactions to \(feedDID), status code: \(responseCode)")
+    for (feedDID, keys) in batches where !keys.isEmpty {
+      let interactions = keys.map { parseInteractionKey($0) }
+      do {
+        // Route this request alone to the feed generator ({feedGeneratorDID}#bsky_fg).
+        // A per-request proxy header overrides the client's default service
+        // routing without leaking into concurrent requests.
+        let input = AppBskyFeedSendInteractions.Input(interactions: interactions)
+        let network = await client.networkService
+        let request = try await network.createURLRequest(
+          endpoint: "app.bsky.feed.sendInteractions",
+          method: "POST",
+          headers: ["Content-Type": "application/json", "Accept": "application/json"],
+          body: try JSONEncoder().encode(input),
+          queryItems: nil
+        )
+        let (_, response) = try await network.performRequest(
+          request,
+          skipTokenRefresh: false,
+          additionalHeaders: ["atproto-proxy": "\(feedDID)#bsky_fg"]
+        )
+        
+        if (200...299).contains(response.statusCode) {
+          logger.info("Successfully sent \(interactions.count) interactions to feed generator \(feedDID)")
+        } else {
+          logger.warning("Failed to send interactions to \(feedDID), status code: \(response.statusCode)")
+        }
+      } catch {
+        logger.error("Error sending interactions to \(feedDID): \(error.localizedDescription)")
       }
-    } catch {
-      // Make sure to remove the proxy header even on error
-      await client.removeHeader(name: "atproto-proxy")
-      logger.error("Error sending interactions to \(feedDID): \(error.localizedDescription)")
     }
   }
   

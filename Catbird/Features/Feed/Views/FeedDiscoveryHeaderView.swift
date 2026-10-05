@@ -24,12 +24,14 @@ struct FeedDiscoveryHeaderView: View {
   @State private var liked = false
   @State private var likeUri: ATProtocolURI?
   @State private var didSeedViewerState = false
+  /// The server's like count already includes a like the viewer made earlier.
+  @State private var countIncludesViewerLike = false
   @State private var isShowingReportSheet = false
   
   private let logger = Logger(subsystem: "blue.catbird", category: "FeedDiscoveryHeaderView")
   
   private var displayedLikeCount: Int? {
-    let base = feed.likeCount ?? 0
+    let base = max(0, (feed.likeCount ?? 0) - (countIncludesViewerLike ? 1 : 0))
     let total = base + (liked ? 1 : 0)
     return total > 0 ? total : nil
   }
@@ -194,13 +196,15 @@ struct FeedDiscoveryHeaderView: View {
         Button {
           onLikedByTap()
         } label: {
-          Label("Liked by", systemImage: "heart")
+          Label("Liked By", systemImage: "heart")
         }
       }
 
 
-      Button { shareFeed() } label: {
-        Label("Share", systemImage: "square.and.arrow.up")
+      if let shareURL {
+        ShareLink(item: shareURL) {
+          Label("Share", systemImage: "square.and.arrow.up")
+        }
       }
 
       Button(role: .destructive) {
@@ -260,9 +264,14 @@ struct FeedDiscoveryHeaderView: View {
               likeUri = data.uri
             }
           }
+        } else {
+          showFailureToast("Couldn’t like this feed. Try again.")
         }
       } catch {
         logger.error("Like feed failed: \(error.localizedDescription)")
+        if let message = UserFacingError.message(for: error, action: "like this feed") {
+          showFailureToast(message)
+        }
       }
       await MainActor.run {
         isLiking = false
@@ -287,43 +296,35 @@ struct FeedDiscoveryHeaderView: View {
           collection: try NSID(nsidString: "app.bsky.feed.like"),
           rkey: try RecordKey(keyString: rkey)
         )
-        _ = try await client.com.atproto.repo.deleteRecord(input: input)
-        await MainActor.run {
-          liked = false
-          self.likeUri = nil
+        let responseCode = try await client.com.atproto.repo.deleteRecord(input: input).responseCode
+        if responseCode == 200 {
+          await MainActor.run {
+            liked = false
+            self.likeUri = nil
+          }
+        } else {
+          logger.error("Unlike feed returned status \(responseCode)")
+          showFailureToast("Couldn’t remove your like. Try again.")
         }
       } catch {
         logger.error("Unlike feed failed: \(error.localizedDescription)")
+        if let message = UserFacingError.message(for: error, action: "remove your like") {
+          showFailureToast(message)
+        }
       }
       await MainActor.run { isLiking = false }
     }
   }
   
-  private func shareFeed() {
-    PlatformHaptics.light()
-
-    // Build a bsky.app web URL from the AT URI (at://did/collection/rkey)
-    let creatorHandle = feed.creator.handle.description
-    guard let rkey = feed.uri.recordKey,
-          let url = URL(string: "https://bsky.app/profile/\(creatorHandle)/feed/\(rkey)") else { return }
-    
-    #if os(iOS)
-    guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-          let rootViewController = windowScene.windows.first?.rootViewController else {
-      return
-    }
-    let vc = UIActivityViewController(activityItems: [url], applicationActivities: nil)
-    if let pop = vc.popoverPresentationController {
-      pop.sourceView = rootViewController.view
-      pop.sourceRect = CGRect(x: rootViewController.view.bounds.midX, y: rootViewController.view.bounds.midY, width: 0, height: 0)
-      pop.permittedArrowDirections = []
-    }
-    rootViewController.present(vc, animated: true)
-    #elseif os(macOS)
-    NSSharingService.sharingServices(forItems: [url]).first?.perform(withItems: [url])
-    #endif
+  /// The feed's bsky.app web link, built from its AT URI (at://did/collection/rkey).
+  private var shareURL: URL? {
+    guard let rkey = feed.uri.recordKey else { return nil }
+    return URL(string: "https://bsky.app/profile/\(feed.creator.handle.description)/feed/\(rkey)")
   }
-  
+
+  private func showFailureToast(_ message: String) {
+    appState.toastManager.show(ToastItem(message: message, icon: "exclamationmark.triangle.fill"))
+  }
   
   /// Seed from inline viewer state exposed by Petrel's GeneratorView
   private func seedFromFeedViewer() {
@@ -331,6 +332,7 @@ struct FeedDiscoveryHeaderView: View {
     if let uri = feed.viewer?.like {
       liked = true
       likeUri = uri
+      countIncludesViewerLike = true
     }
     didSeedViewerState = true
   }
@@ -345,6 +347,7 @@ struct FeedDiscoveryHeaderView: View {
         await MainActor.run {
           self.liked = true
           self.likeUri = uri
+          self.countIncludesViewerLike = true
           self.didSeedViewerState = true
         }
       } else {

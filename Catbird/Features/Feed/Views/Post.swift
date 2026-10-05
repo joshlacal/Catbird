@@ -261,7 +261,7 @@ struct Post: View, Equatable {
                     HStack(spacing: 8) {
                         ForEach(tags, id: \.self) { tag in
                             Text("#\(tag)")
-                                .customScaledFont(size: 13, weight: .medium, design: .rounded)
+                                .customScaledFont(size: 13, weight: .medium, relativeTo: .footnote, design: .rounded)
                                 .foregroundColor(Color.accentColor)
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 4)
@@ -272,6 +272,7 @@ struct Post: View, Equatable {
                                 .onTapGesture {
                                     path.append(NavigationDestination.hashtag(tag))
                                 }
+                                .accessibilityAddTraits(.isButton)
                         }
                     }
                 }
@@ -351,14 +352,14 @@ struct Post: View, Equatable {
                 if isTranslating {
                     ProgressView()
                         .scaleEffect(0.7)
-                    Text("Translating...")
-                        .customScaledFont(size: 12, weight: .medium)
+                    Text("Translating…")
+                        .customScaledFont(size: 12, weight: .medium, relativeTo: .caption)
                 } else {
                     Image(systemName: showTranslation ? "globe.americas.fill" : "globe.americas")
                         .imageScale(.small)
                     
                     Text(showTranslation ? "Hide Translation" : "Translate")
-                        .customScaledFont(size: 12, weight: .medium)
+                        .customScaledFont(size: 12, weight: .medium, relativeTo: .caption)
                 }
             }
             .fixedSize(horizontal: false, vertical: true)
@@ -374,7 +375,7 @@ struct Post: View, Equatable {
         }
         .buttonStyle(PlainButtonStyle())
         .disabled(isTranslating)
-        .accessibilityLabel(isTranslating ? Text("Translating...") : Text(showTranslation ? "Hide Translation" : "Translate"))
+        .accessibilityLabel(isTranslating ? Text("Translating…") : Text(showTranslation ? "Hide Translation" : "Translate"))
         .accessibilityHint(showTranslation ? Text("Show the original post") : Text("Translate into \(languageName(for: targetLanguage))"))
     }
 
@@ -573,7 +574,7 @@ struct Post: View, Equatable {
                     } else if fullErrorText.contains("network") || fullErrorText.contains("internet") {
                         translationError = NSLocalizedString("Internet connection required to download translation models.", comment: "")
                     } else {
-                        translationError = "Translation failed: \(fullErrorText.trimmingCharacters(in: .whitespaces))"
+                        translationError = "Translation isn’t available right now. Try again later."
                     }
                 }
                 #else
@@ -587,7 +588,7 @@ struct Post: View, Equatable {
                 } else if fullErrorText.contains("network") || fullErrorText.contains("internet") {
                     translationError = NSLocalizedString("Internet connection required to download translation models.", comment: "")
                 } else {
-                    translationError = "Translation failed: \(fullErrorText.trimmingCharacters(in: .whitespaces))"
+                    translationError = "Translation isn’t available right now. Try again later."
                 }
                 #endif
                 isTranslating = false

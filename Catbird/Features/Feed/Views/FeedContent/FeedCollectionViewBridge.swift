@@ -207,7 +207,7 @@ struct FeedCollectionViewWrapper: View {
                     if stateManager.isLoading {
                         HStack {
                             Spacer()
-                            ProgressView("Loading more...")
+                            ProgressView("Loading more…")
                                 .foregroundStyle(.secondary)
                             Spacer()
                         }

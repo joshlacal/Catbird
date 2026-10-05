@@ -42,6 +42,7 @@ final class UIKitStateObserver<T: Observable> {
                 _ = stateManager.posts
                 _ = stateManager.loadingState
                 _ = stateManager.hasReachedEnd
+                _ = stateManager.paginationError
                 _ = stateManager.isEmpty
             } else if let themeManager = self.observedObject as? ThemeManager {
                 _ = themeManager.colorSchemeOverride

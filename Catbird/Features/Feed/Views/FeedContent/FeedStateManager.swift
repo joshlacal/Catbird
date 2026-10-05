@@ -16,6 +16,13 @@ import os
 import UIKit
 #endif
 
+extension Notification.Name {
+    /// Posted after a post is hidden or unhidden, so open feeds re-filter immediately.
+    static let feedPostVisibilityChanged = Notification.Name("FeedPostVisibilityChanged")
+    /// Posted after the user deletes one of their posts. `object` is the post's URI string.
+    static let feedPostDeleted = Notification.Name("FeedPostDeleted")
+}
+
 @MainActor @Observable
 final class FeedStateManager: StateInvalidationSubscriber {
     // MARK: - Types
@@ -52,6 +59,9 @@ final class FeedStateManager: StateInvalidationSubscriber {
     
     /// Error message for display
     private(set) var errorMessage: String?
+
+    /// The failure of the most recent page request, shown in the feed's footer.
+    private(set) var paginationError: Error?
     
     /// Whether the feed is empty (no posts and not loading)
     var isEmpty: Bool {
@@ -101,6 +111,10 @@ final class FeedStateManager: StateInvalidationSubscriber {
     
     /// Automatic refresh coordination
     private var autoRefreshTask: Task<Void, Never>?
+
+    /// Only the feed the user most recently opened refreshes itself in the
+    /// background; FeedStateStore moves this flag as feeds are switched.
+    private var isAutoRefreshEligible = true
     
     /// Only FeedStateStore's aggregate scene lifecycle may suspend shared work.
     private var isAppInBackground = false
@@ -150,14 +164,32 @@ final class FeedStateManager: StateInvalidationSubscriber {
     // MARK: - Setup
     
     private func setupObservers() {
-        // Observe filter changes and reapply immediately
+        // Filter edits, blocks, mutes and hidden posts all take effect immediately
+        // on the posts already on screen, without waiting for a refresh.
+        for name in [
+            NSNotification.Name("FeedFiltersChanged"),
+            NSNotification.Name("UserGraphChanged"),
+            Notification.Name.feedPostVisibilityChanged
+        ] {
+            NotificationCenter.default.addObserver(
+                forName: name,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor in
+                    await self?.reapplyFilters()
+                }
+            }
+        }
+
         NotificationCenter.default.addObserver(
-            forName: NSNotification.Name("FeedFiltersChanged"),
+            forName: Notification.Name.feedPostDeleted,
             object: nil,
             queue: .main
-        ) { [weak self] _ in
+        ) { [weak self] notification in
+            guard let uri = notification.object as? String else { return }
             Task { @MainActor in
-                await self?.reapplyFilters()
+                self?.removePost(withURI: uri)
             }
         }
     }
@@ -233,7 +265,13 @@ final class FeedStateManager: StateInvalidationSubscriber {
     /// Performs initial load of the feed
     @MainActor
     func loadInitialData() async {
-        guard !isLoadingInitialData, case .idle = loadingState else { return }
+        guard !isLoadingInitialData else { return }
+        switch loadingState {
+        case .idle, .error:
+            break
+        case .loading, .refreshing, .loadingMore:
+            return
+        }
         isLoadingInitialData = true
         defer { isLoadingInitialData = false }
 
@@ -406,6 +444,7 @@ final class FeedStateManager: StateInvalidationSubscriber {
 
             loadingState = .refreshing
             errorMessage = nil
+            paginationError = nil
             hasReachedEnd = false
 
             await feedModel.loadFeed(fetch: feedType, forceRefresh: true)
@@ -461,12 +500,18 @@ final class FeedStateManager: StateInvalidationSubscriber {
             guard !Task.isCancelled && !isAppInBackground else { return }
             
             loadingState = .loadingMore
+            paginationError = nil
             
             let previousCount = posts.count
             
             await feedModel.loadMore()
             
             guard !Task.isCancelled && !isAppInBackground else { return }
+
+            if let error = feedModel.loadMoreError {
+                logger.error("Loading more posts failed: \(error.localizedDescription)")
+                paginationError = error
+            }
 
             await updatePostsFromModel()
             guard !Task.isCancelled && !isAppInBackground else { return }
@@ -597,6 +642,19 @@ final class FeedStateManager: StateInvalidationSubscriber {
         logger.debug("Filter reapplication complete - now showing \(self.posts.count) posts")
     }
     
+    /// Drops a deleted post from this feed without waiting for a refresh.
+    @MainActor
+    private func removePost(withURI uri: String) {
+        let matches: (CachedFeedViewPost) -> Bool = { cached in
+            (try? cached.feedViewPost.post.uri.uriString()) == uri
+        }
+        guard posts.contains(where: matches) else { return }
+        feedModel.posts.removeAll(where: matches)
+        posts.removeAll(where: matches)
+        cleanupViewModels()
+        logger.debug("Removed deleted post from feed")
+    }
+
     // MARK: - Utility Methods
     
     /// Gets a post by ID
@@ -1024,9 +1082,21 @@ final class FeedStateManager: StateInvalidationSubscriber {
     
     // MARK: - Automatic Refresh
     
+    /// Enables or disables background auto-refresh for this feed. Feeds that are
+    /// no longer the active one keep their posts but stop polling the network.
+    func setAutomaticRefreshEligible(_ eligible: Bool) {
+        guard isAutoRefreshEligible != eligible else { return }
+        isAutoRefreshEligible = eligible
+        if eligible {
+            startAutomaticRefreshMonitoring()
+        } else {
+            stopAutomaticRefreshMonitoring()
+        }
+    }
+
     /// Starts at most one monitor, including repeated active/inactive callbacks.
     private func startAutomaticRefreshMonitoring() {
-        guard autoRefreshTask == nil, !isAppInBackground, !isCleanedUp else { return }
+        guard autoRefreshTask == nil, isAutoRefreshEligible, !isAppInBackground, !isCleanedUp else { return }
         logger.debug("Starting automatic refresh monitoring")
 
         autoRefreshTask = Task { @MainActor [weak self] in

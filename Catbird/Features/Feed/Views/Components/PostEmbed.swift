@@ -294,7 +294,7 @@ private struct PostEmbedPreviewLoader: View {
         .environment(\.postID, data.post.cid.string)
         .padding()
       } else {
-        ProgressView("Loading embed...")
+        ProgressView("Loading embed…")
       }
     }
     .task {

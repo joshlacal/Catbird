@@ -169,7 +169,7 @@ final class FeedPostViewModel {
         let text = displayText
         let maxLength = 280
         let truncated = text.count > maxLength 
-            ? String(text.prefix(maxLength)) + "..."
+            ? String(text.prefix(maxLength)) + "…"
             : text
         _truncatedText = truncated
         return truncated

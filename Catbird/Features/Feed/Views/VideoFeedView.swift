@@ -214,7 +214,8 @@ public struct VideoFeedView: View {
       // SwiftUI owns the initial request and cancels it when leaving or retrying.
     } catch {
       if initialLoadRequestID == requestID, !Task.isCancelled {
-        self.errorMessage = error.localizedDescription
+        self.errorMessage = (error as? FeedError)?.errorDescription
+          ?? UserFacingError.message(for: error, action: "load videos")
       }
     }
   }

@@ -415,7 +415,7 @@ struct EmbeddedMediaWebView: View {
             ProgressView()
                 .scaleEffect(0.8)
                 .progressViewStyle(CircularProgressViewStyle(tint: .secondary))
-            Text("Loading...")
+            Text("Loading…")
                 .font(.caption2)
                 .foregroundColor(.secondary)
         }

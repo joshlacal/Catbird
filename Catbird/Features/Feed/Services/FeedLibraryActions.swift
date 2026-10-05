@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import OSLog
 import Petrel
 
 enum FeedLibraryDestination: Equatable { case saved, pinned, unpinned }
@@ -16,8 +17,8 @@ enum FeedLibraryActionError: LocalizedError {
   case pendingSync(String), wrongAccount
   var errorDescription: String? {
     switch self {
-    case .pendingSync(let message): return "Saved on this device. Sync needs retry: \(message)"
-    case .wrongAccount: return "The active account changed. Reopen feed discovery."
+    case .pendingSync: return FeedLibraryActions.pendingSyncMessage
+    case .wrongAccount: return "You switched accounts. Close this screen and open it again."
     }
   }
 }
@@ -26,7 +27,12 @@ enum FeedLibraryActionError: LocalizedError {
 /// Preferences remain the source of truth; the arrays here are a display snapshot.
 @MainActor @Observable
 final class FeedLibraryActions {
+  /// Shown for changes kept locally until the server accepts them; the raw sync
+  /// error is logged, never displayed.
+  nonisolated static let pendingSyncMessage = "Saved on this device. It will sync when you’re back online."
+
   let accountDID: String
+  @ObservationIgnored private let logger = Logger(subsystem: "blue.catbird", category: "FeedLibraryActions")
   private(set) var savedFeeds: [String] = []
   private(set) var pinnedFeeds: [String] = []
   private(set) var refreshError: String?
@@ -84,6 +90,10 @@ final class FeedLibraryActions {
     states[uri.uriString()] ?? .idle
   }
 
+  private static func failureMessage(for error: Error) -> String {
+    (error as? FeedLibraryActionError)?.errorDescription ?? "Couldn’t save this change. Try again."
+  }
+
   func refresh() async {
     if let refreshTask { await refreshTask.value; return }
     let task = Task { @MainActor in
@@ -93,7 +103,11 @@ final class FeedLibraryActions {
         self.restorePendingIntents()
         self.snapshot(preferences)
         self.refreshError = nil
-      } catch { self.refreshError = error.localizedDescription }
+      } catch {
+        self.logger.error("Refreshing feed library failed: \(error.localizedDescription)")
+        self.refreshError = (error as? FeedLibraryActionError)?.errorDescription
+          ?? "Couldn’t load your feeds. Check your connection and try again."
+      }
     }
     refreshTask = task
     await task.value
@@ -157,12 +171,16 @@ final class FeedLibraryActions {
           self.pendingPinnedOrder = nil
           self.orderState = .success(.pinned)
         case .pendingSync(let message):
-          self.orderState = .pendingSync(message)
+          self.logger.error("Feed order kept locally pending sync: \(message)")
+          self.orderState = .pendingSync(Self.pendingSyncMessage)
           throw FeedLibraryActionError.pendingSync(message)
         }
         return FeedLibraryMembership.pinned
       } catch {
-        if case .pendingSync = self.orderState {} else { self.orderState = .failed(error.localizedDescription) }
+        if case .pendingSync = self.orderState {} else {
+          self.logger.error("Saving feed order failed: \(error.localizedDescription)")
+          self.orderState = .failed(Self.failureMessage(for: error))
+        }
         throw error
       }
     }
@@ -233,7 +251,8 @@ final class FeedLibraryActions {
           case .synced:
             if let entry { self.pendingStore?.complete(entry, accountDID: self.accountDID) }
           case .pendingSync(let message):
-            self.states[key] = .pendingSync(message)
+            self.logger.error("Feed library change kept locally pending sync: \(message)")
+            self.states[key] = .pendingSync(Self.pendingSyncMessage)
             throw FeedLibraryActionError.pendingSync(message)
           }
         } else { self.snapshot(preferences) }
@@ -242,7 +261,8 @@ final class FeedLibraryActions {
         return membership
       } catch {
         if case .pendingSync = self.states[key] {} else {
-          self.states[key] = .failed(error.localizedDescription)
+          self.logger.error("Saving feed library change failed: \(error.localizedDescription)")
+          self.states[key] = .failed(Self.failureMessage(for: error))
         }
         throw error
       }
@@ -260,7 +280,7 @@ final class FeedLibraryActions {
   private func restorePendingIntents() {
     if let pendingStore {
       if case .failed = orderState {} else { pendingPinnedOrder = pendingStore.pinnedOrder(accountDID: accountDID) }
-      if pendingPinnedOrder != nil { orderState = .pendingSync("Retry to synchronize this local order.") }
+      if pendingPinnedOrder != nil { orderState = .pendingSync(Self.pendingSyncMessage) }
       else if case .pendingSync = orderState { orderState = .idle }
     }
     let pendingURIs = Set(pendingStore?.entries(accountDID: accountDID).map(\.uri) ?? [])
@@ -279,7 +299,7 @@ final class FeedLibraryActions {
       case .pinned: intents[entry.uri] = .add(.pinned)
       case .removed: intents[entry.uri] = .remove
       }
-      states[entry.uri] = .pendingSync("Retry to synchronize this local change.")
+      states[entry.uri] = .pendingSync(Self.pendingSyncMessage)
     }
   }
 

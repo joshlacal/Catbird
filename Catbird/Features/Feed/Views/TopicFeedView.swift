@@ -5,12 +5,14 @@
 //  Created by Josh LaCalamito on 8/24/26.
 //
 
+import OSLog
 import Petrel
 import SwiftUI
 
 /// Screen for viewing posts associated with a specific topic (queried via searchPostsV2).
 public struct TopicFeedView: View {
   public let topic: String
+  @Binding var path: NavigationPath
   @Environment(AppState.self) private var appState
 
   public enum Tab: String, CaseIterable, Identifiable {
@@ -30,8 +32,9 @@ public struct TopicFeedView: View {
   @State private var topTabState = TopicTabState(sort: "top")
   @State private var latestTabState = TopicTabState(sort: "latest")
 
-  public init(topic: String) {
+  init(topic: String, path: Binding<NavigationPath>) {
     self.topic = topic
+    self._path = path
   }
 
   private var shareURL: URL {
@@ -55,6 +58,7 @@ public struct TopicFeedView: View {
         TopicTabContentView(
           topic: topic,
           state: topTabState,
+          path: $path,
           appState: appState
         )
         .opacity(selectedTab == .top ? 1 : 0)
@@ -64,6 +68,7 @@ public struct TopicFeedView: View {
         TopicTabContentView(
           topic: topic,
           state: latestTabState,
+          path: $path,
           appState: appState
         )
         .opacity(selectedTab == .latest ? 1 : 0)
@@ -81,10 +86,10 @@ public struct TopicFeedView: View {
     }
     .task {
       if !topTabState.hasLoadedInitial {
-        await topTabState.loadInitial(topic: topic, client: appState.atProtoClient)
+        await topTabState.loadInitial(topic: topic, appState: appState)
       }
       if !latestTabState.hasLoadedInitial {
-        await latestTabState.loadInitial(topic: topic, client: appState.atProtoClient)
+        await latestTabState.loadInitial(topic: topic, appState: appState)
       }
     }
   }
@@ -95,6 +100,7 @@ public struct TopicFeedView: View {
 private struct TopicTabContentView: View {
   let topic: String
   @Bindable var state: TopicTabState
+  @Binding var path: NavigationPath
   let appState: AppState
 
   var body: some View {
@@ -113,13 +119,13 @@ private struct TopicTabContentView: View {
             .font(.system(size: 44))
             .foregroundStyle(.secondary)
           Text(error)
-            .font(.subheadline)
+            .appFont(AppTextRole.subheadline)
             .foregroundStyle(.secondary)
             .multilineTextAlignment(.center)
             .padding(.horizontal, 32)
-          Button("Retry") {
+          Button("Try Again") {
             Task {
-              await state.refresh(topic: topic, client: appState.atProtoClient)
+              await state.refresh(topic: topic, appState: appState)
             }
           }
           .buttonStyle(.borderedProminent)
@@ -131,11 +137,11 @@ private struct TopicTabContentView: View {
           Image(systemName: "text.bubble")
             .font(.system(size: 44))
             .foregroundStyle(.secondary)
-          Text("No posts found for \"\(topic)\"")
-            .font(.headline)
+          Text("No posts found for “\(topic)”")
+            .appFont(AppTextRole.headline)
             .foregroundStyle(.primary)
           Text("Try checking back later or explore other topics.")
-            .font(.subheadline)
+            .appFont(AppTextRole.subheadline)
             .foregroundStyle(.secondary)
             .multilineTextAlignment(.center)
             .padding(.horizontal, 32)
@@ -146,15 +152,15 @@ private struct TopicTabContentView: View {
           if let error = state.errorMessage {
             HStack {
               Text(error)
-                .font(.caption)
-                .foregroundStyle(.red)
+                .appFont(AppTextRole.caption)
+                .foregroundStyle(.secondary)
               Spacer()
-              Button("Retry") {
+              Button("Try Again") {
                 Task {
-                  await state.loadMore(topic: topic, client: appState.atProtoClient)
+                  await state.loadMore(topic: topic, appState: appState)
                 }
               }
-              .font(.caption.weight(.semibold))
+              .appFont(AppTextRole.caption)
             }
             .listRowSeparator(.hidden)
           }
@@ -166,7 +172,7 @@ private struct TopicTabContentView: View {
                 grandparentAuthor: nil,
                 isParentPost: false,
                 isSelectable: true,
-                path: .constant(NavigationPath()),
+                path: $path,
                 appState: appState
               )
               .padding(.vertical, 4)
@@ -177,7 +183,7 @@ private struct TopicTabContentView: View {
             .onAppear {
               if post.uri == state.posts.last?.uri, state.cursor != nil, !state.isLoadingMore {
                 Task {
-                  await state.loadMore(topic: topic, client: appState.atProtoClient)
+                  await state.loadMore(topic: topic, appState: appState)
                 }
               }
             }
@@ -195,7 +201,7 @@ private struct TopicTabContentView: View {
         }
         .listStyle(.plain)
         .refreshable {
-          await state.refresh(topic: topic, client: appState.atProtoClient)
+          await state.refresh(topic: topic, appState: appState)
         }
       }
     }
@@ -215,108 +221,84 @@ final class TopicTabState {
   var errorMessage: String? = nil
   var hasLoadedInitial: Bool = false
 
+  @ObservationIgnored private let contentFilterService = ContentFilterService()
+  @ObservationIgnored private let logger = Logger(subsystem: "blue.catbird", category: "TopicFeed")
+
   init(sort: String) {
     self.sort = sort
   }
 
-  func loadInitial(topic: String, client: ATProtoClient?) async {
+  func loadInitial(topic: String, appState: AppState) async {
     guard !isLoading, !hasLoadedInitial else { return }
     isLoading = true
     errorMessage = nil
 
-    guard let client else {
-      errorMessage = "Client unavailable"
-      isLoading = false
-      return
-    }
-
-    do {
-      let (responseCode, data) = try await client.app.bsky.feed.searchPostsV2(
-        input: .init(
-          limit: 25,
-          query: topic,
-          sort: sort
-        )
-      )
-      guard (200...299).contains(responseCode), let data else {
-        self.errorMessage = "Failed to load topic posts (HTTP \(responseCode))"
-        self.isLoading = false
-        return
-      }
-      self.posts = data.posts
-      self.cursor = data.cursor
+    if let page = await fetchPage(topic: topic, cursor: nil, appState: appState) {
+      self.posts = page.posts
+      self.cursor = page.cursor
       self.hasLoadedInitial = true
-    } catch {
-      self.errorMessage = error.localizedDescription
     }
     self.isLoading = false
   }
 
-  func refresh(topic: String, client: ATProtoClient?) async {
+  func refresh(topic: String, appState: AppState) async {
     guard !isLoading else { return }
     isLoading = true
     errorMessage = nil
 
-    guard let client else {
-      errorMessage = "Client unavailable"
-      isLoading = false
-      return
-    }
-
-    do {
-      let (responseCode, data) = try await client.app.bsky.feed.searchPostsV2(
-        input: .init(
-          limit: 25,
-          query: topic,
-          sort: sort
-        )
-      )
-      guard (200...299).contains(responseCode), let data else {
-        self.errorMessage = "Failed to refresh topic posts (HTTP \(responseCode))"
-        self.isLoading = false
-        return
-      }
-      self.posts = data.posts
-      self.cursor = data.cursor
+    if let page = await fetchPage(topic: topic, cursor: nil, appState: appState) {
+      self.posts = page.posts
+      self.cursor = page.cursor
       self.hasLoadedInitial = true
-    } catch {
-      self.errorMessage = error.localizedDescription
     }
     self.isLoading = false
   }
 
-  func loadMore(topic: String, client: ATProtoClient?) async {
+  func loadMore(topic: String, appState: AppState) async {
     guard let currentCursor = cursor, !isLoading, !isLoadingMore else { return }
     isLoadingMore = true
     errorMessage = nil
 
-    guard let client else {
-      errorMessage = "Client unavailable"
-      isLoadingMore = false
-      return
+    if let page = await fetchPage(topic: topic, cursor: currentCursor, appState: appState) {
+      let existingURIs = Set(self.posts.map { $0.uri.uriString() })
+      let newPosts = page.posts.filter { !existingURIs.contains($0.uri.uriString()) }
+      self.posts.append(contentsOf: newPosts)
+      self.cursor = page.cursor
+    }
+    self.isLoadingMore = false
+  }
+
+  /// Fetches one page and drops posts the viewer has muted, blocked or hidden, the
+  /// same way search results are filtered. Sets `errorMessage` and returns nil on failure.
+  private func fetchPage(
+    topic: String, cursor: String?, appState: AppState
+  ) async -> (posts: [AppBskyFeedDefs.PostView], cursor: String?)? {
+    guard let client = appState.atProtoClient else {
+      errorMessage = "Couldn’t load posts. Sign in again and try again."
+      return nil
     }
 
     do {
       let (responseCode, data) = try await client.app.bsky.feed.searchPostsV2(
         input: .init(
-          cursor: currentCursor,
+          cursor: cursor,
           limit: 25,
           query: topic,
           sort: sort
         )
       )
       guard (200...299).contains(responseCode), let data else {
-        self.errorMessage = "Failed to load more posts (HTTP \(responseCode))"
-        self.isLoadingMore = false
-        return
+        logger.error("Topic search failed with status \(responseCode)")
+        errorMessage = "Couldn’t load posts. Pull to try again."
+        return nil
       }
-      let existingURIs = Set(self.posts.map { $0.uri.uriString() })
-      let newPosts = data.posts.filter { !existingURIs.contains($0.uri.uriString()) }
-      self.posts.append(contentsOf: newPosts)
-      self.cursor = data.cursor
+      let settings = await appState.buildFilterSettings()
+      let visible = await contentFilterService.filterPostViews(data.posts, settings: settings)
+      return (visible, data.cursor)
     } catch {
-      self.errorMessage = error.localizedDescription
+      logger.error("Topic search failed: \(error.localizedDescription)")
+      errorMessage = UserFacingError.message(for: error, action: "load posts")
+      return nil
     }
-    self.isLoadingMore = false
   }
 }

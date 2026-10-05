@@ -11,6 +11,8 @@ struct RecordEmbedView: View {
     @Environment(AppState.self) private var appState
     // When true, render full post styling for quoted posts (used in thread main post view)
     var useFullPostStyle: Bool = false
+    /// Quotes from muted accounts stay collapsed until the viewer asks to see them.
+    @State private var showsMutedQuote = false
     
     var body: some View {
         switch record {
@@ -27,7 +29,12 @@ struct RecordEmbedView: View {
         case .appBskyGraphDefsListView(let list):
             listView(list)
         case .appBskyLabelerDefsLabelerView(let labeler):
-            LabelerView(labeler: labeler)
+            Button {
+                path.append(NavigationDestination.profile(labeler.creator.did.didString()))
+            } label: {
+                LabelerView(labeler: labeler)
+            }
+            .buttonStyle(.plain)
         case .appBskyGraphDefsStarterPackViewBasic(let starterPack):
                 StarterPackCardView(starterPack: starterPack, path: $path)
                     .padding(.vertical, 4)
@@ -38,6 +45,53 @@ struct RecordEmbedView: View {
     
     @ViewBuilder
     private func postView(_ post: AppBskyEmbedRecord.ViewRecord) -> some View {
+        if post.author.viewer?.muted == true && !showsMutedQuote {
+            mutedQuoteView
+        } else {
+            quotedPostView(post)
+        }
+    }
+
+    private var mutedQuoteView: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "speaker.slash")
+                .foregroundStyle(Color.secondary)
+                .accessibilityHidden(true)
+            Text("Post from an account you muted")
+                .appFont(AppTextRole.subheadline)
+                .foregroundStyle(Color.secondary)
+            Spacer(minLength: 0)
+            Button("Show") {
+                showsMutedQuote = true
+            }
+            .appFont(AppTextRole.subheadline)
+            .buttonStyle(.borderless)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(platformColor: PlatformColor.platformSecondarySystemBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// Applies the quoted post's own labels to its text, the way a top-level post
+    /// without media is covered. Media embeds apply the same labels themselves.
+    @ViewBuilder
+    private func labeledQuoteText<Content: View>(
+        for post: AppBskyEmbedRecord.ViewRecord,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        if (post.embeds ?? []).isEmpty, let labels = post.labels, !labels.isEmpty {
+            ContentLabelManager(labels: labels, contentType: "post") {
+                content()
+            }
+        } else {
+            content()
+        }
+    }
+
+    @ViewBuilder
+    private func quotedPostView(_ post: AppBskyEmbedRecord.ViewRecord) -> some View {
         Group {
             if useFullPostStyle {
                 // Render a fuller post style with standard card background and let tap navigate
@@ -78,11 +132,13 @@ struct RecordEmbedView: View {
                     if case let .knownType(record) = post.value,
                        let feedPost = record as? AppBskyFeedPost,
                        !feedPost.text.isEmpty {
-                        Text(feedPost.text)
-                            .appFont(AppTextRole.body)
-                            .foregroundStyle(.primary)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .padding(.top, 4)
+                        labeledQuoteText(for: post) {
+                            Text(feedPost.text)
+                                .appFont(AppTextRole.body)
+                                .foregroundStyle(.primary)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .padding(.top, 4)
+                        }
                     }
                     // Embeds
                     embeddedContent(for: post)
@@ -140,11 +196,13 @@ struct RecordEmbedView: View {
                         if case let .knownType(record) = post.value,
                            let feedPost = record as? AppBskyFeedPost {
                             if !feedPost.text.isEmpty {
-                                Text(feedPost.text)
-                                    .appFont(AppTextRole.body)
-                                    .foregroundStyle(.primary)
-                                    .lineLimit(nil)
-                                    .fixedSize(horizontal: false, vertical: true)
+                                labeledQuoteText(for: post) {
+                                    Text(feedPost.text)
+                                        .appFont(AppTextRole.body)
+                                        .foregroundStyle(.primary)
+                                        .lineLimit(nil)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
                             }
                             // Add embed content if present
                             embeddedContent(for: post)
@@ -295,7 +353,7 @@ struct RecordEmbedView: View {
                             .foregroundStyle(.secondary)
                             .padding(.top, 6)
                     default:
-                        Text("Quoting content")
+                        Text("Quoting a post")
                             .appFont(AppTextRole.caption)
                             .foregroundStyle(.secondary)
                             .padding(.top, 6)
@@ -371,7 +429,7 @@ struct RecordEmbedView: View {
                     
                 case .unexpected:
                     // Simple fallback for unexpected content
-                    Text("Unsupported content")
+                    Text("This content can’t be shown")
                         .appFont(AppTextRole.caption)
                         .foregroundStyle(.secondary)
                         .padding(.top, 6)
@@ -382,8 +440,8 @@ struct RecordEmbedView: View {
     }
     private var notFoundView: some View {
         HStack {
-            Image(systemName: "exclamationmark.triangle")
-            Text("Post not found")
+            Image(systemName: "trash")
+            Text("Deleted post")
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -407,8 +465,8 @@ struct RecordEmbedView: View {
     @ViewBuilder
     private func detachedView(_ detached: AppBskyEmbedRecord.ViewDetached) -> some View {
         HStack {
-            Image(systemName: "link.badge.plus")
-            Text("Content unavailable")
+            Image(systemName: "eye.slash")
+            Text("Removed by author")
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -479,7 +537,7 @@ struct RecordEmbedView: View {
     private var unsupportedView: some View {
         HStack {
             Image(systemName: "questionmark.circle")
-            Text("Unsupported content type")
+            Text("This content can’t be shown")
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)

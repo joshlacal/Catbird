@@ -564,8 +564,8 @@ final class PostViewModel {
                 return "The interaction record could not be found. Refresh the post and try again."
             case .requestFailed:
                 return "The request could not be completed. Please try again."
-            case .repostRemovalFailed(let statusCode):
-                return "The repost could not be removed (HTTP \(statusCode)). Please try again."
+            case .repostRemovalFailed:
+                return "Your repost couldn’t be removed. Try again."
             }
         }
     }

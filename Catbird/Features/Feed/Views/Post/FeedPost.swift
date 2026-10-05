@@ -141,7 +141,7 @@ struct FeedPost: View, Equatable {
         path: $path
       )
     case .unexpected:
-      Text("Unexpected post type")
+      Text("Post unavailable")
         .appFont(AppTextRole.caption)
         .foregroundColor(.secondary)
         .padding(.vertical, FeedPost.baseUnit * 2)
@@ -151,8 +151,9 @@ struct FeedPost: View, Equatable {
   /// Renders the main post content
   @ViewBuilder
   private var mainPostContent: some View {
-    // Determine grandparent author and whether this is a reply with deleted/blocked parent
-    let (grandparentAuthor, isReplyWithMissingParent) = computeReplyContext()
+    // A deleted or blocked parent is already shown above the post, so it adds no
+    // "in reply to" line (and the reply was not necessarily to the current user).
+    let (grandparentAuthor, _) = computeReplyContext()
     
     PostView(
       post: post.post,
@@ -161,7 +162,7 @@ struct FeedPost: View, Equatable {
       isSelectable: false,
       path: $path,
       appState: appState,
-      isToYou: isReplyWithMissingParent,
+      isToYou: false,
       hasVisibleThreadContext: post.reply != nil
     )
     .environment(\.feedPostID, post.id)

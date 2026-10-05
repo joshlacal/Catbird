@@ -80,7 +80,7 @@ private struct RepostHeaderPreviewLoader: View {
         )
         .padding()
       } else {
-        ProgressView("Loading...")
+        ProgressView("Loading…")
       }
     }
     .task {

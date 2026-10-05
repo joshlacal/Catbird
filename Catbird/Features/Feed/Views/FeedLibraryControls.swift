@@ -34,14 +34,14 @@ struct FeedLibraryControls: View {
         Menu {
           if membership == .saved {
             Button { perform(.pinned) } label: {
-              Label("Pin to start page", systemImage: "pin")
+              Label("Pin to Feeds", systemImage: "pin")
             }
           }
           if let onOpen {
-            Button("Open feed", systemImage: "arrow.up.forward", action: onOpen)
+            Button("Open Feed", systemImage: "arrow.up.forward", action: onOpen)
           }
           Button(role: .destructive) { perform(nil) } label: {
-            Label("Remove from library", systemImage: "trash")
+            Label("Remove from Library", systemImage: "trash")
           }
         } label: {
           Label {
@@ -62,28 +62,28 @@ struct FeedLibraryControls: View {
     .alert("Saved and Pinned", isPresented: $showExplanation) {
       Button("Got it") { education.acknowledge(accountDID: appState.userDID) }
     } message: {
-      Text("Saved keeps a feed in your library. Pin to start page adds it to your pinned feeds without changing your default feed.")
+      Text("Saved keeps a feed in your library. Pin to Feeds adds it to your pinned feeds without changing your default feed.")
     }
   }
 
   @ViewBuilder private var feedback: some View {
     switch state {
     case .pendingSync:
-      Text("Library change saved on this device · Sync pending")
+      Text("Saved on this device. It will sync when you’re back online.")
         .font(.caption)
         .foregroundStyle(.secondary)
       Button(action: retry) {
-        Text("Retry sync").font(.caption).frame(minHeight: 44)
+        Text("Try Again").font(.caption).frame(minHeight: 44)
       }
     case .failed(let message):
       Text(message).font(.caption).foregroundStyle(.red)
       Button(action: retry) {
-        Text("Retry").font(.caption).frame(minHeight: 44)
+        Text("Try Again").font(.caption).frame(minHeight: 44)
       }
     case .success(.saved):
       Text("Added to Saved").font(.caption).foregroundStyle(.secondary)
     case .success(.pinned):
-      Text("Pinned to start page").font(.caption).foregroundStyle(.secondary)
+      Text("Pinned to Feeds").font(.caption).foregroundStyle(.secondary)
     default:
       EmptyView()
     }

@@ -291,6 +291,24 @@ struct ViewImageGridView: View {
         }
       }
     }
+    .accessibilityElement(children: .ignore)
+    .accessibilityLabel(accessibilityLabel(for: viewImage))
+    .accessibilityAddTraits([.isImage, .isButton])
+    .accessibilityHint(imageAccessibilityHint)
+  }
+
+  private var imageAccessibilityHint: String {
+    guard shouldBlur else { return "Opens image viewer" }
+    return isBlurred ? "Shows the hidden image" : "Hides the image"
+  }
+
+  /// The author's alt text when there is one, otherwise the image's position.
+  private func accessibilityLabel(for viewImage: AppBskyEmbedImages.ViewImage) -> String {
+    let position = (viewImages.firstIndex(where: { $0.id == viewImage.id }) ?? 0) + 1
+    let fallback = "Image \(position) of \(viewImages.count)"
+    if isBlurred { return "Hidden image, \(fallback)" }
+    let alt = viewImage.alt.trimmingCharacters(in: .whitespacesAndNewlines)
+    return alt.isEmpty ? fallback : alt
   }
 
   @ViewBuilder
@@ -358,6 +376,10 @@ struct ViewImageGridView: View {
           activeTransitionID = viewImage.id
         }
       }
+      .accessibilityElement(children: .ignore)
+      .accessibilityLabel(accessibilityLabel(for: viewImage))
+      .accessibilityAddTraits([.isImage, .isButton])
+      .accessibilityHint(imageAccessibilityHint)
     }
     .aspectRatio(aspectRatio, contentMode: .fit)
     .frame(maxHeight: maxHeight)
@@ -1627,7 +1649,7 @@ private struct ImageGridPreviewLoader: View {
         ViewImageGridView(viewImages: images, shouldBlur: false)
           .frame(height: 300)
       } else {
-        ProgressView("Loading images...")
+        ProgressView("Loading images…")
       }
     }
     .task {

@@ -136,7 +136,7 @@ struct FeedLibraryActionsTests {
     let feed = try uri()
     do { _ = try await actions.add(feed); Issue.record("Pending sync returned success") } catch {}
     #expect(actions.membership(for: feed) == .saved)
-    #expect(actions.state(for: feed) == .pendingSync("Offline"))
+    #expect(actions.state(for: feed) == .pendingSync(FeedLibraryActions.pendingSyncMessage))
     #expect(notifications == 1)
     #expect(try await actions.add(feed) == .saved)
     #expect(writes == 2)
