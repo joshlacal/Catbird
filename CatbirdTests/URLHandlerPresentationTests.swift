@@ -132,7 +132,11 @@ struct URLHandlerPresentationTests {
   private func settleRetirement(_ probes: RetirementProbe...) async {
     // Main-queue dispatch alone need not reach UIKit's run-loop cleanup.
     // Each idle-boundary wait has a wall timeout and removes its observer.
-    for _ in 0..<20 {
+    // Clearing a window's root controller runs a root dismissal whose completion
+    // (which holds the window) waits for the render server to acknowledge a CA
+    // commit, so the settle bound is wall time, not a count of run-loop turns.
+    let deadline = ContinuousClock.now + .seconds(2)
+    while ContinuousClock.now < deadline {
       let reachedIdle = await withCheckedContinuation { continuation in
         IdleBoundaryWaiter(continuation).start()
       }
