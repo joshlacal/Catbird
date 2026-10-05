@@ -1,6 +1,5 @@
 import SwiftUI
 import Petrel
-import NukeUI
 
 /// Row view for displaying a starter pack in search results
 struct StarterPackRowView: View {
@@ -8,29 +7,12 @@ struct StarterPackRowView: View {
     
     var body: some View {
         HStack(spacing: 12) {
-            // Pack creator avatar
-            if let avatar = pack.creator.avatar {
-                LazyImage(url: URL(string: avatar.uriString())) { state in
-                    if let image = state.image {
-                        image
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                    } else {
-                        Color.gray.opacity(0.2)
-                    }
-                }
-                .frame(width: 44, height: 44)
-                .clipShape(Circle())
-            } else {
-                // Placeholder
-                Circle()
-                    .fill(Color.gray.opacity(0.2))
-                    .frame(width: 44, height: 44)
-                    .overlay(
-                        Image(systemName: "person.3")
-                            .foregroundColor(Color.gray)
-                    )
-            }
+            // Pack creator avatar, honoring moderation labels
+            AsyncProfileImage(
+                url: URL(string: pack.creator.avatar?.uriString() ?? ""),
+                size: 44,
+                labels: pack.creator.labels
+            )
             
             // Pack info
             VStack(alignment: .leading, spacing: 4) {
@@ -63,12 +45,14 @@ struct StarterPackRowView: View {
                 }
                 
                 // Pack stats
-                HStack(spacing: 12) {
-                    Label("\(pack.listItemCount ?? 0) profiles", systemImage: "person.2")
-                        .appFont(AppTextRole.caption2)
-                        .foregroundColor(.secondary)
+                if let count = pack.listItemCount {
+                    HStack(spacing: 12) {
+                        Label("^[\(count) profile](inflect: true)", systemImage: "person.2")
+                            .appFont(AppTextRole.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.top, 2)
                 }
-                .padding(.top, 2)
             }
             
             Spacer()

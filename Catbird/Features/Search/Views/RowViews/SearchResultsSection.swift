@@ -158,7 +158,6 @@ struct SearchErrorView: View {
     let query: String
     let retryAction: () -> Void
     
-    @State private var isExpanded = false
     @Environment(AppState.self) private var appState
     
     var body: some View {
@@ -172,7 +171,7 @@ struct SearchErrorView: View {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .appFont(size: 48)
                     .foregroundColor(.red)
-                    .symbolEffect(.bounce, value: error.localizedDescription)
+                    .symbolEffect(.bounce, value: errorMessage)
             }
             
             VStack(spacing: 8) {
@@ -205,55 +204,21 @@ struct SearchErrorView: View {
                             .fill(Color.accentColor)
                     )
                 }
-                
-                Button {
-                    isExpanded.toggle()
-                } label: {
-                    HStack(spacing: 4) {
-                        Text("Technical Details")
-                            .appFont(AppTextRole.caption)
-                        
-                        Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                            .appFont(AppTextRole.caption2)
-                    }
-                    .foregroundColor(.secondary)
-                }
+                .buttonStyle(.plain)
             }
             .padding(.horizontal, 32)
-            
-            // Technical details (collapsible)
-            if isExpanded {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Error Details:")
-                        .appFont(AppTextRole.caption.weight(.medium))
-                        .foregroundColor(.secondary)
-                    
-                    Text(error.localizedDescription)
-                        .appFont(.system(size: 11, design: .monospaced))
-                        .foregroundColor(Color(platformColor: PlatformColor.platformTertiaryLabel))
-                        .padding(12)
-                        .background(Color.secondarySystemBackground)
-                        .cornerRadius(8)
-                }
-                .padding(.horizontal, 32)
-                .transition(.opacity.combined(with: .move(edge: .top)))
-            }
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 60)
-        .animation(.easeInOut(duration: 0.3), value: isExpanded)
     }
     
+    /// Friendly copy only; the raw error is logged where the search failed.
     private var errorMessage: String {
-        if error.localizedDescription.contains("network") || 
-           error.localizedDescription.contains("connection") {
-            return "Check your internet connection and try again"
-        } else if error.localizedDescription.contains("timeout") {
-            return "The request took too long. Please try again"
-        } else if error.localizedDescription.contains("404") {
-            return "The search service is temporarily unavailable"
-        } else {
-            return "Something went wrong. Please try again"
+        switch UserFacingError.kind(of: error) {
+        case .notFound, .server:
+            return "Search is temporarily unavailable. Try again later."
+        default:
+            return UserFacingError.message(for: error, action: "search right now") ?? "Couldn’t search right now. Try again."
         }
     }
 }

@@ -15,17 +15,21 @@ struct ResultsView: View {
   var viewModel: RefinedSearchViewModel
   @Binding var path: NavigationPath
   @Binding var selectedContentType: ContentType
+  /// Clears the search field and returns to Discovery.
+  let onReset: () -> Void
   @Environment(AppState.self) private var appState
   private let baseUnit: CGFloat = 3
 
   init(
     viewModel: RefinedSearchViewModel,
     path: Binding<NavigationPath>,
-    selectedContentType: Binding<ContentType>
+    selectedContentType: Binding<ContentType>,
+    onReset: @escaping () -> Void
   ) {
     self.viewModel = viewModel
     self._path = path
     self._selectedContentType = selectedContentType
+    self.onReset = onReset
   }
 
   public var body: some View {
@@ -69,7 +73,9 @@ struct ResultsView: View {
   private var postResultsSection: some View {
     Group {
       detectedLanguagesAdmonitionSection
-      if viewModel.postResults.isEmpty {
+      if viewModel.isSearchInFlight && viewModel.postResults.isEmpty {
+        loadingResultsSection
+      } else if viewModel.postResults.isEmpty {
         Section { emptyResultsView(for: selectedContentType) }
       } else {
         postSection
@@ -78,12 +84,30 @@ struct ResultsView: View {
     }
   }
 
+  private var loadingResultsSection: some View {
+    Section {
+      LoadingRowsView(count: 5)
+        .redacted(reason: .placeholder)
+        .mainContentFrame()
+        .listRowInsets(EdgeInsets())
+        .listRowSeparator(.hidden)
+        .accessibilityLabel("Loading results")
+    }
+  }
+
   @ViewBuilder
   private var detectedLanguagesAdmonitionSection: some View {
+    // Offering the languages the user already reads is noise; only suggest other languages.
+    let readerLanguages = Set(
+      (appState.appSettings.contentLanguages + [Locale.current.language.languageCode?.identifier ?? ""])
+        .map(Self.baseLanguageCode)
+        .filter { !$0.isEmpty }
+    )
     let unselected = DetectedQueryLanguagesAdmonition.unselectedLanguages(
       from: viewModel.detectedQueryLanguages,
       selectedLanguage: viewModel.filterState.language
     )
+    .filter { !readerLanguages.contains(Self.baseLanguageCode($0)) }
     if !unselected.isEmpty {
       Section {
         DetectedQueryLanguagesAdmonition(
@@ -148,7 +172,9 @@ struct ResultsView: View {
 
   private var profileResultsSection: some View {
     Group {
-      if viewModel.profileResults.isEmpty {
+      if viewModel.isSearchInFlight && viewModel.profileResults.isEmpty {
+        loadingResultsSection
+      } else if viewModel.profileResults.isEmpty {
         Section { emptyResultsView(for: .people) }
       } else {
         profileSection
@@ -197,10 +223,13 @@ struct ResultsView: View {
 
   private var feedResultsSection: some View {
     Group {
-      if viewModel.feedResults.isEmpty {
+      if viewModel.isSearchInFlight && viewModel.feedResults.isEmpty {
+        loadingResultsSection
+      } else if viewModel.feedResults.isEmpty {
         Section { emptyResultsView(for: .feeds) }
       } else {
         feedSection
+        loadMoreSectionIfNeeded(cursor: viewModel.feedCursor)
       }
     }
   }
@@ -226,6 +255,11 @@ struct ResultsView: View {
         }
         .listRowInsets(EdgeInsets())
         .listRowSeparator(.hidden)
+        .onAppear {
+          if feed == viewModel.feedResults.last {
+            triggerLoadMoreIfNeeded()
+          }
+        }
       }
     }
   }
@@ -234,7 +268,9 @@ struct ResultsView: View {
 
   private var starterPackResultsSection: some View {
     Group {
-      if viewModel.starterPackResults.isEmpty {
+      if viewModel.isSearchInFlight && viewModel.starterPackResults.isEmpty {
+        loadingResultsSection
+      } else if viewModel.starterPackResults.isEmpty {
         Section { emptyResultsView(for: .starterPacks) }
       } else {
         starterPackSection
@@ -320,7 +356,7 @@ struct ResultsView: View {
           Spacer()
           VStack(spacing: 8) {
             ProgressView()
-            Text("Loading more results...")
+            Text("Loading more results…")
               .appFont(AppTextRole.caption)
               .foregroundColor(.secondary)
           }
@@ -336,7 +372,7 @@ struct ResultsView: View {
           Spacer()
           VStack(spacing: 8) {
             ProgressView()
-            Text("Loading...")
+            Text("Loading…")
               .appFont(AppTextRole.caption)
               .foregroundColor(.secondary)
           }
@@ -363,32 +399,76 @@ struct ResultsView: View {
         .padding(.bottom, 8)
         .symbolEffect(.pulse, options: .repeating)
 
-      Text("No \(type.title.lowercased()) found")
+      Text(emptyResultsTitle(for: type))
         .appFont(AppTextRole.headline)
 
-      Text("Try a different search term or check your spelling")
+      Text(hasActiveFilters ? "Try removing some filters." : "Try a different search term or check your spelling.")
         .appFont(AppTextRole.subheadline)
         .foregroundColor(.secondary)
         .multilineTextAlignment(.center)
         .padding(.horizontal, 32)
 
-      Button {
-        viewModel.resetSearch()
-      } label: {
-        Text("Explore Trending Content")
-          .appFont(AppTextRole.subheadline)
-          .foregroundColor(.white)
-          .padding(.vertical, 8)
-          .padding(.horizontal, 16)
-          .background(
-            Capsule()
-              .fill(Color.accentColor)
-          )
+      if hasActiveFilters {
+        Button {
+          clearFilters()
+        } label: {
+          Text("Clear Filters")
+            .appFont(AppTextRole.subheadline)
+            .foregroundColor(.white)
+            .padding(.vertical, 8)
+            .padding(.horizontal, 16)
+            .background(
+              Capsule()
+                .fill(Color.accentColor)
+            )
+        }
+        .buttonStyle(.plain)
+        .padding(.top, 8)
+      } else {
+        Button {
+          onReset()
+        } label: {
+          Text("Explore Trending Content")
+            .appFont(AppTextRole.subheadline)
+            .foregroundColor(.white)
+            .padding(.vertical, 8)
+            .padding(.horizontal, 16)
+            .background(
+              Capsule()
+                .fill(Color.accentColor)
+            )
+        }
+        .buttonStyle(.plain)
+        .padding(.top, 8)
       }
-      .padding(.top, 8)
     }
     .frame(maxWidth: .infinity)
     .padding(.vertical, 60)
+  }
+
+  private func emptyResultsTitle(for type: ContentType) -> String {
+    switch type {
+    case .top, .latest: return "No Posts Found"
+    case .people: return "No People Found"
+    case .feeds: return "No Feeds Found"
+    case .starterPacks: return "No Starter Packs Found"
+    }
+  }
+
+  /// Filters only apply to post results, so they only explain an empty Top or Latest list.
+  private var hasActiveFilters: Bool {
+    (selectedContentType == .top || selectedContentType == .latest)
+      && viewModel.filterState.activeFilterCount > 0
+  }
+
+  private func clearFilters() {
+    guard let client = appState.atProtoClient else { return }
+    viewModel.applyFilterState(SearchFilterState(sort: viewModel.filterState.sort), client: client)
+  }
+
+  private static func baseLanguageCode(_ code: String) -> String {
+    let normalized = code.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    return normalized.split(whereSeparator: { $0 == "-" || $0 == "_" }).first.map(String.init) ?? normalized
   }
 
   // MARK: - Helper Methods

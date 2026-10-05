@@ -5,6 +5,8 @@ struct HashtagView: View {
     let tag: String
     @Binding var path: NavigationPath
     @Environment(AppState.self) private var appState
+    @Environment(SceneNavigationContext.self) private var sceneContext
+    @Environment(\.colorScheme) private var colorScheme
     @State private var posts: [AppBskyFeedDefs.PostView] = []
     @State private var relatedTags: [String] = []
     @State private var isLoading = false
@@ -12,6 +14,10 @@ struct HashtagView: View {
     @State private var sortByRecent = true // true for "latest", false for "top"
     @State private var languageFilter: String?
     @State private var showFilterSheet = false
+    @State private var loadFailed = false
+    @State private var loadGeneration = 0
+    
+    private static let contentFilterService = ContentFilterService()
     
     var body: some View {
         VStack(spacing: 0) {
@@ -77,7 +83,7 @@ struct HashtagView: View {
                 .padding(.horizontal)
             }
             .padding(.bottom, 4)
-            .background(Color.systemBackground) // Keep background consistent
+            .background(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))
             
             // Posts list with improved UI
             if isLoading && posts.isEmpty {
@@ -86,6 +92,8 @@ struct HashtagView: View {
                     .padding()
                     .scaleEffect(1.5)
                 Spacer()
+            } else if loadFailed && posts.isEmpty {
+                loadFailedState
             } else if posts.isEmpty {
                 emptyState
             } else {
@@ -113,6 +121,19 @@ struct HashtagView: View {
         }
     }
     
+    private var loadFailedState: some View {
+        ContentUnavailableView {
+            Label("Couldn’t Load Posts", systemImage: "wifi.exclamationmark")
+        } description: {
+            Text("Check your connection and try again.")
+        } actions: {
+            Button("Try Again") {
+                loadPosts()
+            }
+        }
+        .frame(maxHeight: .infinity)
+    }
+    
     private var emptyState: some View {
         VStack(spacing: 16) {
             Spacer()
@@ -133,8 +154,7 @@ struct HashtagView: View {
                 .padding(.horizontal)
             
             Button {
-                // Open post composer with pre-filled hashtag
-                // This would need to be implemented through your app's composer
+                sceneContext.presentPostComposer(initialText: "#\(tag) ")
             } label: {
                 Label("Create Post with #\(tag)", systemImage: "square.and.pencil")
                     .foregroundColor(.white)
@@ -196,26 +216,33 @@ struct HashtagView: View {
         .listStyle(.plain)
     }
     
+    private var sortOrder: String {
+        sortByRecent ? "latest" : "top"
+    }
+    
+    private var languageCode: LanguageCodeContainer? {
+        languageFilter.map { LanguageCodeContainer(languageCode: $0) }
+    }
+    
+    /// Removes posts from muted or blocked accounts, muted words and hidden labels.
+    private func applyModeration(to posts: [AppBskyFeedDefs.PostView]) async -> [AppBskyFeedDefs.PostView] {
+        let settings = await appState.buildFilterSettings()
+        return await Self.contentFilterService.filterPostViews(posts, settings: settings)
+    }
+    
     private func loadPosts() {
+        loadGeneration += 1
+        let generation = loadGeneration
         isLoading = true
+        loadFailed = false
         
         Task {
+            guard let client = appState.atProtoClient else {
+                isLoading = false
+                return
+            }
             do {
-                guard let client = appState.atProtoClient else {
-                    isLoading = false
-                    return
-                }
-                
-                let sortOrder = sortByRecent ? "latest" : "top"
-                
-                let languageCode: LanguageCodeContainer?
-                if let languageFilter = languageFilter {
-                    languageCode = LanguageCodeContainer(languageCode: languageFilter)
-                } else {
-                    languageCode = nil
-                }
-
-                let (_, data) = try await client.app.bsky.feed.searchPosts(
+                let (status, data) = try await client.app.bsky.feed.searchPosts(
                     input: .init(
                         q: "#\(tag)",
                         sort: sortOrder,
@@ -223,42 +250,40 @@ struct HashtagView: View {
                         limit: 30
                     )
                 )
+                guard generation == loadGeneration else { return }
+                guard (200..<300).contains(status), let data else {
+                    logger.debug("Hashtag posts request failed with status \(status)")
+                    loadFailed = true
+                    isLoading = false
+                    return
+                }
                 
-                await MainActor.run {
-                    posts = data?.posts ?? []
-                    cursor = data?.cursor
-                    isLoading = false
-                }
+                let visiblePosts = await applyModeration(to: data.posts)
+                guard generation == loadGeneration else { return }
+                posts = visiblePosts
+                cursor = data.cursor
+                isLoading = false
             } catch {
+                guard generation == loadGeneration else { return }
                 logger.debug("Error loading hashtag posts: \(error)")
-                await MainActor.run {
-                    isLoading = false
-                }
+                loadFailed = true
+                isLoading = false
             }
         }
     }
     
     private func loadMorePosts() {
         guard let currentCursor = cursor, !isLoading else { return }
+        let generation = loadGeneration
         isLoading = true
         
         Task {
+            guard let client = appState.atProtoClient else {
+                isLoading = false
+                return
+            }
             do {
-                guard let client = appState.atProtoClient else {
-                    isLoading = false
-                    return
-                }
-                
-                let sortOrder = sortByRecent ? "latest" : "top"
-                
-                let languageCode: LanguageCodeContainer?
-                if let languageFilter = languageFilter {
-                    languageCode = LanguageCodeContainer(languageCode: languageFilter)
-                } else {
-                    languageCode = nil
-                }
-                
-                let (_, data) = try await client.app.bsky.feed.searchPosts(
+                let (status, data) = try await client.app.bsky.feed.searchPosts(
                     input: .init(
                         q: "#\(tag)",
                         sort: sortOrder,
@@ -267,19 +292,23 @@ struct HashtagView: View {
                         cursor: currentCursor
                     )
                 )
+                guard generation == loadGeneration else { return }
+                guard (200..<300).contains(status), let data else {
+                    logger.debug("Loading more hashtag posts failed with status \(status)")
+                    isLoading = false
+                    return
+                }
                 
-                await MainActor.run {
-                    if let newPosts = data?.posts {
-                        posts.append(contentsOf: newPosts)
-                    }
-                    cursor = data?.cursor
-                    isLoading = false
-                }
+                let visiblePosts = await applyModeration(to: data.posts)
+                guard generation == loadGeneration else { return }
+                let existing = Set(posts.map { $0.uri.uriString() })
+                posts.append(contentsOf: visiblePosts.filter { !existing.contains($0.uri.uriString()) })
+                cursor = data.cursor
+                isLoading = false
             } catch {
+                guard generation == loadGeneration else { return }
                 logger.debug("Error loading more hashtag posts: \(error)")
-                await MainActor.run {
-                    isLoading = false
-                }
+                isLoading = false
             }
         }
     }
@@ -350,7 +379,6 @@ struct HashtagView: View {
                 guard let client = appState.atProtoClient else { return }
                 
                 // Use broader search terms based on the current tag
-                // This could be improved with NLP/topic modeling in a production app
                 let searchTerm = getTopicFromTag(tag)
                 
                 let (_, data) = try await client.app.bsky.feed.searchPosts(
@@ -410,7 +438,6 @@ struct HashtagView: View {
             "typescript": "programming",
             "swiftui": "ios",
             "uikit": "ios"
-            // Add more mappings as needed
         ]
         
         return topicMappings[tag.lowercased()] ?? tag
@@ -422,6 +449,14 @@ struct HashtagFilterView: View {
     @Binding var languageFilter: String?
     var onApply: () -> Void
     @Environment(\.dismiss) private var dismiss
+    /// Edited locally so Cancel leaves the applied language untouched.
+    @State private var draftLanguage: String?
+    
+    init(languageFilter: Binding<String?>, onApply: @escaping () -> Void) {
+        self._languageFilter = languageFilter
+        self.onApply = onApply
+        self._draftLanguage = State(initialValue: languageFilter.wrappedValue)
+    }
     
     // Define a list of common languages
     private let languages = [
@@ -436,20 +471,18 @@ struct HashtagFilterView: View {
         (name: "Russian", code: "ru" as String?),
         (name: "Korean", code: "ko" as String?),
         (name: "Chinese", code: "zh" as String?)
-        // Add more languages as needed
     ]
 
     var body: some View {
         NavigationStack {
             Form {
                 Section("Language") {
-                    Picker("Language", selection: $languageFilter) {
+                    Picker("Language", selection: $draftLanguage) {
                         ForEach(languages, id: \.name) { lang in
                             Text(lang.name).tag(lang.code)
                         }
                     }
                 }
-                // Could add more filter options
             }
             .navigationTitle("Filter Posts")
     #if os(iOS)
@@ -461,6 +494,7 @@ struct HashtagFilterView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Apply") {
+                        languageFilter = draftLanguage
                         onApply()
                         dismiss()
                     }

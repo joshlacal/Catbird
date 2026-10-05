@@ -128,6 +128,7 @@ struct RefinedSearchView: View {
         .sheet(isPresented: $isShowingSuggestedProfiles) {
             SuggestedProfilesSheet(
                 profiles: viewModel.suggestedProfiles,
+                isLoading: viewModel.isSuggestedProfilesLoading,
                 onSelect: { profile in
                     isShowingSuggestedProfiles = false
                     navigationPath.wrappedValue.append(NavigationDestination.profile(profile.did.didString()))
@@ -382,7 +383,8 @@ struct RefinedSearchView: View {
         return ResultsView(
             viewModel: viewModel,
             path: navigationPath,
-            selectedContentType: $bindableViewModel.selectedContentType
+            selectedContentType: $bindableViewModel.selectedContentType,
+            onReset: { reset() }
         )
     }
     
@@ -495,7 +497,7 @@ struct RefinedSearchView: View {
                         Image(systemName: "magnifyingglass")
                             .foregroundColor(.accentColor)
                             .frame(width: 44, height: 44)
-                        Text(verbatim: "Search for \"\(searchText)\"")
+                        Text(verbatim: "Search for “\(searchText)”")
                             .foregroundColor(.accentColor)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
@@ -512,6 +514,7 @@ struct RefinedSearchView: View {
                 RecentProfilesSection(
                     profiles: viewModel.recentProfileSearches,
                     onSelect: { profile in
+                        isSearchFieldFocused = false
                         navigationPath.wrappedValue.append(NavigationDestination.profile(profile.did.didString()))
                     },
                     onClear: {
@@ -529,6 +532,7 @@ struct RefinedSearchView: View {
                 RecentSearchesSection(
                     entries: viewModel.recentSearchEntries,
                     onSelect: { entry in
+                        isSearchFieldFocused = false
                         viewModel.applyRecentSearchEntry(
                             entry,
                             client: client,
@@ -551,7 +555,7 @@ struct RefinedSearchView: View {
     
     private func profileSuggestionRow(_ profile: AppBskyActorDefs.ProfileViewBasic) -> some View {
         HStack(spacing: 12) {
-            AsyncProfileImage(url: URL(string: profile.avatar?.uriString() ?? ""), size: 36)
+            AsyncProfileImage(url: URL(string: profile.avatar?.uriString() ?? ""), size: 36, labels: profile.labels)
             VStack(alignment: .leading, spacing: 2) {
                 Text(profile.displayName ?? "@\(profile.handle)")
                     .appHeadline()
@@ -672,12 +676,20 @@ struct RefinedSearchView: View {
     private func commitSearch() {
         logger.debug("commitSearch() called")
 
+        let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        isSearchFieldFocused = false
+        // The field can hold text the view model no longer has (for example after
+        // "Explore Trending Content"), so always commit what the user sees.
+        viewModel.searchQuery = trimmed
+
         if let client = appState.atProtoClient {
             viewModel.commitSearch(client: client)
         }
     }
     
     private func handleProfileSelection(_ profile: AppBskyActorDefs.ProfileViewBasic) {
+        isSearchFieldFocused = false
         viewModel.addRecentProfileSearchBasic(profile: profile)
         navigationPath.wrappedValue.append(NavigationDestination.profile(profile.did.didString()))
     }

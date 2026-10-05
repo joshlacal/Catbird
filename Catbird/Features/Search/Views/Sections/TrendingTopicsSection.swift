@@ -16,6 +16,7 @@ struct TrendingTopicsSection: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     
     let topics: [AppBskyUnspeccedDefs.TrendView]
+    let isLoading: Bool
     let onSelect: (String) -> Void
     let onSeeAll: () -> Void
     let maxItems: Int
@@ -25,11 +26,13 @@ struct TrendingTopicsSection: View {
     @State private var showHideConfirmation = false
     init(
         topics: [AppBskyUnspeccedDefs.TrendView],
+        isLoading: Bool = false,
         onSelect: @escaping (String) -> Void,
         onSeeAll: @escaping () -> Void,
         maxItems: Int = 5
     ) {
         self.topics = topics
+        self.isLoading = isLoading
         self.onSelect = onSelect
         self.onSeeAll = onSeeAll
         self.maxItems = maxItems
@@ -48,7 +51,7 @@ struct TrendingTopicsSection: View {
                     }
                     Menu {
                         Button { showHideConfirmation = true } label: {
-                            Label("Hide trending topics…", systemImage: "eye.slash")
+                            Label("Hide Trending Topics…", systemImage: "eye.slash")
                         }
                     } label: {
                         Image(systemName: "ellipsis")
@@ -61,7 +64,9 @@ struct TrendingTopicsSection: View {
                 }
             }
 
-            if topics.isEmpty {
+            if topics.isEmpty && isLoading {
+                loadingView
+            } else if topics.isEmpty {
                 emptyStateView
             } else {
                 topicsListView
@@ -95,7 +100,7 @@ struct TrendingTopicsSection: View {
             }
         }
         .confirmationDialog(
-            "Hide trending topics?",
+            "Hide Trending Topics?",
             isPresented: $showHideConfirmation,
             titleVisibility: .visible
         ) {
@@ -104,10 +109,22 @@ struct TrendingTopicsSection: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This hides trending topics for this account in Feeds and Search. You can show trending topics again in Settings → Content & Media.")
+            Text("This hides trending topics for this account in Feeds and Search. You can turn them back on in Settings › Feeds & Discovery › Discovery.")
         }
     }
     
+    private var loadingView: some View {
+        HStack(spacing: DesignTokens.Spacing.sm) {
+            ProgressView()
+            Text("Loading trending topics…")
+                .appFont(AppTextRole.subheadline)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 16)
+        .padding(.vertical, DesignTokens.Spacing.base)
+    }
+
     private var emptyStateView: some View {
         Text("No trending topics right now. Pull to refresh.")
             .appFont(AppTextRole.subheadline)

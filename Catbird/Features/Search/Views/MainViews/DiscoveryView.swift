@@ -65,6 +65,7 @@ struct DiscoveryView: View {
                    appState.appSettings.showTrendingTopics {
                     TrendingTopicsSection(
                         topics: viewModel.trendingTopics,
+                        isLoading: viewModel.isTrendingTopicsLoading || !viewModel.hasLoadedTrendingTopics,
                         onSelect: { term in
                             viewModel.searchQuery = term
                             viewModel.commitSearch(client: client)
@@ -151,7 +152,8 @@ struct DiscoveryView: View {
             onInviteFriends: { showInviteFriends = true },
             onScanQR: { showInviteScanner = true },
             onExploreFeeds: { showAddFeedSheet = true },
-            onOpenTopics: { showAllTrendingTopics = true }
+            onOpenTopics: { showAllTrendingTopics = true },
+            showsTopics: appState.appSettings.showTrendingTopics
         )
     }
 }
@@ -163,6 +165,7 @@ struct DiscoveryToolsSection: View {
     let onScanQR: () -> Void
     let onExploreFeeds: () -> Void
     let onOpenTopics: () -> Void
+    var showsTopics: Bool = true
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
@@ -177,7 +180,9 @@ struct DiscoveryToolsSection: View {
                 tool("Invite Friends", detail: "Share your invite card", icon: "person.badge.plus", action: onInviteFriends)
                 tool("Scan QR", detail: "Open a profile from its code", icon: "qrcode.viewfinder", action: onScanQR)
                 tool("Custom Feeds", detail: "Explore curated feeds", icon: "rectangle.on.rectangle.angled", action: onExploreFeeds)
-                tool("All Trending Topics", detail: "Browse the latest conversations", icon: "chart.line.uptrend.xyaxis", action: onOpenTopics)
+                if showsTopics {
+                    tool("All Trending Topics", detail: "Browse the latest conversations", icon: "chart.line.uptrend.xyaxis", action: onOpenTopics)
+                }
             }
         }
     }
@@ -366,13 +371,18 @@ private struct InlineTopicSummaryLine: View {
         }
     }
     
+    /// Yellow, mint and cyan fills are too light for white text.
+    private static func usesDarkChipText(_ category: String?) -> Bool {
+        ["business", "science", "tech", "technology"].contains(category?.lowercased() ?? "")
+    }
+    
     private func categoryFilterButton(_ category: String?) -> some View {
         Button {
             withAnimation(.easeInOut(duration: 0.2)) {
                 selectedCategory = category
             }
         } label: {
-            Text(category?.capitalized ?? "All")
+            Text(category.map { TrendingTopicCategoryStyle.name(for: $0) } ?? "All")
                 .appFont(AppTextRole.subheadline.weight(selectedCategory == category ? .semibold : .medium))
                 .padding(.horizontal, 16)
                 .padding(.vertical, 8)
@@ -383,7 +393,7 @@ private struct InlineTopicSummaryLine: View {
                               Color.dynamicSecondaryBackground(appState.themeManager, currentScheme: colorScheme))
                 )
                 .foregroundColor(selectedCategory == category ?
-                                .white :
+                                (Self.usesDarkChipText(category) ? .black : .white) :
                                 Color.dynamicText(appState.themeManager, style: .primary, currentScheme: colorScheme))
                 .overlay(
                     Capsule()

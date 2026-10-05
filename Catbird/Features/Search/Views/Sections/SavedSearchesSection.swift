@@ -3,7 +3,7 @@
 //  Catbird
 //
 //  Created on 10/13/25.
-//  SRCH-015: Saved Searches with Notifications
+//  SRCH-015: Saved Searches
 //
 
 import SwiftUI
@@ -54,13 +54,9 @@ struct SavedSearchesSection: View {
             savedSearchLabel(search)
         }
         .buttonStyle(.plain)
-        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-            Button(role: .destructive) {
-                withAnimation {
-                    onDelete(search)
-                }
-            } label: {
-                Label("Delete", systemImage: "trash")
+        .accessibilityAction(named: "Delete") {
+            withAnimation {
+                onDelete(search)
             }
         }
         .contextMenu {
@@ -236,6 +232,7 @@ struct AllSavedSearchesView: View {
                     } label: {
                         Image(systemName: "arrow.up.arrow.down")
                     }
+                    .accessibilityLabel("Sort")
                 }
                 
                 ToolbarItem(placement: .cancellationAction) {
@@ -244,6 +241,7 @@ struct AllSavedSearchesView: View {
                     } label: {
                         Image(systemName: "xmark")
                     }
+                    .accessibilityLabel("Close")
                 }
             }
         }
@@ -318,16 +316,12 @@ struct AllSavedSearchesView: View {
     private func filtersPreview(_ filters: SearchFilterState) -> some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                if let language = filters.language {
-                    filterChip(icon: "globe", text: language.uppercased())
-                }
-                
-                if filters.dateRange != .anytime {
-                    filterChip(icon: "calendar", text: filters.dateRange.displayName)
-                }
-                
                 if filters.sort != .top {
                     filterChip(icon: "arrow.up.arrow.down", text: filters.sort.displayName)
+                }
+                
+                ForEach(filters.summaryItems) { item in
+                    filterChip(icon: item.icon, text: item.text)
                 }
             }
         }
@@ -352,9 +346,7 @@ struct AllSavedSearchesView: View {
     }
     
     private func hasActiveFilters(_ filters: SearchFilterState) -> Bool {
-        return filters.language != nil ||
-               filters.dateRange != .anytime ||
-               filters.sort != .top
+        filters.sort != .top || !filters.summaryItems.isEmpty
     }
     
     @ViewBuilder
@@ -368,8 +360,8 @@ struct AllSavedSearchesView: View {
                 .appFont(AppTextRole.headline)
             
             Text(searchFilter.isEmpty ? 
-                 "Save your frequent searches for quick access" :
-                 "No searches match '\(searchFilter)'")
+                 "Save your frequent searches for quick access." :
+                 "No searches match “\(searchFilter)”.")
                 .appFont(AppTextRole.subheadline)
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)

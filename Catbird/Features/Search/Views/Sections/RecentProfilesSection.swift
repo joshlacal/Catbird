@@ -39,7 +39,8 @@ struct RecentProfilesSection: View {
                                 // Profile image
                                 AsyncProfileImage(
                                     url: URL(string: profile.avatarURL ?? ""),
-                                    size: 56
+                                    size: 56,
+                                    labels: profile.labels
                                 )
                                 .shadow(color: colorScheme == .dark ? .white.opacity(0.2) : .black.opacity(0.2), radius: 3)
                                 .padding(6)
@@ -73,19 +74,24 @@ struct RecentProfileSearch: Identifiable, Codable, Equatable {
     let handle: Handle
     let displayName: String?
     let avatarURL: String?
+    /// Moderation labels, so adult avatars stay hidden. Optional so entries saved before labels
+    /// were stored still decode.
+    let labels: [ComAtprotoLabelDefs.Label]?
     let timestamp: Date
     
     init(
         did: DID,
         handle: Handle,
         displayName: String?,
-        avatarURL: String?
+        avatarURL: String?,
+        labels: [ComAtprotoLabelDefs.Label]?
     ) {
         self.id = did
         self.did = did
         self.handle = handle
         self.displayName = displayName
         self.avatarURL = avatarURL
+        self.labels = labels
         self.timestamp = Date()
     }
     
@@ -95,6 +101,7 @@ struct RecentProfileSearch: Identifiable, Codable, Equatable {
         self.handle = profile.handle
         self.displayName = profile.displayName
         self.avatarURL = profile.avatar?.uriString()
+        self.labels = profile.labels
         self.timestamp = Date()
     }
     

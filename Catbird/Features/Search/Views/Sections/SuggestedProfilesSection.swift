@@ -141,7 +141,7 @@ public struct SuggestedProfilesSection: View {
       VStack(spacing: 12) {
         ProgressView()
           .scaleEffect(1.1)
-        Text("Loading accounts...")
+        Text("Loading accounts…")
           .appFont(AppTextRole.subheadline)
           .foregroundColor(.secondary)
       }
@@ -185,7 +185,7 @@ public struct SuggestedProfilesSection: View {
     return layout {
       Button { onSelectProfile(profile) } label: {
         HStack(alignment: .top, spacing: DesignTokens.Spacing.base) {
-          AsyncProfileImage(url: URL(string: profile.avatar?.uriString() ?? ""), size: 48)
+          AsyncProfileImage(url: URL(string: profile.avatar?.uriString() ?? ""), size: 48, labels: profile.labels)
           VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
             HStack(alignment: .firstTextBaseline, spacing: 4) {
               Text(profile.displayName ?? profile.handle.description)

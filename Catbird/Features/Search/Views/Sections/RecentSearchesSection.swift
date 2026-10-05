@@ -68,7 +68,7 @@ public struct RecentSearchesSection: View {
           }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.systemBackground)
+        .background(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))
       } else {
         emptyStateView
       }
@@ -118,6 +118,7 @@ public struct RecentSearchesSection: View {
       .buttonStyle(.plain)
       .accessibilityLabel("Delete \(entry.query)")
       .opacity(isRevealed ? 1 : 0)
+      .accessibilityHidden(!isRevealed)
 
       Button {
         if isRevealed {
@@ -141,16 +142,17 @@ public struct RecentSearchesSection: View {
           if filterCount > 0 {
             HStack(spacing: 3) {
               Image(systemName: "line.3.horizontal.decrease.circle.fill")
-                .font(.system(size: 11))
+                .appFont(AppTextRole.caption2)
               Text("\(filterCount)")
-                .font(.system(size: 11, weight: .semibold))
+                .appFont(AppTextRole.caption2.weight(.semibold))
             }
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
             .foregroundColor(.accentColor)
             .background(Color.accentColor.opacity(0.15))
             .clipShape(Capsule())
-            .accessibilityLabel("\(filterCount) active filters")
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(filterCount == 1 ? "1 active filter" : "\(filterCount) active filters")
           }
 
           Spacer()
@@ -161,10 +163,16 @@ public struct RecentSearchesSection: View {
         }
         .padding(.vertical, 12)
         .padding(.horizontal, 16)
-        .background(Color.systemBackground)
+        .background(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))
         .contentShape(Rectangle())
       }
       .buttonStyle(.plain)
+      .accessibilityAction(named: "Delete") {
+        withAnimation(.easeInOut(duration: 0.2)) {
+          revealedEntryId = nil
+          onDelete(entry)
+        }
+      }
       .offset(x: isRevealed ? -Self.deleteRevealWidth : 0)
       .simultaneousGesture(
         DragGesture(minimumDistance: 12)
@@ -200,7 +208,7 @@ public struct RecentSearchesSection: View {
           .appFont(AppTextRole.subheadline.weight(.medium))
           .foregroundColor(.secondary)
 
-        Text("Your search history will appear here")
+        Text("Your search history will appear here.")
           .appFont(AppTextRole.caption)
           .foregroundColor(Color(platformColor: PlatformColor.platformTertiaryLabel))
       }
@@ -209,6 +217,6 @@ public struct RecentSearchesSection: View {
     }
     .padding(16)
     .frame(maxWidth: .infinity, alignment: .leading)
-    .background(Color.systemBackground)
+    .background(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))
   }
 }
