@@ -1022,6 +1022,12 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     hostingController.view.setContentHuggingPriority(.required, for: .vertical)
     hostingController.view.setContentCompressionResistancePriority(.required, for: .vertical)
     hostingController.sizingOptions = .intrinsicContentSize
+    // The container is pinned to `keyboardLayoutGuide.top`, which already clears
+    // the tab bar, home indicator and keyboard. If the hosted view also honoured
+    // safe-area insets, any pass where its frame overlapped the bottom inset
+    // (e.g. before the inset settled after a push) would add the inset a second
+    // time to the intrinsic height, leaving an empty band under the capsule.
+    hostingController.safeAreaRegions = []
     return hostingController
   }
 
