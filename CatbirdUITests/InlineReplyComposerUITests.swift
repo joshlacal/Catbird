@@ -285,7 +285,13 @@ final class InlineReplyComposerUITests: XCTestCase {
       let current = try probe(app)
       if editor.isHittable, current["editorTextAndCaretVisible"] as? Bool == true,
          rectsVisible(app, probe: current, key: "editorGlyphFrames", includeCaret: true) { return }
-      dragSource(app, scroll: scroll, down: false)
+      // Move toward the editor's actual position; after rotation it can sit
+      // above the reading region as well as below it.
+      var editorAbove = false
+      if let region = unobscuredReadingRegion(app), editor.exists, !editor.frame.isEmpty {
+        editorAbove = editor.frame.minY < region.minY
+      }
+      dragSource(app, scroll: scroll, down: editorAbove)
     }
     XCTFail("Could not return to the existing reply editor by native scrolling")
   }

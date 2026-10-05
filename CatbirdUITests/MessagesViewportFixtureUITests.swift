@@ -209,17 +209,16 @@ final class MessagesViewportFixtureUITests: XCTestCase {
       let sample = try settled(app)
       let target = edge == .top ? sample.legalTop : sample.legalBottom
       if abs(sample.offsetY - target) <= sample.epsilon { return }
-      // XCUITest's .fast swipe registers no pan at all on the iOS 27 simulator,
-      // while a press-drag scrolls natively (R5 passive traces). Drag through
-      // the horizontal center: at the right edge the interactive scroll
-      // indicator claims the touch once the knob sits under it, and every
-      // later drag becomes a no-op. Release without a hold so native
-      // deceleration carries the flick.
+      // Use the gesture shape the passive center/gutter traces proved scrolls
+      // natively. Instant, very fast synthesized drags (and .fast swipes) that
+      // start on transcript content register no pan on the iOS 27 simulator,
+      // and at the right edge the interactive scroll indicator claims the
+      // touch once its knob sits under it. A short hold keeps travel exact.
       let usableFraction = (sample.collectionFrame.height - sample.footerFrame.height) / sample.collectionFrame.height
       let upper = collection.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: CGFloat(0.08 * usableFraction)))
       let lower = collection.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: CGFloat(0.92 * usableFraction)))
       let (start, end) = edge == .top ? (upper, lower) : (lower, upper)
-      start.press(forDuration: 0.01, thenDragTo: end, withVelocity: XCUIGestureVelocity(2_400), thenHoldForDuration: 0)
+      start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.1)
     }
     XCTFail("Native gestures did not reach the requested legal edge: \(rawSample(app) ?? "missing probe")")
     throw FixtureError.edgeNotReached
