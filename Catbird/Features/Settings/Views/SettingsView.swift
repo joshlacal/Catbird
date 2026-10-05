@@ -97,14 +97,14 @@ struct SettingsView: View {
             HStack(spacing: DesignTokens.Spacing.base) {
                 ProfileAvatarView(url: profile?.finalAvatarURL() ?? cached?.avatarURL, fallbackText: String((handle ?? "?").prefix(1)).uppercased(), size: 44)
                 VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
-                    Text(name).appFont(AppTextRole.headline).foregroundStyle(.primary)
-                    if let handle { Text("@" + handle).appFont(AppTextRole.subheadline).foregroundStyle(.secondary) }
-                    Text("Switch or add an account").appFont(AppTextRole.caption).foregroundStyle(.secondary)
-                    if isLoadingProfile && handle == nil { Text("Loading account…").appFont(AppTextRole.caption).foregroundStyle(.secondary) }
-                    if let profileError { Text(profileError).appFont(AppTextRole.caption).foregroundStyle(.secondary) }
+                    Text(name).appFont(AppTextRole.headline).foregroundStyle(Color.primary)
+                    if let handle { Text("@" + handle).appFont(AppTextRole.subheadline).foregroundStyle(Color.secondary) }
+                    Text("Switch or add an account").appFont(AppTextRole.caption).foregroundStyle(Color.secondary)
+                    if isLoadingProfile && handle == nil { Text("Loading account…").appFont(AppTextRole.caption).foregroundStyle(Color.secondary) }
+                    if let profileError { Text(profileError).appFont(AppTextRole.caption).foregroundStyle(Color.secondary) }
                 }
                 Spacer(minLength: 0)
-                Image(systemName: "chevron.right").foregroundStyle(.secondary).accessibilityHidden(true)
+                Image(systemName: "chevron.right").foregroundStyle(Color(platformColor: PlatformColor.platformTertiaryLabel)).accessibilityHidden(true)
             }
         }
         .accessibilityIdentifier("settings.accountSwitcher")

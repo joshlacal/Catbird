@@ -4,33 +4,42 @@ import Observation
 /// A destination's stable category color, independent of the user's selected accent.
 enum SettingsIconFamily {
     case account, privacy, notifications, feeds, moderation, media, language, appearance, accessibility, support, advanced
-    var palette: AccentColorOption? {
+    /// Fully saturated system colors; they adapt to dark mode and Increase Contrast on their own.
+    var tint: Color {
         switch self {
-        case .account, .support: .catbird
-        case .privacy: .midnight
-        case .notifications: .dusk
-        case .feeds, .language: .aurora
-        case .moderation: .lavender
-        case .media: .sunrise
-        case .appearance, .accessibility: .twilight
-        case .advanced: nil
+        case .account: .blue
+        case .privacy: .indigo
+        case .notifications: .red
+        case .feeds: .orange
+        case .moderation: .green
+        case .media: .pink
+        case .language: .teal
+        case .appearance: .purple
+        case .accessibility: .blue
+        case .support: .cyan
+        case .advanced: .gray
         }
     }
 }
 
+/// A solid category tile whose glyph is cut out in the app background color (white in light mode, black or dim in dark mode).
 struct SettingsCategoryIcon: View {
     let systemImage: String
     let family: SettingsIconFamily
     @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.colorSchemeContrast) private var contrast
-    private var color: Color { family.palette.map { colorScheme == .dark ? $0.darkColor : $0.color } ?? .secondary }
+    @Environment(\.themeManager) private var themeManager
+    @ScaledMetric(relativeTo: .body) private var side = DesignTokens.Size.iconXL
+    private var glyphColor: Color {
+        guard let themeManager else { return colorScheme == .dark ? .black : .white }
+        return Color.dynamicBackground(themeManager, currentScheme: colorScheme)
+    }
     var body: some View {
         Image(systemName: systemImage)
-            .font(.system(size: DesignTokens.Size.iconMD, weight: .semibold))
-            .foregroundStyle(.primary)
-            .frame(width: DesignTokens.Size.iconXL, height: DesignTokens.Size.iconXL)
-            .background(color.opacity(contrast == .increased ? 0.22 : 0.16), in: RoundedRectangle(cornerRadius: DesignTokens.Size.radiusSM))
-            .overlay { RoundedRectangle(cornerRadius: DesignTokens.Size.radiusSM).strokeBorder(color.opacity(contrast == .increased ? 0.8 : 0.45), lineWidth: contrast == .increased ? 1.5 : 0.5) }
+            .symbolVariant(.fill)
+            .font(.system(size: side * 0.56, weight: .semibold))
+            .foregroundStyle(glyphColor)
+            .frame(width: side, height: side)
+            .background(family.tint, in: RoundedRectangle(cornerRadius: side * 0.24, style: .continuous))
             .accessibilityHidden(true)
     }
 }
