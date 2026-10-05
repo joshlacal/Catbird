@@ -964,8 +964,9 @@ private final class PresentationHost {
       #expect(receipt.contains(text), "Expected complete visible text '\(text)'; see \(name) receipts")
     }
     for line in receipt.lines {
-      #expect(line.rect.minX >= 0 && line.rect.maxX <= controller.view.bounds.width + 1)
-      #expect(line.rect.minY >= 0 && line.rect.maxY <= controller.view.bounds.height + 1)
+      // OCR rects are normalized floats; tolerate sub-point rounding at the edges (e.g. minY = -6e-8).
+      #expect(line.rect.minX >= -0.5 && line.rect.maxX <= controller.view.bounds.width + 1)
+      #expect(line.rect.minY >= -0.5 && line.rect.maxY <= controller.view.bounds.height + 1)
     }
     return receipt
   }
