@@ -94,7 +94,9 @@ final class LiveMessageRequestsStore: MessageRequestsStore {
     switch item.origin {
     case .bluesky(let convoID):
       guard await appState.chatManager.acceptMessageRequest(convoId: convoID) else {
-        errorMessage = "Could not accept this request. It has been kept so you can try again."
+        // Show the failure in the sheet, not as a Messages alert after it closes
+        appState.chatManager.errorState = nil
+        errorMessage = "Couldn’t accept this request. It’s been kept so you can try again."
         return nil
       }
       return appState.userDID == accountDID ? .bluesky(convoID: convoID) : nil
@@ -106,7 +108,13 @@ final class LiveMessageRequestsStore: MessageRequestsStore {
     defer { end(item) }
     switch item.origin {
     case .bluesky(let convoID):
-      return await appState.chatManager.declineMessageRequest(convoId: convoID)
+      guard await appState.chatManager.declineMessageRequest(convoId: convoID) else {
+        // Show the failure in the sheet, not as a Messages alert after it closes
+        appState.chatManager.errorState = nil
+        errorMessage = "Couldn’t decline this request. Please try again."
+        return false
+      }
+      return true
     }
   }
 

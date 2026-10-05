@@ -1,6 +1,10 @@
 import Foundation
 import Petrel
 
+/// The shared post no longer exists or isn't visible to this account
+/// (deleted, or its author blocked the viewer). Retrying won't help.
+struct ChatRecordEmbedUnavailableError: Error {}
+
 /// Session-scoped metadata, shared by UIKit prefetch and visible SwiftUI cells.
 /// No guessed height is stored: a warm record renders its real text and media
 /// aspect ratios on the first sizing pass, at the current width and text size.
@@ -42,7 +46,8 @@ final class ChatRecordEmbedStore {
     let record = try await requests.value(for: key) {
       let (status, response) = try await client.app.bsky.feed.getPosts(input: .init(uris: [postURI]))
       try Task.checkCancellation()
-      guard status == 200, let post = response?.posts.first else { throw URLError(.resourceUnavailable) }
+      guard status == 200 else { throw URLError(.badServerResponse) }
+      guard let post = response?.posts.first else { throw ChatRecordEmbedUnavailableError() }
       let embeds = post.embed.map(Self.mapEmbed)
       return .appBskyEmbedRecordViewRecord(AppBskyEmbedRecord.ViewRecord(
         uri: post.uri, cid: post.cid, author: post.author, value: post.record,

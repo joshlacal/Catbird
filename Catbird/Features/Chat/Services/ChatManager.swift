@@ -108,6 +108,11 @@ final class ChatManager: StateInvalidationSubscriber {
   private(set) var systemMessagesMap: [String: [String: ChatBskyConvoDefs.SystemMessageView]] = [:]  // [convoId: [messageId: SystemMessageView]]
   private(set) var relatedProfilesMap: [String: [String: ChatBskyActorDefs.ProfileViewBasic]] = [:]  // [convoId: [didString: ProfileViewBasic]]
   private(set) var loadingConversations: Bool = false
+  /// True once a conversation-list load has finished (successfully or not)
+  /// for the current account, so the list can tell "loading" from "empty".
+  private(set) var hasAttemptedConversationsLoad: Bool = false
+  /// True when the most recent conversation-list load failed.
+  private(set) var lastConversationsLoadFailed: Bool = false
   private(set) var loadingMessages: [String: Bool] = [:]
   var errorState: ChatError?
 
@@ -124,6 +129,14 @@ final class ChatManager: StateInvalidationSubscriber {
 
   // Profile caching
   private var profileCache: [String: AppBskyActorDefs.ProfileViewDetailed] = [:]
+
+  /// Messageability results from getConvoAvailability, keyed by the sorted
+  /// member DIDs, so list rows don't re-query the same people.
+  @ObservationIgnored private var availabilityCache: [String: Bool] = [:]
+
+  /// The chat service caps message text at 1,000 graphemes
+  /// (`chat.bsky.convo.defs#messageInput`).
+  static let maxMessageGraphemes = 1000
 
   // Pagination control
   var conversationsCursor: String?
@@ -405,9 +418,12 @@ final class ChatManager: StateInvalidationSubscriber {
     conversationsPollBackoff = 0
     messagePollBackoffs = [:]
     loadingConversations = false
+    hasAttemptedConversationsLoad = false
+    lastConversationsLoadFailed = false
     loadingMessages = [:]
     errorState = nil
     profileCache = [:]
+    availabilityCache = [:]
     filteredConversations = []
     filteredProfiles = []
     actorSearchTask?.cancel()
@@ -420,8 +436,11 @@ final class ChatManager: StateInvalidationSubscriber {
 
   // MARK: - Conversation Loading
 
+  /// Loads the conversation list. Background polls pass `userInitiated: false`
+  /// (the default) so transient failures back off silently instead of
+  /// alerting on every tick; pull-to-refresh and the first load pass `true`.
   @MainActor
-  func loadConversations(refresh: Bool = false) async {
+  func loadConversations(refresh: Bool = false, userInitiated: Bool = false) async {
     guard let ticket = pollingBarrier.begin(accountDID: pollingAccountDID) else { return }
     defer { pollingBarrier.finish(ticket) }
 
@@ -455,7 +474,6 @@ final class ChatManager: StateInvalidationSubscriber {
           conversationLoadID = nil
         }
       }
-      errorState = nil
 
       // Reset cursor if refreshing
       let cursorToUse = refresh ? nil : conversationsCursor
@@ -476,6 +494,7 @@ final class ChatManager: StateInvalidationSubscriber {
           increaseConversationsPollBackoff()
         }
         setNetworkError(code: responseCode, context: "loadConversations")
+        recordConversationsLoad(failed: true)
         loadingConversations = false
         return
       }
@@ -483,6 +502,7 @@ final class ChatManager: StateInvalidationSubscriber {
       guard let convosData = response else {
         logger.error("No data returned from conversations request")
         setEmptyResponseError(context: "loadConversations")
+        recordConversationsLoad(failed: true)
         loadingConversations = false
         return
       }
@@ -499,6 +519,7 @@ final class ChatManager: StateInvalidationSubscriber {
 
       conversationsCursor = convosData.cursor
       conversationsPollBackoff = 0
+      recordConversationsLoad(failed: false)
 
       // Update filtered lists based on status
       updateConversationsByStatus()
@@ -520,22 +541,36 @@ final class ChatManager: StateInvalidationSubscriber {
       // Rate limits surface as thrown errors (Petrel throws for non-400 client
       // errors); back off silently — a rate-limited background poll must not
       // alert the user on every tick.
+      recordConversationsLoad(failed: true)
       if isRateLimitError(error) {
         increaseConversationsPollBackoff()
         loadingConversations = false
         return
       }
       logger.error("Error loading conversations: \(error.localizedDescription)")
-      setErrorState(error)
+      if userInitiated || UserFacingError.kind(of: error) == .signInRequired {
+        setErrorState(error)
+      } else {
+        increaseConversationsPollBackoff()
+      }
     }
 
     loadingConversations = false
   }
 
+  @MainActor
+  private func recordConversationsLoad(failed: Bool) {
+    hasAttemptedConversationsLoad = true
+    lastConversationsLoadFailed = failed
+  }
+
   // MARK: - Messages Loading
 
+  /// Loads a page of messages. The 5-second conversation poll passes
+  /// `userInitiated: false` (the default) so a degraded chat service backs off
+  /// quietly instead of cycling an alert; the first load passes `true`.
   @MainActor
-  func loadMessages(convoId: String, refresh: Bool = false) async {
+  func loadMessages(convoId: String, refresh: Bool = false, userInitiated: Bool = false) async {
     guard let ticket = pollingBarrier.begin(accountDID: pollingAccountDID) else { return }
     defer { pollingBarrier.finish(ticket) }
 
@@ -560,7 +595,6 @@ final class ChatManager: StateInvalidationSubscriber {
           messageLoadIDs[convoId] = nil
         }
       }
-      errorState = nil
 
       // Reset cursor if refreshing
       let cursorToUse: String? = refresh ? nil : (messagesCursors[convoId] ?? nil)
@@ -669,7 +703,11 @@ final class ChatManager: StateInvalidationSubscriber {
         return
       }
       logger.error("Error loading messages for \(convoId): \(error.localizedDescription)")
-      setErrorState(error)
+      if userInitiated || UserFacingError.kind(of: error) == .signInRequired {
+        setErrorState(error)
+      } else {
+        increaseMessagePollBackoff(for: convoId)
+      }
     }
 
     loadingMessages[convoId] = false
@@ -726,6 +764,8 @@ final class ChatManager: StateInvalidationSubscriber {
         originalMessagesMap[convoId] = nil  // Clear original messages for this convo
         systemMessagesMap[convoId] = nil
         relatedProfilesMap[convoId] = nil
+        updateConversationsByStatus()
+        onUnreadCountChanged?()
         logger.debug("Left conversation \(convoId) successfully.")
       }
       return .success
@@ -839,27 +879,25 @@ final class ChatManager: StateInvalidationSubscriber {
       return
     }
 
-    // Implement mute functionality here
-    // 1. Create ChatBskyConvoMute.Input
-    // 2. Call client.chat.bsky.convo.mute
-    // 3. Check responseCode
-    // 4. If success, update local state (e.g., mark conversation as muted)
     let muteInput = ChatBskyConvoMuteConvo.Input(convoId: convoId)
      do {
-      let (responseCode, _) = try await client.chat.bsky.convo.muteConvo(input: muteInput)
+      let (responseCode, response) = try await client.chat.bsky.convo.muteConvo(input: muteInput)
       guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return }
  
       guard responseCode >= 200 && responseCode < 300 else {
-        setNetworkError(code: responseCode, context: "muteConversation(\(convoId))")
+        setInteractiveNetworkError(
+          code: responseCode,
+          context: "muteConversation(\(convoId))",
+          operation: "mute this conversation"
+        )
         return
       }
 
-      // Update local state
-      if conversations.firstIndex(where: { $0.id == convoId }) != nil {
-        //                conversations[index].muted = true // Assuming ConvoView has an isMuted property
-        await self.loadMessages(convoId: convoId, refresh: true)  // Reload messages to reflect mute state
-        logger.debug("Conversation \(convoId) muted successfully.")
+      // The response carries the updated ConvoView (muted flipped)
+      if let updatedConvo = response?.convo {
+        replaceConversation(updatedConvo)
       }
+      logger.debug("Conversation \(convoId) muted successfully.")
 
       // Sync mute status to Nest (non-fatal)
       await syncMuteStatusToServer(convoId: convoId, muted: true)
@@ -868,7 +906,11 @@ final class ChatManager: StateInvalidationSubscriber {
     } catch {
       guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return }
       logger.error("Error muting conversation \(convoId): \(error.localizedDescription)")
-      setErrorState(error)
+      setInteractiveThrownError(
+        error,
+        context: "muteConversation(\(convoId))",
+        operation: "mute this conversation"
+      )
     }
   }
 
@@ -885,20 +927,23 @@ final class ChatManager: StateInvalidationSubscriber {
 
     let unmuteInput = ChatBskyConvoUnmuteConvo.Input(convoId: convoId)
      do {
-      let (responseCode, _) = try await client.chat.bsky.convo.unmuteConvo(input: unmuteInput)
+      let (responseCode, response) = try await client.chat.bsky.convo.unmuteConvo(input: unmuteInput)
       guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return }
  
       guard responseCode >= 200 && responseCode < 300 else {
-        setNetworkError(code: responseCode, context: "unmuteConversation(\(convoId))")
+        setInteractiveNetworkError(
+          code: responseCode,
+          context: "unmuteConversation(\(convoId))",
+          operation: "unmute this conversation"
+        )
         return
       }
 
-      // Update local state
-      if conversations.firstIndex(where: { $0.id == convoId }) != nil {
-        await self.loadMessages(convoId: convoId, refresh: true)
-        guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return }
-        logger.debug("Conversation \(convoId) unmuted successfully.")
+      // The response carries the updated ConvoView (muted flipped)
+      if let updatedConvo = response?.convo {
+        replaceConversation(updatedConvo)
       }
+      logger.debug("Conversation \(convoId) unmuted successfully.")
 
       // Sync mute status to Nest (non-fatal)
       await syncMuteStatusToServer(convoId: convoId, muted: false)
@@ -907,8 +952,21 @@ final class ChatManager: StateInvalidationSubscriber {
     } catch {
       guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return }
       logger.error("Error unmuting conversation \(convoId): \(error.localizedDescription)")
-      setErrorState(error)
+      setInteractiveThrownError(
+        error,
+        context: "unmuteConversation(\(convoId))",
+        operation: "unmute this conversation"
+      )
     }
+  }
+
+  /// Swaps a server-returned ConvoView into local state and refreshes the
+  /// derived lists the conversation list renders from.
+  @MainActor
+  private func replaceConversation(_ convo: ChatBskyConvoDefs.ConvoView) {
+    guard let index = conversations.firstIndex(where: { $0.id == convo.id }) else { return }
+    conversations[index] = convo
+    updateConversationsByStatus()
   }
 
   // MARK: - Mute Status Server Sync
@@ -1023,15 +1081,18 @@ final class ChatManager: StateInvalidationSubscriber {
     return messagesCursors[convoId] != nil
   }
 
+  /// Whether the given members can chat. `canChat` is `nil` when the answer
+  /// is unknown (network failure, cancellation, account switch) — callers must
+  /// not treat an unknown result as "can't be messaged". Failures are logged,
+  /// not surfaced: this backs per-row checks in people lists.
   @MainActor
-  func checkConversationAvailability(members: [String]) async -> (canChat: Bool, existingConvo: ChatBskyConvoDefs.ConvoView?) {
-    guard let ticket = pollingBarrier.begin(accountDID: pollingAccountDID) else { return (false, nil) }
+  func checkConversationAvailability(members: [String]) async -> (canChat: Bool?, existingConvo: ChatBskyConvoDefs.ConvoView?) {
+    guard let ticket = pollingBarrier.begin(accountDID: pollingAccountDID) else { return (nil, nil) }
     defer { pollingBarrier.finish(ticket) }
 
     guard let client = client else {
       logger.error("Cannot check conversation availability: client is nil")
-      errorState = .noClient
-      return (false, nil)
+      return (nil, nil)
     }
 
     do {
@@ -1039,28 +1100,40 @@ final class ChatManager: StateInvalidationSubscriber {
       let params = ChatBskyConvoGetConvoAvailability.Parameters(members: memberDIDs)
          
       let (responseCode, response) = try await client.chat.bsky.convo.getConvoAvailability(input: params)
-      guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return (false, nil) }
+      guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return (nil, nil) }
  
       guard responseCode >= 200 && responseCode < 300 else {
-        setNetworkError(code: responseCode, context: "checkConversationAvailability")
-        return (false, nil)
+        logger.warning("checkConversationAvailability: HTTP \(responseCode)")
+        return (nil, nil)
       }
 
       guard let availability = response else {
         logger.error("No data returned from conversation availability request")
-        setEmptyResponseError(context: "checkConversationAvailability")
-        return (false, nil)
+        return (nil, nil)
       }
 
+      availabilityCache[Self.availabilityKey(for: members)] = availability.canChat
       logger.debug("Conversation availability check completed. Can chat: \(availability.canChat)")
       return (availability.canChat, availability.convo)
 
     } catch {
-      guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return (false, nil) }
+      guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return (nil, nil) }
       logger.error("Error checking conversation availability: \(error.localizedDescription)")
-      setErrorState(error)
-      return (false, nil)
+      return (nil, nil)
     }
+  }
+
+  /// Cached-first messageability check for list rows; `nil` means unknown.
+  @MainActor
+  func canMessage(members: [String]) async -> Bool? {
+    if let cached = availabilityCache[Self.availabilityKey(for: members)] {
+      return cached
+    }
+    return await checkConversationAvailability(members: members).canChat
+  }
+
+  private static func availabilityKey(for members: [String]) -> String {
+    members.sorted().joined(separator: ",")
   }
 
   // MARK: - Message Actions
@@ -1093,6 +1166,11 @@ final class ChatManager: StateInvalidationSubscriber {
       logger.warning("Attempted to send empty message to \(convoId) without embed")
       return false
     }
+    guard trimmedText.count <= Self.maxMessageGraphemes else {
+      logger.warning("Attempted to send a \(trimmedText.count)-character message to \(convoId)")
+      errorState = .messageTooLong
+      return false
+    }
 
     // Note: The UI handles optimistic updates, so we don't create them here
     // This prevents message duplication
@@ -1121,9 +1199,9 @@ final class ChatManager: StateInvalidationSubscriber {
       guard responseCode >= 200 && responseCode < 300 else {
         // `ConvoLocked` / `ConvoLockedByModeration` are the lexicon 400s for group
         // sends; the error body is dropped by the generated wrapper, so map from
-        // the conversation kind.
+        // the conversation's locally known lock state.
         let typedError: ChatError? =
-          conversation(withID: convoId)?.isGroupConversation == true ? .conversationLocked : nil
+          conversation(withID: convoId)?.isLockedForSending == true ? .conversationLocked : nil
         setInteractiveNetworkError(
           code: responseCode,
           context: "sendMessage(\(convoId))",
@@ -1292,6 +1370,7 @@ final class ChatManager: StateInvalidationSubscriber {
       if let updatedConvoView = response?.convo {
         if let index = conversations.firstIndex(where: { $0.id == updatedConvoView.id }) {
           conversations[index] = updatedConvoView
+          updateConversationsByStatus()
           logger.debug(
             "Successfully marked conversation \(convoId) as read and updated local state.")
           // Notify that unread count has changed
@@ -1838,42 +1917,27 @@ final class ChatManager: StateInvalidationSubscriber {
     logger.warning("Could not find message \(updatedMessageView.id) in local state to update.")
   }
 
-  /// Updates the `lastMessage` property of a conversation in the `conversations` array.
+  /// Updates the `lastMessage` of a conversation after a send and moves it to
+  /// the top of the list, matching the server's most-recent-activity order.
   @MainActor
   private func updateConversationLastMessage(
     convoId: String, messageView: ChatBskyConvoDefs.MessageView
   ) {
-    if let index = conversations.firstIndex(where: { $0.id == convoId }) {
-      // We need to update the ConvoView, which might be immutable.
-      // A common pattern is to replace the element with a modified copy.
-      _ = conversations[index]
-
-      // Create the correct union type for the last message
-      _ = ChatBskyConvoDefs.ConvoViewLastMessageUnion
-        .chatBskyConvoDefsMessageView(messageView)
-
-      // Create a new ConvoView instance with the updated lastMessage
-      // This assumes ConvoView has an initializer or properties are mutable.
-      // If immutable, you might need a custom struct or recreate it fully.
-      // For demonstration, assuming properties can be set (replace if needed):
-
-      // This direct mutation won't work if ConvoView is a struct from a library.
-      // conversations[index].lastMessage = updatedLastMessage
-
-      // Instead, you might need to recreate it (if possible) or rely on the next refresh.
-      // Example if ConvoView was mutable or had an appropriate init:
-      // conversations[index] = ChatBskyConvoDefs.ConvoView(..., lastMessage: updatedLastMessage, ...)
-
-      // For now, log and rely on refresh:
-      logger.debug(
-        "Need to update last message preview for convo \(convoId). Relying on next refresh.")
-
-      // Also, move the updated conversation to the top of the list
-      let updatedConvo = conversations.remove(at: index)
-      conversations.insert(updatedConvo, at: 0)
-      logger.debug("Moved conversation \(convoId) to top.")
-
-    }
+    guard let index = conversations.firstIndex(where: { $0.id == convoId }) else { return }
+    let convo = conversations.remove(at: index)
+    let updatedConvo = ChatBskyConvoDefs.ConvoView(
+      id: convo.id,
+      rev: convo.rev,
+      members: convo.members,
+      lastMessage: .chatBskyConvoDefsMessageView(messageView),
+      lastReaction: convo.lastReaction,
+      muted: convo.muted,
+      status: convo.status,
+      unreadCount: convo.unreadCount,
+      kind: convo.kind
+    )
+    conversations.insert(updatedConvo, at: 0)
+    updateConversationsByStatus()
   }
 
   // MARK: - Actor Management Methods
@@ -1899,11 +1963,8 @@ final class ChatManager: StateInvalidationSubscriber {
       }
 
       logger.debug("Successfully exported chat account data")
-      // Convert the output to Data if needed, or return the raw data
-      if let outputData = output {
-        return try JSONEncoder().encode(outputData)
-      }
-      return nil
+      // The output wraps the raw JSON Lines export body
+      return output?.data
 
     } catch {
       guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return nil }
@@ -1913,24 +1974,26 @@ final class ChatManager: StateInvalidationSubscriber {
     }
   }
 
+  /// Deletes the account's chat data on the server. Returns `true` once the
+  /// server has confirmed the deletion and local chat state is cleared.
   @MainActor
-  func deleteChatAccount() async -> (success: Bool, exportData: Data?) {
-    guard let ticket = pollingBarrier.begin(accountDID: pollingAccountDID) else { return (false, nil) }
+  func deleteChatAccount() async -> Bool {
+    guard let ticket = pollingBarrier.begin(accountDID: pollingAccountDID) else { return false }
     defer { pollingBarrier.finish(ticket) }
 
     guard let client = client else {
       logger.error("Cannot delete chat account: client is nil")
       errorState = .noClient
-      return (false, nil)
+      return false
     }
 
      do {
-      let (responseCode, output) = try await client.chat.bsky.actor.deleteAccount()
-      guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return (false, nil) }
+      let (responseCode, _) = try await client.chat.bsky.actor.deleteAccount()
+      guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return false }
  
       guard responseCode >= 200 && responseCode < 300 else {
         setNetworkError(code: responseCode, context: "deleteChatAccount")
-        return (false, nil)
+        return false
       }
 
       // Clear all local chat data after successful deletion
@@ -1943,24 +2006,18 @@ final class ChatManager: StateInvalidationSubscriber {
       profileCache = [:]
       filteredConversations = []
       filteredProfiles = []
+      availabilityCache = [:]
+      updateConversationsByStatus()
+      onUnreadCountChanged?()
 
       logger.debug("Successfully deleted chat account")
-      
-      // Convert output to Data if available
-      let exportData: Data?
-      if let outputData = output {
-        exportData = try JSONEncoder().encode(outputData)
-      } else {
-        exportData = nil
-      }
-      
-      return (true, exportData)
+      return true
 
     } catch {
-      guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return (false, nil) }
+      guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return false }
       logger.error("Error deleting chat account: \(error.localizedDescription)")
       setErrorState(error)
-      return (false, nil)
+      return false
     }
   }
 
@@ -2188,10 +2245,10 @@ final class ChatManager: StateInvalidationSubscriber {
     guard let ticket = pollingBarrier.begin(accountDID: pollingAccountDID) else { return false }
     defer { pollingBarrier.finish(ticket) }
 
-    await leaveConversation(convoId: convoId)
+    guard await leaveConversation(convoId: convoId) == .success else { return false }
     guard !Task.isCancelled, pollingBarrier.isCurrent(ticket, accountDID: pollingAccountDID) else { return false }
-      // Remove from message requests
-      messageRequests.removeAll { $0.id == convoId }
+    // Remove from message requests
+    messageRequests.removeAll { $0.id == convoId }
     // Note: leaveConversation already removes from main conversations list
     return true
   }
@@ -2383,6 +2440,14 @@ final class ChatManager: StateInvalidationSubscriber {
     case messageDeleteNotAllowed
     case reactionNotAllowed
     case reactionLimitReached
+    /// Message text exceeds `maxMessageGraphemes`.
+    case messageTooLong
+    /// The other person's chat settings don't allow a conversation with you.
+    case recipientNotAccepting
+    /// One or more selected people can't be added to a new group.
+    case groupMembersUnavailable
+    /// A validation failure whose text is already user-readable.
+    case invalidInput(String)
     /// Generic user-readable failure for an interactive operation that doesn't
     /// map to a lexicon-defined error. `operation` is a verb phrase, e.g.
     /// "send this message".
@@ -2391,15 +2456,27 @@ final class ChatManager: StateInvalidationSubscriber {
     var errorDescription: String? {
       switch self {
       case .noClient:
-        return NSLocalizedString("Not connected to Bluesky service.", comment: "Chat error")
+        return NSLocalizedString("Sign in to use Messages.", comment: "Chat error")
       case .networkError(let code):
-        return String(
-          format: NSLocalizedString("Network error (HTTP %d)", comment: "Chat error"), code)
+        switch code {
+        case 401:
+          return NSLocalizedString("Your session expired. Sign in again.", comment: "Chat error")
+        case 403:
+          return NSLocalizedString("You don’t have permission to do that.", comment: "Chat error")
+        case 400:
+          return NSLocalizedString("This action isn’t allowed right now.", comment: "Chat error")
+        case 429:
+          return NSLocalizedString("Too many requests. Wait a moment and try again.", comment: "Chat error")
+        default:
+          return NSLocalizedString(
+            "Couldn’t reach Bluesky chat. Check your connection and try again.", comment: "Chat error")
+        }
       case .emptyResponse:
         return NSLocalizedString(
-          "Received an empty response from the server.", comment: "Chat error")
+          "Bluesky chat didn’t respond. Try again.", comment: "Chat error")
       case .generalError(let error):
-        return error.localizedDescription
+        return UserFacingError.message(for: error, action: "reach Bluesky chat")
+          ?? NSLocalizedString("Something went wrong. Try again.", comment: "Chat error")
       case .ownerCannotLeave:
         return NSLocalizedString(
           "You own this group, so you need to lock it before you can leave.",
@@ -2409,17 +2486,28 @@ final class ChatManager: StateInvalidationSubscriber {
           "This conversation is locked. New messages and reactions are disabled.",
           comment: "Chat error")
       case .messageDeleteNotAllowed:
-        return NSLocalizedString("This message can't be deleted.", comment: "Chat error")
+        return NSLocalizedString("This message can’t be deleted.", comment: "Chat error")
       case .reactionNotAllowed:
         return NSLocalizedString(
-          "Reactions aren't allowed on this message.", comment: "Chat error")
+          "Reactions aren’t allowed on this message.", comment: "Chat error")
       case .reactionLimitReached:
         return NSLocalizedString(
-          "You've reached the maximum number of reactions for this message.",
+          "You’ve reached the maximum number of reactions for this message.",
           comment: "Chat error")
+      case .messageTooLong:
+        return NSLocalizedString(
+          "Messages can be up to 1,000 characters.", comment: "Chat error")
+      case .recipientNotAccepting:
+        return NSLocalizedString(
+          "This person isn’t accepting messages from you.", comment: "Chat error")
+      case .groupMembersUnavailable:
+        return NSLocalizedString(
+          "Some of these people can’t be added to a group.", comment: "Chat error")
+      case .invalidInput(let message):
+        return message
       case .operationFailed(let operation):
         return String(
-          format: NSLocalizedString("Couldn't %@. Please try again.", comment: "Chat error"),
+          format: NSLocalizedString("Couldn’t %@. Please try again.", comment: "Chat error"),
           operation)
       }
     }
@@ -2440,8 +2528,13 @@ final class ChatManager: StateInvalidationSubscriber {
            (.conversationLocked, .conversationLocked),
            (.messageDeleteNotAllowed, .messageDeleteNotAllowed),
            (.reactionNotAllowed, .reactionNotAllowed),
-           (.reactionLimitReached, .reactionLimitReached):
+           (.reactionLimitReached, .reactionLimitReached),
+           (.messageTooLong, .messageTooLong),
+           (.recipientNotAccepting, .recipientNotAccepting),
+           (.groupMembersUnavailable, .groupMembersUnavailable):
         return true
+      case (.invalidInput(let lMessage), .invalidInput(let rMessage)):
+        return lMessage == rMessage
       case (.operationFailed(let lOperation), .operationFailed(let rOperation)):
         return lOperation == rOperation
       default:

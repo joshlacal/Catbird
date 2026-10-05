@@ -10,7 +10,7 @@ struct GroupConfigView: View {
   private let defaultGroupName = "Group Chat"
   private let namePlaceholder = "Group Name"
   private let nameFooter = "Choose a name for this Bluesky group chat."
-  private let participantsFooter = "Everyone listed will be invited when this group chat is created."
+  private let participantsFooter = "Everyone listed will be added when this group chat is created. Group chats on Bluesky aren’t end-to-end encrypted."
 
   var body: some View {
     List {
@@ -52,7 +52,6 @@ struct GroupConfigView: View {
           .designCaption()
       }
 
-      securitySection
     }
     #if os(iOS)
     .listStyle(.insetGrouped)
@@ -98,40 +97,5 @@ struct GroupConfigView: View {
 
   private var previewSubtitle: String {
     "\(participants.count) member\(participants.count == 1 ? "" : "s")"
-  }
-
-  private var securitySection: some View {
-    Section {
-      detailRow(
-        icon: "bubble.left.and.bubble.right.fill",
-        title: "Bluesky Chat",
-        detail: "Native chat.bsky group",
-        iconColor: .accentColor
-      )
-      detailRow(
-        icon: "lock.slash.fill",
-        title: "Encryption",
-        detail: "Not end-to-end encrypted",
-        iconColor: .secondary
-      )
-    } header: {
-      Label("Delivery", systemImage: "person.3")
-        .designCaption()
-    }
-  }
-
-  @ViewBuilder
-  private func detailRow(icon: String, title: String, detail: String, iconColor: Color) -> some View {
-    HStack(spacing: DesignTokens.Spacing.sm) {
-      Image(systemName: icon)
-        .font(.system(size: DesignTokens.Size.iconMD))
-        .foregroundColor(iconColor)
-        .frame(width: 24)
-      VStack(alignment: .leading, spacing: 2) {
-        Text(title).designCallout()
-        Text(detail).designCaption().foregroundColor(.secondary)
-      }
-      Spacer()
-    }
   }
 }

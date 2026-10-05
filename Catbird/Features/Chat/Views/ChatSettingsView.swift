@@ -47,8 +47,9 @@ struct ChatSettingsView: View {
   @State private var isExporting = false
   @State private var isDeleting = false
   @State private var isMarkingAllRead = false
-  @State private var exportedData: Data?
+  @State private var exportedFileURL: URL?
   @State private var errorMessage: String?
+  @State private var showingDeletedConfirmation = false
   @State private var privacyEditor: AccountSettingsEditSession<ChatPrivacySettingsRecord>?
   private let logger = Logger(subsystem: "blue.catbird", category: "ChatSettingsView")
   
@@ -84,36 +85,30 @@ struct ChatSettingsView: View {
       privacySection
         Section {
           Button {
-            markAllConversationsAsRead()
+            showingMarkAllReadAlert = true
           } label: {
             HStack {
-              Image(systemName: "envelope.open")
-                .foregroundColor(.blue)
               Text("Mark All Conversations as Read")
+                .foregroundStyle(Color.primary)
               Spacer()
               if isMarkingAllRead {
                 ProgressView()
-                  .scaleEffect(0.8)
               }
             }
           }
           .disabled(isMarkingAllRead)
-        } header: {
-          Text("Quick Actions")
         }
-        
+
         Section {
           Button {
             exportChatData()
           } label: {
             HStack {
-              Image(systemName: "square.and.arrow.up")
-                .foregroundColor(.blue)
               Text("Export Chat Data")
+                .foregroundStyle(Color.primary)
               Spacer()
               if isExporting {
                 ProgressView()
-                  .scaleEffect(0.8)
               }
             }
           }
@@ -125,41 +120,30 @@ struct ChatSettingsView: View {
             NavigationLink {
               ChatModerationView()
             } label: {
-              HStack {
-                Image(systemName: "shield")
-                  .foregroundColor(.orange)
-                Text("Moderation Tools")
-              }
+              Text("Moderation Tools")
             }
           #endif
-        } header: {
-          #if DEBUG
-            Text("Data & Moderation")
-          #else
-            Text("Data")
-          #endif
+        } footer: {
+          Text("Download a copy of your direct messages.")
         }
-        
+
         Section {
-          Button {
+          Button(role: .destructive) {
             showingDeleteAccountAlert = true
           } label: {
             HStack {
-              Image(systemName: "trash")
-                .foregroundColor(.red)
               Text("Delete Chat Account")
               Spacer()
               if isDeleting {
                 ProgressView()
-                  .scaleEffect(0.8)
               }
             }
           }
           .disabled(isDeleting)
         } header: {
-          Text("Danger Zone")
+          Text("Delete Chat Data")
         } footer: {
-          Text("This will permanently delete all your chat data including conversations, messages, and settings. This action cannot be undone.")
+          Text("Permanently deletes your chat data, including conversations, messages and chat settings. This can’t be undone.")
         }
       }
       .navigationTitle("Chat Settings")
@@ -171,31 +155,41 @@ struct ChatSettingsView: View {
           }
         }
       }
-      .alert("Mark All as Read", isPresented: $showingMarkAllReadAlert) {
+      .alert("Mark All as Read?", isPresented: $showingMarkAllReadAlert) {
         Button("Cancel", role: .cancel) { }
-        Button("Mark All Read") {
+        Button("Mark All as Read") {
           markAllConversationsAsRead()
         }
       } message: {
-        Text("This will mark all conversations as read. Continue?")
+        Text("All of your conversations will be marked as read.")
       }
-      .alert("Delete Chat Account", isPresented: $showingDeleteAccountAlert) {
+      .alert("Delete Chat Account?", isPresented: $showingDeleteAccountAlert) {
         Button("Cancel", role: .cancel) { }
         Button("Delete", role: .destructive) {
           deleteChatAccount()
         }
       } message: {
-        Text("Are you sure you want to permanently delete your chat account? This will remove all conversations, messages, and chat history. This action cannot be undone.")
+        Text("This permanently deletes all of your conversations, messages and chat history. This can’t be undone.")
+      }
+      .alert("Chat Account Deleted", isPresented: $showingDeletedConfirmation) {
+        Button("OK") { dismiss() }
+      } message: {
+        Text("Your chat account has been deleted.")
       }
       .sheet(isPresented: $showingExportData) {
-        ChatDataExportView(exportedData: $exportedData)
+        if let exportedFileURL {
+          ChatDataExportView(fileURL: exportedFileURL)
+        }
       }
-      .alert("Error", isPresented: .constant(errorMessage != nil)) {
+      .alert("Something Went Wrong", isPresented: Binding(
+        get: { errorMessage != nil },
+        set: { if !$0 { errorMessage = nil } }
+      )) {
         Button("OK") {
           errorMessage = nil
         }
       } message: {
-        Text(errorMessage ?? "An unknown error occurred")
+        Text(errorMessage ?? "")
       }
       .task(id: appState.userDID) { await loadPrivacyEditor() }
       .onDisappear { privacyEditor?.invalidate() }
@@ -335,47 +329,50 @@ struct ChatSettingsView: View {
     Task {
       isMarkingAllRead = true
       let success = await appState.chatManager.markAllConversationsAsRead()
-      await MainActor.run {
-        isMarkingAllRead = false
-        if !success {
-          errorMessage = "Failed to mark all conversations as read"
-        }
+      isMarkingAllRead = false
+      if success {
+        appState.toastManager.show(ToastItem(message: "All conversations marked as read"))
+      } else {
+        appState.chatManager.errorState = nil
+        errorMessage = "Couldn’t mark your conversations as read. Try again."
       }
     }
   }
-  
+
   private func exportChatData() {
     Task {
       isExporting = true
       let data = await appState.chatManager.exportChatAccountData()
-      await MainActor.run {
-        isExporting = false
-        if let data = data {
-          exportedData = data
-          showingExportData = true
-        } else {
-          errorMessage = "Failed to export chat data"
-        }
+      isExporting = false
+      guard let data else {
+        appState.chatManager.errorState = nil
+        errorMessage = "Couldn’t export your chat data. Try again."
+        return
+      }
+      let stamp = Date().formatted(.iso8601.year().month().day())
+      let fileURL = FileManager.default.temporaryDirectory
+        .appendingPathComponent("bluesky-chat-export-\(stamp).jsonl")
+      do {
+        try data.write(to: fileURL, options: .atomic)
+        exportedFileURL = fileURL
+        showingExportData = true
+      } catch {
+        logger.error("Failed to write chat export: \(error.localizedDescription)")
+        errorMessage = "Couldn’t save your chat data. Try again."
       }
     }
   }
-  
+
   private func deleteChatAccount() {
     Task {
       isDeleting = true
-      let result = await appState.chatManager.deleteChatAccount()
-      await MainActor.run {
-        isDeleting = false
-        if result.success {
-          // Optionally save export data before dismissing
-          if let exportData = result.exportData {
-            exportedData = exportData
-            showingExportData = true
-          }
-          dismiss()
-        } else {
-          errorMessage = "Failed to delete chat account"
-        }
+      let success = await appState.chatManager.deleteChatAccount()
+      isDeleting = false
+      if success {
+        showingDeletedConfirmation = true
+      } else {
+        appState.chatManager.errorState = nil
+        errorMessage = "Couldn’t delete your chat account. Try again."
       }
     }
   }
@@ -387,7 +384,7 @@ private enum ChatPrivacySettingsError: LocalizedError {
     switch self {
     case .notAuthenticated: "Sign in to load chat privacy settings."
     case .accountChanged: "The account changed. Open these settings again."
-    case .response(let code): "Chat privacy settings could not be confirmed (status \(code)). Try again."
+    case .response: "Chat privacy settings couldn’t be confirmed. Try again."
     }
   }
 }
@@ -402,46 +399,45 @@ private struct ChatSettingsTitleStyle: ViewModifier {
   }
 }
 
-/// View for displaying and sharing exported chat data
+/// View for sharing or saving an exported chat data file
 struct ChatDataExportView: View {
-  @Binding var exportedData: Data?
+  let fileURL: URL
   @Environment(\.dismiss) private var dismiss
-  @State private var showingShareSheet = false
-  
+
+  private var fileSize: Int64? {
+    (try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize).map { Int64($0) }
+  }
+
   var body: some View {
     NavigationStack {
       VStack(spacing: 20) {
         Image(systemName: "square.and.arrow.up.circle")
           .appFont(size: 64)
-          .foregroundColor(.blue)
-        
+          .foregroundStyle(.tint)
+          .accessibilityHidden(true)
+
         Text("Chat Data Exported")
           .appFont(AppTextRole.title2)
           .fontWeight(.semibold)
-        
-        Text("Your chat data has been exported successfully. You can share or save this file.")
+
+        Text("Your chat data is ready. Share it or save it to Files.")
           .multilineTextAlignment(.center)
-          .foregroundColor(.secondary)
-        
-        if let data = exportedData {
-          VStack(spacing: 12) {
-            Text("File Size: \(ByteCountFormatter.string(fromByteCount: Int64(data.count), countStyle: .file))")
+          .foregroundStyle(.secondary)
+
+        VStack(spacing: 12) {
+          if let fileSize {
+            Text("File size: \(ByteCountFormatter.string(fromByteCount: fileSize, countStyle: .file))")
               .appFont(AppTextRole.caption)
-              .foregroundColor(.secondary)
-            
-            Button {
-              showingShareSheet = true
-            } label: {
-              HStack {
-                Image(systemName: "square.and.arrow.up")
-                Text("Share Export File")
-              }
-              .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent)
+              .foregroundStyle(.secondary)
           }
+
+          ShareLink(item: fileURL) {
+            Label("Share Export File", systemImage: "square.and.arrow.up")
+              .frame(maxWidth: .infinity)
+          }
+          .buttonStyle(.borderedProminent)
         }
-        
+
         Spacer()
       }
       .padding()
@@ -456,13 +452,6 @@ struct ChatDataExportView: View {
           }
         }
       }
-      #if os(iOS)
-      .sheet(isPresented: $showingShareSheet) {
-        if let data = exportedData {
-          ChatShareSheet(items: [data])
-        }
-      }
-      #endif
     }
   }
 }

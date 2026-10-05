@@ -254,7 +254,7 @@ struct BlueskyMessageAdapter: UnifiedChatMessage {
         }
         return "@" + profile.handle.description
       }
-      return didStr
+      return "Someone"
     }
 
     switch systemMessageView.data {
@@ -356,7 +356,7 @@ struct BlueskyMessageAdapter: UnifiedChatMessage {
     case .chatBskyConvoDefsSystemMessageDataEditGroup(let data):
       let text: String
       if let newName = data.newName, !newName.isEmpty {
-        text = "Group name changed to \"\(newName)\""
+        text = "Group name changed to “\(newName)”"
       } else {
         text = "Group name was updated"
       }
@@ -375,7 +375,7 @@ struct BlueskyMessageAdapter: UnifiedChatMessage {
         id: id,
         kind: .joinLinkCreated,
         sentAt: sentAt,
-        messageText: "Join link created",
+        messageText: "Invite link created",
         iconName: "link.badge.plus"
       )
 
@@ -384,7 +384,7 @@ struct BlueskyMessageAdapter: UnifiedChatMessage {
         id: id,
         kind: .joinLinkEdited,
         sentAt: sentAt,
-        messageText: "Join link updated",
+        messageText: "Invite link updated",
         iconName: "link"
       )
 
@@ -393,7 +393,7 @@ struct BlueskyMessageAdapter: UnifiedChatMessage {
         id: id,
         kind: .joinLinkEnabled,
         sentAt: sentAt,
-        messageText: "Join link enabled",
+        messageText: "Invite link enabled",
         iconName: "link"
       )
 
@@ -402,7 +402,7 @@ struct BlueskyMessageAdapter: UnifiedChatMessage {
         id: id,
         kind: .joinLinkDisabled,
         sentAt: sentAt,
-        messageText: "Join link disabled",
+        messageText: "Invite link disabled",
         iconName: "link"
       )
 

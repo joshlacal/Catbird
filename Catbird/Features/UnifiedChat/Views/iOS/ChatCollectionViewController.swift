@@ -90,6 +90,8 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
   var onEditMessage: ((Message) -> Void)?
   var onUnsendMessage: ((Message) -> Void)?
   var onReply: ((Message) -> Void)?
+  var onDeleteMessage: ((Message) -> Void)?
+  var onReportMessage: ((Message) -> Void)?
   private var hasPerformedInitialScroll = false
   private var lastScrollToBottomTrigger: Int = 0
 
@@ -312,6 +314,7 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
             onRetry: { [weak self] in
               self?.onRetryMessage?(messageID)
             },
+            showSenderName: (self.dataSource as? BlueskyConversationDataSource)?.isGroupConversation ?? true,
             groupPosition: UnifiedMessageGrouping.groupPosition(for: messageID, in: self.dataSource.messages)
           )
           .environment(appState)
@@ -704,6 +707,31 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
           self?.onUnsendMessage?(message)
         })
         self.present(alert, animated: true)
+      },
+      showsMessageActions: !message.isSystemMessage && !message.isTombstone,
+      canCopy: !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+      canReply: onReply != nil,
+      canDeleteForMe: onDeleteMessage != nil,
+      canReport: onReportMessage != nil && !message.isFromCurrentUser,
+      onCopyTapped: { [weak self] in
+        UIPasteboard.general.string = message.text
+        PlatformHaptics.light()
+        self?.dismissReactionOverlay()
+      },
+      onReplyTapped: { [weak self] in
+        guard let self else { return }
+        self.dismissReactionOverlay()
+        self.onReply?(message)
+      },
+      onDeleteForMeTapped: { [weak self] in
+        guard let self else { return }
+        self.dismissReactionOverlay()
+        self.onDeleteMessage?(message)
+      },
+      onReportTapped: { [weak self] in
+        guard let self else { return }
+        self.dismissReactionOverlay()
+        self.onReportMessage?(message)
       }
     )
 
@@ -1125,6 +1153,20 @@ struct MessageLongPressOverlay: View {
   let canUnsend: Bool
   let onEditTapped: () -> Void
   let onUnsendTapped: () -> Void
+  /// Copy, Reply, Delete for Me and Report for regular (non-system) messages.
+  var showsMessageActions: Bool = false
+  var canCopy: Bool = false
+  var canReply: Bool = false
+  var canDeleteForMe: Bool = false
+  var canReport: Bool = false
+  var onCopyTapped: () -> Void = {}
+  var onReplyTapped: () -> Void = {}
+  var onDeleteForMeTapped: () -> Void = {}
+  var onReportTapped: () -> Void = {}
+
+  private var hasMessageActions: Bool {
+    showsMessageActions && (canCopy || canReply || canDeleteForMe || canReport)
+  }
 
   var body: some View {
     VStack(alignment: .trailing, spacing: 8) {
@@ -1133,6 +1175,10 @@ struct MessageLongPressOverlay: View {
         onReactionSelected: onReactionSelected,
         onMoreTapped: onMoreTapped
       )
+
+      if hasMessageActions {
+        messageActionsMenu
+      }
 
       if canEdit || canUnsend {
         HStack(spacing: 16) {
@@ -1158,6 +1204,49 @@ struct MessageLongPressOverlay: View {
         .shadow(color: .black.opacity(0.1), radius: 4, x: 0, y: 2)
       }
     }
+  }
+
+  private var messageActionsMenu: some View {
+    VStack(spacing: 0) {
+      if canReply {
+        actionRow("Reply", systemImage: "arrowshape.turn.up.left", action: onReplyTapped)
+      }
+      if canCopy {
+        actionRow("Copy", systemImage: "doc.on.doc", action: onCopyTapped)
+      }
+      if canDeleteForMe {
+        actionRow("Delete for Me", systemImage: "trash", role: .destructive, action: onDeleteForMeTapped)
+      }
+      if canReport {
+        actionRow("Report", systemImage: "exclamationmark.bubble", role: .destructive, action: onReportTapped)
+      }
+    }
+    .frame(minWidth: 200)
+    .fixedSize()
+    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    .shadow(color: .black.opacity(0.1), radius: 4, x: 0, y: 2)
+  }
+
+  private func actionRow(
+    _ title: String,
+    systemImage: String,
+    role: ButtonRole? = nil,
+    action: @escaping () -> Void
+  ) -> some View {
+    Button(role: role, action: action) {
+      HStack(spacing: 12) {
+        Text(title)
+        Spacer(minLength: 16)
+        Image(systemName: systemImage)
+      }
+      .font(.body)
+      .foregroundStyle(role == .destructive ? Color.red : Color.primary)
+      .padding(.horizontal, 16)
+      .padding(.vertical, 11)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
   }
 }
 #endif

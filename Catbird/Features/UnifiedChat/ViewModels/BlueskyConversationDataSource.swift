@@ -21,7 +21,15 @@ final class BlueskyConversationDataSource: UnifiedChatDataSource {
   private(set) var hasMoreMessages: Bool = true
   private(set) var error: Error?
   private(set) var expandedSystemGroupIDs: Set<String> = []
+  /// True once the first load has finished, so an empty transcript can be
+  /// told apart from one that is still loading.
+  private(set) var hasCompletedInitialLoad: Bool = false
   private var hasReceivedInitialMessages: Bool = false
+
+  /// Whether this is a group chat, which shows sender names above messages.
+  var isGroupConversation: Bool {
+    chatManager.conversations.first { $0.id == convoID }?.isGroupConversation ?? false
+  }
 
   let draft = MessageDraft(BlueskyConversationDraft())
   var draftText: String {
@@ -53,8 +61,15 @@ final class BlueskyConversationDataSource: UnifiedChatDataSource {
     isLoading = true
     error = nil
 
-    await chatManager.loadMessages(convoId: convoID, refresh: true)
+    // Only the first load reports failures; later refreshes (after a send)
+    // stay quiet like the background poll.
+    await chatManager.loadMessages(
+      convoId: convoID,
+      refresh: true,
+      userInitiated: !hasCompletedInitialLoad
+    )
     updateMessagesFromManager()
+    hasCompletedInitialLoad = true
     isLoading = false
   }
 

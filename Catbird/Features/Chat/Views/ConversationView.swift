@@ -134,9 +134,12 @@ struct ConversationView: View {
           Text(conversationTitle)
             .font(.headline)
             .lineLimit(1)
-          Image(systemName: conversationIconName)
-            .font(.system(size: 10))
-            .foregroundStyle(.secondary)
+          if currentConversation?.isGroupConversation == true {
+            Image(systemName: "person.3.fill")
+              .font(.caption2)
+              .foregroundStyle(.secondary)
+              .accessibilityHidden(true)
+          }
         }
       }
       ToolbarItem(placement: .primaryAction) {
@@ -162,7 +165,7 @@ struct ConversationView: View {
         showShareReplacement = false
       }
     }
-    .alert("Replace shared post?", isPresented: $showShareReplacement) {
+    .alert("Replace Shared Post?", isPresented: $showShareReplacement) {
       Button("Keep Current", role: .cancel) {
         if isCurrentScene, let pending = shareAwaitingReplacement {
           PendingChatShareStore.shared.consume(
@@ -191,24 +194,28 @@ struct ConversationView: View {
       chatManager.stopMessagePolling(for: convoId)
       appState.chatHeartbeatManager.viewDisappeared()
     }
-    .alert("Delete Message", isPresented: $showingDeleteAlert) {
-      Button("Cancel", role: .cancel) { }
+    .alert("Delete for Me?", isPresented: $showingDeleteAlert) {
+      Button("Cancel", role: .cancel) {
+        messageToDelete = nil
+      }
       Button("Delete", role: .destructive) {
         if let messageId = messageToDelete {
           Task {
             await unifiedDataSource?.deleteMessage(messageID: messageId)
           }
         }
+        messageToDelete = nil
       }
     } message: {
-      Text("This will delete the message for you. Others will still be able to see it.")
+      Text("The message will be removed for you. Others in the conversation will still see it.")
     }
-    .sheet(isPresented: $showingReportSheet) {
+    .sheet(isPresented: $showingReportSheet, onDismiss: { messageToReport = nil }) {
       if let messageId = messageToReport,
          !convoId.isEmpty,
          let originalMessage = chatManager.originalMessagesMap[convoId]?[messageId] {
         ReportChatMessageView(
           message: originalMessage,
+          convoId: convoId,
           onDismiss: { showingReportSheet = false }
         )
       }
@@ -234,8 +241,19 @@ struct ConversationView: View {
         onReply: { message in
           guard !message.isSystemMessage else { return }
           dataSource.draft.value.replyTarget = message
+        },
+        onDeleteMessage: { message in
+          messageToDelete = message.id
+          showingDeleteAlert = true
+        },
+        onReportMessage: { message in
+          messageToReport = message.id
+          showingReportSheet = true
         }
       )
+      .overlay {
+        transcriptStateOverlay(dataSource: dataSource)
+      }
       .onChange(of: selectedEmoji) { _, newEmoji in
         guard let messageID = emojiPickerMessageID, !newEmoji.isEmpty else { return }
         dataSource.addReaction(messageID: messageID, emoji: newEmoji)
@@ -287,6 +305,26 @@ struct ConversationView: View {
     }
   }
   
+  // MARK: - Transcript States
+
+  @ViewBuilder
+  private func transcriptStateOverlay(dataSource: BlueskyConversationDataSource) -> some View {
+    if dataSource.messages.isEmpty {
+      Group {
+        if dataSource.isLoading || !dataSource.hasCompletedInitialLoad {
+          ProgressView()
+        } else {
+          ContentUnavailableView(
+            "No Messages Yet",
+            systemImage: "bubble.left",
+            description: Text("Send a message to start the conversation.")
+          )
+        }
+      }
+      .allowsHitTesting(false)
+    }
+  }
+
   // MARK: - Input Bar
   
 
@@ -367,7 +405,7 @@ struct ConversationView: View {
       }
       .frame(maxWidth: .infinity)
       .padding(.vertical, 16)
-      .background(Color(.systemBackground))
+      .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
   }
 
     // MARK: - Locked Conversation Banner
@@ -382,17 +420,13 @@ struct ConversationView: View {
       }
       .frame(maxWidth: .infinity)
       .padding(.vertical, 16)
-      .background(Color(.systemBackground))
+      .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
     }
   
   // MARK: - Message Actions
   
   private func presentMessageActions(for message: BlueskyMessageAdapter) {
     PlatformHaptics.soft()
-    
-    // Store for potential report/delete
-    messageToReport = message.id
-    messageToDelete = message.id
   }
 
     private var currentConversation: ChatBskyConvoDefs.ConvoView? {
@@ -418,13 +452,6 @@ struct ConversationView: View {
 
     private var isConversationLocked: Bool {
       chatManager.conversations.first(where: { $0.id == convoId })?.isLockedForSending ?? false
-    }
-
-    private var conversationIconName: String {
-      guard let convo = chatManager.conversations.first(where: { $0.id == convoId }) else {
-        return "bubble.left.and.bubble.right"
-      }
-      return convo.isGroupConversation ? "person.3.fill" : "bubble.left.and.bubble.right"
     }
 
   // Compute conversation title based on the other member

@@ -49,10 +49,21 @@ struct ChatMessageComposerView: View {
     return prefix.isEmpty ? "unknown" : prefix
   }
 
+  /// Grapheme count of the text that will be sent (the chat service limit
+  /// applies to the trimmed text).
+  private var messageLength: Int {
+    text.trimmingCharacters(in: .whitespacesAndNewlines).count
+  }
+
+  private var isOverLimit: Bool {
+    messageLength > ChatManager.maxMessageGraphemes
+  }
+
   private var canSend: Bool {
     #if DEBUG
     if fixtureSendingDisabled { return false }
     #endif
+    guard !isOverLimit else { return false }
     return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || attachedPost != nil
   }
 
@@ -117,7 +128,12 @@ struct ChatMessageComposerView: View {
   private var composerContent: some View {
     HStack(alignment: .bottom, spacing: DesignTokens.Spacing.sm) {
       textField
-      sendButton
+      VStack(spacing: 2) {
+        if messageLength > ChatManager.maxMessageGraphemes - 100 {
+          characterCounter
+        }
+        sendButton
+      }
     }
     .padding(.horizontal, DesignTokens.Spacing.lg)
     .padding(.vertical, DesignTokens.Spacing.sm)
@@ -171,6 +187,18 @@ struct ChatMessageComposerView: View {
         }
     }
     .fixedSize(horizontal: false, vertical: true)
+  }
+
+  private var characterCounter: some View {
+    Text("\(messageLength.formatted())/\(ChatManager.maxMessageGraphemes.formatted())")
+      .font(.caption2.monospacedDigit())
+      .foregroundStyle(isOverLimit ? Color.red : Color.secondary)
+      .fixedSize()
+      .accessibilityLabel(
+        isOverLimit
+          ? "Message too long. \(messageLength) of \(ChatManager.maxMessageGraphemes) characters."
+          : "\(messageLength) of \(ChatManager.maxMessageGraphemes) characters"
+      )
   }
 
   private var sendButton: some View {

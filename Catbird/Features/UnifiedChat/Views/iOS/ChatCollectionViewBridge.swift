@@ -17,6 +17,8 @@ struct ChatCollectionViewBridge<DataSource: UnifiedChatDataSource>: UIViewContro
   var onEditMessage: ((DataSource.Message) -> Void)?
   var onUnsendMessage: ((DataSource.Message) -> Void)?
   var onReply: ((DataSource.Message) -> Void)?
+  var onDeleteMessage: ((DataSource.Message) -> Void)?
+  var onReportMessage: ((DataSource.Message) -> Void)?
 
   func makeUIViewController(context: Context) -> ChatCollectionViewController<DataSource> {
     let controller = ChatCollectionViewController(
@@ -31,6 +33,8 @@ struct ChatCollectionViewBridge<DataSource: UnifiedChatDataSource>: UIViewContro
     controller.onEditMessage = onEditMessage
     controller.onUnsendMessage = onUnsendMessage
     controller.onReply = onReply
+    controller.onDeleteMessage = onDeleteMessage
+    controller.onReportMessage = onReportMessage
     controller.updatePrefetchSceneActivity(isActive: scenePhase == .active)
     return controller
   }
@@ -50,6 +54,8 @@ struct ChatCollectionViewBridge<DataSource: UnifiedChatDataSource>: UIViewContro
     controller.onEditMessage = onEditMessage
     controller.onUnsendMessage = onUnsendMessage
     controller.onReply = onReply
+    controller.onDeleteMessage = onDeleteMessage
+    controller.onReportMessage = onReportMessage
   }
 }
 #endif

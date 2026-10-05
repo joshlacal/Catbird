@@ -11,6 +11,7 @@ struct UnifiedEmbedView: View {
   @Binding var navigationPath: NavigationPath
 
   @Environment(AppState.self) private var appState
+  @Environment(SceneNavigationContext.self) private var sceneContext
   @Environment(\.colorScheme) private var colorScheme
 
   var body: some View {
@@ -48,32 +49,21 @@ struct UnifiedEmbedView: View {
 
   // MARK: - Group Invite Embed
 
-  /// Placeholder card for join-link invites — joining via link is not supported yet,
-  /// so the card carries no join action; copying the link is the only affordance.
+  /// Invite card for group join links. Tapping routes the link through the
+  /// scene's URL handler, which presents the group join sheet.
   @ViewBuilder
   private func groupInviteEmbed(_ invite: GroupInviteEmbedData) -> some View {
     switch invite {
     case .preview(let name, let memberCount, let memberLimit, let code):
-      VStack(alignment: .leading, spacing: 4) {
-        HStack(spacing: 8) {
-          Image(systemName: "person.2.fill")
-            .foregroundStyle(.secondary)
-          Text(name)
-            .font(.caption)
-            .fontWeight(.medium)
-            .foregroundStyle(.primary)
-            .lineLimit(2)
-            .multilineTextAlignment(.leading)
+      Button {
+        if let url = URL(string: "https://bsky.app/chat/\(code)") {
+          _ = sceneContext.urlHandler.handle(url)
         }
-
-        Text("Group invite · \(memberCount) of \(memberLimit) members")
-          .font(.caption2)
-          .foregroundStyle(.secondary)
-          .lineLimit(1)
+      } label: {
+        groupInviteCard(name: name, memberCount: memberCount, memberLimit: memberLimit)
       }
-      .padding(10)
-      .frame(maxWidth: .infinity, alignment: .leading)
-      .embedCardStyle(colorScheme: colorScheme)
+      .buttonStyle(.plain)
+      .accessibilityHint("Opens the group invite")
       .contextMenu {
         Button {
           PlatformApplication.copyToClipboard("https://bsky.app/chat/\(code)")
@@ -94,6 +84,30 @@ struct UnifiedEmbedView: View {
       .frame(maxWidth: .infinity, alignment: .leading)
       .embedCardStyle(colorScheme: colorScheme)
     }
+  }
+
+  private func groupInviteCard(name: String, memberCount: Int, memberLimit: Int) -> some View {
+    VStack(alignment: .leading, spacing: 4) {
+      HStack(spacing: 8) {
+        Image(systemName: "person.2.fill")
+          .foregroundStyle(.secondary)
+        Text(name)
+          .font(.caption)
+          .fontWeight(.medium)
+          .foregroundStyle(.primary)
+          .lineLimit(2)
+          .multilineTextAlignment(.leading)
+      }
+
+      Text("Group invite · \(memberCount) of \(memberLimit) members")
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
+    }
+    .padding(10)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .embedCardStyle(colorScheme: colorScheme)
+    .contentShape(Rectangle())
   }
 
   // MARK: - Link Embed
@@ -284,7 +298,7 @@ private struct UnifiedGIFView: View {
           .font(.system(size: 32))
           .foregroundStyle(.red)
 
-        Text("Failed to load GIF")
+        Text("Couldn’t load GIF")
           .font(.callout)
           .fontWeight(.semibold)
 
@@ -337,7 +351,7 @@ private struct UnifiedGIFView: View {
     guard let wrapper else {
       await MainActor.run {
         isLoading = false
-        loadError = "Could not create a looping player"
+        loadError = "This GIF can’t be played right now."
       }
       logger.error("Tenor GIF setup failed: could not create LoopingPlayerWrapper for url=\(url, privacy: .public)")
       return
@@ -453,7 +467,8 @@ private struct RecordEmbedContainer: View {
 
   @State private var record: AppBskyEmbedRecord.ViewRecordUnion?
   @State private var isLoading = false
-  @State private var loadError: String?
+  @State private var loadFailed = false
+  @State private var isUnavailable = false
 
   private let logger = Logger(subsystem: "blue.catbird", category: "UnifiedEmbed.Record")
 
@@ -472,8 +487,10 @@ private struct RecordEmbedContainer: View {
         RecordEmbedView(record: record, labels: nil, path: $navigationPath)
           .environment(\.postID, uriString)
           .foregroundStyle(.primary)
-      } else if let error = loadError {
-        errorView(error)
+      } else if isUnavailable {
+        unavailableView
+      } else if loadFailed {
+        errorView
       } else {
         placeholderView
       }
@@ -509,7 +526,7 @@ private struct RecordEmbedContainer: View {
             .lineLimit(2)
             .multilineTextAlignment(.leading)
         } else {
-          Text(uriString)
+          Text("Shared post")
             .font(.caption2)
             .foregroundStyle(.secondary)
             .lineLimit(1)
@@ -523,24 +540,29 @@ private struct RecordEmbedContainer: View {
     .disabled(isLoading)
   }
 
+  private var unavailableView: some View {
+    Label("Post unavailable", systemImage: "eye.slash")
+      .font(.caption)
+      .foregroundStyle(.secondary)
+      .padding(10)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .embedCardStyle(colorScheme: colorScheme)
+  }
+
   @ViewBuilder
-  private func errorView(_ error: String) -> some View {
+  private var errorView: some View {
     Button {
       Task { await loadRecord() }
     } label: {
       VStack(alignment: .leading, spacing: 6) {
-        Label("Failed to load post", systemImage: "exclamationmark.triangle")
+        Label("Couldn’t load post", systemImage: "exclamationmark.triangle")
           .font(.caption)
-          .foregroundStyle(.red)
+          .foregroundStyle(.orange)
 
-        Text(error)
+        Text("Check your connection, then tap to try again.")
           .font(.caption2)
           .foregroundStyle(.secondary)
           .lineLimit(2)
-
-        Text("Tap to retry")
-          .font(.caption2)
-          .foregroundStyle(.secondary)
       }
       .padding(10)
       .frame(maxWidth: .infinity, alignment: .leading)
@@ -553,7 +575,7 @@ private struct RecordEmbedContainer: View {
   private func loadRecord() async {
     guard !isLoading, !Task.isCancelled, isActiveAccount else { return }
     isLoading = true
-    loadError = nil
+    loadFailed = false
     defer { isLoading = false }
     do {
       let loaded = try await ChatRecordEmbedStore.shared.load(uri: uriString, appState: appState)
@@ -562,9 +584,12 @@ private struct RecordEmbedContainer: View {
       record = loaded
     } catch is CancellationError {
       // Reuse, interrupted presentation and account changes are not load errors.
+    } catch is ChatRecordEmbedUnavailableError {
+      guard !Task.isCancelled, isActiveAccount else { return }
+      isUnavailable = true
     } catch {
       guard !Task.isCancelled, isActiveAccount else { return }
-      loadError = error.localizedDescription
+      loadFailed = true
       logger.error("Failed to load record embed: \(error.localizedDescription)")
     }
   }

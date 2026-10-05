@@ -20,18 +20,18 @@ struct BlockedConversationFooter: View {
     switch blockState {
     case .directBlock:
       if isGroup {
-        return "You have blocked the creator of this group. You cannot send messages."
+        return "You have blocked the creator of this group. You can’t send messages."
       } else {
-        return "You have blocked this user. You cannot send messages to each other."
+        return "You have blocked this user. You can’t send messages to each other."
       }
     case .listBlock(_, _, _, let list):
       if isGroup {
-        return "You have blocked the creator of this group via the list '\(list.name)'. You cannot send messages."
+        return "You have blocked the creator of this group via the list “\(list.name)”. You can’t send messages."
       } else {
-        return "You have blocked this user via the list '\(list.name)'. You cannot send messages to each other."
+        return "You have blocked this user via the list “\(list.name)”. You can’t send messages to each other."
       }
     case .blockedBy:
-      return "You have been blocked by this user. You cannot send messages to each other."
+      return "You have been blocked by this user. You can’t send messages to each other."
     case .none:
       return ""
     }
@@ -97,7 +97,7 @@ struct BlockedConversationFooter: View {
         Button(role: .destructive) {
           showingLeaveAlert = true
         } label: {
-          Text(isGroup ? "Leave group" : "Leave chat")
+          Text(isGroup ? "Leave Group" : "Leave Chat")
             .fontWeight(.medium)
         }
         .buttonStyle(.bordered)
@@ -140,7 +140,7 @@ struct BlockedConversationFooter: View {
         onUnblocked?()
       } catch {
         isProcessing = false
-        errorMessage = error.localizedDescription
+        errorMessage = UserFacingError.message(for: error, action: "unblock this account")
       }
     }
   }
@@ -154,7 +154,7 @@ struct BlockedConversationFooter: View {
       if result == .success {
         onLeft?()
       } else {
-        errorMessage = appState.chatManager.errorState?.localizedDescription ?? "Couldn't leave this conversation. Please try again."
+        errorMessage = appState.chatManager.errorState?.localizedDescription ?? "Couldn’t leave this conversation. Please try again."
         appState.chatManager.errorState = nil
       }
     }

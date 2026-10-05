@@ -119,8 +119,8 @@
 
     var errorDescription: String? {
       switch self {
-      case .unavailable: "This person cannot receive a Bluesky message from this account."
-      case .lookupFailed: "Couldn't load this chat. Please try again."
+      case .unavailable: "This person can’t receive a Bluesky message from this account."
+      case .lookupFailed: "Couldn’t load this chat. Please try again."
       case .accountChanged: "Your account changed. Open sharing again from the account you want to use."
       }
     }
@@ -202,7 +202,7 @@
       } catch {
         guard isCurrent, !Task.isCancelled, generation == searchGeneration,
               !(error is CancellationError) else { return }
-        errorMessage = "Couldn't search for people. Please try again."
+        errorMessage = "Couldn’t search for people. Please try again."
       }
     }
 
@@ -351,7 +351,7 @@
 
           VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 4) {
-              Text("Sharing as @\(appState.currentUserProfile?.handle.description ?? model.accountDID)")
+              Text(appState.currentUserProfile.map { "Sharing as @\($0.handle.description)" } ?? "Sharing from your account")
                 .font(.subheadline.weight(.semibold))
               Text("Choose a chat, then review the post and press Send.")
                 .font(.footnote)
@@ -522,15 +522,31 @@
       .background(.background)
     }
 
+    @ViewBuilder
     private var emptyState: some View {
-      ContentUnavailableView {
-        Label("No Results", systemImage: "magnifyingglass")
-      } description: {
-        Text(
-          searchText.isEmpty
-            ? "Start typing to search for people" : "No matches found for '\(searchText)'")
+      let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+      if query.isEmpty {
+        ContentUnavailableView {
+          Label("Search for People", systemImage: "person.crop.circle.badge.plus")
+        } description: {
+          Text("Search for someone to send this post to.")
+        }
+        .padding(.vertical, 60)
+      } else if query.count < 2 {
+        ContentUnavailableView {
+          Label("Search for People", systemImage: "magnifyingglass")
+        } description: {
+          Text("Keep typing to search.")
+        }
+        .padding(.vertical, 60)
+      } else {
+        ContentUnavailableView {
+          Label("No Results", systemImage: "magnifyingglass")
+        } description: {
+          Text("No matches for “\(query)”")
+        }
+        .padding(.vertical, 60)
       }
-      .padding(.vertical, 60)
     }
 
     @ViewBuilder

@@ -22,7 +22,7 @@ struct ConversationInvitationsView: View {
       if isLoading && invitations.isEmpty {
         HStack {
           Spacer()
-          ProgressView("Loading invitations...")
+          ProgressView("Loading invitations…")
           Spacer()
         }
         .listRowSeparator(.hidden)
