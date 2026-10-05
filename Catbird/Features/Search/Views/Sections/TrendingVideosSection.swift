@@ -48,6 +48,11 @@ public struct TrendingVideosSection: View {
     let lineSpacing = fontManager.getLineSpacing(for: Typography.Size.caption)
     return max(36, lineHeight * 2 + max(0, lineSpacing))
   }
+  /// Small author avatar sized to the first caption line so the caption area keeps its height.
+  private var authorAvatarSize: CGFloat {
+    let lineHeight = (fontManager.dynamicTypeEnabled ? authorLineHeight : 18) * fontManager.sizeScale
+    return min(24, max(16, lineHeight))
+  }
 
   public var body: some View {
     VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
@@ -130,12 +135,7 @@ public struct TrendingVideosSection: View {
         }
         .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Size.radiusMD))
 
-        Text(author)
-          .appFont(size: Typography.Size.caption, weight: .medium, relativeTo: .caption)
-          .lineLimit(2)
-          .multilineTextAlignment(.leading)
-          .foregroundStyle(.primary)
-          .frame(width: cardWidth, height: authorHeight, alignment: .topLeading)
+        authorRow(post, name: author)
       }
       .contentShape(Rectangle())
     }
@@ -143,6 +143,26 @@ public struct TrendingVideosSection: View {
     .accessibilityElement(children: .ignore)
     .accessibilityLabel("Video by \(author)\(altText.map { ", \($0)" } ?? "")")
     .accessibilityHint("Play this video in The Vids")
+  }
+
+  /// Small avatar beside the creator's name; the row keeps the fixed author height.
+  private func authorRow(_ post: AppBskyFeedDefs.PostView, name: String) -> some View {
+    HStack(alignment: .top, spacing: DesignTokens.Spacing.sm) {
+      AsyncProfileImage(
+        url: post.author.finalAvatarURL(),
+        size: authorAvatarSize,
+        labels: post.author.labels
+      )
+      .accessibilityHidden(true)
+
+      Text(name)
+        .appFont(size: Typography.Size.caption, weight: .medium, relativeTo: .caption)
+        .lineLimit(2)
+        .multilineTextAlignment(.leading)
+        .foregroundStyle(.primary)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+    }
+    .frame(width: cardWidth, height: authorHeight, alignment: .topLeading)
   }
 
   private var fallbackThumbnail: some View {
