@@ -23,7 +23,7 @@ struct ComposeWidgetIntent: WidgetConfigurationIntent {
 
 struct ComposeWidgetEntry: TimelineEntry {
   let date: Date
-  let avatarURL: URL?
+  let displayName: String?
   let handle: String?
   let accountDID: String?
 }
@@ -33,7 +33,7 @@ struct ComposeWidgetEntry: TimelineEntry {
 @available(iOS 17.0, *)
 struct ComposeWidgetProvider: AppIntentTimelineProvider {
   func placeholder(in context: Context) -> ComposeWidgetEntry {
-    ComposeWidgetEntry(date: Date(), avatarURL: nil, handle: nil, accountDID: nil)
+    ComposeWidgetEntry(date: Date(), displayName: nil, handle: nil, accountDID: nil)
   }
 
   func snapshot(for configuration: ComposeWidgetIntent, in context: Context) async -> ComposeWidgetEntry {
@@ -46,29 +46,32 @@ struct ComposeWidgetProvider: AppIntentTimelineProvider {
   }
 
   private func resolveEntry(for configuration: ComposeWidgetIntent) -> ComposeWidgetEntry {
-    if let account = configuration.account {
+    let accounts = WidgetDataReader.allAccounts()
+
+    // Use the chosen account while it's still signed in to Catbird.
+    if let account = configuration.account,
+       let signedIn = accounts.first(where: { $0.did == account.id }) {
       return ComposeWidgetEntry(
         date: Date(),
-        avatarURL: account.avatarURL,
-        handle: account.handle,
-        accountDID: account.id
+        displayName: signedIn.displayName,
+        handle: signedIn.handle,
+        accountDID: signedIn.did
       )
     }
 
     // Fall back to active account
     let activeDID = WidgetDataReader.activeAccountDID()
-    let accounts = WidgetDataReader.allAccounts()
     if let activeDID,
        let active = accounts.first(where: { $0.did == activeDID }) {
       return ComposeWidgetEntry(
         date: Date(),
-        avatarURL: active.avatarURL.flatMap(URL.init),
+        displayName: active.displayName,
         handle: active.handle,
         accountDID: active.did
       )
     }
 
-    return ComposeWidgetEntry(date: Date(), avatarURL: nil, handle: nil, accountDID: nil)
+    return ComposeWidgetEntry(date: Date(), displayName: nil, handle: nil, accountDID: nil)
   }
 }
 
@@ -80,9 +83,9 @@ struct ComposeWidgetView: View {
 
   var body: some View {
     VStack(spacing: WidgetSpacing.md) {
-      WidgetAvatar(url: entry.avatarURL, size: WidgetAvatarSize.xxl)
+      WidgetAvatar(name: entry.displayName ?? entry.handle, size: WidgetAvatarSize.xxl)
 
-      Text("What's on your mind?")
+      Text(entry.accountDID == nil ? "Open Catbird to sign in" : "What’s on your mind?")
         .font(.system(size: 12, weight: .medium))
         .foregroundStyle(.secondary)
         .multilineTextAlignment(.center)

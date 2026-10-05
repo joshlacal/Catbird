@@ -684,6 +684,11 @@ final class AppStateManager {
 
     // Update widget account list after logout
     writeAccountsToAppGroup()
+    // Stop showing the signed-out account's posts in widgets and Spotlight
+    if let loggingOutDID {
+      FeedWidgetDataProvider.shared.clearWidgetData(for: loggingOutDID)
+      await SpotlightEntityDonator.shared.removeAll()
+    }
 
     logger.info("✅ Logged out successfully")
   }
@@ -1018,6 +1023,9 @@ final class AppStateManager {
 
     // Update widget account list after removal
     writeAccountsToAppGroup()
+    // Stop showing the removed account's posts in widgets and Spotlight
+    FeedWidgetDataProvider.shared.clearWidgetData(for: userDID)
+    await SpotlightEntityDonator.shared.removeAll()
   }
 
   /// Get AppState for a specific account without switching to it

@@ -113,46 +113,14 @@ final class FeedWidgetDataProvider {
     return repostReason.by.displayName ?? repostReason.by.handle.description
   }
 
-  /// Maps internal FetchType to widget's FeedTypeOption
+  /// Maps internal FetchType to the feed type label stored with widget data
   private func mapFeedType(_ fetchType: FetchType) -> String {
     switch fetchType {
-    case .timeline:
-      return "timeline"
-    case .feed(let uri):
-      // Check for known feed types
-      let uriString = uri.uriString()
-      if uriString.contains("discover") {
-        return "discover"
-      } else if uriString.contains("popular") || uriString.contains("hot") {
-        return "popular"
-      } else {
-        return "custom"
-      }
+    case .feed:
+      return "feed"
     default:
       return "timeline"
     }
-  }
-
-  /// Updates widget data for a specific profile
-  func updateWidgetDataForProfile(handle: String, posts: [CachedFeedViewPost]) {
-    // Use the enhanced version with profile handle
-    updateWidgetDataEnhanced(from: posts, feedType: .timeline, profileHandle: handle)
-  }
-
-  /// Updates shared preferences for widget theme and font settings
-  private func updateSharedPreferences() {
-    guard let sharedDefaults = sharedDefaults else { return }
-
-    // Theme settings (these should be read from actual app state)
-    sharedDefaults.set("system", forKey: "selectedTheme")
-    sharedDefaults.set("dim", forKey: "darkThemeMode")
-
-    // Font settings (these should be read from actual app state)
-    sharedDefaults.set(1.0, forKey: "fontSizeScale")
-    sharedDefaults.set("system", forKey: "fontFamily")
-    sharedDefaults.set("normal", forKey: "lineSpacing")
-
-    logger.debug("Updated shared preferences for widget access")
   }
 
   /// Updates user's pinned and saved feeds for widget access
@@ -219,10 +187,12 @@ final class FeedWidgetDataProvider {
     return (pinnedFeeds, savedFeeds, feedGenerators)
   }
 
-  /// Updates widget data with enhanced metadata and configuration support
-  func updateWidgetDataEnhanced(
-    from posts: [CachedFeedViewPost], feedType: FetchType, profileHandle: String? = nil
-  ) {
+  /// Updates widget data with enhanced metadata and configuration support.
+  /// Only the Following timeline and feed generators have widget configurations;
+  /// lists, profiles and likes are ignored so they never overwrite a widget's posts.
+  func updateWidgetDataEnhanced(from posts: [CachedFeedViewPost], feedType: FetchType) {
+    guard let configKey = createConfigurationKey(feedType: feedType) else { return }
+    guard !accountDID.isEmpty else { return }
     guard let sharedDefaults = sharedDefaults else {
       logger.error("Failed to access shared defaults")
       return
@@ -239,7 +209,6 @@ final class FeedWidgetDataProvider {
       posts: widgetPosts,
       feedType: mapFeedType(feedType),
       lastUpdated: Date(),
-      profileHandle: profileHandle,
       totalPostCount: posts.count
     )
 
@@ -249,20 +218,12 @@ final class FeedWidgetDataProvider {
       encoder.dateEncodingStrategy = .iso8601
       let data = try encoder.encode(feedWidgetData)
 
-      // Save to general key for fallback (DID-scoped)
-      let didSuffix = accountDID.isEmpty ? "" : ".\(accountDID)"
-      sharedDefaults.set(data, forKey: "\(FeedWidgetConstants.feedDataKey)\(didSuffix)")
-
-      // Save to configuration-specific key for targeted widgets (DID-scoped)
-      let configKey = createConfigurationKey(feedType: feedType, profileHandle: profileHandle)
-      sharedDefaults.set(data, forKey: "\(configKey)\(didSuffix)")
+      // Save to the configuration-specific key the widget reads (DID-scoped)
+      sharedDefaults.set(data, forKey: "\(configKey).\(accountDID)")
 
       logger.info(
-        "Updated enhanced widget data with \(widgetPosts.count) posts for feed type: \(feedType.displayName) (keys: general + \(configKey))"
+        "Updated enhanced widget data with \(widgetPosts.count) posts for feed type: \(feedType.displayName) (key: \(configKey))"
       )
-
-      // Update shared preferences
-      updateSharedPreferences()
 
       // Reload widget timelines
       WidgetCenter.shared.reloadTimelines(ofKind: "CatbirdFeedWidget")
@@ -347,48 +308,44 @@ final class FeedWidgetDataProvider {
     }
   }
 
-  /// Creates a configuration key that matches the widget's key generation logic
-  private func createConfigurationKey(feedType: FetchType, profileHandle: String? = nil) -> String {
-    var keyComponents = ["widgetData"]
-
+  /// The storage key the widget reads for this feed (same rule as the widget's
+  /// FeedWidgetProvider). Nil for feed types no widget configuration can show.
+  private func createConfigurationKey(feedType: FetchType) -> String? {
     switch feedType {
     case .timeline:
-      keyComponents.append("timeline")
+      return FeedWidgetConstants.timelineConfigKey
     case .feed(let uri):
-      let uriString = uri.uriString()
-      if uriString.contains("discover") {
-        keyComponents.append("discover")
-      } else if uriString.contains("popular") || uriString.contains("hot") {
-        keyComponents.append("popular")
-      } else {
-        keyComponents.append("custom")
-        keyComponents.append(
-          uriString.replacingOccurrences(of: "at://", with: "").replacingOccurrences(
-            of: "/", with: "_"))
-      }
+      return FeedWidgetConstants.configKey(forFeedURI: uri.uriString())
     default:
-      keyComponents.append("timeline")
+      return nil
     }
-
-    if let handle = profileHandle {
-      keyComponents.append(handle.replacingOccurrences(of: "@", with: ""))
-    }
-
-    return keyComponents.joined(separator: "_")
   }
 
-  /// Clears widget data
-  func clearWidgetData() {
+  /// Removes everything the widgets know about `did` (saved posts and feed
+  /// preferences) and reloads every widget, so a signed-out or removed account's
+  /// posts stop appearing on the Home Screen.
+  func clearWidgetData(for did: String) {
+    guard !did.isEmpty else { return }
     guard let sharedDefaults = sharedDefaults else {
       logger.error("Failed to access shared defaults")
       return
     }
 
-    let didSuffix = accountDID.isEmpty ? "" : ".\(accountDID)"
-    sharedDefaults.removeObject(forKey: "\(FeedWidgetConstants.feedDataKey)\(didSuffix)")
-    WidgetCenter.shared.reloadTimelines(ofKind: "CatbirdFeedWidget")
+    let accountPrefixes = [
+      "widgetData_", FeedWidgetConstants.feedDataKey, "pinnedFeeds", "savedFeeds", "feedGenerators",
+    ]
+    let suffix = ".\(did)"
+    for key in sharedDefaults.dictionaryRepresentation().keys
+    where key.hasSuffix(suffix) && accountPrefixes.contains(where: { key.hasPrefix($0) }) {
+      sharedDefaults.removeObject(forKey: key)
+    }
 
-    logger.info("Cleared widget data")
+    if accountDID == did {
+      accountDID = ""
+    }
+    WidgetCenter.shared.reloadAllTimelines()
+
+    logger.info("Cleared widget data for a signed-out account")
   }
 }
 
@@ -439,4 +396,17 @@ struct FeedWidgetConstants {
   static let sharedSuiteName = "group.blue.catbird.shared"
   static let feedDataKey = "feedWidgetData"
   static let updateInterval: TimeInterval = 15 * 60  // 15 minutes
+
+  /// Storage key for the Following timeline's posts. Must match the widget's
+  /// FeedWidgetConstants in CatbirdFeedWidget/FeedWidgetModels.swift.
+  static let timelineConfigKey = "widgetData_timeline"
+
+  /// Storage key for one feed generator's posts. Must match the widget's
+  /// FeedWidgetConstants.configKey(forFeedURI:) in CatbirdFeedWidget/FeedWidgetModels.swift.
+  static func configKey(forFeedURI uri: String) -> String {
+    let sanitized = uri
+      .replacingOccurrences(of: "at://", with: "")
+      .replacingOccurrences(of: "/", with: "_")
+    return "widgetData_feed_\(sanitized)"
+  }
 }

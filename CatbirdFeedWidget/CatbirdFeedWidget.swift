@@ -24,32 +24,41 @@ struct FeedWidgetProvider: AppIntentTimelineProvider {
   }
 
   func snapshot(for configuration: ConfigurationAppIntent, in context: Context) async -> FeedWidgetEntry {
-    let posts = loadFeedData(for: configuration) ?? createPlaceholderPosts()
+    let feed = loadFeedData(for: configuration)
+    // Sample posts are only for the widget gallery preview; a real widget never shows them.
+    if feed == nil && context.isPreview {
+      return FeedWidgetEntry(
+        date: Date(),
+        posts: createPlaceholderPosts(),
+        configuration: configuration,
+        isPlaceholder: true
+      )
+    }
     return FeedWidgetEntry(
       date: Date(),
-      posts: posts,
+      posts: feed.map { Array($0.posts.prefix(configuration.effectivePostCount)) } ?? [],
       configuration: configuration,
-      isPlaceholder: context.isPreview
+      lastUpdated: feed?.lastUpdated,
+      isSignedIn: !configuration.resolvedAccountDID.isEmpty
     )
   }
 
   func timeline(for configuration: ConfigurationAppIntent, in context: Context) async -> Timeline<FeedWidgetEntry> {
     let currentDate = Date()
-    let posts = loadFeedData(for: configuration) ?? createPlaceholderPosts()
+    let feed = loadFeedData(for: configuration)
 
     let entry = FeedWidgetEntry(
       date: currentDate,
-      posts: Array(posts.prefix(configuration.effectivePostCount)),
+      posts: feed.map { Array($0.posts.prefix(configuration.effectivePostCount)) } ?? [],
       configuration: configuration,
-      isPlaceholder: false
+      lastUpdated: feed?.lastUpdated,
+      isSignedIn: !configuration.resolvedAccountDID.isEmpty
     )
 
     let refreshInterval: TimeInterval = {
       switch configuration.effectiveFeedType {
       case .timeline:
         return 10 * 60
-      case .profile, .custom:
-        return 20 * 60
       case .pinnedFeed, .savedFeed:
         return 15 * 60
       }
@@ -66,41 +75,28 @@ struct FeedWidgetProvider: AppIntentTimelineProvider {
 
   // MARK: - Private Methods
 
-  private func loadFeedData(for configuration: ConfigurationAppIntent) -> [WidgetPost]? {
-    let accountDID = configuration.resolvedAccountDID
-    let configKey = createConfigurationKey(for: configuration)
-    return WidgetDataReader.feedData(accountDID: accountDID, configKey: configKey)
+  private func loadFeedData(for configuration: ConfigurationAppIntent) -> WidgetFeedSnapshot? {
+    guard let configKey = createConfigurationKey(for: configuration) else { return nil }
+    return WidgetDataReader.feedData(accountDID: configuration.resolvedAccountDID, configKey: configKey)
   }
 
-  /// Creates a unique key for widget configuration (matches FeedWidgetDataProvider)
-  private func createConfigurationKey(for configuration: ConfigurationAppIntent) -> String {
-    var keyComponents = ["widgetData", configuration.effectiveFeedType.rawValue]
-
+  /// The storage key for this configuration (same rule as the app's FeedWidgetDataProvider).
+  /// Nil when a pinned or saved feed hasn't been chosen yet.
+  private func createConfigurationKey(for configuration: ConfigurationAppIntent) -> String? {
     switch configuration.effectiveFeedType {
-    case .pinnedFeed, .savedFeed:
-      if let feedURI = configuration.selectedFeedURI {
-        keyComponents.append(feedURI.replacingOccurrences(of: "at://", with: "").replacingOccurrences(of: "/", with: "_"))
-      }
-    case .custom:
-      if !configuration.customFeedURL.isEmpty {
-        keyComponents.append(configuration.customFeedURL.replacingOccurrences(of: "at://", with: "").replacingOccurrences(of: "/", with: "_"))
-      }
-    case .profile:
-      if !configuration.profileHandle.isEmpty {
-        keyComponents.append(configuration.profileHandle.replacingOccurrences(of: "@", with: ""))
-      }
     case .timeline:
-      break
+      return FeedWidgetConstants.timelineConfigKey
+    case .pinnedFeed, .savedFeed:
+      return configuration.selectedFeedURI.map(FeedWidgetConstants.configKey(forFeedURI:))
     }
-
-    return keyComponents.joined(separator: "_")
   }
 
-  /// Gets the display name for a feed URI from shared preferences
-  func getFeedDisplayName(for feedURI: String?) -> String? {
+  /// Gets the display name for a feed URI from the account's shared feed preferences
+  func getFeedDisplayName(for feedURI: String?, accountDID: String) -> String? {
     guard let feedURI = feedURI,
+          !accountDID.isEmpty,
           let sharedDefaults = UserDefaults(suiteName: FeedWidgetConstants.sharedSuiteName),
-          let data = sharedDefaults.data(forKey: "feedGenerators") else {
+          let data = sharedDefaults.data(forKey: "feedGenerators.\(accountDID)") else {
       return nil
     }
 
@@ -218,29 +214,8 @@ struct CatbirdFeedWidgetEntryView: View {
   private func createWidgetURL() -> URL? {
     var components = URLComponents()
     components.scheme = "blue.catbird"
-
-    switch entry.configuration.effectiveFeedType {
-    case .profile:
-      if !entry.configuration.profileHandle.isEmpty {
-        components.host = "profile"
-        components.path = "/\(entry.configuration.profileHandle)"
-      } else {
-        components.host = "feed"
-        components.path = "/timeline"
-      }
-    case .custom:
-      if !entry.configuration.customFeedURL.isEmpty {
-        components.host = "feed"
-        components.queryItems = [URLQueryItem(name: "url", value: entry.configuration.customFeedURL)]
-      } else {
-        components.host = "feed"
-        components.path = "/timeline"
-      }
-    default:
-      components.host = "feed"
-      components.path = "/\(entry.configuration.effectiveFeedType.rawValue)"
-    }
-
+    components.host = "feed"
+    components.path = "/\(entry.configuration.effectiveFeedType.rawValue)"
     return components.url
   }
 }
@@ -248,38 +223,49 @@ struct CatbirdFeedWidgetEntryView: View {
 // MARK: - Feed Display Name Helper
 
 private func feedDisplayName(for configuration: ConfigurationAppIntent) -> String {
+  let accountDID = configuration.resolvedAccountDID
   switch configuration.effectiveFeedType {
   case .timeline:
-    return "Timeline"
+    return "Following"
   case .pinnedFeed:
-    return FeedWidgetProvider().getFeedDisplayName(for: configuration.selectedFeedURI) ?? "Pinned Feed"
+    return FeedWidgetProvider().getFeedDisplayName(for: configuration.selectedFeedURI, accountDID: accountDID) ?? "Pinned Feed"
   case .savedFeed:
-    return FeedWidgetProvider().getFeedDisplayName(for: configuration.selectedFeedURI) ?? "Saved Feed"
-  case .custom:
-    return "Custom Feed"
-  case .profile:
-    if !configuration.profileHandle.isEmpty {
-      return configuration.profileHandle.replacingOccurrences(of: "@", with: "")
-    }
-    return "Profile"
+    return FeedWidgetProvider().getFeedDisplayName(for: configuration.selectedFeedURI, accountDID: accountDID) ?? "Saved Feed"
   }
 }
 
-// MARK: - Account Avatar URL Helper
+// MARK: - Account Name Helper
 
-private func accountAvatarURL(for configuration: ConfigurationAppIntent) -> URL? {
+/// The configured (or active) account's display name, used for the header avatar initial.
+private func accountName(for configuration: ConfigurationAppIntent) -> String? {
   if let account = configuration.account {
-    return account.avatarURL
+    return account.displayName
   }
-  // Try to get active account avatar
   let accounts = WidgetDataReader.allAccounts()
   let activeDID = WidgetDataReader.activeAccountDID()
   if let activeDID,
-     let active = accounts.first(where: { $0.did == activeDID }),
-     let urlString = active.avatarURL {
-    return URL(string: urlString)
+     let active = accounts.first(where: { $0.did == activeDID }) {
+    return active.displayName
   }
   return nil
+}
+
+// MARK: - Empty State Copy
+
+/// Explains why a widget has no posts and what to do about it.
+private func emptyStateMessage(for entry: FeedWidgetEntry) -> (title: String, detail: String) {
+  if !entry.isSignedIn {
+    return ("Not Signed In", "Open Catbird to sign in.")
+  }
+  switch entry.configuration.effectiveFeedType {
+  case .timeline:
+    return ("No Posts Yet", "Open Catbird to load your Following feed.")
+  case .pinnedFeed, .savedFeed:
+    if entry.configuration.selectedFeedURI == nil {
+      return ("No Feed Chosen", "Touch and hold this widget, then choose Edit Widget to pick a feed.")
+    }
+    return ("No Posts Yet", "Open this feed in Catbird to show it here.")
+  }
 }
 
 // MARK: - Small Feed Widget
@@ -293,7 +279,7 @@ struct SmallFeedWidget: View {
         // Header: avatar + feed label
         HStack(spacing: WidgetSpacing.sm) {
           WidgetAvatar(
-            url: accountAvatarURL(for: entry.configuration),
+            name: accountName(for: entry.configuration),
             size: WidgetAvatarSize.sm
           )
 
@@ -349,17 +335,20 @@ struct SmallFeedWidget: View {
 
   @ViewBuilder
   private var emptyState: some View {
+    let message = emptyStateMessage(for: entry)
     VStack(spacing: WidgetSpacing.md) {
       Image(systemName: "text.bubble")
         .font(.title2)
         .foregroundStyle(.tertiary)
 
-      Text("No Posts")
+      Text(message.title)
         .font(.system(size: 12, weight: .medium))
+        .multilineTextAlignment(.center)
 
-      Text("Check back later")
+      Text(message.detail)
         .font(.system(size: 10))
         .foregroundStyle(.tertiary)
+        .multilineTextAlignment(.center)
     }
     .padding(WidgetSpacing.lg)
   }
@@ -375,10 +364,9 @@ struct MediumFeedWidget: View {
     if !entry.posts.isEmpty {
       VStack(spacing: 0) {
         WidgetHeader(
-          avatarURL: accountAvatarURL(for: entry.configuration),
+          avatarName: accountName(for: entry.configuration),
           title: feedDisplayName(for: entry.configuration),
-          lastUpdated: entry.date,
-          refreshIntent: RefreshFeedWidgetIntent()
+          lastUpdated: entry.lastUpdated
         )
         .padding(.bottom, WidgetSpacing.md)
 
@@ -411,23 +399,23 @@ struct MediumFeedWidget: View {
   private var emptyStateWithHeader: some View {
     VStack(spacing: WidgetSpacing.md) {
       WidgetHeader(
-        avatarURL: accountAvatarURL(for: entry.configuration),
+        avatarName: accountName(for: entry.configuration),
         title: feedDisplayName(for: entry.configuration),
-        lastUpdated: entry.date,
-        refreshIntent: RefreshFeedWidgetIntent()
+        lastUpdated: entry.lastUpdated
       )
 
       Spacer()
 
+      let message = emptyStateMessage(for: entry)
       VStack(spacing: WidgetSpacing.sm) {
         Image(systemName: "text.bubble")
           .font(.title2)
           .foregroundStyle(.tertiary)
 
-        Text("No Posts Available")
+        Text(message.title)
           .font(.system(size: 13, weight: .medium))
 
-        Text("Open Catbird to load your feed")
+        Text(message.detail)
           .font(.system(size: 10))
           .foregroundStyle(.tertiary)
           .multilineTextAlignment(.center)
@@ -456,11 +444,10 @@ struct LargeFeedWidget: View {
     if !entry.posts.isEmpty {
       VStack(spacing: 0) {
         WidgetHeader(
-          avatarURL: accountAvatarURL(for: entry.configuration),
+          avatarName: accountName(for: entry.configuration),
           title: feedDisplayName(for: entry.configuration),
           subtitle: accountHandle(for: entry.configuration),
-          lastUpdated: entry.date,
-          refreshIntent: RefreshFeedWidgetIntent()
+          lastUpdated: entry.lastUpdated
         )
         .padding(.bottom, WidgetSpacing.md)
 
@@ -493,25 +480,25 @@ struct LargeFeedWidget: View {
   private var largeEmptyState: some View {
     VStack(spacing: WidgetSpacing.lg) {
       WidgetHeader(
-        avatarURL: accountAvatarURL(for: entry.configuration),
+        avatarName: accountName(for: entry.configuration),
         title: feedDisplayName(for: entry.configuration),
         subtitle: accountHandle(for: entry.configuration),
-        lastUpdated: entry.date,
-        refreshIntent: RefreshFeedWidgetIntent()
+        lastUpdated: entry.lastUpdated
       )
 
       Spacer()
 
+      let message = emptyStateMessage(for: entry)
       VStack(spacing: WidgetSpacing.md) {
         Image(systemName: "text.bubble.fill")
           .font(.title)
           .foregroundStyle(.tertiary)
 
         VStack(spacing: WidgetSpacing.sm) {
-          Text("No Posts Available")
+          Text(message.title)
             .font(.system(size: 14, weight: .medium))
 
-          Text("Your feed will appear here once content is loaded. Try opening Catbird to refresh your timeline.")
+          Text(message.detail)
             .font(.system(size: 11))
             .foregroundStyle(.secondary)
             .multilineTextAlignment(.center)
@@ -556,11 +543,10 @@ struct ExtraLargeFeedWidget: View {
     if !entry.posts.isEmpty {
       VStack(spacing: 0) {
         WidgetHeader(
-          avatarURL: accountAvatarURL(for: entry.configuration),
+          avatarName: accountName(for: entry.configuration),
           title: feedDisplayName(for: entry.configuration),
-          subtitle: "\(entry.posts.count) posts",
-          lastUpdated: entry.date,
-          refreshIntent: RefreshFeedWidgetIntent()
+          subtitle: entry.posts.count == 1 ? "1 post" : "\(entry.posts.count) posts",
+          lastUpdated: entry.lastUpdated
         )
         .padding(.bottom, WidgetSpacing.lg)
 
@@ -593,25 +579,24 @@ struct ExtraLargeFeedWidget: View {
   private var extraLargeEmptyState: some View {
     VStack(spacing: WidgetSpacing.lg) {
       WidgetHeader(
-        avatarURL: accountAvatarURL(for: entry.configuration),
+        avatarName: accountName(for: entry.configuration),
         title: feedDisplayName(for: entry.configuration),
-        subtitle: "0 posts",
-        lastUpdated: entry.date,
-        refreshIntent: RefreshFeedWidgetIntent()
+        lastUpdated: entry.lastUpdated
       )
 
       Spacer()
 
+      let message = emptyStateMessage(for: entry)
       VStack(spacing: WidgetSpacing.lg) {
         Image(systemName: "text.bubble.fill")
           .font(.largeTitle)
           .foregroundStyle(.tertiary)
 
         VStack(spacing: WidgetSpacing.md) {
-          Text("No Posts Available")
+          Text(message.title)
             .font(.system(size: 15, weight: .medium))
 
-          Text("Your feed will appear here once content is loaded. Try opening Catbird to refresh and check for new posts.")
+          Text(message.detail)
             .font(.system(size: 12))
             .foregroundStyle(.secondary)
             .multilineTextAlignment(.center)
@@ -641,7 +626,7 @@ struct CatbirdFeedWidget: Widget {
       CatbirdFeedWidgetEntryView(entry: entry)
     }
     .configurationDisplayName("Catbird Feed")
-    .description("Stay connected with your Bluesky timeline, feeds, and profiles directly from your home screen.")
+    .description("See recent posts from your Following feed or a pinned or saved feed.")
     .supportedFamilies([
       .systemSmall,
       .systemMedium,

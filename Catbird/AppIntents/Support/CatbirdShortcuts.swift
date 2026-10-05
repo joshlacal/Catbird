@@ -85,7 +85,7 @@ struct CatbirdShortcuts: AppShortcutsProvider {
       phrases: [
         "Block someone on \(.applicationName)",
         "Block this person on \(.applicationName)",
-        "Block this guy on \(.applicationName)",
+        "Block this account on \(.applicationName)",
       ],
       shortTitle: "Block Profile",
       systemImageName: "hand.raised"

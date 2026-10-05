@@ -32,7 +32,7 @@ struct SendDirectMessageIntent: AppIntent {
   func perform() async throws -> some IntentResult & ProvidesDialog {
     let text = message.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !text.isEmpty else {
-      throw IntentError.invalidParameter("Message text cannot be empty.")
+      throw IntentError.invalidParameter("Enter a message to send.")
     }
 
     let did = account?.id ?? IntentAccountResolver.activeDID()
@@ -44,8 +44,14 @@ struct SendDirectMessageIntent: AppIntent {
         members: [try DID(didString: recipient.id)]))
     guard (200..<300).contains(convoCode), let convo = convoData?.convo else {
       throw IntentError.invalidParameter(
-        "\(recipientName) can't receive direct messages right now.")
+        "\(recipientName) can’t receive direct messages right now.")
     }
+
+    // A message can't be unsent for the recipient, so always confirm the
+    // recipient and text first (Siri may have misheard either).
+    try await requestConfirmation(
+      actionName: .send,
+      dialog: IntentDialog(stringLiteral: "Send “\(text)” to \(recipientName)?"))
 
     _ = try unwrapIntentResponse(
       await client.chat.bsky.convo.sendMessage(

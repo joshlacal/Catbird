@@ -32,8 +32,9 @@ struct PostEntity: AppEntity {
     @Property(title: "Text")
     var text: String?
 
-    @Property(title: "Record Key")
-    var rkey: String
+    // Plain stored property (not @Property) so the record key isn't shown in Shortcuts.
+    // Defaulted so the wrapped properties above can be set before it in initializers.
+    var rkey: String = ""
 
 
     var displayRepresentation: DisplayRepresentation {

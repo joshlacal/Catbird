@@ -102,16 +102,27 @@ class NotificationService: UNNotificationServiceExtension {
     handler?(content)
   }
 
-  /// Replaces all displayable content with a generic alert. Used for pushes from features
-  /// this build does not include, so no server-supplied text or identifiers are shown.
+  /// Replaces all displayable content with a quiet generic alert. Used for pushes from
+  /// features this build does not include, so no server-supplied text or identifiers are
+  /// shown. Only the push's `type`/`kind` are kept so the app recognizes it as unsupported
+  /// and suppresses it in the foreground and on tap.
   private static func neutralized(_ original: UNMutableNotificationContent)
     -> UNMutableNotificationContent
   {
     let content = UNMutableNotificationContent()
     content.title = "Catbird"
     content.body = "New activity"
-    content.sound = original.sound
+    content.sound = nil
+    content.interruptionLevel = .passive
     content.threadIdentifier = "catbird-unsupported"
+    var userInfo: [AnyHashable: Any] = [:]
+    if let type = original.userInfo["type"] as? String {
+      userInfo["type"] = type
+    }
+    if let kind = original.userInfo["kind"] as? String {
+      userInfo["kind"] = kind
+    }
+    content.userInfo = userInfo
     return content
   }
 
@@ -150,8 +161,6 @@ class NotificationService: UNNotificationServiceExtension {
 
     if let senderName {
       content.title = senderName
-    } else if let senderDid, let shortDid = formatShortDID(senderDid) {
-      content.title = shortDid
     } else if content.title.isEmpty {
       content.title = "New Message"
     }
@@ -347,13 +356,5 @@ class NotificationService: UNNotificationServiceExtension {
     } catch {
       logger.warning("[NSE] Failed to attach profile photo: \(error.localizedDescription)")
     }
-  }
-
-  /// Formats a DID for display when no profile info is available,
-  /// e.g. "did:plc:abc123xyz456" -> "abc123xy..."
-  private func formatShortDID(_ did: String) -> String? {
-    guard let lastPart = did.split(separator: ":").last else { return nil }
-    let identifier = String(lastPart.prefix(8))
-    return identifier.isEmpty ? nil : "\(identifier)..."
   }
 }

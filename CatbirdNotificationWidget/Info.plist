@@ -11,10 +11,5 @@
 	<string>Catbird Notifications</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>Copyright © 2025 Catbird. All rights reserved.</string>
-	<key>NSAppTransportSecurity</key>
-	<dict>
-		<key>NSAllowsArbitraryLoads</key>
-		<true/>
-	</dict>
 </dict>
 </plist>
