@@ -162,11 +162,13 @@ struct TrendingTopicsSection: View {
         .accessibilityHint("Open posts about this topic")
         .contentShape(Rectangle())
         .contextMenu {
-            Button {
-                copilotTopic = topic
-                isShowingCopilot = true
-            } label: {
-                Label("Ask Catbird", systemImage: "sparkles")
+            if CopilotAvailability.isAvailable {
+                Button {
+                    copilotTopic = topic
+                    isShowingCopilot = true
+                } label: {
+                    Label("Ask Catbird", systemImage: "sparkles")
+                }
             }
         }
     }

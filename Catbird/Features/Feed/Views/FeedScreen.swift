@@ -102,7 +102,7 @@ struct FeedScreen: View {
       onLikedByTap: { feed in
         path.append(NavigationDestination.postLikes(feed.uri.uriString()))
       },
-      onAskCatbird: { isShowingCopilot = true },
+      onAskCatbird: CopilotAvailability.isAvailable ? { isShowingCopilot = true } : nil,
       onReportTap: { isShowingReportSheet = true },
       onRetry: { Task { await loadGenerator() } }
     ))
@@ -153,7 +153,7 @@ private final class FeedScreenMetadata {
 private struct FeedScreenMetadataHeader: View {
   let metadata: FeedScreenMetadata
   let onLikedByTap: (AppBskyFeedDefs.GeneratorView) -> Void
-  let onAskCatbird: () -> Void
+  let onAskCatbird: (() -> Void)?
   let onReportTap: () -> Void
   let onRetry: () -> Void
 

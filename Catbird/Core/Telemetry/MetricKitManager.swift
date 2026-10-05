@@ -9,7 +9,7 @@ import OSLog
 /// - Subscribes to daily metric and diagnostic payloads
 /// - Tracks extended launch measurements
 /// - Provides custom signpost logging for key operations
-/// - Persists metrics for analysis
+/// - Logs payload summaries (payloads are not stored on disk)
 @available(iOS 26, macOS 26, *)
 @MainActor
 final class MetricKitManager: NSObject, @unchecked Sendable {
@@ -68,6 +68,7 @@ final class MetricKitManager: NSObject, @unchecked Sendable {
     
     // Process any pending payloads from previous sessions
     processPastPayloads()
+    removeStoredPayloads()
   }
   
   /// Stops the MetricKit manager
@@ -135,14 +136,12 @@ final class MetricKitManager: NSObject, @unchecked Sendable {
   private func processMetricPayloads(_ payloads: [MXMetricPayload]) {
     for payload in payloads {
       logMetricSummary(payload)
-      persistMetricPayload(payload)
     }
   }
   
   private func processDiagnosticPayloads(_ payloads: [MXDiagnosticPayload]) {
     for payload in payloads {
       logDiagnosticSummary(payload)
-      persistDiagnosticPayload(payload)
     }
   }
   
@@ -235,48 +234,18 @@ final class MetricKitManager: NSObject, @unchecked Sendable {
     #endif
   }
   
-  // MARK: - Persistence
-  
-  private func persistMetricPayload(_ payload: MXMetricPayload) {
-    Task {
-      do {
-        let data = payload.jsonRepresentation()
-        let directory = try metricsDirectory()
-        let filename = "metric_\(ISO8601DateFormatter().string(from: payload.timeStampEnd)).json"
-        let url = directory.appendingPathComponent(filename)
-        try data.write(to: url)
-        metricLogger.debug("Persisted metric payload to \(url.lastPathComponent)")
-      } catch {
-        metricLogger.error("Failed to persist metric payload: \(error.localizedDescription)")
-      }
+  // MARK: - Storage Cleanup
+
+  /// Earlier builds wrote every payload to Application Support/MetricKit and never read
+  /// or pruned it. Nothing uses those files, so reclaim the space.
+  private func removeStoredPayloads() {
+    Task.detached(priority: .utility) {
+      guard let base = FileManager.default
+        .urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return }
+      let directory = base.appendingPathComponent("MetricKit", isDirectory: true)
+      guard FileManager.default.fileExists(atPath: directory.path) else { return }
+      try? FileManager.default.removeItem(at: directory)
     }
-  }
-  
-  private func persistDiagnosticPayload(_ payload: MXDiagnosticPayload) {
-    Task {
-      do {
-        let data = payload.jsonRepresentation()
-        let directory = try metricsDirectory()
-        let filename = "diagnostic_\(ISO8601DateFormatter().string(from: payload.timeStampEnd)).json"
-        let url = directory.appendingPathComponent(filename)
-        try data.write(to: url)
-        metricLogger.debug("Persisted diagnostic payload to \(url.lastPathComponent)")
-      } catch {
-        metricLogger.error("Failed to persist diagnostic payload: \(error.localizedDescription)")
-      }
-    }
-  }
-  
-  private func metricsDirectory() throws -> URL {
-    let directory = FileManager.default
-      .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-      .appendingPathComponent("MetricKit", isDirectory: true)
-    
-    if !FileManager.default.fileExists(atPath: directory.path) {
-      try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-    }
-    
-    return directory
   }
 }
 

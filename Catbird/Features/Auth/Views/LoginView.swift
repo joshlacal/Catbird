@@ -477,9 +477,11 @@ struct LoginView: View {
                 text: $handle,
                 prompt: "username.bsky.social",
                 icon: "at",
+                label: "Handle",
                 validationError: validationError,
                 isDisabled: isLoggingIn,
                 keyboardType: .emailAddress,
+                textContentType: .username,
                 submitLabel: .go,
                 onSubmit: {
                     handleLogin()
@@ -662,9 +664,11 @@ struct LoginView: View {
                     text: $pdsURL,
                     prompt: "PDS URL (e.g., https://bsky.social)",
                     icon: "link",
+                    label: "Server Address",
                     validationError: validationError,
                     isDisabled: isLoggingIn,
                     keyboardType: .URL,
+                    textContentType: .URL,
                     submitLabel: .go,
                     onSubmit: {
                         handleAdvancedSignup()

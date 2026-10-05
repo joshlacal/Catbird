@@ -5,7 +5,8 @@
 //  Created by Josh LaCalamito on 2/26/25.
 //
 
-// Simplified version that uses the built-in Done button
+// Full-screen video cover: AVKit's inline controls plus Catbird's own Close button,
+// because AVKit draws no Done button for a player embedded in a SwiftUI cover.
 import SwiftUI
 import AVKit
 import AVFoundation
@@ -52,10 +53,30 @@ struct FullscreenVideoPlayerView: View {
         }
         // Enable swipe to dismiss
         #elseif os(iOS)
-        AVPlayerViewControllerWrapper(player: originalPlayer, model: model, onDismiss: {
-            dismiss()
-        })
-        .platformIgnoresSafeArea()
+        VStack(spacing: 0) {
+            HStack {
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 44, height: 44)
+                        .background(.ultraThinMaterial, in: Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Close Video")
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 4)
+
+            AVPlayerViewControllerWrapper(player: originalPlayer, model: model)
+                .ignoresSafeArea(edges: .bottom)
+        }
+        .background(Color.black.ignoresSafeArea())
+        .environment(\.colorScheme, .dark)
+        .accessibilityAction(.escape) { dismiss() }
         .statusBar(hidden: true)
         .onAppear {
             // Respect prior mute state to avoid interrupting external audio
@@ -84,7 +105,6 @@ struct FullscreenVideoPlayerView: View {
 struct AVPlayerViewControllerWrapper: UIViewControllerRepresentable {
     let player: AVPlayer
     let model: VideoModel
-    let onDismiss: () -> Void
     
     func makeUIViewController(context: Context) -> AVPlayerViewController {
         let controller = AVPlayerViewController()
@@ -93,7 +113,7 @@ struct AVPlayerViewControllerWrapper: UIViewControllerRepresentable {
         
         // Configure for fullscreen experience
         controller.showsPlaybackControls = true
-        controller.entersFullScreenWhenPlaybackBegins = true
+        controller.entersFullScreenWhenPlaybackBegins = false
         controller.updatesNowPlayingInfoCenter = true
         controller.allowsPictureInPicturePlayback = true
         
@@ -104,6 +124,10 @@ struct AVPlayerViewControllerWrapper: UIViewControllerRepresentable {
     
     func updateUIViewController(_ uiViewController: AVPlayerViewController, context: Context) {
         // Nothing to update
+    }
+
+    static func dismantleUIViewController(_ uiViewController: AVPlayerViewController, coordinator: Coordinator) {
+        coordinator.teardownForDismiss()
     }
     
     func makeCoordinator() -> Coordinator {
@@ -288,8 +312,8 @@ struct AVPlayerViewControllerWrapper: UIViewControllerRepresentable {
             }
         }
 
-        // This is called when the user taps the built-in "Done" button
-        func playerViewControllerDidEndFullScreenPresentation(_ playerViewController: AVPlayerViewController) {
+        /// Called when the full-screen cover goes away (Close button, swipe down or escape).
+        func teardownForDismiss() {
             if isPictureInPictureActive {
                 // PiP keeps using this player and its observers (looping,
                 // mute sync); defer teardown until the session stops.
@@ -297,7 +321,6 @@ struct AVPlayerViewControllerWrapper: UIViewControllerRepresentable {
             } else {
                 stopObserving()
             }
-            parent.onDismiss()
         }
     }
 }

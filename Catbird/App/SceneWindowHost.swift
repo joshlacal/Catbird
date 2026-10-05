@@ -318,6 +318,7 @@ struct SceneNavigationHost<Content: View>: View {
         .applyAppStateEnvironment(appState)
         .environment(appStateManager)
         .environment(context)
+        .toastContainer(using: appState.toastManager)
         .presentationDetents(request.parentPost == nil ? [.large] : [.medium, .large],
                              selection: $composerDetent)
         .presentationDragIndicator(.visible)

@@ -402,7 +402,7 @@ struct RefinedSearchView: View {
 
     private var searchMenuButton: some View {
         Menu {
-            if !activeSearchQuery.isEmpty {
+            if !activeSearchQuery.isEmpty && CopilotAvailability.isAvailable {
                 Button {
                     isShowingCopilot = true
                 } label: {

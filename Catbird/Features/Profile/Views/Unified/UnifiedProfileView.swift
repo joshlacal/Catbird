@@ -890,13 +890,15 @@ struct UnifiedProfileView: View {
           }
         } else {
           // Regular user options
-          Button {
-            isShowingCopilot = true
-          } label: {
-            Label("Ask Catbird", systemImage: "sparkles")
-          }
+          if CopilotAvailability.isAvailable {
+            Button {
+              isShowingCopilot = true
+            } label: {
+              Label("Ask Catbird", systemImage: "sparkles")
+            }
 
-          Divider()
+            Divider()
+          }
 
           Button {
             showAddToListSheet(profile)

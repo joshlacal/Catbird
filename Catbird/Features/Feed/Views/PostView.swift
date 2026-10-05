@@ -433,14 +433,16 @@ var id: String {
   // Post menu (three dots)
   private var postEllipsisMenuView: some View {
     Menu {
-      Button {
-        copilotContextToPresent = copilotContext
-        isShowingCopilot = true
-      } label: {
-        Label("Ask Catbird", systemImage: "sparkles")
-      }
+      if CopilotAvailability.isAvailable {
+        Button {
+          copilotContextToPresent = copilotContext
+          isShowingCopilot = true
+        } label: {
+          Label("Ask Catbird", systemImage: "sparkles")
+        }
 
-      Divider()
+        Divider()
+      }
 
       // Only show "Add to List" for other users' posts
       if !isOwnPost {
@@ -454,7 +456,7 @@ var id: String {
       }
       
 #if canImport(FoundationModels)
-      if #available(iOS 26.0, macOS 26.0, *), contextMenuViewModel.allowsThreadSummary {
+      if #available(iOS 26.0, macOS 26.0, *), contextMenuViewModel.allowsThreadSummary, CopilotAvailability.isAvailable {
         Button(action: {
           let rootURI: String
           if case .knownType(let record) = postState.currentPost.record,

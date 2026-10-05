@@ -25,10 +25,12 @@ struct SmartFiltersSettingsView: View {
                             .foregroundStyle(.secondary)
                     }
                     .contextMenu {
-                        Button {
-                            copilotRule = rule
-                        } label: {
-                            Label("Ask Catbird", systemImage: "sparkles")
+                        if CopilotAvailability.isAvailable {
+                            Button {
+                                copilotRule = rule
+                            } label: {
+                                Label("Ask Catbird", systemImage: "sparkles")
+                            }
                         }
                         Button(role: .destructive) {
                             Task {
@@ -43,12 +45,14 @@ struct SmartFiltersSettingsView: View {
                         }
                     }
                     .swipeActions(edge: .leading) {
-                        Button {
-                            copilotRule = rule
-                        } label: {
-                            Label("Ask Catbird", systemImage: "sparkles")
+                        if CopilotAvailability.isAvailable {
+                            Button {
+                                copilotRule = rule
+                            } label: {
+                                Label("Ask Catbird", systemImage: "sparkles")
+                            }
+                            .tint(.accentColor)
                         }
-                        .tint(.accentColor)
                     }
                     .swipeActions(edge: .trailing) {
                         Button("Delete", role: .destructive) {

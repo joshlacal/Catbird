@@ -212,7 +212,8 @@ struct BookmarksView: View {
     } catch {
       await MainActor.run {
         self.hasError = true
-        self.errorMessage = "Failed to load bookmarks: \(error.localizedDescription)"
+        self.errorMessage = UserFacingError.message(for: error, action: "load your saved posts")
+          ?? "Couldn’t load your saved posts."
         self.isLoading = false
       }
       logger.error("Failed to load initial bookmarks: \(error)")
@@ -242,7 +243,8 @@ struct BookmarksView: View {
     } catch {
       await MainActor.run {
         self.hasError = true
-        self.errorMessage = "Failed to refresh bookmarks: \(error.localizedDescription)"
+        self.errorMessage = UserFacingError.message(for: error, action: "refresh your saved posts")
+          ?? "Couldn’t refresh your saved posts."
       }
       logger.error("Failed to refresh bookmarks: \(error)")
     }
@@ -272,7 +274,8 @@ struct BookmarksView: View {
     } catch {
       await MainActor.run {
         self.hasError = true
-        self.errorMessage = "Failed to load more bookmarks: \(error.localizedDescription)"
+        self.errorMessage = UserFacingError.message(for: error, action: "load more saved posts")
+          ?? "Couldn’t load more saved posts."
       }
       logger.error("Failed to load more bookmarks: \(error)")
     }

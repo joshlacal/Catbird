@@ -67,6 +67,7 @@ struct ModernVideoPlayerView: View {
   @State private var isVisible = false
   @State private var showControls = false
   @State private var showFullscreen = false
+  @State private var loadFailed = false
   @Environment(\.scenePhase) private var scenePhase
   @Environment(AppState.self) private var appState
   let postID: String
@@ -134,7 +135,8 @@ struct ModernVideoPlayerView: View {
       url: playlistURL,
       type: videoType,
       aspectRatio: ar,
-      thumbnailURL: bskyVideo.thumbnail?.url
+      thumbnailURL: bskyVideo.thumbnail?.url,
+      alt: bskyVideo.alt
     )
     self.postID = postID
   }
@@ -164,16 +166,30 @@ struct ModernVideoPlayerView: View {
         playerLayerView()
 
         // Show thumbnail overlay if video is not playing and autoplay is disabled
-        if !model.isPlaying && !appState.appSettings.autoplayVideos,
+        if !model.isPlaying && !appState.appSettings.autoplayVideos && !loadFailed,
            let thumbnailURL = model.thumbnailURL
         {
-          VideoThumbnailView(thumbnailURL: thumbnailURL, aspectRatio: model.aspectRatio)
-            .allowsHitTesting(false)  // Let taps pass through to the player
+          ZStack {
+            VideoThumbnailView(thumbnailURL: thumbnailURL, aspectRatio: model.aspectRatio)
+            Image(systemName: "play.fill")
+              .font(.title2)
+              .foregroundStyle(.white)
+              .frame(width: 52, height: 52)
+              .background(.ultraThinMaterial, in: Circle())
+              .accessibilityHidden(true)
+          }
+          .allowsHitTesting(false)  // Let taps pass through to the player
         }
       }
       .contentShape(Rectangle())
       .onTapGesture { location in
         handleTap(location: location)
+      }
+      .accessibilityElement(children: .ignore)
+      .accessibilityLabel(videoAccessibilityLabel)
+      .accessibilityAddTraits(.startsMediaSession)
+      .accessibilityAction {
+        handleAccessibilityActivate()
       }
 
       // HLS video controls (mute button)
@@ -271,10 +287,41 @@ struct ModernVideoPlayerView: View {
           .animation(.spring(), value: playerScale)
       }
 
+    } else if loadFailed {
+      ZStack {
+        if let thumbnailURL = model.thumbnailURL {
+          VideoThumbnailView(thumbnailURL: thumbnailURL, aspectRatio: model.aspectRatio)
+        } else {
+          Rectangle()
+            .fill(Color.gray.opacity(0.3))
+        }
+        VStack(spacing: 8) {
+          Label(model.type.isGif ? "GIF Unavailable" : "Video Unavailable", systemImage: "exclamationmark.triangle")
+            .appFont(AppTextRole.subheadline)
+          Button("Try Again") {
+            Task { await setupPlayer() }
+          }
+          .buttonStyle(.bordered)
+        }
+        .padding()
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+      }
+      .clipShape(RoundedRectangle(cornerRadius: 10))
     } else {
       ProgressView()
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
+  }
+
+  private var videoAccessibilityLabel: String {
+    let kind = model.type.isGif ? "GIF" : "Video"
+    if loadFailed {
+      return "\(kind) unavailable"
+    }
+    if let alt = model.alt?.trimmingCharacters(in: .whitespacesAndNewlines), !alt.isEmpty {
+      return "\(kind): \(alt)"
+    }
+    return kind
   }
 
   @ViewBuilder
@@ -319,6 +366,16 @@ struct ModernVideoPlayerView: View {
 
   // MARK: - Gesture Handling
 
+  private func handleAccessibilityActivate() {
+    if loadFailed {
+      Task { await setupPlayer() }
+    } else if !model.isPlaying && !appState.appSettings.autoplayVideos {
+      VideoCoordinator.shared.forcePlayVideo(model.id)
+    } else if case .hlsStream = model.type, player != nil {
+      showFullscreen = true
+    }
+  }
+
   private func handleTap(location: CGPoint) {
     guard !muteButtonFrame.contains(location) else { return }
 
@@ -350,6 +407,8 @@ struct ModernVideoPlayerView: View {
       return
     }
     
+    loadFailed = false
+
     // Create player
     do {
       let newPlayer: AVPlayer
@@ -381,6 +440,9 @@ struct ModernVideoPlayerView: View {
       }
     } catch {
       logger.debug("Failed to setup player: \(error)")
+      if !Task.isCancelled {
+        loadFailed = true
+      }
     }
   }
 
@@ -483,11 +545,9 @@ struct MuteButton: View {
   let player: AVPlayer
   let model: VideoModel
 
-  @State private var isMuted: Bool = true
-
   var body: some View {
     Button(action: toggleMute) {
-      Image(systemName: isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
+      Image(systemName: model.isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
         .foregroundStyle(.white)
         .frame(width: 32, height: 32)
         .background(Circle().fill(Color.black.opacity(0.6)))
@@ -495,14 +555,12 @@ struct MuteButton: View {
     .padding(4)
     .contentShape(Circle().scale(1.5))
     .buttonStyle(MuteButtonStyle())
-    .onAppear {
-      isMuted = model.isMuted
-    }
+    .accessibilityLabel(model.isMuted ? "Unmute" : "Mute")
   }
 
   private func toggleMute() {
-    isMuted.toggle()
-    VideoCoordinator.shared.setUnmuted(model.id, unmuted: !isMuted)
+    // Muted now means the user is asking to unmute.
+    VideoCoordinator.shared.setUnmuted(model.id, unmuted: model.isMuted)
   }
 }
 

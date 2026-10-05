@@ -1755,8 +1755,10 @@ final class AudioVisualizerService {
   // MARK: - Utility Methods
   
   private func generateOutputURL() -> URL {
-    let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-    return documentsPath.appendingPathComponent("audio_visualizer_\(Date().timeIntervalSince1970).mp4")
+    // The composer copies the finished video into its draft storage, so this render is
+    // only an intermediate file: keep it out of Documents (and device backups).
+    FileManager.default.temporaryDirectory
+      .appendingPathComponent("audio_visualizer_\(Date().timeIntervalSince1970).mp4")
   }
   
   private func formatTime(_ timeInterval: TimeInterval) -> String {

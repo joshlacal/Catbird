@@ -43,6 +43,7 @@ struct TabViewBottomAccessoryWrapper: View {
         editingSession: editingSession,
         editingClaim: composerInitialClaim
       )
+      .toastContainer(using: appState.toastManager)
     }
     .confirmationDialog("Recover Earlier Draft?", isPresented: $showingLegacyRecovery, titleVisibility: .visible) {
       Button("Recover for Current Account") {

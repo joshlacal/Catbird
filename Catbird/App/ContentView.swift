@@ -528,7 +528,7 @@ struct MainContentView: View {
       }
       .platformIgnoresSafeArea()
       .scrollDismissesKeyboard(.interactively)
-      .toastContainer()
+      .toastContainer(using: appState.toastManager)
       .onAppear {
         // Theme is already applied during AppState initialization - no need to reapply here
         
@@ -599,6 +599,7 @@ struct MainContentView: View {
         }
         .applyAppStateEnvironment(appState)
         .environment(sceneContext)
+        .toastContainer(using: appState.toastManager)
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
         .applyComposerNavigationTransition(
