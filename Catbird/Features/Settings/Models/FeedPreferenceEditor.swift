@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import OSLog
 
 enum FeedPreferenceEdit: Equatable, Sendable {
   case replies(Bool), unfollowedReplies(Bool), minimumLikes(Int?), reposts(Bool), quotes(Bool)
@@ -8,6 +9,7 @@ enum FeedPreferenceEdit: Equatable, Sendable {
 /// A sparse edit stays pending until the account's server-first transaction succeeds.
 @MainActor @Observable
 final class FeedPreferenceEditor {
+  private static let logger = Logger(subsystem: "blue.catbird", category: "FeedPreferenceEditor")
   private(set) var confirmed: FeedViewPreference?
   private(set) var hasLoaded = false
   private(set) var isLoading = false
@@ -124,7 +126,8 @@ final class FeedPreferenceEditor {
       error = nil
     } catch {
       guard !Task.isCancelled, isCurrentAccount() else { return }
-      self.error = "Couldn’t load Bluesky feed preferences. \(error.localizedDescription)"
+      Self.logger.error("Feed preference load failed: \(error.localizedDescription, privacy: .public)")
+      self.error = UserFacingError.message(for: error, action: "load your feed preferences") ?? "Couldn’t load your feed preferences. Try again."
     }
   }
 
@@ -151,7 +154,8 @@ final class FeedPreferenceEditor {
         userInfo: ["accountDID": accountDID])
     } catch {
       guard !Task.isCancelled, isCurrentAccount() else { return }
-      self.error = "This change hasn’t been confirmed by Bluesky. \(error.localizedDescription)"
+      Self.logger.error("Feed preference save failed: \(error.localizedDescription, privacy: .public)")
+      self.error = UserFacingError.message(for: error, action: "save this change") ?? "Couldn’t save this change. Try again."
     }
   }
 

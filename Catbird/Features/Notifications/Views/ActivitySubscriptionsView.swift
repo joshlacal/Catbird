@@ -4,6 +4,8 @@ import Petrel
 
 struct ActivitySubscriptionsView: View {
   @Environment(AppState.self) private var appState: AppState
+  /// Present only inside the Settings sheet, whose stack can't push app destinations like profiles.
+  @Environment(\.settingsDraftGuard) private var settingsDraftGuard
 
   private var service: ActivitySubscriptionService { appState.activitySubscriptionService }
 
@@ -13,7 +15,7 @@ struct ActivitySubscriptionsView: View {
 
       if let error = service.lastError {
         Section("Status") {
-          Text(error.localizedDescription)
+          Text(UserFacingError.message(for: error, action: "load your subscriptions") ?? "Couldn’t load your subscriptions. Pull to refresh to try again.")
             .foregroundStyle(.red)
             .appBody()
         }
@@ -23,21 +25,27 @@ struct ActivitySubscriptionsView: View {
         Section("Subscriptions") {
           HStack {
             ProgressView()
-            Text("Loading activity subscriptions…")
+            Text("Loading subscriptions…")
               .appBody()
           }
         }
       } else if service.subscriptions.isEmpty {
         Section("Subscriptions") {
-          Text("You are not subscribed to any accounts yet. Visit a profile and tap the bell icon to start receiving post alerts.")
+          Text("You aren’t subscribed to anyone yet. Visit a profile and tap the bell to get alerts when they post.")
             .appBody()
             .foregroundStyle(.secondary)
         }
       } else {
         Section("Subscriptions") {
           ForEach(service.subscriptions) { entry in
-            NavigationLink(value: NavigationDestination.profile(entry.profile.did)) {
-              ActivitySubscriptionRow(entry: entry)
+            Group {
+              if settingsDraftGuard == nil {
+                NavigationLink(value: NavigationDestination.profile(entry.profile.did)) {
+                  ActivitySubscriptionRow(entry: entry)
+                }
+              } else {
+                ActivitySubscriptionRow(entry: entry)
+              }
             }
             .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
           }
@@ -50,6 +58,10 @@ struct ActivitySubscriptionsView: View {
     .listStyle(.automatic)
     #endif
     .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
+    .navigationTitle("People I Subscribe To")
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
     .task {
       if service.subscriptions.isEmpty && !service.isLoading {
         await service.refreshSubscriptions()
@@ -62,7 +74,7 @@ struct ActivitySubscriptionsView: View {
 
   private var introductionSection: some View {
     Section("How it works") {
-      Text("Activity subscriptions send alerts when selected users publish new posts. Manage existing subscriptions here and use the bell on any profile to add more.")
+      Text("Get an alert when people you subscribe to post. Change or turn off alerts here, and use the bell on any profile to add more people.")
         .appBody()
         .foregroundStyle(.secondary)
     }
@@ -126,6 +138,7 @@ private struct ActivitySubscriptionRow: View {
     }
     .frame(width: 44, height: 44)
     .clipShape(Circle())
+    .accessibilityHidden(true)
   }
 
   private var subscriptionMenu: some View {
@@ -133,26 +146,26 @@ private struct ActivitySubscriptionRow: View {
       Button {
         updateSubscription(posts: true, replies: false)
       } label: {
-        Label("Posts only", systemImage: currentState == .postsOnly ? "checkmark" : "bell")
+        Label("Posts Only", systemImage: currentState == .postsOnly ? "checkmark" : "bell")
       }
 
       Button {
         updateSubscription(posts: false, replies: true)
       } label: {
-        Label("Replies only", systemImage: currentState == .repliesOnly ? "checkmark" : "arrowshape.turn.up.left")
+        Label("Replies Only", systemImage: currentState == .repliesOnly ? "checkmark" : "arrowshape.turn.up.left")
       }
 
       Button {
         updateSubscription(posts: true, replies: true)
       } label: {
-        Label("Posts and replies", systemImage: currentState == .postsAndReplies ? "checkmark" : "bubble.left.and.bubble.right")
+        Label("Posts and Replies", systemImage: currentState == .postsAndReplies ? "checkmark" : "bubble.left.and.bubble.right")
       }
 
       if currentState != .none {
         Button(role: .destructive) {
           updateSubscription(posts: false, replies: false)
         } label: {
-          Label("Turn off", systemImage: "bell.slash")
+          Label("Turn Off", systemImage: "bell.slash")
         }
       }
     } label: {
@@ -188,7 +201,7 @@ private struct ActivitySubscriptionRow: View {
       do {
         try await service.setSubscription(for: entry.id, posts: posts, replies: replies)
       } catch {
-        actionError = error.localizedDescription
+        actionError = UserFacingError.message(for: error, action: "update this subscription")
       }
     }
   }

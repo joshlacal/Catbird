@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// Retained for existing links; each choice opens its canonical settings page.
+#if DEBUG
+/// Used only by the Settings layout fixtures; the shipping app reaches these pages from Settings directly.
 struct ContentMediaSettingsView: View {
   var body: some View {
     SettingsFocusedForm(initialFocus: nil) {
@@ -18,3 +19,4 @@ struct ContentMediaSettingsView: View {
     }.navigationTitle("Content & Media")
   }
 }
+#endif

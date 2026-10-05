@@ -76,13 +76,13 @@ struct AdvancedSettingsView: View {
         else if baseline == nil {
           Section {
             Text("Couldn’t load service providers. Your current providers are unchanged.").foregroundStyle(.secondary)
-            Button("Retry") { Task { _ = await loadCurrentSettings(); publishDraftGuard() } }
+            Button("Try Again") { Task { _ = await loadCurrentSettings(); publishDraftGuard() } }
               .settingsControl(.init(rawValue: "advanced.providerRetryLoad"))
           }
         }
         if saveOutcomeUnconfirmed {
-          Section("Saved outcome unconfirmed") {
-            Text("The SDK could not confirm which providers were saved. Your typed choices are still here. Reload saved providers to check the account record, or retry these choices.")
+          Section("Save Not Confirmed") {
+            Text("Catbird couldn’t confirm which providers were saved. Your choices are still here. Reload to check, or try again.")
               .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             Button("Reload Saved Providers") { confirmingReload = true }
             Button("Retry These Choices") { Task { await saveChanges() } }
@@ -120,30 +120,30 @@ struct AdvancedSettingsView: View {
         }
       }
     }
-    .confirmationDialog("Unsaved provider changes", isPresented: $confirmingDeparture, titleVisibility: .visible) {
+    .confirmationDialog("Unsaved Provider Changes", isPresented: $confirmingDeparture, titleVisibility: .visible) {
       Button("Save") { Task { if await resolveDraft(save: true) { dismiss() } } }
       Button("Discard Changes", role: .destructive) { Task { if await resolveDraft(save: false) { dismiss() } } }
       Button("Stay", role: .cancel) { }
     }
     .onDisappear { if draftGuard?.accountDID == originDID { draftGuard?.hasChanges = false; draftGuard?.resolve = nil } }
-    .confirmationDialog("Reload saved providers?", isPresented: $confirmingReload, titleVisibility: .visible) {
+    .confirmationDialog("Reload Saved Providers?", isPresented: $confirmingReload, titleVisibility: .visible) {
       Button("Reload Saved Providers") { Task { _ = await loadCurrentSettings(reconcileRuntime: true); publishDraftGuard() } }
       Button("Keep Typed Choices", role: .cancel) { }
-    } message: { Text("Replace the typed choices with the providers read from this account’s saved record.") }
+    } message: { Text("Replace your choices with the providers saved to this account.") }
     .alert("Saved", isPresented: $showingSaveConfirmation) {
       Button("OK") {
         showingSaveConfirmation = false
       }
     } message: {
-      Text("Service DID settings have been updated.")
+      Text("Service providers updated.")
     }
-    .alert("Error", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
+    .alert(error.map { ($0 as NSError).code } == -4 ? "Couldn’t Reload Providers" : "Couldn’t Save Providers", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
       Button("OK") {
         error = nil
       }
     } message: {
       if let error {
-        Text(error.localizedDescription)
+        Text((error as NSError).domain == "AdvancedSettings" ? error.localizedDescription : (UserFacingError.message(for: error, action: "save service providers") ?? "Couldn’t save service providers. Try again."))
       }
     }
   }
@@ -176,7 +176,7 @@ struct AdvancedSettingsView: View {
 
   private var headerSection: some View {
     Section {
-      Text("Configure custom service endpoints for your account. These settings are per-account and persist across app restarts.")
+      Text("Choose which services provide content and direct messages for this account. Your choice is saved with this account.")
         .foregroundStyle(.secondary)
         .appFont(AppTextRole.caption)
     }
@@ -305,7 +305,7 @@ struct AdvancedSettingsView: View {
               .scaleEffect(0.8)
               #endif
           }
-          Text(isSaving ? "Saving..." : "Save Changes")
+          Text(isSaving ? "Saving…" : "Save Changes")
                 .appFont(AppTextRole.body).bold()
         }
         .frame(maxWidth: .infinity)
@@ -400,7 +400,7 @@ struct AdvancedSettingsView: View {
     } catch {
       guard SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision) else { return false }
       if reconcileRuntime {
-        self.error = NSError(domain: "AdvancedSettings", code: -4, userInfo: [NSLocalizedDescriptionKey: "Saved providers could not be reloaded. Your typed choices are still here. \(error.localizedDescription)"])
+        self.error = NSError(domain: "AdvancedSettings", code: -4, userInfo: [NSLocalizedDescriptionKey: "Couldn’t reload saved providers. Your choices are still here. Try again."])
       }
       return false
     }
@@ -426,7 +426,7 @@ struct AdvancedSettingsView: View {
       error = NSError(
         domain: "AdvancedSettings",
         code: -1,
-        userInfo: [NSLocalizedDescriptionKey: "Not authenticated"]
+        userInfo: [NSLocalizedDescriptionKey: "Sign in again to change service providers."]
       )
       return false
     }
@@ -451,7 +451,7 @@ struct AdvancedSettingsView: View {
       error = NSError(
         domain: "AdvancedSettings",
         code: -2,
-        userInfo: [NSLocalizedDescriptionKey: "Invalid AppView DID format"]
+        userInfo: [NSLocalizedDescriptionKey: "Enter a valid AppView service identifier. It starts with “did:”."]
       )
       return false
     }
@@ -460,7 +460,7 @@ struct AdvancedSettingsView: View {
       error = NSError(
         domain: "AdvancedSettings",
         code: -3,
-        userInfo: [NSLocalizedDescriptionKey: "Invalid Chat DID format"]
+        userInfo: [NSLocalizedDescriptionKey: "Enter a valid chat service identifier. It starts with “did:”."]
       )
       return false
     }
@@ -503,7 +503,7 @@ struct AdvancedSettingsView: View {
       saveOutcomeUnconfirmed = saveOutcomeUnconfirmed || didAttemptSDKSave
       publishDraftGuard()
       if didAttemptSDKSave {
-        self.error = NSError(domain: "AdvancedSettings", code: -5, userInfo: [NSLocalizedDescriptionKey: "The saved provider outcome could not be confirmed. Your typed choices are retained. Reload saved providers or retry. \(error.localizedDescription)"])
+        self.error = NSError(domain: "AdvancedSettings", code: -5, userInfo: [NSLocalizedDescriptionKey: "Catbird couldn’t confirm which providers were saved. Your choices are still here. Reload to check, or try again."])
       } else {
         self.error = error
       }

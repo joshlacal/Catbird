@@ -90,7 +90,7 @@ struct TextReadabilitySettingsView: View {
     Picker(title, selection: string(path)) {
       ForEach(choices, id: \.0) { choice in Text(LocalizedStringKey(choice.1)).tag(choice.0) }
       if !choices.contains(where: { $0.0 == appState.appSettings[keyPath: path] }) {
-        Text("Saved value: \(appState.appSettings[keyPath: path])").tag(appState.appSettings[keyPath: path])
+        Text("Custom").tag(appState.appSettings[keyPath: path])
       }
     }
     .pickerStyle(.menu)

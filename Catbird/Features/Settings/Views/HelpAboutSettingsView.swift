@@ -20,6 +20,9 @@ struct HelpAboutSettingsView: View {
             }
         }
         .navigationTitle("Help & About")
+        #if os(iOS)
+        .toolbarTitleDisplayMode(.inline)
+        #endif
         .confirmationDialog("Replay Tips?", isPresented: $confirmingReplay, titleVisibility: .visible) {
             Button("Replay Tips") {
                 appState.onboardingManager.resetAllOnboarding(for: appState.userDID)

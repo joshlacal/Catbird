@@ -3,6 +3,7 @@ import Petrel
 
 struct SettingsView: View {
     @Environment(AppState.self) private var appState
+    @Environment(SceneNavigationContext.self) private var sceneContext
     @Environment(\.dismiss) private var dismiss
     @State private var draftGuard = SettingsDraftGuard()
     @State private var path: [SettingsTarget] = []
@@ -18,48 +19,62 @@ struct SettingsView: View {
     @State private var resolvingDeparture = false
     @State private var departureError: String?
     private enum Departure { case close, accounts }
+    /// True when pushed onto an existing navigation stack (a settings link opened in a tab) rather than presented as its own sheet.
+    var isEmbedded = false
 
     var body: some View {
-        NavigationStack(path: $path) {
-            ResponsiveContentView {
-                Form {
-                    SettingsPersistenceStatusSection(settings: appState.appSettings)
-                    Section { accountHeader }
-                    if searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        ForEach(SettingsCatalog.homeGroups, id: \.0) { group in
-                            Section(group.0) {
-                                ForEach(group.1, id: \.self) { screen in
-                                    SettingsLink(screen: screen, summary: summary(for: screen), systemImage: symbol(for: screen), family: family(for: screen))
-                                        .accessibilityIdentifier("settings.category." + screen.rawValue)
-                                }
+        if isEmbedded {
+            home
+        } else {
+            NavigationStack(path: $path) { home }
+                .environment(\.settingsDraftGuard, draftGuard)
+                // Some Settings rows open app content (a feed, a list). That lands on the tab behind this sheet, so close Settings to show it.
+                .onChange(of: appNavigationDepth) { oldDepth, newDepth in
+                    if newDepth > oldDepth { requestDeparture(.close) }
+                }
+                .interactiveDismissDisabled(appState.appSettings.hasPendingChanges || draftGuard.hasChanges || resolvingDeparture)
+        }
+    }
+
+    private var home: some View {
+        ResponsiveContentView {
+            Form {
+                SettingsPersistenceStatusSection(settings: appState.appSettings)
+                Section { accountHeader }
+                if searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    ForEach(SettingsCatalog.homeGroups, id: \.0) { group in
+                        Section(group.0) {
+                            ForEach(group.1, id: \.self) { screen in
+                                SettingsLink(screen: screen, summary: summary(for: screen), systemImage: symbol(for: screen), family: family(for: screen))
+                                    .accessibilityIdentifier("settings.category." + screen.rawValue)
                             }
                         }
-                    } else {
-                        Section("Search results") {
-                            let results = SettingsCatalog.search(searchQuery).filter { $0.target.control?.rawValue != "account.appLock" || AppStateManager.shared.authentication.biometricType != .none }
-                            if results.isEmpty {
-                                Text("No settings found. Try a setting name, such as autoplay, muted words, or text size.")
-                                    .foregroundStyle(.secondary)
+                    }
+                } else {
+                    Section("Search Results") {
+                        let results = SettingsCatalog.search(searchQuery).filter { $0.target.control?.rawValue != "account.appLock" || AppStateManager.shared.authentication.biometricType != .none }
+                        if results.isEmpty {
+                            Text("No settings found. Try a setting name, such as autoplay, muted words, or text size.")
+                                .foregroundStyle(.secondary)
+                        }
+                        ForEach(results) { entry in
+                            NavigationLink(value: entry.target) {
+                                SettingsNavigationRow(title: entry.title, summary: resultSummary(entry), systemImage: symbol(for: entry.target.screen), family: family(for: entry.target.screen))
                             }
-                            ForEach(results) { entry in
-                                NavigationLink(value: entry.target) {
-                                    SettingsNavigationRow(title: entry.title, summary: resultSummary(entry), systemImage: symbol(for: entry.target.screen), family: family(for: entry.target.screen))
-                                }
-                                .accessibilityIdentifier("settings.result." + (entry.target.control?.rawValue ?? entry.target.screen.rawValue))
-                            }
+                            .accessibilityIdentifier("settings.result." + (entry.target.control?.rawValue ?? entry.target.screen.rawValue))
                         }
                     }
                 }
             }
-            .navigationTitle("Settings")
-            .searchable(text: $searchQuery, prompt: "Search settings")
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
-            .navigationDestination(for: SettingsTarget.self) { target in
-                SettingsDestinationView(target: target)
-            }
-            .toolbar {
+        }
+        .navigationTitle("Settings")
+        .searchable(text: $searchQuery, prompt: "Search settings")
+        #if os(iOS)
+        .navigationBarTitleDisplayMode(.inline)
+        #endif
+        .modifier(SettingsTargetDestinations(isEnabled: !isEmbedded))
+        .toolbar {
+            if !isEmbedded {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close Settings", systemImage: "xmark") { requestDeparture(.close) }
                         .labelStyle(.iconOnly)
@@ -67,26 +82,28 @@ struct SettingsView: View {
                         .disabled(resolvingDeparture)
                 }
             }
-            .sheet(isPresented: $showingAccounts) {
-                AccountSwitcherView().environment(AppStateManager.shared)
-            }
-            .confirmationDialog("Unsaved settings", isPresented: $showingDeparture, titleVisibility: .visible) {
-                Button("Save") { resolveDeparture(save: true) }
-                Button("Discard Changes", role: .destructive) { resolveDeparture(save: false) }
-                Button("Stay", role: .cancel) { departure = nil; pendingAccountDID = nil }
-            } message: { Text("Save or discard changes for this account before leaving Settings or choosing another account.") }
-            .alert("Settings Couldn’t Be Saved", isPresented: Binding(get: { departureError != nil }, set: { if !$0 { departureError = nil } })) {
-                Button("OK", role: .cancel) { departureError = nil }
-            } message: { Text(departureError ?? "") }
-            .task(id: appState.userDID) {
-                path = []
-                profile = nil
-                profileError = nil
-                await loadProfile(for: appState.userDID)
-            }
         }
-        .environment(\.settingsDraftGuard, draftGuard)
-        .interactiveDismissDisabled(appState.appSettings.hasPendingChanges || draftGuard.hasChanges || resolvingDeparture)
+        .sheet(isPresented: $showingAccounts) {
+            AccountSwitcherView().environment(AppStateManager.shared)
+        }
+        .confirmationDialog("Unsaved Settings", isPresented: $showingDeparture, titleVisibility: .visible) {
+            Button("Save") { resolveDeparture(save: true) }
+            Button("Discard Changes", role: .destructive) { resolveDeparture(save: false) }
+            Button("Stay", role: .cancel) { departure = nil; pendingAccountDID = nil }
+        } message: { Text("Save or discard changes for this account before leaving Settings or choosing another account.") }
+        .alert("Settings Couldn’t Be Saved", isPresented: Binding(get: { departureError != nil }, set: { if !$0 { departureError = nil } })) {
+            Button("OK", role: .cancel) { departureError = nil }
+        } message: { Text(departureError ?? "") }
+        .task(id: appState.userDID) {
+            path = []
+            profile = nil
+            profileError = nil
+            await loadProfile(for: appState.userDID)
+        }
+    }
+
+    private var appNavigationDepth: Int {
+        sceneContext.navigationManager.tabPaths.values.reduce(0) { $0 + $1.count }
     }
 
     private var accountHeader: some View {
@@ -199,7 +216,9 @@ struct SettingsView: View {
         switch id {
         case "media.autoplayVideos": return settings.autoplayVideos ? "On" : "Off"
         case "appearance.theme": return settings.theme.capitalized
-        case "text.fontSize": return settings.fontSize.capitalized
+        case "text.fontSize":
+            let sizes = ["small": "Small", "default": "Default", "large": "Large", "extraLarge": "Extra Large"]
+            return sizes[settings.fontSize] ?? settings.fontSize.capitalized
         case "accessibility.altText": return settings.requireAltText ? "On" : "Off"
         case "accessibility.reduceMotion": return settings.effectiveReduceMotion ? "On" : "Off"
         case "accessibility.increaseContrast": return settings.effectiveIncreaseContrast ? "On" : "Off"
@@ -217,11 +236,11 @@ struct SettingsView: View {
         case .feedsDiscovery: "Feed preferences, threads, interests"
         case .moderation: "Warnings, mutes, blocks"
         case .mediaLinks: "Playback, external media, browser"
-        case .language: "Interface and reading languages"
+        case .language: InterfaceLanguagePreferences.availableLanguages().count > 1 ? "Interface and reading languages" : "Reading languages and language filter"
         case .appearance: "Theme and app icon"
         case .accessibility: "Text, motion, image descriptions"
         case .helpAbout: "Get help, support Catbird, app info"
-        case .advanced: "Providers, diagnostics, cache"
+        case .advanced: "Service providers and cache"
         default: ""
         }
     }
@@ -253,6 +272,20 @@ struct SettingsView: View {
         case .accessibility, .textReadability: .accessibility
         case .helpAbout, .help, .blueskyHelpCenter, .about, .licenses, .home: .support
         case .advanced, .providers, .systemLogs, .cache: .advanced
+        }
+    }
+}
+
+/// Registers Settings destinations on the Settings sheet's own stack; an embedded home relies on its host stack's registration.
+private struct SettingsTargetDestinations: ViewModifier {
+    let isEnabled: Bool
+    @ViewBuilder func body(content: Content) -> some View {
+        if isEnabled {
+            content.navigationDestination(for: SettingsTarget.self) { target in
+                SettingsDestinationView(target: target)
+            }
+        } else {
+            content
         }
     }
 }

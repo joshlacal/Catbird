@@ -8,14 +8,19 @@ struct AdvancedSettingsHubView: View {
     var body: some View {
         SettingsFocusedForm(initialFocus: initialFocus) {
             Section("Current account") {
-                SettingsLink(screen: .providers, summary: "AppView and chat providers; changes apply when saved", systemImage: "server.rack", family: .advanced)
+                SettingsLink(screen: .providers, summary: "Content and chat servers; changes apply when saved", systemImage: "server.rack", family: .advanced)
             }
             Section("This device") {
+                #if DEBUG
                 SettingsLink(screen: .systemLogs, summary: "View and export diagnostic logs", systemImage: "doc.text.magnifyingglass", family: .advanced)
+                #endif
                 SettingsLink(screen: .cache, summary: "Cached images and web media only", systemImage: "externaldrive", family: .advanced)
             }
         }
         .navigationTitle("Advanced")
+        #if os(iOS)
+        .toolbarTitleDisplayMode(.inline)
+        #endif
     }
 }
 
@@ -39,7 +44,10 @@ struct SettingsCacheView: View {
             }
         }
         .navigationTitle("Image & Web Cache")
-        .confirmationDialog("Clear image and web cache?", isPresented: $confirmingClear, titleVisibility: .visible) {
+        #if os(iOS)
+        .toolbarTitleDisplayMode(.inline)
+        #endif
+        .confirmationDialog("Clear Image & Web Cache?", isPresented: $confirmingClear, titleVisibility: .visible) {
             Button("Clear Cache", role: .destructive) { clearCache() }
             Button("Cancel", role: .cancel) { }
         }

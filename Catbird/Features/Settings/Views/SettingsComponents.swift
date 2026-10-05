@@ -53,8 +53,9 @@ struct SettingsNavigationRow: View {
         HStack(alignment: .center, spacing: DesignTokens.Spacing.base) {
             SettingsCategoryIcon(systemImage: systemImage, family: family)
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
-                Text(title).appFont(AppTextRole.body).foregroundStyle(.primary)
-                if let summary, !summary.isEmpty { Text(summary).appFont(AppTextRole.subheadline).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
+                // Concrete colors: inside a Button label, hierarchical styles pick up the button tint.
+                Text(title).appFont(AppTextRole.body).foregroundStyle(Color.primary)
+                if let summary, !summary.isEmpty { Text(summary).appFont(AppTextRole.subheadline).foregroundStyle(Color.secondary).fixedSize(horizontal: false, vertical: true) }
             }
         }
         .accessibilityElement(children: .combine)
@@ -120,8 +121,9 @@ struct SettingsScopeSection: View {
         Section {
             LabeledContent("Applies to", value: scope)
             if scope == "Current account" {
-                let handle = AppStateManager.shared.authentication.getCachedProfileData(for: appState.userDID)?.handle
-                Text(handle.map { "@" + $0 } ?? appState.userDID).appFont(AppTextRole.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                if let handle = AppStateManager.shared.authentication.getCachedProfileData(for: appState.userDID)?.handle {
+                    Text("@" + handle).appFont(AppTextRole.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                }
             }
         }
     }

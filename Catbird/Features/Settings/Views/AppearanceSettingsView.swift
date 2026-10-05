@@ -4,6 +4,9 @@ struct AppearanceSettingsView: View {
   @Environment(AppState.self) private var appState
   @Environment(\.colorScheme) private var colorScheme
   @State private var isShowingResetConfirmation = false
+  #if os(iOS)
+  @State private var currentAppIcon: AppIconChoice = .default
+  #endif
   var initialFocus: SettingsControlID? = nil
 
   // Direct binding to AppSettings - no local state needed
@@ -41,7 +44,7 @@ struct AppearanceSettingsView: View {
           Text("Light").tag("light")
           Text("Dark").tag("dark")
           if !["system", "light", "dark"].contains(theme.wrappedValue) {
-            Text("Saved value: \(theme.wrappedValue)").tag(theme.wrappedValue)
+            Text("Custom").tag(theme.wrappedValue)
           }
         }
         .settingsControl(.init(rawValue: "appearance.theme"))
@@ -51,7 +54,7 @@ struct AppearanceSettingsView: View {
             Text("Dim").tag("dim")
             Text("True Black").tag("black")
             if !["dim", "black"].contains(darkThemeMode.wrappedValue) {
-              Text("Saved value: \(darkThemeMode.wrappedValue)").tag(darkThemeMode.wrappedValue)
+              Text("Custom").tag(darkThemeMode.wrappedValue)
             }
           }
           .disabled(!usesDarkTheme)
@@ -65,20 +68,8 @@ struct AppearanceSettingsView: View {
       #if os(iOS)
         if UIApplication.shared.supportsAlternateIcons {
           Section("App Icon") {
-            NavigationLink(destination: AppIconSettingsView()) {
-              HStack {
-                Text("App Icon")
-                Spacer()
-                if let alternateName = UIApplication.shared.alternateIconName {
-                  Text(alternateName == "CatbirdClassic" ? "Classic" : alternateName)
-                    .foregroundStyle(.secondary)
-                } else {
-                  Text("Default")
-                    .foregroundStyle(.secondary)
-                }
-              }
-            }
-            .settingsControl(.init(rawValue: "appearance.appIcon"))
+            SettingsLink(screen: .appIcon, summary: currentAppIcon.displayName, systemImage: "app.badge", family: .appearance)
+              .settingsControl(.init(rawValue: "appearance.appIcon"))
           }
         } else if initialFocus?.rawValue == "appearance.appIcon" {
           Section { Text("Custom app icons are not available on this device.").settingsControl(.init(rawValue: "appearance.appIcon")) }
@@ -98,7 +89,7 @@ struct AppearanceSettingsView: View {
         } label: {
           SettingsNavigationRow(title: "Text & Readability", summary: "Font, spacing, system text size and reading aids", systemImage: "textformat.size", family: .accessibility)
         }
-        NavigationLink("Accessibility") { AccessibilitySettingsView() }
+        SettingsLink(screen: .accessibility, summary: "Motion, contrast, alt text and haptics", systemImage: "accessibility", family: .accessibility)
       } footer: {
         Text("Appearance and text choices apply to this account in Catbird on this device. The app icon applies to this device.")
       }
@@ -124,7 +115,10 @@ struct AppearanceSettingsView: View {
       }
     }
     .navigationTitle("Appearance")
-    .confirmationDialog("Reset appearance?", isPresented: $isShowingResetConfirmation, titleVisibility: .visible) {
+    #if os(iOS)
+    .onAppear { currentAppIcon = AppIconChoice.current }
+    #endif
+    .confirmationDialog("Reset Appearance?", isPresented: $isShowingResetConfirmation, titleVisibility: .visible) {
       Button("Reset Appearance", role: .destructive) {
         appState.appSettings.resetAppearanceToDefaults()
       }
@@ -238,7 +232,8 @@ struct ColorSchemePreview: View {
     if !isDarkMode {
       return .white
     } else {
-      return isBlackMode ? .black : Color.systemGray6
+      // Matches the app's Dim theme background (Color.dynamicBackground).
+      return isBlackMode ? .black : Color(red: 0.18, green: 0.18, blue: 0.20)
     }
   }
 
@@ -246,7 +241,7 @@ struct ColorSchemePreview: View {
     if !isDarkMode {
       return Color(platformColor: PlatformColor.platformSecondarySystemBackground)
     } else {
-      return isBlackMode ? Color.systemGray6 : Color.systemGray5
+      return isBlackMode ? Color.systemGray6 : Color(red: 0.25, green: 0.25, blue: 0.27)
     }
   }
 

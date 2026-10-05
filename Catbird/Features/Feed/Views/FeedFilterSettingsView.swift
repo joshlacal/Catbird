@@ -37,11 +37,11 @@ struct FeedFilterSettingsView: View {
         } else if editor?.isLoading != false {
           ProgressView("Loading Bluesky preferences…")
         } else {
-          Text("Load Bluesky preferences to see every active source before changing visibility.").foregroundStyle(.secondary)
+          Text("Load your Bluesky preferences to change which posts appear.").foregroundStyle(.secondary)
           Button("Retry Loading") { Task { await editor?.load() } }
         }
       } header: { Text("Post Visibility") } footer: {
-        Text("These rows combine Bluesky preferences and existing filters on this device. Choosing Show clears each source that hides that post type. Your own replies remain visible.")
+        Text("Choose which kinds of posts appear in your feeds. Turning one of these off shows those posts again everywhere they were hidden. Your own replies are always shown.")
       }
       .disabled(!isEditable && editor?.hasLoaded == true)
 
@@ -95,7 +95,7 @@ struct FeedFilterSettingsView: View {
           SettingsNavigationRow(title: "Reading Languages", summary: languageSummary, systemImage: "globe", family: .language)
         }.settingsControl(.init(rawValue: "feed.languageFilter"))
       } footer: {
-        Text("Reading-language preferences and an existing Filter by Language choice combine. Manage both sources in Languages.")
+        Text("Choose which languages appear in your feeds in Language settings.")
       }
       if let editor {
         if editor.isSaving { Section { ProgressView("Saving Bluesky preference…") } }
@@ -111,6 +111,9 @@ struct FeedFilterSettingsView: View {
       }
     }
     .navigationTitle("Feed Filtering")
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
     .task(id: appState.userDID) {
       #if DEBUG
       let editor: FeedPreferenceEditor
@@ -135,7 +138,7 @@ struct FeedFilterSettingsView: View {
       }
       Button("Cancel", role: .cancel) { reconciledFilter = nil }
     } message: {
-      Text("This clears the filter on this device and turns off the Bluesky hide preference when enabled. Other filters still apply.")
+      Text("These posts will appear in your feeds again, here and in other Bluesky apps. Other filters still apply.")
     }
   }
 

@@ -153,7 +153,7 @@ class LanguageManager {
                 contentLanguages: contentLanguages, expectedAccountDID: expectedAccountDID)
             addToRecentLanguages(primaryLanguage)
         } catch {
-            self.error = "Your reading choice is saved in Catbird. Local language compatibility data could not be updated."
+            self.error = "Your reading languages are saved in Catbird, but couldn’t be applied everywhere. Try again."
             Self.logger.error("Local reading-language publication failed: \(error.localizedDescription)")
         }
     }
@@ -182,7 +182,7 @@ class LanguageManager {
             }
         } catch {
             // Refusal must leave the existing compatibility error available for a later Retry.
-            self.error = self.error ?? "Your reading choice is saved in Catbird. Local language compatibility data could not be updated."
+            self.error = self.error ?? "Your reading languages are saved in Catbird, but couldn’t be applied everywhere. Try again."
             Self.logger.error("Confirmed reading-language Retry did not complete: \(error.localizedDescription)")
         }
     }
@@ -205,22 +205,25 @@ struct LanguageSettingsView: View {
 
     var body: some View {
         SettingsFocusedForm(initialFocus: initialFocus) {
-            Section {
-                NavigationLink {
-                    InterfaceLanguageSelectionView(selectedLanguage: $interfaceLanguage, preferences: interfacePreferences)
-                } label: {
-                    SettingsNavigationRow(title: "Interface Language", summary: languageName(interfaceLanguage), systemImage: "globe", family: .language)
+            // Only offer an interface language choice when Catbird ships more than one translation.
+            if InterfaceLanguagePreferences.availableLanguages().count > 1 {
+                Section {
+                    NavigationLink {
+                        InterfaceLanguageSelectionView(selectedLanguage: $interfaceLanguage, preferences: interfacePreferences)
+                    } label: {
+                        SettingsNavigationRow(title: "Interface Language", summary: languageName(interfaceLanguage), systemImage: "globe", family: .language)
+                    }
+                    .settingsControl(.init(rawValue: "languages.interface"))
+                } header: { Text("This Device") } footer: {
+                    Text("Menu language applies to every account on this device. Available choices reflect the translations included in Catbird. Some interface text may remain in English.")
                 }
-                .settingsControl(.init(rawValue: "languages.interface"))
-            } header: { Text("This Device") } footer: {
-                Text("Menu language applies to every account on this device. Available choices reflect the translations included in Catbird. Some interface text may remain in English.")
             }
 
             SettingsPersistenceStatusSection(settings: appState.appSettings)
             if let error = languageManager?.error {
                 Section {
                     Text(error).foregroundStyle(.secondary)
-                    Button("Retry Local Language Update") {
+                    Button("Try Again") {
                         let capturedState = appState
                         guard let manager = languageManager,
                               let confirmed = capturedState.appSettings.confirmedReadingLanguages(for: capturedState.userDID)
@@ -274,16 +277,16 @@ struct LanguageSettingsView: View {
                     set: { appState.appSettings.showLanguageIndicators = $0 }))
                     .settingsControl(.init(rawValue: "languages.indicators"))
             } header: { Text("This Account in Catbird") } footer: {
-                Text("Reading preferences apply to this account in Catbird on this device. Either stored language filter can hide posts; choosing Show All Languages turns both off after saving. Posts without a language remain eligible. Indicators identify posts outside your preferred reading languages. These choices are stored locally and do not change other Bluesky apps.")
+                Text("Hide posts in languages you haven’t selected. Posts with no language are always shown. Indicators mark posts outside your reading languages. These choices are stored in Catbird on this device and don’t change other Bluesky apps.")
             }
             .disabled(!canEdit)
         }
         .navigationTitle("Language")
-        .confirmationDialog("Show posts in all languages?", isPresented: $confirmsShowingAllLanguages, titleVisibility: .visible) {
+        .confirmationDialog("Show Posts in All Languages?", isPresented: $confirmsShowingAllLanguages, titleVisibility: .visible) {
             Button("Show All Languages") { showAllReadingLanguages() }
             Button("Cancel", role: .cancel) { }
         } message: {
-            Text("This turns off both language-filter sources for this account. Your preferred reading languages are kept.")
+            Text("Posts in every language will appear. Your preferred reading languages are kept.")
         }
         .contrastAwareBackground(appState: appState, defaultColor: Color.systemBackground)
         .onAppear {
@@ -504,7 +507,7 @@ struct EnhancedLanguageSelectionView: View {
                 }
             }
         }
-        .searchable(text: $searchText, prompt: "Search languages...")
+        .searchable(text: $searchText, prompt: "Search languages")
         .navigationTitle(title)
     #if os(iOS)
     .toolbarTitleDisplayMode(.inline)
@@ -556,8 +559,6 @@ struct EnhancedContentLanguagesView: View {
     let recentLanguages: [String]
     
     @State private var searchText = ""
-    @State private var showingSelectAll = false
-    @Environment(\.dismiss) private var dismiss
     
     private var filteredLanguages: [Language] {
         if searchText.isEmpty {
@@ -599,54 +600,39 @@ struct EnhancedContentLanguagesView: View {
     }
     
     var body: some View {
-        NavigationStack {
-            List {
-                SettingsPersistenceStatusSection(settings: appState.appSettings)
+        List {
+            SettingsPersistenceStatusSection(settings: appState.appSettings)
 
-                // Selected Languages Summary
-                if !selectedLanguageObjects.isEmpty && searchText.isEmpty {
-                    Section {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Selected Languages (\(selectedLanguageObjects.count))")
-                                .appFont(AppTextRole.headline)
-                            
-                            ScrollView(.horizontal, showsIndicators: false) {
-                                HStack(spacing: 8) {
-                                    ForEach(selectedLanguageObjects) { language in
-                                        HStack(spacing: 4) {
-                                            Text(language.flag)
-                                            Text(language.englishName)
-                                                .appFont(AppTextRole.caption)
-                                        }
-                                        .padding(.horizontal, 8)
-                                        .padding(.vertical, 4)
-                                        .background(Color.blue.opacity(0.1))
-                                        .clipShape(Capsule())
+            // Selected Languages Summary
+            if !selectedLanguageObjects.isEmpty && searchText.isEmpty {
+                Section {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Selected Languages (\(selectedLanguageObjects.count))")
+                            .appFont(AppTextRole.headline)
+                        
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 8) {
+                                ForEach(selectedLanguageObjects) { language in
+                                    HStack(spacing: 4) {
+                                        Text(language.flag)
+                                        Text(language.englishName)
+                                            .appFont(AppTextRole.caption)
                                     }
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(Color.blue.opacity(0.1))
+                                    .clipShape(Capsule())
                                 }
                             }
                         }
                     }
                 }
-                
-                // Suggested Languages
-                if !suggestedLanguages.isEmpty && searchText.isEmpty {
-                    Section("Suggested") {
-                        ForEach(suggestedLanguages) { language in
-                            ContentLanguageRow(
-                                language: language,
-                                isSelected: selectedLanguages.contains(language.id),
-                                isPrimary: language.id == primaryLanguage,
-                                onToggle: { toggleLanguage(language.id) }
-                            )
-                            .disabled(!appState.appSettings.canEditPersistedSettings)
-                        }
-                    }
-                }
-                
-                // All Languages
-                Section(searchText.isEmpty ? "All Languages" : "Search Results") {
-                    ForEach(filteredLanguages) { language in
+            }
+            
+            // Suggested Languages
+            if !suggestedLanguages.isEmpty && searchText.isEmpty {
+                Section("Suggested") {
+                    ForEach(suggestedLanguages) { language in
                         ContentLanguageRow(
                             language: language,
                             isSelected: selectedLanguages.contains(language.id),
@@ -657,38 +643,25 @@ struct EnhancedContentLanguagesView: View {
                     }
                 }
             }
-            .searchable(text: $searchText, prompt: "Search languages...")
-            .navigationTitle("Content Languages")
-    #if os(iOS)
-    .toolbarTitleDisplayMode(.inline)
-    #endif
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Done", systemImage: "checkmark") {
-                        dismiss()
-                    }
-                }
-                
-                ToolbarItem(placement: .primaryAction) {
-                    Button {
-                        dismiss()
-                    } label: {
-                        Image(systemName: "xmark")
-                    }
-                    .fontWeight(.semibold)
+            
+            // All Languages
+            Section(searchText.isEmpty ? "All Languages" : "Search Results") {
+                ForEach(filteredLanguages) { language in
+                    ContentLanguageRow(
+                        language: language,
+                        isSelected: selectedLanguages.contains(language.id),
+                        isPrimary: language.id == primaryLanguage,
+                        onToggle: { toggleLanguage(language.id) }
+                    )
+                    .disabled(!appState.appSettings.canEditPersistedSettings)
                 }
             }
         }
-        .alert("Select All Languages?", isPresented: $showingSelectAll) {
-            Button("Select All", role: .destructive) {
-                guard appState.appSettings.canEditPersistedSettings else { return }
-                selectedLanguages = Language.allLanguages.map { $0.id }
-            }
-            .disabled(!appState.appSettings.canEditPersistedSettings)
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("This will show content in all \(Language.allLanguages.count) languages. This may include content you don't understand.")
-        }
+        .searchable(text: $searchText, prompt: "Search languages")
+        .navigationTitle("Preferred Reading Languages")
+        #if os(iOS)
+        .toolbarTitleDisplayMode(.inline)
+        #endif
     }
     
     private func toggleLanguage(_ code: String) {

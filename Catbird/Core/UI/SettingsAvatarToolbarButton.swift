@@ -79,8 +79,8 @@ struct SettingsAvatarToolbarButton: View {
       } primaryAction: {
         action()
       }
-      .accessibilityLabel("Profile and settings")
-      .accessibilityHint("Tap for settings, hold for account switcher")
+      .accessibilityLabel("Settings")
+      .accessibilityHint("Opens Settings. Touch and hold to switch accounts.")
       .task(id: accounts.map(\.did)) {
         await loadAvatars(for: accounts)
       }
@@ -89,8 +89,8 @@ struct SettingsAvatarToolbarButton: View {
         avatarLabel
       }
       .buttonStyle(.plain)
-      .accessibilityLabel("Profile and settings")
-      .accessibilityHint("Opens your profile and app settings")
+      .accessibilityLabel("Settings")
+      .accessibilityHint("Opens Settings and account options")
       .accessibilityAddTraits(.isButton)
     }
   }

@@ -23,6 +23,24 @@ public enum AppIconChoice: String, CaseIterable, Identifiable {
         case .classic: return "CatbirdClassic"
         }
     }
+
+    /// An image set that shows what the icon looks like; app icon sets can't be loaded as images.
+    var previewImageName: String {
+        switch self {
+        case .default: return "CatbirdIcon"
+        case .classic: return "AppIconPreviewClassic"
+        }
+    }
+
+    /// The choice matching the icon currently on the Home Screen.
+    @MainActor static var current: AppIconChoice {
+        #if os(iOS)
+        guard let alternateName = UIApplication.shared.alternateIconName else { return .default }
+        return AppIconChoice(rawValue: alternateName) ?? .classic
+        #else
+        return .default
+        #endif
+    }
 }
 
 struct AppIconSettingsView: View {
@@ -44,28 +62,29 @@ struct AppIconSettingsView: View {
                             iconPreview(for: choice)
                             
                             Text(choice.displayName)
-                                .font(.body)
-                                .foregroundStyle(.primary)
+                                .appFont(AppTextRole.body)
+                                .foregroundStyle(Color.primary)
                             
                             Spacer()
                             
                             if currentIconChoice == choice {
                                 Image(systemName: "checkmark")
-                                    .font(.headline)
-                                    .foregroundStyle(.blue)
+                                    .appFont(AppTextRole.headline)
+                                    .foregroundStyle(.tint)
+                                    .accessibilityHidden(true)
                             }
                         }
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .disabled(isSettingIcon)
+                    .accessibilityLabel(choice.displayName)
+                    .accessibilityAddTraits(currentIconChoice == choice ? .isSelected : [])
                 }
             } header: {
                 Text("Choose App Icon")
             } footer: {
-                Text("Select an alternate icon for your device Home Screen.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+                Text("Choose the icon Catbird uses on this device’s Home Screen.")
             }
         }
         .navigationTitle("App Icon")
@@ -75,16 +94,16 @@ struct AppIconSettingsView: View {
         .onAppear {
             updateCurrentIcon()
         }
-        .alert("App Icon", isPresented: $showErrorAlert) {
+        .alert("Couldn’t Change App Icon", isPresented: $showErrorAlert) {
             Button("OK") { }
         } message: {
-            Text(errorMessage ?? "An unknown error occurred.")
+            Text(errorMessage ?? "Try again.")
         }
     }
     
     @ViewBuilder
     private func iconPreview(for choice: AppIconChoice) -> some View {
-        Image("catbird head square")
+        Image(choice.previewImageName)
             .resizable()
             .scaledToFit()
             .frame(width: 48, height: 48)
@@ -93,24 +112,19 @@ struct AppIconSettingsView: View {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .stroke(Color.gray.opacity(0.2), lineWidth: 1)
             )
+            .accessibilityHidden(true)
     }
     
     @MainActor
     private func updateCurrentIcon() {
-        #if os(iOS)
-        if let alternateName = UIApplication.shared.alternateIconName {
-            currentIconChoice = AppIconChoice(rawValue: alternateName) ?? .classic
-        } else {
-            currentIconChoice = .default
-        }
-        #endif
+        currentIconChoice = AppIconChoice.current
     }
     
     @MainActor
     private func setIcon(_ choice: AppIconChoice) {
         #if os(iOS)
         guard UIApplication.shared.supportsAlternateIcons else {
-            errorMessage = "Alternate icons are not supported on this device."
+            errorMessage = "This device doesn’t support changing the app icon."
             showErrorAlert = true
             return
         }
@@ -128,7 +142,7 @@ struct AppIconSettingsView: View {
             } catch {
                 logger.error("Failed to change alternate app icon: \(error.localizedDescription)")
                 currentIconChoice = previousChoice
-                errorMessage = error.localizedDescription
+                errorMessage = "Catbird couldn’t change the app icon. Try again."
                 showErrorAlert = true
             }
         }

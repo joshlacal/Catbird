@@ -8,6 +8,7 @@ struct FeedLibrarySettingsView: View {
   var initialFocus: SettingsControlID? = nil
   @State private var isLoading = true
   @State private var names: [String: String] = [:]
+  @State private var creators: [String: String] = [:]
   private var actions: FeedLibraryActions { appState.feedLibraryActions }
 
   var body: some View {
@@ -42,6 +43,9 @@ struct FeedLibrarySettingsView: View {
       orderFeedback
     }
     .navigationTitle("Feed Library")
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
     .toolbar { ToolbarItem(placement: .primaryAction) { EditButton().disabled(isLoading || isOrdering) } }
     .task(id: appState.userDID) { await load() }
   }
@@ -50,8 +54,11 @@ struct FeedLibrarySettingsView: View {
   private func title(_ uri: String) -> String {
     if SystemFeedTypes.isTimelineFeed(uri) { return "Following" }
     if let name = names[uri] { return name }
-    return uri.split(separator: "/").last.map { "Feed: \($0)" } ?? uri
+    if isLoading { return "Loading…" }
+    return isList(uri) ? "List" : "Custom Feed"
   }
+
+  private func isList(_ uri: String) -> Bool { uri.contains("/app.bsky.graph.list/") }
 
   private func libraryRow(_ raw: String, pinned: Bool) -> some View {
     VStack(alignment: .leading, spacing: 6) {
@@ -59,7 +66,7 @@ struct FeedLibrarySettingsView: View {
       VStack(alignment: .leading, spacing: 4) {
         Text(title(raw))
         if pinned && actions.pinnedFeeds.first == raw { Text("Default Feed").font(.caption).foregroundStyle(.secondary) }
-        if !SystemFeedTypes.isTimelineFeed(raw) { Text(raw).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
+        if let creator = creators[raw] { Text(creator).font(.caption).foregroundStyle(.secondary) }
       }
       Spacer()
       Menu {
@@ -110,7 +117,7 @@ struct FeedLibrarySettingsView: View {
   private func open(_ raw: String) {
     if SystemFeedTypes.isTimelineFeed(raw) { sceneContext.navigationManager.navigate(to: .timeline) }
     else if let uri = try? ATProtocolURI(uriString: raw) {
-      sceneContext.navigationManager.navigate(to: raw.contains("/app.bsky.graph.list/") ? .listFeed(uri) : .feed(uri))
+      sceneContext.navigationManager.navigate(to: isList(raw) ? .listFeed(uri) : .feed(uri))
     }
   }
 
@@ -120,15 +127,31 @@ struct FeedLibrarySettingsView: View {
     defer { isLoading = false }
     await actions.refresh()
     guard !Task.isCancelled, appState.userDID == did, let client = appState.atProtoClient else { return }
-    let uris = (actions.pinnedFeeds + actions.savedFeeds)
+    let library = actions.pinnedFeeds + actions.savedFeeds
+    let uris = library
       .filter { $0.contains("/app.bsky.feed.generator/") }.compactMap { try? ATProtocolURI(uriString: $0) }
     for start in stride(from: 0, to: uris.count, by: 25) {
       do {
         let batch = Array(uris[start..<min(start + 25, uris.count)])
         let response = try await client.app.bsky.feed.getFeedGenerators(input: .init(feeds: batch))
         guard !Task.isCancelled, appState.userDID == did else { return }
-        for feed in response.data?.feeds ?? [] { names[feed.uri.uriString()] = feed.displayName }
-      } catch { return }
+        for feed in response.data?.feeds ?? [] {
+          names[feed.uri.uriString()] = feed.displayName
+          creators[feed.uri.uriString()] = "By @" + feed.creator.handle.description
+        }
+      } catch { break }
+    }
+    for raw in library where isList(raw) && names[raw] == nil {
+      guard let uri = try? ATProtocolURI(uriString: raw) else { continue }
+      do {
+        let response = try await client.app.bsky.graph.getList(input: .init(list: uri, limit: 1))
+        guard !Task.isCancelled, appState.userDID == did else { return }
+        if let list = response.data?.list {
+          names[raw] = list.name
+          creators[raw] = "List by @" + list.creator.handle.description
+        }
+      } catch is CancellationError { return }
+      catch { continue }
     }
   }
 }

@@ -551,7 +551,7 @@ struct SettingsRuntimeWiringTests {
     let appearanceSource = try settingsSource(named: "AppearanceSettingsView.swift")
     let iconSource = try settingsSource(named: "AppIconSettingsView.swift")
     
-    #expect(appearanceSource.contains("AppIconSettingsView()"))
+    #expect(appearanceSource.contains("SettingsLink(screen: .appIcon"))
     #expect(appearanceSource.contains("supportsAlternateIcons"))
     #expect(iconSource.contains("CatbirdClassic"))
     #expect(iconSource.contains("setAlternateIconName"))

@@ -43,6 +43,8 @@ public struct SettingsRoute: RawRepresentable, Hashable, Sendable, CaseIterable 
         case "following-feed": self = .followingFeed
         case "saved-feeds": self = .savedFeeds
         case "app-icon": self = .appIcon
+        case "external-embeds": self.init(target: .init(screen: .externalMedia))
+        case "automation-label": self.init(target: .init(screen: .automationLabel))
         case "account": self = .account
         case "about": self = .about
         default:

@@ -103,6 +103,7 @@ struct ModerationSettingsView: View {
                     Text("Moderation Tools")
                 } footer: {
                     Text("To manage your moderation lists, open My Lists from the menu.")
+                        .settingsControl(.init(rawValue: "moderation.lists"))
                 }
                 
                 

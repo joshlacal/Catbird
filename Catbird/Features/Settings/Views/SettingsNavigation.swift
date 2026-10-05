@@ -2,9 +2,17 @@ import SwiftUI
 
 struct SettingsDestinationView: View {
     let target: SettingsTarget
-    @ViewBuilder var body: some View {
+    var body: some View {
+        destination
+            #if os(iOS)
+            // Every Settings screen uses an inline title, matching the Settings home.
+            .toolbarTitleDisplayMode(.inline)
+            #endif
+    }
+
+    @ViewBuilder private var destination: some View {
         switch target.screen {
-        case .home: SettingsView()
+        case .home: SettingsView(isEmbedded: true)
         case .accountSecurity: AccountSecuritySettingsView(initialFocus: target.control)
         case .accountDetails: AccountSettingsView(initialFocus: target.control)
         case .automationLabel: AutomationLabelSettingsView()
@@ -34,13 +42,18 @@ struct SettingsDestinationView: View {
         case .accessibility: AccessibilitySettingsView(initialFocus: target.control)
         case .textReadability: TextReadabilitySettingsView(initialFocus: target.control)
         case .helpAbout: HelpAboutSettingsView(initialFocus: target.control)
-        case .help: HelpSettingsView()
-        case .blueskyHelpCenter: BlueskyHelpCenterSettingsView()
+        case .help: HelpSettingsView(initialFocus: target.control)
+        case .blueskyHelpCenter: HelpSettingsView(initialFocus: .init(rawValue: "support.blueskyHelpCenter"))
         case .about: AboutSettingsView()
         case .licenses: OpenSourceLicensesView()
         case .advanced: AdvancedSettingsHubView(initialFocus: target.control)
         case .providers: AdvancedSettingsView(initialFocus: target.control)
-        case .systemLogs: SystemLogView()
+        case .systemLogs:
+            #if DEBUG
+            SystemLogView()
+            #else
+            AdvancedSettingsHubView()
+            #endif
         case .cache: SettingsCacheView(initialFocus: target.control)
         }
     }

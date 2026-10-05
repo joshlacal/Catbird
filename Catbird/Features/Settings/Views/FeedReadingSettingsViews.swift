@@ -22,7 +22,11 @@ struct FeedsDiscoverySettingsView: View {
           SettingsNavigationRow(title: "Verification Badges", summary: "Badge visibility across the app", systemImage: "checkmark.seal", family: .feeds)
         }.settingsControl(.init(rawValue: "feed.verification"))
       }
-    }.navigationTitle("Feeds & Discovery")
+    }
+    .navigationTitle("Feeds & Discovery")
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
   }
 }
 
@@ -38,7 +42,7 @@ struct MediaLinksSettingsView: View {
           get: { appState.appSettings.autoplayVideos }, set: { appState.appSettings.autoplayVideos = $0 }
         )).settingsControl(.init(rawValue: "media.autoplayVideos"))
       } header: { Text("Playback") } footer: {
-        Text("Videos can play automatically in feeds. Animated GIFs retain their existing automatic playback behavior.")
+        Text("Videos can play automatically in feeds.")
       }.disabled(!appState.appSettings.canEditPersistedSettings)
       Section {
         Toggle("Open Links In-App", isOn: Binding(
@@ -58,7 +62,11 @@ struct MediaLinksSettingsView: View {
       } header: { Text("External Media") } footer: {
         Text("Embedded players connect to third-party providers. Provider permissions are separate from video autoplay.")
       }
-    }.navigationTitle("Media & Links")
+    }
+    .navigationTitle("Media & Links")
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
   }
 }
 
@@ -76,22 +84,26 @@ struct DiscoverySettingsView: View {
         Toggle("Show Trending Videos", isOn: Binding(
           get: { appState.appSettings.showTrendingVideos }, set: { appState.appSettings.showTrendingVideos = $0 }
         )).settingsControl(.init(rawValue: "feed.trendingVideos"))
-      } header: { Text("Discovery Surfaces · On This Device") } footer: {
+      } header: { Text("Discovery Surfaces") } footer: {
         Text("These choices control trending topics and videos for this account in feeds and Search.")
       }.disabled(!appState.appSettings.canEditPersistedSettings)
       Section {
         NavigationLink { InterestsSettingsView() } label: {
           SettingsNavigationRow(title: "Your Interests", summary: "Topics that help personalize discovery", systemImage: "heart.text.square", family: .feeds)
         }.settingsControl(.init(rawValue: "feed.interests"))
-      } footer: { Text("Interests sync with Bluesky. Opening this page does not change them.") }
-    }.navigationTitle("Discovery")
+      } footer: { Text("Interests sync with Bluesky. Opening this page doesn’t change them.") }
+    }
+    .navigationTitle("Discovery")
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
   }
 }
 
 struct ThreadSettingsView: View {
   @Environment(AppState.self) private var appState
   var initialFocus: SettingsControlID? = nil
-  @State private var sort = "hot"
+  @State private var sort = "top"
   @State private var pendingSort: String?
   @State private var isLoading = true
   @State private var hasLoaded = false
@@ -106,13 +118,12 @@ struct ThreadSettingsView: View {
       Section {
         if hasLoaded {
           Picker("Reply Order", selection: Binding(
-            get: { sort == "hot" ? "top" : sort },
+            get: { sort },
             set: { value in pendingSort = value; saveSort() }
           )) {
             Text("Top").tag("top")
             Text("Latest").tag("newest")
             Text("Oldest").tag("oldest")
-            if !["hot", "top", "newest", "oldest"].contains(sort) { Text("Current: \(sort)").tag(sort) }
           }.disabled(isSaving || pendingSort != nil)
             .settingsControl(.init(rawValue: "feed.threadSort"))
         } else if isLoading { ProgressView("Loading Bluesky preferences…") }
@@ -126,21 +137,25 @@ struct ThreadSettingsView: View {
           get: { appState.appSettings.showHiddenPosts }, set: { appState.appSettings.showHiddenPosts = $0 }
         )).settingsControl(.init(rawValue: "feed.hiddenReplies"))
       } header: { Text("Display · On This Device") } footer: {
-        Text("Author-hidden replies are replies hidden by the thread author’s threadgate. When automatic loading is off, Show More Replies remains available. This does not clear muted words or moderation rules.")
+        Text("Author-hidden replies are replies the thread’s author chose to hide. When automatic loading is off, Show More Replies remains available. This doesn’t change muted words or moderation rules.")
       }.disabled(!appState.appSettings.canEditPersistedSettings)
       if isSaving { Section { ProgressView("Saving reply order…") } }
       if let error {
         Section {
           Text(error).foregroundStyle(.red)
           if let pendingSort {
-            Text("Selected order: \(pendingSort). It hasn’t been confirmed by Bluesky.").foregroundStyle(.secondary)
+            Text("Selected order: \(sortLabel(pendingSort)). It hasn’t been confirmed by Bluesky.").foregroundStyle(.secondary)
             Button("Retry Saving") { saveSort() }.disabled(isSaving)
             Button("Discard Attempt", role: .cancel) { self.pendingSort = nil; self.error = nil }.disabled(isSaving)
           }
         }
       }
-    }.navigationTitle("Threads")
-      .task(id: appState.userDID) { await loadSort() }
+    }
+    .navigationTitle("Threads")
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
+    .task(id: appState.userDID) { await loadSort() }
   }
 
   private func loadSort() async {
@@ -156,12 +171,14 @@ struct ThreadSettingsView: View {
     do {
       let preferences = try await appState.preferencesManager.refreshSettingsPreferences()
       guard !Task.isCancelled, isCurrent(context) else { return }
-      sort = preferences.threadViewPref?.sort ?? "hot"
+      // Match the official app: anything other than oldest or newest (hotness, most-likes, random) reads as Top.
+      let raw = preferences.threadViewPref?.sort ?? "top"
+      sort = (raw == "oldest" || raw == "newest") ? raw : "top"
       hasLoaded = true
       error = nil
     } catch {
       guard !Task.isCancelled, isCurrent(context) else { return }
-      self.error = "Couldn’t load reply order. \(error.localizedDescription)"
+      self.error = UserFacingError.message(for: error, action: "load reply order") ?? "Couldn’t load reply order. Try again."
     }
   }
 
@@ -179,8 +196,16 @@ struct ThreadSettingsView: View {
         error = nil
       } catch {
         guard !Task.isCancelled, isCurrent(context) else { return }
-        self.error = "Couldn’t save reply order. \(error.localizedDescription)"
+        self.error = UserFacingError.message(for: error, action: "save reply order") ?? "Couldn’t save reply order. Try again."
       }
+    }
+  }
+
+  private func sortLabel(_ value: String) -> String {
+    switch value {
+    case "newest": "Latest"
+    case "oldest": "Oldest"
+    default: "Top"
     }
   }
 
