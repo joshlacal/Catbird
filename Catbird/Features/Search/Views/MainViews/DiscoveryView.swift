@@ -328,7 +328,7 @@ private struct InlineTopicSummaryLine: View {
             }
         }
         .task(id: appState.topicPreviewPrefetchIdentity(links: filteredTopics.map(\.link))) {
-            appState.prefetchTopicPreviews(links: filteredTopics.map(\.link), owner: .search)
+            appState.prefetchTopicPreviews(trends: filteredTopics, owner: .search)
         }
         .onDisappear { appState.cancelTopicPreviewPrefetch(owner: .search) }
     }
@@ -443,7 +443,7 @@ private struct InlineTopicSummaryLine: View {
                         
                         // Topic name
                         TrendingTopicHeading(title: topic.displayName, category: topic.category)
-                        TrendingTopicArtwork(link: topic.link)
+                        TrendingTopicArtwork(link: topic.link, actors: topic.actors)
                         // Topic summary
                         InlineTopicSummaryLine(topic: topic)
                         
@@ -510,7 +510,7 @@ private struct InlineTopicSummaryLine: View {
                 if let status = topic.status, status == "hot" {
                     trendingBadge(status: status)
                 }
-                TrendingTopicArtwork(link: topic.link)
+                TrendingTopicArtwork(link: topic.link, actors: topic.actors)
                 InlineTopicSummaryLine(topic: topic)
                 
                 VStack(alignment: .leading, spacing: 4) {

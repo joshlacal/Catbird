@@ -19,8 +19,12 @@ final class TrendingTopicMediaStore {
   @ObservationIgnored private let gate = TopicPreviewRequestGate()
   @ObservationIgnored private var requests: [UUID: Task<Void, Never>] = [:]
   @ObservationIgnored let prefetchCoordinator = TopicPreviewPrefetchCoordinator()
-  @ObservationIgnored private let imagePrefetcher = ImagePrefetcher(
-    pipeline: ImageLoadingManager.shared.pipeline, maxConcurrentRequestCount: 2)
+  /// Trend art is above-the-fold discovery content; warm it ahead of ordinary low-priority prefetch.
+  @ObservationIgnored private let imagePrefetcher: ImagePrefetcher = {
+    let prefetcher = ImagePrefetcher(pipeline: ImageLoadingManager.shared.pipeline, maxConcurrentRequestCount: 4)
+    prefetcher.priority = .normal
+    return prefetcher
+  }()
   @ObservationIgnored private var imageOwnership = TopicPreviewImagePrefetchOwnership<ImageRequest, TrendingTopicImageRequests.Identity>()
   @ObservationIgnored private var lastLabelers: String?
   @ObservationIgnored private var graphObserver: NSObjectProtocol?
@@ -94,8 +98,11 @@ final class TrendingTopicMediaStore {
     revision += 1
   }
 
-  func load(key: String, hydrate: (([AppBskyFeedDefs.FeedViewPost]) async -> [AppBskyFeedDefs.PostView])? = nil,
-    fetch: @escaping () async throws -> [AppBskyFeedDefs.FeedViewPost]) async {
+  func load(
+    key: String,
+    hydrate: (([AppBskyFeedDefs.FeedViewPost]) async -> [AppBskyFeedDefs.PostView])? = nil,
+    fetch: @escaping () async throws -> [AppBskyFeedDefs.FeedViewPost]
+  ) async {
     guard isActive, !Task.isCancelled else { return }
     let id = UUID()
     // Own direct row requests as well as metadata batches, so account suspension cancels both.
@@ -116,8 +123,11 @@ final class TrendingTopicMediaStore {
     for request in requests.values { request.cancel() }
   }
 
-  private func performLoad(key: String, hydrate: (([AppBskyFeedDefs.FeedViewPost]) async -> [AppBskyFeedDefs.PostView])?,
-    fetch: () async throws -> [AppBskyFeedDefs.FeedViewPost]) async {
+  private func performLoad(
+    key: String,
+    hydrate: (([AppBskyFeedDefs.FeedViewPost]) async -> [AppBskyFeedDefs.PostView])?,
+    fetch: () async throws -> [AppBskyFeedDefs.FeedViewPost]
+  ) async {
     guard isActive, !Task.isCancelled else { return }
     guard entries[key]?.expiresAt ?? .distantPast <= Date() else { return }
     let requestRevision = revision
@@ -149,7 +159,7 @@ final class TrendingTopicMediaStore {
       entries.removeValue(forKey: oldest)
     }
     var quotes: [String: AppBskyFeedDefs.PostView] = [:]
-    for post in quotedPosts.prefix(6) { quotes[post.uri.uriString()] = post }
+    for post in quotedPosts.prefix(TrendingTopicPreviewPolicy.maxHydratedQuotes) { quotes[post.uri.uriString()] = post }
     entries[key] = Entry(posts: Array(posts.prefix(30)), quotedPosts: quotes, expiresAt: Date().addingTimeInterval(lifetime))
   }
 
@@ -159,10 +169,15 @@ final class TrendingTopicMediaStore {
     return TrendingTopicPreviewPolicy.select(entries[key]?.posts ?? [], context: context)
   }
 
-  func warmImages(_ preview: TrendingTopicPreview, owner: TopicPreviewPrefetchOwner) {
+  func warmImages(
+    _ preview: TrendingTopicPreview,
+    participants: [TrendingTopicPreview.Participant]? = nil,
+    owner: TopicPreviewPrefetchOwner
+  ) {
     guard isActive else { return }
     // Six topics, three static cards and three avatars each; never expand with scroll renders.
-    let additions = imageOwnership.append(TrendingTopicImageRequests.requests(for: preview), owner: owner,
+    let requests = TrendingTopicImageRequests.requests(for: preview, participants: participants ?? preview.participants)
+    let additions = imageOwnership.append(requests, owner: owner,
       identity: TrendingTopicImageRequests.identity)
     imagePrefetcher.startPrefetching(with: additions)
   }
@@ -208,16 +223,23 @@ enum TrendingTopicImageRequests {
       options: request.options, processors: request.processors.map(\.hashableIdentifier))
   }
 
-  static func request(_ url: URL, size: CGSize) -> ImageRequest {
+  static let cardSize = CGSize(width: 62, height: 72)
+  static let avatarSize = CGSize(width: 26, height: 26)
+
+  /// Priority is not part of the load identity, so visible rows raise a coalesced prefetch.
+  static func request(_ url: URL, size: CGSize, priority: ImageRequest.Priority = .low) -> ImageRequest {
     let pixels = CGSize(width: size.width * PlatformScreenInfo.scale, height: size.height * PlatformScreenInfo.scale)
     return ImageRequest(url: url, processors: [
       ImageProcessors.Resize(size: pixels, unit: .pixels, contentMode: .aspectFill)
-    ], priority: .low)
+    ], priority: priority)
   }
 
-  static func requests(for preview: TrendingTopicPreview) -> [ImageRequest] {
-    preview.media.prefix(3).map { request($0.url, size: CGSize(width: 62, height: 72)) }
-      + preview.participants.prefix(3).map { request($0.avatar, size: CGSize(width: 26, height: 26)) }
+  static func requests(
+    for preview: TrendingTopicPreview,
+    participants: [TrendingTopicPreview.Participant]? = nil
+  ) -> [ImageRequest] {
+    preview.media.prefix(3).map { request($0.url, size: cardSize) }
+      + (participants ?? preview.participants).prefix(3).map { request($0.avatar, size: avatarSize) }
   }
 }
 
@@ -241,8 +263,22 @@ extension AppState {
 
   @MainActor
   func topicPreview(for link: String) -> TrendingTopicPreview {
+    guard let context = topicPreviewContext() else { return .init() }
+    return trendingTopicMediaStore.preview(key: topicPreviewLabelers + "|" + link, context: context)
+  }
+
+  /// Moderated "who is chatting" avatars for a trend; empty whenever previews are not permitted.
+  @MainActor
+  func topicParticipants(for link: String, actors: [AppBskyActorDefs.ProfileViewBasic]) -> [TrendingTopicPreview.Participant] {
+    guard let context = topicPreviewContext() else { return [] }
+    let fallback = trendingTopicMediaStore.preview(key: topicPreviewLabelers + "|" + link, context: context).participants
+    return TrendingTopicPreviewPolicy.participants(actors: actors, fallback: fallback, context: context)
+  }
+
+  @MainActor
+  private func topicPreviewContext() -> TrendingTopicPreviewPolicy.Context? {
     guard !isAccountSwitchSuspended, appSettings.showTrendingTopics, topicPreviewLabelerScopeIsCurrent,
-          let preferences = try? preferencesManager.getLocalPreferences() else { return .init() }
+          let preferences = try? preferencesManager.getLocalPreferences() else { return nil }
     let filters = feedFilterSettings.activeFilters
     let languageFilter = LanguageFilterProcessor(contentLanguages: appSettings.contentLanguages)
     let context = TrendingTopicPreviewPolicy.Context(
@@ -261,7 +297,7 @@ extension AppState {
           && (!self.appSettings.hideNonPreferredLanguages || languageFilter.process(post: item))
       }
     )
-    return trendingTopicMediaStore.preview(key: topicPreviewLabelers + "|" + link, context: context)
+    return context
   }
 
   @MainActor
@@ -308,8 +344,19 @@ extension AppState {
       + TopicPreviewPrefetchCoordinator.boundedLinks(links).joined(separator: "|")
   }
 
+  /// Preferred entry point: trend actors let avatars warm before any preview feed responds.
   @MainActor
-  func prefetchTopicPreviews(links: [String], owner: TopicPreviewPrefetchOwner) {
+  func prefetchTopicPreviews(trends: [AppBskyUnspeccedDefs.TrendView], owner: TopicPreviewPrefetchOwner) {
+    let actors = Dictionary(trends.map { ($0.link, $0.actors) }, uniquingKeysWith: { first, _ in first })
+    prefetchTopicPreviews(links: trends.map(\.link), actors: actors, owner: owner)
+  }
+
+  @MainActor
+  func prefetchTopicPreviews(
+    links: [String],
+    actors: [String: [AppBskyActorDefs.ProfileViewBasic]] = [:],
+    owner: TopicPreviewPrefetchOwner
+  ) {
     guard trendingTopicMediaStore.isActive, !isAccountSwitchSuspended, appSettings.showTrendingTopics, topicPreviewLabelerScopeIsCurrent else { return }
     let links = TopicPreviewPrefetchCoordinator.boundedLinks(links)
     let viewerDID = userDID
@@ -323,9 +370,16 @@ extension AppState {
             self.topicPreviewLabelers == labelers, self.topicPreviewLabelerScopeIsCurrent,
             self.trendingTopicMediaStore.revision == revision else { return }
       // Re-evaluate current local decisions after awaits and before issuing any image request.
-      self.trendingTopicMediaStore.warmImages(self.topicPreview(for: link), owner: owner)
+      self.trendingTopicMediaStore.warmImages(self.topicPreview(for: link),
+        participants: self.topicParticipants(for: link, actors: actors[link] ?? []), owner: owner)
     }
     if started { trendingTopicMediaStore.resetImagePrefetch(owner: owner) }
+    // Trend actors arrive with getTrends; their avatars need no preview round trip.
+    for link in links {
+      let participants = topicParticipants(for: link, actors: actors[link] ?? [])
+      guard !participants.isEmpty else { continue }
+      trendingTopicMediaStore.warmImages(TrendingTopicPreview(), participants: participants, owner: owner)
+    }
   }
 
   @MainActor

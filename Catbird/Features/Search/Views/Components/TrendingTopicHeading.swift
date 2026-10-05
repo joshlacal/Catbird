@@ -59,17 +59,23 @@ struct TrendingTopicHeading: View {
   let title: String
   let category: String?
   var size: CGFloat = 22
+  var titleLineLimit: Int?
+  /// Search rows put media in the leading slot, so their heading omits the category mark.
+  var showsMark = true
 
   var body: some View {
     HStack(alignment: .top, spacing: DesignTokens.Spacing.sm) {
-      TrendingTopicCategoryMark(category: category)
+      if showsMark {
+        TrendingTopicCategoryMark(category: category)
+      }
       VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
         if let category {
           Text(TrendingTopicCategoryStyle.name(for: category))
             .appFont(AppTextRole.caption.weight(.medium))
             .foregroundStyle(TrendingTopicCategoryStyle.color(for: category))
+            .lineLimit(1)
         }
-        TrendingTopicTitle(title: title, size: size)
+        TrendingTopicTitle(title: title, size: size, lineLimit: titleLineLimit)
       }
       .frame(maxWidth: .infinity, alignment: .leading)
     }

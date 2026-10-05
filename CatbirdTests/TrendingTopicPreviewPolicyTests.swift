@@ -234,10 +234,10 @@ struct TrendingTopicPreviewPolicyTests {
   func quotedURITraversalBoundaries() throws {
     let quote = try fixture("quote", author: 7)
     let duplicate = try fixture("duplicate", embed: quotedRecord(for: quote))
-    let wrappers = try (0..<10).map { index in
+    let wrappers = try (0..<30).map { index in
       try fixture("wrapper-\(index)", embed: quotedRecord(for: fixture("quote-\(index)", author: 7)))
     }
-    let expected = (0..<6).map { uri("quote-\($0)", author: 7) }
+    let expected = (0..<TrendingTopicPreviewPolicy.maxHydratedQuotes).map { uri("quote-\($0)", author: 7) }
     #expect(TrendingTopicPreviewPolicy.quotedPostURIs(in: wrappers).map { $0.uriString() } == expected)
     #expect(TrendingTopicPreviewPolicy.quotedPostURIs(in: [duplicate, duplicate]).map { $0.uriString() } == [quote.post.uri.uriString()])
     let ordinary = try fixture("ordinary")
@@ -319,6 +319,28 @@ struct TrendingTopicPreviewPolicyTests {
     #expect(TrendingTopicPreviewPolicy.select([safe], context: .init()).media.count == 1)
     #expect(TrendingTopicPreviewPolicy.select([safe], context: .init()).participants.count == 1)
     #expect(TrendingTopicPreviewPolicy.select([active], context: .init()) == .init())
+  }
+
+  @Test("Logged-out visibility labels do not suppress signed-in previews or avatars")
+  func noUnauthenticatedLabelIsNeutral() throws {
+    let author = try fixture("logged-out-only", authorLabels: [label("!no-unauthenticated", subject: did(1))])
+    #expect(TrendingTopicPreviewPolicy.permitsAuthor(author.post.author, context: .init()))
+    #expect(TrendingTopicPreviewPolicy.select([author], context: .init()).media.count == 1)
+    let warned = try fixture("logged-out-and-warned", authorLabels: [label("!no-unauthenticated", subject: did(1)), label("porn", subject: did(1))])
+    #expect(TrendingTopicPreviewPolicy.select([warned], context: .init()) == .init())
+  }
+
+  @Test("Trend actors lead participants, pass the author gate, and preview authors fill gaps")
+  func trendActorParticipants() throws {
+    let ordinary = try fixture("actor-one", author: 1).post.author
+    let labeled = try fixture("actor-two", author: 2, authorLabels: [label("porn", subject: did(2))]).post.author
+    let muted = try fixture("actor-three", author: 3).post.author
+    let fallback = [TrendingTopicPreview.Participant(id: did(1), avatar: try #require(URL(string: "https://cdn.example.test/dup.jpg"))),
+                    TrendingTopicPreview.Participant(id: did(4), avatar: try #require(URL(string: "https://cdn.example.test/avatar-4.jpg")))]
+    let result = TrendingTopicPreviewPolicy.participants(actors: [ordinary, labeled, muted], fallback: fallback,
+      context: .init(mutedUsers: [did(3)]))
+    #expect(result.map(\.id) == [did(1), did(4)])
+    #expect(result.first?.avatar.absoluteString == "https://cdn.example.test/avatar-1.jpg")
   }
 
   @Test("Hidden posts and local mute/block decisions suppress thumbnails and avatars")

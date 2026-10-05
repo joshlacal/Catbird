@@ -74,12 +74,17 @@ enum TrendingTopicPreviewPolicy {
     return try? ATProtocolURI(uriString: "at://\(parts[1])/app.bsky.feed.generator/\(parts[3])")
   }
 
+  /// getPosts accepts at most 25 URIs per request.
+  static let maxHydratedQuotes = 25
+
   /// One bounded getPosts batch hydrates viewer state omitted by quote ViewRecord.
+  /// The bound covers every quote in a preview response, so quote posts are not
+  /// dropped (with their own media) merely because an earlier post used up the batch.
   static func quotedPostURIs(in posts: [AppBskyFeedDefs.FeedViewPost]) -> [ATProtocolURI] {
     var result: [ATProtocolURI] = []
     var seen = Set<String>()
     func visit(_ embed: AppBskyFeedDefs.PostViewEmbedUnion?, depth: Int) {
-      guard depth < 3, result.count < 6 else { return }
+      guard depth < 3, result.count < maxHydratedQuotes else { return }
       let quote: AppBskyEmbedRecord.View
       switch embed {
       case .appBskyEmbedRecordView(let record): quote = record
@@ -147,9 +152,35 @@ enum TrendingTopicPreviewPolicy {
       && safeLabels(author.labels)
   }
 
+  /// Labels that only change logged-out visibility. Trending previews require a session,
+  /// so these never imply a warning for the viewer.
+  private static let signedInNeutralLabels: Set<String> = ["!no-unauthenticated"]
+
   private static func safeLabels(_ labels: [ComAtprotoLabelDefs.Label]?) -> Bool {
     // Covers canonical warnings, reserved hide/warn/redaction labels and custom labelers.
-    !(labels ?? []).contains { ReportingService.isLabelActive($0) }
+    !(labels ?? []).contains { !signedInNeutralLabels.contains($0.val) && ReportingService.isLabelActive($0) }
+  }
+
+  /// "Who is chatting" avatars: the trend's own actors first, then preview post authors.
+  /// Every actor passes the same author gate as preview posts before an avatar is used.
+  static func participants(
+    actors: [AppBskyActorDefs.ProfileViewBasic],
+    fallback: [TrendingTopicPreview.Participant],
+    context: Context,
+    limit: Int = 3
+  ) -> [TrendingTopicPreview.Participant] {
+    var result: [TrendingTopicPreview.Participant] = []
+    var seen = Set<String>()
+    for actor in actors where result.count < limit && permitsAuthor(actor, context: context) {
+      let did = actor.did.didString()
+      guard let avatar = actor.finalAvatarURL(), let url = imageURL(avatar.absoluteString),
+            seen.insert(did).inserted else { continue }
+      result.append(.init(id: did, avatar: url))
+    }
+    for participant in fallback where result.count < limit && seen.insert(participant.id).inserted {
+      result.append(participant)
+    }
+    return result
   }
 
   private static func matchesMutedWord(_ post: AppBskyFeedPost, author: AppBskyActorDefs.ProfileViewBasic, altText: String, context: Context) -> Bool {

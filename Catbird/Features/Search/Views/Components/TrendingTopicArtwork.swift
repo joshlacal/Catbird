@@ -1,29 +1,79 @@
 import Nuke
 import NukeUI
+import Petrel
 import SwiftUI
 
 /// One decorative, static preview. The topic's enclosing button owns all navigation and speech.
 struct TrendingTopicArtwork: View {
   @Environment(AppState.self) private var appState
   let link: String
+  /// The trend's own "who is chatting" actors from getTrends; preview authors fill any gap.
+  var actors: [AppBskyActorDefs.ProfileViewBasic] = []
   var showParticipants = true
+  /// When set, a text-only (or still-loading) topic shows its category mark instead of empty space.
+  var fallbackCategory: String??
 
   var body: some View {
-    TrendingTopicArtworkPresentation(preview: appState.topicPreview(for: link), showParticipants: showParticipants)
-      .task(id: appState.topicPreviewLabelers + "|" + appState.topicPreviewAppliedLabelers + "|\(appState.trendingTopicMediaStore.revision)|" + link) {
-        await appState.loadTopicPreview(for: link)
+    TrendingTopicArtworkPresentation(
+      preview: appState.topicPreview(for: link),
+      showParticipants: showParticipants,
+      participants: showParticipants ? appState.topicParticipants(for: link, actors: actors) : nil,
+      fallbackCategory: fallbackCategory
+    )
+    .task(id: appState.topicPreviewLabelers + "|" + appState.topicPreviewAppliedLabelers + "|\(appState.trendingTopicMediaStore.revision)|" + link) {
+      await appState.loadTopicPreview(for: link)
+    }
+    .onReceive(NotificationCenter.default.publisher(for: PreferencesManager.acceptLabelersHeaderDidChange)) { notification in
+      guard ProfileLabelRefresh.matches(notification, preferencesManager: appState.preferencesManager,
+        viewerDID: appState.userDID, isActiveViewer: !appState.isAccountSwitchSuspended) else { return }
+      appState.trendingTopicMediaStore.invalidate(labelers: appState.topicPreviewLabelers)
+    }
+  }
+}
+
+/// Moderated "who is chatting" avatars shown apart from the media stack (Search rows).
+struct TrendingTopicParticipants: View {
+  @Environment(AppState.self) private var appState
+  let link: String
+  let actors: [AppBskyActorDefs.ProfileViewBasic]
+
+  var body: some View {
+    TrendingTopicParticipantStack(participants: appState.topicParticipants(for: link, actors: actors))
+  }
+}
+
+struct TrendingTopicParticipantStack: View {
+  let participants: [TrendingTopicPreview.Participant]
+
+  var body: some View {
+    if !participants.isEmpty {
+      HStack(spacing: -6) {
+        ForEach(participants) { participant in
+          LazyImage(request: TrendingTopicImageRequests.request(participant.avatar,
+            size: TrendingTopicImageRequests.avatarSize, priority: .normal)) { state in
+            if let image = state.image {
+              image.resizable().scaledToFill()
+                .frame(width: 26, height: 26)
+                .clipShape(Circle())
+                .overlay { Circle().strokeBorder(.background, lineWidth: 2) }
+            }
+          }
+          .pipeline(ImageLoadingManager.shared.pipeline)
+          .frame(width: 26, height: 26)
+        }
       }
-      .onReceive(NotificationCenter.default.publisher(for: PreferencesManager.acceptLabelersHeaderDidChange)) { notification in
-        guard ProfileLabelRefresh.matches(notification, preferencesManager: appState.preferencesManager,
-          viewerDID: appState.userDID, isActiveViewer: !appState.isAccountSwitchSuspended) else { return }
-        appState.trendingTopicMediaStore.invalidate(labelers: appState.topicPreviewLabelers)
-      }
+      .accessibilityHidden(true)
+      .allowsHitTesting(false)
+    }
   }
 }
 
 struct TrendingTopicArtworkPresentation: View {
   let preview: TrendingTopicPreview
   var showParticipants = true
+  /// Overrides `preview.participants` (e.g. trend actors merged with preview authors).
+  var participants: [TrendingTopicPreview.Participant]?
+  var fallbackCategory: String??
   @Environment(\.layoutDirection) private var layoutDirection
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @Environment(\.colorScheme) private var colorScheme
@@ -33,7 +83,8 @@ struct TrendingTopicArtworkPresentation: View {
       ZStack {
         if !preview.media.isEmpty {
           ForEach(Array(preview.media.enumerated()), id: \.element.id) { index, card in
-            LazyImage(request: TrendingTopicImageRequests.request(card.url, size: CGSize(width: 62, height: 72))) { state in
+            LazyImage(request: TrendingTopicImageRequests.request(card.url,
+              size: TrendingTopicImageRequests.cardSize, priority: .normal)) { state in
               if let image = state.image {
                 image.resizable().scaledToFill()
                   .frame(width: 62, height: 72)
@@ -47,25 +98,14 @@ struct TrendingTopicArtworkPresentation: View {
             .rotationEffect(.degrees(reduceMotion ? 0 : rotation(index)))
             .offset(x: offset(index), y: index == 1 ? -2 : 2)
           }
+        } else if let fallbackCategory {
+          TrendingTopicCategoryMark(category: fallbackCategory)
         }
       }
       .frame(width: 108, height: 86)
-      if showParticipants && !preview.participants.isEmpty {
-        HStack(spacing: -6) {
-          ForEach(preview.participants) { participant in
-            LazyImage(request: TrendingTopicImageRequests.request(participant.avatar, size: CGSize(width: 26, height: 26))) { state in
-              if let image = state.image {
-                image.resizable().scaledToFill()
-                  .frame(width: 26, height: 26)
-                  .clipShape(Circle())
-                  .overlay { Circle().strokeBorder(.background, lineWidth: 2) }
-              }
-            }
-            .pipeline(ImageLoadingManager.shared.pipeline)
-            .frame(width: 26, height: 26)
-          }
-        }
-        .padding(.horizontal, 8)
+      if showParticipants {
+        TrendingTopicParticipantStack(participants: participants ?? preview.participants)
+          .padding(.horizontal, 8)
       }
     }
     // A late response, failed image or text-only topic cannot resize its row or hosting cell.
@@ -91,13 +131,16 @@ struct TrendingTopicTitle: View {
   @Environment(\.fontManager) private var fontManager
   let title: String
   var size: CGFloat = 22
+  /// nil wraps freely; uniform cards pass a bound and truncate the tail.
+  var lineLimit: Int?
 
   var body: some View {
     Text(title)
       .appFont(fontManager.scaledCustomFont(size: size, weight: .bold, width: 120, relativeTo: .title3))
       .foregroundStyle(.primary)
       .multilineTextAlignment(.leading)
-      .lineLimit(nil)
+      .lineLimit(lineLimit)
+      .truncationMode(.tail)
       .fixedSize(horizontal: false, vertical: true)
   }
 }

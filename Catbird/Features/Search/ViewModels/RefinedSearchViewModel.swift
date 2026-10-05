@@ -136,7 +136,7 @@ public enum SearchHTTPResponseClassification: Equatable, Sendable {
     guard !isSubscribed else { return }
     appState.stateInvalidationBus.subscribe(self)
     isSubscribed = true
-    appState.prefetchTopicPreviews(links: trendingTopics.map(\.link), owner: .search)
+    appState.prefetchTopicPreviews(trends: trendingTopics, owner: .search)
     logger.debug("RefinedSearchViewModel subscribed to state invalidation bus")
   }
 
@@ -217,7 +217,7 @@ public enum SearchHTTPResponseClassification: Equatable, Sendable {
       if let topicsResponse = response, !Task.isCancelled, !appState.isAccountSwitchSuspended, appState.userDID == viewerDID {
         trendingTopics = topicsResponse.trends
         if isSubscribed {
-          appState.prefetchTopicPreviews(links: topicsResponse.trends.map(\.link), owner: .search)
+          appState.prefetchTopicPreviews(trends: topicsResponse.trends, owner: .search)
         }
       }
     } catch {

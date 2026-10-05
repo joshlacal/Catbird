@@ -527,7 +527,7 @@ final class FeedStateManager: StateInvalidationSubscriber {
 
     func loadTrendingIfNeeded(requestID: String) async {
         guard shouldReloadTrending(for: requestID, now: Date()) else {
-            appState.prefetchTopicPreviews(links: trendingContent.trends.map(\.link), owner: .timeline)
+            appState.prefetchTopicPreviews(trends: trendingContent.trends, owner: .timeline)
             return
         }
         let content = await TrendingFeedContent.load(appState: appState)

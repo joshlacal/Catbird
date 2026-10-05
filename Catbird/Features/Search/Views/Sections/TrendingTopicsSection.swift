@@ -68,7 +68,7 @@ struct TrendingTopicsSection: View {
             }
         }
         .task(id: appState.topicPreviewPrefetchIdentity(links: topics.map(\.link))) {
-            appState.prefetchTopicPreviews(links: topics.map(\.link), owner: .search)
+            appState.prefetchTopicPreviews(trends: topics, owner: .search)
         }
         .onDisappear { appState.cancelTopicPreviewPrefetch(owner: .search) }
         .sheet(isPresented: $isShowingCopilot) {
@@ -154,35 +154,50 @@ struct TrendingTopicsSection: View {
         }
     }
     
+    /// Media leads the row; title, description, metadata and "who is chatting" avatars
+    /// share one leading text edge beside it.
+    @ViewBuilder
     private func topicLabel(_ topic: AppBskyUnspeccedDefs.TrendView) -> some View {
-        VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
-            HStack(alignment: .top, spacing: DesignTokens.Spacing.sm) {
-                TrendingTopicHeading(title: topic.displayName, category: topic.category)
-                Image(systemName: "chevron.right")
-                    .appFont(AppTextRole.caption)
-                    .foregroundStyle(.tertiary)
-                    .accessibilityHidden(true)
-                    .padding(.top, DesignTokens.Spacing.xs)
-            }
-            if topic.status == "hot" {
-                Label("Trending", systemImage: "flame.fill")
-                    .appFont(AppTextRole.caption)
-                    .foregroundStyle(.orange)
-            }
+        Group {
             if dynamicTypeSize.isAccessibilitySize {
-                topicDetails(topic)
-                TrendingTopicArtwork(link: topic.link)
+                VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+                    topicMedia(topic)
+                    topicText(topic)
+                }
             } else {
-                HStack(alignment: .top, spacing: DesignTokens.Spacing.sm) {
-                    topicDetails(topic)
+                HStack(alignment: .top, spacing: DesignTokens.Spacing.base) {
+                    topicMedia(topic)
+                    topicText(topic)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    TrendingTopicArtwork(link: topic.link)
+                    Image(systemName: "chevron.right")
+                        .appFont(AppTextRole.caption)
+                        .foregroundStyle(.tertiary)
+                        .accessibilityHidden(true)
+                        .padding(.top, DesignTokens.Spacing.xs)
                 }
             }
         }
         .padding(.vertical, DesignTokens.Spacing.base)
         .padding(.horizontal, 16)
         .contentShape(Rectangle())
+    }
+
+    private func topicMedia(_ topic: AppBskyUnspeccedDefs.TrendView) -> some View {
+        TrendingTopicArtwork(link: topic.link, actors: topic.actors, showParticipants: false,
+                             fallbackCategory: topic.category)
+    }
+
+    private func topicText(_ topic: AppBskyUnspeccedDefs.TrendView) -> some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+            TrendingTopicHeading(title: topic.displayName, category: topic.category, showsMark: false)
+            if topic.status == "hot" {
+                Label("Trending", systemImage: "flame.fill")
+                    .appFont(AppTextRole.caption)
+                    .foregroundStyle(.orange)
+            }
+            topicDetails(topic)
+            TrendingTopicParticipants(link: topic.link, actors: topic.actors)
+        }
     }
 
     private func topicDetails(_ topic: AppBskyUnspeccedDefs.TrendView) -> some View {

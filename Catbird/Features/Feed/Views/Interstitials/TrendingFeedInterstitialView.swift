@@ -49,7 +49,6 @@ struct TrendingFeedPresentation: View {
   let onHideVideos: () -> Void
 
   @State private var hideTarget: HideTarget?
-  @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
   private enum HideTarget {
     case topics, videos
@@ -90,26 +89,7 @@ struct TrendingFeedPresentation: View {
           ScrollView(.horizontal, showsIndicators: false) {
             HStack(alignment: .top, spacing: DesignTokens.Spacing.sm) {
               ForEach(content.trends.prefix(6), id: \.topic) { trend in
-                Button { onSelectTopic(trend) } label: {
-                  VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
-                    TrendingTopicHeading(title: trend.displayName, category: trend.category, size: 20)
-                    TrendingTopicArtwork(link: trend.link)
-                    if trend.postCount > 0 {
-                      Text("\(trend.postCount.formatted(.number.notation(.compactName))) posts")
-                        .appFont(AppTextRole.caption)
-                        .foregroundStyle(.secondary)
-                    }
-                  }
-                  .multilineTextAlignment(.leading)
-                  .frame(width: dynamicTypeSize.isAccessibilitySize ? 300 : 240, alignment: .leading)
-                  .padding(.horizontal, DesignTokens.Spacing.base)
-                  .padding(.vertical, DesignTokens.Spacing.md)
-                  .frame(minHeight: 44, alignment: .leading)
-                  .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: DesignTokens.Size.radiusMD))
-                }
-                .buttonStyle(.plain)
-                .accessibilityElement(children: .combine)
-                .accessibilityHint("Open posts about this topic")
+                TrendingTimelineTopicCard(trend: trend, onSelect: { onSelectTopic(trend) })
               }
             }
             .padding(.horizontal, 16)
@@ -128,7 +108,7 @@ struct TrendingFeedPresentation: View {
       .padding(.vertical, DesignTokens.Spacing.base)
       .frame(maxWidth: .infinity, alignment: .leading)
       .overlay(alignment: .bottom) { Divider() }
-      .modifier(TrendingTimelinePreviewPrefetch(links: showTopics ? content.trends.map(\.link) : []))
+      .modifier(TrendingTimelinePreviewPrefetch(trends: showTopics ? content.trends : []))
       .confirmationDialog(
         "Hide \(hideTarget?.name ?? "trending content")?",
         isPresented: Binding(
@@ -172,7 +152,7 @@ struct TrendingFeedContent: Equatable {
             let (_, output) = try await client.app.bsky.unspecced.getTrends(input: .init(limit: 10))
             guard !Task.isCancelled, !appState.isAccountSwitchSuspended, appState.userDID == viewerDID else { return [] }
             let trends = output?.trends ?? []
-            appState.prefetchTopicPreviews(links: trends.map(\.link), owner: .timeline)
+            appState.prefetchTopicPreviews(trends: trends, owner: .timeline)
             return trends
         } catch {
             return []
@@ -200,11 +180,51 @@ struct TrendingFeedContent: Equatable {
 
 private struct TrendingTimelinePreviewPrefetch: ViewModifier {
   @Environment(AppState.self) private var appState
-  let links: [String]
+  let trends: [AppBskyUnspeccedDefs.TrendView]
 
   func body(content: Content) -> some View {
-    content.task(id: appState.topicPreviewPrefetchIdentity(links: links)) {
-      appState.prefetchTopicPreviews(links: links, owner: .timeline)
+    content.task(id: appState.topicPreviewPrefetchIdentity(links: trends.map(\.link))) {
+      appState.prefetchTopicPreviews(trends: trends, owner: .timeline)
     }
+  }
+}
+
+/// Every timeline trend card has one size: a fixed heading box (titles truncate at two lines),
+/// the fixed-size artwork and a single caption line, so media arrival or title length never
+/// changes a card's width or height.
+private struct TrendingTimelineTopicCard: View {
+  let trend: AppBskyUnspeccedDefs.TrendView
+  let onSelect: () -> Void
+  @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+  /// Category caption plus two title lines at the default text size; scales with the title font.
+  @ScaledMetric(relativeTo: .title3) private var headingHeight: CGFloat = 72
+
+  var body: some View {
+    Button(action: onSelect) {
+      VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+        TrendingTopicHeading(title: trend.displayName, category: trend.category, size: 20, titleLineLimit: 2)
+          .frame(height: headingHeight, alignment: .topLeading)
+          .clipped()
+        TrendingTopicArtwork(link: trend.link, actors: trend.actors)
+        Text(postCountText)
+          .appFont(AppTextRole.caption)
+          .foregroundStyle(.secondary)
+          .lineLimit(1)
+          .opacity(trend.postCount > 0 ? 1 : 0)
+          .accessibilityHidden(trend.postCount <= 0)
+      }
+      .multilineTextAlignment(.leading)
+      .frame(width: dynamicTypeSize.isAccessibilitySize ? 300 : 240, alignment: .topLeading)
+      .padding(.horizontal, DesignTokens.Spacing.base)
+      .padding(.vertical, DesignTokens.Spacing.md)
+      .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: DesignTokens.Size.radiusMD))
+    }
+    .buttonStyle(.plain)
+    .accessibilityElement(children: .combine)
+    .accessibilityHint("Open posts about this topic")
+  }
+
+  private var postCountText: String {
+    "\(trend.postCount.formatted(.number.notation(.compactName))) posts"
   }
 }
