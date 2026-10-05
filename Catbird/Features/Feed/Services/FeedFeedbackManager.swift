@@ -11,35 +11,26 @@ import Petrel
 import os
 
 
-/// Manages feed interaction feedback for custom feeds
-@Observable
+/// Queues and sends feed interaction feedback. Every interaction names the feed
+/// it belongs to, so nothing depends on which feed loaded or appeared last.
+@MainActor
 final class FeedFeedbackManager {
     
     private let logger = Logger(subsystem: "blue.catbird", category: "FeedFeedback")
 
   // MARK: - Properties
   
-  /// Whether feedback is enabled for the current feed
-  private(set) var isEnabled = false
-  
-  /// Current feed type being tracked
-  private(set) var currentFeedType: FetchType?
-  
-  /// Interactions waiting to be sent, keyed by the feed generator DID they belong to,
-  /// so reconfiguring for another feed never redirects queued items.
+  /// Interactions waiting to be sent, keyed by the feed generator DID they belong to.
   private var interactionQueue: [String: Set<String>] = [:]
   
-  /// History of sent interactions
+  /// History of sent interactions, keyed by generator DID plus interaction key
   private var sentInteractions: Set<String> = []
   
   /// Timer for throttled sending
   private var sendTimer: Timer?
   
-  /// AT Proto client for sending interactions
-  private weak var client: ATProtoClient?
-  
-  /// Feed generator DID for proxying requests
-  private var feedGeneratorDID: String?
+  /// Supplies the signed-in account's AT Proto client when a batch is sent
+  private let clientProvider: @MainActor () -> ATProtoClient?
   
   // MARK: - Constants
   
@@ -57,99 +48,42 @@ final class FeedFeedbackManager {
   /// Throttle interval for sending interactions (10 seconds)
   private static let sendThrottleInterval: TimeInterval = 10.0
   
-  // MARK: - Configuration
-  
-  /// Configure the feedback manager for a specific feed
-  @MainActor
-  func configure(
-    for feedType: FetchType,
-    client: ATProtoClient?,
-    feedGeneratorDID: String? = nil,
-    canSendInteractions: Bool = false
-  ) {
-    // Only write observable properties when the value actually changes;
-    // @Observable notifies on every assignment, and configure(for:) runs on every feed load.
-    if currentFeedType != feedType {
-      currentFeedType = feedType
-    }
-    self.client = client
-    self.feedGeneratorDID = feedGeneratorDID
-    
-    // Enable feedback for custom feeds only (not timeline)
-    let shouldEnable: Bool
-    switch feedType {
-    case .feed(let feed):
-        // if can send interactions or is Discover feed
-        if canSendInteractions || feed.uriString() == "at://did:plc:z72i7hdynmk6r22z27h6tvur/app.bsky.feed.generator/whats-hot" {
-            shouldEnable = true
-            logger.debug("FeedFeedback ENABLED for \(feedType.identifier) (canSend: \(canSendInteractions))")
-        } else {
-            shouldEnable = false
-            logger.debug("FeedFeedback DISABLED for \(feedType.identifier) - interactions not accepted by generator")
-        }
-    case .timeline, .list, .author, .likes:
-      shouldEnable = false
-      logger.debug("FeedFeedback DISABLED for \(feedType.identifier) - not a custom feed")
-    }
-    if isEnabled != shouldEnable {
-      isEnabled = shouldEnable
-    }
-  }
-  
-  /// Disable feedback and clear state
-  @MainActor
-  func disable() {
-    if isEnabled {
-      isEnabled = false
-    }
-    if currentFeedType != nil {
-      currentFeedType = nil
-    }
-    feedGeneratorDID = nil
-    
-    // Flush any pending interactions before disabling
-    Task {
-      await flushInteractions()
-    }
+  init(clientProvider: @escaping @MainActor () -> ATProtoClient?) {
+    self.clientProvider = clientProvider
   }
   
   // MARK: - Interaction Tracking
   
   /// Send a "show more" interaction for a post
-  func sendShowMore(postURI: ATProtocolURI, feedContext: String? = nil) {
+  func sendShowMore(postURI: ATProtocolURI, target: FeedInteractionTarget?, feedContext: String? = nil) {
     sendInteraction(
       event: "app.bsky.feed.defs#requestMore",
       postURI: postURI,
+      target: target,
       feedContext: feedContext
     )
   }
   
   /// Send a "show less" interaction for a post
-  func sendShowLess(postURI: ATProtocolURI, feedContext: String? = nil) {
+  func sendShowLess(postURI: ATProtocolURI, target: FeedInteractionTarget?, feedContext: String? = nil) {
     sendInteraction(
       event: "app.bsky.feed.defs#requestLess",
       postURI: postURI,
+      target: target,
       feedContext: feedContext
     )
   }
   
-  /// Send a generic interaction
+  /// Queue an interaction for the feed generator behind `target`.
+  /// A nil target means the post is not being shown in a feed that accepts feedback.
   func sendInteraction(
     event: String,
     postURI: ATProtocolURI,
+    target: FeedInteractionTarget?,
     feedContext: String? = nil,
     reqId: String? = nil
   ) {
-    guard isEnabled else {
-      logger.debug("Feedback disabled, ignoring interaction")
-      return
-    }
-    
-    // CRITICAL: We must have a feed generator DID to route interactions
-    guard let feedGeneratorDID else {
-      logger.debug("No feed generator DID available, cannot queue interaction")
-      return
-    }
+    guard let target else { return }
     
     guard Self.allowedThirdPartyInteractions.contains(event) else {
       logger.warning("Interaction event not allowed: \(event)")
@@ -162,63 +96,69 @@ final class FeedFeedbackManager {
       feedContext: feedContext,
       reqId: reqId
     )
+    let historyKey = "\(target.generatorDID)|\(key)"
     
     // Don't send duplicates
-    guard !sentInteractions.contains(key) else {
+    guard !sentInteractions.contains(historyKey) else {
       logger.debug("Interaction already sent, skipping")
       return
     }
     
-    interactionQueue[feedGeneratorDID, default: []].insert(key)
-    sentInteractions.insert(key)
+    interactionQueue[target.generatorDID, default: []].insert(key)
+    sentInteractions.insert(historyKey)
     
     // Schedule throttled send
     scheduleThrottledSend()
     
-    logger.debug("Queued interaction: \(event) for post \(postURI.uriString())")
+    logger.debug("Queued interaction: \(event) for post \(postURI.uriString()) in feed \(target.feedURI)")
   }
   
   /// Track when a post is seen
-  func trackPostSeen(postURI: ATProtocolURI, feedContext: String? = nil) {
+  func trackPostSeen(postURI: ATProtocolURI, target: FeedInteractionTarget?, feedContext: String? = nil) {
     sendInteraction(
       event: "app.bsky.feed.defs#interactionSeen",
       postURI: postURI,
+      target: target,
       feedContext: feedContext
     )
   }
   
   /// Track when a post is liked
-  func trackLike(postURI: ATProtocolURI, feedContext: String? = nil) {
+  func trackLike(postURI: ATProtocolURI, target: FeedInteractionTarget?, feedContext: String? = nil) {
     sendInteraction(
       event: "app.bsky.feed.defs#interactionLike",
       postURI: postURI,
+      target: target,
       feedContext: feedContext
     )
   }
   
   /// Track when a post is reposted
-  func trackRepost(postURI: ATProtocolURI, feedContext: String? = nil) {
+  func trackRepost(postURI: ATProtocolURI, target: FeedInteractionTarget?, feedContext: String? = nil) {
     sendInteraction(
       event: "app.bsky.feed.defs#interactionRepost",
       postURI: postURI,
+      target: target,
       feedContext: feedContext
     )
   }
   
   /// Track when a user replies to a post
-  func trackReply(postURI: ATProtocolURI, feedContext: String? = nil) {
+  func trackReply(postURI: ATProtocolURI, target: FeedInteractionTarget?, feedContext: String? = nil) {
     sendInteraction(
       event: "app.bsky.feed.defs#interactionReply",
       postURI: postURI,
+      target: target,
       feedContext: feedContext
     )
   }
   
   /// Track when a user quotes a post
-  func trackQuote(postURI: ATProtocolURI, feedContext: String? = nil) {
+  func trackQuote(postURI: ATProtocolURI, target: FeedInteractionTarget?, feedContext: String? = nil) {
     sendInteraction(
       event: "app.bsky.feed.defs#interactionQuote",
       postURI: postURI,
+      target: target,
       feedContext: feedContext
     )
   }
@@ -260,13 +200,12 @@ final class FeedFeedbackManager {
     }
   }
   
-  /// Immediately flush all queued interactions
-  @MainActor
+  /// Immediately flush all queued interactions, one request per feed generator
   func flushInteractions() async {
     sendTimer?.invalidate()
     sendTimer = nil
     guard !interactionQueue.isEmpty else { return }
-    guard let client = client else {
+    guard let client = clientProvider() else {
       logger.warning("No client available to send interactions")
       return
     }
@@ -304,9 +243,5 @@ final class FeedFeedbackManager {
         logger.error("Error sending interactions to \(feedDID): \(error.localizedDescription)")
       }
     }
-  }
-  
-  deinit {
-    sendTimer?.invalidate()
   }
 }

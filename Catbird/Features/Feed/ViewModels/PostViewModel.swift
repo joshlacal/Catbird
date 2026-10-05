@@ -228,7 +228,10 @@ final class PostViewModel {
     ///   Example: Alice posts → Bob reposts → Carol likes via Bob's repost → `via` = Bob's repost record
     ///   Note: Attribution is controlled by the enableViaAttribution setting
     @discardableResult
-    func toggleLike(via: ComAtprotoRepoStrongRef? = nil) async throws -> Bool {
+    func toggleLike(
+        via: ComAtprotoRepoStrongRef? = nil,
+        feedInteractionTarget: FeedInteractionTarget? = nil
+    ) async throws -> Bool {
         guard let client = appState.atProtoClient else {
             throw PostViewModelError.missingClient // Throw error instead of returning false
         }
@@ -286,9 +289,9 @@ final class PostViewModel {
                         shadow.decideLike(response.uri)
                     }
                     
-                    // Track interaction for feed feedback
+                    // Tell the feed the post was liked from, when it accepts feedback
                     if let postURI = try? ATProtocolURI(uriString: postId) {
-                        appState.feedFeedbackManager.trackLike(postURI: postURI)
+                        await appState.feedFeedbackManager.trackLike(postURI: postURI, target: feedInteractionTarget)
                     }
                 }
             } else { // Deleting an existing like
@@ -336,7 +339,10 @@ final class PostViewModel {
     ///   Example: Alice posts → Bob reposts → Carol reposts via Bob's repost → `via` = Bob's repost record
     ///   Note: Attribution is controlled by the enableViaAttribution setting
     @discardableResult
-    func toggleRepost(via: ComAtprotoRepoStrongRef? = nil) async throws -> Bool {
+    func toggleRepost(
+        via: ComAtprotoRepoStrongRef? = nil,
+        feedInteractionTarget: FeedInteractionTarget? = nil
+    ) async throws -> Bool {
         guard let client = appState.atProtoClient else {
             throw PostViewModelError.missingClient
         }
@@ -399,9 +405,9 @@ final class PostViewModel {
                     shadow.decideRepost(response.uri)
                 }
                 
-                // Track interaction for feed feedback
+                // Tell the feed the post was reposted from, when it accepts feedback
                 if let postURI = try? ATProtocolURI(uriString: postId) {
-                    appState.feedFeedbackManager.trackRepost(postURI: postURI)
+                    await appState.feedFeedbackManager.trackRepost(postURI: postURI, target: feedInteractionTarget)
                 }
                 
                 return true

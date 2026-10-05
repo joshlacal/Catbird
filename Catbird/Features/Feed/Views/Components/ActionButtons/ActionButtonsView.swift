@@ -52,6 +52,7 @@ struct ActionButtonsView: View {
   // MARK: - Environment & Properties
   @Environment(AppState.self) private var appState
   @Environment(SceneNavigationContext.self) private var sceneContext
+  @Environment(\.feedInteractionTarget) private var feedInteractionTarget
 
   // Post to display actions for
   let post: AppBskyFeedDefs.PostView
@@ -149,7 +150,7 @@ struct ActionButtonsView: View {
         let wasLiked = interactionState.isLiked
         Task {
           do {
-            try await viewModel.toggleLike()
+            try await viewModel.toggleLike(feedInteractionTarget: feedInteractionTarget)
           } catch {
             logger.error("Error toggling like: \(error)")
             showFailureToast(
@@ -304,7 +305,7 @@ struct ActionButtonsView: View {
   
   private func handleReplyTap() {
     guard !sceneContext.isInvalidated, sceneContext.accountDID == appState.userDID else { return }
-    appState.feedFeedbackManager.trackReply(postURI: post.uri)
+    appState.feedFeedbackManager.trackReply(postURI: post.uri, target: feedInteractionTarget)
     sceneContext.presentPostComposer(initialText: nil, parentPost: post, quotedPost: nil)
   }
 
@@ -314,7 +315,7 @@ struct ActionButtonsView: View {
     let wasReposted = interactionState.isReposted
     Task {
       do {
-        try await viewModel.toggleRepost()
+        try await viewModel.toggleRepost(feedInteractionTarget: feedInteractionTarget)
       } catch {
         logger.error("Error toggling repost: \(error)")
         showFailureToast(
@@ -325,6 +326,7 @@ struct ActionButtonsView: View {
 
   private func handleQuotePost() {
     guard !sceneContext.isInvalidated, sceneContext.accountDID == appState.userDID else { return }
+    appState.feedFeedbackManager.trackQuote(postURI: post.uri, target: feedInteractionTarget)
     sceneContext.presentPostComposer(initialText: nil, parentPost: nil, quotedPost: post)
   }
   

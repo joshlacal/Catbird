@@ -85,9 +85,6 @@ final class SceneNavigationContext {
     quotedPost: AppBskyFeedDefs.PostView? = nil
   ) {
     guard !isInvalidated, let appState, appState.userDID == accountDID else { return }
-    if let quotedPost {
-      appState.feedFeedbackManager.trackQuote(postURI: quotedPost.uri)
-    }
     postComposerRequest = ScenePostComposerRequest(
       initialText: initialText,
       parentPost: parentPost,

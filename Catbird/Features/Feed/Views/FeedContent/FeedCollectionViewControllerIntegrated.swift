@@ -120,7 +120,7 @@ import os
     var themeObserver: UIKitStateObserver<ThemeManager>?
     /// AppState observation for account switch boundaries
     var appStateObserver: UIKitStateObserver<AppState>?
-    var feedbackObserver: UIKitStateObserver<FeedFeedbackManager>?
+    var feedbackObserver: UIKitStateObserver<FeedStateManager>?
     /// Observer for tab tap to scroll to top
     var tabTapObserver: UIKitStateObserver<SceneNavigationContext>?
 
@@ -254,22 +254,20 @@ import os
     }
 
     private func setupFeedbackObserver() {
-      let feedback = stateManager.appState.feedFeedbackManager
-      var previousEnabled = feedback.isEnabled
-      var previousFeedID = feedback.currentFeedType?.identifier
-      feedbackObserver = UIKitStateObserver(observing: feedback) {
-        [weak self] manager in
-        let currentEnabled = manager.isEnabled
-        let currentFeedID = manager.currentFeedType?.identifier
-        guard currentEnabled != previousEnabled || currentFeedID != previousFeedID else { return }
-        previousEnabled = currentEnabled
-        previousFeedID = currentFeedID
+      var previousTarget = stateManager.feedInteractionTarget
+      feedbackObserver = UIKitStateObserver(
+        observing: stateManager,
+        tracking: { _ = $0.feedInteractionTarget }
+      ) { [weak self] manager in
+        let currentTarget = manager.feedInteractionTarget
+        guard currentTarget != previousTarget else { return }
+        previousTarget = currentTarget
         self?.handleFeedFeedbackChange()
       }
     }
 
     private func handleFeedFeedbackChange() {
-      // When feed feedback enablement or feed identity changes, cells must rebuild
+      // When this feed starts or stops accepting feedback, cells must rebuild
       reloadAllCells()
       updateBackgroundState()
     }
@@ -474,14 +472,15 @@ import os
           return nil
         }
 
-        // Check if feed feedback is enabled
-        guard self.stateManager.appState.feedFeedbackManager.isEnabled else {
+        // Only feeds whose generator accepts feedback offer these actions
+        guard let target = self.stateManager.feedInteractionTarget else {
           return nil
         }
 
-        // Map the row to its post; header and interstitial rows shift item indexes.
-        guard let postIndex = self.postIndexForRow(at: indexPath) else { return nil }
-        let post = self.stateManager.posts[postIndex]
+        // Resolve the row's own post; header and interstitial rows shift item indexes.
+        guard case .post(_, _, let postID) = self.dataSource?.itemIdentifier(for: indexPath),
+          let post = self.postsByID[postID]
+        else { return nil }
 
         // Create Show More action
         let showMoreAction = UIContextualAction(style: .normal, title: nil) {
@@ -492,7 +491,7 @@ import os
           }
 
           if let postURI = try? post.feedViewPost.post.uri {
-            self.stateManager.appState.feedFeedbackManager.sendShowMore(postURI: postURI)
+            self.stateManager.appState.feedFeedbackManager.sendShowMore(postURI: postURI, target: target)
             self.controllerLogger.debug("Sent 'show more' feedback for post: \(postURI)")
 
             // Show confirmation toast
@@ -519,7 +518,7 @@ import os
           }
 
           if let postURI = try? post.feedViewPost.post.uri {
-            self.stateManager.appState.feedFeedbackManager.sendShowLess(postURI: postURI)
+            self.stateManager.appState.feedFeedbackManager.sendShowLess(postURI: postURI, target: target)
             self.controllerLogger.debug("Sent 'show less' feedback for post: \(postURI)")
 
             // Show confirmation toast
@@ -588,6 +587,7 @@ import os
           .applyAppStateEnvironment(appState)
           .environment(self.sceneContext)
           .environment(\.fontManager, appState.fontManager)
+          .environment(\.feedInteractionTarget, self.stateManager.feedInteractionTarget)
           .id(hostingIdentity)
           .padding(0)
           .background(Color.clear)
@@ -1077,7 +1077,8 @@ import os
       if let postURI = try? ATProtocolURI(
         uriString: postViewModel.feedViewPost.post.uri.uriString())
       {
-        stateManager.appState.feedFeedbackManager.trackPostSeen(postURI: postURI)
+        stateManager.appState.feedFeedbackManager.trackPostSeen(
+          postURI: postURI, target: stateManager.feedInteractionTarget)
       }
     }
     

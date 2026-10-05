@@ -39,14 +39,14 @@ import SwiftUI
     
     /// Toggle like status for the post with optimistic updates
     /// - Returns: True if the operation was successful
-    func toggleLike() async throws {
-        try await postViewModel.toggleLike()
+    func toggleLike(feedInteractionTarget: FeedInteractionTarget? = nil) async throws {
+        try await postViewModel.toggleLike(feedInteractionTarget: feedInteractionTarget)
     }
     
     /// Toggle repost status for the post with optimistic updates
     /// - Returns: True if the operation was successful
-    func toggleRepost() async throws {
-        guard try await postViewModel.toggleRepost() else {
+    func toggleRepost(feedInteractionTarget: FeedInteractionTarget? = nil) async throws {
+        guard try await postViewModel.toggleRepost(feedInteractionTarget: feedInteractionTarget) else {
             throw PostViewModel.PostViewModelError.requestFailed
         }
     }

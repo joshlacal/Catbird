@@ -65,6 +65,7 @@ struct PostView: View, Identifiable {
   let opThreadPostCount: Int?
   @Binding var path: NavigationPath
   @Environment(\.feedPostID) private var feedPostID
+  @Environment(\.feedInteractionTarget) private var feedInteractionTarget
   // MARK: - State
   @State private var postState: PostState  // Consolidated state
   @State private var contextMenuViewModel: PostContextMenuViewModel
@@ -486,18 +487,18 @@ var id: String {
         )
       }
       
-      // Show More / Show Less options for custom feeds
-      if contextMenuViewModel.isFeedbackEnabled {
+      // Show More / Show Less options, only inside a feed that accepts feedback
+      if let feedInteractionTarget {
         Divider()
         
         Button(action: {
-          contextMenuViewModel.sendShowMore()
+          contextMenuViewModel.sendShowMore(target: feedInteractionTarget)
         }) {
           Label("Show More Like This", systemImage: "hand.thumbsup")
         }
         
         Button(action: {
-          contextMenuViewModel.sendShowLess()
+          contextMenuViewModel.sendShowLess(target: feedInteractionTarget)
         }) {
           Label("Show Less Like This", systemImage: "hand.thumbsdown")
         }

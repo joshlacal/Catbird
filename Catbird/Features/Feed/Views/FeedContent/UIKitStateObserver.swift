@@ -14,10 +14,24 @@ final class UIKitStateObserver<T: Observable> {
     private var generation: UInt64 = 0
     
     private let observedObject: T
+    private let tracking: (@MainActor (T) -> Void)?
     private let onChange: @MainActor (T) -> Void
     
     init(observing object: T, onChange: @escaping @MainActor (T) -> Void) {
         self.observedObject = object
+        self.tracking = nil
+        self.onChange = onChange
+        startObserving()
+    }
+    
+    /// Observes only the properties `tracking` reads, instead of the per-type defaults.
+    init(
+        observing object: T,
+        tracking: @escaping @MainActor (T) -> Void,
+        onChange: @escaping @MainActor (T) -> Void
+    ) {
+        self.observedObject = object
+        self.tracking = tracking
         self.onChange = onChange
         startObserving()
     }
@@ -38,7 +52,9 @@ final class UIKitStateObserver<T: Observable> {
         guard isObserving, self.generation == generation else { return }
         
         withObservationTracking {
-            if let stateManager = self.observedObject as? FeedStateManager {
+            if let tracking = self.tracking {
+                tracking(self.observedObject)
+            } else if let stateManager = self.observedObject as? FeedStateManager {
                 _ = stateManager.posts
                 _ = stateManager.loadingState
                 _ = stateManager.hasReachedEnd
@@ -47,9 +63,6 @@ final class UIKitStateObserver<T: Observable> {
             } else if let themeManager = self.observedObject as? ThemeManager {
                 _ = themeManager.colorSchemeOverride
                 _ = themeManager.darkThemeMode
-            } else if let feedback = self.observedObject as? FeedFeedbackManager {
-                _ = feedback.isEnabled
-                _ = feedback.currentFeedType?.identifier
             } else if let sceneContext = self.observedObject as? SceneNavigationContext {
                 _ = sceneContext.tabTappedAgain
                 _ = sceneContext.isInvalidated

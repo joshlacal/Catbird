@@ -188,6 +188,7 @@ struct FeedCollectionViewWrapper: View {
                             navigationPath: $navigationPath,
                             feedTypeIdentifier: stateManager.currentFeedType.identifier
                         )
+                        .environment(\.feedInteractionTarget, stateManager.feedInteractionTarget)
                         .frame(maxWidth: 700)
                         .frame(maxWidth: .infinity, alignment: .center)
                         .listRowSeparator(.hidden)

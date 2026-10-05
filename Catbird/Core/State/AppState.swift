@@ -214,7 +214,12 @@ final class AppState {
     @MainActor @ObservationIgnored lazy var feedLibraryActions = FeedLibraryActions(appState: self)
 
     /// Feed feedback manager for custom feed interactions
-    @ObservationIgnored let feedFeedbackManager = FeedFeedbackManager()
+    @MainActor @ObservationIgnored lazy var feedFeedbackManager = FeedFeedbackManager(
+        clientProvider: { [weak self] in self?.atProtoClient }
+    )
+
+    /// Feed generator info by feed URI, so feeds know at once whether they accept feedback
+    @MainActor @ObservationIgnored lazy var feedGeneratorInfoCache = FeedGeneratorInfoCache()
 
     /// App-specific settings that aren't synced with the server
     @ObservationIgnored let appSettings = AppSettings()

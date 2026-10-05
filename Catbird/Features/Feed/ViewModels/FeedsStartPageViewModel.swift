@@ -285,6 +285,7 @@ final class FeedsStartPageViewModel {
         for generator in generators {
           feedGenerators[generator.uri] = generator
         }
+        appState.feedGeneratorInfoCache.store(generators)
       } else if responseCode == 401 {
         // Don't clear existing generators on auth failure - keep stale data for better UX
         logger.warning("Unauthorized when fetching feed generators (attempt \(attempt + 1)); scheduling retry")

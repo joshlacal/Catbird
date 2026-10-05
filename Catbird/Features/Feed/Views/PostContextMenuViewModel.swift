@@ -560,10 +560,10 @@ final class PostContextMenuViewModel {
     }
     
 
-    /// Send "show more like this" feedback
-    func sendShowMore() {
-        guard appState.feedFeedbackManager.isEnabled else { return }
-        appState.feedFeedbackManager.sendShowMore(postURI: post.uri)
+    /// Send "show more like this" feedback to the feed the post is shown in
+    @MainActor
+    func sendShowMore(target: FeedInteractionTarget) {
+        appState.feedFeedbackManager.sendShowMore(postURI: post.uri, target: target)
         logger.debug("Sent 'show more' feedback for post: \(self.post.uri.uriString())")
         
         // Show confirmation toast
@@ -575,10 +575,10 @@ final class PostContextMenuViewModel {
         )
     }
     
-    /// Send "show less like this" feedback
-    func sendShowLess() {
-        guard appState.feedFeedbackManager.isEnabled else { return }
-        appState.feedFeedbackManager.sendShowLess(postURI: post.uri)
+    /// Send "show less like this" feedback to the feed the post is shown in
+    @MainActor
+    func sendShowLess(target: FeedInteractionTarget) {
+        appState.feedFeedbackManager.sendShowLess(postURI: post.uri, target: target)
         logger.debug("Sent 'show less' feedback for post: \(self.post.uri.uriString())")
         
         // Show confirmation toast
@@ -588,11 +588,6 @@ final class PostContextMenuViewModel {
                 icon: "checkmark.circle.fill"
             )
         )
-    }
-    
-    /// Whether feed feedback is available for the current feed
-    var isFeedbackEnabled: Bool {
-        appState.feedFeedbackManager.isEnabled
     }
     
     /// Creates a report subject for this post

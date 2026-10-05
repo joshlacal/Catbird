@@ -88,6 +88,18 @@ final class FeedStateManager: StateInvalidationSubscriber {
     var currentFeedType: FetchType {
         return feedType
     }
+
+    /// Where "Show More/Less Like This" and implicit interactions for this feed go.
+    /// Nil unless this is a custom feed whose generator accepts feedback; stays nil
+    /// while the generator info is loading.
+    var feedInteractionTarget: FeedInteractionTarget? {
+        FeedInteractionPolicy.target(for: feedType, info: feedModel.generatorInteractionInfo)
+    }
+
+    /// Whether this feed offers "Show More/Less Like This"
+    var supportsFeedInteractions: Bool {
+        feedInteractionTarget != nil
+    }
     
     // MARK: - Private Properties
     

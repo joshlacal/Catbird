@@ -31,8 +31,9 @@ final class FeedModel: StateInvalidationSubscriber {
   @ObservationIgnored private var settingsObservers: [NSObjectProtocol] = []
   @ObservationIgnored private let prepareSlices: @Sendable ([FeedSlice]) async throws -> [PreparedFeedSlice]
 
-  /// Feed generator info for custom feeds (contains DID for proxy routing)
-  private(set) var feedGeneratorInfo: AppBskyFeedDefs.GeneratorView?
+  /// Whether this feed's generator accepts interaction feedback, and its DID for proxy routing.
+  /// Nil for non-custom feeds and until the generator info for the current feed is known.
+  private(set) var generatorInteractionInfo: FeedGeneratorInteractionInfo?
   private func cacheKey(for feedIdentifier: String) -> String {
     let account = appState.userDID ?? "unknown-account"
     return "\(account)-\(feedIdentifier)"
@@ -368,45 +369,28 @@ final class FeedModel: StateInvalidationSubscriber {
       return
     }
     
-    // Fetch feed generator info for custom feeds and configure feedback
+    // Resolve whether a custom feed's generator accepts feedback. A fresh cached
+    // answer applies immediately; otherwise it stays unknown until the network answers.
     if case .feed(let generatorUri) = fetch {
-      // Fetch the feed generator info to get the correct DID
-      let generatorInfo = await fetchFeedGeneratorInfo(for: generatorUri)
-      guard !Task.isCancelled, requestedGeneration == publicationGeneration,
-            requestedFeedKey == cacheKey(for: fetch.identifier),
-            lastFeedType == fetch, feedManager.fetchType == fetch else { return }
-      feedGeneratorInfo = generatorInfo
-
-      // The generator response still belongs to the selected feed.
-      if !Task.isCancelled {
-          // Configure feed feedback with the generator's DID (NOT the creator's DID)
-          // The generator DID is the service DID (e.g., did:web:xxx or feed generator's did:plc)
-          // The creator DID is the person who created the feed
-          if let generatorDID = feedGeneratorInfo?.did.didString() {
-            appState.feedFeedbackManager.configure(
-              for: fetch,
-              client: appState.atProtoClient,
-              feedGeneratorDID: generatorDID,
-              canSendInteractions: feedGeneratorInfo?.acceptsInteractions ?? false
-            )
-            logger.debug("Configured feed feedback for generator: \(generatorDID)")
-          } else {
-            logger.warning("No DID found in feed generator info, feedback may not route correctly")
-            appState.feedFeedbackManager.configure(
-              for: fetch,
-              client: appState.atProtoClient,
-              feedGeneratorDID: nil
-            )
-          }
+      let feedURI = generatorUri.uriString()
+      if let cached = appState.feedGeneratorInfoCache.info(for: feedURI) {
+        if generatorInteractionInfo != cached {
+          generatorInteractionInfo = cached
+        }
+      } else {
+        let generatorInfo = await fetchFeedGeneratorInfo(for: generatorUri)
+        guard !Task.isCancelled, requestedGeneration == publicationGeneration,
+              requestedFeedKey == cacheKey(for: fetch.identifier),
+              lastFeedType == fetch, feedManager.fetchType == fetch else { return }
+        if let generatorInfo {
+          generatorInteractionInfo = appState.feedGeneratorInfoCache.store(generatorInfo, forFeedURI: feedURI)
+        } else if generatorInteractionInfo?.feedURI != feedURI {
+          logger.warning("No feed generator info for \(feedURI); feedback stays off")
+          generatorInteractionInfo = nil
+        }
       }
-    } else {
-      // Disable feedback for non-custom feeds
-      feedGeneratorInfo = nil
-      appState.feedFeedbackManager.configure(
-        for: fetch,
-        client: appState.atProtoClient,
-        feedGeneratorDID: nil
-      )
+    } else if generatorInteractionInfo != nil {
+      generatorInteractionInfo = nil
     }
 
     if isLoading || (strategy == .loadIfNeeded && !posts.isEmpty) {
