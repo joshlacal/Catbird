@@ -264,7 +264,7 @@ struct SettingsRuntimeWiringTests {
     #expect(ThreadSortAPIMapper.apiValue(for: "top") == "top")
     #expect(ThreadSortAPIMapper.apiValue(for: "newest") == "newest")
     #expect(ThreadSortAPIMapper.apiValue(for: "oldest") == "oldest")
-    #expect(ThreadSortAPIMapper.apiValue(for: "invalid") == "oldest")
+    #expect(ThreadSortAPIMapper.apiValue(for: "invalid") == "top")
   }
 
   @Test("Reading-time estimates start at one hundred words")

@@ -289,7 +289,7 @@ struct SelectableTextView: UIViewRepresentable {
     // Calculate effective font size
     let baseSize = textSize ?? Typography.Size.body
     let effectiveSize = isEmojiOnly ? baseSize * 3 : baseSize
-    let scaledSize = fontManager.scaledSize(effectiveSize)
+    let scaledSize = dynamicTypeScaledSize(fontManager.scaledSize(effectiveSize))
     
     // Create default font with FontManager integration
     let defaultFont = createUIFont(size: scaledSize, weight: textWeight, design: textDesign)
@@ -325,6 +325,34 @@ struct SelectableTextView: UIViewRepresentable {
     return nsAttributedString
   }
   
+  /// Applies the system text size on top of the in-app size setting, so this
+  /// text scales with Dynamic Type like the rest of the thread.
+  private func dynamicTypeScaledSize(_ size: CGFloat) -> CGFloat {
+    guard fontManager.dynamicTypeEnabled else { return size }
+    var category = UIContentSizeCategory(dynamicTypeSize)
+    if let limit = fontManager.dynamicTypeLimit?.uiContentSizeCategory, category > limit {
+      category = limit
+    }
+    let traits = UITraitCollection(preferredContentSizeCategory: category)
+    return UIFontMetrics(forTextStyle: uiTextStyle).scaledValue(for: size, compatibleWith: traits)
+  }
+
+  private var uiTextStyle: UIFont.TextStyle {
+    switch textStyle {
+    case .largeTitle: return .largeTitle
+    case .title: return .title1
+    case .title2: return .title2
+    case .title3: return .title3
+    case .headline: return .headline
+    case .subheadline: return .subheadline
+    case .callout: return .callout
+    case .footnote: return .footnote
+    case .caption: return .caption1
+    case .caption2: return .caption2
+    default: return .body
+    }
+  }
+
   private func createUIFont(size: CGFloat, weight: Font.Weight, design: Font.Design) -> UIFont {
     let fontWeight: UIFont.Weight
     switch weight {

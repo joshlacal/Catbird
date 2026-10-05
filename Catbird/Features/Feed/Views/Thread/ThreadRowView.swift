@@ -83,16 +83,18 @@ struct ThreadRowView: View {
         .foregroundStyle(Color.accentColor)
         .frame(minHeight: ThreadReplyGeometry.readMoreHeight, alignment: .leading)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .contentShape(Rectangle())
+        // Extend the hit area into the row's padding to reach 44pt without
+        // changing the row's height or its connector geometry.
+        .contentShape(Rectangle().inset(by: -Self.hitAreaOutset))
       }
       .buttonStyle(.plain)
       .accessibilityHint("Opens this conversation to show more replies")
 
     case .readMoreUp:
-      actionButton(title: "Show earlier posts", loadingTitle: "Loading earlier posts")
+      actionButton(title: "Show Earlier Posts", loadingTitle: "Loading earlier posts…", alignment: .leading)
 
     case .showOtherReplies:
-      actionButton(title: "Show more replies", loadingTitle: "Loading replies")
+      actionButton(title: "Show More Replies", loadingTitle: "Loading replies…", alignment: .center)
         .frame(maxWidth: .infinity)
 
     case .anchor:
@@ -104,6 +106,9 @@ struct ThreadRowView: View {
     let rootURI = threadRootURI(for: itemPost.post)
     // A connected parent is visible right above; otherwise name it.
     let replyTarget = row.lineIn || row.depth <= 1 ? nil : parentAuthor
+    // Nesting is only drawn with rails, so describe it for VoiceOver.
+    let replyingTo = row.kind == .reply ? parentAuthor.map { Text(verbatim: "@\($0.handle.description)") } : nil
+    let replyLevel = row.usesTreeGeometry ? Text("\(row.indentLevel + 1)") : nil
     return PostView(
       post: itemPost.post,
       grandparentAuthor: replyTarget,
@@ -124,6 +129,8 @@ struct ThreadRowView: View {
     .onTapGesture {
       path.append(NavigationDestination.post(itemPost.post.uri))
     }
+    .accessibilityCustomContent(AccessibilityCustomContentKey("Replying to"), replyingTo, importance: .high)
+    .accessibilityCustomContent(AccessibilityCustomContentKey("Reply level"), replyLevel)
   }
 
   @ViewBuilder
@@ -145,19 +152,22 @@ struct ThreadRowView: View {
           .applyAppStateEnvironment(appState)
 
       case .appBskyUnspeccedDefsThreadItemNoUnauthenticated:
-        Text("Post not available (authentication required)")
+        Text("Only visible to signed-in users")
           .appFont(AppTextRole.subheadline)
           .foregroundStyle(.secondary)
 
-      case .unexpected(let unexpected):
-        Text("Unsupported post type: \(unexpected.textRepresentation)")
+      case .unexpected:
+        Text("This post can’t be displayed")
           .appFont(AppTextRole.subheadline)
           .foregroundStyle(.secondary)
       }
     }
   }
 
-  private func actionButton(title: String, loadingTitle: String) -> some View {
+  /// Extra hit area around compact text controls so they reach the 44pt minimum.
+  private static let hitAreaOutset: CGFloat = max(0, (44 - ThreadReplyGeometry.readMoreHeight) / 2)
+
+  private func actionButton(title: String, loadingTitle: String, alignment: Alignment) -> some View {
     Button {
       onAction?()
     } label: {
@@ -172,7 +182,8 @@ struct ThreadRowView: View {
       }
       .foregroundStyle(Color.accentColor)
       .frame(minHeight: ThreadReplyGeometry.readMoreHeight)
-      .contentShape(Rectangle())
+      .frame(maxWidth: .infinity, alignment: alignment)
+      .contentShape(Rectangle().inset(by: -Self.hitAreaOutset))
     }
     .buttonStyle(.plain)
     .disabled(isActionLoading || onAction == nil)

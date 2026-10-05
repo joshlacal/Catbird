@@ -5,6 +5,7 @@
 //  Created by Josh LaCalamito on 2/26/25.
 //
 
+import OSLog
 import Petrel
 import SwiftUI
 
@@ -19,18 +20,23 @@ struct QuotesView: View {
         hSizeClass == .compact ? .infinity : 600
     }
     @State private var loading: Bool = true
-    @State private var error: Error?
+    @State private var isLoadingPage: Bool = false
+    @State private var initialError: Error?
+    @State private var pageError: Error?
     @State private var cursor: String?
     @Binding var path: NavigationPath
+
+    private let logger = Logger(subsystem: "blue.catbird", category: "QuotesView")
     
     var body: some View {
         VStack {
             if loading && quotes.isEmpty {
                 ProgressView()
                     .padding()
-            } else if let error = error {
-                Text("Error loading quotes: \(error.localizedDescription)")
-                    .padding()
+            } else if let initialError, quotes.isEmpty {
+                ListLoadFailureView(title: "Couldn’t Load Quotes", error: initialError) {
+                    Task { await loadQuotes() }
+                }
             } else if quotes.isEmpty {
                 Text("No quotes yet")
                     .padding()
@@ -67,8 +73,21 @@ struct QuotesView: View {
                         .listRowInsets(EdgeInsets())
                     }
 
-                    if let cursor = cursor {
+                    if pageError != nil {
+                        ListPageFailureRow {
+                            Task { await loadMoreQuotes() }
+                        }
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(
+                            Color.primaryBackground(
+                                themeManager: appState.themeManager,
+                                currentScheme: colorScheme
+                            )
+                        )
+                    } else if cursor != nil {
                         ProgressView()
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 8)
                             .onAppear {
                                 Task { await loadMoreQuotes() }
                             }
@@ -82,6 +101,9 @@ struct QuotesView: View {
                     }
                 }
                 .listStyle(.plain)
+                .refreshable {
+                    await loadQuotes()
+                }
                 .background(
                     Color.primaryBackground(
                         themeManager: appState.themeManager,
@@ -100,25 +122,32 @@ struct QuotesView: View {
     
     private func loadQuotes() async {
         loading = true
+        initialError = nil
+        pageError = nil
         
         do {
             guard let client = appState.atProtoClient else {
-                error = NSError(domain: "AppError", code: 0, userInfo: [NSLocalizedDescriptionKey: "Not logged in"])
-                loading = false
-                return
+                throw NSError(domain: "QuotesView", code: 401, userInfo: [NSLocalizedDescriptionKey: "Not signed in"])
             }
             
             let uri = try ATProtocolURI(uriString: postUri)
             let input = AppBskyFeedGetQuotes.Parameters(uri: uri, limit: 25)
             
-            let (_, result) = try await client.app.bsky.feed.getQuotes(input: input)
-            
-            if let result = result {
-                quotes = result.posts
-                cursor = result.cursor
+            let (responseCode, result) = try await client.app.bsky.feed.getQuotes(input: input)
+            guard (200 ... 299).contains(responseCode), let result else {
+                throw NSError(domain: "QuotesView", code: responseCode, userInfo: [NSLocalizedDescriptionKey: "Unexpected response \(responseCode)"])
             }
+            
+            var seen = Set<String>()
+            quotes = result.posts.filter { seen.insert($0.uri.uriString()).inserted }
+            cursor = result.cursor
         } catch {
-            self.error = error
+            logger.error("Failed to load quotes: \(error.localizedDescription)")
+            if quotes.isEmpty {
+                initialError = error
+            } else {
+                pageError = error
+            }
         }
         
         loading = false
@@ -127,9 +156,10 @@ struct QuotesView: View {
     private func loadMoreQuotes() async {
         guard let client = appState.atProtoClient,
               let currentCursor = cursor,
-              !loading else { return }
+              !loading, !isLoadingPage else { return }
         
-        loading = true
+        isLoadingPage = true
+        pageError = nil
         
         do {
             let uri = try ATProtocolURI(uriString: postUri)
@@ -139,17 +169,24 @@ struct QuotesView: View {
                 cursor: currentCursor
             )
             
-            let (_, result) = try await client.app.bsky.feed.getQuotes(input: input)
+            let (responseCode, result) = try await client.app.bsky.feed.getQuotes(input: input)
+            guard (200 ... 299).contains(responseCode), let result else {
+                throw NSError(domain: "QuotesView", code: responseCode, userInfo: [NSLocalizedDescriptionKey: "Unexpected response \(responseCode)"])
+            }
             
-            if let result = result {
-                quotes.append(contentsOf: result.posts)
+            var seen = Set(quotes.map { $0.uri.uriString() })
+            quotes.append(contentsOf: result.posts.filter { seen.insert($0.uri.uriString()).inserted })
+            if result.cursor == currentCursor || result.posts.isEmpty {
+                cursor = nil
+            } else {
                 cursor = result.cursor
             }
         } catch {
-            self.error = error
+            logger.error("Failed to load more quotes: \(error.localizedDescription)")
+            pageError = error
         }
         
-        loading = false
+        isLoadingPage = false
     }
 }
 

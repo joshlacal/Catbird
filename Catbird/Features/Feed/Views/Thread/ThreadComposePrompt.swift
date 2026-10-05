@@ -34,7 +34,14 @@ struct ThreadComposePrompt: View {
         .fixedSize()
         .accessibilityHidden(true)
 
-        Text("Write your reply")
+        if isReplyDisabled {
+          Image(systemName: "lock.fill")
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+            .accessibilityHidden(true)
+        }
+
+        Text(isReplyDisabled ? "Replies to this post are limited" : "Write your reply")
           .font(.subheadline)
           .foregroundStyle(.secondary)
           .multilineTextAlignment(.leading)
@@ -54,8 +61,8 @@ struct ThreadComposePrompt: View {
     .frame(maxWidth: .infinity)
     .padding(.vertical, 8)
     .disabled(isReplyDisabled)
-    .accessibilityLabel("Compose reply")
-    .accessibilityHint("Opens composer")
+    .accessibilityLabel(isReplyDisabled ? "Replies to this post are limited" : "Compose reply")
+    .accessibilityHint(isReplyDisabled ? "" : "Opens composer")
     .accessibilityIdentifier("thread.composeReply")
 
   }

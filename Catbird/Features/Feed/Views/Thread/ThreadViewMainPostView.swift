@@ -22,6 +22,8 @@ struct ThreadViewMainPostView: View, Equatable {
     @State private var showingAddToListSheet = false
     @State private var showDeleteConfirmation = false
     @State private var showBlockConfirmation = false
+    @State private var showMuteUserConfirmation = false
+    @State private var showMuteThreadConfirmation = false
     @State private var showingInteractionSettings = false
     @State private var showingLabelsOnPost = false
     // Using multiples of 3 for spacing
@@ -31,14 +33,21 @@ struct ThreadViewMainPostView: View, Equatable {
     
     private static let dateTimeFormatter: DateFormatter = {
         let formatter = DateFormatter()
-        formatter.dateStyle = .medium  // Shows month, day, year
-        formatter.timeStyle = .short  // Shows hour and minute
-        
-        // If you specifically want the day of week included:
-        formatter.dateFormat = "EEEE, MMM d, yyyy 'at' h:mm a"  // e.g. "Thursday, Feb 27, 2025 at 2:30 PM"
-        
+        // Weekday, date and time in the user's locale, honoring their 12/24-hour preference
+        formatter.setLocalizedDateFormatFromTemplate("EEEEMMMdyyyyjmm")
         return formatter
     }()
+
+    /// Whether the signed-in account wrote this post; own posts get no mute, block, hide or report actions.
+    private var isOwnPost: Bool {
+        post.author.did.didString() == appState.userDID
+    }
+
+    /// The author's display name, falling back to the handle when it is missing or blank.
+    private var authorDisplayName: String {
+        let name = post.author.displayName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return name.isEmpty ? post.author.handle.description : name
+    }
     
     init(
         post: AppBskyFeedDefs.PostView,
@@ -103,6 +112,8 @@ struct ThreadViewMainPostView: View, Equatable {
             .onTapGesture {
                 path.append(NavigationDestination.profile(post.author.did.didString()))
             }
+            // The name and handle beside it already open the profile for VoiceOver
+            .accessibilityHidden(true)
             
         }
         .frame(maxHeight: .infinity, alignment: .top)
@@ -125,7 +136,7 @@ struct ThreadViewMainPostView: View, Equatable {
                                 
                                 VStack(alignment: .leading, spacing: 0) {
                                     HStack(spacing: 4) {
-                                        Text(post.author.displayName ?? post.author.handle.description)
+                                        Text(authorDisplayName)
                                             .lineLimit(1, reservesSpace: true)
                                             .truncationMode(.tail)
                                             .appHeadline()
@@ -173,11 +184,16 @@ struct ThreadViewMainPostView: View, Equatable {
                                     .contentTransition(.identity)
                                 }                                .padding(.leading, 3)
                                 .padding(.bottom, 4)
+                                .contentShape(Rectangle())
                                 .onTapGesture {
                                     
                                     path.append(NavigationDestination.profile(post.author.did.didString()))
                                     
                                 }
+                                .accessibilityElement(children: .ignore)
+                                .accessibilityLabel("\(authorDisplayName), @\(post.author.handle.description)")
+                                .accessibilityAddTraits(.isButton)
+                                .accessibilityHint("Opens profile")
                                 Spacer()
                                 
                                 if let opThreadPostIndex, let opThreadPostCount {
@@ -187,7 +203,7 @@ struct ThreadViewMainPostView: View, Equatable {
                                 
                                 postEllipsisMenuView
                             }
-                            .frame(height: 60, alignment: .center)
+                            .frame(minHeight: 60, alignment: .center)
                             .padding(.bottom, 3)
 
                             if !feedPost.text.isEmpty {
@@ -318,10 +334,26 @@ struct ThreadViewMainPostView: View, Equatable {
             .alert("Delete Post", isPresented: $showDeleteConfirmation) {
                 Button("Cancel", role: .cancel) { }
                 Button("Delete", role: .destructive) {
-                    Task { await contextMenuViewModel.deletePost(visibilityContext: visibilityContext) }
+                    Task { await deletePostAndLeaveThread() }
                 }
             } message: {
-                Text("Are you sure you want to delete this post? This action cannot be undone.")
+                Text("Are you sure you want to delete this post? This can’t be undone.")
+            }
+            .alert("Mute User", isPresented: $showMuteUserConfirmation) {
+                Button("Cancel", role: .cancel) { }
+                Button("Mute", role: .destructive) {
+                    Task { await contextMenuViewModel.muteUser() }
+                }
+            } message: {
+                Text("Mute @\(post.author.handle)? You won’t see their posts and replies in your feeds.")
+            }
+            .alert("Mute Thread", isPresented: $showMuteThreadConfirmation) {
+                Button("Cancel", role: .cancel) { }
+                Button("Mute", role: .destructive) {
+                    Task { await contextMenuViewModel.muteThread() }
+                }
+            } message: {
+                Text("Mute this thread? You won’t be notified about new replies.")
             }
             .alert("Block User", isPresented: $showBlockConfirmation) {
                 Button("Cancel", role: .cancel) { }
@@ -329,7 +361,7 @@ struct ThreadViewMainPostView: View, Equatable {
                     Task { await contextMenuViewModel.blockUser() }
                 }
             } message: {
-                Text("Block @\(post.author.handle)? You won't see each other's posts, and they won't be able to follow you.")
+                Text("Block @\(post.author.handle)? You won’t see each other’s posts, and they won’t be able to follow you.")
             }
             .task(id: post) {
                 await setupContextMenu()
@@ -385,6 +417,23 @@ struct ThreadViewMainPostView: View, Equatable {
         currentUserDid = appState.userDID
     }
     
+    /// Deletes the post and, once it's gone, leaves the thread screen so nothing
+    /// keeps targeting the deleted post.
+    @MainActor
+    private func deletePostAndLeaveThread() async {
+        await contextMenuViewModel.deletePost(visibilityContext: visibilityContext)
+        let isDeleted = await appState.postShadowManager.getShadow(forUri: post.uri.uriString())?.isDeleted ?? false
+        if isDeleted {
+            if !path.isEmpty {
+                path.removeLast()
+            }
+        } else {
+            appState.toastManager.show(
+                ToastItem(message: "Couldn’t delete post. Try again.", icon: "exclamationmark.triangle")
+            )
+        }
+    }
+
     // MARK: - Helper Views
     
     // Post menu (three dots)
@@ -413,28 +462,62 @@ struct ThreadViewMainPostView: View, Equatable {
             
             Divider()
             
-            Button(action: {
-                Task { await contextMenuViewModel.muteUser() }
-            }) {
-                Label("Mute User", systemImage: "speaker.slash")
-            }
-            
-            Button(role: .destructive, action: {
-                showBlockConfirmation = true
-            }) {
-                Label("Block User", systemImage: "exclamationmark.octagon")
+            if !isOwnPost {
+                Button(action: {
+                    if DestructiveActionConfirmation.shouldConfirm(
+                        isEnabled: appState.appSettings.confirmBeforeActions
+                    ) {
+                        showMuteUserConfirmation = true
+                    } else {
+                        Task { await contextMenuViewModel.muteUser() }
+                    }
+                }) {
+                    Label("Mute User", systemImage: "speaker.slash")
+                }
+                
+                Button(role: .destructive, action: {
+                    showBlockConfirmation = true
+                }) {
+                    Label("Block User", systemImage: "exclamationmark.octagon")
+                }
             }
             
             if case .public = visibilityContext {
                 Button(action: {
-                    Task { await contextMenuViewModel.muteThread() }
+                    if DestructiveActionConfirmation.shouldConfirm(
+                        isEnabled: appState.appSettings.confirmBeforeActions
+                    ) {
+                        showMuteThreadConfirmation = true
+                    } else {
+                        Task { await contextMenuViewModel.muteThread() }
+                    }
                 }) {
                     Label("Mute Thread", systemImage: "bubble.left.and.bubble.right.fill")
                 }
             }
             
-            // Use currentUserDid and post
-            if post.author.did.didString() != currentUserDid {
+            if !isOwnPost {
+                Button(action: {
+                    Task {
+                        if contextMenuViewModel.isPostHidden {
+                            await contextMenuViewModel.unhidePost()
+                        } else {
+                            await contextMenuViewModel.hidePost()
+                        }
+                    }
+                }) {
+                    Label(
+                        contextMenuViewModel.isPostHidden ? "Unhide Post" : "Hide Post",
+                        systemImage: contextMenuViewModel.isPostHidden ? "eye" : "eye.slash"
+                    )
+                }
+
+                Button(action: {
+                    showingReportView = true
+                }) {
+                    Label("Report Post", systemImage: "flag")
+                }
+
                 // Threadgate OP Moderation (G13): Root author can hide/show replies for everyone
                 if contextMenuViewModel.isRootAuthor {
                     Button(action: {
@@ -447,7 +530,7 @@ struct ThreadViewMainPostView: View, Equatable {
                         }
                     }) {
                         Label(
-                            contextMenuViewModel.isReplyHiddenByThreadgate ? "Show reply for everyone" : "Hide reply for everyone",
+                            contextMenuViewModel.isReplyHiddenByThreadgate ? "Show Reply for Everyone" : "Hide Reply for Everyone",
                             systemImage: contextMenuViewModel.isReplyHiddenByThreadgate ? "eye" : "eye.slash"
                         )
                     }
@@ -465,7 +548,7 @@ struct ThreadViewMainPostView: View, Equatable {
                         }
                     }) {
                         Label(
-                            contextMenuViewModel.isQuoteDetached ? "Re-attach quote" : "Detach quote",
+                            contextMenuViewModel.isQuoteDetached ? "Re-attach Quote" : "Detach Quote",
                             systemImage: contextMenuViewModel.isQuoteDetached ? "link" : "arrow.branch"
                         )
                     }
@@ -478,34 +561,28 @@ struct ThreadViewMainPostView: View, Equatable {
                     Task { await contextMenuViewModel.togglePin() }
                 }) {
                     if contextMenuViewModel.isPinned {
-                        Label("Unpin from profile", systemImage: "pin.slash")
+                        Label("Unpin from Profile", systemImage: "pin.slash")
                     } else {
-                        Label("Pin to your profile", systemImage: "pin")
+                        Label("Pin to Profile", systemImage: "pin")
                     }
                 }
 
                 Button(action: {
                     showingInteractionSettings = true
                 }) {
-                    Label("Edit interaction settings", systemImage: "slider.horizontal.3")
+                    Label("Edit Interaction Settings", systemImage: "slider.horizontal.3")
                 }
 
                 Button(action: {
                     showingLabelsOnPost = true
                 }) {
-                    Label("Labels applied to this post", systemImage: "tag")
+                    Label("View Labels", systemImage: "tag")
                 }
                 Button(role: .destructive, action: {
                     showDeleteConfirmation = true
                 }) {
                     Label("Delete Post", systemImage: "trash")
                 }
-            }
-            
-            Button(action: {
-                showingReportView = true
-            }) {
-                Label("Report Post", systemImage: "flag")
             }
         } label: {
             Image(systemName: "ellipsis")
