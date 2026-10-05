@@ -477,10 +477,14 @@ struct PostShareMenu: View {
         .appFont(Font.TextStyle.callout)
         .fontWeight(isBig ? .medium : .semibold)
         .imageScale(isBig ? .large : .medium)
-        .foregroundStyle(.secondary)
+        // Concrete `Color.secondary`, not the hierarchical `.secondary` style:
+        // inside a Menu label the hierarchical style resolves against the
+        // menu's accent tint and renders blue. Matches reply/repost/like.
+        .foregroundStyle(Color.secondary)
         .frame(minWidth: isBig ? 48 : 36, minHeight: isBig ? 40 : 32, alignment: .leading)
         .contentShape(Rectangle())
     }
+    .tint(Color.secondary)
     .disabled(!isValidOrigin)
     .accessibilityIdentifier("shareButton")
     .accessibilityLabel("Share post")
