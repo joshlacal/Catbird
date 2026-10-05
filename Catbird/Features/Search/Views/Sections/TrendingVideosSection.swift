@@ -3,6 +3,7 @@
 //  Catbird
 //
 
+import Nuke
 import NukeUI
 import Petrel
 import SwiftUI
@@ -109,15 +110,17 @@ public struct TrendingVideosSection: View {
       VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
         ZStack(alignment: .bottomLeading) {
           if let url = thumbnailURL {
-            LazyImage(url: url) { state in
+            LazyImage(request: TrendingTopicImageRequests.request(url,
+              size: CGSize(width: cardWidth, height: presentation.thumbnailHeight), priority: .normal)) { state in
               if let image = state.image {
                 image.resizable().scaledToFill()
               } else if state.isLoading {
-                Color.secondary.opacity(0.12).overlay(ProgressView())
+                Color.secondary.opacity(0.12)
               } else {
                 fallbackThumbnail
               }
             }
+            .pipeline(ImageLoadingManager.shared.pipeline)
           } else {
             fallbackThumbnail
           }

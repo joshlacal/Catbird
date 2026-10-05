@@ -472,6 +472,17 @@ struct FeedFilter: Identifiable, Hashable {
     languageProcessor = processor
   }
 
+  /// Equal signatures filter identically: filter blocks are fixed per name and processors are replaced, never mutated.
+  struct ActiveFilterSignature: Equatable {
+    var filterIDs: [String] = []
+    var processors: [ObjectIdentifier] = []
+  }
+
+  var activeFilterSignature: ActiveFilterSignature {
+    ActiveFilterSignature(filterIDs: filters.filter(\.isEnabled).map(\.id),
+      processors: contentProcessors.map { ObjectIdentifier($0 as AnyObject) })
+  }
+
   // Get active filters only
   var activeFilters: [FeedFilter] {
     // Combine standard filters with content processor filters

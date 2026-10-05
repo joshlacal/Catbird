@@ -649,6 +649,7 @@ import os
         cell.contentConfiguration = UIHostingConfiguration {
           TrendingFeedInterstitialView(content: self.trendingContent)
             .applyAppStateEnvironment(appState)
+            .environment(\.fontManager, appState.fontManager)
           .environment(self.sceneContext)
         }
         .margins(.all, 0)

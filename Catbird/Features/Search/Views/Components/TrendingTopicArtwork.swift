@@ -14,10 +14,11 @@ struct TrendingTopicArtwork: View {
   var fallbackCategory: String??
 
   var body: some View {
+    let artwork = appState.topicArtwork(for: link, actors: showParticipants ? actors : nil)
     TrendingTopicArtworkPresentation(
-      preview: appState.topicPreview(for: link),
+      preview: artwork.preview,
       showParticipants: showParticipants,
-      participants: showParticipants ? appState.topicParticipants(for: link, actors: actors) : nil,
+      participants: artwork.participants,
       fallbackCategory: fallbackCategory
     )
     .task(id: appState.topicPreviewLabelers + "|" + appState.topicPreviewAppliedLabelers + "|\(appState.trendingTopicMediaStore.revision)|" + link) {
@@ -103,6 +104,11 @@ struct TrendingTopicArtworkPresentation: View {
         }
       }
       .frame(width: 108, height: 86)
+      // Rasterize the rotated, shadowed stack once instead of compositing three shadows per frame.
+      // The padding keeps rotated corners and shadows inside the offscreen bounds.
+      .padding(12)
+      .drawingGroup()
+      .padding(-12)
       if showParticipants {
         TrendingTopicParticipantStack(participants: participants ?? preview.participants)
           .padding(.horizontal, 8)

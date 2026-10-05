@@ -152,6 +152,27 @@ struct TopicPreviewPrefetchTests {
     try await waitUntil { finished.contains("new") }
   }
 
+  @Test("A finished batch is not repeated until its identity changes or its owner is cancelled")
+  func completedIdentityIsNoOp() async throws {
+    let coordinator = TopicPreviewPrefetchCoordinator()
+    var loads: [String] = []
+    let load: @MainActor (String) async -> Void = { loads.append($0) }
+    #expect(coordinator.start(owner: .timeline, identity: "same", links: ["one"], load: load))
+    try await waitUntil { loads == ["one"] }
+    for _ in 0..<20 { await Task.yield() }
+    #expect(!coordinator.start(owner: .timeline, identity: "same", links: ["one"], load: load),
+      "Reappearing with the same identity must not reload or reset image prefetch")
+    #expect(coordinator.start(owner: .search, identity: "same", links: ["one"], load: load),
+      "Completion is remembered per owner")
+    try await waitUntil { loads.count == 2 }
+    #expect(coordinator.start(owner: .timeline, identity: "next-revision", links: ["one"], load: load))
+    try await waitUntil { loads.count == 3 }
+    coordinator.cancel(owner: .timeline)
+    #expect(coordinator.start(owner: .timeline, identity: "next-revision", links: ["one"], load: load))
+    try await waitUntil { loads.count == 4 }
+    coordinator.cancelAll()
+  }
+
   private func waitUntil(_ condition: () -> Bool) async throws {
     let deadline = ContinuousClock.now.advanced(by: .seconds(2))
     while !condition() {

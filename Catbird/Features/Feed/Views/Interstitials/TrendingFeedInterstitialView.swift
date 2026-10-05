@@ -87,7 +87,8 @@ struct TrendingFeedPresentation: View {
 
         if showTopics && !content.trends.isEmpty {
           ScrollView(.horizontal, showsIndicators: false) {
-            HStack(alignment: .top, spacing: DesignTokens.Spacing.sm) {
+            // Every card has the same fixed size, so the lazy stack's height does not depend on which cards are built.
+            LazyHStack(alignment: .top, spacing: DesignTokens.Spacing.sm) {
               ForEach(content.trends.prefix(6), id: \.topic) { trend in
                 TrendingTimelineTopicCard(trend: trend, onSelect: { onSelectTopic(trend) })
               }

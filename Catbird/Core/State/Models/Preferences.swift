@@ -1,5 +1,6 @@
 import Foundation
 import OrderedCollections
+import os
 import Petrel
 import SwiftData
 
@@ -19,6 +20,22 @@ enum SystemFeedTypes {
       || uri.contains("following")
   }
 }
+
+/// Feed and trending rows read these JSON-backed preferences per render; decode only when the stored JSON changes.
+private final class PreferenceDecodeCache<Value: Sendable>: Sendable {
+  private let state = OSAllocatedUnfairLock<(raw: String, value: Value)?>(initialState: nil)
+
+  func value(for raw: String, decode: (String) -> Value) -> Value {
+    if let cached = state.withLock({ $0 }), cached.raw == raw { return cached.value }
+    let value = decode(raw)
+    state.withLock { $0 = (raw, value) }
+    return value
+  }
+}
+
+private let feedViewPrefCache = PreferenceDecodeCache<FeedViewPreference?>()
+private let mutedWordsCache = PreferenceDecodeCache<[MutedWord]>()
+private let labelersCache = PreferenceDecodeCache<[LabelerPreference]>()
 
 @Model
 final class Preferences {
@@ -105,8 +122,10 @@ final class Preferences {
 
   var feedViewPref: FeedViewPreference? {
     get {
-      guard feedViewPrefData != "{}" else { return nil }
-      return try? JSONDecoder().decode(FeedViewPreference.self, from: Data(feedViewPrefData.utf8))
+      feedViewPrefCache.value(for: feedViewPrefData) { raw in
+        guard raw != "{}" else { return nil }
+        return try? JSONDecoder().decode(FeedViewPreference.self, from: Data(raw.utf8))
+      }
     }
     set {
       if let value = newValue, let data = try? JSONEncoder().encode(value) {
@@ -119,7 +138,9 @@ final class Preferences {
 
   var mutedWords: [MutedWord] {
     get {
-      return (try? JSONDecoder().decode([MutedWord].self, from: Data(mutedWordsData.utf8))) ?? []
+      mutedWordsCache.value(for: mutedWordsData) { raw in
+        (try? JSONDecoder().decode([MutedWord].self, from: Data(raw.utf8))) ?? []
+      }
     }
     set {
       if let data = try? JSONEncoder().encode(newValue) {
@@ -141,8 +162,9 @@ final class Preferences {
 
   var labelers: [LabelerPreference] {
     get {
-      return (try? JSONDecoder().decode([LabelerPreference].self, from: Data(labelersData.utf8)))
-        ?? []
+      labelersCache.value(for: labelersData) { raw in
+        (try? JSONDecoder().decode([LabelerPreference].self, from: Data(raw.utf8))) ?? []
+      }
     }
     set {
       if let data = try? JSONEncoder().encode(newValue) {

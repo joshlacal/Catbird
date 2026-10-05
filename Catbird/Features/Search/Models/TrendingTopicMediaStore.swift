@@ -6,6 +6,12 @@ import Petrel
 import UIKit
 #endif
 
+/// Per-topic observation: one topic's preview arriving re-renders only the views showing that topic.
+@MainActor @Observable
+final class TopicPreviewSlot {
+  var generation = 0
+}
+
 /// Account-owned raw preview cache. Only the presentation policy may extract image URLs.
 @MainActor @Observable
 final class TrendingTopicMediaStore {
@@ -13,8 +19,17 @@ final class TrendingTopicMediaStore {
     let posts: [AppBskyFeedDefs.FeedViewPost]
     let quotedPosts: [String: AppBskyFeedDefs.PostView]
     let expiresAt: Date
+    let generation: Int
   }
-  private var entries: [String: Entry] = [:]
+  private struct Selection {
+    let generation: Int
+    let token: TopicPreviewContextToken
+    let preview: TrendingTopicPreview
+  }
+  @ObservationIgnored private var entries: [String: Entry] = [:]
+  @ObservationIgnored private var slots: [String: TopicPreviewSlot] = [:]
+  @ObservationIgnored private var selections: [String: Selection] = [:]
+  @ObservationIgnored private var entryGeneration = 0
   private(set) var revision = 0
   @ObservationIgnored private let gate = TopicPreviewRequestGate()
   @ObservationIgnored private var requests: [UUID: Task<Void, Never>] = [:]
@@ -85,7 +100,7 @@ final class TrendingTopicMediaStore {
     cancelRequests()
     cancelPrefetches()
     canReusePrefetchedFeed = false
-    entries.removeAll()
+    removeAllEntries()
     revision += 1
   }
 
@@ -94,7 +109,7 @@ final class TrendingTopicMediaStore {
     lastLabelers = labelers
     cancelRequests()
     cancelPrefetches()
-    entries.removeAll()
+    removeAllEntries()
     revision += 1
   }
 
@@ -154,19 +169,64 @@ final class TrendingTopicMediaStore {
   }
 
   private func cache(posts: [AppBskyFeedDefs.FeedViewPost], quotedPosts: [AppBskyFeedDefs.PostView], key: String, lifetime: TimeInterval) {
-    entries = entries.filter { $0.value.expiresAt > Date() }
+    let now = Date()
+    for (expiredKey, entry) in entries where entry.expiresAt <= now { removeEntry(expiredKey) }
     if entries.count >= 20, let oldest = entries.min(by: { $0.value.expiresAt < $1.value.expiresAt })?.key {
-      entries.removeValue(forKey: oldest)
+      removeEntry(oldest)
     }
     var quotes: [String: AppBskyFeedDefs.PostView] = [:]
     for post in quotedPosts.prefix(TrendingTopicPreviewPolicy.maxHydratedQuotes) { quotes[post.uri.uriString()] = post }
-    entries[key] = Entry(posts: Array(posts.prefix(30)), quotedPosts: quotes, expiresAt: Date().addingTimeInterval(lifetime))
+    entryGeneration += 1
+    entries[key] = Entry(posts: Array(posts.prefix(30)), quotedPosts: quotes,
+      expiresAt: now.addingTimeInterval(lifetime), generation: entryGeneration)
+    slot(for: key).generation += 1
+  }
+
+  /// Observers of a removed topic are notified; the next read observes a fresh slot.
+  private func removeEntry(_ key: String) {
+    entries.removeValue(forKey: key)
+    selections.removeValue(forKey: key)
+    slots.removeValue(forKey: key)?.generation += 1
+  }
+
+  private func removeAllEntries() {
+    entries.removeAll()
+    selections.removeAll()
+    for slot in slots.values { slot.generation += 1 }
+    slots.removeAll()
+  }
+
+  private func slot(for key: String) -> TopicPreviewSlot {
+    if let slot = slots[key] { return slot }
+    let slot = TopicPreviewSlot()
+    slots[key] = slot
+    return slot
   }
 
   func preview(key: String, context: TrendingTopicPreviewPolicy.Context) -> TrendingTopicPreview {
+    _ = slot(for: key).generation
     var context = context
     context.quotedPosts = entries[key]?.quotedPosts ?? [:]
     return TrendingTopicPreviewPolicy.select(entries[key]?.posts ?? [], context: context)
+  }
+
+  /// Render path: selects once per cached response and context token, so scrolling past a
+  /// trend card reuses the moderated preview instead of re-filtering up to thirty posts.
+  func preview(
+    key: String,
+    token: TopicPreviewContextToken,
+    context: () -> TrendingTopicPreviewPolicy.Context
+  ) -> TrendingTopicPreview {
+    _ = slot(for: key).generation
+    guard let entry = entries[key] else { return TrendingTopicPreview() }
+    if let selection = selections[key], selection.generation == entry.generation, selection.token == token {
+      return selection.preview
+    }
+    var context = context()
+    context.quotedPosts = entry.quotedPosts
+    let preview = TrendingTopicPreviewPolicy.select(entry.posts, context: context)
+    selections[key] = Selection(generation: entry.generation, token: token, preview: preview)
+    return preview
   }
 
   func warmImages(
@@ -263,41 +323,13 @@ extension AppState {
 
   @MainActor
   func topicPreview(for link: String) -> TrendingTopicPreview {
-    guard let context = topicPreviewContext() else { return .init() }
-    return trendingTopicMediaStore.preview(key: topicPreviewLabelers + "|" + link, context: context)
+    topicArtwork(for: link, actors: nil).preview
   }
 
   /// Moderated "who is chatting" avatars for a trend; empty whenever previews are not permitted.
   @MainActor
   func topicParticipants(for link: String, actors: [AppBskyActorDefs.ProfileViewBasic]) -> [TrendingTopicPreview.Participant] {
-    guard let context = topicPreviewContext() else { return [] }
-    let fallback = trendingTopicMediaStore.preview(key: topicPreviewLabelers + "|" + link, context: context).participants
-    return TrendingTopicPreviewPolicy.participants(actors: actors, fallback: fallback, context: context)
-  }
-
-  @MainActor
-  private func topicPreviewContext() -> TrendingTopicPreviewPolicy.Context? {
-    guard !isAccountSwitchSuspended, appSettings.showTrendingTopics, topicPreviewLabelerScopeIsCurrent,
-          let preferences = try? preferencesManager.getLocalPreferences() else { return nil }
-    let filters = feedFilterSettings.activeFilters
-    let languageFilter = LanguageFilterProcessor(contentLanguages: appSettings.contentLanguages)
-    let context = TrendingTopicPreviewPolicy.Context(
-      mutedUsers: graphManager.muteCache,
-      blockedUsers: graphManager.blockCache,
-      hiddenPosts: postHidingManager.hiddenPosts,
-      mutedWords: preferences.mutedWords,
-      feedPreference: preferences.feedViewPref,
-      currentUserDID: userDID,
-      allowsExternal: { url in
-        guard let provider = TrendingTopicExternalMediaPolicy.provider(for: url) else { return true }
-        return self.appSettings.externalMediaConsent(for: provider) != .hide
-      },
-      allowsPost: { item in
-        filters.allSatisfy { $0.filterBlock(item) }
-          && (!self.appSettings.hideNonPreferredLanguages || languageFilter.process(post: item))
-      }
-    )
-    return context
+    topicArtwork(for: link, actors: actors).participants ?? []
   }
 
   @MainActor
@@ -370,10 +402,12 @@ extension AppState {
             self.topicPreviewLabelers == labelers, self.topicPreviewLabelerScopeIsCurrent,
             self.trendingTopicMediaStore.revision == revision else { return }
       // Re-evaluate current local decisions after awaits and before issuing any image request.
-      self.trendingTopicMediaStore.warmImages(self.topicPreview(for: link),
-        participants: self.topicParticipants(for: link, actors: actors[link] ?? []), owner: owner)
+      let artwork = self.topicArtwork(for: link, actors: actors[link] ?? [])
+      self.trendingTopicMediaStore.warmImages(artwork.preview, participants: artwork.participants, owner: owner)
     }
-    if started { trendingTopicMediaStore.resetImagePrefetch(owner: owner) }
+    // A running or completed batch with this identity already warmed these avatars.
+    guard started else { return }
+    trendingTopicMediaStore.resetImagePrefetch(owner: owner)
     // Trend actors arrive with getTrends; their avatars need no preview round trip.
     for link in links {
       let participants = topicParticipants(for: link, actors: actors[link] ?? [])

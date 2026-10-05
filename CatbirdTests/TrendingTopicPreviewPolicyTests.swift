@@ -1,4 +1,6 @@
 import Foundation
+import Observation
+import os
 import Petrel
 import Testing
 @testable import Catbird
@@ -482,6 +484,54 @@ struct TrendingTopicPreviewPolicyTests {
     #expect(store.preview(key: "topic", context: .init()) == original)
     await store.load(key: "topic") { fetches += 1; return [] }
     #expect(fetches == 1)
+  }
+
+  @Test("Render-path previews select once per cached response and context token")
+  func renderPreviewMemoizesSelection() async throws {
+    let store = TrendingTopicMediaStore()
+    let post = try fixture("memoized")
+    var builds = 0
+    let context = { () -> TrendingTopicPreviewPolicy.Context in builds += 1; return .init() }
+    #expect(store.preview(key: "topic", token: .init(), context: context) == .init())
+    #expect(builds == 0, "A topic without a cached response needs no context")
+    await store.load(key: "topic") { [post] }
+    let first = store.preview(key: "topic", token: .init(), context: context)
+    #expect(first.media.count == 1)
+    #expect(store.preview(key: "topic", token: .init(), context: context) == first)
+    #expect(builds == 1)
+
+    let hidden = TopicPreviewContextToken(hiddenPosts: [post.post.uri.uriString()])
+    #expect(store.preview(key: "topic", token: hidden) { builds += 1; return .init(hiddenPosts: hidden.hiddenPosts) } == .init())
+    #expect(builds == 2, "A changed moderation input reselects")
+    #expect(store.preview(key: "topic", token: .init(), context: context) == first)
+    #expect(builds == 3)
+
+    store.invalidateForGraphChange()
+    #expect(store.preview(key: "topic", token: .init(), context: context) == .init())
+    await store.load(key: "topic") { [post] }
+    #expect(store.preview(key: "topic", token: .init(), context: context) == first)
+    #expect(builds == 4, "A new response for the same key reselects")
+  }
+
+  @Test("One topic's response re-renders only the views reading that topic")
+  func perTopicObservation() async throws {
+    let store = TrendingTopicMediaStore()
+    let post = try fixture("observed")
+    let oneChanged = OSAllocatedUnfairLock(initialState: false)
+    withObservationTracking { _ = store.preview(key: "one", token: .init()) { .init() } } onChange: {
+      oneChanged.withLock { $0 = true }
+    }
+    await store.load(key: "two") { [post] }
+    #expect(!oneChanged.withLock { $0 })
+    await store.load(key: "one") { [post] }
+    #expect(oneChanged.withLock { $0 })
+
+    let twoChanged = OSAllocatedUnfairLock(initialState: false)
+    withObservationTracking { _ = store.preview(key: "two", token: .init()) { .init() } } onChange: {
+      twoChanged.withLock { $0 = true }
+    }
+    store.invalidate(labelers: "changed")
+    #expect(twoChanged.withLock { $0 }, "Invalidation clears every topic")
   }
 
   @Test("Concurrent requests for the same feed coalesce into one cached fetch")
