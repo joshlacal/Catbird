@@ -413,15 +413,16 @@ struct SettingsRuntimeWiringTests {
   func accountDeactivationWiring() throws {
     let source = try settingsSource(named: "AccountSettingsView.swift")
     
-    #expect(source.contains("deactivateConfirmText == \"DEACTIVATE\""))
+    #expect(source.contains("caseInsensitiveCompare(\"DEACTIVATE\")"))
     #expect(source.contains("ensurePermission(.accountStatusManage)"))
     #expect(source.contains("client.com.atproto.server.deactivateAccount("))
     #expect(source.contains("input: .init(deleteAfter: nil)"))
     #expect(source.contains("(200...299).contains(responseCode)"))
     #expect(source.contains("handleLogout()"))
-    // Verify dormant delete account UI/methods are removed
+    // OAuth sessions can't delete accounts: "Delete Account" hands off to the provider's account page
     #expect(!source.contains("deleteAccount("))
-    #expect(!source.contains("Delete Account"))
+    #expect(source.contains("Button(\"Delete Account\", role: .destructive)"))
+    #expect(source.contains("rawValue: \"account.delete\""))
   }
 
   @Test("Two-Factor Authentication wires to emailAuthFactor and JIT account:email?action=manage")

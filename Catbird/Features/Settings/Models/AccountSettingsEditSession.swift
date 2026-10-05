@@ -67,7 +67,7 @@ final class AccountSettingsEditSession<Value> {
       state = .ready
     } catch {
       guard accepts(request) else { return }
-      errorMessage = error.localizedDescription
+      errorMessage = UserFacingError.message(for: error, action: "load this setting")
       state = .loadFailed
     }
   }
@@ -103,7 +103,7 @@ final class AccountSettingsEditSession<Value> {
         guard self.accepts(request) else { return }
         self.failedValue = value
         self.proposedValue = nil
-        self.errorMessage = error.localizedDescription
+        self.errorMessage = UserFacingError.message(for: error, action: "save this change")
         self.state = .saveFailed
       }
     }

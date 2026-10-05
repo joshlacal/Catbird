@@ -63,8 +63,8 @@ struct ModerationSettingsView: View {
 
     var body: some View {
         SettingsFocusedForm(initialFocus: hasConfirmedPreferences ? initialFocus
-          : initialFocus.map { _ in SettingsControlID(rawValue: "moderation.retryLoad") }, isReady: !isLoading) {
-            if isLoading {
+          : initialFocus.map { _ in SettingsControlID(rawValue: "moderation.retryLoad") }, isReady: hasConfirmedPreferences || !isLoading) {
+            if isLoading && !hasConfirmedPreferences {
                 Section {
                     ProgressView()
                         .frame(maxWidth: .infinity, alignment: .center)
@@ -72,9 +72,9 @@ struct ModerationSettingsView: View {
                 }
             } else if !hasConfirmedPreferences {
                 Section {
-                    Text(errorMessage ?? "Content preferences could not be loaded.")
+                    Text(errorMessage ?? "Your moderation settings couldn’t be loaded.")
                         .foregroundStyle(.secondary)
-                    Button("Retry") { Task { await loadPreferences() } }
+                    Button("Try Again") { Task { await loadPreferences() } }
                         .settingsControl(.init(rawValue: "moderation.retryLoad"))
                 }
             } else {
@@ -82,86 +82,33 @@ struct ModerationSettingsView: View {
                     Section { ProgressView("Saving moderation preferences…") }
                 }
                 // Moderation Tools Section
-                Section("Moderation Tools") {
-                    NavigationLink(destination: DefaultPostInteractionSettingsView()) {
-                        Label {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Post Interaction Settings")
-                                Text("Default reply and quote rules")
-                                    .appFont(AppTextRole.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        } icon: {
-                            Image(systemName: "bubble.left.and.bubble.right.fill")
-                                .foregroundStyle(.blue)
-                        }
-                    }
+                Section {
+                    SettingsLink(screen: .defaultPostInteractions, summary: "Who can reply to or quote new posts", systemImage: "bubble.left.and.bubble.right", family: .privacy)
 
-                    NavigationLink(destination: VerificationSettingsView()) {
-                        Label {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Verification Badges")
-                                Text("Manage badge visibility")
-                                    .appFont(AppTextRole.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        } icon: {
-                            Image(systemName: "checkmark.seal.fill")
-                                .foregroundStyle(.blue)
-                        }
-                    }
+                    SettingsLink(screen: .verification, summary: "Badge visibility across the app", systemImage: "checkmark.seal", family: .feeds)
 
-                    NavigationLink(destination: MuteWordsSettingsView()) {
-                        Label {
-                            Text("Muted Words & Tags")
-                        } icon: {
-                            Image(systemName: "speaker.slash.fill")
-                                .foregroundStyle(.orange)
-                        }
+                    NavigationLink {
+                        MuteWordsSettingsView()
+                    } label: {
+                        SettingsNavigationRow(title: "Muted Words & Tags", systemImage: "text.badge.minus", family: .moderation)
                     }
-
                     .settingsControl(.init(rawValue: "moderation.mutedWords"))
 
-                    NavigationLink(destination: ListsManagerView()) {
-                        Label {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Moderation Lists")
-                                Text("Manage blocking and muting lists")
-                                    .appFont(AppTextRole.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        } icon: {
-                            Image(systemName: "list.bullet.clipboard")
-                                .foregroundStyle(.purple)
-                        }
-                    }
-                    
-                    NavigationLink(destination: ModeratedAccountsSettingsView(kind: .muted)) {
-                        Label {
-                            Text("Muted Accounts")
-                        } icon: {
-                            Image(systemName: "speaker.slash.circle")
-                                .foregroundStyle(.gray)
-                        }
-                    }
-                    .settingsControl(.init(rawValue: "moderation.mutedAccounts"))
-                    
-                    NavigationLink(destination: ModeratedAccountsSettingsView(kind: .blocked)) {
-                        Label {
-                            Text("Blocked Accounts")
-                        } icon: {
-                            Image(systemName: "xmark.circle")
-                                .foregroundStyle(.red)
-                        }
-                    }
-                    .settingsControl(.init(rawValue: "moderation.blockedAccounts"))
+                    SettingsLink(screen: .mutedAccounts, systemImage: "speaker.slash", family: .moderation)
+                        .settingsControl(.init(rawValue: "moderation.mutedAccounts"))
+
+                    SettingsLink(screen: .blockedAccounts, systemImage: "person.crop.circle.badge.xmark", family: .moderation)
+                        .settingsControl(.init(rawValue: "moderation.blockedAccounts"))
+                } header: {
+                    Text("Moderation Tools")
+                } footer: {
+                    Text("To manage your moderation lists, open My Lists from the menu.")
                 }
                 
                 
                 // Content Filters Section
                 Section("Content Filters") {
                         Toggle("Adult Content", isOn: adultContentBinding)
-                            .tint(.blue)
                             // Only allow turning it off here. Enabling must be done in Bluesky.
                             .disabled(!adultContentEnabled || isSavingPreferences)
                             .settingsControl(.init(rawValue: "moderation.adultContent"))
@@ -169,9 +116,9 @@ struct ModerationSettingsView: View {
                             HStack(spacing: 8) {
                                 Image(systemName: "info.circle.fill")
                                     .foregroundStyle(.orange)
-                                    .font(.caption)
-                                Text("To enable adult content, turn it on in the official Bluesky app. You can turn it off here at any time.")
-                                    .font(.caption)
+                                    .appFont(AppTextRole.caption)
+                                Text("Adult content can only be turned on at bsky.app in a web browser. You can turn it off here at any time.")
+                                    .appFont(AppTextRole.caption)
                                     .foregroundStyle(.secondary)
                             }
                         }
@@ -194,7 +141,7 @@ struct ModerationSettingsView: View {
                         
                         ContentVisibilitySelector(
                             title: "Sexually Suggestive",
-                            description: "Sexualized content that doesn't show explicit sexual activity",
+                            description: "Sexualized content that doesn’t show explicit sexual activity",
                             selection: visibilityBinding(label: "suggestive", value: $suggestiveContentVisibility)
                         )
                         .disabled(isSavingPreferences)
@@ -231,10 +178,8 @@ struct ModerationSettingsView: View {
                 )
                 
                 Section("Moderation Services") {
-                    NavigationLink(destination: LabelerSettingsView()) {
-                        Label("Moderation Services", systemImage: "checklist")
-                    }
-                    .settingsControl(.init(rawValue: "moderation.labelers"))
+                    SettingsLink(screen: .labelers, summary: "Services that label posts and accounts", systemImage: "checklist", family: .moderation)
+                        .settingsControl(.init(rawValue: "moderation.labelers"))
                 }
                 if let error = errorMessage {
                     Section {
@@ -249,7 +194,7 @@ struct ModerationSettingsView: View {
                             .appFont(AppTextRole.caption)
                             .foregroundStyle(.secondary)
                         
-                        Text("Bluesky uses moderation services to help manage content. These preferences control what you'll see in your feeds.")
+                        Text("Bluesky uses moderation services to help manage content. These preferences control what you’ll see in your feeds.")
                             .appFont(AppTextRole.caption)
                             .foregroundStyle(.secondary)
                             .padding(.top, 4)
@@ -264,7 +209,7 @@ struct ModerationSettingsView: View {
     #endif
         .appDisplayScale(appState: appState)
         .contrastAwareBackground(appState: appState, defaultColor: Color.systemBackground)
-        .alert("Remove Unavailable Labelers", isPresented: $showingCleanupConfirmation) {
+        .alert("Remove Unavailable Services", isPresented: $showingCleanupConfirmation) {
             Button("Cancel", role: .cancel) {}
             Button("Remove", role: .destructive) {
                 Task {
@@ -272,7 +217,7 @@ struct ModerationSettingsView: View {
                 }
             }
         } message: {
-            Text("Remove \(unavailableLabelers.count) unavailable labeler(s) from your subscribed moderation services?")
+            Text(unavailableLabelers.count == 1 ? "Remove 1 unavailable moderation service from your subscriptions?" : "Remove \(unavailableLabelers.count) unavailable moderation services from your subscriptions?")
         }
         .task(id: appState.userDID) { await loadPreferences() }
         .refreshable { await loadPreferences() }
@@ -285,7 +230,6 @@ struct ModerationSettingsView: View {
         loadRequest = request
         isLoading = true
         isSavingPreferences = false
-        hasConfirmedPreferences = false
         errorMessage = nil
         defer { if loadRequest == request { isLoading = false } }
         do {
@@ -301,7 +245,11 @@ struct ModerationSettingsView: View {
             hasConfirmedPreferences = true
         } catch {
             guard loadRequest == request, manager.accountDID == account else { return }
-            errorMessage = "Failed to load content preferences: \(error.localizedDescription)"
+            if hasConfirmedPreferences {
+                errorMessage = UserFacingError.message(for: error, action: "refresh your moderation settings")
+            } else {
+                errorMessage = UserFacingError.message(for: error, action: "load your moderation settings")
+            }
         }
     }
 
@@ -489,7 +437,7 @@ struct ModerationSettingsView: View {
                 } catch {
                     guard loadRequest == request, manager.accountDID == account, appState.userDID == account else { return }
                     hasConfirmedPreferences = false
-                    errorMessage = "Failed to update adult content setting: \(error.localizedDescription)"
+                    errorMessage = UserFacingError.message(for: error, action: "update the adult content setting")
                 }
             }
         })
@@ -514,7 +462,7 @@ struct ModerationSettingsView: View {
                 } catch {
                     guard loadRequest == request, manager.accountDID == account, appState.userDID == account else { return }
                     hasConfirmedPreferences = false
-                    errorMessage = "Failed to save content label preference: \(error.localizedDescription)"
+                    errorMessage = UserFacingError.message(for: error, action: "save this content setting")
                 }
             }
         })
@@ -600,7 +548,7 @@ struct ModerationListView<T: Identifiable>: View {
                 let response = try await client.com.atproto.repo.deleteRecord(input: input)
                 
                 if response.responseCode != 200 {
-                    errorMessage = "Failed to unblock account"
+                    errorMessage = "Couldn’t unblock this account. Try again."
                     return
                 }
             } else {
@@ -609,7 +557,7 @@ struct ModerationListView<T: Identifiable>: View {
                 let code = try await client.app.bsky.graph.unmuteActor(input: input)
                 
                 if code != 200 {
-                    errorMessage = "Failed to unmute account"
+                    errorMessage = "Couldn’t unmute this account. Try again."
                     return
                 }
             }
@@ -623,7 +571,7 @@ struct ModerationListView<T: Identifiable>: View {
             }
             
         } catch {
-            errorMessage = "Failed to \(isBlocked ? "unblock" : "unmute") account: \(error.localizedDescription)"
+            errorMessage = UserFacingError.message(for: error, action: isBlocked ? "unblock this account" : "unmute this account")
         }
         
         // End loading state
@@ -695,7 +643,7 @@ struct ModerationAccountRow: View {
 // Moderation lists now use the main ListsManagerView for full functionality
 
 struct AddLabelerView: View {
-    @State private var labelerDID = ""
+    @State private var serviceInput = ""
     @State private var isAdding = false
     @State private var errorMessage: String?
     @State private var successMessage: String?
@@ -704,16 +652,17 @@ struct AddLabelerView: View {
     
     var body: some View {
         Form {
-            Section("Add Labeler") {
-                TextField("Labeler DID", text: $labelerDID)
+            Section {
+                TextField("Handle (e.g. moderation.example.com)", text: $serviceInput)
                     #if os(iOS)
-                    .autocapitalization(.none)
+                    .textInputAutocapitalization(.never)
+                    .keyboardType(.URL)
                     #endif
                     .autocorrectionDisabled(true)
-                
-                Text("Enter the DID of the content labeler you want to add to your moderation settings.")
-                    .appFont(AppTextRole.caption)
-                    .foregroundStyle(.secondary)
+            } header: {
+                Text("Moderation Service")
+            } footer: {
+                Text("Enter the moderation service’s handle. You can also subscribe from its profile.")
             }
             
             if let error = errorMessage {
@@ -738,19 +687,19 @@ struct AddLabelerView: View {
                 } label: {
                     if isAdding {
                         HStack {
-                            Text("Adding...")
+                            Text("Adding…")
                             Spacer()
                             ProgressView()
                         }
                     } else {
-                        Text("Add Labeler")
+                        Text("Add Moderation Service")
                             .frame(maxWidth: .infinity, alignment: .center)
                     }
                 }
-                .disabled(isAdding || labelerDID.isEmpty)
+                .disabled(isAdding || serviceInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
-        .navigationTitle("Add Labeler")
+        .navigationTitle("Add Moderation Service")
     #if os(iOS)
     .toolbarTitleDisplayMode(.inline)
     #endif
@@ -763,17 +712,60 @@ struct AddLabelerView: View {
         
         let account = appState.userDID
         let manager = appState.preferencesManager
-        let requestedDID = labelerDID
+        let requested = serviceInput.trimmingCharacters(in: .whitespacesAndNewlines)
         Task { @MainActor in
+            defer { isAdding = false }
+            guard let client = appState.atProtoClient else {
+                errorMessage = "You’re signed out. Sign in and try again."
+                return
+            }
+            
+            let did: DID
+            if requested.lowercased().hasPrefix("did:") {
+                guard let parsed = try? DID(didString: requested) else {
+                    errorMessage = "Couldn’t find a moderation service with that handle."
+                    return
+                }
+                did = parsed
+            } else {
+                let handleString = (requested.hasPrefix("@") ? String(requested.dropFirst()) : requested).lowercased()
+                guard let handle = try? Handle(handleString: handleString) else {
+                    errorMessage = "Enter a handle like moderation.example.com."
+                    return
+                }
+                do {
+                    let (code, output) = try await client.com.atproto.identity.resolveHandle(input: .init(handle: handle))
+                    guard code == 200, let output else {
+                        errorMessage = "Couldn’t find a moderation service with that handle."
+                        return
+                    }
+                    did = output.did
+                } catch {
+                    guard manager.accountDID == account, appState.userDID == account else { return }
+                    if UserFacingError.kind(of: error) == .other || UserFacingError.kind(of: error) == .notFound {
+                        errorMessage = "Couldn’t find a moderation service with that handle."
+                    } else {
+                        errorMessage = UserFacingError.message(for: error, action: "add this moderation service")
+                    }
+                    return
+                }
+            }
+            
             do {
-                let did = try DID(didString: requestedDID)
+                let (code, output) = try await client.app.bsky.labeler.getServices(input: .init(dids: [did], detailed: false))
+                guard manager.accountDID == account, appState.userDID == account else { return }
+                guard code == 200, let output, !output.views.isEmpty else {
+                    errorMessage = "This account isn’t a moderation service."
+                    return
+                }
+                
                 try await manager.addLabeler(did, expectedAccountDID: account)
                 guard manager.accountDID == account, appState.userDID == account else { return }
                 
-                successMessage = "Labeler added successfully"
+                successMessage = "Moderation service added."
                 
                 // Clear the input field
-                labelerDID = ""
+                serviceInput = ""
                 
                 // Dismiss after a short delay
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
@@ -781,10 +773,8 @@ struct AddLabelerView: View {
                 }
             } catch {
                 guard manager.accountDID == account, appState.userDID == account else { return }
-                errorMessage = "Failed to add labeler: \(error.localizedDescription)"
+                errorMessage = UserFacingError.message(for: error, action: "add this moderation service")
             }
-            
-            isAdding = false
         }
     }
 }
@@ -804,14 +794,14 @@ struct LabelerDetailView: View {
     var body: some View {
         Form {
             Section {
-                Toggle("Enable Labeler", isOn: $isEnabled)
+                Toggle("Use This Service", isOn: $isEnabled)
                     .onChange(of: isEnabled) {
                         updateLabelerStatus()
                     }
                     .disabled(isUpdating)
             }
             
-            Section("Labeler Information") {
+            Section("About This Service") {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Name")
                         .appFont(AppTextRole.caption)
@@ -819,22 +809,7 @@ struct LabelerDetailView: View {
                     
                     Text(labeler.name)
                                         .appFont(AppTextRole.body)
-                    
-                    Divider()
-                        .padding(.vertical, 4)
-                    
-                    Text("DID")
-                        .appFont(AppTextRole.caption)
-                        .foregroundStyle(.secondary)
-                    
-                    Text(labeler.id)
-                        .appFont(AppTextRole.caption)
-                        .fontWeight(.medium)
-                        .padding(8)
-                        .background(Color.systemGray6)
-                        .cornerRadius(6)
-                        .textSelection(.enabled)
-                    
+
                     if let description = labeler.description {
                         Divider()
                             .padding(.vertical, 4)
@@ -864,12 +839,12 @@ struct LabelerDetailView: View {
                 } label: {
                     if isUpdating {
                         HStack {
-                            Text("Removing...")
+                            Text("Removing…")
                             Spacer()
                             ProgressView()
                         }
                     } else {
-                        Text("Remove Labeler")
+                        Text("Remove Service")
                             .frame(maxWidth: .infinity, alignment: .center)
                             .foregroundStyle(.red)
                     }
@@ -877,7 +852,7 @@ struct LabelerDetailView: View {
                 .disabled(isUpdating)
             }
         }
-        .navigationTitle("Labeler Settings")
+        .navigationTitle("Moderation Service")
     #if os(iOS)
     .toolbarTitleDisplayMode(.inline)
     #endif
@@ -897,7 +872,7 @@ struct LabelerDetailView: View {
             } catch {
                 // Revert toggle if there's an error
                 isEnabled = !isEnabled
-                errorMessage = "Failed to update labeler status: \(error.localizedDescription)"
+                errorMessage = UserFacingError.message(for: error, action: "update this moderation service")
             }
             
             isUpdating = false
@@ -913,7 +888,7 @@ struct LabelerDetailView: View {
                 try await appState.preferencesManager.removeLabeler(try DID(didString: labeler.id))
                 isEnabled = false
             } catch {
-                errorMessage = "Failed to remove labeler: \(error.localizedDescription)"
+                errorMessage = UserFacingError.message(for: error, action: "remove this moderation service")
             }
             
             isUpdating = false
@@ -933,10 +908,19 @@ struct ContentPreviewSection: View {
     var body: some View {
         Section("Content Preview") {
             VStack(spacing: 12) {
-                Text("See how your moderation settings affect content display")
+                Text("See how your settings change the way posts appear.")
                     .appFont(AppTextRole.caption)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                
+                ContentPreviewView(
+                    label: "Graphic Content",
+                    icon: "exclamationmark.triangle.fill",
+                    iconColor: .red,
+                    contentVisibility: violentContentVisibility,
+                    sampleText: "This post contains graphic violence",
+                    showImage: true
+                )
                 
                 if adultContentEnabled {
                     // Adult Content Preview
@@ -959,16 +943,6 @@ struct ContentPreviewSection: View {
                         showImage: true
                     )
                     
-                    // Violent Content Preview
-                    ContentPreviewView(
-                        label: "Graphic Content",
-                        icon: "exclamationmark.triangle.fill",
-                        iconColor: .red,
-                        contentVisibility: violentContentVisibility,
-                        sampleText: "This post contains graphic violence",
-                        showImage: true
-                    )
-                    
                     // Nudity Content Preview
                     ContentPreviewView(
                         label: "Non-Sexual Nudity",
@@ -979,7 +953,7 @@ struct ContentPreviewSection: View {
                         showImage: true
                     )
                 } else {
-                    Text("Enable adult content to see preview examples")
+                    Text("Turn on adult content at bsky.app to preview adult content settings.")
                         .appFont(AppTextRole.callout)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .center)
@@ -1016,7 +990,7 @@ struct ContentPreviewView: View {
                 Spacer()
                 
                 // Visibility Badge
-                Text(contentVisibility.rawValue.capitalized)
+                Text(contentVisibility.displayName)
                     .appFont(AppTextRole.caption2)
                     .fontWeight(.medium)
                     .padding(.horizontal, 8)
@@ -1095,7 +1069,7 @@ struct ContentPreviewView: View {
                         .appFont(AppTextRole.caption2)
                         .foregroundStyle(.secondary)
                     
-                    Button("Show content") {
+                    Button("Show Content") {
                         withAnimation(.easeInOut(duration: 0.2)) {
                             isRevealed = true
                         }

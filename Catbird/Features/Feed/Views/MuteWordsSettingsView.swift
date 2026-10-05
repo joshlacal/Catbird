@@ -57,17 +57,17 @@ struct MuteWordsSettingsView: View {
     #else
     .listStyle(.sidebar)
     #endif
-    .searchable(text: $searchText, prompt: "Search mute words")
+    .searchable(text: $searchText, prompt: "Search muted words")
     .onChange(of: searchText) {
       filterMuteWords()
     }
-    .navigationTitle("Mute Words")
+    .navigationTitle("Muted Words & Tags")
     #if os(iOS)
-    .toolbarTitleDisplayMode(.large)
+    .toolbarTitleDisplayMode(.inline)
     #endif
     .themedSecondaryBackground(appState.themeManager, appSettings: appState.appSettings)
-    .alert("Delete Mute Word", isPresented: $showingDeleteConfirmation) {
-      Button("Delete", role: .destructive) {
+    .alert("Remove Muted Word", isPresented: $showingDeleteConfirmation) {
+      Button("Remove", role: .destructive) {
         if let word = wordToDelete, deleteConfirmationRequest == loadRequest {
           removeMuteWord(word.id)
         }
@@ -76,7 +76,7 @@ struct MuteWordsSettingsView: View {
       Button("Cancel", role: .cancel) {}
     } message: {
       if let word = wordToDelete {
-        Text("Are you sure you want to remove \"\(word.value)\" from your mute words?")
+        Text("Remove “\(word.value)” from your muted words?")
       }
     }
     .overlay(
@@ -105,7 +105,7 @@ struct MuteWordsSettingsView: View {
     Section {
       HStack(spacing: DesignTokens.Spacing.sm) {
 #if os(iOS)
-        TextField("Add new mute word", text: $newMuteWord)
+        TextField("Add a word or tag", text: $newMuteWord)
           .textFieldStyle(.plain)
           .autocorrectionDisabled(true)
           .textInputAutocapitalization(.never)
@@ -114,7 +114,7 @@ struct MuteWordsSettingsView: View {
             addWordIfValid()
           }
 #else
-        TextField("Add new mute word", text: $newMuteWord)
+        TextField("Add a word or tag", text: $newMuteWord)
           .textFieldStyle(.plain)
           .accessibilityIdentifier("settings.mutedWords.input")
           .onSubmit {
@@ -131,13 +131,13 @@ struct MuteWordsSettingsView: View {
         }
         .disabled(!canEdit || newMuteWord.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         .buttonStyle(.plain)
-        .accessibilityLabel("Add mute word")
+        .accessibilityLabel("Add Muted Word")
         .accessibilityIdentifier("settings.mutedWords.add")
       }
       .disabled(!canEdit)
       
       if !newMuteWord.isEmpty && muteWords.contains(where: { $0.value.lowercased() == newMuteWord.lowercased() }) {
-        Label("This word is already in your mute list", systemImage: "exclamationmark.triangle.fill")
+        Label("This word is already muted", systemImage: "exclamationmark.triangle.fill")
           .designFootnote()
           .foregroundStyle(.orange)
       }
@@ -151,7 +151,7 @@ struct MuteWordsSettingsView: View {
         loadingView
       }
       if isSaving {
-        ProgressView("Saving mute words…")
+        ProgressView("Saving muted words…")
       }
       if let error = errorMessage {
         errorView(error)
@@ -163,7 +163,7 @@ struct MuteWordsSettingsView: View {
       }
     } header: {
       if !muteWords.isEmpty {
-        Text(hasSearchText ? "Search Results" : "Mute Words")
+        Text(hasSearchText ? "Search Results" : "Muted Words")
           .designCallout()
       }
     }
@@ -188,17 +188,17 @@ struct MuteWordsSettingsView: View {
           .foregroundStyle(.primary)
         
         if !word.targets.isEmpty {
-          Text("Targets: \(word.targets.joined(separator: ", "))")
+          Text(targetsDescription(word.targets))
             .designCaption()
             .foregroundStyle(.secondary)
         } else {
-          Text("No active targets")
+          Text("Not muting anything")
             .designCaption()
             .foregroundStyle(.secondary)
         }
         if let actorTarget = word.actorTarget, actorTarget != "all" {
           Text(actorTarget == "exclude-following" ? "Accounts you follow are excluded"
-            : "Account targeting: \(actorTarget) (unrecognized)")
+            : "Custom account rule")
             .designCaption()
             .foregroundStyle(.secondary)
         } else {
@@ -207,13 +207,13 @@ struct MuteWordsSettingsView: View {
             .foregroundStyle(.secondary)
         }
         if let expiresAt = word.expiresAt {
-          Text(expiresAt <= Date() ? "Expired and inactive: \(expiresAt.formatted(date: .abbreviated, time: .shortened))"
+          Text(expiresAt <= Date() ? "Expired \(expiresAt.formatted(date: .abbreviated, time: .shortened))"
             : "Expires: \(expiresAt.formatted(date: .abbreviated, time: .shortened))")
             .designCaption()
             .foregroundStyle(.secondary)
         }
         if !hasUniqueIdentifier(word.id) {
-          Text("This saved rule has no unique identifier and cannot be removed separately here.")
+          Text("This muted word can only be removed from the Bluesky app.")
             .designCaption()
             .foregroundStyle(.secondary)
         }
@@ -232,19 +232,19 @@ struct MuteWordsSettingsView: View {
       }
       .buttonStyle(.plain)
       .disabled(!canEdit || !hasUniqueIdentifier(word.id))
-      .accessibilityLabel("Remove muted word \(word.value)")
+      .accessibilityLabel("Remove “\(word.value)”")
     }
     .spacingSM(.vertical)
     #if os(iOS)
     .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-      Button("Delete", role: .destructive) {
+      Button("Remove", role: .destructive) {
         removeMuteWord(word.id)
       }
       .disabled(!canEdit || !hasUniqueIdentifier(word.id))
     }
     #endif
     .contextMenu {
-      Button("Delete", role: .destructive) {
+      Button("Remove", role: .destructive) {
         confirmRemoval(of: word)
       }
       .disabled(!canEdit || !hasUniqueIdentifier(word.id))
@@ -256,7 +256,7 @@ struct MuteWordsSettingsView: View {
     HStack(spacing: DesignTokens.Spacing.base) {
       ProgressView()
         .scaleEffect(0.8)
-      Text("Loading mute words...")
+      Text("Loading muted words…")
         .designBody()
         .foregroundStyle(.secondary)
       Spacer()
@@ -270,7 +270,7 @@ struct MuteWordsSettingsView: View {
       HStack(spacing: DesignTokens.Spacing.sm) {
         Image(systemName: "exclamationmark.triangle.fill")
           .foregroundStyle(.red)
-        Text("Error")
+        Text("Something Went Wrong")
           .designCallout()
           .foregroundStyle(.red)
         Spacer()
@@ -282,7 +282,7 @@ struct MuteWordsSettingsView: View {
         .multilineTextAlignment(.leading)
         .frame(maxWidth: .infinity, alignment: .leading)
       
-      Button("Retry") {
+      Button("Try Again") {
         Task {
           await loadMuteWords()
         }
@@ -306,13 +306,13 @@ struct MuteWordsSettingsView: View {
         .font(.title2)
         .foregroundStyle(.tertiary)
       
-      Text(hasSearchText ? "No matching words found" : "No mute words yet")
+      Text(hasSearchText ? "No matching words" : "No muted words yet")
         .designBody()
         .foregroundStyle(.secondary)
         .multilineTextAlignment(.center)
       
       if !hasSearchText {
-        Text("Add words to hide posts containing them")
+        Text("Add words or tags to hide posts that contain them.")
           .designFootnote()
           .foregroundStyle(.tertiary)
           .multilineTextAlignment(.center)
@@ -329,8 +329,8 @@ struct MuteWordsSettingsView: View {
         HStack(spacing: DesignTokens.Spacing.xs) {
           Image(systemName: "info.circle")
             .foregroundStyle(.blue)
-            .font(.caption)
-          Text("How Mute Words Work")
+            .designCaption()
+          Text("How Muted Words Work")
             .designCallout()
             .foregroundStyle(.primary)
         }
@@ -352,7 +352,7 @@ struct MuteWordsSettingsView: View {
       HStack(spacing: DesignTokens.Spacing.sm) {
         Image(systemName: "checkmark.circle.fill")
           .foregroundStyle(.green)
-        Text("Mute word added")
+        Text("Word muted")
           .designCallout()
           .foregroundStyle(.primary)
       }
@@ -443,7 +443,7 @@ struct MuteWordsSettingsView: View {
       filterMuteWords()
     } catch {
       guard isCurrent(request, account: account, state: originatingState, manager: manager) else { return }
-      errorMessage = "Failed to load mute words: \(error.localizedDescription)"
+      errorMessage = UserFacingError.message(for: error, action: "load your muted words") ?? "Couldn’t load your muted words. Try again."
     }
   }
 
@@ -476,7 +476,7 @@ struct MuteWordsSettingsView: View {
       } catch {
         guard isCurrent(request, account: account, state: originatingState, manager: manager) else { return }
         hasConfirmedPreferences = false
-        errorMessage = "Failed to add mute word: \(error.localizedDescription)"
+        errorMessage = UserFacingError.message(for: error, action: "mute this word") ?? "Couldn’t mute this word. Try again."
       }
     }
   }
@@ -517,11 +517,17 @@ struct MuteWordsSettingsView: View {
       } catch {
         guard isCurrent(request, account: account, state: originatingState, manager: manager) else { return }
         hasConfirmedPreferences = false
-        errorMessage = isConfirmingRemoval
-          ? "Failed to confirm mute words after removal: \(error.localizedDescription)"
-          : "Failed to remove mute word: \(error.localizedDescription)"
+        let action = isConfirmingRemoval ? "refresh your muted words" : "remove this muted word"
+        errorMessage = UserFacingError.message(for: error, action: action) ?? "Couldn’t \(action). Try again."
       }
     }
+  }
+
+  /// Plain-language summary of a rule's protocol targets ("content" covers post text and tags).
+  private func targetsDescription(_ targets: [String]) -> String {
+    if targets.contains("content") { return "Mutes post text and tags" }
+    if targets.contains("tag") { return "Mutes tags only" }
+    return "Custom rule"
   }
 
   private func hasUniqueIdentifier(_ id: String) -> Bool {

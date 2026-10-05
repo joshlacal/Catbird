@@ -20,7 +20,8 @@ struct AccountSecuritySettingsView: View {
             SettingsPersistenceStatusSection(settings: appState.appSettings)
             Section("Account") {
                 SettingsLink(screen: .accountDetails, summary: "Handle, email, automation label, public data export", systemImage: "person.crop.circle", family: .account)
-                SettingsLink(screen: .accountDetails, title: "Email & Email Two-Factor Authentication", summary: "Manage email and verification codes for sign-in", systemImage: "envelope.badge.shield.half.filled", family: .account, control: .init(rawValue: "account.email"))
+                SettingsLink(screen: .accountDetails, title: "Email & Sign-In Codes", summary: "Manage email and verification codes for sign-in", systemImage: "envelope.badge.shield.half.filled", family: .account, control: .init(rawValue: "account.email"))
+                SettingsLink(screen: .accountDetails, title: "Delete Account", summary: "Permanently delete this account", systemImage: "person.crop.circle.badge.xmark", family: .account, control: .init(rawValue: "account.delete"))
             }
             if AppStateManager.shared.authentication.biometricType != .none {
                 Section {
@@ -31,7 +32,7 @@ struct AccountSecuritySettingsView: View {
                     .disabled(changingAppLock)
                     .settingsControl(.init(rawValue: "account.appLock"))
                     if changingAppLock { ProgressView("Updating app lock…") }
-                } header: { Text("This device") } footer: {
+                } header: { Text("This Device") } footer: {
                     Text("Use your device’s biometric authentication to unlock Catbird. This preference applies to the app on this device.")
                 }
             }
@@ -43,6 +44,9 @@ struct AccountSecuritySettingsView: View {
             }
         }
         .navigationTitle("Account & Security")
+        #if os(iOS)
+        .toolbarTitleDisplayMode(.inline)
+        #endif
         .confirmationDialog("Sign out of this account?", isPresented: $confirmingSignOut, titleVisibility: .visible) {
             Button("Sign Out", role: .destructive) {
                 guard let did = signOutDID, SettingsAccountBoundary.isCurrent(did, revision: signOutRevision) else { return }
@@ -51,7 +55,7 @@ struct AccountSecuritySettingsView: View {
             }
             Button("Stay", role: .cancel) { }
         }
-        .confirmationDialog("Unsaved settings", isPresented: $showingPendingSignOut, titleVisibility: .visible) {
+        .confirmationDialog("Unsaved Settings", isPresented: $showingPendingSignOut, titleVisibility: .visible) {
             Button("Save & Sign Out") { resolveSignOut(save: true) }
             Button("Discard & Sign Out", role: .destructive) { resolveSignOut(save: false) }
             Button("Stay", role: .cancel) { pendingSignOutDID = nil }
@@ -69,7 +73,7 @@ struct AccountSecuritySettingsView: View {
             let auth = AppStateManager.shared.authentication
             await auth.setBiometricAuthEnabled(enabled)
             changingAppLock = false
-            if auth.biometricAuthEnabled != enabled { lockError = auth.lastBiometricError?.localizedDescription ?? "App lock could not be updated. Try again." }
+            if auth.biometricAuthEnabled != enabled { lockError = auth.lastBiometricError?.localizedDescription ?? "App lock couldn’t be updated. Try again." }
         }
     }
     private func resolveSignOut(save: Bool) {

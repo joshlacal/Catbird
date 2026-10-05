@@ -13,57 +13,72 @@ struct AccountDeletionSheet: View {
   var body: some View {
     NavigationStack {
       Form {
-        Section("Account to Delete") {
+        Section("Account") {
           if let handle = flow.target.handle, !handle.isEmpty {
             Text("@\(handle)")
-              .font(.headline)
+              .appFont(AppTextRole.headline)
+          } else {
+            Text(flow.target.did)
+              .appFont(AppTextRole.footnote)
+              .foregroundStyle(.secondary)
+              .textSelection(.enabled)
           }
-          Text(flow.target.did)
-            .font(.footnote)
-            .foregroundStyle(.secondary)
-            .textSelection(.enabled)
-          Text("Bluesky may already be signed in to a different account. Verify that its account matches this one before choosing Delete account.")
+          LabeledContent("Account Provider") {
+            if let host = providerHost {
+              Text(host)
+            } else {
+              ProgressView()
+                .accessibilityLabel("Finding your account provider")
+            }
+          }
         }
 
-        Section("Permanent Provider Deletion") {
-          Text("Deleting your account at its hosting provider is irreversible. It affects Bluesky and other AT Protocol apps you use with this account. Your provider controls deletion of the account and associated data; other services may retain copies under their own policies.")
-          Text("Open Bluesky's account settings, sign in to this account if needed, then choose Delete account. Complete the provider's verification and final confirmation there. Opening settings does not send a deletion code or delete anything.")
+        Section {
+          Text("Deleting your account is permanent and can’t be undone.")
+          Text("Catbird can’t delete accounts directly. You’ll finish on your account provider’s website: sign in there if asked, then choose Delete account.")
+            .foregroundStyle(.secondary)
 
-          Button(action: openAccountSettings) {
-            Label("Open Bluesky Account Settings", systemImage: "arrow.up.right")
+          Button(role: .destructive, action: openAccountPage) {
+            HStack {
+              Text(continueTitle)
+              Spacer()
+              if flow.isResolvingDestination || isOpening {
+                ProgressView()
+              } else {
+                Image(systemName: "arrow.up.right")
+              }
+            }
           }
           .disabled(!flow.canOpen || appState.userDID != flow.target.did)
           .accessibilityIdentifier("AccountDeletion.OpenProvider")
 
           if let statusMessage {
             Text(statusMessage)
+              .appFont(AppTextRole.footnote)
               .foregroundStyle(.secondary)
               .accessibilityIdentifier("AccountDeletion.Status")
           }
-          if flow.phase == .failed {
-            Text(AccountDeletionFlow.accountSettingsURL.absoluteString)
-              .font(.footnote)
+          if flow.phase == .failed, let destination = flow.destination {
+            Text(destination.absoluteString)
+              .appFont(AppTextRole.footnote)
               .textSelection(.enabled)
           }
+        } footer: {
+          Text("If the website is signed in to a different account, switch accounts there first. Want a break instead? Deactivating your account is reversible.")
         }
 
-        Section("Accounts Hosted Elsewhere") {
-          Text("For a custom hosting provider, choose that provider when signing in to Bluesky. If Bluesky cannot manage your account, use your provider's documented account-deletion process. Catbird cannot confirm deletion for that provider.")
-        }
-
-        Section("Catbird Data and Sign-In") {
-          Text("This flow does not submit a request to delete data held by Catbird. Signing out or removing this account from Catbird disconnects it on this device; it does not erase all Catbird-held server records or delete your provider account.")
-          Text("Deactivation is separate: it temporarily disables your provider account and can be reversed. It is not permanent deletion.")
-          if let privacyURL = LegalConfig.privacyPolicyURL {
+        if let privacyURL = LegalConfig.privacyPolicyURL {
+          Section {
             Link("Catbird Privacy Policy", destination: privacyURL)
+          } footer: {
+            Text("Explains what Catbird stores and how to remove it.")
           }
         }
-
-        Section {
-          Text("You can cancel here or return from Bluesky before its final confirmation without deleting your account. Returning to Catbird does not confirm that deletion succeeded.")
-        }
       }
-      .navigationTitle("Account Deletion")
+      .navigationTitle("Delete Account")
+      #if os(iOS)
+      .toolbarTitleDisplayMode(.inline)
+      #endif
       .toolbar {
         ToolbarItem(placement: .cancellationAction) {
           Button("Cancel", role: .cancel) {
@@ -72,6 +87,9 @@ struct AccountDeletionSheet: View {
           }
           .accessibilityIdentifier("AccountDeletion.Cancel")
         }
+      }
+      .task {
+        await resolveAccountPage()
       }
       .onChange(of: appState.userDID) { _, did in
         flow.accountDidChange(to: did)
@@ -82,22 +100,46 @@ struct AccountDeletionSheet: View {
     }
   }
 
+  private var providerHost: String? {
+    flow.destination.map(AccountManagementPageResolver.displayHost(of:))
+  }
+
+  private var isOpening: Bool {
+    if case .opening = flow.phase { return true }
+    return false
+  }
+
+  private var continueTitle: String {
+    guard let providerHost else { return "Finding Your Account Provider…" }
+    return "Continue to \(providerHost)"
+  }
+
   private var statusMessage: String? {
     switch flow.phase {
-    case .ready, .cancelled:
+    case .ready, .cancelled, .opening:
       return nil
-    case .opening:
-      return "Opening account settings…"
     case .opened:
-      return "The link was opened. Catbird has not received confirmation of account deletion."
+      return "Finish deleting your account on \(providerHost ?? "your provider’s website"). Catbird can’t confirm when it’s done."
     case .failed:
-      return "Account settings could not be opened. Try again, or copy the address below into your browser."
+      return "Couldn’t open the website. Copy this address into your browser instead:"
     case .accountChanged:
-      return "The active account changed. Cancel and reopen Account Deletion for the account you want to delete."
+      return "You switched accounts. Close this and start again from the account you want to delete."
     }
   }
 
-  private func openAccountSettings() {
+  private func resolveAccountPage() async {
+    guard flow.isResolvingDestination else { return }
+    let did = flow.target.did
+    var pdsURL: URL?
+    if !did.isEmpty, let client = appState.atProtoClient {
+      pdsURL = try? await client.resolveDIDToPDSURL(did: did)
+    }
+    let pageURL = await AccountManagementPageResolver().accountPageURL(forPDS: pdsURL)
+    guard !Task.isCancelled else { return }
+    flow.resolveDestination(pageURL)
+  }
+
+  private func openAccountPage() {
     guard let attempt = flow.prepareToOpen(currentDID: appState.userDID) else { return }
     openURL(attempt.url) { accepted in
       flow.finishOpening(attempt.id, accepted: accepted, currentDID: appState.userDID)

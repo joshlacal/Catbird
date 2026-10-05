@@ -14,7 +14,7 @@ struct NotificationSettingsView: View {
 
   var body: some View {
     SettingsFocusedForm(initialFocus: initialFocus) {
-      SettingsScopeSection(scope: "This account")
+      SettingsScopeSection()
       deviceSection
       NotificationPreferencesStatusSection(manager: manager, accountDID: appState.userDID)
       Section {
@@ -57,9 +57,9 @@ struct NotificationSettingsView: View {
         Text("Choose direct message alerts for this account. Push delivery also needs device permission and a ready connection.")
       }
       Section("Post Notification Subscriptions") {
-        NavigationLink("People You Subscribe To") { ActivitySubscriptionsView() }
+        SettingsLink(screen: .activitySubscriptions, systemImage: "bell.badge", family: .notifications)
           .settingsControl(.init(rawValue: "notifications.subscriptions"))
-        NavigationLink("Who Can Subscribe to Your Posts") { ActivityPrivacySettingsView() }
+        SettingsLink(screen: .activityPrivacy, systemImage: "person.badge.clock", family: .privacy)
       }
     }
     .navigationTitle("Notifications")
@@ -99,9 +99,10 @@ struct NotificationSettingsView: View {
       Button("Open System Notification Settings", action: openSystemSettings)
         .settingsControl(.init(rawValue: "notifications.systemPermission"))
       if case .registrationFailed(let error) = manager.status {
-        Text(error.localizedDescription).foregroundStyle(.secondary)
+        Text(UserFacingError.message(for: error, action: "connect push alerts on this device")
+          ?? "Couldn’t connect push alerts on this device. Try again.").foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
-        Button("Retry Push Connection") {
+        Button("Try Push Connection Again") {
           let origin = manager
           let did = appState.userDID
           Task { await origin.enableNotifications(expectedAccountDID: did) }
@@ -299,10 +300,10 @@ private struct NotificationPreferencesStatusSection: View {
       Section { ProgressView("Saving notification preferences…") }
     case .loadFailed(let error):
       statusSection(title: "Couldn’t Load Preferences", error: error,
-        explanation: "Your saved rules have not been replaced. Load them before making changes.", retry: "Retry Loading")
+        explanation: "Your saved rules have not been replaced. Load them before making changes.", retry: "Try Loading Again")
     case .saveFailed(let error):
       statusSection(title: "Couldn’t Save Preferences", error: error,
-        explanation: "Last confirmed rules are shown. Retry saves the attempted changes below.", retry: "Retry Saving")
+        explanation: "Your last saved rules are shown. Try saving again to apply the changes below.", retry: "Try Saving Again")
     case .unavailable:
       Section { Text("Notification preferences are not connected for this account.").foregroundStyle(.secondary) }
     case .ready:

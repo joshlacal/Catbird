@@ -31,6 +31,8 @@ struct AccountSettingsView: View {
     @Environment(\.webAuthenticationSession) private var webAuthenticationSession
     
     @State private var isLoading = true
+    @State private var hasLoadedOnce = false
+    @State private var sessionLoadFailed = false
     @State private var profile: AppBskyActorDefs.ProfileViewDetailed?
     private let logger = Logger(subsystem: "blue.catbird", category: "AccountSettings")
     
@@ -40,6 +42,8 @@ struct AccountSettingsView: View {
     @State private var hasEmailScope = false
     @State private var emailAuthFactor: Bool?
     @State private var isShowingEmailSheet = false
+    @State private var isManagingEmail = false
+    @State private var isSendingVerification = false
     // Handle management
     @State private var isShowingHandleSheet = false
     
@@ -111,27 +115,8 @@ struct AccountSettingsView: View {
             return
         }
         
-        let errorMessage: String
-        
-        if let urlError = error as? URLError {
-            switch urlError.code {
-            case .notConnectedToInternet:
-                errorMessage = "No internet connection. Please check your connection and try again."
-            case .timedOut:
-                errorMessage = "Request timed out. Please try again."
-            case .networkConnectionLost:
-                errorMessage = "Network connection lost. Please try again."
-            default:
-                errorMessage = "Network error occurred. Please try again."
-            }
-        } else {
-            let (_, userMessage, requiresReAuth) = AuthenticationErrorHandler.categorizeError(error)
-            if requiresReAuth {
-                errorMessage = "\(userMessage) You may need to sign in again to continue."
-            } else {
-                errorMessage = userMessage
-            }
-        }
+        guard let errorMessage = UserFacingError.message(for: error, action: operation) else { return }
+        logger.error("Account settings couldn’t \(operation, privacy: .public): \(error.localizedDescription)")
         
         formError = errorMessage
         showingFormError = true
@@ -147,9 +132,9 @@ struct AccountSettingsView: View {
     
     var body: some View {
         Group {
-            SettingsFocusedForm(initialFocus: initialFocus, isReady: !isLoading) {
+            SettingsFocusedForm(initialFocus: initialFocus, isReady: hasLoadedOnce || !isLoading) {
                 SettingsScopeSection()
-                if isLoading {
+                if isLoading && !hasLoadedOnce {
                     Section {
                         ProgressView()
                             .frame(maxWidth: .infinity, alignment: .center)
@@ -212,7 +197,7 @@ struct AccountSettingsView: View {
                         } label: {
                             if isExportingData {
                                 HStack {
-                                    Text("Downloading Repository Data...")
+                                    Text("Exporting Account Data…")
                                     Spacer()
                                     ProgressView()
                                         .scaleEffect(0.8)
@@ -230,7 +215,7 @@ struct AccountSettingsView: View {
                     } header: {
                         Text("Data Export")
                     } footer: {
-                        Text("Download your public AT Protocol repository as a CAR (Content Addressable aRchive) file. This contains your public posts, likes, follows, and profile data, Messages and local drafts are not included.")
+                        Text("Download a copy of your public Bluesky data (posts, likes, follows and profile) as a .car file. Messages and drafts aren’t included.")
                             .appFont(AppTextRole.footnote)
                             .foregroundStyle(.secondary)
                     }
@@ -256,7 +241,7 @@ struct AccountSettingsView: View {
                                 } label: {
                                     if isReactivating {
                                         HStack {
-                                            Text("Reactivating Account...")
+                                            Text("Reactivating Account…")
                                             Spacer()
                                             ProgressView()
                                                 .scaleEffect(0.8)
@@ -272,6 +257,13 @@ struct AccountSettingsView: View {
                             } else {
                                 accountUnavailableView(for: "inactive")
                             }
+                        } else if sessionLoadFailed {
+                            Text("Account status couldn’t be loaded.")
+                                .foregroundStyle(.secondary)
+                            Button("Try Again") {
+                                reloadAccountDetails()
+                            }
+                            .disabled(isLoading)
                         } else {
                             if let status = accountStatus, !status.isEmpty {
                                 accountUnavailableView(for: status)
@@ -283,36 +275,37 @@ struct AccountSettingsView: View {
                     .settingsControl(.init(rawValue: "account.deactivate"))
                 }
                 Section {
-                    Button {
+                    Button("Delete Account", role: .destructive) {
                         let did = appState.userDID
                         let handle = profile.flatMap { $0.did.description == did ? $0.handle.description : nil }
+                            ?? AppStateManager.shared.authentication.getCachedProfileData(for: did)?.handle
                         accountDeletionTarget = AccountDeletionTarget(did: did, handle: handle)
-                    } label: {
-                        Label("Account Deletion Options", systemImage: "person.crop.circle.badge.minus")
                     }
                     .disabled(appState.userDID.isEmpty || isDeactivating || isReactivating || isExportingData)
                     .accessibilityIdentifier("AccountDeletion.Options")
-                } header: {
-                    Text("Account Deletion")
                 } footer: {
-                    Text("Review permanent provider-account deletion and how it differs from deactivation or removing an account from Catbird.")
+                    Text("Permanently delete your account. You’ll finish on your account provider’s website.")
                 }
+                .settingsControl(.init(rawValue: "account.delete"))
             }
             .navigationTitle("Account Details")
             #if os(iOS)
             .toolbarTitleDisplayMode(.inline)
             #endif
             .task(id: appState.userDID) {
+                if mountedAccountDID != nil, mountedAccountDID != appState.userDID {
+                    hasLoadedOnce = false
+                }
                 mountedAccountDID = appState.userDID
                 mountedAccountRevision = AppStateManager.shared.settingsAccountContextRevision
                 logger.info("AccountSettingsView appeared, loading data...")
                 await loadAccountDetails()
                 logger.info("Initial data load complete")
             }
-            .alert("Error", isPresented: $showingFormError) {
+            .alert("Something Went Wrong", isPresented: $showingFormError) {
                 Button("OK") { }
             } message: {
-                Text(formError ?? "An unknown error occurred")
+                Text(formError ?? "Something went wrong. Try again.")
             }
             .sheet(isPresented: $isShowingEmailSheet) {
                 EmailUpdateSheet(
@@ -349,7 +342,7 @@ struct AccountSettingsView: View {
                         do {
                             try appStateManager.authentication.recordCurrentHandleChange(newHandle, for: targetDID)
                         } catch {
-                            handleAPIError(error, operation: "update handle")
+                            handleAPIError(error, operation: "save your new handle")
                         }
                         reloadAccountDetails()
                     }
@@ -361,17 +354,19 @@ struct AccountSettingsView: View {
             }
             .alert("Deactivate Account", isPresented: $isShowingDeactivateAlert) {
                 TextField("Type DEACTIVATE to confirm", text: $deactivateConfirmText)
+                    .textInputAutocapitalization(.characters)
+                    .autocorrectionDisabled()
                 Button("Cancel", role: .cancel) {
                     deactivateConfirmText = ""
                 }
                 Button("Deactivate", role: .destructive) {
-                    if deactivateConfirmText == "DEACTIVATE" {
+                    if deactivateConfirmed {
                         deactivateAccount()
                     }
                 }
-                .disabled(deactivateConfirmText != "DEACTIVATE")
+                .disabled(!deactivateConfirmed)
             } message: {
-                Text("This will temporarily disable your account. You can reactivate it by logging in again.")
+                Text("Your account will be hidden until you reactivate it by signing in again.")
             }
             .fileExporter(
                 isPresented: $isShowingFileExporter,
@@ -412,6 +407,10 @@ struct AccountSettingsView: View {
         }
     }
     
+    private var deactivateConfirmed: Bool {
+        deactivateConfirmText.trimmingCharacters(in: .whitespaces).caseInsensitiveCompare("DEACTIVATE") == .orderedSame
+    }
+    
     // MARK: - Data Export
     
     @MainActor
@@ -441,13 +440,14 @@ struct AccountSettingsView: View {
                         self.exportDocument = CARFileDocument(data: output.data)
                         self.isShowingFileExporter = true
                     } else {
-                        formError = "Failed to export repository (status \(code))."
+                        logger.error("Repository export returned status \(code)")
+                        formError = "Couldn’t export your data. Try again."
                         showingFormError = true
                     }
                 }
             } catch {
                 guard !Task.isCancelled, SettingsAccountBoundary.isCurrent(userDID, revision: operationRevision) else { return }
-                handleAPIError(error, operation: "export repository data")
+                handleAPIError(error, operation: "export your data")
             }
         }
     }
@@ -465,13 +465,16 @@ struct AccountSettingsView: View {
     @MainActor
     private func loadAccountDetails() async {
         isLoading = true
-        hasConfirmedAccountType = false
-        isAccountActive = nil
-        accountStatus = nil
+        if !hasLoadedOnce {
+            hasConfirmedAccountType = false
+            isAccountActive = nil
+            accountStatus = nil
+        }
         
         defer {
             if !Task.isCancelled {
                 isLoading = false
+                hasLoadedOnce = true
             }
         }
         
@@ -479,7 +482,7 @@ struct AccountSettingsView: View {
                   mountedAccountDID.map { SettingsAccountBoundary.isCurrent($0, revision: mountedAccountRevision) } == true,
                   let client = appState.atProtoClient else {
             if !Task.isCancelled {
-                handleAPIError(AuthError.clientNotInitialized, operation: "load account details")
+                handleAPIError(AuthError.clientNotInitialized, operation: "load your account details")
             }
             return
         }
@@ -517,12 +520,14 @@ struct AccountSettingsView: View {
                     }
                     self.isAccountActive = session.active
                     self.accountStatus = session.status
+                    self.sessionLoadFailed = false
                 } else {
                     self.email = ""
                     self.isEmailVerified = false
                     self.emailAuthFactor = nil
                     self.isAccountActive = nil
                     self.accountStatus = nil
+                    self.sessionLoadFailed = true
                 }
             }
         } catch {
@@ -533,7 +538,9 @@ struct AccountSettingsView: View {
             self.emailAuthFactor = nil
             self.isAccountActive = nil
             self.accountStatus = nil
-            handleAPIError(error, operation: "load account session")
+            // The Account Status section shows an inline retry for this failure.
+            self.sessionLoadFailed = !(error is CancellationError)
+            logger.error("Failed to load account session: \(error.localizedDescription)")
         }
         
         guard !Task.isCancelled, SettingsAccountBoundary.isCurrent(userDID, revision: operationRevision) else { return }
@@ -595,14 +602,14 @@ struct AccountSettingsView: View {
                   mountedAccountDID.map { SettingsAccountBoundary.isCurrent($0, revision: mountedAccountRevision) } == true,
                   let client = appState.atProtoClient else {
                 if !Task.isCancelled {
-                    handleAPIError(AuthError.clientNotInitialized, operation: "manage email")
+                    handleAPIError(AuthError.clientNotInitialized, operation: "open email settings")
                 }
                 return
             }
-            isLoading = true
+            isManagingEmail = true
             defer {
                 if !Task.isCancelled {
-                    isLoading = false
+                    isManagingEmail = false
                 }
             }
             
@@ -635,7 +642,7 @@ struct AccountSettingsView: View {
                         self.email = ""
                         self.isEmailVerified = false
                         self.emailAuthFactor = nil
-                        formError = "Missing required email management permission."
+                        formError = "Catbird needs permission to manage your email. Try again and allow access when asked."
                         showingFormError = true
                         return
                     }
@@ -659,7 +666,8 @@ struct AccountSettingsView: View {
                         self.email = ""
                         self.isEmailVerified = false
                         self.emailAuthFactor = nil
-                        formError = "Failed to load account session (Code: \(sessionCode))."
+                        logger.error("getSession returned status \(sessionCode) while opening email settings")
+                        formError = "Couldn’t open email settings. Try again."
                         showingFormError = true
                     }
                 }
@@ -669,20 +677,20 @@ struct AccountSettingsView: View {
                 // User cancelled permission upgrade - preserve form
             } catch {
                 guard !Task.isCancelled, mountedAccountDID.map { SettingsAccountBoundary.isCurrent($0, revision: mountedAccountRevision) } == true else { return }
-                handleAPIError(error, operation: "manage email")
+                handleAPIError(error, operation: "open email settings")
             }
         }
     }
     
     @MainActor
     private func sendVerificationEmail() {
-        isLoading = true
+        isSendingVerification = true
         
         sendVerificationTask?.cancel()
         sendVerificationTask = Task { @MainActor in
             defer {
                 if !Task.isCancelled {
-                    isLoading = false
+                    isSendingVerification = false
                 }
             }
             
@@ -690,7 +698,7 @@ struct AccountSettingsView: View {
                   mountedAccountDID.map { SettingsAccountBoundary.isCurrent($0, revision: mountedAccountRevision) } == true,
                   let client = appState.atProtoClient else {
                 if !Task.isCancelled {
-                    handleAPIError(AuthError.clientNotInitialized, operation: "send verification email")
+                    handleAPIError(AuthError.clientNotInitialized, operation: "send the verification email")
                 }
                 return
             }
@@ -714,7 +722,8 @@ struct AccountSettingsView: View {
                     if (200...299).contains(responseCode) {
                         startEmailVerificationPolling()
                     } else if !Task.isCancelled {
-                        formError = "Failed to send verification email (Code: \(responseCode)). Please try again."
+                        logger.error("requestEmailConfirmation returned status \(responseCode)")
+                        formError = "Couldn’t send the verification email. Try again."
                         showingFormError = true
                     }
                 }
@@ -724,7 +733,7 @@ struct AccountSettingsView: View {
                 // User cancelled permission upgrade - preserve form
             } catch {
                 guard !Task.isCancelled, mountedAccountDID.map { SettingsAccountBoundary.isCurrent($0, revision: mountedAccountRevision) } == true else { return }
-                handleAPIError(error, operation: "send verification email")
+                handleAPIError(error, operation: "send the verification email")
             }
         }
     }
@@ -756,7 +765,7 @@ struct AccountSettingsView: View {
                 if !success {
                     consecutivePollingErrors += 1
                     if consecutivePollingErrors >= maxConsecutiveErrors {
-                        formError = "Email verification check failed after multiple attempts. Please try again."
+                        formError = "Couldn’t check whether your email is verified. Try again."
                         showingFormError = true
                         break
                     }
@@ -849,7 +858,7 @@ struct AccountSettingsView: View {
                   mountedAccountDID.map { SettingsAccountBoundary.isCurrent($0, revision: mountedAccountRevision) } == true,
                   let client = appState.atProtoClient else {
                 if !Task.isCancelled {
-                    handleAPIError(AuthError.clientNotInitialized, operation: "deactivate account")
+                    handleAPIError(AuthError.clientNotInitialized, operation: "deactivate your account")
                 }
                 return
             }
@@ -873,7 +882,8 @@ struct AccountSettingsView: View {
                     // Always process 2xx and reconcile logout even if view disappears
                     try? await appState.handleLogout()
                 } else if !Task.isCancelled {
-                    formError = "Failed to deactivate account (Code: \(responseCode)). Please try again."
+                    logger.error("deactivateAccount returned status \(responseCode)")
+                    formError = "Couldn’t deactivate your account. Try again."
                     showingFormError = true
                 }
             } catch is CancellationError {
@@ -882,7 +892,7 @@ struct AccountSettingsView: View {
                 // User cancelled permission upgrade - preserve form
             } catch {
                 guard !Task.isCancelled, mountedAccountDID.map { SettingsAccountBoundary.isCurrent($0, revision: mountedAccountRevision) } == true else { return }
-                handleAPIError(error, operation: "deactivate account")
+                handleAPIError(error, operation: "deactivate your account")
             }
         }
     }
@@ -902,7 +912,7 @@ struct AccountSettingsView: View {
                   mountedAccountDID.map { SettingsAccountBoundary.isCurrent($0, revision: mountedAccountRevision) } == true,
                   let client = appState.atProtoClient else {
                 if !Task.isCancelled {
-                    handleAPIError(AuthError.clientNotInitialized, operation: "reactivate account")
+                    handleAPIError(AuthError.clientNotInitialized, operation: "reactivate your account")
                 }
                 return
             }
@@ -924,7 +934,8 @@ struct AccountSettingsView: View {
                     // Always process 2xx and reconcile status even if view disappears
                     await loadAccountDetails()
                 } else if !Task.isCancelled {
-                    formError = "Failed to reactivate account (Code: \(responseCode)). Please try again."
+                    logger.error("activateAccount returned status \(responseCode)")
+                    formError = "Couldn’t reactivate your account. Try again."
                     showingFormError = true
                 }
             } catch is CancellationError {
@@ -933,7 +944,7 @@ struct AccountSettingsView: View {
                 // User cancelled permission upgrade - preserve form
             } catch {
                 guard !Task.isCancelled, mountedAccountDID.map { SettingsAccountBoundary.isCurrent($0, revision: mountedAccountRevision) } == true else { return }
-                handleAPIError(error, operation: "reactivate account")
+                handleAPIError(error, operation: "reactivate your account")
             }
         }
     }
@@ -941,7 +952,7 @@ struct AccountSettingsView: View {
     // MARK: - Computed Subviews
     
     private var emailSection: some View {
-        Section("Email & Sign-In Protection") {
+        Section("Email & Sign-In Codes") {
             if hasEmailScope {
                 LabeledContent("Email Sign-In Codes", value: emailAuthFactor.map { $0 ? "Required" : "Not required" } ?? "Not available")
                 HStack {
@@ -969,10 +980,10 @@ struct AccountSettingsView: View {
                     emailVerificationActions
                 }
                 
-                Button("Manage Email & Email 2FA") {
+                Button("Manage Email & Sign-In Codes") {
                     manageEmailAction()
                 }
-                .disabled(isLoading || isDeactivating || isReactivating)
+                .disabled(isManagingEmail || isDeactivating || isReactivating)
             } else {
                 HStack {
                     VStack(alignment: .leading, spacing: 4) {
@@ -987,10 +998,10 @@ struct AccountSettingsView: View {
                     Spacer()
                 }
                 
-                Button("Manage Email & Email 2FA") {
+                Button("Manage Email & Sign-In Codes") {
                     manageEmailAction()
                 }
-                .disabled(isLoading || isDeactivating || isReactivating)
+                .disabled(isManagingEmail || isDeactivating || isReactivating)
             }
         }
     }
@@ -1024,9 +1035,9 @@ struct AccountSettingsView: View {
             Button {
                 sendVerificationEmail()
             } label: {
-                if isLoading {
+                if isSendingVerification {
                     HStack {
-                        Text("Sending verification email...")
+                        Text("Sending Verification Email…")
                         Spacer()
                         ProgressView()
                             .scaleEffect(0.8)
@@ -1035,9 +1046,9 @@ struct AccountSettingsView: View {
                     Text("Send Verification Email")
                 }
             }
-            .disabled(isLoading || isDeactivating || isReactivating)
+            .disabled(isSendingVerification || isDeactivating || isReactivating)
             
-            Text("A verification email will be sent to \(email). Click the link in the email to verify your address.")
+            Text("We’ll send a verification email to \(email). Tap the link in the email to verify your address.")
                 .appFont(AppTextRole.caption)
                 .foregroundStyle(.secondary)
                 .padding(.top, 4)

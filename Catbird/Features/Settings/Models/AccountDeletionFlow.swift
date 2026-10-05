@@ -22,14 +22,16 @@ struct AccountDeletionFlow {
     let url: URL
   }
 
-  // The official client supports federated PDS sign-in. Do not guess a deletion
-  // URL from a handle or PDS origin, or put account/session details in this URL.
-  static let accountSettingsURL = URL(string: "https://bsky.app/settings/account")!
-
   let target: AccountDeletionTarget
   private(set) var phase = Phase.ready
+  /// The provider's account page, discovered by `AccountManagementPageResolver`. It never carries
+  /// account or session details.
+  private(set) var destination: URL?
+
+  var isResolvingDestination: Bool { destination == nil }
 
   var canOpen: Bool {
+    guard destination != nil else { return false }
     switch phase {
     case .ready, .opened, .failed:
       return !target.did.isEmpty
@@ -38,10 +40,17 @@ struct AccountDeletionFlow {
     }
   }
 
+  /// Records the discovered provider page. Only plain HTTPS addresses are accepted.
+  mutating func resolveDestination(_ url: URL) {
+    guard url.scheme?.lowercased() == "https", url.host?.isEmpty == false,
+          url.user == nil, url.password == nil, url.query == nil, url.fragment == nil else { return }
+    destination = url
+  }
+
   mutating func prepareToOpen(currentDID: String) -> OpeningAttempt? {
     accountDidChange(to: currentDID)
-    guard canOpen else { return nil }
-    let attempt = OpeningAttempt(id: UUID(), url: Self.accountSettingsURL)
+    guard canOpen, let destination else { return nil }
+    let attempt = OpeningAttempt(id: UUID(), url: destination)
     phase = .opening(attempt.id)
     return attempt
   }

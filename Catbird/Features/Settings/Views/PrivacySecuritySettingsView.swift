@@ -135,9 +135,9 @@ struct PrivacySecuritySettingsView: View {
                 if isLoadingLoggedOutVisibility { ProgressView("Loading visibility…") }
                 if !hasLoadedVisibility && !isLoadingLoggedOutVisibility {
                     Text("Couldn’t load visibility. Your current setting is unchanged.").foregroundStyle(.secondary)
-                    Button("Retry Visibility") { visibilityTask = Task { await loadLoggedOutVisibility() } }
+                    Button("Try Again") { visibilityTask = Task { await loadLoggedOutVisibility() } }
                 }
-            } footer: { Text("When enabled, people who aren’t signed in can view your public profile and posts.") }
+            } footer: { Text("Turning this off asks Bluesky and other apps not to show your profile and posts to people who aren’t signed in. Other apps may not honor this request, and it doesn’t make your account private.") }
             .settingsControl(.init(rawValue: "privacy.loggedOutVisibility"))
             Section {
                 if hasLoadedAlgorithmicVisibility {
@@ -156,7 +156,7 @@ struct PrivacySecuritySettingsView: View {
                 if isLoadingAlgorithmicVisibility { ProgressView("Loading recommendation request…") }
                 if !hasLoadedAlgorithmicVisibility && !isLoadingAlgorithmicVisibility {
                     Text("Couldn’t load the recommendation request. Your current setting is unchanged.").foregroundStyle(.secondary)
-                    Button("Retry Recommendation Request") { algorithmicVisibilityTask = Task { await loadAlgorithmicVisibility() } }
+                    Button("Try Again") { algorithmicVisibilityTask = Task { await loadAlgorithmicVisibility() } }
                 }
             } footer: { Text("Requests that Bluesky and third-party apps exclude your posts from algorithmic feeds and discovery. Apps decide whether to honor this request.") }
             .settingsControl(.init(rawValue: "privacy.algorithmicVisibility"))
@@ -170,6 +170,9 @@ struct PrivacySecuritySettingsView: View {
             } footer: { Text("Shows attribution when you discover a post through another person’s repost.") }
         }
         .navigationTitle("Visibility & Attribution")
+        #if os(iOS)
+        .toolbarTitleDisplayMode(.inline)
+        #endif
         .task(id: appState.userDID) {
             hasFinishedInitialLoad = false
             mountedAccountDID = appState.userDID
@@ -178,9 +181,9 @@ struct PrivacySecuritySettingsView: View {
             await loadData()
             if !Task.isCancelled { hasFinishedInitialLoad = true }
         }
-        .alert("Visibility", isPresented: $showLoggedOutVisibilityError) { Button("OK", role: .cancel) { } }
+        .alert("Couldn’t Update Visibility", isPresented: $showLoggedOutVisibilityError) { Button("OK", role: .cancel) { } }
             message: { Text(loggedOutVisibilityErrorMessage) }
-        .alert("Recommendation Request", isPresented: $showAlgorithmicVisibilityError) { Button("OK", role: .cancel) { } }
+        .alert("Couldn’t Update Recommendations", isPresented: $showAlgorithmicVisibilityError) { Button("OK", role: .cancel) { } }
             message: { Text(algorithmicVisibilityErrorMessage) }
         .onDisappear { visibilityTask?.cancel(); algorithmicVisibilityTask?.cancel() }
     }
@@ -428,7 +431,7 @@ struct PrivacySecuritySettingsView: View {
         let expectedDID = appState.userDID
         let expectedRevision = AppStateManager.shared.settingsAccountContextRevision
         guard SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision), let client = appState.atProtoClient else {
-            revertLoggedOutVisibility(to: previousValue, message: "You must be signed in to change this setting.")
+            revertLoggedOutVisibility(to: previousValue, message: "Sign in to change this setting.")
             return
         }
 
@@ -463,7 +466,7 @@ struct PrivacySecuritySettingsView: View {
             logger.error("Error updating logged-out visibility: \(error.localizedDescription)")
             revertLoggedOutVisibility(
                 to: previousValue,
-                message: "Couldn't update this setting: \(error.localizedDescription)"
+                message: UserFacingError.message(for: error, action: "update this setting") ?? "Couldn’t update this setting. Try again."
             )
         }
     }
@@ -508,9 +511,8 @@ struct PrivacySecuritySettingsView: View {
             // Cancelled
         } catch {
             guard !Task.isCancelled, SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision) else { return }
+            // The section shows an inline retry; an alert on open would be redundant.
             logger.error("Failed to load content visibility declaration: \(error.localizedDescription)")
-            algorithmicVisibilityErrorMessage = "Couldn't load algorithmic recommendations setting: \(error.localizedDescription)"
-            showAlgorithmicVisibilityError = true
         }
     }
 
@@ -518,7 +520,7 @@ struct PrivacySecuritySettingsView: View {
         let expectedDID = appState.userDID
         let expectedRevision = AppStateManager.shared.settingsAccountContextRevision
         guard SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision), let client = appState.atProtoClient else {
-            revertAlgorithmicVisibility(to: previousValue, message: "You must be signed in to change this setting.")
+            revertAlgorithmicVisibility(to: previousValue, message: "Sign in to change this setting.")
             return
         }
 
@@ -544,7 +546,7 @@ struct PrivacySecuritySettingsView: View {
         } catch {
             guard !Task.isCancelled, SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision) else { return }
             logger.error("Error updating algorithmic recommendations setting: \(error.localizedDescription)")
-            revertAlgorithmicVisibility(to: previousValue, message: "Couldn't update this setting: \(error.localizedDescription)")
+            revertAlgorithmicVisibility(to: previousValue, message: UserFacingError.message(for: error, action: "update this setting") ?? "Couldn’t update this setting. Try again.")
         }
     }
 

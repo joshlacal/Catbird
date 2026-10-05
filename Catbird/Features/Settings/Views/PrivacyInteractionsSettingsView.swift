@@ -17,7 +17,7 @@ struct PrivacyInteractionsSettingsView: View {
             Section("Visibility") {
                 SettingsLink(screen: .visibility, summary: "Signed-out visitors, recommendation requests, repost credit", systemImage: "eye", family: .privacy)
             }
-            Section("Connected content") {
+            Section("Connected Content") {
                 SettingsLink(screen: .externalMedia, summary: "The same provider permissions used in Media & Links", systemImage: "play.rectangle", family: .media)
             }
             Section("People") {
@@ -26,5 +26,8 @@ struct PrivacyInteractionsSettingsView: View {
             }
         }
         .navigationTitle("Privacy & Interactions")
+        #if os(iOS)
+        .toolbarTitleDisplayMode(.inline)
+        #endif
     }
 }

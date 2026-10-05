@@ -157,31 +157,14 @@ struct ContentVisibilitySelector: View {
                 .appFont(AppTextRole.caption)
                 .foregroundStyle(.secondary)
             
-            Picker("Content Visibility", selection: $selection) {
+            Picker(title, selection: $selection) {
                 ForEach(ContentVisibility.allCases, id: \.id) { option in
-                    Image(systemName: option.iconName)
-                        .foregroundStyle(option.color)
-                        .appFont(size: 20)
+                    Text(option.displayName)
                         .tag(option)
-                        .help(option.displayName) // Accessibility label
                 }
             }
             .pickerStyle(.segmented)
-            .padding(.top, 4)
-            
-            // Icon legend
-            HStack(spacing: 20) {
-                ForEach(ContentVisibility.allCases, id: \.id) { option in
-                    HStack(spacing: 4) {
-                        Image(systemName: option.iconName)
-                            .foregroundStyle(option.color)
-                            .appFont(AppTextRole.caption)
-                        Text(option.displayName)
-                            .appFont(AppTextRole.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
+            .labelsHidden()
             .padding(.top, 4)
         }
         .padding(.vertical, 8)

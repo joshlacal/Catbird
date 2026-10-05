@@ -80,7 +80,7 @@ final class ModeratedAccountsModel {
       hasLoaded = true
     } catch {
       guard generation == requestGeneration, transport.isCurrent() else { return }
-      errorMessage = error.localizedDescription
+      errorMessage = UserFacingError.message(for: error, action: "load these accounts") ?? "Couldn’t load these accounts. Try again."
     }
   }
 
@@ -95,14 +95,14 @@ final class ModeratedAccountsModel {
     do {
       guard try await transport.remove(entry.did) else {
         throw NSError(domain: "ModeratedAccounts", code: 2,
-                      userInfo: [NSLocalizedDescriptionKey: "The account could not be removed. Try again."])
+                      userInfo: [NSLocalizedDescriptionKey: "The account couldn’t be removed. Try again."])
       }
       guard generation == requestGeneration, transport.isCurrent() else { return }
       entries.removeAll { $0.did == entry.did }
       retryRemoval = nil
     } catch {
       guard generation == requestGeneration, transport.isCurrent() else { return }
-      errorMessage = error.localizedDescription
+      errorMessage = UserFacingError.message(for: error, action: "update this account") ?? "Couldn’t update this account. Try again."
     }
   }
   func retry() async {
@@ -133,7 +133,7 @@ struct ModeratedAccountsSettingsView: View {
             ProfileAvatarView(url: entry.avatar, fallbackText: String(entry.handle.prefix(1).uppercased()), size: 40)
             VStack(alignment: .leading) {
               Text(entry.displayName ?? entry.handle)
-              Text("@\(entry.handle)").font(.subheadline).foregroundStyle(.secondary)
+              Text("@\(entry.handle)").appFont(AppTextRole.subheadline).foregroundStyle(.secondary)
             }
             Spacer()
             if model.removing.contains(entry.did) { ProgressView().controlSize(.small) }
@@ -158,19 +158,22 @@ struct ModeratedAccountsSettingsView: View {
       if let error = model.errorMessage {
         Section {
           Text(error).foregroundStyle(.secondary)
-          Button("Retry") { Task { await model.retry() } }
+          Button("Try Again") { Task { await model.retry() } }
             .disabled(model.isLoading || !model.removing.isEmpty)
             .accessibilityIdentifier("\(kind.control).retry")
         }
       }
     }
     .navigationTitle(kind.title)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
     .task(id: appState.userDID) {
       configureTransport()
       await model.loadNextPage()
     }
     .refreshable { await model.loadNextPage(refresh: true) }
-    .confirmationDialog("\(kind.action) account?", isPresented: $showConfirmation, titleVisibility: .visible) {
+    .confirmationDialog("\(kind.action) Account?", isPresented: $showConfirmation, titleVisibility: .visible) {
       Button(kind.action, role: .destructive) {
         if let entry = selectedEntry { Task { await model.remove(entry) } }
       }

@@ -62,13 +62,13 @@ struct ActivityPrivacySettingsView: View {
         if editor.state == .unavailable {
           Section { Text("This account is no longer active. Open Settings for the current account.") }
         } else if editor.state == .loading {
-          Section { ProgressView("Loading post notification subscriptions…") }
+          Section { ProgressView("Loading your subscription setting…") }
         } else if editor.state == .loadFailed {
           Section {
-            Text("Post notification subscriptions could not be loaded.")
+            Text("Your subscription setting couldn’t be loaded.")
             Text(editor.errorMessage ?? "Try again.")
               .font(.footnote).foregroundStyle(.secondary)
-            Button("Retry") { Task { await editor.load() } }
+            Button("Try Again") { Task { await editor.load() } }
               .settingsControl(.init(rawValue: "privacy.activityRetryLoad"))
           }
           .settingsControl(.init(rawValue: "privacy.activitySubscriptions"))
@@ -76,7 +76,7 @@ struct ActivityPrivacySettingsView: View {
           Section {
             if let value = editor.displayedValue,
                ActivityPrivacyOption(rawValue: value.allowSubscriptions) == nil {
-              Text("Your current subscription rule is not supported by this version. It will stay unchanged unless you select a rule below.")
+              Text("Your current rule isn’t supported by this version of Catbird. It stays unchanged unless you choose a rule below.")
                 .font(.footnote).foregroundStyle(.secondary)
             }
             ForEach(ActivityPrivacyOption.allCases) { option in
@@ -108,20 +108,23 @@ struct ActivityPrivacySettingsView: View {
             Section { ProgressView("Saving subscription rule…") }
           } else if editor.state == .saveFailed {
             Section {
-              Text("This change could not be confirmed. The last loaded rule is shown.")
-              Text(editor.errorMessage ?? "Retry the change or reload the saved rule.")
+              Text("This change couldn’t be confirmed. Your last saved rule is shown.")
+              Text(editor.errorMessage ?? "Try the change again or reload the saved rule.")
                 .font(.footnote).foregroundStyle(.secondary)
-              Button("Retry This Change") { editor.retrySave() }
+              Button("Try This Change Again") { editor.retrySave() }
                 .settingsControl(.init(rawValue: "privacy.activityRetrySave"))
               Button("Reload Saved Rule") { Task { await editor.load() } }
             }
           }
         }
       } else {
-        Section { ProgressView("Loading post notification subscriptions…") }
+        Section { ProgressView("Loading your subscription setting…") }
       }
     }
-    .navigationTitle("Post Notification Subscriptions")
+    .navigationTitle("Who Can Subscribe to My Posts")
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
     .task(id: appState.userDID) { await loadEditor() }
     .onDisappear { editor?.invalidate() }
   }

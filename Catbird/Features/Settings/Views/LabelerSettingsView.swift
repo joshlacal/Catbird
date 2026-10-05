@@ -24,9 +24,9 @@ struct LabelerSettingsView: View {
           } label: {
             VStack(alignment: .leading, spacing: 4) {
               Text(labeler.creator.displayName ?? labeler.creator.handle.description)
-              Text("@\(labeler.creator.handle)").font(.caption).foregroundStyle(.secondary)
+              Text("@\(labeler.creator.handle)").appFont(AppTextRole.caption).foregroundStyle(.secondary)
               if labeler.creator.did.didString() == Self.defaultDID {
-                Text("Always active").font(.caption).foregroundStyle(.secondary)
+                Text("Always active").appFont(AppTextRole.caption).foregroundStyle(.secondary)
               }
             }
           }
@@ -39,11 +39,11 @@ struct LabelerSettingsView: View {
       .settingsControl(.init(rawValue: "moderation.labelers"))
       if !unavailable.isEmpty {
         Section("Unavailable Services") {
-          Text("Details could not be returned for these subscriptions. They remain subscribed until you remove them.")
-            .font(.caption).foregroundStyle(.secondary)
+          Text("These services couldn’t be reached. They stay in your subscriptions until you remove them.")
+            .appFont(AppTextRole.caption).foregroundStyle(.secondary)
           ForEach(unavailable, id: \.self) { did in
             HStack {
-              Text(did.didString()).font(.caption)
+              Text("Unavailable Service")
               Spacer()
               Button("Remove", role: .destructive) { removeUnavailable(did) }.disabled(!hasConfirmedPreferences || isSaving)
             }
@@ -53,12 +53,15 @@ struct LabelerSettingsView: View {
       if let errorMessage {
         Section {
           Text(errorMessage).foregroundStyle(.secondary)
-          Button("Retry") { Task { await load() } }.disabled(isLoading || isSaving)
+          Button("Try Again") { Task { await load() } }.disabled(isLoading || isSaving)
             .accessibilityIdentifier("moderation.labelers.retry")
         }
       }
     }
     .navigationTitle("Moderation Services")
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
     .task(id: appState.userDID) { await load() }
     .refreshable { await load() }
   }
@@ -93,7 +96,7 @@ struct LabelerSettingsView: View {
       hasConfirmedPreferences = true
     } catch {
       guard request == token, manager.accountDID == account else { return }
-      errorMessage = "Could not load moderation services: \(error.localizedDescription)"
+      errorMessage = UserFacingError.message(for: error, action: "load moderation services")
     }
   }
 
@@ -111,7 +114,7 @@ struct LabelerSettingsView: View {
       } catch {
         guard request == editRequest, manager.accountDID == account, appState.userDID == account else { return }
         hasConfirmedPreferences = false
-        errorMessage = "Could not remove service: \(error.localizedDescription)"
+        errorMessage = UserFacingError.message(for: error, action: "remove this service")
       }
     }
   }
@@ -155,13 +158,16 @@ struct ModerationServiceSettingsView: View {
           Section {
             ContentVisibilitySelector(title: title(for: label), description: description(for: label),
               selection: Binding(get: { visibility(for: label) }, set: { save(label: label, visibility: $0) }))
-              .disabled(isSaving || (!adultContentEnabled && ["nsfw", "suggestive", "nudity"].contains(ProfileLabelPreferenceAdapter.consumedKey(for: label))))
+              .disabled(isSaving || (!adultContentEnabled && isAdultOnly(label)))
               .accessibilityIdentifier("moderation.service.\(label)")
+            if !adultContentEnabled && isAdultOnly(label) {
+              Text("Requires adult content to be turned on.").appFont(AppTextRole.caption).foregroundStyle(.secondary)
+            }
             if hasOverride(for: label) {
               Button("Use Inherited Setting") { inherit(label: label) }.disabled(isSaving)
                 .accessibilityIdentifier("moderation.service.\(label).inherit")
             }
-            Text(inheritanceDescription(for: label)).font(.caption).foregroundStyle(.secondary)
+            Text(inheritanceDescription(for: label)).appFont(AppTextRole.caption).foregroundStyle(.secondary)
           }
         }
       }
@@ -175,11 +181,19 @@ struct ModerationServiceSettingsView: View {
       }
     }
     .navigationTitle(labeler.creator.displayName ?? labeler.creator.handle.description)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
     .task(id: appState.userDID) { await load() }
   }
 
   private func definition(for label: String) -> ComAtprotoLabelDefs.LabelValueDefinition? {
     labeler.policies.labelValueDefinitions?.first { $0.identifier == label }
+  }
+  /// Builtin adult labels and any custom label the service marks adult-only stay locked while adult content is off.
+  private func isAdultOnly(_ label: String) -> Bool {
+    ["nsfw", "suggestive", "nudity"].contains(ProfileLabelPreferenceAdapter.consumedKey(for: label))
+      || definition(for: label)?.adultOnly == true
   }
   private func title(for label: String) -> String {
     switch label {
@@ -212,7 +226,7 @@ struct ModerationServiceSettingsView: View {
     let hasGlobal = preferences.contains { $0.label == key && $0.labelerDid == nil }
     if ProfileLabelPreferenceAdapter.selection(raw: label, labelerDID: serviceDID,
       preferences: preferences, inheritedDefault: inheritedVisibility(for: label)).usesLegacyRawKey {
-      return "Saved choice for an older label name. Choose a setting to apply it to this content."
+      return "Saved under an older label name. Choose a setting to apply it to this content."
     }
     if !isBuiltin, !hasGlobal,
        definition(for: label)?.defaultSetting == nil {
@@ -234,7 +248,7 @@ struct ModerationServiceSettingsView: View {
       hasConfirmedPreferences = true
     } catch {
       guard request == token, manager.accountDID == account else { return }
-      errorMessage = "Could not load settings: \(error.localizedDescription)"
+      errorMessage = UserFacingError.message(for: error, action: "load this service’s settings")
     }
   }
   private func save(label: String, visibility: ContentVisibility) {
@@ -275,7 +289,7 @@ struct ModerationServiceSettingsView: View {
       } catch {
         guard request == editRequest, manager.accountDID == account, appState.userDID == account else { return }
         hasConfirmedPreferences = false
-        errorMessage = "Could not save settings: \(error.localizedDescription)"
+        errorMessage = UserFacingError.message(for: error, action: "save this setting")
       }
     }
   }

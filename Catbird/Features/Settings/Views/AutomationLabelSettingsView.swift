@@ -61,8 +61,8 @@ struct AutomationLabelSettingsView: View {
             } header: {
                 Text("Preview")
             } footer: {
-                Text("When enabled, a Bot badge is displayed on your profile and posts to let others know this account is automated.")
-                    .font(.footnote)
+                Text("When this is on, a Bot badge appears on your profile and posts to let people know this account is automated.")
+                    .appFont(AppTextRole.footnote)
                     .foregroundStyle(.secondary)
             }
             
@@ -80,12 +80,12 @@ struct AutomationLabelSettingsView: View {
                 }
                 if let profileLoadError {
                     Text(profileLoadError).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                    Button("Retry") { Task { await loadProfileData() } }
+                    Button("Try Again") { Task { await loadProfileData() } }
                         .disabled(isLoading || isUpdating)
                 }
             } footer: {
-                Text("Self-labeling as a bot helps people and algorithms understand automated activity from your account.")
-                    .font(.footnote)
+                Text("Labeling your account as a bot helps people and feeds understand automated activity from your account.")
+                    .appFont(AppTextRole.footnote)
                     .foregroundStyle(.secondary)
             }
         }
@@ -101,10 +101,10 @@ struct AutomationLabelSettingsView: View {
             await loadProfileData()
         }
         .onChange(of: appState.userDID) { _, _ in updateTask?.cancel() }
-        .alert("Error", isPresented: $showErrorAlert) {
+        .alert("Couldn’t Update Label", isPresented: $showErrorAlert) {
             Button("OK") { }
         } message: {
-            Text(errorMessage ?? "An unknown error occurred.")
+            Text(errorMessage ?? "Something went wrong. Try again.")
         }
         .onDisappear {
             loadTask?.cancel()
@@ -136,13 +136,13 @@ struct AutomationLabelSettingsView: View {
             
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
-                    Text(profileDetailed?.displayName ?? profileDetailed?.handle.description ?? "User")
-                        .font(.headline)
+                    Text(profileDetailed?.displayName ?? profileDetailed?.handle.description ?? "Your Name")
+                        .appFont(AppTextRole.headline)
                         .lineLimit(1)
                     
                     if isBot {
                         Text("BOT")
-                            .font(.system(size: 10, weight: .bold))
+                            .font(.caption2.weight(.bold))
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
                             .background(Color.secondary.opacity(0.2))
@@ -151,12 +151,15 @@ struct AutomationLabelSettingsView: View {
                     }
                 }
                 
-                Text("@\(profileDetailed?.handle.description ?? "")")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                if let handle = profileDetailed?.handle.description {
+                    Text("@\(handle)")
+                        .appFont(AppTextRole.subheadline)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
         .padding(.vertical, 4)
+        .redacted(reason: profileDetailed == nil ? .placeholder : [])
     }
     
     @MainActor
@@ -169,7 +172,7 @@ struct AutomationLabelSettingsView: View {
         guard mountedAccountDID == appState.userDID,
               mountedAccountDID.map { SettingsAccountBoundary.isCurrent($0, revision: mountedAccountRevision) } == true,
               let client = appState.atProtoClient else {
-            profileLoadError = "Couldn’t load your automation label. Retry to confirm the current value."
+            profileLoadError = "Couldn’t load your automation label. Try again to confirm the current value."
             return
         }
         let userDID = appState.userDID
@@ -222,7 +225,7 @@ struct AutomationLabelSettingsView: View {
         } catch {
             guard !Task.isCancelled, SettingsAccountBoundary.isCurrent(userDID, revision: operationRevision) else { return }
             logger.error("Failed to load profile record for bot label: \(error)")
-            profileLoadError = "Couldn’t load your automation label. Retry to confirm the current value."
+            profileLoadError = "Couldn’t load your automation label. Try again to confirm the current value."
         }
     }
     
@@ -230,7 +233,7 @@ struct AutomationLabelSettingsView: View {
     private func confirmProfileAbsent(for accountDID: String, revision: UInt64, isProfileRecordRead: Bool) {
         guard !Task.isCancelled, SettingsAccountBoundary.isCurrent(accountDID, revision: revision) else { return }
         guard isProfileRecordRead else {
-            profileLoadError = "Couldn’t load your automation label. Retry to confirm the current value."
+            profileLoadError = "Couldn’t load your automation label. Try again to confirm the current value."
             return
         }
         profileRecord = nil
@@ -280,14 +283,14 @@ struct AutomationLabelSettingsView: View {
                 guard SettingsAccountBoundary.isCurrent(accountDID, revision: operationRevision) else { return }
                 hasConfirmedProfileLoad = false
                 isBot = previousValue
-                profileLoadError = "The automation label update wasn’t confirmed. Retry to load the saved value before editing again."
+                profileLoadError = "The automation label update wasn’t confirmed. Try again to load the saved value before changing it."
             } catch {
                 guard SettingsAccountBoundary.isCurrent(accountDID, revision: operationRevision) else { return }
                 hasConfirmedProfileLoad = false
-                profileLoadError = "The automation label update wasn’t confirmed. Retry to load the saved value before editing again."
+                profileLoadError = "The automation label update wasn’t confirmed. Try again to load the saved value before changing it."
                 guard !Task.isCancelled else { return }
                 logger.error("Failed to update bot label: \(error)")
-                revert(to: previousValue, message: error.localizedDescription)
+                revert(to: previousValue, message: UserFacingError.message(for: error, action: "update your automation label") ?? "Couldn’t update your automation label. Try again.")
             }
         }
     }

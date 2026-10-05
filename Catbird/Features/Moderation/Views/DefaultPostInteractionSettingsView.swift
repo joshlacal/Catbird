@@ -17,14 +17,14 @@ struct DefaultPostInteractionSettingsView: View {
     var title: String {
       switch self {
       case .everybody: "Everyone"
-      case .nobody: "No one"
-      case .custom: "Selected groups and lists"
+      case .nobody: "No One"
+      case .custom: "Selected Groups and Lists"
       }
     }
     var explanation: String {
       switch self {
       case .everybody: "Anyone can reply to new posts."
-      case .nobody: "New posts do not allow replies."
+      case .nobody: "New posts don’t allow replies."
       case .custom: "People in any selected group or list can reply."
       }
     }
@@ -69,9 +69,9 @@ struct DefaultPostInteractionSettingsView: View {
           Section { ProgressView("Loading default replies and quotes…") }
         } else if editor.state == .loadFailed {
           Section {
-            Text("Default replies and quotes could not be loaded.")
+            Text("Default replies and quotes couldn’t be loaded.")
             Text(editor.errorMessage ?? "Try again.").font(.footnote).foregroundStyle(.secondary)
-            Button("Retry") { Task { await editor.load() } }
+            Button("Try Again") { Task { await editor.load() } }
               .settingsControl(.init(rawValue: "privacy.defaultRulesRetryLoad"))
           }
           .settingsControl(.init(rawValue: "privacy.defaultPostInteractions"))
@@ -101,13 +101,13 @@ struct DefaultPostInteractionSettingsView: View {
 
           if replyMode == .custom {
             Section("Allow Replies From") {
-              replyToggle("People I follow", kind: .following, editor: editor)
-              replyToggle("My followers", kind: .followers, editor: editor)
-              replyToggle("People mentioned in the post", kind: .mentioned, editor: editor)
+              replyToggle("People I Follow", kind: .following, editor: editor)
+              replyToggle("My Followers", kind: .followers, editor: editor)
+              replyToggle("People Mentioned in the Post", kind: .mentioned, editor: editor)
               if editor.displayedValue?.threadgateAllowRules?.contains(where: {
                 if case .unexpected = $0 { return true }; return false
               }) == true {
-                Text("Other saved reply rules are preserved when you change a group or list. Selecting Everyone or No one replaces all reply rules.")
+                Text("Other saved reply rules are kept when you change a group or list. Choosing Everyone or No One replaces all reply rules.")
                   .font(.footnote).foregroundStyle(.secondary)
               }
               Text("The selected groups, lists and any other saved rules are combined.")
@@ -118,7 +118,7 @@ struct DefaultPostInteractionSettingsView: View {
                 ProgressView("Loading my lists…")
               } else if let listError {
                 Text(listError).font(.footnote).foregroundStyle(.secondary)
-                Button("Retry Lists") { Task { await loadUserLists() } }
+                Button("Try Again") { Task { await loadUserLists() } }
               } else if userLists.isEmpty {
                 Text("You have no lists.").foregroundStyle(.secondary)
               } else {
@@ -140,7 +140,7 @@ struct DefaultPostInteractionSettingsView: View {
             }
           }
           Section {
-            Toggle("Allow quote posts", isOn: Binding(
+            Toggle("Allow Quote Posts", isOn: Binding(
               get: { editor.displayedValue?.postgateEmbeddingRules?.contains(where: {
                 if case .appBskyFeedPostgateDisableRule = $0 { return true }
                 return false
@@ -152,7 +152,7 @@ struct DefaultPostInteractionSettingsView: View {
             if editor.displayedValue?.postgateEmbeddingRules?.contains(where: {
               if case .unexpected = $0 { return true }; return false
             }) == true {
-              Text("Other saved quote rules are preserved.").font(.footnote).foregroundStyle(.secondary)
+              Text("Other saved quote rules are kept.").font(.footnote).foregroundStyle(.secondary)
             }
           } header: {
             Text("Quote Posts")
@@ -163,9 +163,9 @@ struct DefaultPostInteractionSettingsView: View {
             Section { ProgressView("Saving defaults…") }
           } else if editor.state == .saveFailed {
             Section {
-              Text("This change could not be confirmed.")
+              Text("This change couldn’t be confirmed.")
               Text(editor.errorMessage ?? "Try again.").font(.footnote).foregroundStyle(.secondary)
-              Button("Retry This Change") { editor.retrySave() }
+              Button("Try This Change Again") { editor.retrySave() }
                 .settingsControl(.init(rawValue: "privacy.defaultRulesRetrySave"))
               Button("Reload Saved Defaults") { Task { await editor.load() } }
             }
@@ -176,6 +176,9 @@ struct DefaultPostInteractionSettingsView: View {
       }
     }
     .navigationTitle("Default Replies & Quotes")
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
     .task(id: appState.userDID) { await loadEditor() }
     .onDisappear { editor?.invalidate(); listLoadRevision &+= 1; isLoadingLists = false }
   }
@@ -318,13 +321,13 @@ struct DefaultPostInteractionSettingsView: View {
               state.atProtoClient === client else { return }
         guard code == 200, let output else {
           throw NSError(domain: "DefaultRepliesLists", code: code,
-            userInfo: [NSLocalizedDescriptionKey: "Your lists could not be loaded. Try again."])
+            userInfo: [NSLocalizedDescriptionKey: "Your lists couldn’t be loaded. Try again."])
         }
         loaded.append(contentsOf: output.lists)
         cursor = output.cursor
         if let cursor, !seen.insert(cursor).inserted {
           throw NSError(domain: "DefaultRepliesLists", code: -1,
-            userInfo: [NSLocalizedDescriptionKey: "Your complete list collection could not be confirmed. Try again."])
+            userInfo: [NSLocalizedDescriptionKey: "Your lists couldn’t be loaded completely. Try again."])
         }
       } while cursor != nil
       var unique: Set<String> = []
@@ -333,7 +336,9 @@ struct DefaultPostInteractionSettingsView: View {
       guard !Task.isCancelled, AppStateManager.shared.lifecycle.userDID == account,
             AppStateManager.shared.settingsAccountContextRevision == contextRevision,
             listLoadRevision == loadRevision, !state.isTransitioningAccounts else { return }
-      listError = error.localizedDescription
+      listError = (error as NSError).domain == "DefaultRepliesLists"
+        ? error.localizedDescription
+        : (UserFacingError.message(for: error, action: "load your lists") ?? "Your lists couldn’t be loaded. Try again.")
     }
   }
 }
