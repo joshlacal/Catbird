@@ -24,6 +24,12 @@ struct ScenePostComposerRequest: Identifiable {
   }
 }
 
+/// A request to open the Settings sheet at a specific screen (for example from a bsky.app/settings link).
+struct SceneSettingsRequest: Identifiable {
+  let id = UUID()
+  let route: SettingsRoute
+}
+
 /// Navigation and presentation state for one authenticated account in one scene.
 @MainActor
 @Observable
@@ -40,6 +46,7 @@ final class SceneNavigationContext {
   var pendingSearchRequest: AppState.SearchRequest?
   var tabTappedAgain: Int?
   var postComposerRequest: ScenePostComposerRequest?
+  var settingsRequest: SceneSettingsRequest?
   private(set) var isInvalidated = false
 
   @ObservationIgnored private weak var appState: AppState?
@@ -61,6 +68,15 @@ final class SceneNavigationContext {
     self.navigationManager = AppNavigationManager()
     self.urlHandler = URLHandler()
     self.urlHandler.configure(with: appState, navigationManager: self.navigationManager)
+    // Settings destinations open the Settings sheet rather than being pushed into a tab's stack.
+    self.navigationManager.settingsPresenter = { [weak self] route in
+      self?.presentSettings(route)
+    }
+  }
+
+  func presentSettings(_ route: SettingsRoute) {
+    guard !isInvalidated, let appState, appState.userDID == accountDID else { return }
+    settingsRequest = SceneSettingsRequest(route: route)
   }
 
   func presentPostComposer(
@@ -88,6 +104,8 @@ final class SceneNavigationContext {
     ChatDraftHandoff.shared.invalidate(sceneID: sceneID, accountDID: accountDID)
     urlHandler.invalidate()
     navigationManager.tabSelection = nil
+    navigationManager.settingsPresenter = nil
+    settingsRequest = nil
     pendingSearchRequest = nil
     tabTappedAgain = nil
     postComposerRequest = nil

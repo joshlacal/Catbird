@@ -18,9 +18,17 @@ struct SettingsView: View {
     @State private var pendingAccountDID: String?
     @State private var resolvingDeparture = false
     @State private var departureError: String?
+    /// The account whose settings were last loaded; a change of account resets navigation.
+    @State private var loadedDID: String?
     private enum Departure { case close, accounts }
     /// True when pushed onto an existing navigation stack (a settings link opened in a tab) rather than presented as its own sheet.
-    var isEmbedded = false
+    let isEmbedded: Bool
+
+    /// Opens Settings at `initialTarget` (used by bsky.app/settings links); `nil` opens the home list.
+    init(initialTarget: SettingsTarget? = nil, isEmbedded: Bool = false) {
+        self.isEmbedded = isEmbedded
+        _path = State(initialValue: initialTarget.map { $0.screen == .home ? [] : [$0] } ?? [])
+    }
 
     var body: some View {
         if isEmbedded {
@@ -95,7 +103,9 @@ struct SettingsView: View {
             Button("OK", role: .cancel) { departureError = nil }
         } message: { Text(departureError ?? "") }
         .task(id: appState.userDID) {
-            path = []
+            // Keep a deep-linked starting screen on first load; reset only when the account changes.
+            if loadedDID != nil, loadedDID != appState.userDID { path = [] }
+            loadedDID = appState.userDID
             profile = nil
             profileError = nil
             await loadProfile(for: appState.userDID)

@@ -224,7 +224,10 @@ final class StarterPackOnboardingManager: @unchecked Sendable {
         
         if getRecordCode == 200, let existingRecord = getRecordOutput,
            let profile = existingRecord.value.decoded(AppBskyActorProfile.self) {
-            if profile.joinedViaStarterPack == nil {
+            // Attribution is public, so only stamp profiles created in this sign-up, never
+            // an existing account that signed in from a starter pack link.
+            let isNewProfile = profile.createdAt.map { Date().timeIntervalSince($0.date) < 24 * 60 * 60 } ?? false
+            if profile.joinedViaStarterPack == nil, isNewProfile {
                 let updated = AppBskyActorProfile(
                     displayName: profile.displayName,
                     description: profile.description,

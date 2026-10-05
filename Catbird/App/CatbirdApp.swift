@@ -467,6 +467,7 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
   private static let lastLaunchTimeKey = "CatbirdLastLaunchTime"
   private static let crashLoopThreshold = 3
   private static let crashLoopWindowSeconds: TimeInterval = 60  // 3 crashes in 60 seconds
+  private static let safeModeReason = "Catbird had trouble opening its local data, so changes you make now won’t be saved after you close the app."
 
   // MARK: - ModelContainer Async Initialization
 
@@ -488,7 +489,7 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
       logger.error("🔄 CRASH LOOP DETECTED - forcing safe mode recovery")
       // Jump straight to in-memory fallback
       if let container = try? makeInMemoryContainer() {
-        appStateManager.modelContainerState = .degraded(container, reason: "Crash loop detected - running in safe mode")
+        appStateManager.modelContainerState = .degraded(container, reason: Self.safeModeReason)
         // Reset crash counter after successful safe mode entry
         resetCrashLoopCounter()
         return
@@ -556,7 +557,7 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
     do {
       logger.error("⚠️ Attempt D: Falling back to in-memory storage...")
       let container = try makeInMemoryContainer()
-      appStateManager.modelContainerState = .degraded(container, reason: "Database recovery failed - running in safe mode. Data will not persist.")
+      appStateManager.modelContainerState = .degraded(container, reason: Self.safeModeReason)
       resetCrashLoopCounter()  // Prevent crash loop on next launch
       logger.error("⚠️ Running in DEGRADED MODE - data will not persist across restarts")
       return
@@ -845,7 +846,8 @@ NavigationFontConfig.applyEarlyNavigationBarAppearance()
     return false
   }
 
-  /// Resets the crash loop counter (called after successful recovery)
+  /// Resets the crash loop counter (called after successful recovery, and whenever the app
+  /// reaches the background cleanly, so quick manual relaunches never count as crashes)
   private func resetCrashLoopCounter() {
     UserDefaults.standard.removeObject(forKey: Self.launchAttemptCountKey)
     UserDefaults.standard.removeObject(forKey: Self.lastLaunchTimeKey)
@@ -1123,6 +1125,8 @@ private extension CatbirdApp {
     }
     context.navigationManager.updateCurrentTab(2)
     context.navigationManager.tabSelection?(2)
+  } else if (scheme == "blue.catbird" || scheme == "catbird") && Self.widgetRouteHosts.contains(host) {
+    handleWidgetURL(url, components: components, host: host, in: scene)
   } else if (url.scheme == "blue.catbird" || url.scheme == "catbird") && (url.host == "e2e" || url.host == "test") {
     // Handle E2E testing commands (DEBUG builds, E2E mode only)
     #if DEBUG
@@ -1161,6 +1165,87 @@ private extension CatbirdApp {
   }
   }
 
+  /// Hosts emitted by the Compose and Feed widgets (and post links from widget timelines).
+  static let widgetRouteHosts: Set<String> = ["compose", "feed", "profile", "post"]
+
+  /// Routes widget taps such as `blue.catbird://compose?account=<did>`, `blue.catbird://feed/timeline`,
+  /// `blue.catbird://feed?url=<feed>`, `blue.catbird://profile/<handle>` and `blue.catbird://post?uri=<at-uri>`.
+  /// Requests go through the scene route coordinator so they wait for an account switch to finish.
+  func handleWidgetURL(_ url: URL, components: URLComponents, host: String, in scene: SceneWindowState) {
+    guard let appState = self.appState else {
+      scene.retainLaunchURL(url)
+      return
+    }
+    let queryItems = components.queryItems ?? []
+    let requestedDID = queryItems.first(where: { $0.name == "account" })?.value
+    let targetDID = (requestedDID?.isEmpty == false ? requestedDID : nil) ?? appState.userDID
+
+    let command: SceneRouteCommand
+    var beforeDelivery: SceneRouteCoordinator.BeforeDelivery?
+    switch host {
+    case "compose":
+      command = .showTab(0, resetPath: false)
+      beforeDelivery = { context in
+        context.presentPostComposer()
+        return true
+      }
+    case "profile":
+      let actor = components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+      guard !actor.isEmpty else {
+        command = .showTab(0, resetPath: false)
+        break
+      }
+      command = .navigate(.profile(actor), tabIndex: 0)
+    case "post":
+      guard let rawURI = queryItems.first(where: { $0.name == "uri" })?.value,
+            let uri = try? ATProtocolURI(uriString: rawURI) else {
+        command = .showTab(0, resetPath: false)
+        break
+      }
+      command = .navigate(.post(uri), tabIndex: 0)
+    default:
+      // feed: a custom feed or list arrives as `?url=`; anything else opens the Home timeline.
+      if let rawFeed = queryItems.first(where: { $0.name == "url" })?.value, !rawFeed.isEmpty {
+        if let uri = try? ATProtocolURI(uriString: rawFeed) {
+          command = .navigate(uri.collection == "app.bsky.graph.list" ? .listFeed(uri) : .feed(uri), tabIndex: 0)
+        } else if let webURL = URL(string: rawFeed), URLSchemePolicy.isWeb(webURL) {
+          command = .showTab(0, resetPath: false)
+          beforeDelivery = { context in
+            _ = context.urlHandler.handle(webURL, tabIndex: 0)
+            return true
+          }
+        } else {
+          command = .showTab(0, resetPath: true)
+        }
+      } else {
+        command = .showTab(0, resetPath: true)
+      }
+    }
+
+    SceneRouteCoordinator.shared.submit(
+      SceneRouteRequest(accountDID: targetDID, command: command, preferredSceneID: scene.sceneID),
+      beforeDelivery: beforeDelivery
+    )
+
+    // A widget configured for another signed-in account switches to it first; the request
+    // above is delivered once this window shows that account.
+    if targetDID != appState.userDID {
+      Task { @MainActor in
+        let outcome = await appStateManager.switchAccount(to: targetDID)
+        if case .failed = outcome {
+          logger.error("Widget deep link could not switch to the requested account")
+        }
+      }
+    }
+  }
+
+  private var pendingAuthAlertBinding: Binding<AuthenticationManager.AuthAlert?> {
+    Binding(
+      get: { appStateManager.authentication.pendingAuthAlert },
+      set: { _ in Task { await appStateManager.authentication.clearPendingAuthAlert() } }
+    )
+  }
+
   @ViewBuilder
   func sceneRoot(in scene: SceneWindowState) -> some View {
     @Bindable var scene = scene
@@ -1190,10 +1275,17 @@ private extension CatbirdApp {
         if shouldShowContentForAuthenticatedState,
            let context = scene.context, !context.isInvalidated,
            context.accountDID == appState.userDID {
-          SceneNavigationHost(appState: appState, appStateManager: appStateManager, context: context) {
-            ContentView()
+          if CommunityStandards.shared.requiresAgreement(for: appState.userDID) {
+            // One-time, per-account agreement before any posts are shown (App Review 1.2).
+            CommunityStandardsAgreementView(appState: appState)
+              .applyAppStateEnvironment(appState)
+              .environment(appStateManager)
+          } else {
+            SceneNavigationHost(appState: appState, appStateManager: appStateManager, context: context) {
+              ContentView()
+            }
+            .id(context.activityRegistrationID)
           }
-          .id(context.activityRegistrationID)
         } else {
           LoadingView()  // For biometric check
         }
@@ -1220,6 +1312,17 @@ private extension CatbirdApp {
           LoadingView()
         }
       }
+    }
+    // Sign-out explanations are usually raised while moving to the sign-in screen,
+    // so they're presented here, above every lifecycle state.
+    .alert(item: pendingAuthAlertBinding) { alert in
+      Alert(
+        title: Text(alert.title),
+        message: Text(alert.message),
+        dismissButton: .default(Text("OK"), action: {
+          Task { await appStateManager.authentication.clearPendingAuthAlert() }
+        })
+      )
     }
     .overlay {
       biometricOverlay()
@@ -1337,6 +1440,8 @@ private extension CatbirdApp {
 
 
       if newPhase == .background {
+        // Reaching the background cleanly means this launch didn't crash.
+        resetCrashLoopCounter()
         saveApplicationState()
 #if os(iOS)
         if !otherScenesActive {
@@ -1486,7 +1591,7 @@ private extension CatbirdApp {
         ProgressView()
           .scaleEffect(1.5)
 
-        Text("Loading...")
+        Text("Loading…")
           .font(.headline)
           .foregroundColor(.secondary)
       }
@@ -1510,13 +1615,13 @@ private extension CatbirdApp {
           .foregroundStyle(.red, .red.opacity(0.2))
 
         // Title
-        Text("Database Error")
+        Text("Catbird Couldn’t Open")
           .font(.title)
           .fontWeight(.bold)
 
         // Error details (expandable)
         VStack(alignment: .leading, spacing: 8) {
-          Text("Unable to open app database")
+          Text("Catbird couldn’t open the data it keeps on this device.")
             .font(.body)
             .foregroundColor(.secondary)
 
@@ -1556,7 +1661,7 @@ private extension CatbirdApp {
         } label: {
           HStack {
             Image(systemName: "trash")
-            Text("Reset Local Database")
+            Text("Reset Local Data")
             Text("(Recommended)")
               .font(.caption)
               .foregroundColor(.orange)
@@ -1583,7 +1688,7 @@ private extension CatbirdApp {
       .frame(maxWidth: .infinity, maxHeight: .infinity)
       .background(Color.systemBackground)
       .confirmationDialog(
-        "Reset Local Database?",
+        "Reset Local Data?",
         isPresented: $showResetConfirmation,
         titleVisibility: .visible
       ) {
@@ -1601,7 +1706,7 @@ private extension CatbirdApp {
             VStack(spacing: 16) {
               ProgressView()
                 .scaleEffect(1.5)
-              Text("Resetting...")
+              Text("Resetting…")
                 .font(.headline)
                 .foregroundColor(.white)
             }
@@ -1694,7 +1799,7 @@ private extension CatbirdApp {
               // Force app restart by setting state to loading
               AppStateManager.shared.modelContainerState = .loading
             } label: {
-              Text("Reset Database & Restart")
+              Text("Reset Local Data")
                 .font(.caption)
                 .fontWeight(.medium)
             }
@@ -1989,7 +2094,7 @@ struct BiometricAuthenticationOverlay: View {
           .fontWeight(.bold)
           .foregroundColor(.white)
         
-        Text("Authenticate to continue")
+        Text("Unlock to continue")
           .font(.subheadline)
           .foregroundColor(.gray)
         

@@ -30,8 +30,9 @@ struct CloudView: UIViewRepresentable {
         mtkView.isPaused = false
         mtkView.enableSetNeedsDisplay = false
 
-        // 60fps is sufficient for slow cloud animation - saves 50% GPU work
-        mtkView.preferredFramesPerSecond = 60
+        // 60fps is sufficient for slow cloud animation - saves 50% GPU work.
+        // A still sky (Reduce Motion) only needs occasional redraws for appearance changes.
+        mtkView.preferredFramesPerSecond = animationSpeed == 0 ? 1 : 60
 
         // Render at reduced resolution for performance (clouds are soft/blurry anyway)
         let screenScale = UIScreen.main.scale
@@ -54,6 +55,7 @@ struct CloudView: UIViewRepresentable {
         renderer.cloudScale = cloudScale
         renderer.animationSpeed = animationSpeed
         renderer.shaderMode = shaderMode
+        uiView.preferredFramesPerSecond = animationSpeed == 0 ? 1 : 60
     }
     
     func makeCoordinator() -> Coordinator {

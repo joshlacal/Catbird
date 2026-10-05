@@ -30,6 +30,8 @@ final class URLHandler {
     
     var navigateAction: ((NavigationDestination, Int?) -> Void)?
     var useInAppBrowser = true
+    /// Replaces the system browser hand-off (used by tests); `nil` opens the default browser.
+    @ObservationIgnored var systemBrowserOpener: (@MainActor (URL) async -> Bool)?
     
     // External intent presenter
     let externalIntentPresenter = ExternalURLIntentPresenter()
@@ -207,8 +209,15 @@ final class URLHandler {
                 navigateAction?(destination, tabIndex)
                 return true
             }
-            if useInAppBrowser && URLSchemePolicy.isWeb(url) {
-                return openInAppBrowser(url)
+            if selectTabForTabRootURL(url) {
+                return true
+            }
+            // No native screen: show the page instead of silently doing nothing.
+            if URLSchemePolicy.isWeb(url) {
+                if useInAppBrowser && openInAppBrowser(url) {
+                    return true
+                }
+                return await openInSystemBrowser(url)
             }
             return false
         }
@@ -225,6 +234,54 @@ final class URLHandler {
 
     private func isBlueskyOrBskyAppURL(_ url: URL) -> Bool {
         URLSchemePolicy.isBluesky(url)
+    }
+
+    /// Bluesky links to a top-level screen (Home, Search, Notifications, Messages) select that tab.
+    private func selectTabForTabRootURL(_ url: URL) -> Bool {
+        guard let navigationManager,
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: true),
+              (components.host ?? "").lowercased() != "go.bsky.app" else { return false }
+        var path = components.path
+        if (components.scheme ?? "").lowercased() == "bluesky", let host = components.host, !host.isEmpty {
+            path = "/\(host)\(path)"
+        }
+        let segments = path.split(separator: "/").map(String.init)
+        let hasQuery = !(components.queryItems ?? []).isEmpty
+        let tab: Int
+        switch segments.first {
+        case nil:
+            tab = 0
+        case "search" where segments.count == 1 && !hasQuery:
+            tab = 1
+        case "notifications" where segments.count == 1:
+            tab = 2
+        case "messages" where segments.count == 1 || (segments.count == 2 && segments[1] != "settings"):
+            tab = AppNavigationManager.chatTabIndex
+        default:
+            return false
+        }
+        navigationManager.updateCurrentTab(tab)
+        navigationManager.tabSelection?(tab)
+        #if os(iOS)
+        if segments.first == "messages", segments.count == 2 {
+            navigationManager.navigate(to: .conversation(segments[1]), in: tab)
+        }
+        #endif
+        return true
+    }
+
+    /// Opens a link in the default browser when the in-app browser is off or unavailable.
+    private func openInSystemBrowser(_ url: URL) async -> Bool {
+        if let systemBrowserOpener {
+            return await systemBrowserOpener(url)
+        }
+        #if os(iOS)
+        return await UIApplication.shared.open(url, options: [:])
+        #elseif os(macOS)
+        return NSWorkspace.shared.open(url)
+        #else
+        return false
+        #endif
     }
     
     // MARK: - URL Parsing

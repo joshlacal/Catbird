@@ -16,6 +16,8 @@ public struct OnboardingAvatarStep: View {
     @State private var selectedPhoto: UIImage?
     @State private var selectedSymbol: String = "bird.fill"
     @State private var selectedColorHex: String = "#0A84FF"
+    /// Becomes true once the person picks an icon or color, so an existing avatar is never replaced by default.
+    @State private var hasCustomizedSticker: Bool = false
     
     @State private var isUploading: Bool = false
     @State private var uploadErrorMessage: String?
@@ -37,6 +39,13 @@ public struct OnboardingAvatarStep: View {
         "music.note", "camera.fill", "crown.fill", "globe.americas.fill"
     ]
     
+    private let symbolNames: [String: String] = [
+        "bird.fill": "Bird", "cat.fill": "Cat", "dog.fill": "Dog", "sparkles": "Sparkles",
+        "star.fill": "Star", "heart.fill": "Heart", "flame.fill": "Flame", "bolt.fill": "Lightning Bolt",
+        "moon.stars.fill": "Moon and Stars", "sun.max.fill": "Sun", "leaf.fill": "Leaf", "paintbrush.fill": "Paintbrush",
+        "music.note": "Music Note", "camera.fill": "Camera", "crown.fill": "Crown", "globe.americas.fill": "Globe"
+    ]
+    
     private let availableColors: [(name: String, hex: String, color: Color)] = [
         ("Blue", "#0A84FF", .blue),
         ("Purple", "#AF52DE", .purple),
@@ -51,6 +60,22 @@ public struct OnboardingAvatarStep: View {
     public init(onContinue: @escaping () -> Void, onSkip: @escaping () -> Void) {
         self.onContinue = onContinue
         self.onSkip = onSkip
+    }
+    
+    /// The account's current avatar, if it already has one.
+    private var existingAvatarURL: URL? {
+        appState.currentUserProfile?.finalAvatarURL()
+    }
+    
+    /// Uploads only a chosen photo, a customized avatar, or the designed avatar for an account without one.
+    private var willUpload: Bool {
+        if avatarMode == .photo { return selectedPhoto != nil }
+        return existingAvatarURL == nil || hasCustomizedSticker
+    }
+    
+    private var primaryButtonTitle: String {
+        if isUploading { return "Saving…" }
+        return willUpload ? "Save & Continue" : "Continue"
     }
     
     public var body: some View {
@@ -105,7 +130,7 @@ public struct OnboardingAvatarStep: View {
                                 .foregroundStyle(.red)
                         }
                         
-                        Button("Retry Upload") {
+                        Button("Try Again") {
                             saveAndContinue()
                         }
                         .font(.caption.bold())
@@ -123,7 +148,7 @@ public struct OnboardingAvatarStep: View {
                                     .tint(.white)
                                     .padding(.trailing, 4)
                             }
-                            Text(isUploading ? "Saving Profile..." : "Save & Continue")
+                            Text(primaryButtonTitle)
                                 .fontWeight(.semibold)
                         }
                         .frame(maxWidth: .infinity)
@@ -132,9 +157,9 @@ public struct OnboardingAvatarStep: View {
                         .foregroundColor(.white)
                         .clipShape(RoundedRectangle(cornerRadius: 14))
                     }
-                    .disabled(isUploading)
+                    .disabled(isUploading || (avatarMode == .photo && selectedPhoto == nil))
                     
-                    Button("Skip for now") {
+                    Button("Skip for Now") {
                         onSkip()
                     }
                     .font(.subheadline)
@@ -160,6 +185,10 @@ public struct OnboardingAvatarStep: View {
                 .frame(width: 140, height: 140)
                 .clipShape(Circle())
                 .overlay { Circle().stroke(Color.primary.opacity(0.1), lineWidth: 2) }
+        } else if avatarMode == .sticker, !hasCustomizedSticker, let existingAvatarURL {
+            ProfileAvatarView(url: existingAvatarURL, fallbackText: "", size: 140)
+                .overlay { Circle().stroke(Color.primary.opacity(0.1), lineWidth: 2) }
+                .accessibilityLabel("Your current profile picture")
         } else {
             let activeColor = availableColors.first(where: { $0.hex == selectedColorHex })?.color ?? .blue
             Circle()
@@ -189,6 +218,7 @@ public struct OnboardingAvatarStep: View {
                     ForEach(availableSymbols, id: \.self) { symbol in
                         Button {
                             selectedSymbol = symbol
+                            hasCustomizedSticker = true
                         } label: {
                             ZStack {
                                 RoundedRectangle(cornerRadius: 12)
@@ -205,7 +235,8 @@ public struct OnboardingAvatarStep: View {
                             .frame(height: 52)
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel("Icon \(symbol)")
+                        .accessibilityLabel(symbolNames[symbol] ?? "Icon")
+                        .accessibilityAddTraits(selectedSymbol == symbol ? .isSelected : [])
                     }
                 }
                 .padding(.horizontal, 24)
@@ -223,6 +254,7 @@ public struct OnboardingAvatarStep: View {
                     ForEach(availableColors, id: \.hex) { item in
                         Button {
                             selectedColorHex = item.hex
+                            hasCustomizedSticker = true
                         } label: {
                             ZStack {
                                 Circle()
@@ -238,6 +270,7 @@ public struct OnboardingAvatarStep: View {
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel("\(item.name) color")
+                        .accessibilityAddTraits(selectedColorHex == item.hex ? .isSelected : [])
                     }
                 }
                 .padding(.horizontal, 24)
@@ -278,6 +311,10 @@ public struct OnboardingAvatarStep: View {
     // MARK: - Save Action
     
     private func saveAndContinue() {
+        guard willUpload else {
+            onContinue()
+            return
+        }
         guard let client = appState.atProtoClient else {
             logger.warning("No ATProtoClient available; advancing onboarding")
             onContinue()
@@ -319,7 +356,7 @@ public struct OnboardingAvatarStep: View {
             } catch {
                 await MainActor.run {
                     isUploading = false
-                    uploadErrorMessage = "Failed to upload avatar: \(error.localizedDescription)"
+                    uploadErrorMessage = UserFacingError.message(for: error, action: "save your profile picture")
                     logger.error("Avatar upload failed: \(error)")
                 }
             }

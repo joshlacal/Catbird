@@ -79,11 +79,29 @@ private extension ContentView {
         MetricKitManager.shared.finishExtendedLaunchMeasurement()
       }
     }
+    .task(id: appState.userDID) {
+      await evaluateWelcomeOnboarding(for: appState)
+    }
+  }
+
+  /// Runs when an account's main content appears (this view is rebuilt for every account).
+  /// Only accounts created on this device, or joining via a starter pack, get the welcome flow;
+  /// existing accounts signing in here skip it, so it never offers to replace their avatar.
+  func evaluateWelcomeOnboarding(for appState: AppState) async {
+    let did = appState.userDID
+    let onboarding = appState.onboardingManager
+    guard !onboarding.hasCompletedWelcome(for: did) else { return }
+    let isNewAccount = NewAccountOnboardingMarker.consumeRecentSignup()
+    if isNewAccount || StarterPackOnboardingManager.shared.pendingContext != nil {
+      await onboarding.checkForWelcomeOnboarding(client: appState.client, for: did)
+    } else {
+      onboarding.completeWelcomeOnboarding(for: did)
+    }
   }
 
   @ViewBuilder
   var launchingView: some View {
-    ContentViewLoadingView(message: "Loading...")
+    ContentViewLoadingView(message: "Loading…")
   }
 
   @ViewBuilder
@@ -717,7 +735,7 @@ struct MainContentView: View {
           scheduleNuxEvaluation(delay: 300_000_000)
         }
       }
-      .onChange(of: appState.onboardingManager.showWelcomeSheet) { _, newValue in
+      .onChange(of: appState.onboardingManager.showWelcomeSheet, initial: true) { _, newValue in
         showingOnboarding = newValue
       }
       .onChange(of: showingPostComposer) { _, isPresented in
@@ -839,7 +857,7 @@ struct MainContentView: View {
             .applyAppStateEnvironment(appState)
         .environment(sceneContext)
         }
-        .onChange(of: appState.onboardingManager.showWelcomeSheet) { _, newValue in
+        .onChange(of: appState.onboardingManager.showWelcomeSheet, initial: true) { _, newValue in
           showingOnboarding = newValue
         }
         .onChange(of: showingOnboarding) { _, newValue in
@@ -1123,35 +1141,17 @@ private struct SoftScrollEdgeEffectModifier: ViewModifier {
 private struct ContentViewModifiers: ViewModifier {
   let appStateManager: AppStateManager
 
-  private var pendingAlertBinding: Binding<AuthenticationManager.AuthAlert?> {
-    Binding(
-      get: { appStateManager.authentication.pendingAuthAlert },
-      set: { _ in Task { await appStateManager.authentication.clearPendingAuthAlert() } }
-    )
-  }
-
+  // Auth alerts are presented by CatbirdApp's scene root so they also show over the sign-in screen.
   func body(content: Content) -> some View {
     content
-      .alert(item: pendingAlertBinding, content: authAlertContent)
       .onChange(of: appStateManager.lifecycle) { _, newValue in
-        if case .authenticated(let appState) = newValue {
+        if case .authenticated = newValue {
           Task { @MainActor in
             await FeedStateStore.shared.triggerPostAuthenticationFeedLoad()
-            await appState.onboardingManager.checkForWelcomeOnboarding(client: appState.client, for: appState.userDID)
           }
         }
       }
       .modifier(AppStateThemeModifier(appStateManager: appStateManager))
-  }
-
-  private func authAlertContent(_ alert: AuthenticationManager.AuthAlert) -> Alert {
-    Alert(
-      title: Text(alert.title),
-      message: Text(alert.message),
-      dismissButton: .default(Text("OK"), action: {
-        Task { await appStateManager.authentication.clearPendingAuthAlert() }
-      })
-    )
   }
 }
 

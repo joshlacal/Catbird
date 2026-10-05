@@ -41,19 +41,20 @@ enum AccountSwitchError: LocalizedError, Equatable {
   var errorDescription: String? {
     switch self {
     case .invalidDID:
-      return "Invalid account identifier"
-    case .authSwitchFailed(let msg):
-      return "AuthManager failed to switch: \(msg)"
+      return "Couldn’t switch accounts. Try again."
+    case .authSwitchFailed:
+      // The underlying reason is logged where the switch fails.
+      return "Couldn’t switch to this account. If this keeps happening, sign in to it again."
     case .clientUnavailable:
-      return "Client not available after switch"
+      return "Couldn’t switch accounts. Try again."
     case .transitionInProgress:
-      return "Another account switch is already in progress"
+      return "Another account switch is already in progress. Try again in a moment."
     case .authenticatedAccountMismatch:
-      return "Authentication did not resolve to the requested account"
+      return "Sign-in finished for a different account. Try again."
     case .accountRestricted:
-      return "This account is restricted and cannot open the composer"
+      return "This account is deactivated or suspended, so it can’t post right now."
     case .recoveryFailed:
-      return "Restart Catbird to safely restore account services"
+      return "Restart Catbird to finish switching accounts."
     }
   }
 }
@@ -165,7 +166,9 @@ final class AppStateManager {
 
   private init() {
     logger.info("AppStateManager initialized")
-    
+
+    // Test-harness launch arguments are compiled out of release builds.
+    #if DEBUG
     // Detect E2E mode from launch arguments
     let args = ProcessInfo.processInfo.arguments
     
@@ -205,6 +208,7 @@ final class AppStateManager {
     } else {
       logger.info("[E2E-DEBUG] E2E mode not detected (--e2e-mode not in args)")
     }
+    #endif
   }
 
   /// Initialize the app - check for saved session and transition to appropriate state
@@ -308,6 +312,7 @@ final class AppStateManager {
     }
     #endif
 
+    #if DEBUG
     // E2E mode with credentials: prioritize fresh login over saved sessions
     // This ensures deterministic test behavior regardless of keychain state
     if isE2EMode, let user = e2eUser, let pass = e2ePass {
@@ -336,6 +341,7 @@ final class AppStateManager {
       startAuthStateObservationIfNeeded()
       return
     }
+    #endif
 
     // Normal mode: Initialize auth manager (checks for saved session, attempts token refresh)
     await authManager.initialize()
@@ -430,9 +436,9 @@ final class AppStateManager {
       logger.critical(
         "🚨 Refusing authenticated transition for invalid DID: \(userDID, privacy: .private)")
       authManager.pendingAuthAlert = AuthenticationManager.AuthAlert(
-        title: "Authentication Failed",
+        title: "Couldn’t Sign In",
         message:
-          "Catbird received an invalid account identifier and blocked authentication to protect account data."
+          "Catbird couldn’t confirm which account you signed in to, so it stopped to keep your data safe. Try signing in again."
       )
       lifecycle = .unauthenticated
       throw AccountSwitchError.invalidDID
@@ -663,6 +669,8 @@ final class AppStateManager {
     lifecycle = .unauthenticated
     // An older switch/rollback must settle before its retained source is retired.
     await accountSwitchOperationBarrier.waitUntilIdle()
+    // Clear the outgoing account's app badge and push registration while its services still exist.
+    await loggingOutState?.notificationManager.cleanupNotifications(previousClient: authManager.client)
     if let currentUserDID = loggingOutDID {
       if let currentState = loggingOutState ?? authenticatedStates[currentUserDID] {
         if currentState === interruptedSwitchSource {
@@ -821,7 +829,7 @@ final class AppStateManager {
   }
 
   private func markAccountSwitchRestartRequired(
-    message: String = "Catbird could not safely finish switching account services. Your draft has been preserved. Restart the app to continue."
+    message: String = "Catbird couldn’t finish switching accounts. Your draft is saved. Quit and reopen Catbird to continue."
   ) {
     accountSwitchRequiresRestart = true
     authManager.pendingAuthAlert = AuthenticationManager.AuthAlert(title: "Restart Required", message: message)
@@ -1108,7 +1116,8 @@ final class AppStateManager {
   }
 
   // MARK: - E2E Re-login
-  
+
+  #if DEBUG
   /// Perform a fresh login for E2E mode when tokens have expired
   /// This is needed for PDSs with very short token lifetimes where refresh tokens also expire
   /// - Returns: true if re-login succeeded, false otherwise
@@ -1143,6 +1152,7 @@ final class AppStateManager {
       return false
     }
   }
+  #endif
 
   // MARK: - Widget Data
 

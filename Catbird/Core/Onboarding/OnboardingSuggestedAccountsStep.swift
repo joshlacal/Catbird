@@ -49,7 +49,7 @@ public struct OnboardingSuggestedAccountsStep: View {
             if isLoading {
                 VStack(spacing: 16) {
                     Spacer()
-                    ProgressView("Finding accounts for you...")
+                    ProgressView("Finding accounts for you…")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                     Spacer()
@@ -128,7 +128,7 @@ public struct OnboardingSuggestedAccountsStep: View {
                         .clipShape(RoundedRectangle(cornerRadius: 14))
                 }
                 
-                Button("Skip for now") {
+                Button("Skip for Now") {
                     onSkip()
                 }
                 .font(.subheadline)
@@ -224,7 +224,7 @@ public struct OnboardingSuggestedAccountsStep: View {
     private func loadSuggestedAccounts() async {
         guard let client = appState.atProtoClient else {
             isLoading = false
-            errorMessage = "Service unavailable"
+            errorMessage = "Suggestions aren’t available right now."
             return
         }
         
@@ -235,7 +235,9 @@ public struct OnboardingSuggestedAccountsStep: View {
         var seenDIDs = Set<String>()
         
         do {
-            let categories = selectedInterests.isEmpty ? [nil] : selectedInterests.map { Optional($0.lowercased()) }
+            // Suggestion categories are Bluesky interest ids; labels without one fall back to global suggestions.
+            let interestIDs = selectedInterests.compactMap(BlueskyInterests.normalizedID)
+            let categories: [String?] = interestIDs.isEmpty ? [nil] : interestIDs.map { Optional($0) }
             
             for category in categories {
                 let params = AppBskyUnspeccedGetSuggestedOnboardingUsers.Parameters(
@@ -290,7 +292,7 @@ public struct OnboardingSuggestedAccountsStep: View {
         } catch {
             await MainActor.run {
                 logger.error("Failed to load suggested onboarding users: \(error)")
-                self.errorMessage = "Unable to load suggested accounts right now."
+                self.errorMessage = "Couldn’t load suggested accounts. Try again."
                 self.isLoading = false
             }
         }

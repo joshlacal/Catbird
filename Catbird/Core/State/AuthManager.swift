@@ -81,26 +81,26 @@ enum AuthProgress: Equatable, Sendable {
   var userDescription: String {
     switch self {
     case .initializingClient:
-      return "Initializing authentication client"
+      return "Getting ready to sign in"
     case .resolvingHandle(let handle):
-      return "Resolving handle \(handle)"
+      return "Looking up @\(handle)"
     case .fetchingMetadata(let url):
       let domain = URL(string: url)?.host ?? url
       return "Connecting to \(domain)"
     case .generatingAuthURL:
-      return "Preparing authentication"
+      return "Preparing a secure sign-in page"
     case .openingBrowser:
-      return "Opening browser for secure login"
+      return "Opening a secure sign-in page"
     case .waitingForCallback:
-      return "Waiting for authentication"
+      return "Waiting for you to finish signing in"
     case .exchangingTokens:
-      return "Processing authentication"
+      return "Finishing sign-in"
     case .creatingSession:
-      return "Creating secure session"
+      return "Setting up your account"
     case .finalizing:
-      return "Finalizing login"
-    case .retrying(let step, let attempt, let maxAttempts):
-      return "Retrying \(step) (attempt \(attempt)/\(maxAttempts))"
+      return "Almost done"
+    case .retrying(_, let attempt, let maxAttempts):
+      return "Trying again (attempt \(attempt) of \(maxAttempts))"
     }
   }
 
@@ -821,6 +821,10 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
   func updateState(_ newState: AuthState) {
     guard newState != state else { return }
     logger.debug(.stateUpdated)
+    if case .authenticated = newState {
+      // A sign-out explanation is stale once any account is signed in again.
+      pendingAuthAlert = nil
+    }
     self.state = newState
     // Emit synchronously - no Task wrapper to eliminate race windows
     stateSubject.continuation.yield(newState)
@@ -909,7 +913,7 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
 
       if client == nil {
         logger.critical(.clientCreationFailed)
-        updateState(.error(message: "Failed to initialize client"))
+        updateState(.error(message: Self.userFacingMessage(for: AuthError.clientNotInitialized)))
         return
       } else {
         logger.info(.clientCreated)
@@ -1220,7 +1224,7 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
 
     guard let client = client else {
       let error = AuthError.clientNotInitialized
-      updateState(.error(message: error.localizedDescription))
+      updateState(.error(message: Self.userFacingMessage(for: error)))
       throw error
     }
 
@@ -1301,13 +1305,14 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
       }
 
       logger.error(.oauthFlowFailed)
-      updateState(.error(message: finalError.localizedDescription))
+      updateState(.error(message: Self.userFacingMessage(for: finalError)))
       throw finalError
     }
   }
 
   // MARK: - E2E Testing Support
-  
+
+  #if DEBUG
   /// Login with username/password for E2E testing only
   /// This bypasses OAuth and uses direct password authentication (legacy mode)
   /// - Parameters:
@@ -1442,6 +1447,7 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
       logger.warning(.e2eKeychainQueryFailed)
     }
   }
+  #endif
 
   /// Handle the OAuth callback after web authentication with timeout support
   @MainActor
@@ -1461,7 +1467,7 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
     guard let client = client else {
       logger.error(.callbackClientUnavailable)
       let error = AuthError.clientNotInitialized
-      updateState(.error(message: error.localizedDescription))
+      updateState(.error(message: Self.userFacingMessage(for: error)))
       throw error
     }
     logger.debug(.callbackClientAvailable)
@@ -1578,7 +1584,7 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
 
       await client.cancelOAuthFlow()
       logger.error(.callbackFailed)
-      updateState(.error(message: finalError.localizedDescription))
+      updateState(.error(message: Self.userFacingMessage(for: finalError)))
       throw finalError
     }
   }
@@ -1598,7 +1604,7 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
       guard client != nil else {
         logger.error(.gatewayCallbackClientUnavailable)
         let error = AuthError.clientNotInitialized
-        updateState(.error(message: error.localizedDescription))
+        updateState(.error(message: Self.userFacingMessage(for: error)))
         throw error
       }
     }
@@ -1675,7 +1681,7 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
 
       await client?.cancelOAuthFlow()
       logger.error(.gatewayCallbackFailed)
-      updateState(.error(message: finalError.localizedDescription))
+      updateState(.error(message: Self.userFacingMessage(for: finalError)))
       throw finalError
     }
   }
@@ -1695,12 +1701,7 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
     cancelInFlightPermissionUpgrade()
     updateState(.unauthenticated)
 
-    // Cleanup notifications before logging out
-    Task {
-      if case .authenticated(let appState) = AppStateManager.shared.lifecycle {
-        await appState.notificationManager.cleanupNotifications(previousClient: client)
-      }
-    }
+    // Notification cleanup runs in AppStateManager.logout, which still holds the outgoing AppState.
 
     // Note: AppStateManager calls this method, so we don't call back to avoid infinite loop
 
@@ -2389,6 +2390,13 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
   func removeAccount(did: String) async throws {
     logger.info(.accountRemovalStarted)
 
+    // Removing the signed-in account signs it out first, so no screen keeps using its suspended
+    // services and the shared client never silently continues as another stored account.
+    if case .authenticated(let currentDID) = state, currentDID == did {
+      await AppStateManager.shared.logout(isManual: true)
+      await ensureClientInitializedForAccountOperations()
+    }
+
     // Clean up cached AppState
     try await AppStateManager.shared.removeAccount(did)
 
@@ -2729,7 +2737,7 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
 
     guard let client = client else {
       let error = AuthError.clientNotInitialized
-      updateState(.error(message: error.localizedDescription))
+      updateState(.error(message: Self.userFacingMessage(for: error)))
       throw error
     }
 
@@ -2755,7 +2763,7 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
       }
 
       logger.error(.addAccountFailed)
-      updateState(.error(message: "Failed to add account: \(finalError.localizedDescription)"))
+      updateState(.error(message: Self.userFacingMessage(for: finalError)))
       throw finalError
     }
   }
@@ -2843,20 +2851,24 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
     }
   }
 
-  /// Authenticate using biometrics
+  /// Authenticate using biometrics.
+  /// - Parameter policy: `.deviceOwnerAuthentication` lets the system offer the device passcode
+  ///   after a failed attempt or a biometric lockout; the default accepts biometrics only.
   @MainActor
-  func authenticateWithBiometrics(reason: String) async -> Bool {
+  func authenticateWithBiometrics(
+    reason: String,
+    policy: LAPolicy = .deviceOwnerAuthenticationWithBiometrics
+  ) async -> Bool {
     guard biometricType != .none else {
       logger.warning(.biometricAuthNotAvailable)
       return false
     }
 
     let context = LAContext()
-    context.localizedFallbackTitle = "Use Password"
 
     do {
       let success = try await context.evaluatePolicy(
-        .deviceOwnerAuthenticationWithBiometrics,
+        policy,
         localizedReason: reason
       )
 
@@ -2897,7 +2909,7 @@ private final class CoalescedPermissionWaiter: @unchecked Sendable {
       return true  // No biometric auth required, proceed
     }
 
-    return await authenticateWithBiometrics(reason: "Unlock Catbird")
+    return await authenticateWithBiometrics(reason: "Unlock Catbird", policy: .deviceOwnerAuthentication)
   }
 
   // MARK: - Biometric Preferences
@@ -3012,8 +3024,8 @@ extension AuthenticationManager: AuthFailureDelegate {
 
     if isRetryable {
       if pendingAuthAlert == nil {
-        let message = "The server is temporarily unavailable. Please try again shortly."
-        pendingAuthAlert = AuthAlert(title: "Authentication Unavailable", message: message)
+        let message = "Your server is temporarily unavailable. Try again shortly."
+        pendingAuthAlert = AuthAlert(title: "Sign-In Unavailable", message: message)
       }
     } else {
       // Terminal failure - prefer auto-reauth without alert if possible
@@ -3034,10 +3046,72 @@ extension AuthenticationManager: AuthFailureDelegate {
     logger.warning(.circuitBreakerOpen)
     if pendingAuthAlert == nil {
       pendingAuthAlert = AuthAlert(
-        title: "Authentication Temporarily Paused",
+        title: "Sign-In Paused",
         message:
           "We’re seeing repeated failures contacting your server. We’ll retry shortly, or you can sign in again now."
       )
+    }
+  }
+}
+
+// MARK: - User-Facing Sign-In Messages
+
+extension AuthenticationManager {
+  /// Plain-language copy for sign-in and account failures shown in the UI.
+  /// Technical details (status codes, server errors) belong in logs only.
+  static func userFacingMessage(for error: Error) -> String {
+    guard let authError = error as? AuthError else {
+      return userFacingMessage(forUnderlying: error)
+    }
+    switch authError {
+    case .networkError:
+      return "Couldn’t reach the server. Check your connection and try again."
+    case .timeout:
+      return "Signing in took too long. Try again."
+    case .badResponse(let code) where code == 429:
+      return "Too many attempts. Wait a moment and try again."
+    case .badResponse(let code) where code >= 500:
+      return "Your server is having trouble right now. Try again in a moment."
+    case .badResponse:
+      return "Your server couldn’t finish signing you in. Try again."
+    case .invalidHandle:
+      return "That handle doesn’t look right. Check it and try again."
+    case .invalidSession:
+      return "Your session has expired. Sign in again to continue."
+    case .invalidCredentials:
+      return "Sign-in didn’t finish. Check your details and try again."
+    case .accountSwitchInProgress:
+      return "Another account is still switching. Try again in a moment."
+    case .cancelled:
+      return "Sign-in was canceled."
+    case .unknown(let underlying):
+      return userFacingMessage(forUnderlying: underlying)
+    case .clientNotInitialized, .invalidCallbackURL, .invalidUserDID:
+      return "Sign-in didn’t finish. Try again."
+    }
+  }
+
+  private static func userFacingMessage(forUnderlying error: Error) -> String {
+    if let authError = error as? AuthError {
+      return userFacingMessage(for: authError)
+    }
+    switch UserFacingError.kind(of: error) {
+    case .offline:
+      return "Couldn’t reach the server. Check your connection and try again."
+    case .timedOut:
+      return "Signing in took too long. Try again."
+    case .rateLimited:
+      return "Too many attempts. Wait a moment and try again."
+    case .server:
+      return "Your server is having trouble right now. Try again in a moment."
+    case .notFound:
+      return "Couldn’t find that account. Check the handle and try again."
+    case .signInRequired:
+      return "Your session has expired. Sign in again to continue."
+    case .cancelled:
+      return "Sign-in was canceled."
+    case .notAllowed, .other:
+      return "Sign-in didn’t finish. Try again."
     }
   }
 }

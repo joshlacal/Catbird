@@ -21,6 +21,8 @@ public struct InviteScannerView: View {
     @State private var errorMessage: String?
     @State private var manualHandleInput: String = ""
     @State private var showManualEntry: Bool = false
+    /// Incremented to restart scanning after an unrecognized code.
+    @State private var scanSession: Int = 0
     
     private let logger = Logger(subsystem: "blue.catbird", category: "InviteScannerView")
     
@@ -44,13 +46,14 @@ public struct InviteScannerView: View {
             .navigationTitle("Scan QR Code")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
+            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
                         dismiss()
                     }
-                    .foregroundColor(.white)
                 }
             }
             .task {
@@ -62,9 +65,10 @@ public struct InviteScannerView: View {
             )) {
                 Button("Try Again", role: .cancel) {
                     errorMessage = nil
+                    scanSession += 1
                 }
             } message: {
-                Text(errorMessage ?? "This QR code does not link to a valid Bluesky profile.")
+                Text(errorMessage ?? "This QR code doesn’t link to a Bluesky profile.")
             }
         }
     }
@@ -75,7 +79,7 @@ public struct InviteScannerView: View {
         ZStack {
             #if os(iOS) && canImport(VisionKit)
             if #available(iOS 16.0, *), DataScannerViewController.isSupported && DataScannerViewController.isAvailable {
-                DataScannerRepresentable { recognizedString in
+                DataScannerRepresentable(session: scanSession) { recognizedString in
                     handleScannedString(recognizedString)
                 }
                 .ignoresSafeArea()
@@ -133,7 +137,7 @@ public struct InviteScannerView: View {
                     .fontWeight(.bold)
                     .foregroundStyle(.white)
                 
-                Text("Please enable Camera access in iOS Settings to scan Bluesky profile QR codes.")
+                Text("Turn on camera access for Catbird in Settings to scan Bluesky profile QR codes.")
                     .font(.subheadline)
                     .foregroundStyle(.white.opacity(0.7))
                     .multilineTextAlignment(.center)
@@ -183,12 +187,12 @@ public struct InviteScannerView: View {
                 .foregroundStyle(.white.opacity(0.8))
             
             VStack(spacing: 8) {
-                Text("Camera Scanner Unavailable")
+                Text("QR Scanning Unavailable")
                     .font(.title2)
                     .fontWeight(.bold)
                     .foregroundStyle(.white)
                 
-                Text("QR code scanning is not supported on this device or simulator. You can enter a handle to find your friend.")
+                Text("QR code scanning isn’t available on this device. You can enter a handle instead.")
                     .font(.subheadline)
                     .foregroundStyle(.white.opacity(0.7))
                     .multilineTextAlignment(.center)
@@ -295,6 +299,12 @@ public struct InviteScannerView: View {
             AVCaptureDevice.requestAccess(for: .video) { granted in
                 Task { @MainActor in
                     self.cameraPermission = granted ? .authorized : .denied
+                    // VisionKit reports the scanner as unavailable until camera access is granted.
+                    #if os(iOS) && canImport(VisionKit)
+                    if #available(iOS 16.0, *) {
+                        self.isScannerAvailable = DataScannerViewController.isSupported && DataScannerViewController.isAvailable
+                    }
+                    #endif
                 }
             }
         }
@@ -303,7 +313,7 @@ public struct InviteScannerView: View {
     private func handleScannedString(_ string: String) {
         guard let handleOrDID = InviteURLHelper.parseProfilePayload(string) else {
             logger.warning("Scanned invalid payload: \(string)")
-            self.errorMessage = "The scanned QR code is not a valid Bluesky profile URL."
+            self.errorMessage = "This QR code doesn’t link to a Bluesky profile."
             return
         }
         
@@ -332,6 +342,8 @@ public struct InviteScannerView: View {
 #if os(iOS) && canImport(VisionKit)
 @available(iOS 16.0, *)
 struct DataScannerRepresentable: UIViewControllerRepresentable {
+    /// Changing the session restarts scanning after a code was rejected.
+    var session: Int = 0
     var onScanned: (String) -> Void
     
     func makeUIViewController(context: Context) -> DataScannerViewController {
@@ -347,17 +359,25 @@ struct DataScannerRepresentable: UIViewControllerRepresentable {
         return scanner
     }
     
-    func updateUIViewController(_ uiViewController: DataScannerViewController, context: Context) {}
+    func updateUIViewController(_ uiViewController: DataScannerViewController, context: Context) {
+        context.coordinator.onScanned = onScanned
+        guard context.coordinator.lastSession != session else { return }
+        context.coordinator.lastSession = session
+        context.coordinator.hasFoundCode = false
+        try? uiViewController.startScanning()
+    }
     
     func makeCoordinator() -> Coordinator {
-        Coordinator(onScanned: onScanned)
+        Coordinator(session: session, onScanned: onScanned)
     }
     
     final class Coordinator: NSObject, DataScannerViewControllerDelegate {
         var onScanned: (String) -> Void
-        private var hasFoundCode: Bool = false
+        var hasFoundCode: Bool = false
+        var lastSession: Int
         
-        init(onScanned: @escaping (String) -> Void) {
+        init(session: Int, onScanned: @escaping (String) -> Void) {
+            self.lastSession = session
             self.onScanned = onScanned
         }
         

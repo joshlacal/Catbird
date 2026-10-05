@@ -117,11 +117,17 @@ final class URLHandlerRoutingTests: XCTestCase {
         XCTAssertTrue(handledValid)
         XCTAssertEqual(capturedDestination, .notificationActivity([uri1, uri2]))
 
-        // Invalid delivery assertion - should not navigate
+        // Invalid delivery assertion - should not navigate; the page opens in the default browser instead
         capturedDestination = nil
         urlHandler.useInAppBrowser = false
+        var browserURL: URL?
+        urlHandler.systemBrowserOpener = { url in
+            browserURL = url
+            return true
+        }
         let handledInvalid = await urlHandler.handleURL(URL(string: invalidURL)!)
-        XCTAssertFalse(handledInvalid)
+        XCTAssertTrue(handledInvalid)
+        XCTAssertEqual(browserURL, URL(string: invalidURL))
         XCTAssertNil(capturedDestination, "Invalid notifications activity URL should not navigate")
     }
 

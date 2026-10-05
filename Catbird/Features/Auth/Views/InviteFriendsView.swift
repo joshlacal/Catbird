@@ -124,6 +124,7 @@ public enum InviteURLHelper {
 /// Themed QR code card and invite sharing view (G66)
 public struct InviteFriendsView: View {
     @Environment(AppState.self) private var appState
+    @Environment(SceneNavigationContext.self) private var sceneContext
     @Environment(\.dismiss) private var dismiss
     
     @State private var selectedTheme: InviteTheme = .day
@@ -132,10 +133,19 @@ public struct InviteFriendsView: View {
 
     private let logger = Logger(subsystem: "blue.catbird", category: "InviteFriendsView")
     
-    public init() {}
+    /// Opens a scanned profile after this sheet closes. Without it, the profile opens in the current tab.
+    private let onOpenProfile: ((String) -> Void)?
     
+    public init(onOpenProfile: ((String) -> Void)? = nil) {
+        self.onOpenProfile = onOpenProfile
+    }
+    
+    /// Falls back to the cached handle, then the account DID (bsky.app profile links accept both),
+    /// so the invite never points at someone else's profile while the profile is still loading.
     private var currentHandle: String {
-        appState.currentUserProfile?.handle.description ?? "user.bsky.social"
+        appState.currentUserProfile?.handle.description
+            ?? AppStateManager.shared.authentication.getCachedProfileData(for: appState.userDID)?.handle
+            ?? appState.userDID
     }
     
     private var currentDisplayName: String {
@@ -249,11 +259,23 @@ public struct InviteFriendsView: View {
                 }
             }
             .sheet(isPresented: $showScanner) {
-                InviteScannerView()
+                InviteScannerView(onScannedProfile: { handleOrDID in
+                    openScannedProfile(handleOrDID)
+                })
             }
             .onAppear {
                 loadSavedTheme()
             }
+        }
+    }
+    
+    /// Closes Invite Friends so the scanned profile isn't hidden behind this sheet.
+    private func openScannedProfile(_ handleOrDID: String) {
+        dismiss()
+        if let onOpenProfile {
+            onOpenProfile(handleOrDID)
+        } else {
+            sceneContext.navigationManager.navigate(to: .profile(handleOrDID))
         }
     }
     

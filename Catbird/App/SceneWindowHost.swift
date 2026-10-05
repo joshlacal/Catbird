@@ -277,13 +277,19 @@ private struct CatbirdWindowContentRoot<Content: View>: View {
         scene.updateAccount(appStateManager.lifecycle.appState)
         onAccountReady(scene)
         scene.reopenTransferredComposer(using: appStateManager)
+        // A share-extension or Siri draft saved while signed out (or before restore) opens now.
+        IncomingSharedDraftHandler.importIfAvailable()
       }
       .onChange(of: appStateManager.pendingComposerReopenRevision, initial: true) { _, _ in
         scene.reopenTransferredComposer(using: appStateManager)
       }
       .onChange(of: scenePhase, initial: true) { _, phase in
         scene.updatePhase(phase)
-        if phase == .active { scene.reopenTransferredComposer(using: appStateManager) }
+        if phase == .active {
+          scene.reopenTransferredComposer(using: appStateManager)
+          // Drafts handed over by the share extension while Catbird was in the background.
+          IncomingSharedDraftHandler.importIfAvailable()
+        }
       }
       .onOpenURL { url in
         scene.markFocused()
@@ -325,6 +331,12 @@ struct SceneNavigationHost<Content: View>: View {
       }
       .onChange(of: context.postComposerRequest?.id) { _, _ in
         composerDetent = .large
+      }
+      .sheet(item: $context.settingsRequest) { request in
+        SettingsView(initialTarget: request.route.target)
+          .applyAppStateEnvironment(appState)
+          .environment(appStateManager)
+          .environment(context)
       }
   }
 }

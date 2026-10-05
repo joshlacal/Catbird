@@ -69,7 +69,8 @@ struct NavigationHandler {
         .id(uri.uriString())
 
     case .list(let uri):
-      ListView(listURI: uri, path: path)
+      // The full list screen, with Report, Block/Unblock and Share, for every list link.
+      ListDetailView(listURIString: uri.uriString(), path: path)
         .id(uri.uriString())
 
     case .starterPack(let uri):
@@ -349,16 +350,16 @@ public struct StarterPackShortResolverView: View {
         StarterPackView(uri: resolvedURI, path: $path)
       } else if let errorMessage {
         ContentUnavailableView {
-          Label("Unable to Open Starter Pack", systemImage: "exclamationmark.triangle")
+          Label("Couldn’t Open Starter Pack", systemImage: "exclamationmark.triangle")
         } description: {
           Text(errorMessage)
         } actions: {
-          Button("Retry") {
+          Button("Try Again") {
             Task { await resolveCode() }
           }
         }
       } else {
-        ProgressView("Resolving Starter Pack...")
+        ProgressView("Opening starter pack…")
           .frame(maxWidth: .infinity, maxHeight: .infinity)
       }
     }
@@ -374,7 +375,7 @@ public struct StarterPackShortResolverView: View {
     errorMessage = nil
     
     guard let url = URL(string: "https://go.bsky.app/\(code)") else {
-      errorMessage = "Invalid starter pack code"
+      errorMessage = "This starter pack link isn’t valid."
       isLoading = false
       return
     }
@@ -387,7 +388,7 @@ public struct StarterPackShortResolverView: View {
       let (data, response) = try await URLSession.shared.data(for: request)
       guard isCurrentScene(operationScene) else { return }
       guard let httpResponse = response as? HTTPURLResponse, (200...399).contains(httpResponse.statusCode) else {
-        errorMessage = "Starter pack not found or link has expired."
+        errorMessage = "This starter pack couldn’t be found. The link may have expired."
         isLoading = false
         return
       }
@@ -403,11 +404,11 @@ public struct StarterPackShortResolverView: View {
             if case .starterPack(let uri)? = destination {
               self.resolvedURI = uri
             } else {
-              errorMessage = "Could not resolve starter pack destination."
+              errorMessage = "This starter pack couldn’t be found. The link may have expired."
             }
           }
         } else {
-          errorMessage = "Starter pack not found or link has expired."
+          errorMessage = "This starter pack couldn’t be found. The link may have expired."
         }
       } else if let location = httpResponse.value(forHTTPHeaderField: "Location") {
         if location.starts(with: "at://"), let uri = try? ATProtocolURI(uriString: location) {
@@ -418,15 +419,15 @@ public struct StarterPackShortResolverView: View {
           if case .starterPack(let uri)? = destination {
             self.resolvedURI = uri
           } else {
-            errorMessage = "Could not resolve starter pack destination."
+            errorMessage = "This starter pack couldn’t be found. The link may have expired."
           }
         }
       } else {
-        errorMessage = "Starter pack not found or link has expired."
+        errorMessage = "This starter pack couldn’t be found. The link may have expired."
       }
     } catch {
       guard isCurrentScene(operationScene) else { return }
-      errorMessage = "Network error resolving starter pack: \(error.localizedDescription)"
+      errorMessage = UserFacingError.message(for: error, action: "open this starter pack")
     }
     isLoading = false
   }

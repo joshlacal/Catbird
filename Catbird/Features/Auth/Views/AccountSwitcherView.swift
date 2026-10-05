@@ -57,17 +57,23 @@ struct AccountSwitcherView: View {
     init(from accountInfo: AuthenticationManager.AccountInfo, profile: AppBskyActorDefs.ProfileViewDetailed?) {
       self.id = accountInfo.did
       self.did = accountInfo.did
-      // Use fallback chain: profile -> cached data -> stored handle -> "Loading..."
-      // Never show raw DID directly
+      // Use fallback chain: profile -> cached data -> stored handle -> shortened DID
+      // Never show the full raw DID
       self.handle = profile?.handle.description
         ?? accountInfo.cachedHandle
         ?? accountInfo.handle
-        ?? "Loading..."
+        ?? Self.shortenedIdentifier(accountInfo.did)
       self.displayName = profile?.displayName
         ?? accountInfo.cachedDisplayName
       self.avatar = profile?.finalAvatarURL()
         ?? accountInfo.cachedAvatarURL
       self.isActive = accountInfo.isActive
+    }
+
+    /// e.g. "did:plc:abcd…wxyz", shown only until the account's handle is known.
+    private static func shortenedIdentifier(_ did: String) -> String {
+      guard did.count > 20 else { return did }
+      return "\(did.prefix(12))…\(did.suffix(4))"
     }
   }
 
@@ -78,7 +84,7 @@ struct AccountSwitcherView: View {
         .modifier(ToolbarTitleModifier())
         .toolbar { toolbarContent }
         .sheet(isPresented: $isAddingAccount) {
-          LoginView(isAddingNewAccount: true)
+          LoginView(isAddingNewAccount: true, isPresentedModally: true)
             .environment(appStateManager)
         }
         .alert(
@@ -104,7 +110,7 @@ struct AccountSwitcherView: View {
   private var contentView: some View {
     ZStack {
       if isLoading {
-        ProgressView("Loading accounts...")
+        ProgressView("Loading accounts…")
           .frame(maxWidth: .infinity, maxHeight: .infinity)
       } else {
         accountsContentView
@@ -129,6 +135,7 @@ struct AccountSwitcherView: View {
         } label: {
           Image(systemName: "xmark")
         }
+        .accessibilityLabel("Close")
         .disabled(isSwitchingAccount)
       }
     }
@@ -144,6 +151,7 @@ struct AccountSwitcherView: View {
       } label: {
         Image(systemName: "plus")
       }
+      .accessibilityLabel("Add Account")
       .disabled(isSwitchingAccount)
     }
     #elseif os(macOS)
@@ -154,6 +162,7 @@ struct AccountSwitcherView: View {
           } label: {
               Image(systemName: "xmark")
           }
+          .accessibilityLabel("Close")
           .disabled(isSwitchingAccount)
       }
     }
@@ -164,6 +173,7 @@ struct AccountSwitcherView: View {
       } label: {
         Image(systemName: "plus")
       }
+      .accessibilityLabel("Add Account")
       .disabled(isSwitchingAccount)
     }
     #endif
@@ -183,7 +193,7 @@ struct AccountSwitcherView: View {
 
   @ViewBuilder
   private func removeAccountAlertMessage(_ account: AccountViewModel) -> some View {
-    Text("Are you sure you want to remove the account '\(account.handle)'? You can add it again later.")
+    Text("Remove @\(account.handle) from Catbird? This doesn’t delete the account, and you can add it again later.")
   }
 
   // MARK: - onChange Handlers
@@ -198,7 +208,7 @@ struct AccountSwitcherView: View {
 
   private func handleReauthRequestChange(_ oldRequest: AppState.ReauthenticationRequest?, _ newRequest: AppState.ReauthenticationRequest?) {
     guard composerTransfer == nil else {
-      if newRequest != nil { error = "Sign in to that account before transferring this composer." }
+      if newRequest != nil { error = "Sign in to that account before moving this draft to it." }
       return
     }
     Task { @MainActor in
@@ -232,7 +242,7 @@ struct AccountSwitcherView: View {
         ContentUnavailableView(
           "No Accounts",
           systemImage: "person.crop.circle.badge.exclamationmark",
-          description: Text("You don't have any Bluesky accounts set up.")
+          description: Text("You haven’t added any Bluesky accounts yet.")
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
       } else {
@@ -282,6 +292,31 @@ struct AccountSwitcherView: View {
   }
 
   private func accountRow(for account: AccountViewModel) -> some View {
+    Button {
+      guard !account.isActive, !isSwitchingAccount else { return }
+      Task {
+        await switchToAccount(account)
+      }
+    } label: {
+      accountRowContent(for: account)
+    }
+    .buttonStyle(.plain)
+    .disabled(isSwitchingAccount)
+    .accessibilityElement(children: .combine)
+    .accessibilityAddTraits(account.isActive ? .isSelected : [])
+    .accessibilityHint(account.isActive ? "" : "Switches to this account")
+    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+      if !account.isActive {
+        Button(role: .destructive) {
+          showConfirmRemove = account
+        } label: {
+          Label("Remove", systemImage: "person.crop.circle.badge.minus")
+        }
+      }
+    }
+  }
+
+  private func accountRowContent(for account: AccountViewModel) -> some View {
     HStack(spacing: 12) {
       // Avatar
       ProfileAvatarView(url: account.avatar, fallbackText: account.handle.prefix(1).uppercased())
@@ -312,21 +347,6 @@ struct AccountSwitcherView: View {
     }
     .padding(.vertical, 4)
     .contentShape(Rectangle())
-    .onTapGesture {
-      guard !account.isActive, !isSwitchingAccount else { return }
-      Task {
-        await switchToAccount(account)
-      }
-    }
-    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-      if !account.isActive {
-        Button(role: .destructive) {
-          showConfirmRemove = account
-        } label: {
-          Label("Delete", systemImage: "trash")
-        }
-      }
-    }
   }
 
   // MARK: - Add Account Sheet
@@ -389,7 +409,7 @@ struct AccountSwitcherView: View {
               ProgressView()
                 .controlSize(.small)
 
-              Text("Authenticating...")
+              Text("Signing in…")
                 .appFont(AppTextRole.subheadline)
                 .foregroundStyle(.secondary)
             }
@@ -417,7 +437,7 @@ struct AccountSwitcherView: View {
           HStack {
             Image(systemName: "xmark.circle.fill")
               .foregroundStyle(.secondary)
-            Text("Authentication cancelled")
+            Text("Sign-in canceled")
               .appFont(AppTextRole.subheadline)
               .foregroundStyle(.secondary)
           }
@@ -534,7 +554,7 @@ struct AccountSwitcherView: View {
               appStateManager.lifecycle.isAuthenticated,
               appStateManager.lifecycle.userDID == accountDID,
               composerTransfer == nil || reopenID != nil else {
-          error = "The requested account is not ready. Your composer has been preserved."
+          error = "That account isn’t ready yet. Your draft is saved."
           return
         }
         // The captured callback belongs to this exact attempt, even if account content remounts.
@@ -543,7 +563,7 @@ struct AccountSwitcherView: View {
       case .unchanged, .cancelled:
         return
       case .busy:
-        error = "Another account switch is already in progress. Please try again."
+        error = "Another account is still switching. Try again in a moment."
       case .blockedBySettings(let message):
         // A local save refusal has already recovered the source; it needs no target reauthentication.
         error = message
@@ -568,7 +588,8 @@ struct AccountSwitcherView: View {
         )
         await handleReauthentication(request)
       } catch {
-        self.error = "Failed to sign in: \(error.localizedDescription)"
+        logger.error("Reauthentication could not start: \(error.localizedDescription)")
+        self.error = AuthenticationManager.userFacingMessage(for: error)
       }
     }
 
@@ -582,6 +603,7 @@ struct AccountSwitcherView: View {
         await loadAccounts()
       } catch {
         logger.error("Failed to remove account \(account.did): \(error.localizedDescription)")
+        self.error = "Couldn’t remove this account. Try again."
       }
     }
 
@@ -595,6 +617,7 @@ struct AccountSwitcherView: View {
       await loadAccounts()
     } catch {
       logger.error("Failed to remove account \(account.did): \(error.localizedDescription)")
+      self.error = "Couldn’t remove this account. Try again."
     }
   }
 
@@ -712,9 +735,9 @@ struct AccountSwitcherView: View {
         logger.error("Authentication error: \(error.localizedDescription)")
 
         if case AuthError.timeout = error {
-          self.error = "Authentication timed out. The authentication session took too long to complete. Please try again."
+          self.error = "Signing in took too long. Try again."
         } else {
-          self.error = error.localizedDescription
+          self.error = AuthenticationManager.userFacingMessage(for: error)
         }
         isLoading = false
       }
@@ -722,7 +745,7 @@ struct AccountSwitcherView: View {
     } catch {
       // Error starting login flow
       logger.error("Error starting add account: \(error.localizedDescription)")
-      self.error = error.localizedDescription
+      self.error = AuthenticationManager.userFacingMessage(for: error)
       isLoading = false
     }
   }
@@ -833,7 +856,7 @@ struct AccountSwitcherView: View {
 
       // The auth observer owns readiness. A precise lifecycle observation replaces delayed retry.
       guard appStateManager.authentication.state.userDID == request.did else {
-        error = "Sign-in completed for a different account. Please try again."
+        error = "Sign-in finished for a different account. Try again."
         isLoading = false
         return
       }
@@ -856,9 +879,9 @@ struct AccountSwitcherView: View {
       
       if case AuthError.timeout = error {
         logger.error("⏱️ [REAUTH] Error was timeout")
-        self.error = "Authentication timed out. The authentication session took too long to complete. Please try again."
+        self.error = "Signing in took too long. Try again."
       } else {
-        self.error = "Failed to reauthenticate: \(error.localizedDescription)"
+        self.error = AuthenticationManager.userFacingMessage(for: error)
       }
       isLoading = false
     }

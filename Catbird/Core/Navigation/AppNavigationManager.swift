@@ -32,6 +32,10 @@ import SwiftUI
     // when the matching conversation opens.
     var pendingChatShare: PendingChatShare?
 
+    // Presents Settings as a sheet for `.settings` destinations. Pushing Settings into a tab's
+    // stack would nest its own navigation stack, search field and Close button.
+    var settingsPresenter: ((SettingsRoute) -> Void)?
+
     // Set the current tab index - called when the user switches tabs
     func updateCurrentTab(_ index: Int) {
         currentTabIndex = index
@@ -47,6 +51,11 @@ import SwiftUI
     
     // Navigate to a destination in the current tab or a specified tab
     func navigate(to destination: NavigationDestination, in tabIndex: Int? = nil) {
+        if case .settings(let route) = destination, let settingsPresenter {
+            settingsPresenter(route)
+            return
+        }
+
         // Always use the current tab unless explicitly specified
         let targetTab = tabIndex ?? currentTabIndex
         
