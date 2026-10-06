@@ -53,13 +53,22 @@ struct NotificationWidgetIntent: WidgetConfigurationIntent {
 struct NotificationEntry: TimelineEntry {
   let date: Date
   let count: Int
+  /// When Catbird last saved the unread count; nil when it never has.
+  var lastUpdated: Date? = nil
+  /// False when no account is signed in to Catbird.
+  var isSignedIn: Bool = true
   var configuration: NotificationWidgetIntent
 }
 
 // Provider class for the widget timeline
 struct Provider: AppIntentTimelineProvider {
     func snapshot(for configuration: NotificationWidgetIntent, in context: Context) async -> NotificationEntry {
-        return getNotificationEntry(configuration: configuration)
+        let entry = getNotificationEntry(configuration: configuration)
+        // A sample count is only for the widget gallery preview; a real widget never shows one.
+        if context.isPreview && entry.lastUpdated == nil {
+          return NotificationEntry(date: Date(), count: 3, lastUpdated: Date(), configuration: configuration)
+        }
+        return entry
     }
     
     func timeline(for configuration: NotificationWidgetIntent, in context: Context) async -> Timeline<NotificationEntry> {
@@ -80,24 +89,34 @@ struct Provider: AppIntentTimelineProvider {
   }
 
   private func getNotificationEntry(configuration: NotificationWidgetIntent) -> NotificationEntry {
-      if let sharedDefaults = sharedDefaults {
-        if let data = sharedDefaults.data(forKey: "notificationWidgetData") {
-          do {
-            let widgetData = try JSONDecoder().decode(NotificationWidgetData.self, from: data)
-            logger.debug("Widget found data: count=\(widgetData.count), lastUpdated=\(widgetData.lastUpdated)")
-            return NotificationEntry(date: Date(), count: widgetData.count, configuration: configuration)
-          } catch {
-            logger.debug("Widget failed to decode data: \(error.localizedDescription)")
-            return NotificationEntry(date: Date(), count: 5, configuration: configuration)
-          }
-        } else {
-          logger.debug("Widget: No notification data found in UserDefaults")
-          return NotificationEntry(date: Date(), count: 3, configuration: configuration)
-        }
-      } else {
-        logger.debug("Widget: Failed to access UserDefaults with suite 'group.blue.catbird.shared'")
-        return NotificationEntry(date: Date(), count: 7, configuration: configuration)
-      }
+    guard let sharedDefaults = sharedDefaults else {
+      logger.debug("Widget: Failed to access UserDefaults with suite 'group.blue.catbird.shared'")
+      return NotificationEntry(date: Date(), count: 0, isSignedIn: false, configuration: configuration)
+    }
+
+    guard sharedDefaults.string(forKey: "activeAccountDID") != nil else {
+      logger.debug("Widget: No signed-in account")
+      return NotificationEntry(date: Date(), count: 0, isSignedIn: false, configuration: configuration)
+    }
+
+    guard let data = sharedDefaults.data(forKey: "notificationWidgetData") else {
+      logger.debug("Widget: No notification data found in UserDefaults")
+      return NotificationEntry(date: Date(), count: 0, configuration: configuration)
+    }
+
+    do {
+      let widgetData = try JSONDecoder().decode(NotificationWidgetData.self, from: data)
+      logger.debug("Widget found data: count=\(widgetData.count), lastUpdated=\(widgetData.lastUpdated)")
+      return NotificationEntry(
+        date: Date(),
+        count: widgetData.count,
+        lastUpdated: widgetData.lastUpdated,
+        configuration: configuration
+      )
+    } catch {
+      logger.debug("Widget failed to decode data: \(error.localizedDescription)")
+      return NotificationEntry(date: Date(), count: 0, configuration: configuration)
+    }
   }
 }
 
@@ -117,7 +136,7 @@ struct NotificationWidgetEntryView: View {
       } else if family == .accessoryCircular {
         circularWidgetView
       } else if family == .accessoryInline {
-        Text("Catbird: \(entry.count) unread")
+        Text(entry.isSignedIn ? "Catbird: \(entry.count) unread" : "Catbird: Not signed in")
           .font(.headline)
           .widgetAccentable()
       } else if family == .accessoryRectangular {
@@ -150,7 +169,7 @@ struct NotificationWidgetEntryView: View {
       // Count area with extra large number
       VStack(alignment: .center, spacing: 2) {
           
-          Text("bluesky")
+          Text("Bluesky")
               .font(.system(.headline, design: .rounded, weight: .heavy).lowercaseSmallCaps())
               .foregroundStyle(.tertiary)
               .textScale(.secondary)
@@ -158,29 +177,35 @@ struct NotificationWidgetEntryView: View {
             .widgetAccentable()
             .minimumScaleFactor(0.8)
 
-        Text("\(entry.count)")
-              .font(.system(size: 75, weight: .bold, design: .rounded))
-          .minimumScaleFactor(0.5)
-          .lineLimit(1)
-          .widgetAccentable()
-          .shadow(color: .black.opacity(0.2), radius: 1, x: 0, y: 1)
-        
-          Text(entry.count == 1 ? "unread notification" : "unread notifications")
-              .font(.system(.caption, design: .rounded))
-              .lineLimit(nil)
-              .multilineTextAlignment(.center)
-          .foregroundStyle(.secondary)
-          .widgetAccentable()
+        if entry.isSignedIn {
+          Text("\(entry.count)")
+                .font(.system(size: 75, weight: .bold, design: .rounded))
+            .minimumScaleFactor(0.5)
+            .lineLimit(1)
+            .widgetAccentable()
+            .shadow(color: .black.opacity(0.2), radius: 1, x: 0, y: 1)
+
+            Text(entry.count == 1 ? "unread notification" : "unread notifications")
+                .font(.system(.caption, design: .rounded))
+                .lineLimit(nil)
+                .multilineTextAlignment(.center)
+            .foregroundStyle(.secondary)
+            .widgetAccentable()
+        } else {
+          signedOutMessage
+        }
       }
       .frame(maxWidth: .infinity)
       
       // Timestamp area
-      Text("Updated \(entry.date.formatted(.relative(presentation: .named)))")
-        .font(.system(.caption2, design: .rounded))
-        .textScale(.secondary)
-        .foregroundStyle(.tertiary)
-        .lineLimit(1)
-        .minimumScaleFactor(0.8)
+      if let lastUpdated = entry.lastUpdated, entry.isSignedIn {
+        Text("Updated \(lastUpdated.formatted(.relative(presentation: .named)))")
+          .font(.system(.caption2, design: .rounded))
+          .textScale(.secondary)
+          .foregroundStyle(.tertiary)
+          .lineLimit(1)
+          .minimumScaleFactor(0.8)
+      }
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     .containerBackground(for: .widget, content: {
@@ -196,7 +221,7 @@ struct NotificationWidgetEntryView: View {
       // Left section with icon and title
       VStack(alignment: .leading, spacing: 4) {
 
-        Text("bluesky notifications")
+        Text("Bluesky Notifications")
               .font(.system(.headline, design: .rounded, weight: .heavy).lowercaseSmallCaps())
           .foregroundStyle(.secondary)
           .widgetAccentable()
@@ -204,27 +229,33 @@ struct NotificationWidgetEntryView: View {
           
         Spacer()
         
-        Text("Updated \(entry.date.formatted(.relative(presentation: .named)))")
-          .font(.system(.caption2, design: .rounded))
-          .foregroundStyle(.tertiary)
-          .lineLimit(1)
-          .minimumScaleFactor(0.8)
+        if let lastUpdated = entry.lastUpdated, entry.isSignedIn {
+          Text("Updated \(lastUpdated.formatted(.relative(presentation: .named)))")
+            .font(.system(.caption2, design: .rounded))
+            .foregroundStyle(.tertiary)
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+        }
       }
       
       // Right section with large count
       VStack(alignment: .trailing) {
-        Text("\(entry.count)")
-          .font(.system(size: 75, weight: .bold, design: .rounded))
-          .minimumScaleFactor(0.6)
-          .lineLimit(1)
-          .widgetAccentable()
-          .shadow(color: .black.opacity(0.2), radius: 1, x: 0, y: 1)
-          
-        Text(entry.count == 1 ? "unread notification" : "unread notifications")
-          .font(.system(.caption, design: .rounded))
-          .foregroundStyle(.secondary)
-          .widgetAccentable()
-          .minimumScaleFactor(0.8)
+        if entry.isSignedIn {
+          Text("\(entry.count)")
+            .font(.system(size: 75, weight: .bold, design: .rounded))
+            .minimumScaleFactor(0.6)
+            .lineLimit(1)
+            .widgetAccentable()
+            .shadow(color: .black.opacity(0.2), radius: 1, x: 0, y: 1)
+
+          Text(entry.count == 1 ? "unread notification" : "unread notifications")
+            .font(.system(.caption, design: .rounded))
+            .foregroundStyle(.secondary)
+            .widgetAccentable()
+            .minimumScaleFactor(0.8)
+        } else {
+          signedOutMessage
+        }
       }
       .frame(maxWidth: .infinity)
     }
@@ -247,12 +278,21 @@ struct NotificationWidgetEntryView: View {
         .widgetAccentable()
       
       // Count with large font
-      Text("\(entry.count)")
-        .font(.system(size: 24, weight: .bold, design: .rounded))
-        .lineLimit(1)
-        .minimumScaleFactor(0.6)
-        .widgetAccentable()
+      if entry.isSignedIn {
+        Text("\(entry.count)")
+          .font(.system(size: 24, weight: .bold, design: .rounded))
+          .lineLimit(1)
+          .minimumScaleFactor(0.6)
+          .widgetAccentable()
+      }
     }
+    .accessibilityElement(children: .ignore)
+    .accessibilityLabel(Text(countAccessibilityLabel))
+  }
+
+  private var countAccessibilityLabel: String {
+    guard entry.isSignedIn else { return "Not signed in to Catbird" }
+    return entry.count == 1 ? "1 unread notification" : "\(entry.count) unread notifications"
   }
 
   // Rectangular widget for Lock Screen
@@ -263,20 +303,37 @@ struct NotificationWidgetEntryView: View {
         .font(.system(size: 18))
         .widgetAccentable()
       
-      // Count with large, prominent text
-      Text("\(entry.count) unread")
-        .font(.system(.body, design: .rounded))
-        .fontWeight(.bold)
-        .widgetAccentable()
-        .lineLimit(1)
-        .minimumScaleFactor(0.8)
-        
-      Text("notifications")
-        .font(.system(.body, design: .rounded))
-        .widgetAccentable()
-        .lineLimit(1)
-        .minimumScaleFactor(0.8)
+      if entry.isSignedIn {
+        // Count with large, prominent text
+        Text("\(entry.count) unread")
+          .font(.system(.body, design: .rounded))
+          .fontWeight(.bold)
+          .widgetAccentable()
+          .lineLimit(1)
+          .minimumScaleFactor(0.8)
+
+        Text(entry.count == 1 ? "notification" : "notifications")
+          .font(.system(.body, design: .rounded))
+          .widgetAccentable()
+          .lineLimit(1)
+          .minimumScaleFactor(0.8)
+      } else {
+        Text("Open Catbird to sign in")
+          .font(.system(.body, design: .rounded))
+          .widgetAccentable()
+          .lineLimit(2)
+          .minimumScaleFactor(0.8)
+      }
     }
+  }
+
+  // Shown in place of the count when no account is signed in
+  private var signedOutMessage: some View {
+    Text("Open Catbird to sign in")
+      .font(.system(.subheadline, design: .rounded, weight: .semibold))
+      .multilineTextAlignment(.center)
+      .foregroundStyle(.secondary)
+      .minimumScaleFactor(0.8)
   }
 }
 
@@ -293,7 +350,7 @@ struct CatbirdNotificationWidget: Widget {
       NotificationWidgetEntryView(entry: entry)
     }
     .configurationDisplayName("Notifications")
-    .description("Shows your unread bluesky notifications.")
+    .description("Shows your unread Bluesky notifications.")
     .supportedFamilies([
       .systemSmall,
       .systemMedium,

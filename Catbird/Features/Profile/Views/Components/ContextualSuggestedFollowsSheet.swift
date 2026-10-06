@@ -17,16 +17,25 @@ public struct ContextualSuggestedFollowsSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(AppState.self) private var appState
     
-    @State private var suggestions: [AppBskyActorDefs.ProfileView] = []
-    @State private var isLoading: Bool = true
+    @State private var suggestions: [AppBskyActorDefs.ProfileView]
+    @State private var isLoading: Bool
     @State private var errorMessage: String?
     
-    private let logger = Logger(subsystem: "blue.catbird", category: "ContextualSuggestedFollowsSheet")
+    private static let logger = Logger(subsystem: "blue.catbird", category: "ContextualSuggestedFollowsSheet")
     
-    public init(actorDID: String, actorHandle: String, path: Binding<NavigationPath>) {
+    /// - Parameter initialSuggestions: Suggestions the caller already fetched. When provided,
+    ///   the sheet shows them immediately instead of loading its own.
+    public init(
+        actorDID: String,
+        actorHandle: String,
+        path: Binding<NavigationPath>,
+        initialSuggestions: [AppBskyActorDefs.ProfileView]? = nil
+    ) {
         self.actorDID = actorDID
         self.actorHandle = actorHandle
         self._path = path
+        self._suggestions = State(initialValue: initialSuggestions ?? [])
+        self._isLoading = State(initialValue: initialSuggestions == nil)
     }
     
     public var body: some View {
@@ -36,19 +45,29 @@ public struct ContextualSuggestedFollowsSheet: View {
                     VStack(spacing: 16) {
                         ProgressView()
                             .controlSize(.large)
-                        Text("Finding suggested follows...")
+                        Text("Finding suggested follows…")
                             .appFont(AppTextRole.subheadline)
                             .foregroundColor(.secondary)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if let errorMessage, suggestions.isEmpty {
+                    ContentUnavailableView {
+                        Label("Couldn’t Load Suggestions", systemImage: "exclamationmark.triangle")
+                    } description: {
+                        Text(errorMessage)
+                    } actions: {
+                        Button("Try Again") {
+                            Task { await loadSuggestions() }
+                        }
+                    }
                 } else if suggestions.isEmpty {
                     VStack(spacing: 12) {
                         Image(systemName: "person.2.slash")
                             .font(.system(size: 40))
                             .foregroundColor(.secondary)
-                        Text("No suggestions available")
+                        Text("No Suggestions Right Now")
                             .appFont(AppTextRole.headline)
-                        Text("There are no additional suggested follows for @\(actorHandle) right now.")
+                        Text("There are no other suggested follows for @\(actorHandle) right now.")
                             .appFont(AppTextRole.subheadline)
                             .foregroundColor(.secondary)
                             .multilineTextAlignment(.center)
@@ -71,9 +90,11 @@ public struct ContextualSuggestedFollowsSheet: View {
                 }
             }
             .task {
+                guard isLoading else { return }
                 await loadSuggestions()
             }
         }
+        .presentationDetents([.medium, .large])
     }
     
     // MARK: - Suggestions List
@@ -138,42 +159,56 @@ public struct ContextualSuggestedFollowsSheet: View {
         }
         
         isLoading = true
+        errorMessage = nil
         defer { isLoading = false }
         
         do {
-            let identifier = try ATIdentifier(string: actorDID)
-            let params = AppBskyGraphGetSuggestedFollowsByActor.Parameters(actor: identifier)
-            let (code, output) = try await client.app.bsky.graph.getSuggestedFollowsByActor(input: params)
-            
-            guard code == 200, let suggestionsOutput = output else {
-                logger.warning("getSuggestedFollowsByActor returned HTTP \(code)")
-                return
-            }
-            
-            let currentDID = appState.userDID
-            
-            // Filter eligible suggestions
-            let filtered = suggestionsOutput.suggestions.filter { profile in
-                let didString = profile.did.didString()
-                // Exclude self
-                if didString == currentDID { return false }
-                
-                guard let viewer = profile.viewer else { return true }
-                
-                // Exclude already following
-                if viewer.following != nil { return false }
-                // Exclude muted
-                if viewer.muted == true || viewer.mutedByList != nil { return false }
-                // Exclude blocked / blocking
-                if viewer.blocking != nil || viewer.blockingByList != nil || viewer.blockedBy == true { return false }
-                
-                return true
-            }
-            
-            self.suggestions = filtered
+            suggestions = try await Self.fetchSuggestions(
+                client: client,
+                actorDID: actorDID,
+                currentUserDID: appState.userDID
+            )
         } catch {
-            logger.error("Failed to load suggested follows for \(actorDID): \(error.localizedDescription)")
-            self.errorMessage = error.localizedDescription
+            Self.logger.error("Failed to load suggested follows for \(actorDID): \(error.localizedDescription)")
+            errorMessage = UserFacingError.message(for: error, action: "load suggestions")
         }
     }
+    
+    /// Fetches people similar to `actorDID`, excluding the current user and anyone already
+    /// followed, muted or blocked.
+    static func fetchSuggestions(
+        client: ATProtoClient,
+        actorDID: String,
+        currentUserDID: String?
+    ) async throws -> [AppBskyActorDefs.ProfileView] {
+        let identifier = try ATIdentifier(string: actorDID)
+        let params = AppBskyGraphGetSuggestedFollowsByActor.Parameters(actor: identifier)
+        let (code, output) = try await client.app.bsky.graph.getSuggestedFollowsByActor(input: params)
+        
+        guard code == 200, let suggestionsOutput = output else {
+            logger.warning("getSuggestedFollowsByActor returned HTTP \(code)")
+            throw SuggestedFollowsError.unavailable(code)
+        }
+        
+        return suggestionsOutput.suggestions.filter { profile in
+            let didString = profile.did.didString()
+            // Exclude self
+            if didString == currentUserDID { return false }
+            
+            guard let viewer = profile.viewer else { return true }
+            
+            // Exclude already following
+            if viewer.following != nil { return false }
+            // Exclude muted
+            if viewer.muted == true || viewer.mutedByList != nil { return false }
+            // Exclude blocked / blocking
+            if viewer.blocking != nil || viewer.blockingByList != nil || viewer.blockedBy == true { return false }
+            
+            return true
+        }
+    }
+}
+
+enum SuggestedFollowsError: Error {
+    case unavailable(Int)
 }

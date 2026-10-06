@@ -9,6 +9,7 @@ import os
 final class ThreadViewController: UIViewController, StateInvalidationSubscriber {
   // MARK: - Properties
   private var appState: AppState
+  private var sceneContext: SceneNavigationContext
   private let postURI: ATProtocolURI
   private var path: Binding<NavigationPath>
   let visibilityContext: PostVisibilityContext
@@ -116,7 +117,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
 
     let label = UILabel()
     label.translatesAutoresizingMaskIntoConstraints = false
-    label.text = "Loading thread..."
+    label.text = "Loading thread…"
     label.textAlignment = .center
     label.font = UIFont.preferredFont(forTextStyle: UIFont.TextStyle.body)
 
@@ -201,17 +202,27 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   // MARK: - Initialization
   init(
     appState: AppState,
+    sceneContext: SceneNavigationContext,
     postURI: ATProtocolURI,
     path: Binding<NavigationPath>,
     visibilityContext: PostVisibilityContext = .public
   ) {
     self.appState = appState
+    self.sceneContext = sceneContext
     self.postURI = postURI
     self.path = path
     self.visibilityContext = visibilityContext
     super.init(nibName: nil, bundle: nil)
     // Subscribe to state invalidation events for reply updates
     appState.stateInvalidationBus.subscribe(self)
+  }
+
+  func updateSceneContext(_ context: SceneNavigationContext) {
+    guard sceneContext !== context else { return }
+    sceneContext = context
+    guard isViewLoaded else { return }
+    collectionView.reloadData()
+    if let mainPost { setupComposePrompt(with: mainPost) }
   }
 
   required init?(coder: NSCoder) {
@@ -293,8 +304,6 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   override func viewWillAppear(_ animated: Bool) {
     super.viewWillAppear(animated)
     
-    // Apply theme directly to this view controller's navigation and toolbar
-    configureNavigationAndToolbarTheme()
     updateThemeColors()
     
     // Apply width=120 fonts to this navigation bar
@@ -308,16 +317,30 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     
     // Setup UIUpdateLink now that view is in window hierarchy
     #if os(iOS) && !targetEnvironment(macCatalyst)
-    if #available(iOS 18.0, *), updateLink == nil {
-      setupUIUpdateLink()
+    if #available(iOS 18.0, *) {
+      if updateLink == nil {
+        setupUIUpdateLink()
+      } else {
+        updateLink?.isEnabled = true
+      }
     }
     #endif
     
     // Ensure theming is applied after view appears (helps with material effects)
     DispatchQueue.main.async {
-      self.configureNavigationAndToolbarTheme()
       self.updateThemeColors()
     }
+  }
+
+  override func viewWillDisappear(_ animated: Bool) {
+    super.viewWillDisappear(animated)
+
+    // Stop driving display updates while another screen covers the thread
+    #if os(iOS) && !targetEnvironment(macCatalyst)
+    if #available(iOS 18.0, *) {
+      updateLink?.isEnabled = false
+    }
+    #endif
   }
   
   override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
@@ -332,80 +355,11 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
 
     // Update theme when system appearance changes
     if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
-      // Apply theme directly to this view controller
-      configureNavigationAndToolbarTheme()
       // Update themed colors
       updateThemeColors()
     }
   }
   
-  // MARK: - Theme Configuration
-  
-  private func configureNavigationAndToolbarTheme() {
-    let currentScheme = getCurrentColorScheme()
-    let isDarkMode = appState.themeManager.isDarkMode(for: currentScheme)
-    let isBlackMode = appState.themeManager.isUsingTrueBlack
-    
-    // MARK: - Configure Navigation Bar
-//    if let navigationBar = navigationController?.navigationBar {
-//        let navAppearance = UINavigationBarAppearance()
-//
-//        if isDarkMode && isBlackMode {
-//            // True black mode
-//            navAppearance.configureWithOpaqueBackground()
-//            navAppearance.backgroundColor = UIColor.black
-//            navAppearance.shadowColor = .clear
-//        } else if isDarkMode {
-//            // Dim mode
-//            navAppearance.configureWithOpaqueBackground()
-//            navAppearance.backgroundColor = UIColor(appState.themeManager.dimBackgroundColor)
-//            navAppearance.shadowColor = .clear
-//        } else {
-//            // Light mode
-//            navAppearance.configureWithDefaultBackground()
-//        }
-//
-//        // Apply width=120 fonts to navigation bar
-//        NavigationFontConfig.applyFonts(to: navAppearance)
-//
-//        // Apply the navigation bar appearance
-//        navigationBar.standardAppearance = navAppearance
-//        navigationBar.scrollEdgeAppearance = navAppearance
-//        navigationBar.compactAppearance = navAppearance
-//    }
-//
-    // MARK: - Configure Tab Bar (only if present)
-    guard let tabBarController = self.tabBarController else { return }
-    
-    let tabBarAppearance = UITabBarAppearance()
-    if isDarkMode && isBlackMode {
-      tabBarAppearance.configureWithOpaqueBackground()
-      tabBarAppearance.backgroundColor = .black
-      tabBarAppearance.shadowColor = .clear
-      tabBarController.tabBar.tintColor = UIColor.systemBlue
-    } else if isDarkMode {
-      tabBarAppearance.configureWithOpaqueBackground()
-      tabBarAppearance.backgroundColor = UIColor(
-        Color.dynamicBackground(appState.themeManager, currentScheme: .dark)
-      )
-      tabBarAppearance.shadowColor = .clear
-      tabBarController.tabBar.tintColor = nil
-    } else {
-      tabBarAppearance.configureWithDefaultBackground()
-      tabBarAppearance.backgroundColor = UIColor.systemBackground
-      tabBarController.tabBar.tintColor = UIColor.systemBlue
-    }
-    
-    // Apply the tab bar appearance
-    tabBarController.tabBar.standardAppearance = tabBarAppearance
-    tabBarController.tabBar.scrollEdgeAppearance = tabBarAppearance
-    
-    // Ensure proper color scheme for tab bar icons and text
-    if #available(iOS 13.0, *) {
-        tabBarController.tabBar.overrideUserInterfaceStyle = currentScheme == .dark ? .dark : .light
-    }
-  }
-
   // MARK: - Theme Observation and Updates
   private func setupThemeObserver() {
     // Observe ThemeManager changes via @Observable and fallback notification
@@ -427,7 +381,6 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   }
 
   private func handleThemeChange() {
-    configureNavigationAndToolbarTheme()
     updateThemeColors()
     // Force cells to re-read backgrounds where needed
     let snapshot = dataSource.snapshot()
@@ -676,6 +629,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
           cell.configure(
             post: mainPost,
             appState: self.appState,
+            sceneContext: self.sceneContext,
             path: self.path,
             opThreadPostIndex: self.mainPostIndex,
             opThreadPostCount: self.mainPostCount,
@@ -693,6 +647,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
             blocked: blocked,
             anchorURI: self.postURI,
             appState: self.appState,
+            sceneContext: self.sceneContext,
             path: self.path
           )
         }
@@ -722,6 +677,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       threadItem: threadItemsByID[row.id],
       parentAuthor: parentAuthor,
       appState: appState,
+      sceneContext: sceneContext,
       path: path,
       visibilityContext: visibilityContext,
       isActionLoading: row.kind == .showOtherReplies && isLoadingHiddenReplies,
@@ -737,10 +693,16 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     updateShowMoreRepliesCell()
     
     Task { @MainActor in
-      await threadManager?.loadHiddenReplies(uri: postURI)
+      let loaded = await threadManager?.loadHiddenReplies(uri: postURI) ?? false
 
-      hasLoadedHiddenReplies = true
+      hasLoadedHiddenReplies = loaded
       isLoadingHiddenReplies = false
+
+      if !loaded {
+        appState.toastManager.show(
+          ToastItem(message: "Couldn’t load more replies. Try again.", icon: "exclamationmark.triangle")
+        )
+      }
 
       // Rebuild so the hidden replies replace the button
       rebuildRows()
@@ -784,11 +746,16 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
 
     threadManager = manager
 
-    // Check if the thread has no parent posts
+    // The new manager starts without hidden replies; reload them below if the
+    // viewer had already revealed them, so a reload doesn't drop them.
+    let hadLoadedHiddenReplies = hasLoadedHiddenReplies
+    hasLoadedHiddenReplies = false
+
     if let threadData = manager.threadData {
-      if threadData.thread.filter({ $0.depth < 0 }).isEmpty {
-        controllerLogger.debug("🧵 THREAD LOAD: This thread has no parent posts, marking as top of thread")
-        hasReachedTopOfThread = true
+      // The top is reached when there are no parents or the topmost one is the root
+      hasReachedTopOfThread = Self.isTopOfThreadLoaded(in: threadData.thread)
+      if hasReachedTopOfThread {
+        controllerLogger.debug("🧵 THREAD LOAD: Topmost parent is the thread root, marking as top of thread")
       }
       
       // Track whether there are hidden replies available
@@ -796,13 +763,13 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       
       // If auto-load setting is enabled, load hidden replies automatically
       // Otherwise, we'll show a "Show More Replies" button
-      if appState.appSettings.showHiddenPosts && threadData.hasOtherReplies {
-        await manager.loadHiddenReplies(uri: postURI)
+      if (appState.appSettings.showHiddenPosts || hadLoadedHiddenReplies) && threadData.hasOtherReplies {
+        let loaded = await manager.loadHiddenReplies(uri: postURI)
         guard !Task.isCancelled && self.loadGeneration == thisGeneration else {
           controllerLogger.debug("🧵 THREAD LOAD: Task cancelled or superseded after loadHiddenReplies [gen: \(thisGeneration)]")
           return
         }
-        hasLoadedHiddenReplies = true
+        hasLoadedHiddenReplies = loaded
       }
     }
 
@@ -832,6 +799,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       "🧪 TEMP THREAD JUMP: about to apply initial snapshot - parents: \(self.parentPosts.count), replies: \(self.replyRows.count), hasMainPost: \(self.mainPost != nil)"
     )
     updateDataSnapshot(animatingDifferences: false)
+    updateUnavailableState()
     
     isLoading = false
 
@@ -946,6 +914,91 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     rebuildRows()
   }
 
+  /// Whether the topmost loaded ancestor is the thread's root, or one that can't
+  /// be walked past (deleted, blocked or hidden), so no earlier posts can load.
+  private static func isTopOfThreadLoaded(in thread: [AppBskyUnspeccedGetPostThreadV2.ThreadItem]) -> Bool {
+    guard let topmost = thread.filter({ $0.depth < 0 }).min(by: { $0.depth < $1.depth }) else {
+      return true
+    }
+    if case .appBskyUnspeccedDefsThreadItemPost(let itemPost) = topmost.value {
+      return !itemPost.moreParents
+    }
+    return true
+  }
+
+  // MARK: - Unavailable State
+
+  /// Shows a full-screen message when the thread's post can't be displayed, so a
+  /// deleted post, a failed load or a connection problem never leaves a blank screen.
+  private func updateUnavailableState() {
+    guard mainPost == nil, threadManager?.blockedAnchor == nil else {
+      contentUnavailableConfiguration = nil
+      return
+    }
+
+    var configuration = UIContentUnavailableConfiguration.empty()
+
+    if let threadData = threadManager?.threadData {
+      let anchorValue = threadData.thread.first(where: { $0.depth == 0 })?.value
+      if case .appBskyUnspeccedDefsThreadItemNoUnauthenticated = anchorValue {
+        configuration.image = UIImage(systemName: "lock")
+        configuration.text = "Post Unavailable"
+        configuration.secondaryText = "The author has limited this post to signed-in users."
+      } else {
+        configuration.image = UIImage(systemName: "trash")
+        configuration.text = "Post Not Found"
+        configuration.secondaryText = "This post may have been deleted."
+      }
+    } else {
+      let error = threadManager?.error
+      if let error {
+        controllerLogger.error("Thread unavailable after load error: \(String(describing: error), privacy: .public)")
+      }
+      switch error.map(Self.unavailableKind(of:)) ?? .other {
+      case .notFound:
+        configuration.image = UIImage(systemName: "trash")
+        configuration.text = "Post Not Found"
+        configuration.secondaryText = "This post may have been deleted."
+      case .notAllowed:
+        configuration.image = UIImage(systemName: "eye.slash")
+        configuration.text = "Post Unavailable"
+        configuration.secondaryText = "This post isn’t available."
+      case let kind:
+        configuration.image = UIImage(systemName: kind == .offline ? "wifi.exclamationmark" : "exclamationmark.triangle")
+        configuration.text = "Couldn’t Load Post"
+        configuration.secondaryText = LoadFailureCopy.suggestion(for: kind)
+        var button = UIButton.Configuration.filled()
+        button.title = "Try Again"
+        configuration.button = button
+        configuration.buttonProperties.primaryAction = UIAction { [weak self] _ in
+          self?.retryAfterLoadFailure()
+        }
+      }
+    }
+
+    contentUnavailableConfiguration = configuration
+  }
+
+  /// Classifies a thread load error, including the status-coded errors ThreadManager creates.
+  private static func unavailableKind(of error: Error) -> UserFacingError.Kind {
+    let nsError = error as NSError
+    guard nsError.domain == "ThreadManager" else { return UserFacingError.kind(of: error) }
+    switch nsError.code {
+    case 404, 410: return .notFound
+    case 403: return .notAllowed
+    case 401: return .signInRequired
+    case 429: return .rateLimited
+    case 500...599: return .server
+    default: return .other
+    }
+  }
+
+  private func retryAfterLoadFailure() {
+    contentUnavailableConfiguration = nil
+    loadingView.isHidden = false
+    reloadThread()
+  }
+
   /// Rebuilds `rows` from the thread data, loaded hidden replies and pending
   /// optimistic replies, and settles optimistic replies the server confirmed.
   private func rebuildRows() {
@@ -1008,6 +1061,12 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     hostingController.view.setContentHuggingPriority(.required, for: .vertical)
     hostingController.view.setContentCompressionResistancePriority(.required, for: .vertical)
     hostingController.sizingOptions = .intrinsicContentSize
+    // The container is pinned to `keyboardLayoutGuide.top`, which already clears
+    // the tab bar, home indicator and keyboard. If the hosted view also honoured
+    // safe-area insets, any pass where its frame overlapped the bottom inset
+    // (e.g. before the inset settled after a push) would add the inset a second
+    // time to the intrinsic height, leaving an empty band under the capsule.
+    hostingController.safeAreaRegions = []
     return hostingController
   }
 
@@ -1023,6 +1082,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
   private func setupComposePrompt(with post: AppBskyFeedDefs.PostView) {
     let promptView = ThreadComposePrompt(post: post, appState: appState)
       .applyAppStateEnvironment(appState)
+      .environment(sceneContext)
 
     if let existingHC = composePromptHostingController {
       existingHC.rootView = AnyView(promptView.fixedSize(horizontal: false, vertical: true))
@@ -1424,6 +1484,18 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     updateLoadingCell(isLoading: true)
     
     Task { @MainActor in
+      // Ends a load that produced no new parents without leaving the display
+      // link requesting per-frame updates.
+      func finishWithoutUpdate() {
+        isLoadingMoreParents = false
+        updateLoadingCell(isLoading: false)
+        #if os(iOS) && !targetEnvironment(macCatalyst)
+        if #available(iOS 18.0, *) {
+          updateLink?.requiresContinuousUpdates = false
+        }
+        #endif
+      }
+
       // Get oldest parent URI - with v2 API it's directly on the thread item
       let postURI = oldestParent.threadItem.uri
       
@@ -1432,8 +1504,11 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       
       guard success,
             let threadData = threadManager.threadData else {
-        isLoadingMoreParents = false
-        updateLoadingCell(isLoading: false)
+        // Stop retrying once the topmost loaded parent is the root
+        if let threadData = threadManager.threadData, Self.isTopOfThreadLoaded(in: threadData.thread) {
+          markReachedTopOfThread()
+        }
+        finishWithoutUpdate()
         return
       }
       
@@ -1443,7 +1518,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       )
       
       // Check if we have the complete chain with root post (topmost parent has moreParents = false)
-      let hasRootPost = fullChainFromManager.last.map { parent in
+      let hasRootPost = fullChainFromManager.first.map { parent in
         if case .appBskyUnspeccedDefsThreadItemPost(let itemPost) = parent.threadItem.value {
           return !itemPost.moreParents
         }
@@ -1465,18 +1540,10 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
         // Only mark as reached top if we truly have no more parents to load
         if fullChainFromManager.isEmpty {
           controllerLogger.debug("⬆️ LOAD MORE PARENTS: No parents at all, reached top")
-          hasReachedTopOfThread = true
-          
-          // Remove the load more trigger
-          var snapshot = dataSource.snapshot()
-          if let loadMoreItem = snapshot.itemIdentifiers(inSection: .loadMoreParents).first {
-            snapshot.deleteItems([loadMoreItem])
-            applySnapshot(snapshot, animatingDifferences: false)
-          }
+          markReachedTopOfThread()
         }
         
-        isLoadingMoreParents = false
-        updateLoadingCell(isLoading: false)
+        finishWithoutUpdate()
         return
       }
       
@@ -1484,6 +1551,16 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       
       // Update data with coordinated updates
       updateDataWithNewParents(fullChainFromManager, scrollAnchor: scrollAnchor)
+    }
+  }
+
+  /// Marks the root as loaded and removes the load-more trigger.
+  private func markReachedTopOfThread() {
+    hasReachedTopOfThread = true
+    var snapshot = dataSource.snapshot()
+    if let loadMoreItem = snapshot.itemIdentifiers(inSection: .loadMoreParents).first {
+      snapshot.deleteItems([loadMoreItem])
+      applySnapshot(snapshot, animatingDifferences: false)
     }
   }
 
@@ -1510,7 +1587,7 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
     parentPosts = newParents
     
     // Check if we now have the root post (topmost parent has moreParents = false)
-    let hasRootPost = parentPosts.last.map { parent in
+    let hasRootPost = parentPosts.first.map { parent in
       if case .appBskyUnspeccedDefsThreadItemPost(let itemPost) = parent.threadItem.value {
         return !itemPost.moreParents
       }
@@ -1812,18 +1889,12 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       return nil
       
     case Section.parentPosts.rawValue: // Section 1 - Parent posts
-      guard firstVisibleIndexPath.item < parentPosts.reversed().count else {
+      guard firstVisibleIndexPath.item < parentRows.count else {
         controllerLogger.debug("⚠️ Parent index out of bounds: \(firstVisibleIndexPath.item)")
         return nil
       }
-      // parentPosts are displayed in reverse order, so map the index correctly
-      let reversedIndex = parentPosts.count - 1 - firstVisibleIndexPath.item
-      if let pid = parentPosts[reversedIndex].uri?.uriString() {
-        postId = pid
-      } else {
-        controllerLogger.debug("⚠️ Parent post at index has no stable URI (pending/unexpected)")
-        return nil
-      }
+      // Parent rows are displayed oldest first, in the same order as their index paths
+      postId = parentRows[firstVisibleIndexPath.item].id
       
     case Section.mainPost.rawValue: // Section 2 - Main post
       guard let mainPostUri = mainPost?.uri.uriString() else {
@@ -1880,12 +1951,11 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       var mapping: [String: IndexPath] = [:]
       
       // Parent posts section (Section.parentPosts.rawValue = 1)
-      // Parents are displayed in reverse order, so map accordingly
-      for (displayIndex, parentPost) in parentPosts.reversed().enumerated() {
-        let key = parentPost.threadItem.uri.uriString()
+      // Parent rows are displayed oldest first, in the same order as their index paths
+      for (displayIndex, row) in parentRows.enumerated() {
         // Skip placeholder/unknown URIs to avoid mapping the wrong item
-        if key.hasPrefix("at://unknown") == false {
-          mapping[key] = IndexPath(item: displayIndex, section: Section.parentPosts.rawValue)
+        if row.id.hasPrefix("at://unknown") == false {
+          mapping[row.id] = IndexPath(item: displayIndex, section: Section.parentPosts.rawValue)
         }
       }
       
@@ -2071,9 +2141,11 @@ final class ThreadViewController: UIViewController, StateInvalidationSubscriber 
       }
       
     case .threadUpdated(let rootUri):
-      // Check if this is our thread being updated
+      // Check if this is our thread being updated: the anchor itself or the
+      // root it replies to (for example after the anchor reply was deleted)
       let currentPostUri = postURI.uriString()
-      if rootUri == currentPostUri {
+      let threadRootUri = parentPosts.first?.threadItem.uri.uriString()
+      if rootUri == currentPostUri || rootUri == threadRootUri {
         await MainActor.run {
           // Only reload if we don't already have the updates from optimistic additions
           if !hasOptimisticUpdates {

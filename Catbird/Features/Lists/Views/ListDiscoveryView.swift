@@ -91,7 +91,7 @@ final class ListDiscoveryViewModel {
       
     } catch {
       logger.error("Failed to load discovered lists: \(error.localizedDescription)")
-      errorMessage = error.localizedDescription
+      errorMessage = UserFacingError.message(for: error, action: "load lists") ?? "Try again."
       showingError = true
     }
     
@@ -213,7 +213,7 @@ struct ListDiscoveryView: View {
           .onChange(of: viewModel.searchText) { _, _ in
             viewModel.searchLists()
           }
-          .alert("Error", isPresented: Binding(
+          .alert("Couldn’t Load Lists", isPresented: Binding(
             get: { viewModel.showingError },
             set: { viewModel.showingError = $0 }
           )) {
@@ -280,7 +280,7 @@ struct ListDiscoveryView: View {
     VStack(spacing: 16) {
       ProgressView()
         .scaleEffect(1.5)
-      Text("Discovering lists...")
+      Text("Finding lists…")
         .font(.headline)
         .foregroundStyle(.secondary)
     }
@@ -429,7 +429,7 @@ struct DiscoveryListRow: View {
               
               Spacer()
               
-              Text("\(list.listItemCount ?? 0) members")
+              Text("^[\(list.listItemCount ?? 0) member](inflect: true)")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
             }

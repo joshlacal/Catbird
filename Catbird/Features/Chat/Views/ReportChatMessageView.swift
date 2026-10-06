@@ -8,6 +8,7 @@ struct ReportChatMessageView: View {
   @Environment(\.dismiss) private var dismiss
   
   let message: ChatBskyConvoDefs.MessageView
+  let convoId: String
   let onDismiss: () -> Void
   
   @State private var isSubmitting = false
@@ -22,7 +23,9 @@ struct ReportChatMessageView: View {
     NavigationStack {
       ChatReportFormView(
         title: "Report Message",
-        subtitle: "Reporting message: \"\(message.text.prefix(60))\(message.text.count > 60 ? "…" : "")\"",
+        subtitle: message.text.isEmpty
+          ? "Reporting a message"
+          : "Reporting message: “\(message.text.prefix(60))\(message.text.count > 60 ? "…" : "")”",
         isSubmitting: isSubmitting,
         errorMessage: errorMessage,
         onSubmit: { reason, details in
@@ -43,13 +46,19 @@ struct ReportChatMessageView: View {
       guard let reportingService = reportingService else {
         await MainActor.run {
           self.isSubmitting = false
-          self.errorMessage = "Not authenticated"
+          self.errorMessage = "Sign in to report this message."
         }
         return
       }
       
       do {
-        let subject = reportingService.createUserSubject(did: message.sender.did)
+        // Report the specific message (chat.bsky.convo.defs#messageRef), not just its sender
+        let messageRef = ChatBskyConvoDefs.MessageRef(
+          did: message.sender.did,
+          convoId: convoId,
+          messageId: message.id
+        )
+        let subject = ComAtprotoModerationCreateReport.InputSubjectUnion.unexpected(.knownType(messageRef))
         let reasonText = details.isEmpty ? "Inappropriate message in chat" : details
         
         let success = try await reportingService.submitReport(
@@ -61,15 +70,16 @@ struct ReportChatMessageView: View {
         await MainActor.run {
           self.isSubmitting = false
           if success {
+            appState.toastManager.show(ToastItem(message: "Report sent. Thanks for helping keep Bluesky safe."))
             onDismiss()
           } else {
-            self.errorMessage = "Failed to submit report. Please try again."
+            self.errorMessage = "Couldn’t send the report. Please try again."
           }
         }
       } catch {
         await MainActor.run {
           self.isSubmitting = false
-          self.errorMessage = "Error submitting report: \(error.localizedDescription)"
+          self.errorMessage = UserFacingError.message(for: error, action: "send the report")
         }
       }
     }

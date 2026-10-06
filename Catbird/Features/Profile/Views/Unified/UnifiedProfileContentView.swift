@@ -14,7 +14,7 @@ struct UnifiedProfileContentView: View {
   @Binding var navigationPath: NavigationPath
   let refreshAllContent: @MainActor () async -> Void
   let onTabChange: @MainActor (ProfileTab) -> Void
-  let prepareBlockConfirmation: @MainActor () async -> Void
+  let requestUnblock: @MainActor () -> Void
 
   var body: some View {
     ZStack {
@@ -37,7 +37,7 @@ struct UnifiedProfileContentView: View {
             isEditingProfile: $isEditingProfile,
             navigationPath: $navigationPath,
             onTabChange: onTabChange,
-            prepareBlockConfirmation: prepareBlockConfirmation
+            requestUnblock: requestUnblock
           )
         }
         .frame(maxWidth: .infinity, alignment: .center)
@@ -67,7 +67,7 @@ private struct UnifiedProfileDetailsView: View {
   @Binding var isEditingProfile: Bool
   @Binding var navigationPath: NavigationPath
   let onTabChange: @MainActor (ProfileTab) -> Void
-  let prepareBlockConfirmation: @MainActor () async -> Void
+  let requestUnblock: @MainActor () -> Void
 
   var body: some View {
     @Bindable var viewModel = viewModel
@@ -89,7 +89,7 @@ private struct UnifiedProfileDetailsView: View {
       ProfileBlockRelationshipView(
         viewer: profile.viewer,
         navigationPath: $navigationPath,
-        prepareBlockConfirmation: prepareBlockConfirmation
+        requestUnblock: requestUnblock
       )
       .padding(.horizontal, 16)
       .padding(.top, 8)
@@ -99,6 +99,7 @@ private struct UnifiedProfileDetailsView: View {
       if !viewModel.isCurrentUser && !viewModel.knownFollowers.isEmpty {
         FollowedByView(
           knownFollowers: viewModel.knownFollowers,
+          knownFollowersTotal: max(profile.viewer?.knownFollowers?.count ?? 0, viewModel.knownFollowers.count),
           totalFollowersCount: profile.followersCount ?? 0,
           profileDID: profile.did.didString(),
           path: $navigationPath
@@ -136,7 +137,7 @@ private struct UnifiedProfileDetailsView: View {
 private struct ProfileBlockRelationshipView: View {
   let viewer: AppBskyActorDefs.ViewerState?
   @Binding var navigationPath: NavigationPath
-  let prepareBlockConfirmation: @MainActor () async -> Void
+  let requestUnblock: @MainActor () -> Void
 
   var body: some View {
     let relationship = BlockRelationship(viewer: viewer)
@@ -148,12 +149,12 @@ private struct ProfileBlockRelationshipView: View {
         HStack(spacing: 16) {
           if relationship.canUnblockDirectly {
             Button("Unblock") {
-              Task { await prepareBlockConfirmation() }
+              requestUnblock()
             }
             .appFont(AppTextRole.callout)
           }
           if let listRef = relationship.listRef {
-            Button("View list") {
+            Button("View List") {
               navigationPath.append(NavigationDestination.list(listRef.uri))
             }
             .appFont(AppTextRole.callout)
@@ -185,7 +186,7 @@ private struct ProfileCurrentTabView: View {
           .frame(maxWidth: contentMaxWidth, alignment: .center)
           .frame(maxWidth: .infinity, alignment: .center)
       } else {
-        ProgressView("Loading labeler information...")
+        ProgressView("Loading…")
           .frame(maxWidth: .infinity, minHeight: 100)
           .padding()
       }
@@ -202,7 +203,8 @@ private struct ProfileCurrentTabView: View {
         posts: viewModel.replies,
         emptyMessage: "No replies",
         hasAttemptedLoad: hasAttemptedLoadReplies,
-        loadAction: viewModel.loadReplies,
+        hasMore: viewModel.hasMoreReplies,
+        loadAction: viewModel.loadMoreReplies,
         contentMaxWidth: contentMaxWidth,
         navigationPath: $navigationPath
       )
@@ -212,12 +214,13 @@ private struct ProfileCurrentTabView: View {
         posts: viewModel.postsWithMedia,
         emptyMessage: "No media posts",
         hasAttemptedLoad: hasAttemptedLoadMedia,
-        loadAction: viewModel.loadMediaPosts,
+        hasMore: viewModel.hasMoreMedia,
+        loadAction: viewModel.loadMoreMediaPosts,
         contentMaxWidth: contentMaxWidth,
         navigationPath: $navigationPath
       )
     case .more:
-      MoreView(path: $navigationPath)
+      MoreView(profileDID: viewModel.profile?.did.didString() ?? viewModel.userDID, path: $navigationPath)
     default:
       EmptyView()
     }
@@ -233,7 +236,7 @@ private struct ProfilePostsTabView: View {
   var body: some View {
     LazyVStack(spacing: 0) {
       if !hasAttemptedLoad || (viewModel.isLoading && viewModel.posts.isEmpty) {
-        ProgressView("Loading...")
+        ProgressView("Loading…")
           .frame(maxWidth: .infinity, minHeight: 100)
           .padding()
           .frame(maxWidth: contentMaxWidth, alignment: .center)
@@ -266,7 +269,8 @@ private struct ProfilePostsTabView: View {
           feedKey: viewModel.profileFeedKey(for: .posts),
           contentMaxWidth: contentMaxWidth,
           isLoadingMore: viewModel.isLoadingMorePosts,
-          loadMore: viewModel.loadPosts,
+          hasMore: viewModel.hasMorePosts,
+          loadMore: viewModel.loadMorePosts,
           path: $navigationPath
         )
       }
@@ -279,6 +283,7 @@ private struct ProfileFeedTabView: View {
   let posts: [AppBskyFeedDefs.FeedViewPost]
   let emptyMessage: String
   let hasAttemptedLoad: Bool
+  let hasMore: Bool
   let loadAction: @MainActor () async -> Void
   let contentMaxWidth: CGFloat
   @Binding var navigationPath: NavigationPath
@@ -286,11 +291,30 @@ private struct ProfileFeedTabView: View {
   var body: some View {
     LazyVStack(spacing: 0) {
       if !hasAttemptedLoad || (viewModel.isLoading && posts.isEmpty) {
-        ProgressView("Loading...")
+        ProgressView("Loading…")
           .frame(maxWidth: .infinity, minHeight: 100)
           .padding()
           .frame(maxWidth: contentMaxWidth, alignment: .center)
           .frame(maxWidth: .infinity, alignment: .center)
+      } else if posts.isEmpty && hasMore {
+        // The pages fetched so far had nothing for this tab, but older posts may.
+        VStack(spacing: 12) {
+          if viewModel.isLoadingMorePosts {
+            ProgressView()
+          } else {
+            Text("No recent posts here yet.")
+              .appFont(AppTextRole.subheadline)
+              .foregroundStyle(.secondary)
+            Button("Load More") {
+              Task { await loadAction() }
+            }
+            .buttonStyle(.bordered)
+          }
+        }
+        .frame(maxWidth: .infinity, minHeight: 160)
+        .padding(.top, 24)
+        .frame(maxWidth: contentMaxWidth, alignment: .center)
+        .frame(maxWidth: .infinity, alignment: .center)
       } else if posts.isEmpty {
         ProfileEmptyStateView(
           title: "No Content",
@@ -305,6 +329,7 @@ private struct ProfileFeedTabView: View {
           feedKey: viewModel.profileFeedKey(for: viewModel.selectedProfileTab),
           contentMaxWidth: contentMaxWidth,
           isLoadingMore: viewModel.isLoadingMorePosts,
+          hasMore: hasMore,
           loadMore: loadAction,
           path: $navigationPath
         )

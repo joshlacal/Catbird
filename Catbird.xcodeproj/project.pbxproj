@@ -153,14 +153,10 @@
 				FeedWidgetModels.swift,
 				Info.plist,
 				LockScreen/LockScreenWidgets.swift,
+				PrivacyInfo.xcprivacy,
 				Shared/AccountEntity.swift,
-				Shared/RefreshWidgetIntent.swift,
 				Shared/WidgetDataReader.swift,
 				Shared/WidgetDesignSystem.swift,
-				WidgetAvatarView.swift,
-				WidgetPostCard.swift,
-				WidgetThemeProvider.swift,
-				WidgetTypography.swift,
 			);
 			target = 212D4B3E2ED1FE730036E016 /* NotificationServiceExtension */;
 		};
@@ -270,6 +266,7 @@
 		21DDCCF92DD2AD59004947CD /* Exceptions for "Catbird" folder in "Catbird" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				"App/Info-Debug.plist",
 				App/Info.plist,
 				AppIntents/README.md,
 				Services/MLS/IMPLEMENTATION_COMPLETE.md,
@@ -898,9 +895,9 @@
 				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = CatbirdNotificationWidget/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = CatbirdNotificationWidget;
+				INFOPLIST_KEY_CFBundleDisplayName = "Catbird Notifications";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				IPHONEOS_DEPLOYMENT_TARGET = 18.4;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -936,9 +933,9 @@
 				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = CatbirdNotificationWidget/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = CatbirdNotificationWidget;
+				INFOPLIST_KEY_CFBundleDisplayName = "Catbird Notifications";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				IPHONEOS_DEPLOYMENT_TARGET = 18.4;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -987,7 +984,7 @@
 				);
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = NotificationServiceExtension/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = NotificationServiceExtension;
+				INFOPLIST_KEY_CFBundleDisplayName = Catbird;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				IPHONEOS_DEPLOYMENT_TARGET = 18;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -1037,7 +1034,7 @@
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = NotificationServiceExtension/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = NotificationServiceExtension;
+				INFOPLIST_KEY_CFBundleDisplayName = Catbird;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				IPHONEOS_DEPLOYMENT_TARGET = 18;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -1100,16 +1097,14 @@
 				);
 				GENERATE_INFOPLIST_FILE = YES;
 				HEADER_SEARCH_PATHS = "$(inherited)";
-				INFOPLIST_FILE = Catbird/App/Info.plist;
-				"INFOPLIST_FILE[sdk=macosx*]" = "Catbird/App/Info-Debug.plist";
-				"INFOPLIST_FILE[sdk=iphonesimulator*]" = "Catbird/App/Info-Debug.plist";
+				INFOPLIST_FILE = "Catbird/App/Info-Debug.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = Catbird;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.social-networking";
-				INFOPLIST_KEY_NSCameraUsageDescription = "Catbird needs camera access to let you capture photos and videos for your posts.";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Catbird uses the camera to take photos and videos for your posts and to scan Bluesky profile QR codes.";
 				INFOPLIST_KEY_NSContactsUsageDescription = "Catbird uses your contacts to help you find and connect with friends on Bluesky.";
-				INFOPLIST_KEY_NSFaceIDUsageDescription = "Catbird needs permission to lock with Face ID.";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Catbird needs microphone access to record audio for voice notes and video posts.";
+				INFOPLIST_KEY_NSFaceIDUsageDescription = "Catbird uses Face ID to unlock the app when App Lock is turned on.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Catbird uses the microphone when you record audio or video to share in a post.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Catbird saves images to your photo library when you choose Save Image.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -1147,7 +1142,7 @@
 				RUNTIME_EXCEPTION_ALLOW_UNSIGNED_EXECUTABLE_MEMORY = NO;
 				RUNTIME_EXCEPTION_DEBUGGING_TOOL = NO;
 				RUNTIME_EXCEPTION_DISABLE_EXECUTABLE_PAGE_PROTECTION = NO;
-				RUNTIME_EXCEPTION_DISABLE_LIBRARY_VALIDATION = YES;
+				RUNTIME_EXCEPTION_DISABLE_LIBRARY_VALIDATION = NO;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
 				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
@@ -1198,10 +1193,10 @@
 				INFOPLIST_KEY_CFBundleDisplayName = Catbird;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.social-networking";
-				INFOPLIST_KEY_NSCameraUsageDescription = "Catbird needs camera access to let you capture photos and videos for your posts.";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Catbird uses the camera to take photos and videos for your posts and to scan Bluesky profile QR codes.";
 				INFOPLIST_KEY_NSContactsUsageDescription = "Catbird uses your contacts to help you find and connect with friends on Bluesky.";
-				INFOPLIST_KEY_NSFaceIDUsageDescription = "Catbird needs permission to lock with Face ID.";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Catbird needs microphone access to record audio for voice notes and video posts.";
+				INFOPLIST_KEY_NSFaceIDUsageDescription = "Catbird uses Face ID to unlock the app when App Lock is turned on.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Catbird uses the microphone when you record audio or video to share in a post.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Catbird saves images to your photo library when you choose Save Image.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -1239,7 +1234,7 @@
 				RUNTIME_EXCEPTION_ALLOW_UNSIGNED_EXECUTABLE_MEMORY = NO;
 				RUNTIME_EXCEPTION_DEBUGGING_TOOL = NO;
 				RUNTIME_EXCEPTION_DISABLE_EXECUTABLE_PAGE_PROTECTION = NO;
-				RUNTIME_EXCEPTION_DISABLE_LIBRARY_VALIDATION = YES;
+				RUNTIME_EXCEPTION_DISABLE_LIBRARY_VALIDATION = NO;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
 				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
@@ -1469,9 +1464,9 @@
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = SharedDraftImporter/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = SharedDraftImporter;
+				INFOPLIST_KEY_CFBundleDisplayName = Catbird;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -1502,9 +1497,9 @@
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = SharedDraftImporter/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = SharedDraftImporter;
+				INFOPLIST_KEY_CFBundleDisplayName = Catbird;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -1539,9 +1534,9 @@
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = CatbirdFeedWidget/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = CatbirdFeedWidget;
+				INFOPLIST_KEY_CFBundleDisplayName = Catbird;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				IPHONEOS_DEPLOYMENT_TARGET = 18.5;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -1582,9 +1577,9 @@
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = CatbirdFeedWidget/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = CatbirdFeedWidget;
+				INFOPLIST_KEY_CFBundleDisplayName = Catbird;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				IPHONEOS_DEPLOYMENT_TARGET = 18.5;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",

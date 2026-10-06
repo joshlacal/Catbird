@@ -15,26 +15,20 @@ struct ChatProfileAvatarView: View {
     let avatarURL = profile?.finalAvatarURL()
     let profileKey = "\(profile?.did.didString() ?? "nil"):\(avatarURL?.absoluteString ?? "nil")"
 
-    LazyImage(url: avatarURL) { state in
-      if let image = state.image {
-        image
-          .resizable()
-          .scaledToFill()
-      } else {
-        // Placeholder view
-        ZStack {
-          Circle().fill(Color.gray.opacity(0.2))
-          if state.error != nil {
-            Image(systemName: "exclamationmark.circle")  // Error indicator
-              .foregroundColor(.red)
+    Group {
+      if let avatarURL {
+        LazyImage(url: avatarURL) { state in
+          if let image = state.image {
+            image
+              .resizable()
+              .scaledToFill()
           } else {
-            Text(initials)
-              .appFont(size: size * 0.4)
-              .foregroundColor(.secondary)
+            // Shown while loading and when the image fails to load
+            placeholder
           }
-          // NukeUI doesn't expose isLoading directly in the builder like this,
-          // but the placeholder is shown during loading.
         }
+      } else {
+        placeholder
       }
     }
     .frame(width: size, height: size)
@@ -42,6 +36,15 @@ struct ChatProfileAvatarView: View {
     .id(profileKey)
     // Add a subtle border/overlay if desired
     .overlay(Circle().stroke(Color.gray.opacity(0.1), lineWidth: 1))
+  }
+
+  private var placeholder: some View {
+    ZStack {
+      Circle().fill(Color.gray.opacity(0.2))
+      Text(initials)
+        .appFont(size: size * 0.4)
+        .foregroundColor(.secondary)
+    }
   }
 
   // Helper to generate initials from profile display name or handle
@@ -61,9 +64,8 @@ struct ChatProfileAvatarView: View {
       }
     }
 
-    // Fallback to handle
-    return String(profile.handle.description).uppercased()
-
+    // Fallback to the handle's first character
+    return profile.handle.description.first.map { String($0).uppercased() } ?? "?"
   }
 }
 

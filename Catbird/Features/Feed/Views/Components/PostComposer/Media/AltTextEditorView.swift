@@ -60,7 +60,7 @@ struct AltTextEditorView: View {
                         .appFont(AppTextRole.headline)
                         .foregroundStyle(.primary)
 
-                    Text("Good descriptions are concise, accurate, and focus on what's important in the image or video.")
+                    Text("Good descriptions are concise, accurate, and focus on what’s important in the image or video.")
                         .appFont(AppTextRole.subheadline)
                         .foregroundStyle(.secondary)
 
@@ -70,6 +70,7 @@ struct AltTextEditorView: View {
                             HStack(spacing: 8) {
                                 #if canImport(FoundationModels)
                                 if #available(iOS 26.0, macOS 26.0, *) {
+                                  if isAltTextModelAvailable {
                                     Button(action: {
                                         generateAltTextAction()
                                     }) {
@@ -81,7 +82,7 @@ struct AltTextEditorView: View {
                                                 Image(systemName: "sparkles")
                                                     .appFont(AppTextRole.subheadline)
                                             }
-                                            Text(isGeneratingAltText ? "Generating..." : "Generate Alt Text")
+                                            Text(isGeneratingAltText ? "Generating…" : "Generate Alt Text")
                                                 .appFont(AppTextRole.subheadline)
                                         }
                                         .padding(.horizontal, 12)
@@ -91,7 +92,8 @@ struct AltTextEditorView: View {
                                     }
                                     .buttonStyle(.plain)
                                     .disabled(isGeneratingAltText)
-                                    .accessibilityLabel("Generate alt text with Apple Intelligence")
+                                    .accessibilityLabel("Generate Alt Text with Apple Intelligence")
+                                  }
                                 }
                                 #endif
 
@@ -122,7 +124,7 @@ struct AltTextEditorView: View {
 
                 // Text editor
                 VStack(alignment: .trailing) {
-                    TextField("Describe this content...", text: $editedText, axis: .vertical)
+                    TextField("Describe this content…", text: $editedText, axis: .vertical)
                         .padding()
                         .background(Color(platformColor: PlatformColor.platformSystemGray6))
                         .cornerRadius(12)
@@ -161,7 +163,7 @@ struct AltTextEditorView: View {
 
                 #if canImport(FoundationModels)
                 if #available(iOS 26.0, macOS 26.0, *) {
-                    if imageData != nil {
+                    if imageData != nil && isAltTextModelAvailable {
                         ToolbarItem(placement: .primaryAction) {
                             Button {
                                 generateAltTextAction()
@@ -174,7 +176,7 @@ struct AltTextEditorView: View {
                                 }
                             }
                             .disabled(isGeneratingAltText)
-                            .accessibilityLabel("Generate alt text with Apple Intelligence")
+                            .accessibilityLabel("Generate Alt Text with Apple Intelligence")
                         }
                     }
                 }
@@ -211,7 +213,7 @@ struct AltTextEditorView: View {
                     }
                 }
             }
-            .alert("Alt Text Generation", isPresented: $showingErrorAlert) {
+            .alert("Couldn’t Generate Alt Text", isPresented: $showingErrorAlert) {
                 Button("OK", role: .cancel) {}
             } message: {
                 Text(altTextError ?? "Failed to generate alt text.")
@@ -236,6 +238,15 @@ struct AltTextEditorView: View {
     }
 
     // MARK: - AI Alt Text Generation
+
+    #if canImport(FoundationModels)
+    /// Only offer generation when Apple Intelligence can actually run on this device.
+    @available(iOS 26.0, macOS 26.0, *)
+    private var isAltTextModelAvailable: Bool {
+        if case .available = SystemLanguageModel.default.availability { return true }
+        return false
+    }
+    #endif
 
     private func generateAltTextAction() {
         guard let imageData = imageData else { return }
@@ -288,13 +299,13 @@ enum AltTextGeneratorError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .invalidImage:
-            return "Unable to process the image for alt text generation."
+            return "This image can’t be described automatically."
         case .modelUnavailable(let reason):
-            return "Apple Intelligence is currently unavailable: \(reason)"
+            return reason
         case .unsupportedPlatform:
-            return "On-device alt text generation requires iOS 26.0 or macOS 26.0 or later."
-        case .generationFailed(let details):
-            return "Failed to generate alt text: \(details)"
+            return "Generating descriptions requires iOS 26 or later."
+        case .generationFailed:
+            return "Couldn’t generate a description. Try again or write one yourself."
         }
     }
 }
@@ -337,13 +348,13 @@ public final class AltTextGeneratorService: Sendable {
         guard case .available = model.availability else {
             switch model.availability {
             case .unavailable(.appleIntelligenceNotEnabled):
-                throw AltTextGeneratorError.modelUnavailable("Apple Intelligence is not enabled in Settings.")
+                throw AltTextGeneratorError.modelUnavailable("Turn on Apple Intelligence in Settings to generate descriptions.")
             case .unavailable(.deviceNotEligible):
-                throw AltTextGeneratorError.modelUnavailable("This device is not eligible for Apple Intelligence.")
+                throw AltTextGeneratorError.modelUnavailable("This device doesn’t support Apple Intelligence.")
             case .unavailable(.modelNotReady):
-                throw AltTextGeneratorError.modelUnavailable("The on-device model is still downloading or preparing.")
+                throw AltTextGeneratorError.modelUnavailable("Apple Intelligence is still getting ready. Try again later.")
             default:
-                throw AltTextGeneratorError.modelUnavailable("The on-device model is unavailable.")
+                throw AltTextGeneratorError.modelUnavailable("Apple Intelligence isn’t available right now.")
             }
         }
 
@@ -384,7 +395,10 @@ public final class AltTextGeneratorService: Sendable {
         let promptText = buildPrompt(from: visualFeatures)
         let response = try await session.respond(to: Prompt(promptText), options: options)
         let cleaned = Self.cleanAltText(response.content)
-        return cleaned.isEmpty ? "Image description unavailable." : cleaned
+        guard !cleaned.isEmpty else {
+            throw AltTextGeneratorError.generationFailed("No description was generated.")
+        }
+        return cleaned
     }
 
     private func buildPrompt(from features: VisionFeatureExtractor.VisualSummary) -> String {

@@ -1,501 +1,297 @@
 import SwiftUI
 
 struct AppearanceSettingsView: View {
-    @Environment(AppState.self) private var appState
-    @Environment(\.colorScheme) private var colorScheme
-    
-    // Direct binding to AppSettings - no local state needed
-    private var theme: Binding<String> {
-        Binding(
-            get: { appState.appSettings.theme },
-            set: { appState.appSettings.theme = $0 }
-        )
-    }
+  @Environment(AppState.self) private var appState
+  @Environment(\.colorScheme) private var colorScheme
+  @State private var isShowingResetConfirmation = false
+  #if os(iOS)
+  @State private var currentAppIcon: AppIconChoice = .default
+  #endif
+  var initialFocus: SettingsControlID? = nil
 
-    private var darkThemeMode: Binding<String> {
-        Binding(
-            get: { appState.appSettings.darkThemeMode },
-            set: { appState.appSettings.darkThemeMode = $0 }
-        )
-    }
+  // Direct binding to AppSettings - no local state needed
+  private var theme: Binding<String> {
+    Binding(
+      get: { appState.appSettings.theme },
+      set: { appState.appSettings.theme = $0 }
+    )
+  }
 
-    private var accentColor: Binding<String> {
-        Binding(
-            get: { appState.appSettings.accentColor },
-            set: { appState.appSettings.accentColor = $0 }
-        )
-    }
-    
-    private var fontStyle: Binding<String> {
-        Binding(
-            get: { appState.appSettings.fontStyle },
-            set: { appState.appSettings.fontStyle = $0 }
-        )
-    }
-    
-    private var fontSize: Binding<String> {
-        Binding(
-            get: { appState.appSettings.fontSize },
-            set: { appState.appSettings.fontSize = $0 }
-        )
-    }
-    
-    private var lineSpacing: Binding<String> {
-        Binding(
-            get: { appState.appSettings.lineSpacing },
-            set: { appState.appSettings.lineSpacing = $0 }
-        )
-    }
-    
-    private var dynamicTypeEnabled: Binding<Bool> {
-        Binding(
-            get: { appState.appSettings.dynamicTypeEnabled },
-            set: { appState.appSettings.dynamicTypeEnabled = $0 }
-        )
-    }
-    
-    private var maxDynamicTypeSize: Binding<String> {
-        Binding(
-            get: { appState.appSettings.maxDynamicTypeSize },
-            set: { appState.appSettings.maxDynamicTypeSize = $0 }
-        )
-    }
-    
-    var body: some View {
-        Form {
-            // Theme Section
-            Section("Theme") {
-                Picker("App Theme", selection: theme) {
-                    Text("System").tag("system")
-                    Text("Light").tag("light")
-                    Text("Dark").tag("dark")
-                }
-                
-                if theme.wrappedValue == "dark" || (theme.wrappedValue == "system" && colorScheme == .dark) {
-                    Picker("Dark Mode Style", selection: darkThemeMode) {
-                        Text("Dim").tag("dim")
-                        Text("True Black").tag("black")
-                    }
-                }
-            }
-            .pickerStyle(.menu)
-            
-            #if os(iOS)
-            if UIApplication.shared.supportsAlternateIcons {
-                Section("App Icon") {
-                    NavigationLink(destination: AppIconSettingsView()) {
-                        HStack {
-                            Text("App Icon")
-                            Spacer()
-                            if let alternateName = UIApplication.shared.alternateIconName {
-                                Text(alternateName == "CatbirdClassic" ? "Classic" : alternateName)
-                                    .foregroundStyle(.secondary)
-                            } else {
-                                Text("Default")
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                }
-            }
-            #endif
-            
-            // Accent Color Section
-            Section("Accent Color") {
-                AccentColorPicker(selection: accentColor)
-            }
+  private var darkThemeMode: Binding<String> {
+    Binding(
+      get: { appState.appSettings.darkThemeMode },
+      set: { appState.appSettings.darkThemeMode = $0 }
+    )
+  }
 
-            // Typography Section
-            Section("Typography") {
-                Picker("Font Style", selection: fontStyle) {
-                    Text("System").tag("system")
-                    Text("Serif").tag("serif")
-                    Text("Rounded").tag("rounded")
-                    Text("Monospaced").tag("monospaced")
-                }
-                
-                Picker("Font Size", selection: fontSize) {
-                    Text("Small").tag("small")
-                    Text("Default").tag("default")
-                    Text("Large").tag("large")
-                    Text("Extra Large").tag("extraLarge")
-                }
-                
-                Picker("Line Spacing", selection: lineSpacing) {
-                    Text("Tight").tag("tight")
-                    Text("Normal").tag("normal")
-                    Text("Relaxed").tag("relaxed")
-                }
-                
-                FontPreviewRow(
-                    fontStyle: fontStyle.wrappedValue,
-                    fontSize: fontSize.wrappedValue,
-                    lineSpacing: lineSpacing.wrappedValue,
-                    dynamicTypeEnabled: dynamicTypeEnabled.wrappedValue
-                )
-            }
-            
-            // Accessibility Section
-            Section("Accessibility") {
-                #if !targetEnvironment(macCatalyst)
-                // Dynamic Type is iOS-specific; on Mac Catalyst it conflicts with app preferences
-                Toggle("Dynamic Type", isOn: dynamicTypeEnabled)
-                
-                if dynamicTypeEnabled.wrappedValue {
-                    Picker("Maximum Text Size", selection: maxDynamicTypeSize) {
-                        Text("Extra Extra Large").tag("xxLarge")
-                        Text("Extra Extra Extra Large").tag("xxxLarge")
-                        Text("Accessibility Medium").tag("accessibility1")
-                        Text("Accessibility Large").tag("accessibility2")
-                        Text("Accessibility Extra Large").tag("accessibility3")
-                        Text("Accessibility Extra Extra Large").tag("accessibility4")
-                        Text("Accessibility Extra Extra Extra Large").tag("accessibility5")
-                    }
-                }
-                #endif
-                
-                AccessibilityQuickActionsRow()
-            }
-            .pickerStyle(.menu)
-            
-            // Colors Section
-            Section("App Appearance") {
-                ColorSchemePreview(
-                    theme: theme.wrappedValue,
-                    darkThemeMode: darkThemeMode.wrappedValue,
-                    systemIsDark: colorScheme == .dark,
-                    accentColorKey: accentColor.wrappedValue
-                )
-            }
-            
-            // Reset Section
-            Section {
-                Button("Reset to Defaults") {
-                    // Reset all settings to defaults
-                    appState.appSettings.resetToDefaults()
-                }
-                .foregroundStyle(.red)
-            }
+  private var accentColor: Binding<String> {
+    Binding(
+      get: { appState.appSettings.accentColor },
+      set: { appState.appSettings.accentColor = $0 }
+    )
+  }
+
+  private var usesDarkTheme: Bool { theme.wrappedValue == "dark" || (theme.wrappedValue == "system" && colorScheme == .dark) }
+
+  var body: some View {
+    SettingsFocusedForm(initialFocus: initialFocus, isReady: appState.appSettings.persistenceState != .unavailable) {
+      SettingsPersistenceStatusSection(settings: appState.appSettings)
+
+      // Theme Section
+      Section("Theme") {
+        Picker("App Theme", selection: theme) {
+          Text("System").tag("system")
+          Text("Light").tag("light")
+          Text("Dark").tag("dark")
+          if !["system", "light", "dark"].contains(theme.wrappedValue) {
+            Text("Custom").tag(theme.wrappedValue)
+          }
         }
-        .navigationTitle("Appearance")
+        .settingsControl(.init(rawValue: "appearance.theme"))
+
+        if usesDarkTheme || initialFocus?.rawValue == "appearance.darkMode" {
+          Picker("Dark Mode Style", selection: darkThemeMode) {
+            Text("Dim").tag("dim")
+            Text("True Black").tag("black")
+            if !["dim", "black"].contains(darkThemeMode.wrappedValue) {
+              Text("Custom").tag(darkThemeMode.wrappedValue)
+            }
+          }
+          .disabled(!usesDarkTheme)
+          .settingsControl(.init(rawValue: "appearance.darkMode"))
+          if !usesDarkTheme { Text("Dark Mode Style is available when a dark theme is active.").foregroundStyle(.secondary) }
+        }
+      }
+      .pickerStyle(.menu)
+      .disabled(!appState.appSettings.canEditPersistedSettings)
+
+      #if os(iOS)
+        if UIApplication.shared.supportsAlternateIcons {
+          Section("App Icon") {
+            SettingsLink(screen: .appIcon, summary: currentAppIcon.displayName, systemImage: "app.badge", family: .appearance)
+              .settingsControl(.init(rawValue: "appearance.appIcon"))
+          }
+        } else if initialFocus?.rawValue == "appearance.appIcon" {
+          Section { Text("Custom app icons are not available on this device.").settingsControl(.init(rawValue: "appearance.appIcon")) }
+        }
+      #endif
+
+      // Accent Color Section
+      Section("Accent Color") {
+        AccentColorPicker(selection: accentColor)
+          .settingsControl(.init(rawValue: "appearance.accent"))
+      }
+      .disabled(!appState.appSettings.canEditPersistedSettings)
+
+      Section {
+        NavigationLink {
+          TextReadabilitySettingsView()
+        } label: {
+          SettingsNavigationRow(title: "Text & Readability", summary: "Font, spacing, system text size and reading aids", systemImage: "textformat.size", family: .accessibility)
+        }
+        SettingsLink(screen: .accessibility, summary: "Motion, contrast, alt text and haptics", systemImage: "accessibility", family: .accessibility)
+      } footer: {
+        Text("Appearance and text choices apply to this account in Catbird on this device. The app icon applies to this device.")
+      }
+
+      // Colors Section
+      Section("App Appearance") {
+        ColorSchemePreview(
+          theme: theme.wrappedValue,
+          darkThemeMode: darkThemeMode.wrappedValue,
+          systemIsDark: colorScheme == .dark,
+          accentColorKey: accentColor.wrappedValue
+        )
+      }
+
+      Section {
+        Button("Reset Appearance…", role: .destructive) {
+          isShowingResetConfirmation = true
+        }
+        .disabled(!appState.appSettings.canEditPersistedSettings)
+        .settingsControl(.init(rawValue: "appearance.reset"))
+      } footer: {
+        Text("Resets the theme, accent color, and custom typography for this account. Your app icon and accessibility settings are kept.")
+      }
+    }
+    .navigationTitle("Appearance")
+    #if os(iOS)
+    .onAppear { currentAppIcon = AppIconChoice.current }
+    #endif
+    .confirmationDialog("Reset Appearance?", isPresented: $isShowingResetConfirmation, titleVisibility: .visible) {
+      Button("Reset Appearance", role: .destructive) {
+        appState.appSettings.resetAppearanceToDefaults()
+      }
+      .disabled(!appState.appSettings.canEditPersistedSettings)
+      Button("Cancel", role: .cancel) { }
+    } message: {
+      Text("Reset the theme, accent color, and custom typography for this account? Accessibility, content, privacy, languages, and accounts will stay as they are.")
+    }
     #if os(iOS)
     .toolbarTitleDisplayMode(.inline)
     #endif
-        .contrastAwareBackground(appState: appState, defaultColor: Color.systemBackground)
-        // No manual sync needed - direct binding to AppSettings
-    }
+    .contrastAwareBackground(appState: appState, defaultColor: Color.systemBackground)
+    // No manual sync needed - direct binding to AppSettings
+  }
 }
 
 // MARK: - Accent Color Picker
 
 struct AccentColorPicker: View {
-    @Binding var selection: String
+  @Binding var selection: String
+  @Environment(\.colorScheme) private var colorScheme
 
-    private let columns = [GridItem(.adaptive(minimum: 60), spacing: 12)]
+  private let columns = [GridItem(.adaptive(minimum: 60), spacing: 12)]
 
-    var body: some View {
-        LazyVGrid(columns: columns, spacing: 12) {
-            ForEach(AccentColorOption.allCases) { option in
-                Button {
-                    selection = option.rawValue
-                } label: {
-                    VStack(spacing: 6) {
-                        Circle()
-                            .fill(option.color)
-                            .frame(width: 36, height: 36)
-                            .overlay {
-                                if selection == option.rawValue {
-                                    Image(systemName: "checkmark")
-                                        .font(.system(size: 14, weight: .bold))
-                                        .foregroundStyle(.white)
-                                }
-                            }
-                            .shadow(color: option.color.opacity(0.4), radius: 3, y: 1)
-
-                        Text(option.displayName)
-                            .font(.caption2)
-                            .foregroundStyle(selection == option.rawValue ? option.color : .secondary)
-                    }
+  var body: some View {
+    LazyVGrid(columns: columns, spacing: 12) {
+      ForEach(AccentColorOption.allCases) { option in
+        Button {
+          selection = option.rawValue
+        } label: {
+          VStack(spacing: 6) {
+            Circle()
+              .fill(option.color)
+              .frame(width: 36, height: 36)
+              .overlay {
+                if selection == option.rawValue {
+                  Image(systemName: "checkmark")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(.white)
                 }
-                .buttonStyle(.plain)
-            }
+              }
+              .shadow(color: option.color.opacity(0.4), radius: 3, y: 1)
+
+            Text(option.displayName)
+              .appFont(AppTextRole.caption2)
+              .foregroundStyle(selection == option.rawValue ? (colorScheme == .dark ? option.textDarkColor : option.textColor) : .secondary)
+          }
         }
-        .padding(.vertical, 8)
+        .buttonStyle(.plain)
+        .frame(minWidth: 44, minHeight: 44)
+        .accessibilityLabel(option.displayName)
+        .accessibilityAddTraits(selection == option.rawValue ? .isSelected : [])
+      }
     }
+    .padding(.vertical, 8)
+  }
 }
 
 // MARK: - Preview Components
 
 struct FontPreviewRow: View {
-    let fontStyle: String
-    let fontSize: String
-    let lineSpacing: String
-    let dynamicTypeEnabled: Bool
-    
-    var previewFont: Font {
-        let size: CGFloat
-        
-        switch fontSize {
-        case "small":
-            size = 14
-        case "large":
-            size = 18
-        case "extraLarge":
-            size = 22
-        default: // default
-            size = 16
-        }
-        
-        let design: Font.Design
-        switch fontStyle {
-        case "serif":
-            design = .serif
-        case "rounded":
-            design = .rounded
-        case "monospaced":
-            design = .monospaced
-        default: // system
-            design = .default
-        }
-        
-        if dynamicTypeEnabled {
-            return .system(.body, design: design)
-        } else {
-            return .system(size: size, design: design)
-        }
-    }
-    
-    var previewLineSpacing: CGFloat {
-        let baseSize: CGFloat = 16
-        switch lineSpacing {
-        case "tight":
-            return baseSize * 0.3
-        case "relaxed":
-            return baseSize * 0.8
-        default: // normal
-            return baseSize * 0.5
-        }
-    }
-    
-    var body: some View {
+  var body: some View {
+    VStack(alignment: .leading, spacing: 12) {
+      Text("Font Preview")
+        .appFont(AppTextRole.subheadline)
+        .foregroundStyle(.secondary)
+      GroupBox {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Font Preview")
-                .appFont(AppTextRole.subheadline)
-                .foregroundStyle(.secondary)
-            
-            GroupBox {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Catbird for Bluesky")
-                        .font(previewFont.bold())
-                        .lineLimit(1)
-                    
-                    Text("This is how your text will appear throughout the app.")
-                        .font(previewFont)
-                        .lineSpacing(previewLineSpacing)
-                        .lineLimit(2)
-                    
-                    HStack {
-                        Text("@username")
-                            .font(previewFont)
-                            .foregroundStyle(.blue)
-                        
-                        Spacer()
-                        
-                        Text("21h")
-                            .font(previewFont)
-                            .foregroundStyle(.secondary)
-                    }
-                    
-                    Text("#hashtag with 🔥 emojis")
-                        .font(previewFont)
-                        .foregroundStyle(.indigo)
-                }
-                .padding(.vertical, 8)
-            }
+          Text("Catbird for Bluesky")
+            .appFont(AppTextRole.headline)
+          Text("A preview of Catbird’s post typography, including your text-size and readability choices.")
+            .appFont(AppTextRole.body)
+          Text("@username · 21h")
+            .appFont(AppTextRole.caption)
+            .foregroundStyle(.secondary)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 8)
+      }
     }
+    .padding(.vertical, 8)
+  }
 }
 
 struct ColorSchemePreview: View {
-    let theme: String
-    let darkThemeMode: String
-    let systemIsDark: Bool
-    var accentColorKey: String = "default"
+  let theme: String
+  let darkThemeMode: String
+  let systemIsDark: Bool
+  var accentColorKey: String = "default"
 
-    private var accent: Color {
-        (AccentColorOption(rawValue: accentColorKey) ?? .catbird).color
-    }
-    
-    var isDarkMode: Bool {
-        switch theme {
-        case "light":
-            return false
-        case "dark":
-            return true
-        default: // "system"
-            return systemIsDark
-        }
-    }
-    
-    var isBlackMode: Bool {
-        return isDarkMode && darkThemeMode == "black"
-    }
-    
-    var backgroundColor: Color {
-        if !isDarkMode {
-            return .white
-        } else {
-            return isBlackMode ? .black : Color.systemGray6
-        }
-    }
-    
-    var cardBackgroundColor: Color {
-        if !isDarkMode {
-            return Color(platformColor: PlatformColor.platformSecondarySystemBackground)
-        } else {
-            return isBlackMode ? Color.systemGray6 : Color.systemGray5
-        }
-    }
-    
-    var textColor: Color {
-        return isDarkMode ? .white : .black
-    }
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Preview")
-                .appFont(AppTextRole.subheadline)
-                .foregroundStyle(.secondary)
-            
-            ZStack {
-                Rectangle()
-                    .fill(backgroundColor)
-                    .frame(height: 220)
-                    .cornerRadius(12)
-                
-                VStack(spacing: 12) {
-                    HStack {
-                        Circle()
-                            .fill(accent)
-                            .frame(width: 32, height: 32)
-                        Text("@username")
-                            .foregroundStyle(textColor)
-                        Spacer()
-                    }
-                    
-                    Rectangle()
-                        .fill(cardBackgroundColor)
-                        .frame(height: 100)
-                        .cornerRadius(8)
-                        .overlay(
-                            HStack {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text("Post content")
-                                        .fontWeight(.medium)
-                                        .foregroundStyle(textColor)
-                                    
-                                    Text("This is how your timeline will look with these settings")
-                                        .appFont(AppTextRole.caption)
-                                        .foregroundStyle(isDarkMode ? .gray : .secondary)
-                                }
-                                .padding(.leading, 10)
-                                Spacer()
-                            }
-                        )
-                    
-                    HStack(spacing: 20) {
-                        Label("12", systemImage: "bubble.left")
-                            .appFont(AppTextRole.caption)
-                            .foregroundStyle(isDarkMode ? .gray : .secondary)
-                        
-                        Label("43", systemImage: "arrow.2.squarepath")
-                            .appFont(AppTextRole.caption)
-                            .foregroundStyle(isDarkMode ? .gray : .secondary)
-                        
-                        Label("128", systemImage: "heart")
-                            .appFont(AppTextRole.caption)
-                            .foregroundStyle(isDarkMode ? .gray : .secondary)
-                        
-                        Spacer()
-                    }
-                }
-                .padding()
-            }
-            
-            Text("Current Theme: \(isDarkMode ? (isBlackMode ? "True Black" : "Dark (Dim)") : "Light")")
-                .appFont(AppTextRole.caption)
-                .foregroundStyle(.secondary)
-        }
-        .padding(.vertical, 8)
-    }
-}
+  private var accent: Color {
+    (AccentColorOption(rawValue: accentColorKey) ?? .catbird).color
+  }
 
-struct AccessibilityQuickActionsRow: View {
-    @Environment(AppState.self) private var appState
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Quick Actions")
-                .appFont(AppTextRole.subheadline)
-                .foregroundStyle(.secondary)
-            
-            HStack(spacing: 12) {
-                Button("Optimize for Reading") {
-                    // Apply settings for optimal reading experience
-                    appState.appSettings.fontSize = "large"
-                    appState.appSettings.lineSpacing = "relaxed"
-                    #if !targetEnvironment(macCatalyst)
-                    appState.appSettings.dynamicTypeEnabled = true
-                    #endif
-                    // Force immediate font manager update
-                    // Force font update
-                    appState.fontManager.applyFontSettings(
-                        fontStyle: appState.appSettings.fontStyle,
-                        fontSize: appState.appSettings.fontSize,
-                        lineSpacing: appState.appSettings.lineSpacing,
-                        letterSpacing: appState.appSettings.letterSpacing,
-                        dynamicTypeEnabled: appState.appSettings.dynamicTypeEnabled,
-                        maxDynamicTypeSize: appState.appSettings.maxDynamicTypeSize
-                    )
-                }
-                .buttonStyle(.bordered)
-                .appFont(AppTextRole.caption)
-                
-                Button("Maximum Accessibility") {
-                    // Apply settings for maximum accessibility
-                    appState.appSettings.fontSize = "extraLarge"
-                    appState.appSettings.lineSpacing = "relaxed"
-                    #if !targetEnvironment(macCatalyst)
-                    appState.appSettings.dynamicTypeEnabled = true
-                    appState.appSettings.maxDynamicTypeSize = "accessibility3"
-                    #endif
-                    // Force immediate font manager update
-                    // Force font update
-                    appState.fontManager.applyFontSettings(
-                        fontStyle: appState.appSettings.fontStyle,
-                        fontSize: appState.appSettings.fontSize,
-                        lineSpacing: appState.appSettings.lineSpacing,
-                        letterSpacing: appState.appSettings.letterSpacing,
-                        dynamicTypeEnabled: appState.appSettings.dynamicTypeEnabled,
-                        maxDynamicTypeSize: appState.appSettings.maxDynamicTypeSize
-                    )
-                }
-                .buttonStyle(.bordered)
-                .appFont(AppTextRole.caption)
-            }
-        }
-        .padding(.vertical, 8)
+  var isDarkMode: Bool {
+    switch theme {
+    case "light":
+      return false
+    case "dark":
+      return true
+    default: // "system"
+      return systemIsDark
     }
-    
-    // Font manager updates are handled automatically via AppSettings notifications
+  }
+
+  var isBlackMode: Bool {
+    return isDarkMode && darkThemeMode == "black"
+  }
+
+  var backgroundColor: Color {
+    if !isDarkMode {
+      return .white
+    } else {
+      // Matches the app's Dim theme background (Color.dynamicBackground).
+      return isBlackMode ? .black : Color(red: 0.18, green: 0.18, blue: 0.20)
+    }
+  }
+
+  var cardBackgroundColor: Color {
+    if !isDarkMode {
+      return Color(platformColor: PlatformColor.platformSecondarySystemBackground)
+    } else {
+      return isBlackMode ? Color.systemGray6 : Color(red: 0.25, green: 0.25, blue: 0.27)
+    }
+  }
+
+  var textColor: Color {
+    return isDarkMode ? .white : .black
+  }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 16) {
+      Text("Preview")
+        .appFont(AppTextRole.subheadline)
+        .foregroundStyle(.secondary)
+
+      VStack(alignment: .leading, spacing: 12) {
+        Label {
+          Text("@username")
+            .foregroundStyle(textColor)
+        } icon: {
+          Circle().fill(accent).frame(width: 32, height: 32)
+        }
+        VStack(alignment: .leading, spacing: 8) {
+          Text("Post content")
+            .appFont(AppTextRole.headline)
+          Text("This is how your timeline colors will look with these settings.")
+            .appFont(AppTextRole.body)
+        }
+        .foregroundStyle(textColor)
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(cardBackgroundColor, in: .rect(cornerRadius: 8))
+        Label("128 likes", systemImage: "heart")
+          .appFont(AppTextRole.caption)
+          .foregroundStyle(textColor)
+      }
+      .padding()
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .background(backgroundColor, in: .rect(cornerRadius: 12))
+
+      Text("Current Theme: \(isDarkMode ? (isBlackMode ? "True Black" : "Dark (Dim)") : "Light")")
+        .appFont(AppTextRole.caption)
+        .foregroundStyle(.secondary)
+    }
+    .padding(.vertical, 8)
+  }
 }
 
 #Preview {
   AsyncPreviewContent { appState in
     NavigationStack {
-            AppearanceSettingsView()
-        }
+      AppearanceSettingsView()
+    }
   }
 }
-

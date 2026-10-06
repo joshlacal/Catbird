@@ -3,7 +3,11 @@ import Petrel
 
 struct ModerationSettingsView: View {
     @Environment(AppState.self) private var appState
+    let initialFocus: SettingsControlID?
     @State private var isLoading = true
+    @State private var hasConfirmedPreferences = false
+    @State private var isSavingPreferences = false
+    @State private var loadRequest = UUID()
     @State private var errorMessage: String?
     
     // Adult content toggle
@@ -53,161 +57,118 @@ struct ModerationSettingsView: View {
         let isEnabled: Bool
     }
     
+    init(initialFocus: SettingsControlID? = nil) {
+        self.initialFocus = initialFocus
+    }
+
     var body: some View {
-        Form {
-            if isLoading {
+        SettingsFocusedForm(initialFocus: hasConfirmedPreferences ? initialFocus
+          : initialFocus.map { _ in SettingsControlID(rawValue: "moderation.retryLoad") }, isReady: hasConfirmedPreferences || !isLoading) {
+            if isLoading && !hasConfirmedPreferences {
                 Section {
                     ProgressView()
                         .frame(maxWidth: .infinity, alignment: .center)
                         .listRowBackground(Color.clear)
                 }
+            } else if !hasConfirmedPreferences {
+                Section {
+                    Text(errorMessage ?? "Your moderation settings couldn’t be loaded.")
+                        .foregroundStyle(.secondary)
+                    Button("Try Again") { Task { await loadPreferences() } }
+                        .settingsControl(.init(rawValue: "moderation.retryLoad"))
+                }
             } else {
+                if isSavingPreferences {
+                    Section { ProgressView("Saving moderation preferences…") }
+                }
                 // Moderation Tools Section
-                Section("Moderation Tools") {
-                    NavigationLink(destination: DefaultPostInteractionSettingsView()) {
-                        Label {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Post Interaction Settings")
-                                Text("Default reply and quote rules")
-                                    .appFont(AppTextRole.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        } icon: {
-                            Image(systemName: "bubble.left.and.bubble.right.fill")
-                                .foregroundStyle(.blue)
-                        }
-                    }
+                Section {
+                    SettingsLink(screen: .defaultPostInteractions, summary: "Who can reply to or quote new posts", systemImage: "bubble.left.and.bubble.right", family: .privacy)
 
-                    NavigationLink(destination: VerificationSettingsView()) {
-                        Label {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Verification Badges")
-                                Text("Manage badge visibility")
-                                    .appFont(AppTextRole.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        } icon: {
-                            Image(systemName: "checkmark.seal.fill")
-                                .foregroundStyle(.blue)
-                        }
-                    }
+                    SettingsLink(screen: .verification, summary: "Badge visibility across the app", systemImage: "checkmark.seal", family: .feeds)
 
-                    NavigationLink(destination: MuteWordsSettingsView()) {
-                        Label {
-                            Text("Muted Words & Tags")
-                        } icon: {
-                            Image(systemName: "speaker.slash.fill")
-                                .foregroundStyle(.orange)
-                        }
+                    NavigationLink {
+                        MuteWordsSettingsView()
+                    } label: {
+                        SettingsNavigationRow(title: "Muted Words & Tags", systemImage: "text.badge.minus", family: .moderation)
                     }
+                    .settingsControl(.init(rawValue: "moderation.mutedWords"))
 
-                    NavigationLink(destination: ListsManagerView()) {
-                        Label {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Moderation Lists")
-                                Text("Manage blocking and muting lists")
-                                    .appFont(AppTextRole.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        } icon: {
-                            Image(systemName: "list.bullet.clipboard")
-                                .foregroundStyle(.purple)
-                        }
-                    }
-                    
-                    NavigationLink(destination: ModerationListView(accounts: $mutedAccounts, isLoading: $isLoadingMutedAccounts, title: "Muted Accounts", isBlocked: false)) {
-                        Label {
-                            Text("Muted Accounts")
-                        } icon: {
-                            Image(systemName: "speaker.slash.circle")
-                                .foregroundStyle(.gray)
-                        }
-                    }
-                    .task {
-                        if showMutedAccounts {
-                            await loadMutedAccounts()
-                        } else {
-                            showMutedAccounts = true
-                        }
-                    }
-                    
-                    NavigationLink(destination: ModerationListView(accounts: $blockedAccounts, isLoading: $isLoadingBlockedAccounts, title: "Blocked Accounts", isBlocked: true)) {
-                        Label {
-                            Text("Blocked Accounts")
-                        } icon: {
-                            Image(systemName: "xmark.circle")
-                                .foregroundStyle(.red)
-                        }
-                    }
-                    .task {
-                        if showBlockedAccounts {
-                            await loadBlockedAccounts()
-                        } else {
-                            showBlockedAccounts = true
-                        }
-                    }
+                    SettingsLink(screen: .mutedAccounts, systemImage: "speaker.slash", family: .moderation)
+                        .settingsControl(.init(rawValue: "moderation.mutedAccounts"))
+
+                    SettingsLink(screen: .blockedAccounts, systemImage: "person.crop.circle.badge.xmark", family: .moderation)
+                        .settingsControl(.init(rawValue: "moderation.blockedAccounts"))
+                } header: {
+                    Text("Moderation Tools")
+                } footer: {
+                    Text("To manage your moderation lists, open My Lists from the menu.")
+                        .settingsControl(.init(rawValue: "moderation.lists"))
                 }
                 
                 
                 // Content Filters Section
                 Section("Content Filters") {
-                        Toggle("Adult Content", isOn: $adultContentEnabled)
-                            .tint(.blue)
+                        Toggle("Adult Content", isOn: adultContentBinding)
                             // Only allow turning it off here. Enabling must be done in Bluesky.
-                            .disabled(!adultContentEnabled)
-                            .onChange(of: adultContentEnabled) {
-                                updateAdultContentSetting()
-                            }
+                            .disabled(!adultContentEnabled || isSavingPreferences)
+                            .settingsControl(.init(rawValue: "moderation.adultContent"))
                         if !adultContentEnabled {
                             HStack(spacing: 8) {
                                 Image(systemName: "info.circle.fill")
                                     .foregroundStyle(.orange)
-                                    .font(.caption)
-                                Text("To enable adult content, turn it on in the official Bluesky app. You can turn it off here at any time.")
-                                    .font(.caption)
+                                    .appFont(AppTextRole.caption)
+                                Text("Adult content can only be turned on at bsky.app in a web browser. You can turn it off here at any time.")
+                                    .appFont(AppTextRole.caption)
                                     .foregroundStyle(.secondary)
                             }
                         }
                     
+                    if !adultContentEnabled {
+                        ForEach([ContentCategory.adult, .suggestive, .nudity]) { category in
+                            Label(category.name, systemImage: "lock.fill")
+                                .foregroundStyle(.secondary)
+                                .settingsControl(.init(rawValue: "moderation.\(category.visibilityKey)"))
+                        }
+                    }
                     if adultContentEnabled {
                         ContentVisibilitySelector(
                             title: "Adult Content",
                             description: "Explicit sexual images, videos, text, or audio",
-                            selection: $adultContentVisibility
+                            selection: visibilityBinding(label: "nsfw", value: $adultContentVisibility)
                         )
-                        .onChange(of: adultContentVisibility) {
-                            updateContentLabelPreference()
-                        }
+                        .disabled(isSavingPreferences)
+                        .settingsControl(.init(rawValue: "moderation.nsfw"))
                         
                         ContentVisibilitySelector(
                             title: "Sexually Suggestive",
-                            description: "Sexualized content that doesn't show explicit sexual activity",
-                            selection: $suggestiveContentVisibility
+                            description: "Sexualized content that doesn’t show explicit sexual activity",
+                            selection: visibilityBinding(label: "suggestive", value: $suggestiveContentVisibility)
                         )
-                        .onChange(of: suggestiveContentVisibility) {
-                            updateContentLabelPreference()
-                        }
-                        
-                        ContentVisibilitySelector(
-                            title: "Graphic Content",
-                            description: "Images, videos, or text describing violence, blood, or injury",
-                            selection: $violentContentVisibility
-                        )
-                        .onChange(of: violentContentVisibility) {
-                            updateContentLabelPreference()
-                        }
+                        .disabled(isSavingPreferences)
+                        .settingsControl(.init(rawValue: "moderation.suggestive"))
                         
                         ContentVisibilitySelector(
                             title: "Non-Sexual Nudity",
                             description: "Artistic, educational, or non-sexualized images of nudity",
-                            selection: $nudityContentVisibility
+                            selection: visibilityBinding(label: "nudity", value: $nudityContentVisibility)
                         )
-                        .onChange(of: nudityContentVisibility) {
-                            updateContentLabelPreference()
-                        }
+                        .disabled(isSavingPreferences)
+                        .settingsControl(.init(rawValue: "moderation.nudity"))
                     }
                 }
                 
+                Section("Graphic Content") {
+                        ContentVisibilitySelector(
+                            title: "Graphic Content",
+                            description: "Images, videos, or text describing violence, blood, or injury",
+                            selection: visibilityBinding(label: "graphic", value: $violentContentVisibility)
+                        )
+                        .disabled(isSavingPreferences)
+                        .settingsControl(.init(rawValue: "moderation.graphic"))
+                        
+                }
+
                 // Content Preview Section
                 ContentPreviewSection(
                     adultContentEnabled: adultContentEnabled,
@@ -217,94 +178,9 @@ struct ModerationSettingsView: View {
                     nudityContentVisibility: nudityContentVisibility
                 )
                 
-                // Content Labelers Section
-                Section("Content Labelers") {
-                    NavigationLink(destination: LabelerSettingsView()) {
-                        Label {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Labeler Preferences")
-                                Text("Configure per-labeler content settings")
-                                    .appFont(AppTextRole.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        } icon: {
-                            Image(systemName: "slider.horizontal.3")
-                                .foregroundStyle(.blue)
-                        }
-                    }
-                    
-                    if isLoadingLabelers {
-                        ProgressView()
-                    } else if labelers.isEmpty {
-                        Text("No labelers available")
-                            .foregroundStyle(.secondary)
-                    } else {
-                        ForEach(labelers) { labeler in
-                            NavigationLink {
-                                LabelerDetailView(labeler: labeler)
-                            } label: {
-                                HStack {
-                                    VStack(alignment: .leading) {
-                                        Text(labeler.name)
-                                        
-                                        if let description = labeler.description {
-                                            Text(description)
-                                                .appFont(AppTextRole.caption)
-                                                .foregroundStyle(.secondary)
-                                        }
-                                    }
-                                    
-                                    Spacer()
-                                    
-                                    if labeler.isEnabled {
-                                        Text("Enabled")
-                                            .appFont(AppTextRole.caption)
-                                            .fontWeight(.medium)
-                                            .padding(.horizontal, 8)
-                                            .padding(.vertical, 4)
-                                            .background(Color.green.opacity(0.2))
-                                            .foregroundStyle(.green)
-                                            .cornerRadius(4)
-                                    }
-                                }
-                            }
-                        }
-                        
-                        NavigationLink("Add Labeler", destination: AddLabelerView())
-                    }
-                }
-                
-                // Unavailable Labelers Warning & Cleanup
-                if !unavailableLabelers.isEmpty {
-                    Section("Unavailable Labelers") {
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack(alignment: .top, spacing: 10) {
-                                Image(systemName: "exclamationmark.triangle.fill")
-                                    .foregroundStyle(.orange)
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text("\(unavailableLabelers.count) Subscribed Labeler(s) Unavailable")
-                                        .font(.subheadline)
-                                        .fontWeight(.semibold)
-                                    Text("These moderation services are offline or no longer exist. You can remove them from your subscriptions.")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                            
-                            Button(role: .destructive) {
-                                showingCleanupConfirmation = true
-                            } label: {
-                                if isCleaningUpLabelers {
-                                    ProgressView()
-                                } else {
-                                    Text("Remove Unavailable Labelers")
-                                }
-                            }
-                            .buttonStyle(.bordered)
-                            .disabled(isCleaningUpLabelers)
-                        }
-                        .padding(.vertical, 4)
-                    }
+                Section("Moderation Services") {
+                    SettingsLink(screen: .labelers, summary: "Services that label posts and accounts", systemImage: "checklist", family: .moderation)
+                        .settingsControl(.init(rawValue: "moderation.labelers"))
                 }
                 if let error = errorMessage {
                     Section {
@@ -319,7 +195,7 @@ struct ModerationSettingsView: View {
                             .appFont(AppTextRole.caption)
                             .foregroundStyle(.secondary)
                         
-                        Text("Bluesky uses moderation services to help manage content. These preferences control what you'll see in your feeds.")
+                        Text("Bluesky uses moderation services to help manage content. These preferences control what you’ll see in your feeds.")
                             .appFont(AppTextRole.caption)
                             .foregroundStyle(.secondary)
                             .padding(.top, 4)
@@ -334,7 +210,7 @@ struct ModerationSettingsView: View {
     #endif
         .appDisplayScale(appState: appState)
         .contrastAwareBackground(appState: appState, defaultColor: Color.systemBackground)
-        .alert("Remove Unavailable Labelers", isPresented: $showingCleanupConfirmation) {
+        .alert("Remove Unavailable Services", isPresented: $showingCleanupConfirmation) {
             Button("Cancel", role: .cancel) {}
             Button("Remove", role: .destructive) {
                 Task {
@@ -342,58 +218,42 @@ struct ModerationSettingsView: View {
                 }
             }
         } message: {
-            Text("Remove \(unavailableLabelers.count) unavailable labeler(s) from your subscribed moderation services?")
+            Text(unavailableLabelers.count == 1 ? "Remove 1 unavailable moderation service from your subscriptions?" : "Remove \(unavailableLabelers.count) unavailable moderation services from your subscriptions?")
         }
-        .task {
-            await loadPreferences()
-            await loadLabelers()
-        }
-        .refreshable {
-            await loadPreferences()
-            await loadLabelers()
-            
-            if showMutedAccounts {
-                await loadMutedAccounts()
-            }
-            
-            if showBlockedAccounts {
-                await loadBlockedAccounts()
-            }
-        }
+        .task(id: appState.userDID) { await loadPreferences() }
+        .refreshable { await loadPreferences() }
     }
     
     private func loadPreferences() async {
+        let request = UUID()
+        let account = appState.userDID
+        let manager = appState.preferencesManager
+        loadRequest = request
         isLoading = true
-        defer { isLoading = false }
-        
+        isSavingPreferences = false
+        errorMessage = nil
+        defer { if loadRequest == request { isLoading = false } }
         do {
-            let preferences = try await appState.preferencesManager.getPreferences()
-            
-            // Get adult content setting
+            let preferences = try await manager.refreshSettingsPreferences(expectedAccountDID: account)
+            guard loadRequest == request, manager.accountDID == account, appState.userDID == account else { return }
             adultContentEnabled = preferences.adultContentEnabled
             appState.isAdultContentEnabled = adultContentEnabled
-            
-            // Get content label preferences
-            let contentLabelPrefs = preferences.contentLabelPrefs
-            
-            // Map content label preferences to our UI state
-            adultContentVisibility = ContentFilterManager.getVisibilityForLabel(
-                label: "nsfw", preferences: contentLabelPrefs)
-            
-            suggestiveContentVisibility = ContentFilterManager.getVisibilityForLabel(
-                label: "suggestive", preferences: contentLabelPrefs)
-            
-            violentContentVisibility = ContentFilterManager.getVisibilityForLabel(
-                label: "graphic", preferences: contentLabelPrefs)
-            
-            nudityContentVisibility = ContentFilterManager.getVisibilityForLabel(
-                label: "nudity", preferences: contentLabelPrefs)
-            
+            let labels = preferences.contentLabelPrefs
+            adultContentVisibility = ContentFilterManager.getVisibilityForLabel(label: "nsfw", preferences: labels)
+            suggestiveContentVisibility = ContentFilterManager.getVisibilityForLabel(label: "suggestive", preferences: labels)
+            violentContentVisibility = ContentFilterManager.getVisibilityForLabel(label: "graphic", preferences: labels)
+            nudityContentVisibility = ContentFilterManager.getVisibilityForLabel(label: "nudity", preferences: labels)
+            hasConfirmedPreferences = true
         } catch {
-            errorMessage = "Failed to load content preferences: \(error.localizedDescription)"
+            guard loadRequest == request, manager.accountDID == account else { return }
+            if hasConfirmedPreferences {
+                errorMessage = UserFacingError.message(for: error, action: "refresh your moderation settings")
+            } else {
+                errorMessage = UserFacingError.message(for: error, action: "load your moderation settings")
+            }
         }
     }
-    
+
     private func loadLabelers() async {
         isLoadingLabelers = true
         defer { isLoadingLabelers = false }
@@ -468,17 +328,14 @@ struct ModerationSettingsView: View {
         defer { isCleaningUpLabelers = false }
         
         do {
-            let preferences = try await appState.preferencesManager.getPreferences()
+            let account = appState.userDID
+            let manager = appState.preferencesManager
             let unavailableSet = Set(unavailableLabelers)
-            for didStr in unavailableSet {
-                if let did = try? DID(didString: didStr) {
-                    preferences.removeLabeler(did)
-                }
-            }
-            try await appState.preferencesManager.saveAndSyncPreferences(preferences)
+            try await manager.removeLabelers(unavailableSet, expectedAccountDID: account)
+            guard manager.accountDID == account else { return }
             unavailableLabelers = []
             // Refresh hub
-            await loadLabelers()
+
         } catch {
             errorMessage = "Error cleaning up labelers: \(error.localizedDescription)"
         }
@@ -562,49 +419,56 @@ struct ModerationSettingsView: View {
         }
     }
     
-    private func updateAdultContentSetting() {
-        Task {
-            do {
-                // Update both local app state and app settings
-                appState.isAdultContentEnabled = adultContentEnabled
-                
-                // Store in UserDefaults for consistency with AppSettings (per-account key)
-                UserDefaults(suiteName: "group.blue.catbird.shared")?.set(adultContentEnabled, forKey: "isAdultContentEnabled.\(appState.userDID)")
-                
-                // Update preferences on server
-                try await appState.preferencesManager.updateAdultContentEnabled(adultContentEnabled)
-            } catch {
-                errorMessage = "Failed to update adult content setting: \(error.localizedDescription)"
+    private var adultContentBinding: Binding<Bool> {
+        Binding(get: { adultContentEnabled }, set: { enabled in
+            guard hasConfirmedPreferences, !isLoading, !isSavingPreferences,
+                  adultContentEnabled, !enabled else { return }
+            let account = appState.userDID
+            let manager = appState.preferencesManager
+            let request = loadRequest
+            isSavingPreferences = true
+            errorMessage = nil
+            Task { @MainActor in
+                defer { if loadRequest == request, manager.accountDID == account, appState.userDID == account { isSavingPreferences = false } }
+                do {
+                    try await manager.updateAdultContentEnabled(enabled, expectedAccountDID: account)
+                    guard loadRequest == request, manager.accountDID == account, appState.userDID == account else { return }
+                    adultContentEnabled = enabled
+                    appState.isAdultContentEnabled = enabled
+                } catch {
+                    guard loadRequest == request, manager.accountDID == account, appState.userDID == account else { return }
+                    hasConfirmedPreferences = false
+                    errorMessage = UserFacingError.message(for: error, action: "update the adult content setting")
+                }
             }
-        }
+        })
     }
-    
-    private func updateContentLabelPreference() {
-        Task {
-            do {
-                // Create content label preferences array
-                var contentLabelPrefs: [ContentLabelPreference] = []
-                
-                // Add preferences for each content type
-                contentLabelPrefs.append(ContentFilterManager.createPreferenceForLabel(
-                    label: "nsfw", visibility: adultContentVisibility))
-                
-                contentLabelPrefs.append(ContentFilterManager.createPreferenceForLabel(
-                    label: "suggestive", visibility: suggestiveContentVisibility))
-                
-                contentLabelPrefs.append(ContentFilterManager.createPreferenceForLabel(
-                    label: "graphic", visibility: violentContentVisibility))
-                
-                contentLabelPrefs.append(ContentFilterManager.createPreferenceForLabel(
-                    label: "nudity", visibility: nudityContentVisibility))
-                
-                // Update preferences on server
-                try await appState.preferencesManager.updateContentLabelPreferences(contentLabelPrefs)
-            } catch {
-                errorMessage = "Failed to save content label preferences: \(error.localizedDescription)"
+
+    private func visibilityBinding(label: String, value: Binding<ContentVisibility>) -> Binding<ContentVisibility> {
+        Binding(get: { value.wrappedValue }, set: { selected in
+            guard hasConfirmedPreferences, !isLoading, !isSavingPreferences,
+                  selected != value.wrappedValue else { return }
+            let account = appState.userDID
+            let manager = appState.preferencesManager
+            let request = loadRequest
+            isSavingPreferences = true
+            errorMessage = nil
+            Task { @MainActor in
+                defer { if loadRequest == request, manager.accountDID == account, appState.userDID == account { isSavingPreferences = false } }
+                do {
+                    try await manager.setContentLabelVisibility(label: label, visibility: selected.preferenceValue,
+                                                                 expectedAccountDID: account)
+                    guard loadRequest == request, manager.accountDID == account, appState.userDID == account else { return }
+                    value.wrappedValue = selected
+                } catch {
+                    guard loadRequest == request, manager.accountDID == account, appState.userDID == account else { return }
+                    hasConfirmedPreferences = false
+                    errorMessage = UserFacingError.message(for: error, action: "save this content setting")
+                }
             }
-        }
+        })
     }
+
 }
 
 // Note: ProfileBasicInfo protocol is defined in PrivacySecuritySettingsView.swift
@@ -685,7 +549,7 @@ struct ModerationListView<T: Identifiable>: View {
                 let response = try await client.com.atproto.repo.deleteRecord(input: input)
                 
                 if response.responseCode != 200 {
-                    errorMessage = "Failed to unblock account"
+                    errorMessage = "Couldn’t unblock this account. Try again."
                     return
                 }
             } else {
@@ -694,7 +558,7 @@ struct ModerationListView<T: Identifiable>: View {
                 let code = try await client.app.bsky.graph.unmuteActor(input: input)
                 
                 if code != 200 {
-                    errorMessage = "Failed to unmute account"
+                    errorMessage = "Couldn’t unmute this account. Try again."
                     return
                 }
             }
@@ -708,7 +572,7 @@ struct ModerationListView<T: Identifiable>: View {
             }
             
         } catch {
-            errorMessage = "Failed to \(isBlocked ? "unblock" : "unmute") account: \(error.localizedDescription)"
+            errorMessage = UserFacingError.message(for: error, action: isBlocked ? "unblock this account" : "unmute this account")
         }
         
         // End loading state
@@ -780,7 +644,7 @@ struct ModerationAccountRow: View {
 // Moderation lists now use the main ListsManagerView for full functionality
 
 struct AddLabelerView: View {
-    @State private var labelerDID = ""
+    @State private var serviceInput = ""
     @State private var isAdding = false
     @State private var errorMessage: String?
     @State private var successMessage: String?
@@ -789,16 +653,17 @@ struct AddLabelerView: View {
     
     var body: some View {
         Form {
-            Section("Add Labeler") {
-                TextField("Labeler DID", text: $labelerDID)
+            Section {
+                TextField("Handle (e.g. moderation.example.com)", text: $serviceInput)
                     #if os(iOS)
-                    .autocapitalization(.none)
+                    .textInputAutocapitalization(.never)
+                    .keyboardType(.URL)
                     #endif
                     .autocorrectionDisabled(true)
-                
-                Text("Enter the DID of the content labeler you want to add to your moderation settings.")
-                    .appFont(AppTextRole.caption)
-                    .foregroundStyle(.secondary)
+            } header: {
+                Text("Moderation Service")
+            } footer: {
+                Text("Enter the moderation service’s handle. You can also subscribe from its profile.")
             }
             
             if let error = errorMessage {
@@ -823,19 +688,19 @@ struct AddLabelerView: View {
                 } label: {
                     if isAdding {
                         HStack {
-                            Text("Adding...")
+                            Text("Adding…")
                             Spacer()
                             ProgressView()
                         }
                     } else {
-                        Text("Add Labeler")
+                        Text("Add Moderation Service")
                             .frame(maxWidth: .infinity, alignment: .center)
                     }
                 }
-                .disabled(isAdding || labelerDID.isEmpty)
+                .disabled(isAdding || serviceInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
-        .navigationTitle("Add Labeler")
+        .navigationTitle("Add Moderation Service")
     #if os(iOS)
     .toolbarTitleDisplayMode(.inline)
     #endif
@@ -846,26 +711,71 @@ struct AddLabelerView: View {
         errorMessage = nil
         successMessage = nil
         
-        Task {
+        let account = appState.userDID
+        let manager = appState.preferencesManager
+        let requested = serviceInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        Task { @MainActor in
+            defer { isAdding = false }
+            guard let client = appState.atProtoClient else {
+                errorMessage = "You’re signed out. Sign in and try again."
+                return
+            }
+            
+            let did: DID
+            if requested.lowercased().hasPrefix("did:") {
+                guard let parsed = try? DID(didString: requested) else {
+                    errorMessage = "Couldn’t find a moderation service with that handle."
+                    return
+                }
+                did = parsed
+            } else {
+                let handleString = (requested.hasPrefix("@") ? String(requested.dropFirst()) : requested).lowercased()
+                guard let handle = try? Handle(handleString: handleString) else {
+                    errorMessage = "Enter a handle like moderation.example.com."
+                    return
+                }
+                do {
+                    let (code, output) = try await client.com.atproto.identity.resolveHandle(input: .init(handle: handle))
+                    guard code == 200, let output else {
+                        errorMessage = "Couldn’t find a moderation service with that handle."
+                        return
+                    }
+                    did = output.did
+                } catch {
+                    guard manager.accountDID == account, appState.userDID == account else { return }
+                    if UserFacingError.kind(of: error) == .other || UserFacingError.kind(of: error) == .notFound {
+                        errorMessage = "Couldn’t find a moderation service with that handle."
+                    } else {
+                        errorMessage = UserFacingError.message(for: error, action: "add this moderation service")
+                    }
+                    return
+                }
+            }
+            
             do {
-                let did = try DID(didString: labelerDID)
-                let labelerPreference = LabelerPreference(did: did)
-                try await appState.preferencesManager.addLabeler(did)
+                let (code, output) = try await client.app.bsky.labeler.getServices(input: .init(dids: [did], detailed: false))
+                guard manager.accountDID == account, appState.userDID == account else { return }
+                guard code == 200, let output, !output.views.isEmpty else {
+                    errorMessage = "This account isn’t a moderation service."
+                    return
+                }
                 
-                successMessage = "Labeler added successfully"
+                try await manager.addLabeler(did, expectedAccountDID: account)
+                guard manager.accountDID == account, appState.userDID == account else { return }
+                
+                successMessage = "Moderation service added."
                 
                 // Clear the input field
-                labelerDID = ""
+                serviceInput = ""
                 
                 // Dismiss after a short delay
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                    dismiss()
+                    if appState.userDID == account, manager.accountDID == account { dismiss() }
                 }
             } catch {
-                errorMessage = "Failed to add labeler: \(error.localizedDescription)"
+                guard manager.accountDID == account, appState.userDID == account else { return }
+                errorMessage = UserFacingError.message(for: error, action: "add this moderation service")
             }
-            
-            isAdding = false
         }
     }
 }
@@ -885,14 +795,14 @@ struct LabelerDetailView: View {
     var body: some View {
         Form {
             Section {
-                Toggle("Enable Labeler", isOn: $isEnabled)
+                Toggle("Use This Service", isOn: $isEnabled)
                     .onChange(of: isEnabled) {
                         updateLabelerStatus()
                     }
                     .disabled(isUpdating)
             }
             
-            Section("Labeler Information") {
+            Section("About This Service") {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Name")
                         .appFont(AppTextRole.caption)
@@ -900,22 +810,7 @@ struct LabelerDetailView: View {
                     
                     Text(labeler.name)
                                         .appFont(AppTextRole.body)
-                    
-                    Divider()
-                        .padding(.vertical, 4)
-                    
-                    Text("DID")
-                        .appFont(AppTextRole.caption)
-                        .foregroundStyle(.secondary)
-                    
-                    Text(labeler.id)
-                        .appFont(AppTextRole.caption)
-                        .fontWeight(.medium)
-                        .padding(8)
-                        .background(Color.systemGray6)
-                        .cornerRadius(6)
-                        .textSelection(.enabled)
-                    
+
                     if let description = labeler.description {
                         Divider()
                             .padding(.vertical, 4)
@@ -945,12 +840,12 @@ struct LabelerDetailView: View {
                 } label: {
                     if isUpdating {
                         HStack {
-                            Text("Removing...")
+                            Text("Removing…")
                             Spacer()
                             ProgressView()
                         }
                     } else {
-                        Text("Remove Labeler")
+                        Text("Remove Service")
                             .frame(maxWidth: .infinity, alignment: .center)
                             .foregroundStyle(.red)
                     }
@@ -958,7 +853,7 @@ struct LabelerDetailView: View {
                 .disabled(isUpdating)
             }
         }
-        .navigationTitle("Labeler Settings")
+        .navigationTitle("Moderation Service")
     #if os(iOS)
     .toolbarTitleDisplayMode(.inline)
     #endif
@@ -978,7 +873,7 @@ struct LabelerDetailView: View {
             } catch {
                 // Revert toggle if there's an error
                 isEnabled = !isEnabled
-                errorMessage = "Failed to update labeler status: \(error.localizedDescription)"
+                errorMessage = UserFacingError.message(for: error, action: "update this moderation service")
             }
             
             isUpdating = false
@@ -994,7 +889,7 @@ struct LabelerDetailView: View {
                 try await appState.preferencesManager.removeLabeler(try DID(didString: labeler.id))
                 isEnabled = false
             } catch {
-                errorMessage = "Failed to remove labeler: \(error.localizedDescription)"
+                errorMessage = UserFacingError.message(for: error, action: "remove this moderation service")
             }
             
             isUpdating = false
@@ -1014,10 +909,19 @@ struct ContentPreviewSection: View {
     var body: some View {
         Section("Content Preview") {
             VStack(spacing: 12) {
-                Text("See how your moderation settings affect content display")
+                Text("See how your settings change the way posts appear.")
                     .appFont(AppTextRole.caption)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                
+                ContentPreviewView(
+                    label: "Graphic Content",
+                    icon: "exclamationmark.triangle.fill",
+                    iconColor: .red,
+                    contentVisibility: violentContentVisibility,
+                    sampleText: "This post contains graphic violence",
+                    showImage: true
+                )
                 
                 if adultContentEnabled {
                     // Adult Content Preview
@@ -1040,16 +944,6 @@ struct ContentPreviewSection: View {
                         showImage: true
                     )
                     
-                    // Violent Content Preview
-                    ContentPreviewView(
-                        label: "Graphic Content",
-                        icon: "exclamationmark.triangle.fill",
-                        iconColor: .red,
-                        contentVisibility: violentContentVisibility,
-                        sampleText: "This post contains graphic violence",
-                        showImage: true
-                    )
-                    
                     // Nudity Content Preview
                     ContentPreviewView(
                         label: "Non-Sexual Nudity",
@@ -1060,7 +954,7 @@ struct ContentPreviewSection: View {
                         showImage: true
                     )
                 } else {
-                    Text("Enable adult content to see preview examples")
+                    Text("Turn on adult content at bsky.app to preview adult content settings.")
                         .appFont(AppTextRole.callout)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .center)
@@ -1097,7 +991,7 @@ struct ContentPreviewView: View {
                 Spacer()
                 
                 // Visibility Badge
-                Text(contentVisibility.rawValue.capitalized)
+                Text(contentVisibility.displayName)
                     .appFont(AppTextRole.caption2)
                     .fontWeight(.medium)
                     .padding(.horizontal, 8)
@@ -1176,7 +1070,7 @@ struct ContentPreviewView: View {
                         .appFont(AppTextRole.caption2)
                         .foregroundStyle(.secondary)
                     
-                    Button("Show content") {
+                    Button("Show Content") {
                         withAnimation(.easeInOut(duration: 0.2)) {
                             isRevealed = true
                         }

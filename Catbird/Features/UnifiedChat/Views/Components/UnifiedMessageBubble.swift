@@ -85,6 +85,9 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
   /// Invoked when the user taps the retry affordance on a failed send (WS-6.5).
   var onRetry: (() -> Void)? = nil
   var showSenderInfo: Bool = true
+  /// Sender names label message runs in group chats; 1:1 chats already name
+  /// the other person in the title.
+  var showSenderName: Bool = true
   var groupPosition: UnifiedMessageGroupPosition = .single
   @Environment(AppState.self) private var appState
   @Environment(\.colorScheme) private var colorScheme
@@ -174,6 +177,7 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
       }
     }
     .buttonStyle(.plain)
+    .accessibilityLabel(message.senderDisplayName.map { "View \($0)’s profile" } ?? "View profile")
   }
 
   private var placeholderAvatar: some View {
@@ -188,6 +192,12 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
       }
   }
 
+  private var bubbleAccessibilityLabel: String {
+    let sender = message.isFromCurrentUser ? "You" : (message.senderDisplayName ?? "")
+    let time = message.sentAt.formatted(date: .omitted, time: .shortened)
+    return [sender, message.text, time].filter { !$0.isEmpty }.joined(separator: ", ")
+  }
+
   private var avatarPlaceholderSpacer: some View {
     Color.clear
       .frame(width: 32, height: 32)
@@ -199,7 +209,8 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
   private var messageContent: some View {
     VStack(alignment: message.isFromCurrentUser ? .trailing : .leading, spacing: 4) {
       // Sender name for group chats
-      if showSenderInfo, groupPosition.isFirstInGroup, !message.isFromCurrentUser, let name = message.senderDisplayName {
+      if showSenderInfo, showSenderName, groupPosition.isFirstInGroup, !message.isFromCurrentUser,
+         let name = message.senderDisplayName {
         Text(name)
           .font(.caption)
           .foregroundStyle(.secondary)
@@ -256,25 +267,35 @@ struct UnifiedMessageBubble<Message: UnifiedChatMessage>: View {
         }
       }()
 
-      if onLongPress != nil, !message.isTombstone {
-        gesturedSurface
-          .background(
-            GeometryReader { proxy in
-              Color.clear
-                .preference(key: BubbleFramePreferenceKey.self, value: proxy.frame(in: .global))
+      Group {
+        if onLongPress != nil, !message.isTombstone {
+          gesturedSurface
+            .background(
+              GeometryReader { proxy in
+                Color.clear
+                  .preference(key: BubbleFramePreferenceKey.self, value: proxy.frame(in: .global))
+              }
+            )
+            .onPreferenceChange(BubbleFramePreferenceKey.self) { newFrame in
+              if bubbleGlobalFrame != newFrame {
+                bubbleGlobalFrame = newFrame
+              }
             }
-          )
-          .onPreferenceChange(BubbleFramePreferenceKey.self) { newFrame in
-            if bubbleGlobalFrame != newFrame {
-              bubbleGlobalFrame = newFrame
+            .onLongPressGesture {
+              onLongPress?(bubbleGlobalFrame)
             }
-          }
-          .onLongPressGesture {
-            onLongPress?(bubbleGlobalFrame)
-          }
-      } else {
-        gesturedSurface
+        } else {
+          gesturedSurface
+        }
       }
+      // VoiceOver can't perform the swipe-to-reply or long-press gestures,
+      // so expose them as named actions on the bubble.
+      .modifier(BubbleAccessibilityModifier(
+        label: bubbleAccessibilityLabel,
+        combinesChildren: message.embed == nil,
+        onReply: message.isTombstone ? nil : onReply,
+        onMoreActions: (onLongPress == nil || message.isTombstone) ? nil : { onLongPress?(bubbleGlobalFrame) }
+      ))
 
       // Reactions
       if !message.reactions.isEmpty, !message.isTombstone {
@@ -568,9 +589,49 @@ private struct BubbleFramePreferenceKey: PreferenceKey {
   }
 }
 
+// MARK: - Bubble Accessibility
+
+/// Gives a message bubble one VoiceOver element (sender, text, time) plus
+/// named actions for the gesture-only Reply and long-press menu. Bubbles with
+/// embeds keep their children so shared posts and links stay reachable.
+private struct BubbleAccessibilityModifier: ViewModifier {
+  let label: String
+  let combinesChildren: Bool
+  let onReply: (() -> Void)?
+  let onMoreActions: (() -> Void)?
+
+  func body(content: Content) -> some View {
+    content
+      .accessibilityElement(children: combinesChildren ? .combine : .contain)
+      .modifier(LabelIfCombined(label: label, isCombined: combinesChildren))
+      .accessibilityActions {
+        if let onReply {
+          Button("Reply", action: onReply)
+        }
+        if let onMoreActions {
+          Button("React and More", action: onMoreActions)
+        }
+      }
+  }
+
+  private struct LabelIfCombined: ViewModifier {
+    let label: String
+    let isCombined: Bool
+
+    func body(content: Content) -> some View {
+      if isCombined {
+        content.accessibilityLabel(label)
+      } else {
+        content
+      }
+    }
+  }
+}
+
 // MARK: - Chat Rich Text
 
 struct ChatRichTextView: View {
+  @Environment(SceneNavigationContext.self) private var sceneContext
   let attributedText: AttributedString
   let isCurrentUser: Bool
 
@@ -581,7 +642,7 @@ struct ChatRichTextView: View {
       .environment(
         \.openURL,
         OpenURLAction { url in
-          appState.urlHandler.handle(url)
+          sceneContext.urlHandler.handle(url)
         }
       )
   }
@@ -719,4 +780,5 @@ private extension View {
     )
   }
   .padding()
+  .previewWithAuthenticatedState()
 }

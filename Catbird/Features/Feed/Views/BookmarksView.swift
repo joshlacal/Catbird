@@ -10,7 +10,6 @@ import SwiftUI
 import Petrel
 import OSLog
 
-@available(iOS 26.0, macOS 26.0, *)
 struct BookmarksView: View {
   // MARK: - Properties
   @Environment(AppState.self) private var appState
@@ -25,8 +24,8 @@ struct BookmarksView: View {
   // State
   @State private var bookmarks: [AppBskyBookmarkDefs.BookmarkView] = []
   @State private var isLoading = false
-  @State private var hasError = false
-  @State private var errorMessage = ""
+  @State private var hasLoaded = false
+  @State private var loadError: String?
   @State private var cursor: String?
   @State private var hasMoreContent = true
   
@@ -38,10 +37,22 @@ struct BookmarksView: View {
   // MARK: - Body
   var body: some View {
     Group {
-      if bookmarks.isEmpty && !isLoading {
+      if !bookmarks.isEmpty {
+        bookmarksListView
+      } else if let loadError, !isLoading {
+        ContentUnavailableStateView(
+          title: "Couldn’t Load Bookmarks",
+          description: loadError,
+          systemImage: "bookmark.slash",
+          actionTitle: "Try Again"
+        ) {
+          Task { await loadInitialBookmarks() }
+        }
+      } else if hasLoaded && !isLoading {
         emptyStateView
       } else {
-        bookmarksListView
+        ProgressView()
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
       }
     }
     .navigationTitle("Bookmarks")
@@ -62,11 +73,6 @@ struct BookmarksView: View {
     .refreshable {
       await refreshBookmarks()
     }
-    .alert("Error", isPresented: $hasError) {
-      Button("OK") { hasError = false }
-    } message: {
-      Text(errorMessage)
-    }
     .background(Color.primaryBackground(themeManager: appState.themeManager, currentScheme: colorScheme))
   }
   
@@ -79,11 +85,11 @@ struct BookmarksView: View {
       
       VStack(spacing: 8) {
         Text("No Bookmarks")
-          .font(.title2)
+          .appFont(AppTextRole.title2)
           .fontWeight(.semibold)
         
-        Text("Posts you bookmark will appear here")
-          .font(.body)
+        Text("Posts you bookmark will appear here.")
+          .appFont(AppTextRole.body)
           .foregroundColor(.secondary)
           .multilineTextAlignment(.center)
       }
@@ -187,10 +193,13 @@ struct BookmarksView: View {
   /// Loads initial bookmarks
   private func loadInitialBookmarks() async {
     guard !isLoading else { return }
-    guard let client = appState.atProtoClient else { return }
+    guard let client = appState.atProtoClient else {
+      loadError = "Couldn’t load your bookmarks. Sign in again and try again."
+      return
+    }
     
     isLoading = true
-    hasError = false
+    loadError = nil
     
     do {
       let (fetchedBookmarks, nextCursor) = try await appState.bookmarksManager.fetchBookmarks(
@@ -204,6 +213,7 @@ struct BookmarksView: View {
         self.cursor = nextCursor
         // If we got no bookmarks OR no cursor, there's no more content
         self.hasMoreContent = nextCursor != nil && !fetchedBookmarks.isEmpty
+        self.hasLoaded = true
         self.isLoading = false
       }
       
@@ -211,8 +221,7 @@ struct BookmarksView: View {
       
     } catch {
       await MainActor.run {
-        self.hasError = true
-        self.errorMessage = "Failed to load bookmarks: \(error.localizedDescription)"
+        self.loadError = UserFacingError.message(for: error, action: "load your bookmarks")
         self.isLoading = false
       }
       logger.error("Failed to load initial bookmarks: \(error)")
@@ -235,15 +244,14 @@ struct BookmarksView: View {
         self.cursor = nextCursor
         // If we got no bookmarks OR no cursor, there's no more content
         self.hasMoreContent = nextCursor != nil && !fetchedBookmarks.isEmpty
+        self.hasLoaded = true
+        self.loadError = nil
       }
       
       logger.info("Refreshed bookmarks: \(fetchedBookmarks.count) items")
       
     } catch {
-      await MainActor.run {
-        self.hasError = true
-        self.errorMessage = "Failed to refresh bookmarks: \(error.localizedDescription)"
-      }
+      showFailureToast(for: error, action: "refresh your bookmarks")
       logger.error("Failed to refresh bookmarks: \(error)")
     }
   }
@@ -271,15 +279,20 @@ struct BookmarksView: View {
       
     } catch {
       await MainActor.run {
-        self.hasError = true
-        self.errorMessage = "Failed to load more bookmarks: \(error.localizedDescription)"
+        // Stop the footer from retrying in a loop; pull to refresh starts over.
+        self.hasMoreContent = false
       }
+      showFailureToast(for: error, action: "load more bookmarks")
       logger.error("Failed to load more bookmarks: \(error)")
     }
   }
+
+  private func showFailureToast(for error: Error, action: String) {
+    guard let message = UserFacingError.message(for: error, action: action) else { return }
+    appState.toastManager.show(ToastItem(message: message, icon: "exclamationmark.triangle.fill"))
+  }
 }
 
-@available(iOS 26.0, macOS 26.0, *)
 #Preview("BookmarksView") {
   @Previewable @State var path = NavigationPath()
   NavigationStack(path: $path) {

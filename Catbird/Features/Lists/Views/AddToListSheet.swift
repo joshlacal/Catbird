@@ -47,8 +47,9 @@ final class AddToListSheetViewModel {
     errorMessage = nil
     
     do {
-      // Load user's lists
+      // Load user's lists (starter pack backing lists aren't managed here)
       userLists = try await appState.listManager.loadUserLists()
+        .filter { $0.purpose != .appbskygraphdefsreferencelist }
       
       // Check membership status for each list
       for list in userLists {
@@ -70,6 +71,17 @@ final class AddToListSheetViewModel {
     isLoading = false
   }
   
+  /// Picks up lists created from this sheet, which `ListManager` adds to its cache.
+  @MainActor
+  func syncCreatedLists() {
+    let cachedLists = appState.listManager.userLists
+      .filter { $0.purpose != .appbskygraphdefsreferencelist }
+    for list in cachedLists where membershipStatus[list.uri.description] == nil {
+      membershipStatus[list.uri.description] = false
+    }
+    userLists = cachedLists
+  }
+
   // MARK: - List Operations
   
   @MainActor
@@ -147,7 +159,7 @@ struct AddToListSheet: View {
               }
             }
           }
-          .alert("Error", isPresented: Binding(
+          .alert("Couldn’t Update List", isPresented: Binding(
             get: { viewModel.showingError },
             set: { viewModel.showingError = $0 }
           )) {
@@ -162,7 +174,9 @@ struct AddToListSheet: View {
           .sheet(isPresented: Binding(
             get: { viewModel.showingCreateList },
             set: { viewModel.showingCreateList = $0 }
-          )) {
+          ), onDismiss: {
+            viewModel.syncCreatedLists()
+          }) {
             CreateListView()
           }
       } else {
@@ -190,7 +204,7 @@ struct AddToListSheet: View {
     VStack(spacing: 16) {
       ProgressView()
         .scaleEffect(1.5)
-      Text("Loading your lists...")
+      Text("Loading your lists…")
         .font(.headline)
         .foregroundStyle(.secondary)
     }
@@ -208,7 +222,7 @@ struct AddToListSheet: View {
           .font(.title2)
           .fontWeight(.semibold)
         
-        Text("Create your first list to organize and curate accounts")
+        Text("Create your first list to organize and curate accounts.")
           .font(.subheadline)
           .foregroundStyle(.secondary)
           .multilineTextAlignment(.center)
@@ -320,7 +334,7 @@ struct ListSelectionRow: View {
             .lineLimit(2)
         }
         
-        Text("\(list.listItemCount ?? 0) members")
+        Text("^[\(list.listItemCount ?? 0) member](inflect: true)")
           .font(.caption2)
           .foregroundStyle(.tertiary)
       }
@@ -341,6 +355,7 @@ struct ListSelectionRow: View {
       }
       .buttonStyle(.plain)
       .disabled(isOperationInProgress)
+      .accessibilityLabel(isMember ? "Remove from \(list.name)" : "Add to \(list.name)")
     }
     .contentShape(Rectangle())
     .onTapGesture {

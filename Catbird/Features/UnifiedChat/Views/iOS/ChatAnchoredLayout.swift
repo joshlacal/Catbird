@@ -20,17 +20,37 @@ final class ChatAnchoredLayout: UICollectionViewFlowLayout {
       let width = collectionView.bounds.width - collectionView.adjustedContentInset.left
         - collectionView.adjustedContentInset.right
       if width > 0, abs(estimatedItemSize.width - width) > 0.5 {
-        estimatedItemSize = CGSize(width: width, height: 80)
+        estimatedItemSize = CGSize(width: width, height: Self.defaultEstimatedHeight)
+        measuredHeights.removeAll()
       }
     }
     super.prepare()
+  }
+
+  static let defaultEstimatedHeight: CGFloat = 80
+
+  /// Stable identity for the item at an index path (message ID). When set, each
+  /// item's last fitted height becomes its estimate, so a full re-layout (any
+  /// snapshot apply) does not reset off-screen rows to the flat default and
+  /// shrink the scrollable range.
+  var measuredItemKey: ((IndexPath) -> AnyHashable?)?
+  private var measuredHeights: [AnyHashable: CGFloat] = [:]
+
+  func estimatedSize(at indexPath: IndexPath) -> CGSize {
+    let height = measuredItemKey?(indexPath).flatMap { measuredHeights[$0] } ?? Self.defaultEstimatedHeight
+    return CGSize(width: estimatedItemSize.width, height: height)
   }
 
   override func shouldInvalidateLayout(
     forPreferredLayoutAttributes preferredAttributes: UICollectionViewLayoutAttributes,
     withOriginalAttributes originalAttributes: UICollectionViewLayoutAttributes
   ) -> Bool {
-    abs(preferredAttributes.size.height - originalAttributes.size.height) > 0.5
+    if preferredAttributes.representedElementCategory == .cell,
+      abs(preferredAttributes.size.width - estimatedItemSize.width) < 0.5,
+      let key = measuredItemKey?(preferredAttributes.indexPath) {
+      measuredHeights[key] = preferredAttributes.size.height
+    }
+    return abs(preferredAttributes.size.height - originalAttributes.size.height) > 0.5
       || abs(preferredAttributes.size.width - originalAttributes.size.width) > 0.5
   }
 
@@ -105,8 +125,10 @@ final class ChatTranscriptCollectionView: UICollectionView {
   override init(frame: CGRect, collectionViewLayout layout: UICollectionViewLayout) {
     super.init(frame: frame, collectionViewLayout: layout)
     selfSizingInvalidation = .enabledIncludingConstraints
-    // The SwiftUI viewport has already excluded navigation, footer and keyboard.
+    // SwiftUI excludes navigation and keyboard. The measured footer is our sole inset.
     contentInsetAdjustmentBehavior = .never
+    bounces = true
+    alwaysBounceVertical = true
   }
 
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -125,13 +147,22 @@ final class ChatTranscriptCollectionView: UICollectionView {
     }
   }
 
+  // Layout attribute queries can re-prepare the layout and change contentSize
+  // outside layoutSubviews. Schedule a pass so bottom follow still evaluates.
+  override var contentSize: CGSize {
+    didSet { if contentSize != oldValue { setNeedsLayout() } }
+  }
+
   private var settledBottomOffsetY: CGFloat?
+  private var settledContentSize = CGSize.zero
+  private var settledViewportSize = CGSize.zero
+  private var settledInsets = UIEdgeInsets.zero
   private var isRestoringBottom = false
   private var viewportReadingAnchor: (cell: UICollectionViewCell, index: IndexPath, y: CGFloat)?
 
   override var bounds: CGRect {
     willSet {
-      guard abs(newValue.height - bounds.height) > 0.5, bounds.height > 0 else { return }
+      guard newValue.size != bounds.size, bounds.height > 0 else { return }
       // Capture against the old viewport before UIKit reacts to a keyboard or
       // growing composer. Keeping a reader's origin and bottom intent are distinct.
       let bottom = max(-adjustedContentInset.top,
@@ -153,8 +184,11 @@ final class ChatTranscriptCollectionView: UICollectionView {
       return
     }
     let layout = collectionViewLayout as? ChatAnchoredLayout
+    let isInteracting = isTracking || isDragging || isDecelerating
+    let wasOverscrolling = contentOffset.y < -adjustedContentInset.top - 0.5
+      || settledBottomOffsetY.map { contentOffset.y > $0 + 0.5 } == true
     let mayFollow = layout?.preservesSelfSizingAnchor == true
-      && !isTracking && !isDragging && !isDecelerating
+      && !isInteracting && !wasOverscrolling && !UIAccessibility.isVoiceOverRunning
     let wasAtBottom = settledBottomOffsetY.map { abs(contentOffset.y - $0) <= 24 } ?? false
 
     let visibleTop = contentOffset.y + adjustedContentInset.top
@@ -165,22 +199,40 @@ final class ChatTranscriptCollectionView: UICollectionView {
     layout?.managesReadingAnchor = layout?.preservesSelfSizingAnchor == true
     super.layoutSubviews()
     layout?.managesReadingAnchor = false
-    if mayFollow && (wasAtBottom || pendingInsetBottomFollow) {
+    let geometryChanged = contentSize != settledContentSize || bounds.size != settledViewportSize
+      || adjustedContentInset != settledInsets
+    // A resting reader within a few points of the recorded bottom stays pinned
+    // even without a geometry change; otherwise the reading-anchor branch below
+    // can carry a bottom reader away when cells above re-measure.
+    let currentBottom = max(-adjustedContentInset.top, contentSize.height - bounds.height + adjustedContentInset.bottom)
+    let driftedFromBottom = settledBottomOffsetY.map { abs(contentOffset.y - $0) <= 4 } == true
+      && abs(contentOffset.y - currentBottom) > 0.5
+    if mayFollow && (geometryChanged || driftedFromBottom) && (wasAtBottom || pendingInsetBottomFollow) {
       isRestoringBottom = true
-      // Moving to the bottom can materialize another estimated cell. Settle its
-      // measurement before recording the next baseline, without an animation.
-      for _ in 0..<2 {
+      layout?.managesReadingAnchor = true
+      // Moving to the bottom can materialize or re-measure cells, changing the
+      // content height in the same pass. Check convergence after each layout,
+      // not before it, so the last pass cannot leave an unpinned gap.
+      for _ in 0..<4 {
         let bottom = max(-adjustedContentInset.top, contentSize.height - bounds.height + adjustedContentInset.bottom)
-        if abs(contentOffset.y - bottom) > 0.5 { contentOffset.y = bottom }
+        if abs(contentOffset.y - bottom) <= 0.5 { break }
+        contentOffset.y = bottom
         super.layoutSubviews()
       }
+      layout?.managesReadingAnchor = false
       isRestoringBottom = false
+      // The last pass may still have changed the content height. Pin to the
+      // bottom recorded below so the next pass sees a reader at the bottom.
+      let bottom = max(-adjustedContentInset.top, contentSize.height - bounds.height + adjustedContentInset.bottom)
+      if abs(contentOffset.y - bottom) > 0.5 { contentOffset.y = bottom }
     } else if layout?.preservesSelfSizingAnchor == true,
       let readerCell, let readerIndex, let readerY,
       indexPath(for: readerCell) == readerIndex {
       let bottom = max(-adjustedContentInset.top, contentSize.height - bounds.height + adjustedContentInset.bottom)
-      let target = min(bottom, max(-adjustedContentInset.top, readerCell.frame.minY - readerY))
-      if abs(target - contentOffset.y) > 0.5 {
+      if let target = ChatScrollGeometry.readingOffset(
+        target: readerCell.frame.minY - readerY, current: contentOffset.y,
+        bottom: bottom, top: -adjustedContentInset.top, isInteracting: isInteracting
+      ) {
         isRestoringBottom = true
         contentOffset.y = target
         isRestoringBottom = false
@@ -189,6 +241,9 @@ final class ChatTranscriptCollectionView: UICollectionView {
     pendingInsetBottomFollow = false
     viewportReadingAnchor = nil
     settledBottomOffsetY = max(-adjustedContentInset.top, contentSize.height - bounds.height + adjustedContentInset.bottom)
+    settledContentSize = contentSize
+    settledViewportSize = bounds.size
+    settledInsets = adjustedContentInset
   }
 }
 
@@ -218,12 +273,17 @@ struct ChatVisibleItemAnchor<Item: Hashable> {
     guard let indexPath = indexPathFor(item),
       let attributes = collectionView.layoutAttributesForItem(at: indexPath) else { return }
     let target = attributes.frame.minY - viewportY
-    guard abs(target - collectionView.contentOffset.y) > 0.5 else { return }
     let bottom = max(
       -collectionView.adjustedContentInset.top,
       collectionView.contentSize.height - collectionView.bounds.height + collectionView.adjustedContentInset.bottom
     )
-    collectionView.contentOffset.y = min(bottom, max(-collectionView.adjustedContentInset.top, target))
+    if let offset = ChatScrollGeometry.readingOffset(
+      target: target, current: collectionView.contentOffset.y,
+      bottom: bottom, top: -collectionView.adjustedContentInset.top,
+      isInteracting: collectionView.isTracking || collectionView.isDragging || collectionView.isDecelerating
+    ) {
+      collectionView.contentOffset.y = offset
+    }
   }
 }
 #endif

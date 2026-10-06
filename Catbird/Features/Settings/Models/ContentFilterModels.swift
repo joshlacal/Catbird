@@ -51,7 +51,7 @@ class ContentFilterManager {
     /// Convert content label preferences from the server model to our display model
     static func getVisibilityForLabel(label: String, preferences: [ContentLabelPreference]) -> ContentVisibility {
         // Look for a specific preference for this label
-        if let pref = preferences.first(where: { $0.label == label }) {
+        if let pref = preferences.first(where: { $0.label == label && $0.labelerDid == nil }) {
             return ContentVisibility(fromPreference: pref.visibility)
         }
 
@@ -82,8 +82,8 @@ class ContentFilterManager {
             return ContentVisibility(fromPreference: global.visibility)
         }
 
-        // Last fallback: any match for this label
-        return getVisibilityForLabel(label: label, preferences: preferences)
+        // A different service's override never becomes this service's default.
+        return .warn
     }
 
     /// Convert our display model to the server model format
@@ -157,31 +157,14 @@ struct ContentVisibilitySelector: View {
                 .appFont(AppTextRole.caption)
                 .foregroundStyle(.secondary)
             
-            Picker("Content Visibility", selection: $selection) {
+            Picker(title, selection: $selection) {
                 ForEach(ContentVisibility.allCases, id: \.id) { option in
-                    Image(systemName: option.iconName)
-                        .foregroundStyle(option.color)
-                        .appFont(size: 20)
+                    Text(option.displayName)
                         .tag(option)
-                        .help(option.displayName) // Accessibility label
                 }
             }
             .pickerStyle(.segmented)
-            .padding(.top, 4)
-            
-            // Icon legend
-            HStack(spacing: 20) {
-                ForEach(ContentVisibility.allCases, id: \.id) { option in
-                    HStack(spacing: 4) {
-                        Image(systemName: option.iconName)
-                            .foregroundStyle(option.color)
-                            .appFont(AppTextRole.caption)
-                        Text(option.displayName)
-                            .appFont(AppTextRole.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
+            .labelsHidden()
             .padding(.top, 4)
         }
         .padding(.vertical, 8)

@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import NukeUI
 import OSLog
@@ -28,6 +29,11 @@ struct ProfileHeader: View {
     @State private var verificationInfoKind: VerificationBadgeKind?
     @State private var showUnfollowConfirmation = false
     @State private var showingSuggestedFollows = false
+    @State private var suggestedFollows: [AppBskyActorDefs.ProfileView] = []
+    @State private var showingAccountLabels = false
+    @State private var selectedAccountLabelID: String?
+    @State private var pendingGermAction: GermProfileAction?
+    @State private var germLaunchError = false
     @Namespace private var imageTransition
     private let verticalSpacing: CGFloat = 12
     private let avatarSize: CGFloat = 80
@@ -50,9 +56,9 @@ struct ProfileHeader: View {
         }
 #if os(iOS)
         .fullScreenCover(isPresented: $isShowingProfileImageViewer) {
-            if let profile = viewModel.profile, let avatarURI = profile.avatar?.uriString() {
+            if let profile = viewModel.profile {
                 ProfileImageViewerView(avatar: profile.avatar, isPresented: $isShowingProfileImageViewer, namespace: imageTransition)
-                    .navigationTransition(.zoom(sourceID: avatarURI, in: imageTransition))
+                    .navigationTransition(.zoom(sourceID: profile.avatar?.uriString() ?? "", in: imageTransition))
             }
         }
         .presentationBackground(.black)
@@ -69,6 +75,47 @@ struct ProfileHeader: View {
                 displayName: profile.displayName ?? profile.handle.description,
                 verifications: profile.verification?.verifications ?? []
             )
+        }
+        .sheet(isPresented: $showingAccountLabels) {
+            if let client = appState.atProtoClient {
+                LabelsOnMeView(
+                    labels: inspectedAccountLabels,
+                    targetDescription: "Account @\(profile.handle)",
+                    viewerDID: appState.userDID,
+                    reportingService: ReportingService(client: client)
+                )
+            }
+        }
+        .alert("Open Germ DM?", isPresented: Binding(
+            get: { pendingGermAction != nil },
+            set: { if !$0 { pendingGermAction = nil } }
+        ), presenting: pendingGermAction) { action in
+            Button("Cancel", role: .cancel) { pendingGermAction = nil }
+            Button("Open Germ DM") { openGerm(action) }
+        } message: { action in
+            Text("Continue to \(action.url.host() ?? "Germ") to message @\(profile.handle) using your current account. No message is sent by Catbird.")
+        }
+        .alert("Could Not Open Germ", isPresented: $germLaunchError) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text("Please try again. The Germ link opens the app when installed, or its website otherwise.")
+        }
+        .onReceive(NotificationCenter.default.publisher(for: ProfileLabelRefresh.notificationName).receive(on: DispatchQueue.main)) { notification in
+            guard ProfileLabelRefresh.matches(
+                notification, preferencesManager: appState.preferencesManager,
+                viewerDID: appState.userDID, isActiveViewer: isActiveProfileViewer
+            ) else { return }
+            Task { @MainActor in
+                guard isActiveProfileViewer else { return }
+                await viewModel.loadProfile()
+            }
+        }
+        .onChange(of: isActiveProfileViewer) { _, isActive in
+            if !isActive {
+                pendingGermAction = nil
+                showingAccountLabels = false
+                selectedAccountLabelID = nil
+            }
         }
         .onAppear {
             localIsFollowing = profile.viewer?.following != nil
@@ -91,7 +138,8 @@ struct ProfileHeader: View {
             ContextualSuggestedFollowsSheet(
                 actorDID: profile.did.didString(),
                 actorHandle: profile.handle.description,
-                path: $path
+                path: $path,
+                initialSuggestions: suggestedFollows
             )
         }
     }
@@ -270,7 +318,7 @@ struct ProfileHeader: View {
             } catch {
                 logger.error("Failed to update activity subscription: \(error.localizedDescription)")
                 await MainActor.run {
-                    activitySubscriptionError = error.localizedDescription
+                    activitySubscriptionError = "Couldn’t update notifications for this account."
                 }
             }
 
@@ -300,6 +348,23 @@ struct ProfileHeader: View {
         }
     }
 
+    /// Shows similar accounts after a follow, but only when there is something to suggest.
+    private func presentSuggestedFollowsIfAvailable() async {
+        guard let client = appState.atProtoClient else { return }
+        do {
+            let suggestions = try await ContextualSuggestedFollowsSheet.fetchSuggestions(
+                client: client,
+                actorDID: profile.did.didString(),
+                currentUserDID: appState.userDID
+            )
+            guard !suggestions.isEmpty else { return }
+            suggestedFollows = suggestions
+            showingSuggestedFollows = true
+        } catch {
+            logger.debug("Suggested follows unavailable: \(error.localizedDescription)")
+        }
+    }
+
     private func updateLocalActivitySubscription() {
         let did = profile.did.didString()
         if let subscription = profile.viewer?.activitySubscription {
@@ -325,6 +390,7 @@ struct ProfileHeader: View {
     private var avatarView: some View {
         let moderationState = getAvatarModerationState(profile.labels)
         let shouldDisableTap = (moderationState == .hide)
+        let canOpenAvatarViewer = !shouldDisableTap && profile.avatar != nil
         
         return Group {
             if isLabeler {
@@ -354,10 +420,11 @@ struct ProfileHeader: View {
                     }
                 }
                 .onTapGesture {
-                    if !shouldDisableTap {
+                    if canOpenAvatarViewer {
                         isShowingProfileImageViewer = true
                     }
                 }
+                .modifier(AvatarViewerAccessibility(isEnabled: canOpenAvatarViewer))
                 .frame(width: avatarSize, height: avatarSize)
                 .clipShape(RoundedRectangle(cornerRadius: 12))
                 .background(
@@ -393,10 +460,11 @@ struct ProfileHeader: View {
                     }
                 }
                 .onTapGesture {
-                    if !shouldDisableTap {
+                    if canOpenAvatarViewer {
                         isShowingProfileImageViewer = true
                     }
                 }
+                .modifier(AvatarViewerAccessibility(isEnabled: canOpenAvatarViewer))
                 .frame(width: avatarSize, height: avatarSize)
                 .clipShape(Circle())
                 .background(
@@ -501,9 +569,63 @@ struct ProfileHeader: View {
                     if profile.viewer?.followedBy != nil {
                         FollowsBadgeView()
                     }
+
+                    if !viewModel.isCurrentUser && profile.viewer?.muted == true {
+                        Label("Muted", systemImage: "speaker.slash")
+                            .appFont(AppTextRole.caption)
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(
+                                RoundedRectangle(cornerRadius: 4)
+                                    .fill(Color.secondary.opacity(0.15))
+                            )
+                    }
                 }
             }
             
+            if !visibleAccountLabels.isEmpty {
+                if viewModel.isCurrentUser {
+                    Button {
+                        selectedAccountLabelID = nil
+                        showingAccountLabels = true
+                    } label: {
+                        Label(visibleAccountLabels.count == 1 ? "1 account label" : "\(visibleAccountLabels.count) account labels", systemImage: "tag")
+                            .font(.subheadline)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Color.accentColor)
+                    .padding(.vertical, 4)
+                    .accessibilityHint("Opens label names, issuing services, and eligible appeals")
+                } else {
+                    ProfileAccountLabelsView(
+                        labels: visibleAccountLabels,
+                        viewerDID: appState.userDID,
+                        isActiveViewer: { isActiveProfileViewer },
+                        onSelectLabel: { label in
+                            selectedAccountLabelID = label.id
+                            showingAccountLabels = true
+                        }
+                    )
+                    .environment(appState)
+                }
+            }
+
+            if let action = germAction {
+                Button { pendingGermAction = action } label: {
+                    HStack(spacing: 6) {
+                        Image("GermLogo").resizable().scaledToFit().frame(width: 24, height: 24).clipShape(.circle)
+                        Text("Germ DM")
+                        Image(systemName: "arrow.up.right").accessibilityHidden(true)
+                    }
+                    .font(.subheadline)
+                }
+                .buttonStyle(.bordered)
+                .accessibilityLabel("Open Germ DM")
+                .accessibilityHint("Opens an external app or website to compose a message")
+            }
+
             // Bio
             if let attributedBio = bioAttributedString(for: profile) {
                 TappableTextView(attributedString: attributedBio)
@@ -539,60 +661,116 @@ struct ProfileHeader: View {
                 .buttonStyle(.plain)
             }
             
-            // Stats
-            HStack(spacing: 24) {
-
-                // Following
-                Button(action: {
-                    
-                    path.append(ProfileNavigationDestination.following(profile.did.didString()))
-                    
-                }) {
-                    HStack(spacing: 6) {
-                        
-                        Text("\(profile.followsCount?.formatted ?? "0")")
-                            .appFont(AppTextRole.subheadline)
-                            .fontWeight(.semibold)
-                        
-                        Text("Following")
-                            .appFont(AppTextRole.subheadline)
-                            .foregroundStyle(.secondary)
-                    }
+            // Keep each count and caption intact; use rows when the group cannot fit.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 24) {
+                    profileStatistics
                 }
-                .buttonStyle(.plain)
-                
-                // Followers
-                Button(action: {
-                    path.append(ProfileNavigationDestination.followers(profile.did.didString()))
-                }) {
-                    HStack(spacing: 6) {
-                        Text("\(profile.followersCount?.formatted ?? "0")")
-                            .appFont(AppTextRole.subheadline)
-                            .fontWeight(.semibold)
-                        
-                        Text("Followers")
-                            .appFont(AppTextRole.subheadline)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .buttonStyle(.plain)
-                
-                // Posts
-                if let postsCount = profile.postsCount {
-                    HStack(spacing: 6) {
-                        Text("\(postsCount.formatted)")
-                            .appFont(AppTextRole.subheadline)
-                            .fontWeight(.semibold)
+                .fixedSize(horizontal: true, vertical: false)
 
-                        Text("Posts")
-                            .appFont(AppTextRole.subheadline)
-                            .foregroundStyle(.secondary)
-                    }
+                VStack(alignment: .leading, spacing: 12) {
+                    profileStatistics
                 }
-
-                Spacer()
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
         }
+    }
+
+    @ViewBuilder
+    private var profileStatistics: some View {
+        Button {
+            path.append(ProfileNavigationDestination.following(profile.did.didString()))
+        } label: {
+            profileStatistic(count: profile.followsCount?.formatted ?? "0", title: "Following")
+        }
+        .buttonStyle(.plain)
+
+        Button {
+            path.append(ProfileNavigationDestination.followers(profile.did.didString()))
+        } label: {
+            profileStatistic(count: profile.followersCount?.formatted ?? "0", title: "Followers")
+        }
+        .buttonStyle(.plain)
+
+        if let postsCount = profile.postsCount {
+            profileStatistic(count: postsCount.formatted, title: "Posts")
+        }
+    }
+
+    private func profileStatistic(count: String, title: LocalizedStringKey) -> some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 6) {
+                profileStatisticText(count: count, title: title)
+            }
+            .fixedSize(horizontal: true, vertical: true)
+
+            VStack(alignment: .leading, spacing: 4) {
+                profileStatisticText(count: count, title: title)
+            }
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    @ViewBuilder
+    private func profileStatisticText(count: String, title: LocalizedStringKey) -> some View {
+        Text(count)
+            .appFont(AppTextRole.subheadline)
+            .fontWeight(.semibold)
+        Text(title)
+            .appFont(AppTextRole.subheadline)
+            .foregroundStyle(.secondary)
+    }
+
+    private var isActiveProfileViewer: Bool {
+        viewModel.currentUserDID == appState.userDID
+            && AppStateManager.shared.lifecycle.appState === appState
+            && !AppStateManager.shared.authentication.isSwitchingAccount
+    }
+
+    private var visibleAccountLabels: [ComAtprotoLabelDefs.Label] {
+        guard isActiveProfileViewer else { return [] }
+        return AccountLabelPresentation.accountLabels(profile.labels ?? [], subjectDID: profile.did.didString(), subscribedIssuers: Set(subscribedLabelerDIDs))
+    }
+
+    private var inspectedAccountLabels: [ComAtprotoLabelDefs.Label] {
+        guard let selectedAccountLabelID else { return visibleAccountLabels }
+        return visibleAccountLabels.filter { $0.id == selectedAccountLabelID }
+    }
+
+    private var subscribedLabelerDIDs: [String] {
+        let preferences = try? appState.preferencesManager.getLocalPreferences()
+        return ((preferences?.labelers.map { $0.did.didString() } ?? []) + [ReportingService.officialBlueskyDID]).sorted()
+    }
+
+    private var germAction: GermProfileAction? {
+        guard isActiveProfileViewer else { return nil }
+        #if os(iOS)
+        let platform = "iOS"
+        #else
+        let platform = "web"
+        #endif
+        return GermProfileAction.make(
+            metadata: profile.associated?.germ,
+            profileDID: profile.did.didString(), viewerDID: appState.userDID,
+            loadedForViewerDID: viewModel.currentUserDID,
+            profileFollowsViewer: profile.viewer?.followedBy != nil,
+            isBlocked: profile.viewer?.blocking != nil || profile.viewer?.blockedBy == true || profile.viewer?.blockingByList != nil,
+            platform: platform
+        )
+    }
+
+    private func openGerm(_ action: GermProfileAction) {
+        pendingGermAction = nil
+        guard action == germAction, appState.userDID == action.viewerDID else { return }
+        #if os(iOS)
+        UIApplication.shared.open(action.url, options: [:]) { success in
+            if !success { Task { @MainActor in germLaunchError = true } }
+        }
+        #elseif os(macOS)
+        if !NSWorkspace.shared.open(action.url) { germLaunchError = true }
+        #endif
     }
 
     // MARK: - Bio Helpers
@@ -736,48 +914,22 @@ struct ProfileHeader: View {
             // Show blocked state instead of follow button. Neutral styling —
             // direction (you blocked them / they blocked you / mutual) is
             // carried by the block relationship banner's text, not this pill.
-            Button(action: {
-                // Do nothing - blocking handled in parent view
-            }) {
-                HStack {
-                    Image(systemName: "person.crop.circle.badge.xmark")
-                        .appFont(AppTextRole.footnote)
-                    Text("Blocked")
-                        .fixedSize(horizontal: true, vertical: false)
-                }
-                .appFont(AppTextRole.subheadline)
-                .fontWeight(.medium)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .foregroundColor(.secondary)
-                .cornerRadius(16)
+            HStack {
+                Image(systemName: "person.crop.circle.badge.xmark")
+                    .appFont(AppTextRole.footnote)
+                Text("Blocked")
+                    .fixedSize(horizontal: true, vertical: false)
             }
+            .appFont(AppTextRole.subheadline)
+            .fontWeight(.medium)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .foregroundColor(.secondary)
             .background(
                 Capsule()
                     .stroke(Color.secondary, lineWidth: 1.5)
             )
-        } else if profile.viewer?.muted == true {
-            // Show muted state
-            Button(action: {
-                // Do nothing - muting handled in parent view
-            }) {
-                HStack {
-                    Image(systemName: "speaker.slash")
-                        .appFont(AppTextRole.footnote)
-                    Text("Muted")
-                        .fixedSize(horizontal: true, vertical: false)
-                }
-                .appFont(AppTextRole.subheadline)
-                .fontWeight(.medium)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
-                .foregroundColor(.orange)
-                .cornerRadius(16)
-            }
-            .background(
-                Capsule()
-                    .stroke(Color.orange, lineWidth: 1.5)
-            )
+            .accessibilityElement(children: .combine)
         } else if localIsFollowing {
             Button(action: {
                 if DestructiveActionConfirmation.shouldConfirm(
@@ -819,7 +971,7 @@ struct ProfileHeader: View {
                         let success = try await appState.follow(did: profile.did.didString())
                         
                         if success {
-                            showingSuggestedFollows = true
+                            await presentSuggestedFollowsIfAvailable()
                             // Add a small delay before reloading
                             try? await Task.sleep(for: .seconds(0.5))
                             await viewModel.loadProfile()
@@ -871,6 +1023,9 @@ struct ProfileHeader: View {
                             try await viewModel.unsubscribeFromLabeler()
                         } catch {
                             logger.error("Error unsubscribing from labeler: \(error.localizedDescription)")
+                            appState.toastManager.show(
+                                ToastItem(message: "Couldn’t unsubscribe. Try again.", icon: "exclamationmark.triangle.fill")
+                            )
                         }
                         isSubscribeButtonLoading = false
                     }
@@ -900,6 +1055,9 @@ struct ProfileHeader: View {
                             try await viewModel.subscribeToLabeler()
                         } catch {
                             logger.error("Error subscribing to labeler: \(error.localizedDescription)")
+                            appState.toastManager.show(
+                                ToastItem(message: "Couldn’t subscribe. Try again.", icon: "exclamationmark.triangle.fill")
+                            )
                         }
                         isSubscribeButtonLoading = false
                     }
@@ -934,6 +1092,9 @@ struct ProfileHeader: View {
                         }
                     } catch {
                         logger.error("Error toggling labeler like: \(error.localizedDescription)")
+                        appState.toastManager.show(
+                            ToastItem(message: "Couldn’t update like. Try again.", icon: "exclamationmark.triangle.fill")
+                        )
                     }
                     isLikeButtonLoading = false
                 }
@@ -1047,3 +1208,19 @@ struct ProfileHeader: View {
     }
 }
 
+
+// MARK: - Avatar Accessibility
+
+private struct AvatarViewerAccessibility: ViewModifier {
+    let isEnabled: Bool
+
+    func body(content: Content) -> some View {
+        if isEnabled {
+            content
+                .accessibilityAddTraits(.isButton)
+                .accessibilityLabel("View Profile Picture")
+        } else {
+            content
+        }
+    }
+}

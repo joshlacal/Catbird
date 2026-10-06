@@ -24,7 +24,7 @@ struct InterestsSettingsView: View {
                         .fontWeight(.bold)
                         .appFont(AppTextRole.headline)
                     
-                    Text("Select topics you're interested in to get better feed recommendations and discover relevant content across Bluesky.")
+                    Text("Choose topics you’re interested in to get better feed recommendations and discover more across Bluesky.")
                         .appFont(AppTextRole.subheadline)
                         .foregroundStyle(.secondary)
                 }
@@ -46,7 +46,7 @@ struct InterestsSettingsView: View {
                             .foregroundStyle(.red)
                             .appFont(AppTextRole.subheadline)
                         
-                        Button("Retry") {
+                        Button("Try Again") {
                             loadTask?.cancel()
                             loadTask = Task { @MainActor in
                                 await loadInterests()
@@ -58,7 +58,7 @@ struct InterestsSettingsView: View {
                     .padding(.vertical, 4)
                 } else if interests.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("No interests selected")
+                        Text("No Interests Selected")
                             .fontWeight(.medium)
                             .foregroundStyle(.secondary)
                         
@@ -70,7 +70,7 @@ struct InterestsSettingsView: View {
                 } else {
                     FlowLayout(horizontalSpacing: 8, verticalSpacing: 8) {
                         ForEach(interests, id: \.self) { interest in
-                            Text(interest)
+                            Text(BlueskyInterest.displayName(for: interest))
                                 .appFont(AppTextRole.subheadline)
                                 .padding(.horizontal, 14)
                                 .padding(.vertical, 6)
@@ -103,10 +103,10 @@ struct InterestsSettingsView: View {
                 }
             )
         }
-        .alert("Error Saving Interests", isPresented: $showingError) {
+        .alert("Couldn’t Save Interests", isPresented: $showingError) {
             Button("OK", role: .cancel) { }
         } message: {
-            Text(errorMessage ?? "An unknown error occurred.")
+            Text(errorMessage ?? "Try again.")
         }
         .onDisappear {
             loadTask?.cancel()
@@ -135,7 +135,7 @@ struct InterestsSettingsView: View {
         } catch {
             guard !Task.isCancelled else { return }
             logger.error("Failed to load user interests: \(error.localizedDescription)")
-            self.loadError = "Failed to load interests: \(error.localizedDescription)"
+            self.loadError = UserFacingError.message(for: error, action: "load your interests") ?? "Couldn’t load your interests. Try again."
         }
     }
     
@@ -148,7 +148,8 @@ struct InterestsSettingsView: View {
                 self.interests = updated
             } catch {
                 logger.error("Failed to save user interests: \(error.localizedDescription)")
-                self.errorMessage = "Failed to update interests: \(error.localizedDescription)"
+                guard let message = UserFacingError.message(for: error, action: "save your interests") else { return }
+                self.errorMessage = message
                 self.showingError = true
             }
         }

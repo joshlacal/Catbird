@@ -22,6 +22,7 @@ enum NavigationFontConfig {
     private static var lastFontSize: CGFloat?
     private static var lastDynamicTypeEnabled: Bool?
     private static var lastMaxContentSizeCategory: String?
+    private static var lastSystemContentSizeCategory: String?
 
     /// Invalidate font cache when font settings change
     static func invalidateCache() {
@@ -31,6 +32,7 @@ enum NavigationFontConfig {
         lastFontSize = nil
         lastDynamicTypeEnabled = nil
         lastMaxContentSizeCategory = nil
+        lastSystemContentSizeCategory = nil
     }
 
     /// Check if cache is valid for current FontManager settings
@@ -38,7 +40,8 @@ enum NavigationFontConfig {
         return lastFontDesign == fontManager.fontDesign &&
                lastFontSize == fontManager.sizeScale &&
                lastDynamicTypeEnabled == fontManager.dynamicTypeEnabled &&
-               lastMaxContentSizeCategory == fontManager.maxContentSizeCategory.rawValue
+               lastMaxContentSizeCategory == fontManager.maxDynamicTypeSize &&
+               lastSystemContentSizeCategory == fontManager.currentContentSizeCategory.rawValue
     }
 
     /// Update cache validation properties
@@ -46,7 +49,8 @@ enum NavigationFontConfig {
         lastFontDesign = fontManager.fontDesign
         lastFontSize = fontManager.sizeScale
         lastDynamicTypeEnabled = fontManager.dynamicTypeEnabled
-        lastMaxContentSizeCategory = fontManager.maxContentSizeCategory.rawValue
+        lastMaxContentSizeCategory = fontManager.maxDynamicTypeSize
+        lastSystemContentSizeCategory = fontManager.currentContentSizeCategory.rawValue
     }
 
     /// Creates the custom large title font with Core Text variations and FontManager integration
@@ -91,11 +95,15 @@ enum NavigationFontConfig {
         let finalFont: UIFont
         if fontManager.dynamicTypeEnabled {
             let metrics = UIFontMetrics(forTextStyle: .largeTitle)
-            let maxPointSize = UIFont.preferredFont(
-                forTextStyle: .largeTitle,
-                compatibleWith: UITraitCollection(preferredContentSizeCategory: fontManager.maxContentSizeCategory.uiContentSizeCategory)
-            ).pointSize
-            finalFont = metrics.scaledFont(for: customUIFont, maximumPointSize: maxPointSize)
+            if let limit = fontManager.dynamicTypeLimit {
+                let maxPointSize = UIFont.preferredFont(
+                    forTextStyle: .largeTitle,
+                    compatibleWith: UITraitCollection(preferredContentSizeCategory: limit.uiContentSizeCategory)
+                ).pointSize
+                finalFont = metrics.scaledFont(for: customUIFont, maximumPointSize: maxPointSize)
+            } else {
+                finalFont = metrics.scaledFont(for: customUIFont)
+            }
         } else {
             finalFont = customUIFont
         }
@@ -144,11 +152,15 @@ enum NavigationFontConfig {
         let finalFont: UIFont
         if fontManager.dynamicTypeEnabled {
             let metrics = UIFontMetrics(forTextStyle: .headline)
-            let maxPointSize = UIFont.preferredFont(
-                forTextStyle: .headline,
-                compatibleWith: UITraitCollection(preferredContentSizeCategory: fontManager.maxContentSizeCategory.uiContentSizeCategory)
-            ).pointSize
-            finalFont = metrics.scaledFont(for: customTitleFont, maximumPointSize: maxPointSize)
+            if let limit = fontManager.dynamicTypeLimit {
+                let maxPointSize = UIFont.preferredFont(
+                    forTextStyle: .headline,
+                    compatibleWith: UITraitCollection(preferredContentSizeCategory: limit.uiContentSizeCategory)
+                ).pointSize
+                finalFont = metrics.scaledFont(for: customTitleFont, maximumPointSize: maxPointSize)
+            } else {
+                finalFont = metrics.scaledFont(for: customTitleFont)
+            }
         } else {
             finalFont = customTitleFont
         }

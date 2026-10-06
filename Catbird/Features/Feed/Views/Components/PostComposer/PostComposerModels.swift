@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Petrel
 import SwiftUI
@@ -47,7 +48,7 @@ struct TenorMediaItem: Codable, Hashable {
 // MARK: - Thread Models
 
 struct ThreadEntry: Identifiable, Hashable {
-    let id = UUID()
+    var id = UUID()
     var text: String = ""
     var mediaItems: [PostComposerViewModel.MediaItem] = []
     var videoItem: PostComposerViewModel.MediaItem?
@@ -61,6 +62,9 @@ struct ThreadEntry: Identifiable, Hashable {
     var selectedLanguages: [LanguageCodeContainer] = []
     var outlineTags: [String] = []
     var quotedPost: AppBskyFeedDefs.PostView?
+    // Keep the strong reference while its display metadata is loading.
+    var draftQuotedPostURI: String?
+    var draftQuotedPostCID: String?
 }
 
 // MARK: - Submit Validation
@@ -82,10 +86,15 @@ struct PostComposerSubmitValidationState: Equatable {
     enum Reason: Equatable {
         case emptyContent
         case overCharacterLimit(current: Int, max: Int)
+        case threadPostOverCharacterLimit(postNumber: Int, over: Int)
         case posting
         case videoPreparing
         case videoBlocked(String)
         case missingAltText
+        case replyLoading
+        case replyUnavailable
+        case quoteLoading
+        case pendingAudio
     }
 
     let canSubmit: Bool
@@ -96,15 +105,26 @@ struct PostComposerSubmitValidationState: Equatable {
         case .emptyContent:
             return "Add text or media before posting."
         case .overCharacterLimit(let current, let max):
-            return "\(current - max) characters over the limit."
+            let over = current - max
+            return "\(over) character\(over == 1 ? "" : "s") over the limit."
+        case .threadPostOverCharacterLimit(let postNumber, let over):
+            return "Post \(postNumber) is \(over) character\(over == 1 ? "" : "s") over the limit."
         case .posting:
-            return "Posting..."
+            return "Posting…"
         case .videoPreparing:
             return "Video is still preparing."
         case .videoBlocked(let reason):
             return reason
         case .missingAltText:
             return "Add alt text to every media attachment before posting."
+        case .replyLoading:
+            return "Loading the original post…"
+        case .replyUnavailable:
+            return "The post you’re replying to is unavailable."
+        case .quoteLoading:
+            return "The quoted post must load before this draft can be posted."
+        case .pendingAudio:
+            return "Finish or remove your audio attachment before posting."
         case nil:
             return nil
         }
@@ -112,7 +132,7 @@ struct PostComposerSubmitValidationState: Equatable {
 
     var shouldShowInlineMessage: Bool {
         switch reason {
-        case .overCharacterLimit, .videoPreparing, .videoBlocked, .missingAltText:
+        case .overCharacterLimit, .threadPostOverCharacterLimit, .videoPreparing, .videoBlocked, .missingAltText, .replyLoading, .replyUnavailable, .quoteLoading, .pendingAudio:
             return true
         case .emptyContent, .posting, nil:
             return false
@@ -156,6 +176,13 @@ struct PostComposerDraft: Codable, Hashable {
   let currentThreadIndex: Int
   let parentPostURI: String?
   let quotedPostURI: String?
+  var quotedPostCID: String? = nil
+  var draftPostgateEmbeddingRules: [AppBskyDraftDefs.DraftPostgateEmbeddingRulesUnion]? = nil
+  var draftThreadgateAllow: [AppBskyDraftDefs.DraftThreadgateAllowUnion]? = nil
+  // Distinguishes an explicitly unrestricted draft from a legacy draft with no settings.
+  var hasDraftInteractionSettings: Bool? = nil
+  var pendingAudioURLString: String? = nil
+  var pendingAudioThreadEntryID: UUID? = nil
 }
 
 // MARK: - Codable Wrappers for Draft State
@@ -187,17 +214,22 @@ struct CodableMediaItem: Codable, Hashable {
     }
   }
 
-  /// Write image data to a temp file in the shared drafts directory, returning the file URL string
+  /// Write image data to a file in the shared drafts directory, returning the file URL string.
+  /// Files are named by content, so autosaves and thread copies of the same image reuse one file.
   private static func persistImageData(_ data: Data) -> String? {
     guard let container = FileManager.default.containerURL(
       forSecurityApplicationGroupIdentifier: "group.blue.catbird.shared"
     ) else { return nil }
     let draftsDir = container.appendingPathComponent("SharedDrafts", isDirectory: true)
     try? FileManager.default.createDirectory(at: draftsDir, withIntermediateDirectories: true)
-    let filename = "draft_image_\(UUID().uuidString).jpg"
+    let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    let filename = "draft_image_\(digest).jpg"
     let fileURL = draftsDir.appendingPathComponent(filename)
+    if FileManager.default.fileExists(atPath: fileURL.path) {
+      return fileURL.absoluteString
+    }
     do {
-      try data.write(to: fileURL)
+      try data.write(to: fileURL, options: .atomic)
       return fileURL.absoluteString
     } catch {
       return nil
@@ -266,8 +298,11 @@ struct CodableThreadEntry: Codable, Hashable {
   let hashtags: [String]
   let parentPostURI: String?
   let quotedPostURI: String?
+  var quotedPostCID: String? = nil
+  var draftEntryID: UUID? = nil
   
-  init(from threadEntry: ThreadEntry, parentPost: AppBskyFeedDefs.PostView?, quotedPost: AppBskyFeedDefs.PostView?) {
+  init(from threadEntry: ThreadEntry, parentPost: AppBskyFeedDefs.PostView?, quotedPost: AppBskyFeedDefs.PostView?, parentPostURI: String? = nil) {
+    self.draftEntryID = threadEntry.id
     self.text = threadEntry.text
     self.mediaItems = threadEntry.mediaItems.map(CodableMediaItem.init)
     self.videoItem = threadEntry.videoItem.map(CodableMediaItem.init)
@@ -277,12 +312,15 @@ struct CodableThreadEntry: Codable, Hashable {
     self.selectedEmbedURL = threadEntry.selectedEmbedURL
     self.urlsKeptForEmbed = threadEntry.urlsKeptForEmbed
     self.hashtags = threadEntry.hashtags
-    self.parentPostURI = parentPost?.uri.uriString()
-    self.quotedPostURI = quotedPost?.uri.uriString()
+    self.parentPostURI = parentPost?.uri.uriString() ?? parentPostURI
+    let quote = threadEntry.quotedPost ?? quotedPost
+    self.quotedPostURI = threadEntry.draftQuotedPostURI ?? quote?.uri.uriString()
+    self.quotedPostCID = threadEntry.draftQuotedPostCID ?? quote?.cid.string
   }
   
   func toThreadEntry() -> ThreadEntry {
     var entry = ThreadEntry()
+    entry.id = draftEntryID ?? UUID()
     entry.text = text
     entry.mediaItems = mediaItems.map { $0.toMediaItem() }
     entry.videoItem = videoItem?.toMediaItem()
@@ -292,6 +330,8 @@ struct CodableThreadEntry: Codable, Hashable {
     entry.selectedEmbedURL = selectedEmbedURL
     entry.urlsKeptForEmbed = urlsKeptForEmbed
     entry.hashtags = hashtags
+    entry.draftQuotedPostURI = quotedPostURI
+    entry.draftQuotedPostCID = quotedPostCID
     return entry
   }
 }

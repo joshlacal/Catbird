@@ -2,6 +2,26 @@ import Petrel
 
 /// A pure URI patch over V2 records; unrelated IDs, types and relative order survive.
 enum FeedLibraryServerMerge {
+  /// Reorder the pinned subsequence, leaving unpinned and unknown records in their slots.
+  static func applyPinnedOrder(_ order: FeedLibraryPendingStore.PinnedOrder?,
+                               to original: [AppBskyActorDefs.SavedFeed]) -> [AppBskyActorDefs.SavedFeed] {
+    guard let order else { return original }
+    let pinned = original.filter(\.pinned)
+    let values = FeedLibraryPendingStore.applyingPinnedOrder(order.uris, to: pinned.map(\.value))
+    var remaining = pinned
+    var ordered: [AppBskyActorDefs.SavedFeed] = []
+    for value in values {
+      if let index = remaining.firstIndex(where: { $0.value == value }) { ordered.append(remaining.remove(at: index)) }
+    }
+    ordered.append(contentsOf: remaining)
+    var index = 0
+    return original.map { item in
+      guard item.pinned, index < ordered.count else { return item }
+      defer { index += 1 }
+      return ordered[index]
+    }
+  }
+
   static func migrateV1(pinned: [String], saved: [String], timelineIndex: Int?,
                         newIDs: [String: String]) -> [AppBskyActorDefs.SavedFeed] {
     var values = pinned

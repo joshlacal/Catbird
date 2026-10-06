@@ -120,7 +120,7 @@ struct NotificationsActivityListView: View {
       )
 
       guard (200 ... 299).contains(responseCode), let fetchedPosts = output?.posts else {
-        errorMessage = "Failed to load posts (HTTP \(responseCode))"
+        errorMessage = "Couldn’t load these posts. Try again."
         isLoading = false
         return
       }
@@ -135,7 +135,7 @@ struct NotificationsActivityListView: View {
       posts = postURIs.compactMap { postMap[$0] }
       isLoading = false
     } catch {
-      errorMessage = "Error loading posts: \(error.localizedDescription)"
+      errorMessage = UserFacingError.message(for: error, action: "load these posts")
       isLoading = false
     }
   }

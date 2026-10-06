@@ -7,6 +7,8 @@ import SwiftUI
 import PhotosUI
 import Petrel
 import os
+import AVFoundation
+import CoreMedia
 
 private let pcSheetsLogger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "Catbird", category: "PostComposerSheets")
 
@@ -15,24 +17,39 @@ extension PostComposerViewUIKit {
   @ViewBuilder
   func sheetModifiers<Content: View>(vm: PostComposerViewModel, _ content: Content) -> some View {
     let photoPickerContent = content
-      .photosPicker(isPresented: $photoPickerVisible, selection: $photoPickerItems, matching: .images, preferredItemEncoding: .current, photoLibrary: .shared())
+      .photosPicker(isPresented: $photoPickerVisible, selection: $photoPickerItems,
+                    maxSelectionCount: max(1, vm.maxImagesAllowed - vm.mediaItems.count),
+                    matching: .images, preferredItemEncoding: .current, photoLibrary: .shared())
       .onChange(of: photoPickerItems) { _, items in
         pcSheetsLogger.info("PostComposerSheets: Photo picker items changed - count: \(items.count)")
         handleMediaSelection(from: items, isVideo: false, vm: vm)
       }
-      .photosPicker(isPresented: $videoPickerVisible, selection: $videoPickerItems, matching: .videos, photoLibrary: .shared())
+      .photosPicker(isPresented: $videoPickerVisible, selection: $videoPickerItems,
+                    maxSelectionCount: 1, matching: .videos, photoLibrary: .shared())
       .onChange(of: videoPickerItems) { _, items in
         pcSheetsLogger.info("PostComposerSheets: Video picker items changed - count: \(items.count)")
         handleMediaSelection(from: items, isVideo: true, vm: vm)
       }
+      .alert(item: Binding(
+        get: { vm.alertItem },
+        set: { vm.alertItem = $0 }
+      )) { item in
+        Alert(title: Text(item.title), message: Text(item.message), dismissButton: .default(Text("OK")))
+      }
     
     let audioSheetContent = photoPickerContent
-      .sheet(isPresented: $showingAudioRecorder) {
+      .sheet(isPresented: $showingAudioRecorder, onDismiss: {
+        if viewModel === vm, vm.ownsEditingDraft, vm.pendingAudioURL != nil {
+          showingAudioVisualizerPreview = true
+        }
+      }) {
+        let recordingClaim = vm.editingClaim
+        let recordingEntryID = vm.threadEntries.indices.contains(vm.currentThreadIndex)
+          ? vm.threadEntries[vm.currentThreadIndex].id : nil
         PostComposerAudioRecordingView(
           onAudioRecorded: { url in
-            pcSheetsLogger.info("PostComposerSheets: Audio recorded - URL: \(url.path)")
-            currentAudioURL = url
-            // Note: duration would need to be calculated separately if needed
+            guard viewModel === vm, let recordingEntryID,
+                  vm.preserveRecordedAudio(at: url, claim: recordingClaim, threadEntryID: recordingEntryID) else { return }
             showingAudioRecorder = false
           },
           onCancel: {
@@ -41,16 +58,71 @@ extension PostComposerViewUIKit {
           }
         )
       }
-      .sheet(isPresented: $showingAccountSwitcher) {
-        // Pass current draft when switching accounts from composer
-        // NOTE: Do NOT inject appState here — AccountSwitcherView only needs AppStateManager,
-        // and a captured appState becomes stale after account switch, causing EXC_BREAKPOINT
-        // in EnvironmentValues.subscript.getter during sheet dismissal transitions.
-        AccountSwitcherView(showsDismissButton: true, draftToTransfer: vm.saveDraftState())
-          .environment(AppStateManager.shared)
-          .onDisappear {
-            handleAccountSwitchComplete(vm: vm)
+      .sheet(isPresented: $showingAudioVisualizerPreview) {
+        if let audioURL = vm.pendingAudioURL, let threadEntryID = vm.pendingAudioThreadEntryID,
+           vm.threadEntries.contains(where: { $0.id == threadEntryID }) {
+          let previewClaim = vm.editingClaim
+          PendingComposerAudioPreview(
+            audioURL: audioURL,
+            onVideoGenerated: { videoURL in
+              guard viewModel === vm else { return }
+              Task { @MainActor in
+                do {
+                  let attached = try await vm.finishPendingAudio(
+                    withVideoAt: videoURL, audioURL: audioURL,
+                    claim: previewClaim, threadEntryID: threadEntryID
+                  )
+                  if !attached, viewModel === vm, vm.ownsEditingDraft, vm.editingClaim == previewClaim,
+                     vm.pendingAudioURL == audioURL {
+                    appState.toastManager.show(ToastItem(
+                      message: "Your draft changed. Your recording was kept; tap Finish Audio Attachment to try again.",
+                      icon: "waveform"
+                    ))
+                  }
+                } catch {
+                  guard !Task.isCancelled, viewModel === vm, vm.ownsEditingDraft,
+                        vm.editingClaim == previewClaim, vm.pendingAudioURL == audioURL else { return }
+                  pcSheetsLogger.error("PostComposerSheets: Audio attachment failed - \(String(describing: error), privacy: .public)")
+                  let reason = UserFacingError.message(for: error, action: "attach your recording")
+                    ?? "Couldn’t attach your recording."
+                  appState.toastManager.show(ToastItem(
+                    message: "\(reason) Your recording was kept.",
+                    icon: "exclamationmark.triangle.fill"
+                  ))
+                }
+              }
+            },
+            onCancel: { showingAudioVisualizerPreview = false }
+          )
+          .environment(appState)
+        } else if let audioURL = vm.pendingAudioURL {
+          NavigationStack {
+            ScrollView {
+              VStack(spacing: 20) {
+                Text("Original Post Unavailable").appFont(AppTextRole.headline)
+                Text("This recording belongs to a post that is no longer in this draft. Save the recording before removing the attachment.")
+                ShareLink("Save Recording", item: audioURL)
+                Button("Remove Audio Attachment", role: .destructive) {
+                  vm.removePendingAudio()
+                  showingAudioVisualizerPreview = false
+                }
+                Button("Close") { showingAudioVisualizerPreview = false }
+              }
+              .padding()
+            }
           }
+        }
+      }
+      .sheet(isPresented: $showingAccountSwitcher) {
+        let transfer = accountSwitchSnapshot
+        AccountSwitcherView(
+          showsDismissButton: true,
+          composerTransfer: transfer,
+          onSwitchCompleted: { outcome in
+            handleAccountSwitchComplete(outcome, vm: vm, snapshot: transfer)
+          }
+        )
+        .environment(AppStateManager.shared)
       }
     
     let otherSheetsContent = audioSheetContent
@@ -85,12 +157,12 @@ extension PostComposerViewUIKit {
             get: { vm.outlineTags },
             set: { vm.outlineTags = $0 }
           ))
-          .navigationTitle("Outline Hashtags")
+          .navigationTitle("Hashtags")
           #if os(iOS)
           .navigationBarTitleDisplayMode(.inline)
           #endif
           .toolbar {
-            ToolbarItem(placement: .cancellationAction) {
+            ToolbarItem(placement: .confirmationAction) {
               Button("Done") { showingOutlineTagsEditor = false }
             }
           }
@@ -103,15 +175,22 @@ extension PostComposerViewUIKit {
       .sheet(isPresented: $showingDrafts) {
         DraftsListView(appState: appState) { draftVM in
           pcSheetsLogger.info("PostComposerSheets: Draft selected from drafts list")
-          if let draft = appState.composerDraftManager.loadSavedDraft(draftVM) {
-            pcSheetsLogger.debug("PostComposerSheets: Loading draft - text length: \(draft.postText.count)")
-            // Apply draft to current composer
-            vm.enterDraftMode()
-            vm.restoreDraftState(draft)
-            // Move focus to editor after loading
+          if editingSession.savedDraftID == draftVM.id, vm.ownsEditingDraft {
+            showingDrafts = false
+            return
+          }
+          do {
+            // Flush live typing before the session archives the old editor.
+            // The replacement claims a new presentation lease, rejecting late callbacks.
+            let replacement = try vm.replacementForSavedDraft(draftVM)
+            autoSaveTask?.cancel()
+            viewModel = replacement
             activeEditorFocusID = UUID()
-          } else {
-            pcSheetsLogger.warning("PostComposerSheets: Failed to load draft")
+            startAutoSave()
+          } catch {
+            appState.toastManager.show(ToastItem(
+              message: error.localizedDescription, icon: "exclamationmark.triangle.fill"
+            ))
           }
           showingDrafts = false
         }
@@ -191,6 +270,9 @@ extension PostComposerViewUIKit {
             pcSheetsLogger.info("PostComposerSheets: Photo edit completed for image at index \(index)")
             vm.updateEditedImage(editedImage, at: index)
           }
+        } else {
+          // The photo is gone or not loaded yet; a full-screen cover can't be swiped away.
+          Color.clear.onAppear { vm.isPhotoEditorPresented = false }
         }
       }
       #elseif os(macOS)
@@ -211,18 +293,55 @@ extension PostComposerViewUIKit {
       #endif
 
     linkSheetContent
-      .alert("Discard Draft?", isPresented: $showingDismissAlert) {
-        Button("Discard", role: .destructive) {
-          pcSheetsLogger.info("PostComposerSheets: User chose to discard draft")
-          dismissReason = .discard
-          appState.composerDraftManager.clearDraft()
-          dismiss()
+  }
+}
+
+private struct PendingComposerAudioPreview: View {
+  let audioURL: URL
+  let onVideoGenerated: (URL) -> Void
+  let onCancel: () -> Void
+  @State private var duration: TimeInterval?
+  @State private var loadingError: String?
+
+  var body: some View {
+    Group {
+      if let duration {
+        AudioVisualizerPreview(
+          audioURL: audioURL, audioDuration: duration,
+          onVideoGenerated: onVideoGenerated, onCancel: onCancel
+        )
+      } else {
+        NavigationStack {
+          Group {
+            if let loadingError {
+              ContentUnavailableView("Audio Unavailable", systemImage: "waveform",
+                                     description: Text(loadingError))
+            } else {
+              ProgressView("Loading recording…")
+            }
+          }
+          .navigationTitle("Audio Visualizer")
+          .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+              Button("Cancel", action: onCancel)
+            }
+          }
         }
-        Button("Keep Editing", role: .cancel) { 
-          pcSheetsLogger.info("PostComposerSheets: User chose to keep editing")
-        }
-      } message: {
-        Text("You'll lose your post if you discard now.")
       }
+    }
+    .interactiveDismissDisabled()
+    .task(id: audioURL) {
+      do {
+        let loadedDuration = try await AVURLAsset(url: audioURL).load(.duration).seconds
+        guard !Task.isCancelled else { return }
+        guard loadedDuration.isFinite, loadedDuration > 0 else {
+          throw CocoaError(.fileReadCorruptFile)
+        }
+        duration = loadedDuration
+      } catch {
+        guard !Task.isCancelled else { return }
+        loadingError = "This recording couldn’t be loaded."
+      }
+    }
   }
 }

@@ -16,8 +16,6 @@ struct CatbirdFeedWidgetBundle: WidgetBundle {
     if #available(iOS 17.0, *) {
       ComposeWidget()
     }
-    NotificationCircularWidget()
-    NotificationInlineWidget()
     FeedRectangularWidget()
   }
 }

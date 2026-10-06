@@ -2,6 +2,7 @@ import SwiftUI
 import Petrel
 
 struct NuxAnnouncementView: View {
+  @Environment(SceneNavigationContext.self) private var sceneContext
     let nuxID: NuxID
     let onDismiss: () -> Void
     @Environment(AppState.self) private var appState
@@ -55,7 +56,7 @@ struct NuxAnnouncementView: View {
                             .foregroundColor(.red)
                             .multilineTextAlignment(.leading)
                         Spacer()
-                        Button("Retry") {
+                        Button("Try Again") {
                             retryCompletion()
                         }
                         .font(.caption.bold())
@@ -102,6 +103,7 @@ struct NuxAnnouncementView: View {
                             .font(.system(size: 20))
                             .foregroundColor(.secondary)
                     }
+                    .accessibilityLabel("Close")
                     .disabled(isSaving)
                 }
             }
@@ -149,7 +151,7 @@ struct NuxAnnouncementView: View {
         case .bookmarksAnnouncement:
             return "Introducing Bookmarks"
         case .groupChatsAnnouncement:
-            return "Group Chats are Here"
+            return "Group Chats Are Here"
         case .activitySubscriptions:
             return "Activity Alerts"
         }
@@ -158,13 +160,13 @@ struct NuxAnnouncementView: View {
     private var description: String {
         switch nuxID {
         case .draftsAnnouncement:
-            return "Save your posts as drafts to edit and publish whenever you're ready. Access them directly from the composer."
+            return "Save your posts as drafts to edit and publish whenever you’re ready. Find them in the composer."
         case .bookmarksAnnouncement:
-            return "Save posts privately to read later. Access all your saved posts anytime in the new Bookmarks tab."
+            return "Save posts privately to read later. Find them anytime in Bookmarks, from the feeds menu."
         case .groupChatsAnnouncement:
             return "Chat privately with multiple people at once. Create groups, share invite links, and stay connected."
         case .activitySubscriptions:
-            return "Get instant notifications when your favorite accounts post, reply, or go live."
+            return "Get notified when your favorite accounts post or reply."
         }
     }
 
@@ -214,7 +216,7 @@ struct NuxAnnouncementView: View {
                     prefs.setNuxCompleted(nuxID.rawValue, completed: false)
                     try? await appState.preferencesManager.savePreferences(prefs)
                 }
-                errorMessage = error.localizedDescription
+                errorMessage = UserFacingError.message(for: error, action: "save this")
                 isSaving = false
             }
         }
@@ -223,17 +225,23 @@ struct NuxAnnouncementView: View {
     private func navigateToFeature() {
         switch nuxID {
         case .draftsAnnouncement:
-            #if os(iOS)
-            appState.navigationManager.updateCurrentTab(0)
-            #endif
+            // Drafts live in the composer, so open it on the Home tab once this sheet has closed.
+            let context = sceneContext
+            context.navigationManager.updateCurrentTab(0)
+            context.navigationManager.tabSelection?(0)
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 450_000_000)
+                context.presentPostComposer()
+            }
         case .bookmarksAnnouncement:
-            appState.navigationManager.navigate(to: .bookmarks)
+            sceneContext.navigationManager.navigate(to: .bookmarks)
         case .groupChatsAnnouncement:
-            #if os(iOS)
-            appState.navigationManager.navigate(to: .chatTab)
-            #endif
+            // Select the Messages tab instead of pushing a second chat split view onto this stack.
+            let chatTab = AppNavigationManager.chatTabIndex
+            sceneContext.navigationManager.updateCurrentTab(chatTab)
+            sceneContext.navigationManager.tabSelection?(chatTab)
         case .activitySubscriptions:
-            appState.navigationManager.navigate(to: .activitySubscriptions)
+            sceneContext.navigationManager.navigate(to: .activitySubscriptions)
         }
     }
 }

@@ -2,6 +2,7 @@ import SwiftUI
 import Petrel
 
 struct CatbirdCopilotSheet: View {
+  @Environment(SceneNavigationContext.self) private var sceneContext
     @Environment(AppState.self) private var appState
     @Environment(\.dismiss) private var dismiss
 
@@ -21,11 +22,13 @@ struct CatbirdCopilotSheet: View {
     @State private var errorMessage: String? = nil
     @State private var contextTrimmedNotice: String? = nil
     @State private var route: CopilotModelRoute = .onDevice
-    @State private var showingCloudConsent: Bool = false
+    @State private var confirmingClearAll: Bool = false
     @State private var exactContextConversations: [CopilotConversation] = []
     @State private var navigationPath = NavigationPath()
     @State private var selectedTab: Int = 0
     @State private var successMessage: String? = nil
+    private let unavailableMessage: String? = CopilotAvailability.unavailableMessage
+
     init(
         context: CopilotContext,
         onConfirmedAction: ((CopilotProposal) async throws -> Void)? = nil,
@@ -73,9 +76,16 @@ struct CatbirdCopilotSheet: View {
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(spacing: 8) {
-                            if turns.isEmpty && !isResponding {
+                            if turns.isEmpty && !isResponding, let unavailableMessage {
                                 ContentUnavailableView(
-                                    "Ask about this",
+                                    "Ask Catbird Unavailable",
+                                    systemImage: "sparkles",
+                                    description: Text(unavailableMessage)
+                                )
+                                .padding(.top, 40)
+                            } else if turns.isEmpty && !isResponding {
+                                ContentUnavailableView(
+                                    "Ask About This",
                                     systemImage: "sparkles",
                                     description: Text("Catbird can inspect Bluesky, answer questions, and propose actions for you to confirm.")
                                 )
@@ -151,7 +161,7 @@ struct CatbirdCopilotSheet: View {
                         } label: {
                             HStack(spacing: 4) {
                                 Image(systemName: "stop.fill")
-                                Text("Stop generating")
+                                Text("Stop Generating")
                             }
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -171,7 +181,7 @@ struct CatbirdCopilotSheet: View {
                         Task { await send(promptText: text) }
                     },
                     placeholder: "Ask Catbird…",
-                    isDisabled: isResponding || hasUnresolvedProposal,
+                    isDisabled: isResponding || hasUnresolvedProposal || unavailableMessage != nil,
                     showsInputBackground: false
                 )
             }
@@ -191,10 +201,7 @@ struct CatbirdCopilotSheet: View {
                 }
 
                 ToolbarItem(placement: .primaryAction) {
-                    HStack(spacing: 12) {
-                        historyMenu
-                        routeMenu
-                    }
+                    historyMenu
                 }
             }
             .task(id: appState.userDID) {
@@ -212,18 +219,17 @@ struct CatbirdCopilotSheet: View {
             .onDisappear {
                 stopGeneration()
             }
-            .alert("Use Private Cloud Compute?", isPresented: $showingCloudConsent) {
-                Button("Cancel", role: .cancel) {}
-                Button("Use Private Cloud Compute") {
-                    guard let reason = CopilotCloudAvailability.unavailableReason else {
-                        UserDefaults.standard.set(true, forKey: cloudConsentKey)
-                        route = .privateCloudCompute
-                        return
-                    }
-                    errorMessage = reason
+            .confirmationDialog(
+                "Clear All Ask Catbird History?",
+                isPresented: $confirmingClearAll,
+                titleVisibility: .visible
+            ) {
+                Button("Clear All History", role: .destructive) {
+                    Task { await clearAllHistory() }
                 }
+                Button("Cancel", role: .cancel) {}
             } message: {
-                Text("The request and its Catbird context will be sent to Apple's Private Cloud Compute. This choice is remembered for this account.")
+                Text("This deletes every saved Ask Catbird conversation for this account.")
             }
         }
     }
@@ -231,13 +237,10 @@ struct CatbirdCopilotSheet: View {
     // MARK: - Chrome
 
     private var chromeHeader: some View {
-        HStack(spacing: 8) {
-            contextCard
-            routeBadge
-        }
-        .padding(.horizontal, 16)
-        .padding(.top, 8)
-        .padding(.bottom, 4)
+        contextCard
+            .padding(.horizontal, 16)
+            .padding(.top, 8)
+            .padding(.bottom, 4)
     }
 
     private var contextCard: some View {
@@ -250,63 +253,11 @@ struct CatbirdCopilotSheet: View {
             .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
     }
 
-    private var routeBadge: some View {
-        HStack(spacing: 4) {
-            Image(systemName: route == .onDevice ? "iphone" : "cloud")
-            Text(route == .onDevice ? "On Device" : "Private Cloud")
-        }
-        .font(.caption2)
-        .fontWeight(.medium)
-        .foregroundStyle(.secondary)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 8)
-        .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
-        .fixedSize(horizontal: true, vertical: true)
-    }
-
     private var contextLabel: String {
         CopilotReferencePresentation.contextLabel(context)
     }
 
-    private var routeLabel: String {
-        route == .onDevice ? "On Device" : "Private Cloud"
-    }
-
-    private var cloudConsentKey: String { "copilot.pccConsent.\(appState.userDID)" }
-
-    private func requestCloudRoute() {
-        if let reason = CopilotCloudAvailability.unavailableReason {
-            route = .onDevice
-            errorMessage = reason
-            return
-        }
-        if UserDefaults.standard.bool(forKey: cloudConsentKey) {
-            route = .privateCloudCompute
-        } else {
-            showingCloudConsent = true
-        }
-    }
-
     // MARK: - Menus
-
-    private var routeMenu: some View {
-        Menu {
-            Button {
-                route = .onDevice
-            } label: {
-                Label("On Device", systemImage: route == .onDevice ? "checkmark" : "iphone")
-            }
-            Button {
-                requestCloudRoute()
-            } label: {
-                Label("Private Cloud Compute", systemImage: route == .privateCloudCompute ? "checkmark" : "cloud")
-            }
-        } label: {
-            Image(systemName: route == .onDevice ? "iphone" : "cloud")
-        }
-        .accessibilityLabel("Model Route")
-        .accessibilityValue(routeLabel)
-    }
 
     private var historyMenu: some View {
         Menu {
@@ -342,14 +293,15 @@ struct CatbirdCopilotSheet: View {
                 .disabled(turns.isEmpty)
 
                 Button(role: .destructive) {
-                    Task { await clearAllHistory() }
+                    confirmingClearAll = true
                 } label: {
-                    Label("Clear All Copilot History", systemImage: "trash.fill")
+                    Label("Clear All History", systemImage: "trash.fill")
                 }
             }
         } label: {
             Image(systemName: "clock.arrow.circlepath")
         }
+        .accessibilityLabel("Conversation History")
     }
 
     // MARK: - Sources & Proposals
@@ -448,8 +400,11 @@ struct CatbirdCopilotSheet: View {
             } label: {
                 Image(systemName: "xmark")
                     .font(.caption2)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Dismiss")
         }
         .font(.caption)
         .foregroundStyle(color)
@@ -531,7 +486,9 @@ struct CatbirdCopilotSheet: View {
                             self.route = modelRoute
 
                         case .contextTrimmed(let removedTurnCount):
-                            contextTrimmedNotice = "Earlier turns were trimmed (\(removedTurnCount)) to fit model context."
+                            contextTrimmedNotice = removedTurnCount == 1
+                                ? "An earlier message was left out to keep this conversation within limits."
+                                : "Some earlier messages were left out to keep this conversation within limits."
 
                         case .completed:
                             isResponding = false
@@ -561,13 +518,13 @@ struct CatbirdCopilotSheet: View {
                 removeInFlightTurnPair()
                 isResponding = false
                 activeStreamTask = nil
-                errorMessage = "Catbird Copilot requires iOS 26 or later."
+                errorMessage = "Ask Catbird requires iOS 26 or later."
             }
             #else
             removeInFlightTurnPair()
             isResponding = false
             activeStreamTask = nil
-            errorMessage = "Catbird Copilot is not supported on this platform."
+            errorMessage = "Ask Catbird isn’t available on this device."
             #endif
         }
     }
@@ -702,7 +659,7 @@ struct CatbirdCopilotSheet: View {
 
         if uriString.hasPrefix("http://") || uriString.hasPrefix("https://") {
             if let url = URL(string: uriString) {
-                _ = appState.urlHandler.handle(url)
+                _ = sceneContext.urlHandler.handle(url)
             } else {
                 errorMessage = "This source link is invalid."
             }

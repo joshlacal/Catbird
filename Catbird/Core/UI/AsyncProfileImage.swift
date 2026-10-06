@@ -34,9 +34,8 @@ struct AsyncProfileImage: View {
         }
     }
 
-    // Build a Nuke request that decodes at the exact pixel size to avoid large decode/scale costs.
-    // Routes through ImageLoadingManager.cdnURL so Bluesky CDN avatars use JXL.
-    private static func resizedRequest(for url: URL?, sizeInPoints: CGFloat) -> ImageRequest? {
+    // Resize the supplied avatar to the target pixel dimensions.
+    static func resizedRequest(for url: URL?, sizeInPoints: CGFloat) -> ImageRequest? {
         guard let url = url else { return nil }
         let scale = PlatformScreenInfo.scale
         let pixelDimension = max(1, (sizeInPoints * scale).rounded(.toNearestOrAwayFromZero))
@@ -44,7 +43,7 @@ struct AsyncProfileImage: View {
         let processors: [any ImageProcessing] = [
             ImageProcessors.Resize(size: pixelSize, unit: .pixels, contentMode: .aspectFill)
         ]
-        return ImageRequest(url: ImageLoadingManager.cdnURL(url), processors: processors, priority: .high)
+        return ImageRequest(url: url, processors: processors, priority: .high)
     }
     
     private func getAvatarModerationState(_ labels: [ComAtprotoLabelDefs.Label]?) -> AvatarModerationState {

@@ -33,6 +33,7 @@ import AppKit
   private var _knownFollowers: [AppBskyActorDefs.ProfileView] = []
   private var _isLoadingMorePosts = false
   private var _isLoadingLikes = false
+  private var _isLoadingSection = false
   private var _isLoadingKnownFollowers = false
   
   // Labeler-specific properties
@@ -40,6 +41,7 @@ import AppKit
   private(set) var isSubscribedToLabeler = false
   private(set) var isLabelerLiked = false
   private(set) var labelerLikeCount = 0
+  private var labelerLikeURI: ATProtocolURI?
   
   // Computed properties for non-observable data
   var likes: [AppBskyFeedDefs.FeedViewPost] { _likes }
@@ -50,6 +52,8 @@ import AppKit
   var knownFollowers: [AppBskyActorDefs.ProfileView] { _knownFollowers }
   var isLoadingMorePosts: Bool { _isLoadingMorePosts }
   var isLoadingLikes: Bool { _isLoadingLikes }
+  /// True while lists, starter packs or feeds are loading.
+  var isLoadingSection: Bool { _isLoadingSection }
   var isLoadingKnownFollowers: Bool { _isLoadingKnownFollowers }
   
   /// Check if this profile is a labeler
@@ -66,8 +70,14 @@ import AppKit
     return false
   }
 
-  // Pagination tracking
+  // Pagination tracking. Each flag turns false once the server stops returning a cursor.
   private(set) var hasMoreStarterPacks = false
+  private(set) var hasMorePosts = true
+  private(set) var hasMoreReplies = true
+  private(set) var hasMoreMedia = true
+  private(set) var hasMoreLikes = true
+  private(set) var hasMoreLists = true
+  private(set) var hasMoreFeeds = true
 
   // Pagination cursors
   private var postsCursor: String?
@@ -82,7 +92,7 @@ import AppKit
   // Dependencies
   private let client: ATProtoClient?
   let userDID: String  // This is the DID of the profile we're viewing (made public for stable view ID)
-  private let currentUserDID: String?  // This is the logged-in user's DID
+  let currentUserDID: String?  // This is the logged-in user's DID
   private let logger = Logger(subsystem: "blue.catbird", category: "ProfileViewModel")
   private weak var stateInvalidationBus: StateInvalidationBus?
   
@@ -217,7 +227,11 @@ import AppKit
             self.selectedProfileTab = .labelerInfo
           }
         } else {
-          let profileError = ProfileError.httpError(responseCode)
+          // Petrel drops the XRPC error body, so map by status: getProfile answers 400 for
+          // deactivated, suspended and unknown accounts.
+          let profileError: ProfileError = (responseCode == 400 || responseCode == 404)
+            ? .unavailable
+            : .httpError(responseCode)
           self.error = profileError
           logger.error("ProfileViewModel[\(self.instanceId)]: Failed to load profile - HTTP \(responseCode)")
         }
@@ -243,74 +257,106 @@ import AppKit
     }
   }
 
-  /// Loads user's posts
+  /// Loads the first page of the user's posts, replacing anything already loaded.
   func loadPosts() async {
-    await loadFeed(type: .posts, resetCursor: postsCursor == nil)
+    await loadFeed(type: .posts, resetCursor: true)
     // Persist to SwiftData for profile posts feed
     await cacheCurrentTabPosts(for: .posts)
   }
 
-  /// Loads user's replies
+  /// Appends the next page of posts, if there is one.
+  func loadMorePosts() async {
+    guard hasMorePosts, postsCursor != nil else { return }
+    await loadFeed(type: .posts, resetCursor: false)
+    await cacheCurrentTabPosts(for: .posts)
+  }
+
+  /// Loads the first page of the user's replies, replacing anything already loaded.
   func loadReplies() async {
-    await loadFeed(type: .replies, resetCursor: repliesCursor == nil)
+    await loadFeed(type: .replies, resetCursor: true)
     await cacheCurrentTabPosts(for: .replies)
   }
 
-  /// Loads user's posts with media
+  /// Appends the next page of replies, if there is one.
+  func loadMoreReplies() async {
+    guard hasMoreReplies, repliesCursor != nil else { return }
+    await loadFeed(type: .replies, resetCursor: false)
+    await cacheCurrentTabPosts(for: .replies)
+  }
+
+  /// Loads the first page of the user's media posts, replacing anything already loaded.
   func loadMediaPosts() async {
-    await loadFeed(type: .media, resetCursor: mediaPostsCursor == nil)
+    await loadFeed(type: .media, resetCursor: true)
     await cacheCurrentTabPosts(for: .media)
   }
 
-  /// Loads user's liked posts
-  func loadLikes() async {
+  /// Appends the next page of media posts, if there is one.
+  func loadMoreMediaPosts() async {
+    guard hasMoreMedia, mediaPostsCursor != nil else { return }
+    await loadFeed(type: .media, resetCursor: false)
+    await cacheCurrentTabPosts(for: .media)
+  }
+
+  /// Loads the first page of liked posts, replacing anything already loaded.
+  func refreshLikes() async throws {
+    try await fetchLikes(reset: true)
+  }
+
+  /// Appends the next page of liked posts, if there is one.
+  func loadMoreLikes() async {
+    guard hasMoreLikes, likesCursor != nil else { return }
+    do {
+      try await fetchLikes(reset: false)
+    } catch {
+      logger.error("Error loading more likes: \(error.localizedDescription)")
+    }
+  }
+
+  private func fetchLikes(reset: Bool) async throws {
     guard let client = client, let profile = profile, !_isLoadingLikes else { return }
     _isLoadingLikes = true
+    defer { _isLoadingLikes = false }
+    let cursor = reset ? nil : likesCursor
 
-    do {
-      if isCurrentUser {
-        let params = AppBskyFeedGetActorLikes.Parameters(
-          actor: try ATIdentifier(string: profile.did.didString()),
-          limit: 20,
-          cursor: likesCursor
-        )
+    if isCurrentUser {
+      let params = AppBskyFeedGetActorLikes.Parameters(
+        actor: try ATIdentifier(string: profile.did.didString()),
+        limit: 20,
+        cursor: cursor
+      )
 
-        let (responseCode, output) = try await client.app.bsky.feed.getActorLikes(input: params)
+      let (responseCode, output) = try await client.app.bsky.feed.getActorLikes(input: params)
 
-        if responseCode == 200, let feed = output?.feed {
-          await MainActor.run {
-            if self.likesCursor == nil {
-              self._likes = feed
-            } else {
-              self._likes.append(contentsOf: feed)
-            }
-            self.likesCursor = output?.cursor
-          }
-        } else if responseCode == 400 {
-          logger.warning("PDS returned 400 for getActorLikes, likes may not be available")
-        }
-      } else {
-        let result = try await ActorLikesRecordFetcher.fetchLikedPosts(
-          client: client,
-          actorDID: profile.did.didString(),
-          cursor: likesCursor,
-          limit: 25
-        )
-
-        await MainActor.run {
-          if self.likesCursor == nil {
-            self._otherUserLikes = result.posts
-          } else {
-            self._otherUserLikes.append(contentsOf: result.posts)
-          }
-          self.likesCursor = result.cursor
-        }
+      guard responseCode == 200, let feed = output?.feed else {
+        logger.warning("getActorLikes returned HTTP \(responseCode)")
+        throw ProfileError.httpError(responseCode)
       }
+      await MainActor.run {
+        if reset {
+          self._likes = feed
+        } else {
+          self._likes.append(contentsOf: feed)
+        }
+        self.likesCursor = output?.cursor
+        self.hasMoreLikes = output?.cursor != nil
+      }
+    } else {
+      let result = try await ActorLikesRecordFetcher.fetchLikedPosts(
+        client: client,
+        actorDID: profile.did.didString(),
+        cursor: cursor,
+        limit: 25
+      )
 
-      await MainActor.run { self._isLoadingLikes = false }
-    } catch {
-      logger.error("Error loading likes: \(error.localizedDescription)")
-      await MainActor.run { self._isLoadingLikes = false }
+      await MainActor.run {
+        if reset {
+          self._otherUserLikes = result.posts
+        } else {
+          self._otherUserLikes.append(contentsOf: result.posts)
+        }
+        self.likesCursor = result.cursor
+        self.hasMoreLikes = result.cursor != nil
+      }
     }
   }
 
@@ -358,81 +404,90 @@ import AppKit
     }
   }
 
-  /// Loads user's starter packs
+  /// Loads the first page of starter packs, replacing anything already loaded.
+  func refreshStarterPacks() async throws {
+    try await fetchStarterPacks(reset: true)
+  }
+
+  /// Appends the next page of starter packs, if there is one.
   func loadStarterPacks() async {
-    guard let client = client, let profile = profile, !isLoadingMorePosts else { return }
-
-    _isLoadingMorePosts = true
-
+    guard hasMoreStarterPacks, starterPacksCursor != nil else { return }
     do {
-      let params = AppBskyGraphGetActorStarterPacks.Parameters(
-        actor: try ATIdentifier(string: profile.did.didString()),
-        limit: 20,
-        cursor: starterPacksCursor
-      )
-
-      let (responseCode, output) = try await client.app.bsky.graph.getActorStarterPacks(
-        input: params)
-
-      if responseCode == 200, let packs = output?.starterPacks {
-        await MainActor.run {
-          if self.starterPacksCursor == nil {
-            self._starterPacks = packs
-          } else {
-            self._starterPacks.append(contentsOf: packs)
-          }
-          self.starterPacksCursor = output?.cursor
-          self.hasMoreStarterPacks = output?.cursor != nil
-          self._isLoadingMorePosts = false
-        }
-      } else {
-        logger.warning("Failed to load starter packs: HTTP \(responseCode)")
-        await MainActor.run {
-          self._isLoadingMorePosts = false
-          self.hasMoreStarterPacks = false
-        }
-      }
+      try await fetchStarterPacks(reset: false)
     } catch {
-      logger.error("Error loading starter packs: \(error.localizedDescription)")
-      await MainActor.run {
-        self._isLoadingMorePosts = false
-        self.hasMoreStarterPacks = false
-      }
+      logger.error("Error loading more starter packs: \(error.localizedDescription)")
     }
   }
 
-  /// Loads user's lists
-  func loadLists() async {
-    guard let client = client, let profile = profile, !isLoadingMorePosts else { return }
+  private func fetchStarterPacks(reset: Bool) async throws {
+    guard let client = client, let profile = profile, !_isLoadingSection else { return }
+    _isLoadingSection = true
+    defer { _isLoadingSection = false }
 
-    _isLoadingMorePosts = true
+    let params = AppBskyGraphGetActorStarterPacks.Parameters(
+      actor: try ATIdentifier(string: profile.did.didString()),
+      limit: 20,
+      cursor: reset ? nil : starterPacksCursor
+    )
 
-    do {
-      let params = AppBskyGraphGetLists.Parameters(
-        actor: try ATIdentifier(string: profile.did.didString()),
-        limit: 20,
-        cursor: listsCursor
-      )
+    let (responseCode, output) = try await client.app.bsky.graph.getActorStarterPacks(
+      input: params)
 
-      let (responseCode, output) = try await client.app.bsky.graph.getLists(input: params)
-
-      if responseCode == 200, let lists = output?.lists {
-        await MainActor.run {
-          if self.listsCursor == nil {
-            self._lists = lists
-          } else {
-            self._lists.append(contentsOf: lists)
-          }
-          self.listsCursor = output?.cursor
-          self._isLoadingMorePosts = false
-        }
+    guard responseCode == 200, let packs = output?.starterPacks else {
+      logger.warning("Failed to load starter packs: HTTP \(responseCode)")
+      throw ProfileError.httpError(responseCode)
+    }
+    await MainActor.run {
+      if reset {
+        self._starterPacks = packs
       } else {
-        logger.warning("Failed to load lists: HTTP \(responseCode)")
-        await MainActor.run { self._isLoadingMorePosts = false }
+        self._starterPacks.append(contentsOf: packs)
       }
+      self.starterPacksCursor = output?.cursor
+      self.hasMoreStarterPacks = output?.cursor != nil
+    }
+  }
+
+  /// Loads the first page of lists, replacing anything already loaded.
+  func refreshLists() async throws {
+    try await fetchLists(reset: true)
+  }
+
+  /// Appends the next page of lists, if there is one.
+  func loadMoreLists() async {
+    guard hasMoreLists, listsCursor != nil else { return }
+    do {
+      try await fetchLists(reset: false)
     } catch {
-      logger.error("Error loading lists: \(error.localizedDescription)")
-      await MainActor.run { self._isLoadingMorePosts = false }
+      logger.error("Error loading more lists: \(error.localizedDescription)")
+    }
+  }
+
+  private func fetchLists(reset: Bool) async throws {
+    guard let client = client, let profile = profile, !_isLoadingSection else { return }
+    _isLoadingSection = true
+    defer { _isLoadingSection = false }
+
+    let params = AppBskyGraphGetLists.Parameters(
+      actor: try ATIdentifier(string: profile.did.didString()),
+      limit: 20,
+      cursor: reset ? nil : listsCursor
+    )
+
+    let (responseCode, output) = try await client.app.bsky.graph.getLists(input: params)
+
+    guard responseCode == 200, let lists = output?.lists else {
+      logger.warning("Failed to load lists: HTTP \(responseCode)")
+      throw ProfileError.httpError(responseCode)
+    }
+    await MainActor.run {
+      if reset {
+        self._lists = lists
+      } else {
+        self._lists.append(contentsOf: lists)
+      }
+      self.listsCursor = output?.cursor
+      self.hasMoreLists = output?.cursor != nil
     }
   }
 
@@ -487,52 +542,65 @@ import AppKit
               self.posts.append(contentsOf: regularPosts)
             }
             self.postsCursor = output?.cursor
+            self.hasMorePosts = output?.cursor != nil
           }
         }
 
       case .replies:
-        let params = AppBskyFeedGetAuthorFeed.Parameters(
-          actor: try ATIdentifier(string: profile.did.didString()),
-          limit: 20,
-          cursor: resetCursor ? nil : repliesCursor,
-          filter: "posts_with_replies"
-        )
+        // Most of an author feed is often top-level posts, so keep paging (within a small
+        // budget) until enough replies to other people turn up to fill the screen.
+        var cursor = resetCursor ? nil : repliesCursor
+        var repliesToOthers: [AppBskyFeedDefs.FeedViewPost] = []
+        var requestCount = 0
+        var didReceivePage = false
 
-        let (responseCode, output) = try await client.app.bsky.feed.getAuthorFeed(input: params)
+        repeat {
+          let params = AppBskyFeedGetAuthorFeed.Parameters(
+            actor: try ATIdentifier(string: profile.did.didString()),
+            limit: 30,
+            cursor: cursor,
+            filter: "posts_with_replies"
+          )
 
-        if responseCode == 200, let feed = output?.feed {
-          // Filter to only include replies
-          let repliesToOthers = feed.filter { post in
-            // Check if post has a reply
-            if let reply = post.reply {
-              // Handle the parent union type without optional binding
-              switch reply.parent {
-              case .appBskyFeedDefsPostView(let parentPost):
-                // If it's a reply to someone else's post
-                return parentPost.author.did != profile.did
-              case .appBskyFeedDefsNotFoundPost, .appBskyFeedDefsBlockedPost, .unexpected:
-                // For other parent types, include them in the result
-                return true
-}
+          let (responseCode, output) = try await client.app.bsky.feed.getAuthorFeed(input: params)
+          requestCount += 1
+
+          guard responseCode == 200, let feed = output?.feed else { break }
+          didReceivePage = true
+          cursor = output?.cursor
+
+          // Filter to only include replies to other people
+          repliesToOthers.append(contentsOf: feed.filter { post in
+            guard post.reason == nil, let reply = post.reply else { return false }
+            switch reply.parent {
+            case .appBskyFeedDefsPostView(let parentPost):
+              return parentPost.author.did != profile.did
+            case .appBskyFeedDefsNotFoundPost, .appBskyFeedDefsBlockedPost, .unexpected:
+              return true
             }
-            return false
-          }
+          })
+        } while repliesToOthers.count < 10 && cursor != nil && requestCount < 5
 
+        if didReceivePage {
+          let nextCursor = cursor
+          let pageReplies = repliesToOthers
           await MainActor.run {
             if resetCursor {
-              self.replies = repliesToOthers
+              self.replies = pageReplies
             } else {
-              self.replies.append(contentsOf: repliesToOthers)
+              self.replies.append(contentsOf: pageReplies)
             }
-            self.repliesCursor = output?.cursor
+            self.repliesCursor = nextCursor
+            self.hasMoreReplies = nextCursor != nil
           }
         }
 
       case .media:
         let params = AppBskyFeedGetAuthorFeed.Parameters(
           actor: try ATIdentifier(string: profile.did.didString()),
-          limit: 20,
-          cursor: resetCursor ? nil : mediaPostsCursor
+          limit: 30,
+          cursor: resetCursor ? nil : mediaPostsCursor,
+          filter: "posts_with_media"
         )
 
         let (responseCode, output) = try await client.app.bsky.feed.getAuthorFeed(input: params)
@@ -542,7 +610,7 @@ import AppKit
           let postsWithMedia = feed.filter { post in
             if let embed = post.post.embed {
               switch embed {
-              case .appBskyEmbedImagesView, .appBskyEmbedGalleryView, .appBskyEmbedVideoView, .appBskyEmbedExternalView:
+              case .appBskyEmbedImagesView, .appBskyEmbedGalleryView, .appBskyEmbedVideoView:
                 return true
               case .appBskyEmbedRecordWithMediaView:
                 return true
@@ -560,6 +628,7 @@ import AppKit
               self.postsWithMedia.append(contentsOf: postsWithMedia)
             }
             self.mediaPostsCursor = output?.cursor
+            self.hasMoreMedia = output?.cursor != nil
           }
         }
 
@@ -629,42 +698,46 @@ import AppKit
     await PersistentFeedStateManager.shared.saveFeedData(cached, for: key)
   }
 
-  /// Loads user's feeds (feed generators)
-  func loadFeeds() async {
-    guard let client = client, let profile = profile, !isLoadingMorePosts else { return }
+  /// Loads the first page of feeds, replacing anything already loaded.
+  func refreshFeeds() async throws {
+    try await fetchFeeds(reset: true)
+  }
 
-    _isLoadingMorePosts = true
-
+  /// Appends the next page of feeds, if there is one.
+  func loadMoreFeeds() async {
+    guard hasMoreFeeds, feedsCursor != nil else { return }
     do {
-      let params = AppBskyFeedGetActorFeeds.Parameters(
-        actor: try ATIdentifier(string: profile.did.didString()),
-        limit: 20,
-        cursor: feedsCursor
-      )
-
-      let (responseCode, output) = try await client.app.bsky.feed.getActorFeeds(input: params)
-
-      if responseCode == 200, let fetchedFeeds = output?.feeds {
-        await MainActor.run {
-          if self.feedsCursor == nil {
-            self._feeds = fetchedFeeds
-          } else {
-            self._feeds.append(contentsOf: fetchedFeeds)
-          }
-          self.feedsCursor = output?.cursor
-          self._isLoadingMorePosts = false
-        }
-      } else {
-        logger.warning("Failed to load feeds: HTTP \(responseCode)")
-        await MainActor.run {
-          self._isLoadingMorePosts = false
-        }
-      }
+      try await fetchFeeds(reset: false)
     } catch {
-      logger.error("Error loading feeds: \(error.localizedDescription)")
-      await MainActor.run {
-        self._isLoadingMorePosts = false
+      logger.error("Error loading more feeds: \(error.localizedDescription)")
+    }
+  }
+
+  private func fetchFeeds(reset: Bool) async throws {
+    guard let client = client, let profile = profile, !_isLoadingSection else { return }
+    _isLoadingSection = true
+    defer { _isLoadingSection = false }
+
+    let params = AppBskyFeedGetActorFeeds.Parameters(
+      actor: try ATIdentifier(string: profile.did.didString()),
+      limit: 20,
+      cursor: reset ? nil : feedsCursor
+    )
+
+    let (responseCode, output) = try await client.app.bsky.feed.getActorFeeds(input: params)
+
+    guard responseCode == 200, let fetchedFeeds = output?.feeds else {
+      logger.warning("Failed to load feeds: HTTP \(responseCode)")
+      throw ProfileError.httpError(responseCode)
+    }
+    await MainActor.run {
+      if reset {
+        self._feeds = fetchedFeeds
+      } else {
+        self._feeds.append(contentsOf: fetchedFeeds)
       }
+      self.feedsCursor = output?.cursor
+      self.hasMoreFeeds = output?.cursor != nil
     }
   }
 
@@ -696,6 +769,11 @@ import AppKit
   }
 
   // MARK: Update Profile
+
+  /// Updates the signed-in user's profile record.
+  ///
+  /// For the text fields, `nil` keeps the existing value and an empty (or whitespace-only)
+  /// string clears it. `avatar` and `banner` keep the existing images when `nil`.
   func updateProfile(displayName: String? = nil, description: String? = nil, pronouns: String? = nil, website: String? = nil, avatar: Blob? = nil, banner: Blob? = nil) async throws {
     guard let client = client else {
       throw NSError(
@@ -733,15 +811,15 @@ import AppKit
       }
 
       let websiteURI: URI? = if let website {
-        try? URI(uriString: website)
+        Self.nilIfBlank(website).flatMap { try? URI(uriString: $0) }
       } else {
         existingProfile.website
       }
 
       updatedProfile = AppBskyActorProfile(
-        displayName: displayName ?? existingProfile.displayName,
-        description: description ?? existingProfile.description,
-        pronouns: pronouns ?? existingProfile.pronouns,
+        displayName: displayName.map(Self.nilIfBlank) ?? existingProfile.displayName,
+        description: description.map(Self.nilIfBlank) ?? existingProfile.description,
+        pronouns: pronouns.map(Self.nilIfBlank) ?? existingProfile.pronouns,
         website: websiteURI,
         avatar: avatar ?? existingProfile.avatar,
         banner: banner ?? existingProfile.banner,
@@ -773,16 +851,12 @@ import AppKit
       }
     } else if getRecordCode == 400 {
       // Create a new profile record
-      let newWebsiteURI: URI? = if let website {
-        try? URI(uriString: website)
-      } else {
-        nil
-      }
+      let newWebsiteURI: URI? = website.flatMap(Self.nilIfBlank).flatMap { try? URI(uriString: $0) }
 
       updatedProfile = AppBskyActorProfile(
-        displayName: displayName,
-        description: description,
-        pronouns: pronouns,
+        displayName: displayName.flatMap(Self.nilIfBlank),
+        description: description.flatMap(Self.nilIfBlank),
+        pronouns: pronouns.flatMap(Self.nilIfBlank),
         website: newWebsiteURI,
         avatar: avatar,
         banner: banner,
@@ -818,6 +892,11 @@ import AppKit
     }
   }
   
+  private static func nilIfBlank(_ value: String) -> String? {
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? nil : trimmed
+  }
+
   // MARK: - StateInvalidationSubscriber
   
   /// Check if this subscriber is interested in a specific event
@@ -913,6 +992,7 @@ import AppKit
           await MainActor.run {
             self.labelerDetails = detailed
             self.isLabelerLiked = detailed.viewer?.like != nil
+            self.labelerLikeURI = detailed.viewer?.like
             self.labelerLikeCount = detailed.likeCount ?? 0
           }
         }
@@ -1068,8 +1148,9 @@ import AppKit
       )
     )
     
-    if response?.uri != nil {
+    if let likeURI = response?.uri {
       await MainActor.run {
+        self.labelerLikeURI = likeURI
         self.isLabelerLiked = true
         self.labelerLikeCount += 1
       }
@@ -1078,9 +1159,9 @@ import AppKit
   
   /// Unlike this labeler
   func unlikeLabeler() async throws {
-    guard let client = client, let labelerDetails = labelerDetails else { return }
+    guard let client = client, labelerDetails != nil else { return }
     guard let currentUserDID = currentUserDID else { return }
-    guard let likeUri = labelerDetails.viewer?.like else { return }
+    guard let likeUri = labelerLikeURI else { return }
     
     // Extract rkey from the like URI
     guard let rkey = likeUri.recordKey else { return }
@@ -1094,6 +1175,7 @@ import AppKit
     )
     
     await MainActor.run {
+      self.labelerLikeURI = nil
       self.isLabelerLiked = false
       self.labelerLikeCount = max(0, self.labelerLikeCount - 1)
     }
@@ -1117,15 +1199,19 @@ enum ProfileError: LocalizedError {
   case clientNotAvailable
   case invalidUserDID
   case httpError(Int)
+  /// The account is deactivated, suspended, deleted or otherwise not viewable.
+  case unavailable
   
   var errorDescription: String? {
     switch self {
     case .clientNotAvailable:
-      return "Network client not available"
+      return "You’re signed out. Sign in and try again."
     case .invalidUserDID:
-      return "Invalid user identifier"
-    case .httpError(let code):
-      return "HTTP error: \(code)"
+      return "This profile link isn’t valid."
+    case .httpError:
+      return "Couldn’t load this profile. Try again."
+    case .unavailable:
+      return "This account may have been deactivated, suspended or deleted."
     }
   }
 }

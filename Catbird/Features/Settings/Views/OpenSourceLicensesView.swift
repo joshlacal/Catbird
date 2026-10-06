@@ -3,145 +3,100 @@ import SwiftUI
 @available(iOS 18.0, macOS 13.0, *)
 struct OpenSourceLicensesView: View {
   var body: some View {
-    NavigationStack {
-      ResponsiveContentView {
-        List {
-          Section {
-            Text("Catbird is built with love using these amazing open source packages:")
-              .appBody()
-              .foregroundStyle(.secondary)
-          }
-          
-          Section("Dependencies") {
-                        
-            LicenseRow(
-              name: "LazyPager",
-              author: "gh123man",
-              version: "1.1.7",
-              url: "https://github.com/gh123man/LazyPager",
-              license: "MIT"
-            )
+    ResponsiveContentView {
+      List {
+        Section {
+          Text("Catbird is built with these open source packages. Thank you to their maintainers and contributors.")
+            .appBody()
+            .foregroundStyle(.secondary)
+        }
 
-            LicenseRow(
-              name: "GRDB",
-              author: "groue",
-              version: "7.8.0",
-              url: "https://github.com/groue/GRDB.swift.git",
-              license: "MIT"
-            )
-            
-            LicenseRow(
-              name: "Mantis",
-              author: "guoyingtao",
-              version: "1.7.5",
-              url: "https://github.com/guoyingtao/Mantis",
-              license: "MIT"
-            )
-
-            LicenseRow(
-              name: "EmojiKit",
-              author: "Daniel Saidi",
-              version: "2.2.1",
-              url: "https://github.com/danielsaidi/EmojiKit",
-              license: "MIT"
-            )
-            
-            LicenseRow(
-              name: "Nuke",
-              author: "kean",
-              version: "12.8.0",
-              url: "https://github.com/kean/Nuke.git",
-              license: "MIT"
-            )
-            
-            LicenseRow(
-              name: "Petrel",
-              author: "joshlacal",
-              version: "1.0.0",
-              url: "https://github.com/joshlacal/Petrel",
-              license: "MIT"
-            )
-            
-            LicenseRow(
-              name: "Sentry",
-              author: "getsentry",
-              version: "8.56.1",
-              url: "https://github.com/getsentry/sentry-cocoa",
-              license: "MIT"
-            )
-            
-            LicenseRow(
-              name: "swift-collections",
-              author: "Apple",
-              version: "1.1.4",
-              url: "https://github.com/apple/swift-collections.git",
-              license: "Apache 2.0"
-            )
-          }
-          
-          Section {
-            Text("We're grateful to all the maintainers and contributors of these projects.")
-              .appCaption()
-              .foregroundStyle(.secondary)
+        Section("Packages") {
+          ForEach(OpenSourceLicenseCatalog.all) { package in
+            NavigationLink {
+              OpenSourceLicenseDetailView(package: package)
+            } label: {
+              LicenseRow(package: package)
+            }
           }
         }
       }
-      .navigationTitle("Open Source Licenses")
-      #if os(iOS)
-      .toolbarTitleDisplayMode(.inline)
-      #endif
     }
+    .navigationTitle("Open Source Licenses")
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
   }
 }
 
 private struct LicenseRow: View {
-  let name: String
-  let author: String
-  let version: String
-  let url: String?
-  let license: String
-  
+  let package: OpenSourceLicense
+
   var body: some View {
     VStack(alignment: .leading, spacing: 4) {
       HStack {
-        Text(name)
+        Text(package.name)
           .appHeadline()
-        
+
         Spacer()
-        
-        Text(license)
+
+        Text(package.license)
           .appCaption()
           .padding(.horizontal, 8)
           .padding(.vertical, 2)
           .background(.secondary.opacity(0.1))
           .clipShape(Capsule())
       }
-      
+
       HStack {
-        Text("by \(author)")
+        Text(package.author)
           .appSubheadline()
           .foregroundStyle(.secondary)
-        
+
         Spacer()
-        
-        Text("v\(version)")
-          .appCaption()
-          .foregroundStyle(.secondary)
-      }
-      
-      if let url = url {
-        Link(url, destination: URL(string: url)!)
-          .appCaption()
-          .foregroundStyle(.blue)
+
+        if let version = package.version {
+          Text("Version \(version)")
+            .appCaption()
+            .foregroundStyle(.secondary)
+        }
       }
     }
     .padding(.vertical, 2)
+    .accessibilityElement(children: .combine)
+  }
+}
+
+private struct OpenSourceLicenseDetailView: View {
+  let package: OpenSourceLicense
+
+  var body: some View {
+    List {
+      Section {
+        LabeledContent("License", value: package.license)
+        if let version = package.version {
+          LabeledContent("Version", value: version)
+        }
+        Link("View Project Website", destination: package.url)
+      }
+
+      Section("License Text") {
+        Text(package.text)
+          .appFont(AppTextRole.footnote)
+          .textSelection(.enabled)
+      }
+    }
+    .navigationTitle(package.name)
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
+    #endif
   }
 }
 
 #Preview {
   AsyncPreviewContent { appState in
-    OpenSourceLicensesView()
+    NavigationStack {
+      OpenSourceLicensesView()
+    }
   }
 }
-

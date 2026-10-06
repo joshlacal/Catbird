@@ -5,7 +5,7 @@ import UIKit
 import XCTest
 @testable import Catbird
 
-/// Real SwiftUI safe-area reservation plus the production transcript collection.
+/// Real SwiftUI footer overlay plus the production transcript collection.
 /// Keyboard reservation is controlled locally; no account or software keyboard
 /// preference is required to exercise viewport growth and shrink deterministically.
 @MainActor
@@ -57,8 +57,12 @@ final class ChatViewportIntegrationTests: XCTestCase {
 
   struct Bridge: UIViewControllerRepresentable {
     let controller: TranscriptController
+    @Environment(\.chatTranscriptBottomInset) private var bottomInset
     func makeUIViewController(context: Context) -> TranscriptController { controller }
-    func updateUIViewController(_ controller: TranscriptController, context: Context) {}
+    func updateUIViewController(_ controller: TranscriptController, context: Context) {
+      controller.collection.contentInset.bottom = bottomInset
+      controller.collection.verticalScrollIndicatorInsets.bottom = bottomInset
+    }
   }
 
   struct Screen: View {
@@ -137,7 +141,7 @@ final class ChatViewportIntegrationTests: XCTestCase {
       fixture.state.footerHeight = 100
       try await fixture.settle()
       XCTAssertEqual(fixture.collection.contentOffset.y, fixture.bottom, accuracy: 2)
-      XCTAssertEqual(fixture.collection.adjustedContentInset, .zero)
+      XCTAssertEqual(fixture.collection.adjustedContentInset.bottom, fixture.state.footerHeight, accuracy: 2)
       fixture.state.keyboardHeight = 0
       fixture.state.footerHeight = 52
       try await fixture.settle()
@@ -153,12 +157,14 @@ final class ChatViewportIntegrationTests: XCTestCase {
     let originalHeight = fixture.collection.bounds.height
     fixture.state.footerHeight += 120
     try await fixture.settle()
-    XCTAssertEqual(originalHeight - fixture.collection.bounds.height, 120, accuracy: 2)
-    XCTAssertEqual(fixture.collection.contentInset, .zero)
-    XCTAssertEqual(fixture.collection.adjustedContentInset, .zero)
+    XCTAssertEqual(fixture.collection.bounds.height, originalHeight, accuracy: 2)
+    XCTAssertEqual(fixture.collection.contentInset.bottom, fixture.state.footerHeight, accuracy: 2)
+    XCTAssertEqual(fixture.collection.adjustedContentInset.bottom, fixture.state.footerHeight, accuracy: 2)
     XCTAssertEqual(fixture.collection.contentInsetAdjustmentBehavior, .never)
     let frame = fixture.collection.convert(fixture.collection.bounds, to: fixture.window)
-    XCTAssertEqual(frame.maxY, fixture.state.footerFrame.minY, accuracy: 2)
+    XCTAssertEqual(frame.maxY, fixture.state.footerFrame.maxY, accuracy: 2)
+    XCTAssertEqual(frame.maxY - fixture.collection.adjustedContentInset.bottom,
+      fixture.state.footerFrame.minY, accuracy: 2)
   }
 
   func testBottomIntentSurvivesComposerAndKeyboardReservationChanges() async throws {
@@ -174,7 +180,7 @@ final class ChatViewportIntegrationTests: XCTestCase {
     fixture.state.keyboardHeight = 0
     try await fixture.settle()
     XCTAssertEqual(fixture.collection.contentOffset.y, fixture.bottom, accuracy: 2)
-    XCTAssertEqual(fixture.collection.adjustedContentInset, .zero)
+    XCTAssertEqual(fixture.collection.adjustedContentInset.bottom, fixture.state.footerHeight, accuracy: 2)
   }
 
   func testOlderMessageReadingOriginSurvivesGrowingComposerAndKeyboard() async throws {
@@ -211,5 +217,18 @@ final class ChatViewportIntegrationTests: XCTestCase {
     fixture.collection.layoutIfNeeded()
     XCTAssertEqual(try fixture.viewportY(anchor.item), anchor.viewportY, accuracy: 2)
   }
+  func testFooterRemovalReleasesOnlyItsReservedSpace() async throws {
+    let fixture = try Fixture()
+    defer { fixture.window.isHidden = true }
+    try await fixture.settle()
+    fixture.pinBottom()
+    let height = fixture.collection.bounds.height
+    fixture.state.footerHeight = 0
+    try await fixture.settle()
+    XCTAssertEqual(fixture.collection.bounds.height, height, accuracy: 2)
+    XCTAssertEqual(fixture.collection.adjustedContentInset.bottom, 0, accuracy: 2)
+    XCTAssertEqual(fixture.collection.contentOffset.y, fixture.bottom, accuracy: 2)
+  }
+
 }
 #endif

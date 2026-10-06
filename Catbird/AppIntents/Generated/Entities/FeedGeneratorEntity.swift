@@ -6,7 +6,7 @@ import Petrel
 
 @available(iOS 18.0, *)
 struct FeedGeneratorEntity: AppEntity {
-    static var typeDisplayRepresentation: TypeDisplayRepresentation = "FeedGenerator"
+    static var typeDisplayRepresentation: TypeDisplayRepresentation = "Feed"
     static var defaultQuery = FeedGeneratorEntityQuery()
 
     let id: String

@@ -29,7 +29,7 @@ struct ModernTextEditor: View {
     
     @Environment(\.fontResolutionContext) private var fontResolutionContext
     
-    var placeholder: String = "What's on your mind?"
+    var placeholder: String = "What’s on your mind?"
     var onImagePasted: ((PlatformImage) -> Void)?
     var onGenmojiDetected: (([Data]) -> Void)?
     var onTextChanged: ((AttributedString) -> Void)?
@@ -913,7 +913,7 @@ struct LegacyTextEditor: View {
     @Binding var attributedText: NSAttributedString
     @Binding var linkFacets: [RichTextFacetUtils.LinkFacet]
     
-    var placeholder: String = "What's on your mind?"
+    var placeholder: String = "What’s on your mind?"
     var onImagePasted: ((PlatformImage) -> Void)?
     var onGenmojiDetected: (([String]) -> Void)?
     var onTextChanged: ((NSAttributedString) -> Void)?
@@ -942,7 +942,7 @@ struct ModernEnhancedRichTextEditor: View {
     @Binding var attributedText: NSAttributedString
     @Binding var linkFacets: [RichTextFacetUtils.LinkFacet]
     
-    var placeholder: String = "What's on your mind?"
+    var placeholder: String = "What’s on your mind?"
     var onImagePasted: ((PlatformImage) -> Void)?
     var onGenmojiDetected: (([String]) -> Void)?
     var onTextChanged: ((NSAttributedString) -> Void)?
@@ -1048,7 +1048,7 @@ struct EnhancedTextEditor: View {
     @Binding var attributedText: AttributedString
     @Binding var textSelection: AttributedTextSelection
     
-    var placeholder: String = "What's on your mind?"
+    var placeholder: String = "What’s on your mind?"
     var onImagePasted: ((PlatformImage) -> Void)?
     var onGenmojiDetected: (([Data]) -> Void)?
     var onTextChanged: ((AttributedString) -> Void)?
@@ -1077,7 +1077,7 @@ struct EnhancedTextEditor: View {
     @Binding var attributedText: AttributedString
     @Binding var textSelection: AttributedTextSelection
     
-    var placeholder: String = "What's on your mind?"
+    var placeholder: String = "What’s on your mind?"
     var onImagePasted: ((PlatformImage) -> Void)?
     var onGenmojiDetected: (([Data]) -> Void)?
     var onTextChanged: ((AttributedString) -> Void)?

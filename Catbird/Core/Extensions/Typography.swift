@@ -738,11 +738,13 @@ extension View {
 /// A view modifier that applies accessibility text settings
 struct AccessibleTextModifier: ViewModifier {
     let appState: AppState?
+    @Environment(\.legibilityWeight) private var legibilityWeight
+    @Environment(\.colorSchemeContrast) private var accessibilityContrast
     
     func body(content: Content) -> some View {
         let settings = appState?.appSettings
-        let shouldIncreaseContrast = settings?.increaseContrast ?? false
-        let shouldUseBoldText = settings?.boldText ?? false
+        let shouldIncreaseContrast = accessibilityContrast == .increased || (settings?.effectiveIncreaseContrast ?? false)
+        let shouldUseBoldText = legibilityWeight == .bold || (settings?.effectiveBoldText ?? false)
         
         content
             .fontWeight(adjustedFontWeight(shouldUseBoldText: shouldUseBoldText))
@@ -762,11 +764,13 @@ struct AccessibleTextModifier: ViewModifier {
 /// A comprehensive view modifier that applies all accessibility settings
 struct ComprehensiveAccessibilityModifier: ViewModifier {
     let appState: AppState?
+    @Environment(\.legibilityWeight) private var legibilityWeight
+    @Environment(\.colorSchemeContrast) private var accessibilityContrast
     
     func body(content: Content) -> some View {
         let settings = appState?.appSettings
-        let shouldIncreaseContrast = settings?.increaseContrast ?? false
-        let shouldUseBoldText = settings?.boldText ?? false
+        let shouldIncreaseContrast = accessibilityContrast == .increased || (settings?.effectiveIncreaseContrast ?? false)
+        let shouldUseBoldText = legibilityWeight == .bold || (settings?.effectiveBoldText ?? false)
         
         content
             .fontWeight(shouldUseBoldText ? .semibold : .regular)

@@ -37,7 +37,8 @@ struct StarterPackView: View {
     // Follow All State
     @State private var isFollowingAll = false
     @State private var followAllError: String?
-    @State private var locallyFollowedDIDs: Set<String> = []
+    /// Follow state changed on this screen, keyed by DID; overrides the loaded viewer state.
+    @State private var followOverrides: [String: Bool] = [:]
     
     // Action Sheets & Dialogs
     @State private var showingShareSheet = false
@@ -48,6 +49,10 @@ struct StarterPackView: View {
     @State private var isCloningMembers = false
     @State private var cloneMembersMessage: String?
     @State private var showingCloneMessageAlert = false
+    @State private var showingReport = false
+    @State private var showingDeleteConfirmation = false
+    @State private var isDeleting = false
+    @State private var deleteErrorMessage: String?
     
     var body: some View {
         Group {
@@ -96,9 +101,23 @@ struct StarterPackView: View {
                             } label: {
                                 Label("Edit Starter Pack", systemImage: "pencil")
                             }
+                            Button(role: .destructive) {
+                                showingDeleteConfirmation = true
+                            } label: {
+                                Label("Delete Starter Pack", systemImage: "trash")
+                            }
+                            .disabled(isDeleting)
+                        } else {
+                            Divider()
+                            Button(role: .destructive) {
+                                showingReport = true
+                            } label: {
+                                Label("Report Starter Pack", systemImage: "flag")
+                            }
                         }
                     } label: {
                         Image(systemName: "ellipsis.circle")
+                            .accessibilityLabel("More Options")
                     }
                 }
             }
@@ -110,6 +129,36 @@ struct StarterPackView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("This will create a new independent curated list containing all the members in this starter pack. You can edit the list name and description before saving.")
+        }
+        .confirmationDialog(
+            "Delete this starter pack?",
+            isPresented: $showingDeleteConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Delete Starter Pack", role: .destructive) {
+                Task { await deleteStarterPack() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("People who already joined keep following the accounts they followed. This can’t be undone.")
+        }
+        .alert("Couldn’t Delete Starter Pack", isPresented: Binding(
+            get: { deleteErrorMessage != nil },
+            set: { if !$0 { deleteErrorMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(deleteErrorMessage ?? "")
+        }
+        .sheet(isPresented: $showingReport) {
+            if let pack = starterPack, let client = appState.atProtoClient {
+                let reportingService = ReportingService(client: client)
+                ReportFormView(
+                    reportingService: reportingService,
+                    subject: reportingService.createRecordSubject(uri: pack.uri, cid: pack.cid),
+                    contentDescription: "Starter pack “\(starterPackName(pack))”"
+                )
+            }
         }
         .alert("List Created", isPresented: $showingCloneMessageAlert) {
             Button("OK", role: .cancel) {}
@@ -194,7 +243,7 @@ struct StarterPackView: View {
             logger.info("Successfully copied \(copiedCount) members")
         } catch {
             logger.error("Failed to copy members to list: \(error.localizedDescription)")
-            cloneMembersMessage = "Your list was created, but copying members encountered an error: \(error.localizedDescription)"
+            cloneMembersMessage = "Your list was created, but some people couldn’t be copied to it. You can add them from the list’s Manage Members screen."
             showingCloneMessageAlert = true
         }
         
@@ -207,7 +256,7 @@ struct StarterPackView: View {
             ProgressView()
                 .controlSize(.large)
             
-            Text("Loading starter pack...")
+            Text("Loading starter pack…")
                 .foregroundColor(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -219,10 +268,10 @@ struct StarterPackView: View {
                 .appFont(size: 48)
                 .foregroundColor(.orange)
             
-            Text("Error loading starter pack")
+            Text("Couldn’t Load Starter Pack")
                 .appFont(AppTextRole.headline)
             
-            Text(error.localizedDescription)
+            Text(UserFacingError.message(for: error, action: "load this starter pack") ?? "Try again.")
                 .appFont(AppTextRole.subheadline)
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
@@ -420,17 +469,33 @@ struct StarterPackView: View {
         return pack.creator.did.didString() == userDID
     }
     
+    private func starterPackName(_ pack: AppBskyGraphDefs.StarterPackView) -> String {
+        if case .knownType(let recordValue) = pack.record,
+           let starterpack = recordValue as? AppBskyGraphStarterpack {
+            return starterpack.name
+        }
+        return "Starter Pack"
+    }
+    
+    private func isFollowed(_ subject: AppBskyActorDefs.ProfileView) -> Bool {
+        followOverrides[subject.did.didString()] ?? (subject.viewer?.following != nil)
+    }
+    
+    /// Whether Follow All would follow this member, taking follows changed on this screen into account.
+    private func isEligibleForFollowAll(_ item: AppBskyGraphDefs.ListItemView, currentDID: String) -> Bool {
+        let subject = item.subject
+        let did = subject.did.didString()
+        if did == currentDID || isFollowed(subject) { return false }
+        guard let viewer = subject.viewer else { return true }
+        if viewer.muted == true || viewer.mutedByList != nil { return false }
+        if viewer.blocking != nil || viewer.blockingByList != nil || viewer.blockedBy == true { return false }
+        return true
+    }
+    
     private var eligibleMembersCount: Int {
         let currentDID = appState.userDID
         guard !currentDID.isEmpty else { return 0 }
-        return allProfiles.filter { item in
-            let did = item.subject.did.didString()
-            if locallyFollowedDIDs.contains(did) { return false }
-            return StarterPackService.shared.isEligibleToFollow(
-                subject: item.subject,
-                currentAccountDID: currentDID
-            )
-        }.count
+        return allProfiles.filter { isEligibleForFollowAll($0, currentDID: currentDID) }.count
     }
     
     @ViewBuilder
@@ -449,7 +514,7 @@ struct StarterPackView: View {
                         ProgressView()
                             .progressViewStyle(.circular)
                             .tint(.white)
-                        Text("Following...")
+                        Text("Following…")
                             .fontWeight(.semibold)
                     } else if allFollowed {
                         Image(systemName: "checkmark")
@@ -492,27 +557,24 @@ struct StarterPackView: View {
                     membersToFollow = fullList
                 }
             }
-            let eligible = StarterPackService.shared.filterEligibleMembers(
-                membersToFollow,
-                currentAccountDID: currentDID
-            ).filter { !locallyFollowedDIDs.contains($0.subject.did.didString()) }
+            let eligible = membersToFollow.filter { isEligibleForFollowAll($0, currentDID: currentDID) }
             
             guard !eligible.isEmpty else { return }
             
-            try await StarterPackService.shared.followAll(
+            try await StarterPackService.shared.bulkFollow(
                 client: client,
-                members: eligible,
-                starterPack: pack,
-                currentAccountDID: currentDID
+                dids: eligible.map { $0.subject.did },
+                via: ComAtprotoRepoStrongRef(uri: pack.uri, cid: pack.cid),
+                accountDID: currentDID
             )
             
             for item in eligible {
-                locallyFollowedDIDs.insert(item.subject.did.didString())
+                followOverrides[item.subject.did.didString()] = true
             }
             
             await appState.refreshSocialGraph()
         } catch {
-            followAllError = error.localizedDescription
+            followAllError = UserFacingError.message(for: error, action: "follow everyone") ?? "Couldn’t follow everyone. Try again."
             logger.error("Failed to follow all: \(error.localizedDescription)")
         }
     }
@@ -585,9 +647,7 @@ struct StarterPackView: View {
     private func memberRow(item: AppBskyGraphDefs.ListItemView, index: Int) -> some View {
         let subject = item.subject
         let didString = subject.did.didString()
-        let isLocallyFollowed = locallyFollowedDIDs.contains(didString)
-        let isServerFollowing = subject.viewer?.following != nil
-        let isFollowing = isLocallyFollowed || isServerFollowing
+        let isFollowing = isFollowed(subject)
         let isSelf = didString == appState.userDID
         
         return VStack(spacing: 0) {
@@ -662,14 +722,39 @@ struct StarterPackView: View {
     private func toggleMemberFollow(did: String, isFollowing: Bool) async {
         do {
             if isFollowing {
-                try await appState.unfollow(did: did)
-                locallyFollowedDIDs.remove(did)
+                if try await appState.unfollow(did: did) {
+                    followOverrides[did] = false
+                }
             } else {
-                try await appState.follow(did: did)
-                locallyFollowedDIDs.insert(did)
+                if try await appState.follow(did: did) {
+                    followOverrides[did] = true
+                }
             }
         } catch {
             logger.error("Error toggling follow for \(did): \(error.localizedDescription)")
+        }
+    }
+    
+    // MARK: - Deletion
+    
+    private func deleteStarterPack() async {
+        guard let pack = starterPack, let client = appState.atProtoClient else { return }
+        isDeleting = true
+        defer { isDeleting = false }
+        do {
+            try await StarterPackService.shared.deleteStarterPack(
+                client: client,
+                starterPack: pack,
+                accountDID: appState.userDID
+            )
+            appState.toastManager.show(ToastItem(message: "Starter pack deleted", icon: "trash"))
+            if !path.isEmpty {
+                path.removeLast()
+            }
+        } catch {
+            logger.error("Failed to delete starter pack: \(error.localizedDescription)")
+            deleteErrorMessage = UserFacingError.message(for: error, action: "delete this starter pack")
+                ?? "Try again."
         }
     }
     

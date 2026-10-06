@@ -7,6 +7,7 @@ import SwiftUI
 // MARK: - Chat Tab View
 
 struct ChatTabView: View {
+  @Environment(SceneNavigationContext.self) private var sceneContext
   @Environment(AppState.self) private var appState
   @Environment(\.horizontalSizeClass) private var horizontalSizeClass
   @Environment(\.composerTransitionNamespace) private var composerNamespace
@@ -29,7 +30,7 @@ struct ChatTabView: View {
   fileprivate let logger = Logger(subsystem: "blue.catbird", category: "ChatUI")
 
   private var chatNavigationPath: Binding<NavigationPath> {
-    appState.navigationManager.pathBinding(for: 4)
+    sceneContext.navigationManager.pathBinding(for: 4)
   }
 
   private var shouldUseSplitView: Bool {
@@ -64,10 +65,10 @@ struct ChatTabView: View {
     .onChange(of: appState.userDID) { _, _ in
       handleAccountContextChanged()
     }
-    .onChange(of: appState.navigationManager.targetConversationId) { _, newValue in
+    .onChange(of: sceneContext.navigationManager.targetConversationId) { _, newValue in
       if let convoId = newValue, convoId != selectedConvoId {
         selectedConvoId = convoId
-        appState.navigationManager.targetConversationId = nil
+        sceneContext.navigationManager.targetConversationId = nil
       }
     }
     .onChange(of: appState.chatManager.errorState) { oldError, newError in
@@ -137,17 +138,10 @@ struct ChatTabView: View {
       appState.chatManager.searchLocal(searchTerm: newValue, currentUserDID: appState.userDID)
     }
     .refreshable {
-      await appState.chatManager.loadConversations(refresh: true)
+      await appState.chatManager.loadConversations(refresh: true, userInitiated: true)
     }
     .overlay {
-      if coordinator.conversations.isEmpty && !appState.chatManager.loadingConversations {
-        ContentUnavailableView {
-          Label("No Conversations", systemImage: "bubble.left.and.bubble.right")
-        } description: {
-          Text("You haven't started any chats yet.")
-            .enhancedAppBody()
-        }
-      }
+      listOverlay
     }
     .navigationTitle("Messages")
     #if os(iOS)
@@ -160,6 +154,15 @@ struct ChatTabView: View {
       ToolbarItem(placement: .cancellationAction) {
         MessageRequestsButton()
       }
+      if shouldUseSplitView {
+        ToolbarItem(placement: .primaryAction) {
+          Button {
+            showingNewMessageSheet = true
+          } label: {
+            Label("New Message", systemImage: "square.and.pencil")
+          }
+        }
+      }
       ToolbarItem(placement: .primaryAction) {
         ChatToolbarMenu()
       }
@@ -170,6 +173,44 @@ struct ChatTabView: View {
       }
     }
     #endif
+  }
+
+  // MARK: - Empty, Loading and Error States
+
+  @ViewBuilder
+  private var listOverlay: some View {
+    let chatManager = appState.chatManager
+    if !searchText.isEmpty {
+      if chatManager.filteredProfiles.isEmpty && chatManager.filteredConversations.isEmpty {
+        ContentUnavailableView.search(text: searchText)
+      }
+    } else if coordinator.conversations.isEmpty {
+      if chatManager.loadingConversations || !chatManager.hasAttemptedConversationsLoad {
+        ProgressView()
+      } else if chatManager.lastConversationsLoadFailed {
+        ContentUnavailableView {
+          Label("Couldn’t Load Messages", systemImage: "wifi.exclamationmark")
+        } description: {
+          Text("Check your connection and try again.")
+            .enhancedAppBody()
+        } actions: {
+          Button("Try Again") {
+            Task { await chatManager.loadConversations(refresh: true, userInitiated: true) }
+          }
+        }
+      } else {
+        ContentUnavailableView {
+          Label("No Conversations", systemImage: "bubble.left.and.bubble.right")
+        } description: {
+          Text("You haven’t started any chats yet.")
+            .enhancedAppBody()
+        } actions: {
+          Button("New Message") {
+            showingNewMessageSheet = true
+          }
+        }
+      }
+    }
   }
 
   // MARK: - Row Routing
@@ -249,31 +290,34 @@ struct ChatTabView: View {
       HStack {
         ChatProfileAvatarView(profile: profileBasic, size: 40)
         VStack(alignment: .leading) {
-          Text(profileBasic.displayName ?? "")
+          Text(profileBasic.chatDisplayName)
             .appHeadline()
             .foregroundColor(.primary)
           Text("@\(profileBasic.handle.description)")
             .appSubheadline()
             .foregroundColor(.secondary)
+          if profileBasic.chatDisabled == true {
+            Text("Can’t be messaged")
+              .appCaption()
+              .foregroundColor(.secondary)
+          }
         }
       }
       .spacingSM(.vertical)
     }
     .buttonStyle(.plain)
+    .disabled(profileBasic.chatDisabled == true)
+    .opacity(profileBasic.chatDisabled == true ? 0.5 : 1)
     .themedListRowBackground(appState.themeManager, appSettings: appState.appSettings)
-    .listRowInsets(EdgeInsets())
   }
 
   // MARK: - Helper Properties
 
+  /// The floating New Message button only shows over the bare list; split
+  /// layouts use the sidebar toolbar button so it never covers the composer.
   private var shouldShowChatFAB: Bool {
-    guard selectedTab == 4 else { return false }
-
-    if DeviceInfo.isIPad {
-      return true
-    } else {
-      return selectedConvoId == nil && chatNavigationPath.wrappedValue.isEmpty
-    }
+    guard selectedTab == 4, !shouldUseSplitView else { return false }
+    return selectedConvoId == nil && chatNavigationPath.wrappedValue.isEmpty
   }
 
   private var shouldShowPagination: Bool {
@@ -284,7 +328,7 @@ struct ChatTabView: View {
 
   @ViewBuilder
   private var paginationView: some View {
-    ProgressView("Loading more...")
+    ProgressView("Loading more…")
       .frame(maxWidth: .infinity)
       .padding()
       .onAppear {
@@ -302,17 +346,17 @@ struct ChatTabView: View {
     // DEEP-LINK FIX: a share/notification can set the target BEFORE this view
     // mounts, so the .onChange(of: targetConversationId) below never fires
     // (onChange only observes transitions).
-    if let pending = appState.navigationManager.targetConversationId {
+    if let pending = sceneContext.navigationManager.targetConversationId {
       if pending != selectedConvoId {
         selectedConvoId = pending
       }
-      appState.navigationManager.targetConversationId = nil
+      sceneContext.navigationManager.targetConversationId = nil
     }
 
     // Bluesky DMs
     Task {
       if appState.chatManager.acceptedConversations.isEmpty && !appState.chatManager.loadingConversations {
-        await appState.chatManager.loadConversations(refresh: true)
+        await appState.chatManager.loadConversations(refresh: true, userInitiated: true)
       }
     }
     appState.chatManager.startConversationsPolling()
@@ -365,8 +409,8 @@ struct ChatTabView: View {
 
   private func createErrorAlert() -> Alert {
     Alert(
-      title: Text("Chat Error"),
-      message: Text(lastErrorMessage ?? "An unknown error occurred."),
+      title: Text("Messages"),
+      message: Text(lastErrorMessage ?? "Something went wrong. Try again."),
       dismissButton: .default(Text("OK")) {
         appState.chatManager.errorState = nil
         lastErrorMessage = nil
@@ -398,6 +442,7 @@ private struct ConditionalSwipeActions: ViewModifier {
   let enabled: Bool
   @Environment(AppState.self) private var appState
   @State private var showingOwnerLeaveAlert = false
+  @State private var showingLeaveAlert = false
 
   func body(content: Content) -> some View {
     if enabled {
@@ -409,10 +454,10 @@ private struct ConditionalSwipeActions: ViewModifier {
             if conversation.isOwnedGroupConversation(currentUserDID: appState.userDID) {
               showingOwnerLeaveAlert = true
             } else {
-              Task { await appState.chatManager.leaveConversation(convoId: conversation.id) }
+              showingLeaveAlert = true
             }
           } label: {
-            Label("Delete", systemImage: "trash")
+            Label("Leave", systemImage: "rectangle.portrait.and.arrow.right")
           }
 
           Button {
@@ -425,6 +470,14 @@ private struct ConditionalSwipeActions: ViewModifier {
             Label(conversation.muted ? "Unmute" : "Mute", systemImage: conversation.muted ? "bell" : "bell.slash")
           }
           .tint(conversation.muted ? .blue : .orange)
+        }
+        .alert("Leave Conversation?", isPresented: $showingLeaveAlert) {
+          Button("Cancel", role: .cancel) { }
+          Button("Leave", role: .destructive) {
+            Task { await appState.chatManager.leaveConversation(convoId: conversation.id) }
+          }
+        } message: {
+          Text("The conversation will be removed from your list. Your messages will be deleted for you, but not for the other participants.")
         }
         .alert("Lock & Leave Group", isPresented: $showingOwnerLeaveAlert) {
           Button("Cancel", role: .cancel) { }

@@ -49,6 +49,14 @@ public enum SearchDateRange: String, Codable, CaseIterable, Identifiable, Sendab
   }
 }
 
+/// One human-readable line describing an active filter, for saved-search summaries.
+public struct SearchFilterSummaryItem: Hashable, Identifiable, Sendable {
+  public let icon: String
+  public let text: String
+
+  public var id: String { "\(icon)|\(text)" }
+}
+
 /// Applied search filters that map directly onto real searchPostsV2 parameters.
 public struct SearchFilterState: Codable, Equatable, Sendable {
   public var sort: SearchSort = .top
@@ -135,6 +143,33 @@ public struct SearchFilterState: Codable, Equatable, Sendable {
     if hasVideo { count += 1 }
     if following { count += 1 }
     return count
+  }
+
+  /// One entry per active filter (sort excluded), matching what `activeFilterCount` counts.
+  public var summaryItems: [SearchFilterSummaryItem] {
+    var items: [SearchFilterSummaryItem] = []
+    func add(_ icon: String, _ text: String) {
+      items.append(SearchFilterSummaryItem(icon: icon, text: text))
+    }
+    if let value = Self.trimmedValue(author) { add("person", "From \(Self.handleText(value))") }
+    if let value = Self.trimmedValue(excludeAuthor) { add("person.slash", "Not from \(Self.handleText(value))") }
+    if let value = Self.trimmedValue(mentions) { add("at", "Mentions \(Self.handleText(value))") }
+    if let value = Self.trimmedValue(excludeMentions) { add("at", "Doesn’t mention \(Self.handleText(value))") }
+    if let value = Self.trimmedValue(domain) { add("globe", "Links to \(value)") }
+    if let value = Self.trimmedValue(excludeDomain) { add("globe", "No links to \(value)") }
+    if let value = Self.trimmedValue(url) { add("link", "Links to \(value)") }
+    if let value = Self.trimmedValue(excludeURL) { add("link", "Doesn’t link to \(value)") }
+    if let value = Self.trimmedValue(hashtag) { add("number", Self.hashtagText(value)) }
+    if let value = Self.trimmedValue(excludeHashtag) { add("number", "Without \(Self.hashtagText(value))") }
+    if hasDateFilter { add("calendar", dateRange.displayName) }
+    if let value = Self.trimmedValue(language) {
+      add("character.bubble", Locale.current.localizedString(forLanguageCode: value) ?? value.uppercased())
+    }
+    if replyMode != .any { add("arrowshape.turn.up.left", replyMode.displayName) }
+    if hasMedia { add("photo", "Has media") }
+    if hasVideo { add("video", "Has video") }
+    if following { add("person.2", "People you follow") }
+    return items
   }
 
   public var hasAuthorFilter: Bool {
@@ -260,7 +295,7 @@ public struct SearchFilterState: Codable, Equatable, Sendable {
       _ = try ATIdentifier(string: sanitized)
       return nil
     } catch {
-      return "\(fieldName) must be a valid handle or DID (e.g. alice.bsky.social or did:plc:...)"
+      return "Enter a handle like alice.bsky.social"
     }
   }
 
@@ -279,7 +314,7 @@ public struct SearchFilterState: Codable, Equatable, Sendable {
       return nil
     }
     guard let url = URL(string: value), url.scheme != nil, (try? URI(uriString: value)) != nil else {
-      return "\(fieldName) must be a valid URL with scheme (e.g. https://...)"
+      return "\(fieldName) must be a full link, like https://example.com/page"
     }
     return nil
   }
@@ -385,6 +420,21 @@ public struct SearchFilterState: Codable, Equatable, Sendable {
     }
     return !string.isEmpty
   }
+  private static func trimmedValue(_ value: String?) -> String? {
+    guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
+      return nil
+    }
+    return trimmed
+  }
+
+  private static func handleText(_ value: String) -> String {
+    value.hasPrefix("@") || value.hasPrefix("did:") ? value : "@\(value)"
+  }
+
+  private static func hashtagText(_ value: String) -> String {
+    value.hasPrefix("#") ? value : "#\(value)"
+  }
+
   private static func identifierList(_ value: String?) -> [ATIdentifier]? {
     guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else { return nil }
     let sanitized = value.hasPrefix("@") ? String(value.dropFirst()) : value

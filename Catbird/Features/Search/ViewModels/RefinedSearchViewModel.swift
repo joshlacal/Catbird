@@ -39,6 +39,8 @@ public enum SearchHTTPResponseClassification: Equatable, Sendable {
   public var searchQuery: String = ""
   public var isCommittedSearch: Bool = false
   public var isLoadingMoreResults: Bool = false
+  /// True while the first page of a committed search is loading for the active scope.
+  public private(set) var isSearchInFlight: Bool = false
 
   // MARK: - Filtering & Scope (G01 & G02)
   public var selectedContentType: ContentType = .top
@@ -96,6 +98,9 @@ public enum SearchHTTPResponseClassification: Equatable, Sendable {
   private var suggestedUsersGeneration: UInt64 = 0
   private let searchDebounceTime: TimeInterval = 0.15
   private var isSubscribed = false
+  /// Set when filters were restored from a recent or saved search, so typing a new query starts
+  /// from clean filters instead of silently inheriting them.
+  private var filtersCameFromEntry = false
 
   // MARK: - Computed Properties
 
@@ -136,17 +141,22 @@ public enum SearchHTTPResponseClassification: Equatable, Sendable {
     guard !isSubscribed else { return }
     appState.stateInvalidationBus.subscribe(self)
     isSubscribed = true
+    appState.prefetchTopicPreviews(trends: trendingTopics, owner: .search)
     logger.debug("RefinedSearchViewModel subscribed to state invalidation bus")
   }
 
   public func unsubscribeFromEvents() {
+    appState.cancelTopicPreviewPrefetch(owner: .search)
     guard isSubscribed else { return }
     appState.stateInvalidationBus.unsubscribe(self)
     isSubscribed = false
     logger.debug("RefinedSearchViewModel unsubscribed from state invalidation bus")
   }
 
-  private var isTrendingTopicsLoading = false
+  public private(set) var isTrendingTopicsLoading = false
+  /// False until the first trending-topics request finishes, so the section can show a loading
+  /// state on cold open instead of "No trending topics".
+  public private(set) var hasLoadedTrendingTopics = false
 
   // MARK: - Discovery Lifecycle (G03, G04, G06)
 
@@ -202,17 +212,24 @@ public enum SearchHTTPResponseClassification: Equatable, Sendable {
   public func fetchTrendingTopics(client: ATProtoClient) async {
     guard !isTrendingTopicsLoading else { return }
     isTrendingTopicsLoading = true
-    defer { isTrendingTopicsLoading = false }
+    defer {
+      isTrendingTopicsLoading = false
+      hasLoadedTrendingTopics = true
+    }
     let started = ContinuousClock.now
     defer {
       let elapsed = started.duration(to: .now)
       logger.debug("Trending topics request completed in \(String(describing: elapsed), privacy: .public)")
     }
     do {
+      let viewerDID = appState.userDID
       let input = AppBskyUnspeccedGetTrends.Parameters(limit: 10)
       let (_, response) = try await client.app.bsky.unspecced.getTrends(input: input)
-      if let topicsResponse = response {
+      if let topicsResponse = response, !Task.isCancelled, !appState.isAccountSwitchSuspended, appState.userDID == viewerDID {
         trendingTopics = topicsResponse.trends
+        if isSubscribed {
+          appState.prefetchTopicPreviews(trends: topicsResponse.trends, owner: .search)
+        }
       }
     } catch {
       logger.error("Error fetching trending topics: \(error.localizedDescription)")
@@ -296,6 +313,11 @@ public enum SearchHTTPResponseClassification: Equatable, Sendable {
 
     if query != searchQuery {
       invalidateSearchRequests(resetCursors: true)
+      if filtersCameFromEntry {
+        filtersCameFromEntry = false
+        filterState = SearchFilterState()
+        syncSortWithScope()
+      }
     }
     searchQuery = query
 
@@ -391,12 +413,11 @@ public enum SearchHTTPResponseClassification: Equatable, Sendable {
     isCommittedSearch = false
     searchError = nil
     loadMoreError = nil
+    filterState = SearchFilterState()
+    filtersCameFromEntry = false
+    selectedContentType = .top
 
-    profileResults = []
-    postResults = []
-    feedResults = []
-    starterPackResults = []
-    detectedQueryLanguages = []
+    clearSearchResults()
 
     typeaheadProfiles = []
     typeaheadSuggestions = []
@@ -411,6 +432,7 @@ public enum SearchHTTPResponseClassification: Equatable, Sendable {
     }
 
     let request = beginSearchRequest()
+    isSearchInFlight = true
     await executeSearchForCurrentScope(client: client, request: request, isRefresh: true)
   }
 
@@ -435,7 +457,14 @@ public enum SearchHTTPResponseClassification: Equatable, Sendable {
   }
 
   private func scheduleSearch(client: ATProtoClient) {
+    syncSortWithScope()
+    // A different query or filter set must not show the previous request's rows while loading.
+    if activeSearchRequest?.query != searchQuery || activeSearchRequest?.filters != filterState {
+      clearSearchResults()
+    }
+    searchError = nil
     let request = beginSearchRequest()
+    isSearchInFlight = true
     searchExecutionTask = Task { [weak self] in
       guard let self else { return }
       await self.executeSearchForCurrentScope(client: client, request: request, isRefresh: false)
@@ -447,6 +476,9 @@ public enum SearchHTTPResponseClassification: Equatable, Sendable {
     request: SearchRequestSnapshot,
     isRefresh: Bool
   ) async {
+    defer {
+      if requestGeneration.accepts(request) { isSearchInFlight = false }
+    }
     guard !request.query.isEmpty else {
       if requestGeneration.accepts(request) { searchState = .idle }
       return
@@ -500,21 +532,35 @@ public enum SearchHTTPResponseClassification: Equatable, Sendable {
         return
       }
 
-      var results = postsResponse.posts
+      var results = await filterPostResults(postsResponse.posts, request: request)
+      var nextCursor = postsResponse.cursor
+      var pagesFetched = 1
 
-      if request.filters.language == nil
-        && appState.appSettings.hideNonPreferredLanguages
-        && !appState.appSettings.contentLanguages.isEmpty
-      {
-        results = applyLanguageFiltering(to: results)
+      // Muted words, hidden labels and language preferences can filter out a whole page; fetch a
+      // few more pages before showing "no results" so matching posts further down aren't hidden.
+      while results.isEmpty, let cursor = nextCursor, pagesFetched < Self.maxFilteredEmptyPages {
+        guard requestGeneration.accepts(request), !Task.isCancelled else { return }
+        let pageInput = request.filters.toSearchPostsV2Parameters(
+          query: request.query,
+          cursor: cursor,
+          limit: 25
+        )
+        let (pageCode, pageResponse) = try await client.app.bsky.feed.searchPostsV2(input: pageInput)
+        guard requestGeneration.accepts(request), !Task.isCancelled else { return }
+        guard case .success = SearchHTTPResponseClassification.classify(statusCode: pageCode, payload: pageResponse),
+              let nextPage = pageResponse
+        else {
+          logger.error("Search posts V2 follow-up page failed with status \(pageCode)")
+          break
+        }
+        results = await filterPostResults(nextPage.posts, request: request)
+        nextCursor = nextPage.cursor
+        pagesFetched += 1
       }
-
-      let filterSettings = await appState.buildFilterSettings()
-      results = await contentFilterService.filterPostViews(results, settings: filterSettings)
 
       guard requestGeneration.accepts(request), !Task.isCancelled else { return }
       postResults = results
-      postCursor = postsResponse.cursor
+      postCursor = nextCursor
       detectedQueryLanguages = postsResponse.detectedQueryLanguages ?? []
     } catch {
       guard requestGeneration.accepts(request), !Task.isCancelled else { return }
@@ -552,9 +598,8 @@ public enum SearchHTTPResponseClassification: Equatable, Sendable {
         return
       }
 
-      var newOnes = postsResponse.posts
-      let filterSettings = await appState.buildFilterSettings()
-      newOnes = await contentFilterService.filterPostViews(newOnes, settings: filterSettings)
+      let newOnes = await filterPostResults(postsResponse.posts, request: request)
+      guard requestGeneration.accepts(request), !Task.isCancelled else { return }
 
       let existing = Set(postResults.map { $0.uri.uriString() })
       let deduplicated = newOnes.filter { !existing.contains($0.uri.uriString()) }
@@ -676,7 +721,41 @@ public enum SearchHTTPResponseClassification: Equatable, Sendable {
   }
 
   private func loadMoreFeeds(client: ATProtoClient) async {
-    // Feed search API does not currently paginate with a cursor.
+    guard let request = activeSearchRequest,
+          requestGeneration.accepts(request),
+          request.query == searchQuery,
+          request.filters == filterState,
+          let cursor = feedCursor
+    else { return }
+
+    do {
+      let input = AppBskyUnspeccedGetPopularFeedGenerators.Parameters(
+        limit: 25,
+        cursor: cursor,
+        query: request.query
+      )
+      let (responseCode, response) = try await client.app.bsky.unspecced.getPopularFeedGenerators(input: input)
+
+      guard requestGeneration.accepts(request), !Task.isCancelled else { return }
+      guard case .success = SearchHTTPResponseClassification.classify(statusCode: responseCode, payload: response),
+            let feedsResponse = response
+      else {
+        let failureError = NetworkError.serverError(responseCode)
+        logger.error("Error loading more feeds: HTTP \(responseCode)")
+        loadMoreError = failureError
+        return
+      }
+
+      let existing = Set(feedResults.map { $0.uri.uriString() })
+      let newOnes = feedsResponse.feeds.filter { !existing.contains($0.uri.uriString()) }
+      feedResults.append(contentsOf: newOnes)
+      // Stop paginating if the server keeps returning a cursor but nothing new.
+      feedCursor = newOnes.isEmpty ? nil : feedsResponse.cursor
+    } catch {
+      guard requestGeneration.accepts(request), !Task.isCancelled else { return }
+      logger.error("Error loading more feeds: \(error.localizedDescription)")
+      loadMoreError = error
+    }
   }
 
   // MARK: - Starter Pack Search (G01)
@@ -785,6 +864,7 @@ public enum SearchHTTPResponseClassification: Equatable, Sendable {
   ) {
     searchQuery = entry.query
     filterState = entry.filters
+    filtersCameFromEntry = true
     selectedContentType = (entry.filters.sort == .latest ? .latest : .top)
     onQueryLoaded(entry.query)
     commitSearch(client: client)
@@ -802,7 +882,8 @@ public enum SearchHTTPResponseClassification: Equatable, Sendable {
         did: profile.did,
         handle: profile.handle,
         displayName: profile.displayName,
-        avatarURL: profile.avatar?.uriString()
+        avatarURL: profile.avatar?.uriString(),
+        labels: profile.labels
       ),
       did: profile.did.didString()
     )
@@ -870,6 +951,7 @@ public enum SearchHTTPResponseClassification: Equatable, Sendable {
   ) {
     searchQuery = savedSearch.query
     filterState = savedSearch.filters
+    filtersCameFromEntry = true
     selectedContentType = (savedSearch.filters.sort == .latest ? .latest : .top)
     onQueryLoaded(savedSearch.query)
     searchHistoryManager.updateLastUsed(savedSearch.id, userDID: appState.userDID)
@@ -891,6 +973,33 @@ public enum SearchHTTPResponseClassification: Equatable, Sendable {
     } catch {
       logger.error("Error fetching typeahead: \(error.localizedDescription)")
     }
+  }
+
+  private func clearSearchResults() {
+    postResults = []
+    profileResults = []
+    feedResults = []
+    starterPackResults = []
+    detectedQueryLanguages = []
+  }
+
+  private static let maxFilteredEmptyPages = 3
+
+  /// Applies language preferences and the user's moderation settings (muted accounts and words,
+  /// hidden labels) to a page of post search results.
+  private func filterPostResults(
+    _ posts: [AppBskyFeedDefs.PostView],
+    request: SearchRequestSnapshot
+  ) async -> [AppBskyFeedDefs.PostView] {
+    var results = posts
+    if request.filters.language == nil
+      && appState.appSettings.hideNonPreferredLanguages
+      && !appState.appSettings.contentLanguages.isEmpty
+    {
+      results = applyLanguageFiltering(to: results)
+    }
+    let filterSettings = await appState.buildFilterSettings()
+    return await contentFilterService.filterPostViews(results, settings: filterSettings)
   }
 
   private func resetPaginationCursors() {
@@ -929,6 +1038,7 @@ public enum SearchHTTPResponseClassification: Equatable, Sendable {
     searchExecutionTask = nil
     requestGeneration.invalidate()
     activeSearchRequest = nil
+    isSearchInFlight = false
     if resetCursors { resetPaginationCursors() }
   }
 

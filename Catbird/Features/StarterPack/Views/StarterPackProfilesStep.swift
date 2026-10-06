@@ -28,7 +28,7 @@ struct StarterPackProfilesStep: View {
                 Image(systemName: "magnifyingglass")
                     .foregroundColor(.secondary)
                 
-                TextField("Search people to add...", text: $searchQuery)
+                TextField("Search people to add", text: $searchQuery)
                     .autocorrectionDisabled()
         .platformInsetGroupedListStyle()
                     .onChange(of: searchQuery) { _, newValue in
@@ -213,6 +213,7 @@ struct StarterPackProfilesStep: View {
                                     .background(Circle().fill(Color.systemGray5))
                             }
                             .buttonStyle(.plain)
+                            .accessibilityLabel("Remove \(profile.displayName ?? profile.handle.description)")
                         }
                         .padding(.vertical, 4)
                     }

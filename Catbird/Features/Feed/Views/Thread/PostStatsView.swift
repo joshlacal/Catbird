@@ -54,6 +54,7 @@ struct PostStatsView: View {
                             Text(statLabel(for: replyCount, singular: "reply", plural: "replies"))
                                 .foregroundColor(.secondary)
                         }
+                        .accessibilityElement(children: .combine)
                     }
 
                     // Reposts stat with tap gesture
@@ -68,6 +69,9 @@ struct PostStatsView: View {
                         .onTapGesture {
                             path.append(NavigationDestination.postReposts(post.uri.uriString()))
                         }
+                        .accessibilityElement(children: .combine)
+                        .accessibilityAddTraits(.isButton)
+                        .accessibilityHint("Shows who reposted")
                     }
                     
                     // Likes stat with tap gesture
@@ -82,6 +86,9 @@ struct PostStatsView: View {
                         .onTapGesture {
                             path.append(NavigationDestination.postLikes(post.uri.uriString()))
                         }
+                        .accessibilityElement(children: .combine)
+                        .accessibilityAddTraits(.isButton)
+                        .accessibilityHint("Shows who liked")
                     }
                     
                     // Quotes stat with tap gesture
@@ -96,6 +103,9 @@ struct PostStatsView: View {
                         .onTapGesture {
                             path.append(NavigationDestination.postQuotes(post.uri.uriString()))
                         }
+                        .accessibilityElement(children: .combine)
+                        .accessibilityAddTraits(.isButton)
+                        .accessibilityHint("Shows quotes of this post")
                     }
                 }
                     .padding(.top, Self.baseUnit * 2)
@@ -162,6 +172,10 @@ private extension PostStatsView {
         .onTapGesture {
             path.append(NavigationDestination.postLikes(post.uri.uriString()))
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(knownLikersText(knownLikers))
+        .accessibilityAddTraits(.isButton)
+        .accessibilityHint("Shows who liked")
     }
 
     func knownLikersText(_ knownLikers: AppBskyFeedDefs.KnownLikers) -> String {

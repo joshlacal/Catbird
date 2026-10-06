@@ -92,9 +92,13 @@ struct PrivacySecuritySettingsView: View {
     // Logger
     private let logger = Logger(subsystem: "blue.catbird", category: "PrivacySecuritySettings")
     
-    init() {
-        // Initialization will happen in onAppear
-    }
+    let initialFocus: SettingsControlID?
+    @State private var mountedAccountDID: String?
+    @State private var hasFinishedInitialLoad = false
+    @State private var hasLoadedVisibility = false
+    @State private var hasLoadedAlgorithmicVisibility = false
+    @State private var visibilityTask: Task<Void, Never>?
+    init(initialFocus: SettingsControlID? = nil) { self.initialFocus = initialFocus }
     
     /// Display name for the current biometric type
     private var biometricDisplayName: String {
@@ -111,262 +115,82 @@ struct PrivacySecuritySettingsView: View {
     }
     
     var body: some View {
-        Form {
-            // Biometric Authentication Section
-            if AppStateManager.shared.authentication.biometricType != .none {
-                Section("App Security") {
-                    Toggle(biometricDisplayName, isOn: $biometricAuthEnabled)
-                        .tint(.blue)
-                        .onChange(of: biometricAuthEnabled) { oldValue, newValue in
-                            guard oldValue != newValue else { return }
-                            Task {
-                                await handleBiometricToggle(newValue)
-                            }
-                        }
-                        .disabled(isEnablingBiometric)
-                    
-                    if isEnablingBiometric {
-                        HStack {
-                            ProgressView()
-                                .controlSize(.small)
-                            Text("Setting up \(biometricDisplayName)...")
-                                .appFont(AppTextRole.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    } else {
-                        Text("Use \(biometricDisplayName) to unlock Catbird and authenticate sensitive actions.")
-                            .appFont(AppTextRole.caption)
-                            .foregroundStyle(.secondary)
+        SettingsFocusedForm(initialFocus: initialFocus, isReady: hasFinishedInitialLoad) {
+            SettingsScopeSection()
+            SettingsPersistenceStatusSection(settings: appState.appSettings)
+            Section {
+                if hasLoadedVisibility {
+                Toggle("Visible to Signed-Out Visitors", isOn: Binding(
+                    get: { loggedOutVisibility },
+                    set: { value in
+                        guard hasLoadedVisibility, mountedAccountDID == appState.userDID else { return }
+                        let previous = loggedOutVisibility
+                        loggedOutVisibility = value
+                        visibilityTask?.cancel()
+                        visibilityTask = Task { await updateLoggedOutVisibility(value, previousValue: previous) }
                     }
+                ))
+                .disabled(!hasLoadedVisibility || isLoadingLoggedOutVisibility || isUpdatingLoggedOutVisibility)
                 }
-            }
-            
-            // Two-Factor Authentication Section
-            twoFactorSection
-
-            Section("Account Privacy") {
-                Toggle("Logged-Out Visibility", isOn: $loggedOutVisibility)
-                    .tint(.blue)
-                    .disabled(isLoadingLoggedOutVisibility || isUpdatingLoggedOutVisibility)
-                    .onChange(of: loggedOutVisibility) { oldValue, newValue in
-                        guard oldValue != newValue,
-                              loggedOutVisibilityChangeGate.shouldWriteChange(to: newValue) else { return }
-                        Task {
-                            await updateLoggedOutVisibility(newValue, previousValue: oldValue)
-                        }
-                    }
-                
-                Toggle("Ask apps to hide my posts from algorithmic recommendations", isOn: $hideFromAlgorithmicRecommendations)
-                    .tint(.blue)
-                    .disabled(isLoadingAlgorithmicVisibility || isUpdatingAlgorithmicVisibility)
-                    .onChange(of: hideFromAlgorithmicRecommendations) { oldValue, newValue in
-                        guard oldValue != newValue else { return }
+                if isLoadingLoggedOutVisibility { ProgressView("Loading visibility…") }
+                if !hasLoadedVisibility && !isLoadingLoggedOutVisibility {
+                    Text("Couldn’t load visibility. Your current setting is unchanged.").foregroundStyle(.secondary)
+                    Button("Try Again") { visibilityTask = Task { await loadLoggedOutVisibility() } }
+                }
+            } footer: { Text("Turning this off asks Bluesky and other apps not to show your profile and posts to people who aren’t signed in. Other apps may not honor this request, and it doesn’t make your account private.") }
+            .settingsControl(.init(rawValue: "privacy.loggedOutVisibility"))
+            Section {
+                if hasLoadedAlgorithmicVisibility {
+                Toggle("Ask Apps to Exclude My Posts from Recommendations", isOn: Binding(
+                    get: { hideFromAlgorithmicRecommendations },
+                    set: { value in
+                        guard hasLoadedAlgorithmicVisibility, mountedAccountDID == appState.userDID else { return }
+                        let previous = hideFromAlgorithmicRecommendations
+                        hideFromAlgorithmicRecommendations = value
                         algorithmicVisibilityTask?.cancel()
-                        algorithmicVisibilityTask = Task {
-                            await updateAlgorithmicVisibility(newValue, previousValue: oldValue)
-                        }
+                        algorithmicVisibilityTask = Task { await updateAlgorithmicVisibility(value, previousValue: previous) }
                     }
-                
-                NavigationLink(destination: ActivityPrivacySettingsView()) {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Activity Privacy")
-                                .fontWeight(.medium)
-                            Text("Who can subscribe to post notifications")
-                                .appFont(AppTextRole.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                    }
+                ))
+                .disabled(!hasLoadedAlgorithmicVisibility || isLoadingAlgorithmicVisibility || isUpdatingAlgorithmicVisibility)
                 }
-                
-                Toggle("Attribution Tracking", isOn: Binding(
+                if isLoadingAlgorithmicVisibility { ProgressView("Loading recommendation request…") }
+                if !hasLoadedAlgorithmicVisibility && !isLoadingAlgorithmicVisibility {
+                    Text("Couldn’t load the recommendation request. Your current setting is unchanged.").foregroundStyle(.secondary)
+                    Button("Try Again") { algorithmicVisibilityTask = Task { await loadAlgorithmicVisibility() } }
+                }
+            } footer: { Text("Requests that Bluesky and third-party apps exclude your posts from algorithmic feeds and discovery. Apps decide whether to honor this request.") }
+            .settingsControl(.init(rawValue: "privacy.algorithmicVisibility"))
+            Section {
+                Toggle("Credit Repost Discovery", isOn: Binding(
                     get: { appState.appSettings.enableViaAttribution },
                     set: { appState.appSettings.enableViaAttribution = $0 }
                 ))
-                .tint(.blue)
-                
-                Text("When enabled, people who aren't signed into Bluesky can view your profile and posts.")
-                    .appFont(AppTextRole.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(.bottom, 4)
-                
-                Text("Requests that Bluesky and third-party apps do not include your posts in algorithmic feeds and discovery features.")
-                    .appFont(AppTextRole.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(.bottom, 4)
-                
-                Text("Attribution tracking credits users when you like or repost content you discovered through their reposts.")
-                    .appFont(AppTextRole.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Section("Social Graph Management") {
-                NavigationLink {
-                    BlockedAccountsView()
-                } label: {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Blocked Accounts")
-                                .fontWeight(.medium)
-                            
-                            Text("Manage accounts you've blocked")
-                                .appFont(AppTextRole.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        
-                        Spacer()
-                        
-                        if isLoadingBlocks {
-                            ProgressView()
-                                .controlSize(.small)
-                        } else {
-                            Text("\(blockedProfiles.count)")
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                }
-                
-                NavigationLink {
-                    MutedAccountsView()
-                } label: {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Muted Accounts")
-                                .fontWeight(.medium)
-                            
-                            Text("Manage accounts you've muted")
-                                .appFont(AppTextRole.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        
-                        Spacer()
-                        
-                        if isLoadingMutes {
-                            ProgressView()
-                                .controlSize(.small)
-                        } else {
-                            Text("\(mutedProfiles.count)")
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                }
-            }
-            
-            Section("About Privacy Controls") {
-                Text("Blocking prevents an account from interacting with you, including following you or seeing your content in their feeds.")
-                    .appFont(AppTextRole.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(.bottom, 4)
-                
-                Text("Muting hides content from an account without them knowing. They can still interact with your posts, but you won't see their content.")
-                    .appFont(AppTextRole.caption)
-                    .foregroundStyle(.secondary)
-            }
+                .disabled(!appState.appSettings.canEditPersistedSettings)
+                .settingsControl(.init(rawValue: "privacy.attribution"))
+            } footer: { Text("Shows attribution when you discover a post through another person’s repost.") }
         }
-        .navigationTitle("Privacy & Security")
-    #if os(iOS)
-    .toolbarTitleDisplayMode(.inline)
-    #endif
-        .task {
-            setLoggedOutVisibilityProgrammatically(appState.appSettings.loggedOutVisibility)
+        .navigationTitle("Visibility & Attribution")
+        #if os(iOS)
+        .toolbarTitleDisplayMode(.inline)
+        #endif
+        .task(id: appState.userDID) {
+            hasFinishedInitialLoad = false
+            mountedAccountDID = appState.userDID
+            hasLoadedVisibility = false
+            hasLoadedAlgorithmicVisibility = false
             await loadData()
-            // Initialize biometric state
-            await MainActor.run {
-                biometricAuthEnabled = AppStateManager.shared.authentication.biometricAuthEnabled
-            }
+            if !Task.isCancelled { hasFinishedInitialLoad = true }
         }
-        .alert("Biometric Authentication", isPresented: $showBiometricError) {
-            Button("OK", role: .cancel) {
-                showBiometricError = false
-            }
-        } message: {
-            Text(biometricErrorMessage)
-        }
-        .alert("Logged-Out Visibility", isPresented: $showLoggedOutVisibilityError) {
-            Button("OK", role: .cancel) { }
-        } message: {
-            Text(loggedOutVisibilityErrorMessage)
-        }
-        .alert("Algorithmic Recommendations", isPresented: $showAlgorithmicVisibilityError) {
-            Button("OK", role: .cancel) { }
-        } message: {
-            Text(algorithmicVisibilityErrorMessage)
-        }
-        .alert("Enable Email 2FA?", isPresented: $showEnable2FAConfirmation) {
-            Button("Cancel", role: .cancel) { }
-            Button("Enable") {
-                enable2FAAction()
-            }
-        } message: {
-            Text("An authentication code will be sent to \(email) each time you sign in to your Bluesky account.")
-        }
-        .alert("Two-Factor Authentication", isPresented: $show2FAError) {
-            Button("OK", role: .cancel) {
-                show2FAError = false
-            }
-        } message: {
-            Text(twoFAErrorMessage)
-        }
-        .sheet(isPresented: $showDisable2FASheet) {
-            NavigationStack {
-                Form {
-                    Section {
-                        Text("A confirmation code has been sent to \(email). Enter the code below to disable two-factor authentication.")
-                            .appFont(AppTextRole.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    
-                    Section("Confirmation Code") {
-                        TextField("Enter confirmation code", text: $disable2FACode)
-                            #if os(iOS)
-                            .textInputAutocapitalization(.never)
-                            #endif
-                            .autocorrectionDisabled(true)
-                            .disabled(isSubmittingDisableCode)
-                        
-                        Button("Resend Code") {
-                            startDisable2FAFlow()
-                        }
-                        .disabled(isRequestingDisableCode || isSubmittingDisableCode)
-                    }
-                }
-                .navigationTitle("Disable 2FA")
-                #if os(iOS)
-                .toolbarTitleDisplayMode(.inline)
-                #endif
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("Cancel", systemImage: "xmark") {
-                            showDisable2FASheet = false
-                        }
-                        .disabled(isSubmittingDisableCode)
-                    }
-                    
-                    ToolbarItem(placement: .primaryAction) {
-                        Button("Disable") {
-                            submitDisable2FA(token: disable2FACode)
-                        }
-                        .disabled(disable2FACode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSubmittingDisableCode)
-                    }
-                }
-            }
-            .presentationDetents([.medium])
-        }
-        .onDisappear {
-            twoFATask?.cancel()
-            twoFATask = nil
-            algorithmicVisibilityTask?.cancel()
-            algorithmicVisibilityTask = nil
-        }
+        .alert("Couldn’t Update Visibility", isPresented: $showLoggedOutVisibilityError) { Button("OK", role: .cancel) { } }
+            message: { Text(loggedOutVisibilityErrorMessage) }
+        .alert("Couldn’t Update Recommendations", isPresented: $showAlgorithmicVisibilityError) { Button("OK", role: .cancel) { } }
+            message: { Text(algorithmicVisibilityErrorMessage) }
+        .onDisappear { visibilityTask?.cancel(); algorithmicVisibilityTask?.cancel() }
     }
-    
+
     private func loadData() async {
         await loadLoggedOutVisibility()
         await loadAlgorithmicVisibility()
-        await load2FAStatus()
-        // Load blocks and mutes counts
-        await loadBlocksCount()
-        await loadMutesCount()
     }
 
     // MARK: - Progressive Permission & 2FA
@@ -448,8 +272,7 @@ struct PrivacySecuritySettingsView: View {
                 let responseCode = try await client.com.atproto.server.updateEmail(input: input)
                 
                 if (200...299).contains(responseCode) {
-                    await load2FAStatus()
-                } else if !Task.isCancelled {
+                            } else if !Task.isCancelled {
                     twoFAErrorMessage = "Failed to enable two-factor authentication (Code: \(responseCode))."
                     show2FAError = true
                 }
@@ -543,8 +366,7 @@ struct PrivacySecuritySettingsView: View {
                 
                 if (200...299).contains(responseCode) {
                     showDisable2FASheet = false
-                    await load2FAStatus()
-                } else if !Task.isCancelled {
+                            } else if !Task.isCancelled {
                     twoFAErrorMessage = "Failed to disable two-factor authentication (Code: \(responseCode)). Please check your code and try again."
                     show2FAError = true
                 }
@@ -563,44 +385,53 @@ struct PrivacySecuritySettingsView: View {
     private static let noUnauthenticatedLabel = "!no-unauthenticated"
 
     private func loadLoggedOutVisibility() async {
-        guard appState.isAuthenticated, let client = appState.atProtoClient else { return }
+        let expectedDID = appState.userDID
+        let expectedRevision = AppStateManager.shared.settingsAccountContextRevision
+        guard appState.isAuthenticated, SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision), let client = appState.atProtoClient else { return }
         isLoadingLoggedOutVisibility = true
-        defer { isLoadingLoggedOutVisibility = false }
+        defer { if SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision) { isLoadingLoggedOutVisibility = false } }
 
         do {
-            let (code, record) = try await client.com.atproto.repo.getRecord(
-                input: try profileRecordParameters()
-            )
-            let isVisible: Bool
-            if code == 200, let record {
-                guard case let .knownType(value) = record.value,
-                      let profile = value as? AppBskyActorProfile else {
-                    throw visibilityError("Unexpected profile record format.")
+            let originatingAppState = appState
+            try await originatingAppState.performSettingsAccountOperation {
+                try Task.checkCancellation()
+                let (code, record) = try await client.com.atproto.repo.getRecord(
+                    input: try profileRecordParameters(for: expectedDID)
+                )
+                let isVisible: Bool
+                if code == 200, let record {
+                    guard case let .knownType(value) = record.value,
+                          let profile = value as? AppBskyActorProfile else {
+                        throw visibilityError("Unexpected profile record format.")
+                    }
+                    isVisible = !Self.hasNoUnauthenticatedLabel(profile.labels)
+                } else if code == 404 {
+                    isVisible = true
+                } else {
+                    throw visibilityError("Failed to load profile record (\(code)).")
                 }
-                isVisible = !Self.hasNoUnauthenticatedLabel(profile.labels)
-            } else if code == 400 || code == 404 {
-                isVisible = true
-            } else {
-                throw visibilityError("Failed to load profile record (\(code)).")
-            }
 
-            setLoggedOutVisibilityProgrammatically(isVisible)
-            appState.appSettings.loggedOutVisibility = isVisible
+                guard !Task.isCancelled, SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision) else { return }
+                setLoggedOutVisibilityProgrammatically(isVisible)
+                hasLoadedVisibility = true
+            }
         } catch ComAtprotoRepoGetRecord.Error.recordNotFound {
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision) else { return }
             setLoggedOutVisibilityProgrammatically(true)
-            appState.appSettings.loggedOutVisibility = true
+            hasLoadedVisibility = true
         } catch is CancellationError {
             // Cancelled
         } catch {
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision) else { return }
             logger.error("Error loading logged-out visibility: \(error.localizedDescription)")
         }
     }
 
     private func updateLoggedOutVisibility(_ isVisible: Bool, previousValue: Bool) async {
-        guard let client = appState.atProtoClient else {
-            revertLoggedOutVisibility(to: previousValue, message: "You must be signed in to change this setting.")
+        let expectedDID = appState.userDID
+        let expectedRevision = AppStateManager.shared.settingsAccountContextRevision
+        guard SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision), let client = appState.atProtoClient else {
+            revertLoggedOutVisibility(to: previousValue, message: "Sign in to change this setting.")
             return
         }
 
@@ -608,70 +439,88 @@ struct PrivacySecuritySettingsView: View {
         defer { isUpdatingLoggedOutVisibility = false }
 
         do {
-            let (code, record) = try await client.com.atproto.repo.getRecord(
-                input: try profileRecordParameters()
-            )
-            if code == 200, let record {
-                try await putProfileVisibility(
-                    record: record,
-                    isVisible: isVisible,
-                    client: client
+            let originatingAppState = appState
+            try await originatingAppState.performSettingsAccountOperation {
+                try Task.checkCancellation()
+                let (code, record) = try await client.com.atproto.repo.getRecord(
+                    input: try profileRecordParameters(for: expectedDID)
                 )
-            } else if code == 400 {
-                try await createProfileVisibility(isVisible: isVisible, client: client)
-            } else {
-                throw visibilityError("Failed to load profile record (\(code)).")
+                guard !Task.isCancelled, SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision) else { return }
+                if code == 200, let record {
+                    try await putProfileVisibility(
+                        record: record,
+                        isVisible: isVisible,
+                        client: client,
+                        accountDID: expectedDID
+                    )
+                } else if code == 404 {
+                    try await createProfileVisibility(isVisible: isVisible, client: client, accountDID: expectedDID)
+                } else {
+                    throw visibilityError("Failed to load profile record (\(code)).")
+                }
+                guard !Task.isCancelled, SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision) else { return }
+                appState.appSettings.loggedOutVisibility = isVisible
             }
-            appState.appSettings.loggedOutVisibility = isVisible
         } catch {
+            guard !Task.isCancelled, SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision) else { return }
             logger.error("Error updating logged-out visibility: \(error.localizedDescription)")
             revertLoggedOutVisibility(
                 to: previousValue,
-                message: "Couldn't update this setting: \(error.localizedDescription)"
+                message: UserFacingError.message(for: error, action: "update this setting") ?? "Couldn’t update this setting. Try again."
             )
         }
     }
 
     private func loadAlgorithmicVisibility() async {
-        guard appState.isAuthenticated, let client = appState.atProtoClient else { return }
+        let expectedDID = appState.userDID
+        let expectedRevision = AppStateManager.shared.settingsAccountContextRevision
+        guard appState.isAuthenticated, SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision), let client = appState.atProtoClient else { return }
         isLoadingAlgorithmicVisibility = true
-        defer { isLoadingAlgorithmicVisibility = false }
+        defer { if SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision) { isLoadingAlgorithmicVisibility = false } }
 
         do {
-            let (code, recordData) = try await client.com.atproto.repo.getRecord(
-                input: .init(
-                    repo: try ATIdentifier(string: appState.userDID),
-                    collection: try NSID(nsidString: "app.bsky.actor.contentVisibilityDeclaration"),
-                    rkey: try RecordKey(keyString: "self")
+            let originatingAppState = appState
+            try await originatingAppState.performSettingsAccountOperation {
+                try Task.checkCancellation()
+                let (code, recordData) = try await client.com.atproto.repo.getRecord(
+                    input: .init(
+                        repo: try ATIdentifier(string: expectedDID),
+                        collection: try NSID(nsidString: "app.bsky.actor.contentVisibilityDeclaration"),
+                        rkey: try RecordKey(keyString: "self")
+                    )
                 )
-            )
-            guard !Task.isCancelled else { return }
-            if code == 200, let record = recordData,
-               case let .knownType(declarationValue) = record.value,
-               let declaration = declarationValue as? AppBskyActorContentVisibilityDeclaration {
-                self.hideFromAlgorithmicRecommendations = declaration.hideFromAlgorithmicRecommendations
-            } else if code == 400 || code == 404 {
-                // Explicit record-not-found implies false (opted in to recommendations)
-                self.hideFromAlgorithmicRecommendations = false
-            } else {
-                throw NSError(domain: "PrivacySecuritySettings", code: code, userInfo: [NSLocalizedDescriptionKey: "Failed to load content visibility declaration (\(code))."])
+                guard !Task.isCancelled, SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision) else { return }
+                if code == 200, let record = recordData,
+                   case let .knownType(declarationValue) = record.value,
+                   let declaration = declarationValue as? AppBskyActorContentVisibilityDeclaration {
+                    self.hideFromAlgorithmicRecommendations = declaration.hideFromAlgorithmicRecommendations
+                    hasLoadedAlgorithmicVisibility = true
+                } else if code == 404 {
+                    // Explicit record-not-found implies false (opted in to recommendations)
+                    self.hideFromAlgorithmicRecommendations = false
+                    hasLoadedAlgorithmicVisibility = true
+                } else {
+                    throw NSError(domain: "PrivacySecuritySettings", code: code, userInfo: [NSLocalizedDescriptionKey: "Failed to load content visibility declaration (\(code))."])
+                }
             }
         } catch ComAtprotoRepoGetRecord.Error.recordNotFound {
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision) else { return }
             self.hideFromAlgorithmicRecommendations = false
+            hasLoadedAlgorithmicVisibility = true
         } catch is CancellationError {
             // Cancelled
         } catch {
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision) else { return }
+            // The section shows an inline retry; an alert on open would be redundant.
             logger.error("Failed to load content visibility declaration: \(error.localizedDescription)")
-            algorithmicVisibilityErrorMessage = "Couldn't load algorithmic recommendations setting: \(error.localizedDescription)"
-            showAlgorithmicVisibilityError = true
         }
     }
 
     private func updateAlgorithmicVisibility(_ hide: Bool, previousValue: Bool) async {
-        guard let client = appState.atProtoClient else {
-            revertAlgorithmicVisibility(to: previousValue, message: "You must be signed in to change this setting.")
+        let expectedDID = appState.userDID
+        let expectedRevision = AppStateManager.shared.settingsAccountContextRevision
+        guard SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision), let client = appState.atProtoClient else {
+            revertAlgorithmicVisibility(to: previousValue, message: "Sign in to change this setting.")
             return
         }
 
@@ -679,20 +528,25 @@ struct PrivacySecuritySettingsView: View {
         defer { isUpdatingAlgorithmicVisibility = false }
 
         do {
-            let decl = AppBskyActorContentVisibilityDeclaration(hideFromAlgorithmicRecommendations: hide)
-            let input = ComAtprotoRepoPutRecord.Input(
-                repo: try ATIdentifier(string: appState.userDID),
-                collection: try NSID(nsidString: "app.bsky.actor.contentVisibilityDeclaration"),
-                rkey: try RecordKey(keyString: "self"),
-                record: .knownType(decl)
-            )
-            let (code, _) = try await client.com.atproto.repo.putRecord(input: input)
-            guard code == 200 else {
-                throw NSError(domain: "PrivacySecuritySettings", code: code, userInfo: [NSLocalizedDescriptionKey: "Failed to update algorithmic recommendations setting (\(code))."])
+            let originatingAppState = appState
+            try await originatingAppState.performSettingsAccountOperation {
+                try Task.checkCancellation()
+                let decl = AppBskyActorContentVisibilityDeclaration(hideFromAlgorithmicRecommendations: hide)
+                let input = ComAtprotoRepoPutRecord.Input(
+                    repo: try ATIdentifier(string: expectedDID),
+                    collection: try NSID(nsidString: "app.bsky.actor.contentVisibilityDeclaration"),
+                    rkey: try RecordKey(keyString: "self"),
+                    record: .knownType(decl)
+                )
+                let (code, _) = try await client.com.atproto.repo.putRecord(input: input)
+                guard code == 200 else {
+                    throw NSError(domain: "PrivacySecuritySettings", code: code, userInfo: [NSLocalizedDescriptionKey: "Failed to update algorithmic recommendations setting (\(code))."])
+                }
             }
         } catch {
+            guard !Task.isCancelled, SettingsAccountBoundary.isCurrent(expectedDID, revision: expectedRevision) else { return }
             logger.error("Error updating algorithmic recommendations setting: \(error.localizedDescription)")
-            revertAlgorithmicVisibility(to: previousValue, message: "Couldn't update this setting: \(error.localizedDescription)")
+            revertAlgorithmicVisibility(to: previousValue, message: UserFacingError.message(for: error, action: "update this setting") ?? "Couldn’t update this setting. Try again.")
         }
     }
 
@@ -702,9 +556,9 @@ struct PrivacySecuritySettingsView: View {
         showAlgorithmicVisibilityError = true
     }
 
-    private func profileRecordParameters() throws -> ComAtprotoRepoGetRecord.Parameters {
+    private func profileRecordParameters(for accountDID: String) throws -> ComAtprotoRepoGetRecord.Parameters {
         ComAtprotoRepoGetRecord.Parameters(
-            repo: try ATIdentifier(string: appState.userDID),
+            repo: try ATIdentifier(string: accountDID),
             collection: try NSID(nsidString: "app.bsky.actor.profile"),
             rkey: try RecordKey(keyString: "self")
         )
@@ -712,7 +566,8 @@ struct PrivacySecuritySettingsView: View {
     private func putProfileVisibility(
         record: ComAtprotoRepoGetRecord.Output,
         isVisible: Bool,
-        client: ATProtoClient
+        client: ATProtoClient,
+        accountDID: String
     ) async throws {
         guard case let .knownType(value) = record.value,
               let profile = value as? AppBskyActorProfile else {
@@ -732,7 +587,7 @@ struct PrivacySecuritySettingsView: View {
             createdAt: profile.createdAt
         )
         let input = ComAtprotoRepoPutRecord.Input(
-            repo: try ATIdentifier(string: appState.userDID),
+            repo: try ATIdentifier(string: accountDID),
             collection: try NSID(nsidString: "app.bsky.actor.profile"),
             rkey: try RecordKey(keyString: "self"),
             record: .knownType(updatedProfile),
@@ -742,7 +597,7 @@ struct PrivacySecuritySettingsView: View {
         guard code == 200 else { throw visibilityError("Profile update failed (\(code)).") }
     }
 
-    private func createProfileVisibility(isVisible: Bool, client: ATProtoClient) async throws {
+    private func createProfileVisibility(isVisible: Bool, client: ATProtoClient, accountDID: String) async throws {
         let profile = AppBskyActorProfile(
             displayName: nil,
             description: nil,
@@ -756,7 +611,7 @@ struct PrivacySecuritySettingsView: View {
             createdAt: ATProtocolDate(date: Date())
         )
         let input = ComAtprotoRepoCreateRecord.Input(
-            repo: try ATIdentifier(string: appState.userDID),
+            repo: try ATIdentifier(string: accountDID),
             collection: try NSID(nsidString: "app.bsky.actor.profile"),
             rkey: try RecordKey(keyString: "self"),
             record: .knownType(profile)

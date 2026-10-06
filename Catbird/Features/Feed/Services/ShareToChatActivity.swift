@@ -9,17 +9,19 @@
   import UIKit
   import SwiftUI
   import Petrel
-  import OSLog
+  import Observation
 
   /// Custom UIActivity for sharing posts to chat
   class ShareToChatActivity: UIActivity {
 
     private let post: AppBskyFeedDefs.PostView
     private let appState: AppState
+    private let sceneContext: SceneNavigationContext
 
-    init(post: AppBskyFeedDefs.PostView, appState: AppState) {
+    init(post: AppBskyFeedDefs.PostView, appState: AppState, sceneContext: SceneNavigationContext) {
       self.post = post
       self.appState = appState
+      self.sceneContext = sceneContext
       super.init()
     }
 
@@ -28,7 +30,7 @@
     }
 
     override var activityTitle: String? {
-      return "Share to Chat"
+      return "Send to Bluesky chat"
     }
 
     override var activityImage: UIImage? {
@@ -40,16 +42,13 @@
     }
 
     override func canPerform(withActivityItems activityItems: [Any]) -> Bool {
-      return appState.isAuthenticated
-    }
-
-    override func prepare(withActivityItems activityItems: [Any]) {
-      // Find the ShareablePost item
-      for item in activityItems {
-        if let shareablePost = item as? ShareablePost {
-          // Store for later use
-          break
-        }
+      // UIActivity's synchronous availability callback is not actor-isolated.
+      // Reject unexpected background queries before reading live scene state.
+      guard Thread.isMainThread else { return false }
+      return MainActor.assumeIsolated {
+        self.appState.isAuthenticated
+          && !self.sceneContext.isInvalidated
+          && self.sceneContext.accountDID == self.appState.userDID
       }
     }
 
@@ -58,11 +57,12 @@
     }
 
     override var activityViewController: UIViewController? {
-      let chatSelectionView = ModernChatSelectionView(post: post, appState: appState) {
+      let chatSelectionView = ModernChatSelectionView(post: post, appState: appState, sceneContext: sceneContext) {
         [weak self] in
         self?.activityDidFinish(true)
       }
       .applyAppStateEnvironment(appState)
+      .environment(sceneContext)
 
       let hostingController = UIHostingController(rootView: chatSelectionView)
       hostingController.modalPresentationStyle = .pageSheet
@@ -86,25 +86,225 @@
       super.init()
     }
 
-    func activityViewControllerPlaceholderItem(_ activityViewController: UIActivityViewController)
-      -> Any
-    {
-      let username = post.author.handle
-      let recordKey = post.uri.recordKey ?? ""
-      return URL(string: "https://bsky.app/profile/\(username)/post/\(recordKey)") ?? ""
+    func activityViewControllerPlaceholderItem(_ activityViewController: UIActivityViewController) -> Any {
+      ActionButtonViewModel.shareURL(for: post) ?? URL(string: "https://bsky.app")!
     }
 
     func activityViewController(
       _ activityViewController: UIActivityViewController,
       itemForActivityType activityType: UIActivity.ActivityType?
     ) -> Any? {
-      if activityType?.rawValue == "blue.catbird.share-to-chat" {
-        return post
-      }
+      if activityType?.rawValue == "blue.catbird.share-to-chat" { return post }
+      return ActionButtonViewModel.shareURL(for: post)
+    }
+  }
 
-      let username = post.author.handle
-      let recordKey = post.uri.recordKey ?? ""
-      return URL(string: "https://bsky.app/profile/\(username)/post/\(recordKey)")
+  struct NativePostShareSheet: UIViewControllerRepresentable {
+    let post: AppBskyFeedDefs.PostView
+    let appState: AppState
+    let sceneContext: SceneNavigationContext
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+      UIActivityViewController(
+        activityItems: [ShareablePost(post: post)],
+        applicationActivities: [ShareToChatActivity(post: post, appState: appState, sceneContext: sceneContext)]
+      )
+    }
+
+    func updateUIViewController(_ controller: UIActivityViewController, context: Context) { }
+  }
+
+  enum ShareRecipientError: LocalizedError {
+    case unavailable, lookupFailed, accountChanged
+
+    var errorDescription: String? {
+      switch self {
+      case .unavailable: "This person can’t receive a Bluesky message from this account."
+      case .lookupFailed: "Couldn’t load this chat. Please try again."
+      case .accountChanged: "Your account changed. Open sharing again from the account you want to use."
+      }
+    }
+
+    static func message(for error: Error) -> String {
+      if let error = error as? ATProtoError<ChatBskyConvoGetConvoForMembers.Error> {
+        switch error.error {
+        case .accountSuspended, .blockedActor, .blockedSubject, .messagesDisabled, .notFollowedBySender:
+          return ShareRecipientError.unavailable.localizedDescription
+        case .recipientNotFound:
+          return "This account could not be found. Try another recipient."
+        }
+      }
+      if let error = error as? ShareRecipientError { return error.localizedDescription }
+      return ShareRecipientError.lookupFailed.localizedDescription
+    }
+  }
+
+  /// Owns request identity separately from SwiftUI rendering. A cancelled or
+  /// replaced request may finish, but it cannot publish recipients or navigate.
+  @MainActor
+  @Observable
+  final class ShareRecipientSelectionModel {
+    let accountDID: String
+    let originSceneID: UUID
+    private let isOriginValid: () -> Bool
+    private let search: (String) async throws -> [AppBskyActorDefs.ProfileViewBasic]
+    private let resolve: (String) async throws -> String
+    private var searchGeneration = 0
+    private var selectionGeneration = 0
+    private var cancelled = false
+
+    private(set) var searchResults: [AppBskyActorDefs.ProfileViewBasic] = []
+    private(set) var isSearching = false
+    private(set) var isSelecting = false
+    private(set) var errorMessage: String?
+
+    init(
+      accountDID: String,
+      originSceneID: UUID,
+      isOriginValid: @escaping () -> Bool,
+      search: @escaping (String) async throws -> [AppBskyActorDefs.ProfileViewBasic],
+      resolve: @escaping (String) async throws -> String
+    ) {
+      self.accountDID = accountDID
+      self.originSceneID = originSceneID
+      self.isOriginValid = isOriginValid
+      self.search = search
+      self.resolve = resolve
+    }
+
+    var isCurrent: Bool { !cancelled && isOriginValid() }
+
+    func cancel() {
+      cancelled = true
+      searchGeneration += 1
+      selectionGeneration += 1
+      searchResults = []
+      isSearching = false
+      isSelecting = false
+    }
+
+    func searchRecipients(_ text: String, debounce: Duration = .milliseconds(250)) async {
+      searchGeneration += 1
+      let generation = searchGeneration
+      let query = text.trimmingCharacters(in: .whitespacesAndNewlines)
+      searchResults = []
+      errorMessage = nil
+      isSearching = false
+      guard isCurrent, query.count >= 2 else { return }
+      isSearching = true
+      defer { if generation == searchGeneration { isSearching = false } }
+      do {
+        try await Task.sleep(for: debounce)
+        guard isCurrent, !Task.isCancelled, generation == searchGeneration else { return }
+        let results = try await search(query)
+        guard isCurrent, !Task.isCancelled, generation == searchGeneration else { return }
+        searchResults = results.filter { $0.did.didString() != self.accountDID }
+      } catch {
+        guard isCurrent, !Task.isCancelled, generation == searchGeneration,
+              !(error is CancellationError) else { return }
+        errorMessage = "Couldn’t search for people. Please try again."
+      }
+    }
+
+    func select(recipientDID: String) async -> String? {
+      guard isCurrent, !isSelecting, recipientDID != accountDID else { return nil }
+      selectionGeneration += 1
+      let generation = selectionGeneration
+      isSelecting = true
+      errorMessage = nil
+      defer { if generation == selectionGeneration { isSelecting = false } }
+      do {
+        let convoId = try await resolve(recipientDID)
+        guard isCurrent, !Task.isCancelled, generation == selectionGeneration else { return nil }
+        return convoId
+      } catch {
+        guard isCurrent, !Task.isCancelled, generation == selectionGeneration,
+              !(error is CancellationError) else { return nil }
+        errorMessage = ShareRecipientError.message(for: error)
+        return nil
+      }
+    }
+
+    static func canMessage(_ profile: AppBskyActorDefs.ProfileViewBasic) -> Bool {
+      guard profile.viewer?.blockedBy != true, profile.viewer?.blocking == nil,
+            profile.viewer?.blockingByList == nil else { return false }
+      switch profile.associated?.chat?.allowIncoming {
+      case "all": return true
+      case "following", nil: return profile.viewer?.followedBy != nil
+      default: return false
+      }
+    }
+
+    private static func cache(_ conversation: ChatBskyConvoDefs.ConvoView, in appState: AppState) {
+      // Called synchronously only after the exact-auth response and active-account
+      // guards. Keep recipient metadata ready for the destination's preview.
+      let manager = appState.chatManager
+      if let index = manager.conversations.firstIndex(where: { $0.id == conversation.id }) {
+        manager.conversations[index] = conversation
+      } else {
+        manager.conversations.insert(conversation, at: 0)
+      }
+      manager.updateConversationsByStatus()
+    }
+
+    static func live(appState: AppState, sceneContext: SceneNavigationContext) -> ShareRecipientSelectionModel {
+      let accountDID = appState.userDID
+      let client = appState.atProtoClient
+      // Capture this context, not a proxy for whichever window becomes active.
+      let isOriginValid = {
+        !sceneContext.isInvalidated && sceneContext.accountDID == accountDID
+      }
+      return ShareRecipientSelectionModel(
+        accountDID: accountDID,
+        originSceneID: sceneContext.sceneID,
+        isOriginValid: isOriginValid,
+        search: { query in
+          guard let client, isOriginValid() else { throw ShareRecipientError.accountChanged }
+          let continuity = await client.authContinuitySnapshot()
+          guard continuity.did == accountDID else { throw ShareRecipientError.accountChanged }
+          let result = try await client.performGeneratedRequestWithExactAuthContinuity(matching: continuity) {
+            try await client.app.bsky.actor.searchActorsTypeahead(input: .init(q: query, limit: 10))
+          }
+          guard case .performed(let response) = result else { throw ShareRecipientError.accountChanged }
+          guard (200...299).contains(response.responseCode), let data = response.data else {
+            throw ShareRecipientError.lookupFailed
+          }
+          return data.actors
+        },
+        resolve: { recipientDID in
+          guard let client, isOriginValid() else { throw ShareRecipientError.accountChanged }
+          let continuity = await client.authContinuitySnapshot()
+          guard continuity.did == accountDID else { throw ShareRecipientError.accountChanged }
+          let members = try [DID(didString: accountDID), DID(didString: recipientDID)]
+          let availability = try await client.performGeneratedRequestWithExactAuthContinuity(matching: continuity) {
+            try await client.chat.bsky.convo.getConvoAvailability(input: .init(members: members))
+          }
+          try Task.checkCancellation()
+          guard isOriginValid(),
+                case .performed(let response) = availability else { throw ShareRecipientError.accountChanged }
+          guard (200...299).contains(response.responseCode), let data = response.data else {
+            throw ShareRecipientError.lookupFailed
+          }
+          guard data.canChat else { throw ShareRecipientError.unavailable }
+          if let convo = data.convo {
+            guard !convo.isLockedForSending else { throw ShareRecipientError.unavailable }
+            cache(convo, in: appState)
+            return convo.id
+          }
+          let creation = try await client.performGeneratedRequestWithExactAuthContinuity(matching: continuity) {
+            try await client.chat.bsky.convo.getConvoForMembers(input: .init(members: members))
+          }
+          try Task.checkCancellation()
+          guard isOriginValid(),
+                case .performed(let created) = creation else { throw ShareRecipientError.accountChanged }
+          guard (200...299).contains(created.responseCode), let convo = created.data?.convo else {
+            throw ShareRecipientError.lookupFailed
+          }
+          guard !convo.isLockedForSending else { throw ShareRecipientError.unavailable }
+          cache(convo, in: appState)
+          return convo.id
+        }
+      )
     }
   }
 
@@ -114,16 +314,33 @@
   struct ModernChatSelectionView: View {
     let post: AppBskyFeedDefs.PostView
     let appState: AppState
+    let sceneContext: SceneNavigationContext
     let onDismiss: () -> Void
 
     @State private var searchText = ""
-    @State private var isSearching = false
-    @State private var searchResults: [AppBskyActorDefs.ProfileViewBasic] = []
-    @State private var keyboardHeight: CGFloat = 0
-    @State private var isCreatingConversation = false
+    @State private var model: ShareRecipientSelectionModel
+    @State private var selectionTask: Task<Void, Never>?
+    let onSelectConversation: ((String) -> Void)?
+    let conversations: [ChatBskyConvoDefs.ConvoView]?
     @Environment(\.colorScheme) private var colorScheme
 
-    private let logger = Logger(subsystem: "blue.catbird", category: "ShareToChat")
+    init(
+      post: AppBskyFeedDefs.PostView,
+      appState: AppState,
+      sceneContext: SceneNavigationContext,
+      model: ShareRecipientSelectionModel? = nil,
+      conversations: [ChatBskyConvoDefs.ConvoView]? = nil,
+      onSelectConversation: ((String) -> Void)? = nil,
+      onDismiss: @escaping () -> Void
+    ) {
+      self.post = post
+      self.appState = appState
+      self.sceneContext = sceneContext
+      self.onDismiss = onDismiss
+      self.onSelectConversation = onSelectConversation
+      self.conversations = conversations
+      self._model = State(initialValue: model ?? .live(appState: appState, sceneContext: sceneContext))
+    }
 
     var body: some View {
       NavigationStack {
@@ -133,30 +350,54 @@
             .ignoresSafeArea()
 
           VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 4) {
+              Text(appState.currentUserProfile.map { "Sharing as @\($0.handle.description)" } ?? "Sharing from your account")
+                .font(.subheadline.weight(.semibold))
+              Text("Choose a chat, then review the post and press Send.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal)
+            .padding(.top, 8)
+
             // Modern search bar
             searchBar
               .padding(.horizontal)
               .padding(.top, 8)
 
+            if model.isSearching {
+              ProgressView("Searching…").padding()
+            }
+            if let message = model.errorMessage {
+              Text(message)
+                .font(.callout)
+                .foregroundStyle(.red)
+                .padding()
+                .accessibilityIdentifier("shareRecipientError")
+            }
+
             // Recipients list
             recipientsList
+              .disabled(model.isSelecting)
           }
         }
-        .navigationTitle("Share to Chat")
+        .navigationTitle("Send to Bluesky chat")
         #if os(iOS)
           .toolbarTitleDisplayMode(.inline)
         #endif
         .toolbar {
           ToolbarItem(placement: .cancellationAction) {
             Button("Cancel", systemImage: "xmark") {
+              model.cancel()
+              selectionTask?.cancel()
               onDismiss()
             }
-            .disabled(isCreatingConversation)
           }
         }
         .animation(.smooth(duration: 0.2), value: searchText)
         .overlay {
-          if isCreatingConversation {
+          if model.isSelecting {
             ZStack {
               Color.black.opacity(0.2).ignoresSafeArea()
               ProgressView("Starting chat…")
@@ -166,15 +407,20 @@
           }
         }
       }
-      .onChange(of: searchText) { _, newValue in
-        performSearch(newValue)
+      .task(id: searchText) {
+        guard isValidOrigin else { return }
+        await model.searchRecipients(searchText)
+      }
+      .onChange(of: sceneContext.isInvalidated) { _, isInvalidated in
+        if isInvalidated {
+          model.cancel()
+          selectionTask?.cancel()
+          onDismiss()
+        }
       }
       .onDisappear {
-        // Covers dismissal paths that bypass the (disabled-during-creation) Cancel
-        // button, e.g. swiping the UIKit-presented sheet away by its grabber: the
-        // in-flight shareToNewConversation completion's `guard isCreatingConversation`
-        // then fails and skips the stale navigation.
-        isCreatingConversation = false
+        model.cancel()
+        selectionTask?.cancel()
       }
     }
 
@@ -194,7 +440,6 @@
           Button {
             withAnimation(.smooth(duration: 0.2)) {
               searchText = ""
-              searchResults = []
             }
           } label: {
             Image(systemName: "xmark.circle.fill")
@@ -226,14 +471,16 @@
           }
 
           // Search results
-          if !searchText.isEmpty && !searchResults.isEmpty {
-            ForEach(searchResults, id: \.did) { profile in
+          if !searchText.isEmpty && !model.searchResults.isEmpty {
+            ForEach(model.searchResults, id: \.did) { profile in
               ModernRecipientRow(
                 title: profile.displayName ?? profile.handle.description,
-                subtitle: "@\(profile.handle)",
+                subtitle: ShareRecipientSelectionModel.canMessage(profile)
+                  ? "@\(profile.handle)" : "Not available for messages",
                 avatarURL: profile.avatar?.uriString(),
                 isSelected: false,
-                showDivider: profile.did != searchResults.last?.did
+                showDivider: profile.did != model.searchResults.last?.did,
+                isEnabled: ShareRecipientSelectionModel.canMessage(profile)
               ) {
                 shareToNewConversation(with: profile)
               }
@@ -242,7 +489,7 @@
 
           // Existing conversations
           if searchText.isEmpty || (!searchText.isEmpty && !filteredConversations.isEmpty) {
-            if !searchText.isEmpty && !searchResults.isEmpty {
+            if !searchText.isEmpty && !model.searchResults.isEmpty {
               sectionHeader("Conversations")
             }
 
@@ -252,11 +499,11 @@
           }
 
           // Empty state
-          if filteredConversations.isEmpty && searchResults.isEmpty {
+          if !model.isSearching && model.errorMessage == nil && filteredConversations.isEmpty && model.searchResults.isEmpty {
             emptyState
           }
         }
-        .animation(.default, value: searchResults)
+        .animation(.default, value: model.searchResults)
         .animation(.default, value: filteredConversations)
       }
       .scrollDismissesKeyboard(.interactively)
@@ -275,15 +522,31 @@
       .background(.background)
     }
 
+    @ViewBuilder
     private var emptyState: some View {
-      ContentUnavailableView {
-        Label("No Results", systemImage: "magnifyingglass")
-      } description: {
-        Text(
-          searchText.isEmpty
-            ? "Start typing to search for people" : "No matches found for '\(searchText)'")
+      let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+      if query.isEmpty {
+        ContentUnavailableView {
+          Label("Search for People", systemImage: "person.crop.circle.badge.plus")
+        } description: {
+          Text("Search for someone to send this post to.")
+        }
+        .padding(.vertical, 60)
+      } else if query.count < 2 {
+        ContentUnavailableView {
+          Label("Search for People", systemImage: "magnifyingglass")
+        } description: {
+          Text("Keep typing to search.")
+        }
+        .padding(.vertical, 60)
+      } else {
+        ContentUnavailableView {
+          Label("No Results", systemImage: "magnifyingglass")
+        } description: {
+          Text("No matches for “\(query)”")
+        }
+        .padding(.vertical, 60)
       }
-      .padding(.vertical, 60)
     }
 
     @ViewBuilder
@@ -321,13 +584,13 @@
     // MARK: - Helper Methods
 
     private var filteredConversations: [ChatBskyConvoDefs.ConvoView] {
-      appState.chatManager.acceptedConversations.filter {
+      (conversations ?? appState.chatManager.acceptedConversations).filter {
         $0.matchesShareSearch(searchText, currentUserDID: appState.userDID)
       }
     }
 
     private var recentConversations: [ChatBskyConvoDefs.ConvoView] {
-      Array(appState.chatManager.acceptedConversations.prefix(8))
+      Array((conversations ?? appState.chatManager.acceptedConversations).prefix(8))
     }
 
     @ViewBuilder
@@ -368,89 +631,51 @@
       .opacity(conversation.isLockedForSending ? 0.5 : 1.0)
     }
 
+    private var isValidOrigin: Bool {
+      !sceneContext.isInvalidated
+        && sceneContext.accountDID == appState.userDID
+        && model.accountDID == sceneContext.accountDID
+        && model.originSceneID == sceneContext.sceneID
+        && model.isCurrent
+    }
+
     private func shareToConversation(_ conversation: ChatBskyConvoDefs.ConvoView) {
-      appState.navigationManager.pendingChatShare = PendingChatShare(
-        convoId: conversation.id,
-        postRef: ComAtprotoRepoStrongRef(uri: post.uri, cid: post.cid),
-        previewEmbed: PendingChatShare.makePreviewEmbed(from: post)
-      )
-      onDismiss()
-      appState.navigationManager.navigate(to: .conversation(conversation.id), in: 4)
-      appState.navigationManager.tabSelection?(4)
+      guard isValidOrigin, !model.isSelecting, !conversation.isLockedForSending,
+            conversation.members.contains(where: { $0.did.didString() == model.accountDID }) else { return }
+      finishSelection(convoId: conversation.id)
     }
 
     private func shareToNewConversation(with profile: AppBskyActorDefs.ProfileViewBasic) {
-      guard !isCreatingConversation else { return }
-      isCreatingConversation = true
-      Task {
-        let convoId = await appState.chatManager.startConversationWith(
-          userDID: profile.did.didString())
-        await MainActor.run {
-          // Cancel is disabled while isCreatingConversation is true, but guard anyway:
-          // if the sheet was dismissed some other way and this got reset, a stale
-          // completion here must not force navigation into a conversation.
-          guard isCreatingConversation else { return }
-          isCreatingConversation = false
-          guard let convoId else {
-            logger.error("Share-to-chat: failed to start conversation")
-            return
-          }
-          appState.navigationManager.pendingChatShare = PendingChatShare(
-            convoId: convoId,
-            postRef: ComAtprotoRepoStrongRef(uri: post.uri, cid: post.cid),
-            previewEmbed: PendingChatShare.makePreviewEmbed(from: post)
-          )
-          onDismiss()
-          appState.navigationManager.navigate(to: .conversation(convoId), in: 4)
-          appState.navigationManager.tabSelection?(4)
-        }
+      guard isValidOrigin, !model.isSelecting, ShareRecipientSelectionModel.canMessage(profile) else { return }
+      selectionTask?.cancel()
+      selectionTask = Task {
+        guard let convoId = await model.select(recipientDID: profile.did.didString()) else { return }
+        finishSelection(convoId: convoId)
       }
     }
 
-    private func performSearch(_ query: String) {
-      guard !query.isEmpty, query.count >= 2 else {
-        searchResults = []
-        return
+    private func finishSelection(convoId: String) {
+      guard isValidOrigin else { return }
+      if let onSelectConversation {
+        onSelectConversation(convoId)
+      } else {
+        let navigation = sceneContext.navigationManager
+        navigation.updateCurrentTab(AppNavigationManager.chatTabIndex)
+        navigation.tabSelection?(AppNavigationManager.chatTabIndex)
+        // A tab-selection callback can synchronously invalidate its context.
+        guard isValidOrigin else { return }
+        PendingChatShareStore.shared.stage(PendingChatShare(
+          originSceneID: sceneContext.sceneID,
+          accountDID: model.accountDID,
+          convoId: convoId,
+          postRef: ComAtprotoRepoStrongRef(uri: post.uri, cid: post.cid),
+          previewEmbed: PendingChatShare.makePreviewEmbed(from: post)
+        ))
+        navigation.navigate(to: .conversation(convoId), in: AppNavigationManager.chatTabIndex)
       }
-
-      guard let client = appState.atProtoClient else { return }
-
-      Task {
-        isSearching = true
-
-        do {
-          let params = AppBskyActorSearchActorsTypeahead.Parameters(
-            q: query.trimmingCharacters(in: .whitespacesAndNewlines), limit: 10)
-          let (responseCode, response) = try await client.app.bsky.actor.searchActorsTypeahead(input: params)
-
-          await MainActor.run {
-            isSearching = false
-
-            guard responseCode >= 200 && responseCode < 300,
-              let results = response?.actors
-            else {
-              return
-            }
-
-            // Filter out users that already have conversations
-            let existingDids = Set(
-              appState.chatManager.acceptedConversations.flatMap { conv in
-                conv.members.map { $0.did.didString() }
-              })
-
-            searchResults = results.filter { profile in
-              !existingDids.contains(profile.did.didString())
-            }
-          }
-        } catch {
-          await MainActor.run {
-            isSearching = false
-            logger.error("Search error: \(error.localizedDescription)")
-          }
-        }
-      }
+      model.cancel()
+      onDismiss()
     }
-
   }
 
   // MARK: - Modern Recipient Row

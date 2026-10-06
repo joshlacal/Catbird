@@ -27,7 +27,7 @@ struct ChatProfileRowView: View {
 
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 4) {
-                        Text(profile.displayName ?? "")
+                        Text(profile.displayName?.isEmpty == false ? profile.displayName ?? "" : profile.handle.description)
                             .appFont(AppTextRole.headline)
                             .lineLimit(1)
                             .truncationMode(.tail)
@@ -48,9 +48,9 @@ struct ChatProfileRowView: View {
                             .lineLimit(1)
 
                         if isMessageable == false {
-                            Text("• Chat Restricted")
+                            Text("· Can’t be messaged")
                                 .appFont(AppTextRole.caption)
-                                .foregroundColor(.red)
+                                .foregroundColor(.secondary)
                                 .lineLimit(1)
                         }
                     }
@@ -148,10 +148,9 @@ struct ChatProfileRowView: View {
     
     /// Performs authoritative server-side messageability check
     private func performServerMessageabilityCheck() async {
-        guard let chatManager = appState.chatManager as ChatManager?,
-              let currentUserDID = try? await chatManager.client?.getDid() else {
-            // If no chat manager or client, assume not messageable
-            isMessageable = false
+        let chatManager = appState.chatManager
+        guard let currentUserDID = try? await chatManager.client?.getDid() else {
+            // Unknown without a client; leave the row usable
             return
         }
         
@@ -176,10 +175,12 @@ struct ChatProfileRowView: View {
         
         isCheckingAvailability = true
         
-        // Use the authoritative server check
-        let (canChat, _) = await chatManager.checkConversationAvailability(members: [currentUserDID, profileDID])
+        // Use the authoritative server check (cached per person)
+        let canChat = await chatManager.canMessage(members: [currentUserDID, profileDID])
         
         isCheckingAvailability = false
+        // A cancelled or failed check is "unknown", not "restricted"
+        guard !Task.isCancelled, let canChat else { return }
         isMessageable = canChat
     }
 

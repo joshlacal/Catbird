@@ -5,8 +5,10 @@ import Petrel
 import SwiftUI
 
 struct NotificationsView: View {
+  @Environment(SceneNavigationContext.self) private var sceneContext
   @Environment(AppState.self) private var appState: AppState
   @Environment(\.horizontalSizeClass) private var hSizeClass
+  @Environment(\.scenePhase) private var scenePhase
   @State private var viewModel: NotificationsViewModel
   @Binding var selectedTab: Int
   @Binding var lastTappedTab: Int?
@@ -22,11 +24,14 @@ struct NotificationsView: View {
   init(appState: AppState, selectedTab: Binding<Int>, lastTappedTab: Binding<Int?>) {
     self._selectedTab = selectedTab
     self._lastTappedTab = lastTappedTab
-    _viewModel = State(wrappedValue: NotificationsViewModel(client: appState.atProtoClient))
+    _viewModel = State(wrappedValue: NotificationsViewModel(
+      client: appState.atProtoClient,
+      notificationManager: appState.notificationManager
+    ))
   }
 
   var body: some View {
-    let navigationPathBinding = appState.navigationManager.pathBinding(for: 2)
+    let navigationPathBinding = sceneContext.navigationManager.pathBinding(for: 2)
 
     return navigationStack(using: navigationPathBinding)
     .onChange(of: lastTappedTab) { _, newValue in
@@ -53,19 +58,32 @@ struct NotificationsView: View {
       if viewModel.groupedNotifications.isEmpty {
         await viewModel.loadNotifications()
       }
+      // The first visit creates this view with the tab already selected, so the
+      // selectedTab change above never fires for it.
+      if selectedTab == 2 {
+        try? await viewModel.markNotificationsAsSeen()
+      }
       // Force widget update when notifications view appears
       appState.notificationManager.updateWidgetUnreadCount(appState.notificationManager.unreadCount)
     }
-    // Check scene phase changes
-    #if os(iOS)
-    .onChange(of: UIApplication.shared.applicationState) { newState in
-      if newState == .active {
-          // App became active, update widget
-        appState.notificationManager.updateWidgetUnreadCount(
-          appState.notificationManager.unreadCount)
+    .onChange(of: scenePhase) { _, phase in
+      guard phase == .active else { return }
+      appState.notificationManager.updateWidgetUnreadCount(appState.notificationManager.unreadCount)
+      // Returning to the app on this tab: show what's new and clear the badge.
+      if selectedTab == 2 {
+        Task {
+          await viewModel.refreshNotifications()
+          try? await viewModel.markNotificationsAsSeen()
+        }
       }
     }
-    #endif
+    .onChange(of: viewModel.error != nil) { _, hasError in
+      // A failed refresh keeps the loaded list on screen and reports the problem as a toast.
+      guard hasError, !viewModel.groupedNotifications.isEmpty else { return }
+      appState.toastManager.show(ToastItem(
+        message: "Couldn’t refresh notifications", icon: "exclamationmark.triangle.fill"))
+      viewModel.clearError()
+    }
   }
 
   private var notificationsLeadingPlacement: ToolbarItemPlacement {
@@ -96,12 +114,18 @@ struct NotificationsView: View {
         #if !targetEnvironment(macCatalyst)
         .toolbar {
           ToolbarItem(placement: notificationsLeadingPlacement) {
-            Button {
-              navigationPath.wrappedValue.append(NavigationDestination.activitySubscriptions)
+            Menu {
+              Button("Notification Settings", systemImage: "gearshape") {
+                navigationPath.wrappedValue.append(NavigationDestination.settings(.notifications))
+              }
+              Button("Activity Alerts", systemImage: "bell.badge") {
+                navigationPath.wrappedValue.append(NavigationDestination.activitySubscriptions)
+              }
             } label: {
               Image(systemName: "bell.badge")
                 .imageScale(.medium)
             }
+            .accessibilityLabel("Notification Options")
             .nuxNudge(id: .activitySubscriptions)
           }
 
@@ -158,13 +182,13 @@ struct NotificationsView: View {
 
   @ViewBuilder
   private var notificationContent: some View {
-    if let error = viewModel.error {
+    if let error = viewModel.error, viewModel.groupedNotifications.isEmpty {
       ErrorStateView(
         error: error,
-        context: "Failed to load notifications",
+        context: "Couldn’t load notifications",
         retryAction: { Task { await retryLoadNotifications() } }
       )
-    } else if viewModel.isLoading && viewModel.groupedNotifications.isEmpty {
+    } else if (viewModel.isLoading || viewModel.isRefreshing) && viewModel.groupedNotifications.isEmpty {
       loadingView
     } else if viewModel.groupedNotifications.isEmpty {
       emptyView
@@ -185,39 +209,57 @@ struct NotificationsView: View {
   }
 
   private var emptyView: some View {
-    VStack(spacing: DesignTokens.Spacing.xl) {
-      Image(systemName: "bell.slash")
+    let isMentions = selectedFilter == .mentions
+    return VStack(spacing: DesignTokens.Spacing.xl) {
+      Image(systemName: isMentions ? "at" : "bell.slash")
         .appFont(size: 48)
         .foregroundColor(.secondary)
 
-      Text("No Notifications")
+      Text(isMentions ? "No Mentions Yet" : "No Notifications")
         .enhancedAppHeadline()
         .fontWeight(.semibold)
 
-      Text("You don't have any notifications yet")
+      Text(isMentions
+        ? "Replies, mentions, and quotes will appear here."
+        : "You don’t have any notifications yet.")
         .enhancedAppSubheadline()
         .foregroundColor(.secondary)
+        .multilineTextAlignment(.center)
 
-      Button(action: {
+      if viewModel.hasMoreNotifications {
+        loadMoreFilteredNotificationsButton
+      }
+
+      Button("Refresh") {
         Task {
           await viewModel.refreshNotifications()
         }
-      }) {
-        Text("Refresh")
-          .padding(.horizontal, 24)
-          .padding(.vertical, 10)
-          .background(Color.accentColor)
-          .foregroundColor(.white)
-          .cornerRadius(8)
       }
+      .buttonStyle(.borderedProminent)
       .padding(.top, 8)
     }
+    .padding(.horizontal)
     .frame(maxWidth: .infinity, maxHeight: .infinity)
+  }
+
+  private var loadMoreFilteredNotificationsButton: some View {
+    Button {
+      Task { await viewModel.loadMoreNotifications() }
+    } label: {
+      if viewModel.isLoadingMore {
+        ProgressView()
+      } else {
+        Text("Load More")
+      }
+    }
+    .buttonStyle(.bordered)
+    .disabled(viewModel.isLoadingMore)
+    .accessibilityIdentifier("notifications.loadMoreFiltered")
   }
 
   @ViewBuilder
   private var notificationsList: some View {
-    let navigationPath = appState.navigationManager.pathBinding(for: 2)
+    let navigationPath = sceneContext.navigationManager.pathBinding(for: 2)
     let indexedGroups = Array(viewModel.groupedNotifications.enumerated())
 
     ScrollViewReader { _ in
@@ -249,7 +291,24 @@ struct NotificationsView: View {
             }
           }
 
-          if viewModel.hasMoreNotifications {
+          if viewModel.paginationError != nil {
+            VStack(spacing: 8) {
+              Text("Couldn’t load more notifications.")
+                .appSubheadline()
+                .foregroundStyle(.secondary)
+              Button("Retry") {
+                Task { await viewModel.loadMoreNotifications() }
+              }
+              .buttonStyle(.bordered)
+            }
+            .frame(maxWidth: .infinity)
+            .padding()
+            #if os(macOS)
+            .frame(maxWidth: 700)
+            .frame(maxWidth: .infinity, alignment: .center)
+            #endif
+            .listRowSeparator(.hidden)
+          } else if viewModel.hasMoreNotifications {
             HStack {
               Spacer()
               ProgressView()
@@ -287,6 +346,7 @@ struct NotificationsView: View {
   private func shouldLoadMoreNotifications(currentIndex: Int) -> Bool {
     let thresholdIndex = max(0, viewModel.groupedNotifications.count - 5)
     return currentIndex >= thresholdIndex && viewModel.hasMoreNotifications && !viewModel.isLoadingMore
+      && viewModel.paginationError == nil
   }
   
   @MainActor
@@ -554,8 +614,8 @@ struct NotificationCard: View {
     case (.activitySubscription, let n): return " shared \(n) new posts"
     case (.starterpackJoined, 1): return " signed up with your starter pack"
     case (.starterpackJoined, _): return "\(othersSuffix) signed up with your starter pack"
-    case (.verified, _): return " verification was added"
-    case (.unverified, _): return " verification was removed"
+    case (.verified, _): return " verified your account"
+    case (.unverified, _): return " removed their verification from your account"
     case (.contactMatch, _): return " is on Bluesky"
     case (.feedgenLike, 1): return " liked your custom feed"
     case (.feedgenLike, _): return "\(othersSuffix) liked your custom feed"
@@ -625,9 +685,9 @@ struct NotificationCard: View {
   private var postPreview: some View {
     if let post = group.subjectPost {
       VStack(alignment: .leading, spacing: 8) {
-        // Show post text if available
+        // Show post text if available, unless a label says to hide the post
         if case .knownType(let postObj) = post.record, let feedPost = postObj as? AppBskyFeedPost,
-          !feedPost.text.isEmpty {
+          !feedPost.text.isEmpty, !isHiddenByLabel(post) {
           Text(feedPost.text)
             .appBody()
             .themedText(appState.themeManager, style: .secondary, appSettings: appState.appSettings)
@@ -637,9 +697,18 @@ struct NotificationCard: View {
         
         // Show media thumbnails if available
         let thumbnails = extractMediaThumbnails(from: post)
+        let selfLabels = selfLabelValues(of: post)
         if !thumbnails.isEmpty {
-          NotificationMediaThumbnail(thumbnails: thumbnails)
-            .frame(maxWidth: .infinity, alignment: .leading)
+          if !(post.labels ?? []).isEmpty || !selfLabels.isEmpty {
+            // Labelled media (adult, graphic) follows the user's content filter settings
+            ContentLabelManager(labels: post.labels, selfLabelValues: selfLabels, contentType: "media") {
+              NotificationMediaThumbnail(thumbnails: thumbnails)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+          } else {
+            NotificationMediaThumbnail(thumbnails: thumbnails)
+              .frame(maxWidth: .infinity, alignment: .leading)
+          }
         }
         
         // Show quoted post text for record embeds (without media)
@@ -700,6 +769,20 @@ struct NotificationCard: View {
     }
   }
 
+  /// Self-applied label values on the post record (e.g. "porn", "graphic-media").
+  private func selfLabelValues(of post: AppBskyFeedDefs.PostView) -> [String] {
+    guard case .knownType(let record) = post.record,
+          let feedPost = record as? AppBskyFeedPost,
+          let postLabels = feedPost.labels,
+          case .comAtprotoLabelDefsSelfLabels(let labels) = postLabels else { return [] }
+    return labels.values.map { $0.val.lowercased() }
+  }
+
+  /// Whether a moderation label asks clients to hide this post entirely.
+  private func isHiddenByLabel(_ post: AppBskyFeedDefs.PostView) -> Bool {
+    (post.labels ?? []).contains { $0.val == "!hide" }
+  }
+
   private func handleTap() {
     switch group.type {
     case .like, .repost, .likeViaRepost, .repostViaRepost:
@@ -733,7 +816,11 @@ struct NotificationCard: View {
           uniqueURIs = [uri]
         }
       }
-      onTap(NavigationDestination.notificationActivity(uniqueURIs))
+      if uniqueURIs.count == 1 {
+        onTap(NavigationDestination.post(uniqueURIs[0]))
+      } else if !uniqueURIs.isEmpty {
+        onTap(NavigationDestination.notificationActivity(uniqueURIs))
+      }
     case .starterpackJoined:
       if let starterPackURI = group.notifications.first?.reasonSubject {
         onTap(NavigationDestination.starterPack(starterPackURI))
@@ -986,11 +1073,12 @@ struct NotificationMediaThumbnail: View {
 }
 
 struct AvatarStack: View {
+  @Environment(SceneNavigationContext.self) private var sceneContext
   let notifications: [AppBskyNotificationListNotifications.Notification]
   @Environment(AppState.self) private var appState: AppState
 
   var body: some View {
-    let navigationPath = appState.navigationManager.pathBinding(for: 2)
+    let navigationPath = sceneContext.navigationManager.pathBinding(for: 2)
 
     HStack(spacing: 3) {
       ForEach(0..<min(3, notifications.count), id: \.self) { index in

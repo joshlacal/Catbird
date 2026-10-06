@@ -157,77 +157,166 @@ final class AppSettingsModel {
         return existingPerAccountSettings.isEmpty ? legacy : nil
     }
 
-    static func copySettings(from source: AppSettingsModel, to target: AppSettingsModel) {
+    static func copySettings(from source: AppSettingsModel, to target: AppSettingsModel, changedFrom baseline: AppSettingsModel? = nil) {
         // Appearance
-        target.theme = source.theme
-        target.darkThemeMode = source.darkThemeMode
-        target.accentColor = source.accentColor
+        if baseline?.theme != source.theme {
+            target.theme = source.theme
+        }
+        if baseline?.darkThemeMode != source.darkThemeMode {
+            target.darkThemeMode = source.darkThemeMode
+        }
+        if baseline?.accentColor != source.accentColor {
+            target.accentColor = source.accentColor
+        }
 
         // Typography
-        target.fontStyle = source.fontStyle
-        target.fontSize = source.fontSize
-        target.lineSpacing = source.lineSpacing
-        target.letterSpacing = source.letterSpacing
-        target.dynamicTypeEnabled = source.dynamicTypeEnabled
-        target.maxDynamicTypeSize = source.maxDynamicTypeSize
+        if baseline?.fontStyle != source.fontStyle {
+            target.fontStyle = source.fontStyle
+        }
+        if baseline?.fontSize != source.fontSize {
+            target.fontSize = source.fontSize
+        }
+        if baseline?.lineSpacing != source.lineSpacing {
+            target.lineSpacing = source.lineSpacing
+        }
+        if baseline?.letterSpacing != source.letterSpacing {
+            target.letterSpacing = source.letterSpacing
+        }
+        if baseline?.dynamicTypeEnabled != source.dynamicTypeEnabled {
+            target.dynamicTypeEnabled = source.dynamicTypeEnabled
+        }
+        if baseline?.maxDynamicTypeSize != source.maxDynamicTypeSize {
+            target.maxDynamicTypeSize = source.maxDynamicTypeSize
+        }
 
         // Accessibility
-        target.requireAltText = source.requireAltText
-        target.largerAltTextBadges = source.largerAltTextBadges
-        target.disableHaptics = source.disableHaptics
+        if baseline?.requireAltText != source.requireAltText {
+            target.requireAltText = source.requireAltText
+        }
+        if baseline?.largerAltTextBadges != source.largerAltTextBadges {
+            target.largerAltTextBadges = source.largerAltTextBadges
+        }
+        if baseline?.disableHaptics != source.disableHaptics {
+            target.disableHaptics = source.disableHaptics
+        }
 
         // Motion
-        target.reduceMotion = source.reduceMotion
-        target.prefersCrossfade = source.prefersCrossfade
+        if baseline?.reduceMotion != source.reduceMotion {
+            target.reduceMotion = source.reduceMotion
+        }
+        if baseline?.prefersCrossfade != source.prefersCrossfade {
+            target.prefersCrossfade = source.prefersCrossfade
+        }
 
         // Display
-        target.increaseContrast = source.increaseContrast
-        target.boldText = source.boldText
-        target.displayScale = source.displayScale
+        if baseline?.increaseContrast != source.increaseContrast {
+            target.increaseContrast = source.increaseContrast
+        }
+        if baseline?.boldText != source.boldText {
+            target.boldText = source.boldText
+        }
+        if baseline?.displayScale != source.displayScale {
+            target.displayScale = source.displayScale
+        }
 
         // Reading
-        target.showReadingTimeEstimates = source.showReadingTimeEstimates
-        target.highlightLinks = source.highlightLinks
-        target.linkStyle = source.linkStyle
+        if baseline?.showReadingTimeEstimates != source.showReadingTimeEstimates {
+            target.showReadingTimeEstimates = source.showReadingTimeEstimates
+        }
+        if baseline?.highlightLinks != source.highlightLinks {
+            target.highlightLinks = source.highlightLinks
+        }
+        if baseline?.linkStyle != source.linkStyle {
+            target.linkStyle = source.linkStyle
+        }
 
         // Interaction
-        target.confirmBeforeActions = source.confirmBeforeActions
-        target.longPressDuration = source.longPressDuration
-        target.shakeToUndo = source.shakeToUndo
+        if baseline?.confirmBeforeActions != source.confirmBeforeActions {
+            target.confirmBeforeActions = source.confirmBeforeActions
+        }
+        if baseline?.longPressDuration != source.longPressDuration {
+            target.longPressDuration = source.longPressDuration
+        }
+        if baseline?.shakeToUndo != source.shakeToUndo {
+            target.shakeToUndo = source.shakeToUndo
+        }
 
         // Attribution
-        target.enableViaAttribution = source.enableViaAttribution
+        if baseline?.enableViaAttribution != source.enableViaAttribution {
+            target.enableViaAttribution = source.enableViaAttribution
+        }
 
         // Content and Media
-        target.sensitiveContentScanningEnabled = source.sensitiveContentScanningEnabled
-        target.autoplayVideos = source.autoplayVideos
-        target.useInAppBrowser = source.useInAppBrowser
-        target.showTrendingTopics = source.showTrendingTopics
-        target.showTrendingVideos = source.showTrendingVideos
+        if baseline?.sensitiveContentScanningEnabled != source.sensitiveContentScanningEnabled {
+            target.sensitiveContentScanningEnabled = source.sensitiveContentScanningEnabled
+        }
+        if baseline?.autoplayVideos != source.autoplayVideos {
+            target.autoplayVideos = source.autoplayVideos
+        }
+        if baseline?.useInAppBrowser != source.useInAppBrowser {
+            target.useInAppBrowser = source.useInAppBrowser
+        }
+        if baseline?.showTrendingTopics != source.showTrendingTopics {
+            target.showTrendingTopics = source.showTrendingTopics
+        }
+        if baseline?.showTrendingVideos != source.showTrendingVideos {
+            target.showTrendingVideos = source.showTrendingVideos
+        }
 
         // Thread Preferences
-        target.threadSortOrder = source.threadSortOrder
-        target.prioritizeFollowedUsers = source.prioritizeFollowedUsers
-        target.threadedReplies = source.threadedReplies
-        target.showHiddenPosts = source.showHiddenPosts
+        if baseline?.threadSortOrder != source.threadSortOrder {
+            target.threadSortOrder = source.threadSortOrder
+        }
+        if baseline?.prioritizeFollowedUsers != source.prioritizeFollowedUsers {
+            target.prioritizeFollowedUsers = source.prioritizeFollowedUsers
+        }
+        if baseline?.threadedReplies != source.threadedReplies {
+            target.threadedReplies = source.threadedReplies
+        }
+        if baseline?.showHiddenPosts != source.showHiddenPosts {
+            target.showHiddenPosts = source.showHiddenPosts
+        }
 
         // Feed Preferences
-        target.showSavedFeedSamples = source.showSavedFeedSamples
+        if baseline?.showSavedFeedSamples != source.showSavedFeedSamples {
+            target.showSavedFeedSamples = source.showSavedFeedSamples
+        }
 
         // External Media
-        target.externalMediaConsents = source.externalMediaConsents
+        if let baseline {
+            let providerKeys = Set(baseline.externalMediaConsents.keys).union(source.externalMediaConsents.keys)
+            for key in providerKeys where baseline.externalMediaConsents[key] != source.externalMediaConsents[key] {
+                target.externalMediaConsents[key] = source.externalMediaConsents[key]
+            }
+        } else {
+            target.externalMediaConsents = source.externalMediaConsents
+        }
         // WebView Embeds
-        target.useWebViewEmbeds = source.useWebViewEmbeds
+        if baseline?.useWebViewEmbeds != source.useWebViewEmbeds {
+            target.useWebViewEmbeds = source.useWebViewEmbeds
+        }
 
         // Languages
-        target.appLanguage = source.appLanguage
-        target.primaryLanguage = source.primaryLanguage
-        target.contentLanguages = source.contentLanguages
-        target.hideNonPreferredLanguages = source.hideNonPreferredLanguages
-        target.showLanguageIndicators = source.showLanguageIndicators
+        if baseline?.appLanguage != source.appLanguage {
+            target.appLanguage = source.appLanguage
+        }
+        if baseline?.primaryLanguage != source.primaryLanguage {
+            target.primaryLanguage = source.primaryLanguage
+        }
+        if baseline?.contentLanguages != source.contentLanguages {
+            target.contentLanguages = source.contentLanguages
+        }
+        if baseline?.hideNonPreferredLanguages != source.hideNonPreferredLanguages {
+            target.hideNonPreferredLanguages = source.hideNonPreferredLanguages
+        }
+        if baseline?.showLanguageIndicators != source.showLanguageIndicators {
+            target.showLanguageIndicators = source.showLanguageIndicators
+        }
 
         // Privacy
-        target.loggedOutVisibility = source.loggedOutVisibility
+        if baseline?.loggedOutVisibility != source.loggedOutVisibility {
+            target.loggedOutVisibility = source.loggedOutVisibility
+        }
     }
 
     // Unique identifier — per-account, set via init(accountDID:)
@@ -343,18 +432,19 @@ final class AppSettingsModel {
     }
     
     /// Migrate from existing UserDefaults settings
-    func migrateFromUserDefaults(accountDID: String? = nil, includeLegacyFallback: Bool = true) {
-        let defaults = UserDefaults.standard
+    func migrateFromUserDefaults(accountDID: String? = nil, includeLegacyFallback: Bool = true, writeWidgetBackup: Bool = true, defaults: UserDefaults = .standard) {
         
         // Appearance
         if let value = Self.stringValue(for: "theme", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { theme = value }
         if let value = Self.stringValue(for: "darkThemeMode", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { darkThemeMode = value }
         if let value = Self.stringValue(for: "accentColor", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { accentColor = value }
         
-        // Ensure theme settings are also saved to app group for widgets
-        let groupDefaults = Self.sharedDefaults()
-        groupDefaults.set(theme, forKey: "theme")
-        groupDefaults.set(darkThemeMode, forKey: "darkThemeMode")
+        // AppSettings defers this backup until its private persistence transaction succeeds.
+        if writeWidgetBackup {
+            let groupDefaults = Self.sharedDefaults()
+            groupDefaults.set(theme, forKey: "theme")
+            groupDefaults.set(darkThemeMode, forKey: "darkThemeMode")
+        }
         if let value = Self.stringValue(for: "fontStyle", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { fontStyle = value }
         if let value = Self.stringValue(for: "fontSize", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { fontSize = value }
         if let value = Self.stringValue(for: "lineSpacing", accountDID: accountDID, defaults: defaults, includeLegacyFallback: includeLegacyFallback) { lineSpacing = value }
@@ -437,6 +527,17 @@ final class AppSettingsModel {
         
     }
     
+    /// Reset visual customization only. Accessibility and account preferences are preserved.
+    func resetAppearanceToDefaults() {
+        theme = "system"
+        darkThemeMode = "dim"
+        accentColor = "default"
+        fontStyle = "system"
+        fontSize = "default"
+        lineSpacing = "normal"
+        letterSpacing = "normal"
+    }
+
     /// Reset all settings to defaults
     func resetToDefaults() {
         // Appearance

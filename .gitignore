@@ -216,6 +216,8 @@ WORKTREE_PLAN.md
 *.png
 *.jpg
 *.jpeg
+# Asset catalog images ship in the app and must stay tracked
+!Catbird/Resources/Assets.xcassets/**/*.png
 # Log files
 *.txt
 # Claude-specific files

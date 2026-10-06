@@ -350,7 +350,7 @@ final class MediaUploadManager {
     if fileSize.intValue > maxVideoSize {
       logger.error(
         "ERROR: Video exceeds maximum size of 100MB (actual: \(fileSize.intValue / 1024 / 1024)MB)")
-      throw VideoUploadError.processingFailed("Video exceeds maximum size of 100MB")
+      throw VideoUploadError.tooLarge
     }
 
     // Validate video format
@@ -360,8 +360,7 @@ final class MediaUploadManager {
       let isPlayable = try await asset.load(.isPlayable)
       if !isPlayable {
         logger.error("ERROR: Video asset is not playable")
-        throw VideoUploadError.processingFailed(
-          "Video format is not supported or file is corrupted")
+        throw VideoUploadError.unsupportedFormat
       }
 
       // Verify it has a video track
@@ -369,7 +368,7 @@ final class MediaUploadManager {
       let videoTracks = try await asset.loadTracks(withMediaType: .video)
       if videoTracks.isEmpty {
         logger.error("ERROR: No video tracks found in asset")
-        throw VideoUploadError.processingFailed("No video content found in file")
+        throw VideoUploadError.unsupportedFormat
       }
 
       // Get duration
@@ -381,7 +380,7 @@ final class MediaUploadManager {
       if durationInSeconds > 180 {  // 3 minutes max (updated March 2025)
         logger.error(
           "ERROR: Video duration exceeds maximum allowed (\(durationInSeconds) > 180 seconds)")
-        throw VideoUploadError.processingFailed("Video exceeds maximum duration of 3 minutes")
+        throw VideoUploadError.tooLong
       }
     } catch let assetError where !(assetError is VideoUploadError) {
       logger.error("ERROR: Failed to validate video asset: \(assetError)")
@@ -396,9 +395,8 @@ final class MediaUploadManager {
     let (canUpload, limitMessage, _) = try await checkVideoUploadLimits(token: authToken)
 
     guard canUpload else {
-      let errorMessage = limitMessage ?? "Cannot upload videos at this time"
-      logger.error("ERROR: Server does not allow video uploads: \(errorMessage)")
-      throw VideoUploadError.processingFailed(errorMessage)
+      logger.error("ERROR: Server does not allow video uploads: \(limitMessage ?? "no message")")
+      throw VideoUploadError.uploadLimitReached(limitMessage)
     }
 
     logger.debug("DEBUG: Video uploads are allowed, proceeding with upload")
@@ -821,19 +819,31 @@ enum VideoUploadError: LocalizedError {
   case uploadFailed
   case processingFailed(String)
   case processingTimeout
+  case tooLarge
+  case tooLong
+  case unsupportedFormat
+  case uploadLimitReached(String?)
 
+  /// User-facing copy. Technical details stay in the logs.
   var errorDescription: String? {
     switch self {
-    case .noClientAvailable:
-      return "No ATProto client available"
-    case .authenticationFailed:
-      return "Failed to authenticate with video service"
-    case .uploadFailed:
-      return "Failed to upload video"
-    case .processingFailed(let reason):
-      return "Video processing failed: \(reason)"
+    case .noClientAvailable, .authenticationFailed:
+      return "Couldn’t upload your video. Sign in again and try again."
+    case .uploadFailed, .processingFailed:
+      return "Couldn’t upload your video. Try again."
     case .processingTimeout:
-      return "Video processing timed out"
+      return "Your video is taking too long to process. Try again later."
+    case .tooLarge:
+      return "Videos must be 100 MB or smaller."
+    case .tooLong:
+      return "Videos must be 3 minutes or shorter."
+    case .unsupportedFormat:
+      return "This video’s format isn’t supported."
+    case .uploadLimitReached(let message):
+      if let message, !message.isEmpty {
+        return message
+      }
+      return "You can’t upload more videos right now. Try again later."
     }
   }
 }

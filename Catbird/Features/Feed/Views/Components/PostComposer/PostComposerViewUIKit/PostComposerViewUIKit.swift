@@ -20,12 +20,17 @@ import UIKit
 private let pcUIKitLogger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "Catbird", category: "PostComposerUIKit")
 
 struct PostComposerViewUIKit: View {
+  static let composerAvatarSize = DesignTokens.Size.avatarXL
+
   @Environment(\.dismiss) var dismiss
   @Environment(\.horizontalSizeClass) private var hSize
+  @Environment(\.verticalSizeClass) private var vSize
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   
   // Store AppState reference locally to avoid global observation
- let appState: AppState
+  let appState: AppState
+  let editingSession: SceneComposerEditingSession
+  private let initialEditingClaim: ComposerDraftClaim?
   
   @State var viewModel: PostComposerViewModel?
   private let initialParentPost: AppBskyFeedDefs.PostView?
@@ -47,14 +52,13 @@ struct PostComposerViewUIKit: View {
   @State var videoPickerVisible = false
   @State var photoPickerItems: [PhotosPickerItem] = []
   @State var videoPickerItems: [PhotosPickerItem] = []
+  @State var pendingPasteCount = 0
   @State var showingEmojiPicker = false
   @State var showingAudioRecorder = false
   @State var showingAudioVisualizerPreview = false
-  @State var currentAudioURL: URL?
-  @State var currentAudioDuration: TimeInterval = 0
-  @State var isGeneratingVisualizerVideo = false
-  @State var visualizerService: AudioVisualizerService? = nil
   @State var showingAccountSwitcher = false
+  @State var accountSwitchSnapshot: ComposerEditingSnapshot?
+  @State private var initializationError: String?
   @State var showingLanguagePicker = false
   @State var showingDismissAlert = false
   @State var showingDrafts = false
@@ -66,6 +70,18 @@ struct PostComposerViewUIKit: View {
   @State var suppressAutoSaveOnDismiss = false
   @State var activeEditorFocusID = UUID()
   @State var didSetInitialFocusID = false
+  private struct ReplyEditorPosition: Hashable {
+    let claim: ComposerDraftClaim?
+    let sourceURI: String?
+  }
+  @State private var positionedReply: ReplyEditorPosition?
+  @State private var userScrolledReplyClaim: ComposerDraftClaim?
+  /// The scroll view's unobscured height (after navigation, keyboard and footer
+  /// insets). The reply area fills exactly this so the editor can sit at the top
+  /// without leaving scrollable blank space below it.
+  @State private var replyVisibleHeight: CGFloat = 0
+  @State private var replySourcePath = NavigationPath()
+  @State private var replySourceSelectedTab = 0
   @State var mentionOverlayCooldownUntil: Date = .distantPast
 
   @State var autoSaveTask: Task<Void, Never>?
@@ -74,8 +90,12 @@ struct PostComposerViewUIKit: View {
   init(parentPost: AppBskyFeedDefs.PostView? = nil,
        quotedPost: AppBskyFeedDefs.PostView? = nil,
        initialText: String? = nil,
-       appState: AppState) {
+       appState: AppState,
+       editingSession: SceneComposerEditingSession,
+       editingClaim: ComposerDraftClaim? = nil) {
     self.appState = appState
+    self.editingSession = editingSession
+    self.initialEditingClaim = editingClaim
     self.initialParentPost = parentPost
     self.initialQuotedPost = quotedPost
     self.initialTextParam = initialText
@@ -84,8 +104,12 @@ struct PostComposerViewUIKit: View {
   }
   
   init(restoringFromDraft draft: PostComposerDraft,
-       appState: AppState) {
+       appState: AppState,
+       editingSession: SceneComposerEditingSession,
+       editingClaim: ComposerDraftClaim? = nil) {
     self.appState = appState
+    self.editingSession = editingSession
+    self.initialEditingClaim = editingClaim
     self.initialParentPost = nil
     self.initialQuotedPost = nil
     self.initialTextParam = nil
@@ -94,8 +118,12 @@ struct PostComposerViewUIKit: View {
   }
 
   init(initialCapturedMedia: CapturedMedia,
-       appState: AppState) {
+       appState: AppState,
+       editingSession: SceneComposerEditingSession,
+       editingClaim: ComposerDraftClaim? = nil) {
     self.appState = appState
+    self.editingSession = editingSession
+    self.initialEditingClaim = editingClaim
     self.initialParentPost = nil
     self.initialQuotedPost = nil
     self.initialTextParam = nil
@@ -106,12 +134,21 @@ struct PostComposerViewUIKit: View {
   var body: some View {
     Group {
       if let vm = viewModel {
-        GeometryReader { proxy in
+        GeometryReader { _ in
           navigationContainer(vm: vm)
+            .disabled(isSubmitting || vm.isPreparingPendingAudio)
             .onAppear {
               pcUIKitLogger.info("PostComposerViewUIKit: View appeared")
-              updateMentionOverlay(vm: vm, proxy: proxy)
             }
+        }
+      } else if let initializationError {
+        ContentUnavailableView {
+          Label("Draft Unavailable", systemImage: "doc.text")
+        } description: {
+          Text(initializationError)
+        } actions: {
+          Button("Close") { dismiss() }
+            .buttonStyle(.borderedProminent)
         }
       } else {
           ProgressView().progressViewStyle(.circular)
@@ -120,34 +157,38 @@ struct PostComposerViewUIKit: View {
       }
       }
     }
-    // Root-level stable identity: recreate composer only on account switch
-    .id(appState.userDID ?? "composer-unknown-user")
+    // Identity belongs to the injected origin scene.
+    .id(editingSession.sceneID)
+    .interactiveDismissDisabled(hasPendingMediaIntent || isSubmitting)
     .task {
       guard viewModel == nil else { 
         pcUIKitLogger.debug("PostComposerViewUIKit: Task skipped, viewModel already exists")
         return 
       }
-      pcUIKitLogger.info("PostComposerViewUIKit: Initializing composer - parentPost: \(initialParentPost != nil), quotedPost: \(initialQuotedPost != nil), initialText: \(initialTextParam != nil), draft: \(restoringDraftParam != nil), currentDraft: \(appState.composerDraftManager.currentDraft != nil)")
       let vm = PostComposerViewModel(
         parentPost: initialParentPost,
         quotedPost: initialQuotedPost,
-        appState: appState
+        appState: appState,
+        editingSession: editingSession
       )
-      
-      // If initial text was passed (e.g. from Copilot proposal), prefill it;
-      // otherwise check for a restored or current draft.
       if let initialText = initialTextParam, !initialText.isEmpty {
         vm.postText = initialText
-      } else if let draft = restoringDraftParam {
-        pcUIKitLogger.info("PostComposerViewUIKit: Restoring draft from parameter")
-        vm.restoreDraftState(draft)
-      } else if initialCapturedMediaParam == nil,
-                let currentDraft = appState.composerDraftManager.currentDraft {
-        pcUIKitLogger.info("PostComposerViewUIKit: Restoring current draft (likely from account switch)")
-        vm.restoreDraftState(currentDraft)
       }
-      
+      do {
+        try vm.startEditing(restoring: restoringDraftParam, claim: initialEditingClaim)
+      } catch {
+        initializationError = error.localizedDescription
+        return
+      }
+
       viewModel = vm
+
+      // Request focus before any asynchronous media or preference load can
+      // finish after the user has already started reading the source post.
+      if !didSetInitialFocusID {
+        activeEditorFocusID = UUID()
+        didSetInitialFocusID = true
+      }
 
       if let capturedMedia = initialCapturedMediaParam {
         switch capturedMedia {
@@ -158,13 +199,12 @@ struct PostComposerViewUIKit: View {
         }
       }
       
-      await vm.loadUserLanguagePreference()
-      
-      if !didSetInitialFocusID {
-        activeEditorFocusID = UUID()
-        didSetInitialFocusID = true
-        pcUIKitLogger.debug("PostComposerViewUIKit: Set initial focus ID")
+      guard !Task.isCancelled, vm.ownsEditingDraft else { return }
+      if restoringDraftParam == nil && initialEditingClaim == nil && vm.selectedLanguages.isEmpty {
+        await vm.loadUserLanguagePreference()
       }
+      guard !Task.isCancelled, vm.ownsEditingDraft else { return }
+      
       startAutoSave()
     }
     .onDisappear {
@@ -173,12 +213,12 @@ struct PostComposerViewUIKit: View {
       if let vm = viewModel,
          dismissReason != .submit && dismissReason != .discard,
          !suppressAutoSaveOnDismiss,
-         hasContent(vm: vm),
-         appState.composerDraftManager.currentDraft != nil {
-        pcUIKitLogger.info("PostComposerViewUIKit: Auto-saving draft on disappear")
-        Task { await MainActor.run { vm.saveDraftIfNeeded() } }
-      } else {
-        pcUIKitLogger.debug("PostComposerViewUIKit: Skipping auto-save - submit/discard, no content, or draft was cleared")
+         (hasContent(vm: vm) || vm.isReply), vm.ownsEditingDraft {
+        if hasPendingMediaIntent {
+          vm.saveDraftIfNeeded()
+        } else {
+          _ = vm.minimizeEditingDraft()
+        }
       }
     }
   }
@@ -186,68 +226,67 @@ struct PostComposerViewUIKit: View {
   @ViewBuilder
   private func navigationContainer(vm: PostComposerViewModel) -> some View {
     #if os(iOS)
-    NavigationStack {
+    NavigationStack(path: $replySourcePath) {
       mainContent(vm: vm)
         .navigationTitle(getNavigationTitle(vm: vm))
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
           // Leading: X button with confirmation dialog
-          ToolbarItem(placement: .cancellationAction) {
+          ToolbarItem(placement: .topBarLeading) {
             Button(action: {
               closePlusMenu()
               if hasContent(vm: vm) {
                 showingDismissAlert = true
               } else {
+                let ended = vm.isReply ? vm.minimizeEditingDraft() : vm.discardEditingDraft()
+                guard ended else { return }
                 dismissReason = .discard
-                appState.composerDraftManager.clearDraft()
-                vm.clearAll()
                 dismiss()
               }
             }) {
               Image(systemName: "xmark")
             }
             .accessibilityLabel("Cancel")
+            .accessibilityIdentifier("composer-close")
             .confirmationDialog(
-              "Discard post?",
+              "Discard Post?",
               isPresented: $showingDismissAlert,
               titleVisibility: .visible
             ) {
               Button("Save Draft") {
-                guard let vm = viewModel else { return }
-                let draft = vm.saveDraftState()
-                
-                Task { @MainActor in
-                  guard await appState.composerDraftManager.createSavedDraftAndWait(draft) else {
-                    appState.toastManager.show(
-                      ToastItem(message: "Could not save your draft", icon: "exclamationmark.triangle.fill")
-                    )
-                    return
-                  }
+                guard let snapshot = vm.captureEditingSnapshot() else { return }
+                do {
+                  _ = try editingSession.stash(snapshot)
                   suppressAutoSaveOnDismiss = true
-                  appState.composerDraftManager.clearWorkingDraftAfterStash()
                   vm.clearAll()
                   dismissReason = .discard
                   dismiss()
+                } catch {
+                  appState.toastManager.show(
+                    ToastItem(message: error.localizedDescription, icon: "exclamationmark.triangle.fill")
+                  )
                 }
               }
+              .disabled(hasPendingMediaIntent)
               Button("Discard", role: .destructive) {
+                guard vm.discardEditingDraft() else { return }
                 suppressAutoSaveOnDismiss = true
                 dismissReason = .discard
-                appState.composerDraftManager.clearDraft()
-                if let vm = viewModel {
-                  vm.clearAll()
-                }
                 dismiss()
               }
               Button("Keep Editing", role: .cancel) { }
             } message: {
-              Text("You'll lose your post if you discard now.")
+              Text("You’ll lose your post if you discard now.")
             }
           }
 
-          // Drafts button next to X on leading side
-          ToolbarItem(placement: .cancellationAction) {
-            if !appState.composerDraftManager.savedDrafts.isEmpty {
+          if !appState.composerDraftManager.savedDrafts.isEmpty {
+            #if compiler(>=6.2)
+            if #available(iOS 26.0, macOS 26.0, *) {
+              ToolbarSpacer(.fixed, placement: .topBarLeading)
+            }
+            #endif
+            ToolbarItem(placement: .topBarLeading) {
               Button(action: {
                 closePlusMenu()
                 showingDrafts = true
@@ -255,14 +294,12 @@ struct PostComposerViewUIKit: View {
                 Image(systemName: "doc.text")
               }
               .accessibilityLabel("Open Drafts")
+              .accessibilityIdentifier("composer-drafts")
+              .disabled(hasPendingMediaIntent)
               .help("Open saved drafts")
               .nuxNudge(id: .draftsAnnouncement)
             }
           }
-
-
-
-          // Only the 'Open Drafts' button remains visible; 'Save Draft' lives in the discard dialog.
 
           // Trailing: Post button with glass effect
           ToolbarItem(placement: .primaryAction) {
@@ -294,15 +331,16 @@ struct PostComposerViewUIKit: View {
                   ProgressView()
                     .progressViewStyle(.circular)
                     .tint(.white)
-                    .foregroundStyle(Color.white)
                 } else {
                   Image(systemName: "arrow.up")
-                    .foregroundStyle(Color.white)
                 }
               }
               .disabled(!canSubmit(vm: vm) || isSubmitting)
               .opacity(isSubmitting ? 0.7 : 1)
+              .buttonStyle(.borderedProminent)
+              .buttonBorderShape(.capsule)
               .keyboardShortcut(.return, modifiers: .command)
+              .accessibilityLabel(vm.isThreadMode ? "Post All" : "Post")
             }
 #else
             Button(action: {
@@ -313,23 +351,26 @@ struct PostComposerViewUIKit: View {
                 ProgressView()
                   .progressViewStyle(.circular)
                   .tint(.white)
-                  .foregroundStyle(Color.white)
               } else {
                 Image(systemName: "arrow.up")
-                  .foregroundStyle(Color.white)
               }
             }
             .disabled(!canSubmit(vm: vm) || isSubmitting)
             .opacity(isSubmitting ? 0.7 : 1)
+            .buttonStyle(.borderedProminent)
+            .buttonBorderShape(.capsule)
             .keyboardShortcut(.return, modifiers: .command)
+            .accessibilityLabel(vm.isThreadMode ? "Post All" : "Post")
 #endif
           }
         }
-        // Force toolbar re-render when drafts count changes
-        .id("toolbar-\(appState.composerDraftManager.savedDrafts.count)")
+        .navigationDestination(for: NavigationDestination.self) { destination in
+          NavigationHandler.viewForDestination(destination, path: $replySourcePath,
+                                               appState: appState, selectedTab: $replySourceSelectedTab)
+        }
     }
     #else
-    NavigationStack {
+    NavigationStack(path: $replySourcePath) {
       mainContent(vm: vm)
         .navigationTitle(getNavigationTitle(vm: vm))
         .toolbar {
@@ -338,27 +379,26 @@ struct PostComposerViewUIKit: View {
               if hasContent(vm: vm) {
                 showingDismissAlert = true
               } else {
+                let ended = vm.isReply ? vm.minimizeEditingDraft() : vm.discardEditingDraft()
+                guard ended else { return }
                 dismissReason = .discard
-                appState.composerDraftManager.clearDraft()
-                vm.clearAll()
                 dismiss()
               }
             }
             .confirmationDialog(
-              "Discard post?",
+              "Discard Post?",
               isPresented: $showingDismissAlert,
               titleVisibility: .visible
             ) {
               Button("Discard", role: .destructive) {
                 suppressAutoSaveOnDismiss = true
+                guard vm.discardEditingDraft() else { return }
                 dismissReason = .discard
-                appState.composerDraftManager.clearDraft()
-                vm.clearAll()
                 dismiss()
               }
               Button("Keep Editing", role: .cancel) { }
             } message: {
-              Text("You'll lose your post if you discard now.")
+              Text("You’ll lose your post if you discard now.")
             }
           }
           ToolbarItem(placement: .primaryAction) {
@@ -374,12 +414,16 @@ struct PostComposerViewUIKit: View {
             .accessibilityLabel(vm.isThreadMode ? "Post All" : "Post")
           }
         }
+        .navigationDestination(for: NavigationDestination.self) { destination in
+          NavigationHandler.viewForDestination(destination, path: $replySourcePath,
+                                               appState: appState, selectedTab: $replySourceSelectedTab)
+        }
     }
     #endif
   }
   
   private func getNavigationTitle(vm: PostComposerViewModel) -> String {
-    if vm.parentPost != nil {
+    if vm.isReply {
       return "Reply"
     } else if vm.isThreadMode {
       return "Thread"
@@ -390,20 +434,73 @@ struct PostComposerViewUIKit: View {
   
   @ViewBuilder
   private func mainContent(vm: PostComposerViewModel) -> some View {
+    let compactReply = usesCompactReplyLayout(vm: vm)
+    let initialPosition = ReplyEditorPosition(claim: vm.editingClaim, sourceURI: vm.parentPost?.uri.uriString())
     sheetModifiers(vm: vm,
-      ScrollView {
-        VStack(spacing: 16) {
-          // Show a single editor instance.
-          // In thread mode, the active editor is rendered inside threadEntriesSection.
-          if !vm.isThreadMode {
-            composerEditorSection(vm: vm)
-            mentionSuggestionsSection(vm: vm)
-            mediaAttachmentsSection(vm: vm)
-            metadataSection(vm: vm)
+      GeometryReader { geometry in
+        ScrollViewReader { proxy in
+          ScrollView {
+            VStack(spacing: 0) {
+              if let parent = vm.parentPost {
+                let avatarSize = compactReply && !vm.isThreadMode
+                  ? DesignTokens.Size.avatarMD : Self.composerAvatarSize
+                ReplySourcePostView(post: parent, avatarSize: avatarSize, path: $replySourcePath)
+                  .padding(.horizontal, 16)
+                  .padding(.bottom, 16)
+                  .background(alignment: .topLeading) {
+                    Rectangle()
+                      .fill(Color.systemGray4)
+                      .frame(width: 2)
+                      .padding(.top, avatarSize + 4)
+                      .padding(.leading, 16 + (avatarSize - 2) / 2)
+                      .allowsHitTesting(false)
+                      .accessibilityHidden(true)
+                  }
+              } else if vm.isReply {
+                ReplySourceUnavailableView(vm: vm)
+              }
+
+              VStack(spacing: 16) {
+                if !vm.isThreadMode {
+                  composerEditorSection(vm: vm)
+                    .id("reply-editor")
+                  mentionSuggestionsSection(vm: vm)
+                  mediaAttachmentsSection(vm: vm)
+                  metadataSection(vm: vm)
+                }
+                threadEntriesSection(vm: vm)
+              }
+              .frame(minHeight: vm.isReply ? replyMinimumHeight(fallback: geometry.size.height) : nil,
+                     alignment: .top)
+            }
+            .padding(.top, compactReply ? 0 : 8)
           }
-          threadEntriesSection(vm: vm)
+          .accessibilityIdentifier("reply-composer-scroll")
+          .onScrollGeometryChange(for: CGFloat.self) { scrollGeometry in
+            scrollGeometry.containerSize.height - scrollGeometry.contentInsets.top
+              - scrollGeometry.contentInsets.bottom
+          } action: { _, visibleHeight in
+            replyVisibleHeight = max(0, visibleHeight)
+          }
+          .onScrollPhaseChange { _, phase in
+            if phase == .tracking || phase == .interacting || phase == .decelerating {
+              userScrolledReplyClaim = vm.editingClaim
+            }
+          }
+          .task(id: initialPosition) {
+            guard let uri = initialPosition.sourceURI, positionedReply != initialPosition,
+                  userScrolledReplyClaim != vm.editingClaim else { return }
+            await Task.yield()
+            guard !Task.isCancelled, vm.parentPost?.uri.uriString() == uri,
+                  initialPosition.claim == vm.editingClaim,
+                  userScrolledReplyClaim != vm.editingClaim else { return }
+            scrollToReplyEditor(proxy, vm: vm)
+            positionedReply = initialPosition
+          }
+          .onChange(of: vm.currentThreadIndex) { _, _ in
+            if vm.isThreadMode { scrollToReplyEditor(proxy, vm: vm) }
+          }
         }
-        .padding(.top, 8)
       }
       .background(Color.systemBackground)
       .overlay {
@@ -431,8 +528,32 @@ struct PostComposerViewUIKit: View {
     )
   }
 
+  private func usesCompactReplyLayout(vm: PostComposerViewModel) -> Bool {
+    #if os(iOS)
+    return vm.parentPost != nil && vSize == .compact
+    #else
+    return false
+    #endif
+  }
+
+  private func replyMinimumHeight(fallback: CGFloat) -> CGFloat {
+    replyVisibleHeight > 1 ? min(replyVisibleHeight, fallback) : fallback
+  }
+
+  private func scrollToReplyEditor(_ proxy: ScrollViewProxy, vm: PostComposerViewModel) {
+    if vm.isThreadMode, vm.threadEntries.indices.contains(vm.currentThreadIndex) {
+      proxy.scrollTo(vm.threadEntries[vm.currentThreadIndex].id, anchor: .top)
+    } else {
+      proxy.scrollTo("reply-editor", anchor: .top)
+    }
+  }
+
   private func composerAccessoryStack(vm: PostComposerViewModel) -> some View {
-    VStack(alignment: .leading, spacing: 8) {
+    let compactReply = usesCompactReplyLayout(vm: vm)
+    let layout = compactReply
+      ? AnyLayout(HStackLayout(spacing: 8))
+      : AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+    return layout {
       ComposerChipsStrip(
         outlineTags: vm.outlineTags,
         selectedLanguages: vm.selectedLanguages,
@@ -459,20 +580,27 @@ struct PostComposerViewUIKit: View {
         onEditLabels: {
           closePlusMenu()
           showingLabelSelector = true
-        }
+        },
+        showsInteractionSettings: !vm.isReply
       )
+      .frame(maxWidth: compactReply ? .infinity : nil, alignment: .leading)
 
       ComposerAccessoryBar(
         isPlusMenuOpen: $showingPlusMenu,
         characterCount: vm.postText.count,
-        allowTenor: appState.appSettings.externalMediaConsent(for: .tenor) != .hide,
+        allowTenor: appState.appSettings.externalMediaConsent(for: .klipy) != .hide,
+        isAddToThreadDisabled: hasPendingMediaIntent,
+        showsThreadgate: !vm.isReply,
         threadgateValue: vm.interactionSettings.summary,
         languageValue: languageSummary(vm: vm),
         actions: ComposerBarActions(
           onPhotos: { presentPhotoPicker(vm: vm) },
           onVideo: { videoPickerVisible = true },
           onGif: { showingGifPicker = true },
-          onAudio: { showingAudioRecorder = true },
+          onAudio: {
+            if vm.pendingAudioURL != nil { showingAudioVisualizerPreview = true }
+            else { showingAudioRecorder = true }
+          },
           onLink: { presentLinkCreation(vm: vm) },
           onThreadgate: { showingThreadgate = true },
           onLanguage: { showingLanguagePicker = true },
@@ -491,10 +619,12 @@ struct PostComposerViewUIKit: View {
           }
         )
       )
+      .disabled(hasPendingMediaIntent)
+      .fixedSize(horizontal: compactReply, vertical: compactReply)
     }
     .padding(.horizontal, 16)
-    .padding(.top, 4)
-    .padding(.bottom, 8)
+    .padding(.top, compactReply ? 0 : 4)
+    .padding(.bottom, compactReply ? 0 : 8)
   }
 
   private func languageSummary(vm: PostComposerViewModel) -> String {
@@ -516,6 +646,12 @@ struct PostComposerViewUIKit: View {
       || showingDismissAlert
   }
 
+  var hasPendingMediaIntent: Bool {
+    photoPickerVisible || videoPickerVisible || showingGifPicker || showingAudioRecorder
+      || showingAudioVisualizerPreview || !photoPickerItems.isEmpty || !videoPickerItems.isEmpty
+      || pendingPasteCount > 0 || viewModel?.isPreparingPendingAudio == true
+  }
+
   private func closePlusMenu() {
     guard showingPlusMenu else { return }
     withAnimation(ComposerAccessoryBar.menuAnimation(reduceMotion: reduceMotion)) {
@@ -525,23 +661,25 @@ struct PostComposerViewUIKit: View {
   
   @ViewBuilder
   private func composerEditorSection(vm: PostComposerViewModel) -> some View {
+    let avatarSize = usesCompactReplyLayout(vm: vm) ? DesignTokens.Size.avatarMD : Self.composerAvatarSize
     HStack(alignment: .top, spacing: 12) {
       // Tappable avatar that opens account switcher
       Button(action: {
         pcUIKitLogger.info("PostComposerViewUIKit: Avatar tapped - opening account switcher")
         if hasContent(vm: vm) {
-          appState.composerDraftManager.storeDraft(from: vm)
+          vm.saveDraftIfNeeded()
         }
-        showingAccountSwitcher = true
+        accountSwitchSnapshot = vm.captureEditingSnapshot()
+        showingAccountSwitcher = accountSwitchSnapshot != nil
       }) {
         #if os(iOS)
         UIKitAvatarView(
           did: appState.userDID,
           client: appState.atProtoClient,
-          size: 40,
+          size: avatarSize,
           avatarURL: appState.currentUserProfile?.finalAvatarURL()
         )
-        .frame(width: 40, height: 40)
+        .frame(width: avatarSize, height: avatarSize)
         .contentShape(Circle())
         .clipShape(Circle())
         .clipped()
@@ -552,16 +690,18 @@ struct PostComposerViewUIKit: View {
           } placeholder: {
             Circle().fill(Color.systemGray5)
           }
-          .frame(width: 40, height: 40)
+          .frame(width: avatarSize, height: avatarSize)
           .clipShape(Circle())
         } else {
-          Circle().fill(Color.systemGray5).frame(width: 40, height: 40)
+          Circle().fill(Color.systemGray5)
+            .frame(width: avatarSize, height: avatarSize)
         }
         #endif
       }
       .buttonStyle(.plain)
       .accessibilityLabel("Switch account")
       .accessibilityHint("Tap to switch between accounts")
+      .disabled(hasPendingMediaIntent)
       
       RichEditorContainer(
         attributedText: Binding(
@@ -570,11 +710,13 @@ struct PostComposerViewUIKit: View {
         ),
         linkFacets: $linkFacets,
         pendingSelectionRange: $pendingSelectionRange,
-        placeholder: vm.parentPost != nil ? "Write your reply..." : "What's on your mind?",
+        placeholder: vm.isReply ? "Write your reply…" : "What’s on your mind?",
         onImagePasted: { image in
           pcUIKitLogger.info("PostComposerViewUIKit: Image pasted into editor")
           #if os(iOS)
+          pendingPasteCount += 1
           Task {
+            defer { pendingPasteCount -= 1 }
             await vm.handleMediaPaste([NSItemProvider(object: image)])
           }
           #endif
@@ -603,7 +745,8 @@ struct PostComposerViewUIKit: View {
         },
         onAudioAction: { 
           pcUIKitLogger.info("PostComposerViewUIKit: Audio action triggered")
-          showingAudioRecorder = true 
+          if vm.pendingAudioURL != nil { showingAudioVisualizerPreview = true }
+          else { showingAudioRecorder = true } 
         },
         onGifAction: { 
           pcUIKitLogger.info("PostComposerViewUIKit: GIF action triggered")
@@ -622,6 +765,7 @@ struct PostComposerViewUIKit: View {
           showingLanguagePicker = true 
         },
         onThreadAction: { 
+          guard !hasPendingMediaIntent else { return }
           pcUIKitLogger.info("PostComposerViewUIKit: Thread action triggered - isThreadMode: \(viewModel?.isThreadMode ?? false)")
           guard let vm = viewModel else { return }
           withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
@@ -645,7 +789,7 @@ struct PostComposerViewUIKit: View {
           pcUIKitLogger.info("PostComposerViewUIKit: Link action triggered")
           presentLinkCreation(vm: vm)
         },
-        		allowTenor: appState.appSettings.externalMediaConsent(for: .tenor) != .hide,
+        		allowTenor: appState.appSettings.externalMediaConsent(for: .klipy) != .hide,
         onTextViewCreated: { textView in
           pcUIKitLogger.debug("PostComposerViewUIKit: Text view created")
           #if os(iOS)
@@ -661,24 +805,23 @@ struct PostComposerViewUIKit: View {
     }
   }
   
-  private func startAutoSave() {
-    pcUIKitLogger.info("PostComposerViewUIKit: Starting auto-save task (30s interval)")
+  func startAutoSave() {
     autoSaveTask?.cancel()
-    autoSaveTask = Task {
+    guard let vm = viewModel, let claim = vm.editingClaim else { return }
+    autoSaveTask = Task { @MainActor in
       while !Task.isCancelled {
-        try? await Task.sleep(nanoseconds: 30_000_000_000)
-        guard let vm = viewModel else { continue }
-        if hasContent(vm: vm) {
-          pcUIKitLogger.debug("PostComposerViewUIKit: Auto-save triggered - saving draft")
-          await MainActor.run { vm.saveDraftIfNeeded() }
-        } else {
-          pcUIKitLogger.trace("PostComposerViewUIKit: Auto-save skipped - no content")
+        do {
+          try await Task.sleep(nanoseconds: 30_000_000_000)
+        } catch {
+          return
         }
+        guard !Task.isCancelled, vm.ownsEditingDraft, vm.editingClaim == claim else { return }
+        vm.saveDraftIfNeeded(claim: claim)
       }
     }
   }
-  
+
   func hasContent(vm: PostComposerViewModel) -> Bool {
-    return vm.hasContent
+    return vm.hasMeaningfulDraftContent || hasPendingMediaIntent
   }
 }

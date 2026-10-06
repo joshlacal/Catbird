@@ -3,6 +3,7 @@ import os
 import PhotosUI
 import SwiftUI
 import AVFoundation
+import UniformTypeIdentifiers
 
 #if os(iOS)
 import UIKit
@@ -285,6 +286,7 @@ extension PostComposerViewModel {
     // MARK: - Photo Editing
 
     func beginEditingImage(for id: UUID, at index: Int) {
+        guard mediaItems.indices.contains(index), mediaItems[index].rawData != nil else { return }
         currentEditingImageIndex = index
         isPhotoEditorPresented = true
     }
@@ -341,38 +343,37 @@ extension PostComposerViewModel {
         
         do {
             var asset: AVAsset?
+            var videoURL: URL?
             
             if let pickerItem = videoItem.pickerItem {
-                // Load from PhotosPickerItem
-                if let movieData = try await pickerItem.loadTransferable(type: Data.self) {
-                    // Persist to App Group so it's accessible and survives tmp cleanup
-                    let dir = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.blue.catbird.shared")?
-                        .appendingPathComponent("SharedDrafts", isDirectory: true)
-                    if let dir {
-                        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-                        let destURL = dir.appendingPathComponent(UUID().uuidString).appendingPathExtension("mov")
-                        try movieData.write(to: destURL)
-                        asset = AVAsset(url: destURL)
-                        self.videoItem?.rawVideoURL = destURL
-                        self.videoItem?.videoData = movieData
-                    } else {
-                        // Fallback to temporary directory
-                        let tempURL = FileManager.default.temporaryDirectory
-                            .appendingPathComponent(UUID().uuidString)
-                            .appendingPathExtension("mov")
-                        try movieData.write(to: tempURL)
-                        asset = AVAsset(url: tempURL)
-                        self.videoItem?.rawVideoURL = tempURL
-                        self.videoItem?.videoData = movieData
-                    }
+                // Copy the movie file straight to disk instead of loading it into memory.
+                if let movie = try await pickerItem.loadTransferable(type: PickedMovie.self) {
+                    videoURL = movie.url
+                    asset = AVURLAsset(url: movie.url)
+                    self.videoItem?.rawVideoURL = movie.url
                 }
-            } else if let videoURL = videoItem.rawVideoURL {
+            } else if let rawVideoURL = videoItem.rawVideoURL {
                 // Load from URL (for GIF conversions)
-                asset = AVAsset(url: videoURL)
+                videoURL = rawVideoURL
+                asset = AVURLAsset(url: rawVideoURL)
             }
             
             guard let asset = asset else {
                 logger.error("ERROR: Could not create AVAsset")
+                rejectVideo(videoItem, title: "Couldn’t Load Video", message: "This video couldn’t be loaded. Try again.")
+                return
+            }
+
+            // Bluesky accepts videos up to 100 MB and 3 minutes; say so now rather than at post time.
+            if let videoURL,
+               let fileSize = (try? FileManager.default.attributesOfItem(atPath: videoURL.path))?[.size] as? NSNumber,
+               fileSize.int64Value > Self.maxVideoFileSize {
+                rejectVideo(videoItem, title: "Video Too Large", message: "Videos must be 100 MB or smaller.")
+                return
+            }
+            let duration = try await asset.load(.duration)
+            if CMTimeGetSeconds(duration) > Self.maxVideoDurationSeconds {
+                rejectVideo(videoItem, title: "Video Too Long", message: "Videos must be 3 minutes or shorter.")
                 return
             }
             
@@ -411,8 +412,20 @@ extension PostComposerViewModel {
             
         } catch {
             logger.error("ERROR: Failed to load video thumbnail: \(error)")
-            self.videoItem?.isLoading = false
+            rejectVideo(videoItem, title: "Couldn’t Load Video", message: "This video couldn’t be loaded. Try again.")
         }
+    }
+
+    static let maxVideoFileSize: Int64 = 100 * 1024 * 1024
+    static let maxVideoDurationSeconds: Double = 180
+
+    /// Removes a video that can't be posted and tells the user why, unless it was already replaced.
+    @MainActor
+    private func rejectVideo(_ rejected: MediaItem, title: String, message: String) {
+        guard self.videoItem?.id == rejected.id else { return }
+        self.videoItem = nil
+        syncMediaStateToCurrentThread()
+        alertItem = AlertItem(title: title, message: message)
     }
     
     // MARK: - Media Source Tracking
@@ -438,5 +451,30 @@ extension PostComposerViewModel {
     func isMediaSourceAlreadyAdded(_ source: MediaSource) -> Bool {
         let sourceID = generateSourceID(for: source)
         return mediaSourceTracker.contains(sourceID)
+    }
+}
+
+// MARK: - Picked Movie
+
+/// A movie from the photo picker, copied to the app group so drafts can reopen it.
+struct PickedMovie: Transferable {
+    let url: URL
+
+    static var transferRepresentation: some TransferRepresentation {
+        FileRepresentation(contentType: .movie) { movie in
+            SentTransferredFile(movie.url)
+        } importing: { received in
+            let directory = FileManager.default
+                .containerURL(forSecurityApplicationGroupIdentifier: "group.blue.catbird.shared")?
+                .appendingPathComponent("SharedDrafts", isDirectory: true)
+                ?? FileManager.default.temporaryDirectory
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let pathExtension = received.file.pathExtension.isEmpty ? "mov" : received.file.pathExtension
+            let destination = directory
+                .appendingPathComponent(UUID().uuidString)
+                .appendingPathExtension(pathExtension)
+            try FileManager.default.copyItem(at: received.file, to: destination)
+            return PickedMovie(url: destination)
+        }
     }
 }

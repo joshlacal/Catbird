@@ -232,19 +232,6 @@ final class VideoAssetManager {
 
     logger.debug("🎬 Creating GIF player for \(model.id) with URL: \(model.url.absoluteString)")
 
-    // First, validate that the MP4 URL is accessible
-    do {
-      let (_, response) = try await URLSession.shared.data(from: model.url)
-      if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode >= 400 {
-        logger.error(
-          "❌ GIF MP4 URL returned error \(httpResponse.statusCode): \(model.url.absoluteString)")
-        throw VideoError.notPlayable
-      }
-    } catch {
-      logger.error("❌ Failed to validate GIF MP4 URL: \(model.url.absoluteString) - \(error)")
-      throw VideoError.notPlayable
-    }
-
     // For GIFs, use optimized loading options for MP4 looping
     let options: [String: Any] = [
       AVURLAssetPreferPreciseDurationAndTimingKey: false, // Changed to false for performance
@@ -256,8 +243,15 @@ final class VideoAssetManager {
     // Create the asset with optimized settings for GIF MP4s
     let asset = AVURLAsset(url: model.url, options: options)
 
-    // Validate that the asset is playable
-    let isPlayable = try await asset.load(.isPlayable)
+    // Validate that the asset is playable. This also surfaces unreachable or missing
+    // files without downloading the whole MP4 a second time.
+    let isPlayable: Bool
+    do {
+      isPlayable = try await asset.load(.isPlayable)
+    } catch {
+      logger.error("❌ Failed to load GIF MP4: \(model.url.absoluteString) - \(error)")
+      throw VideoError.notPlayable
+    }
     guard isPlayable else {
       logger.error("❌ GIF MP4 asset is not playable: \(model.url.absoluteString)")
       throw VideoError.notPlayable

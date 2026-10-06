@@ -22,6 +22,7 @@ struct MessageRequestSheet<SheetContent: View>: ViewModifier {
 /// requests. Accepting routes to the new conversation
 /// and closes the sheet; declining keeps the sheet open.
 struct UnifiedMessageRequestsView: View {
+  @Environment(SceneNavigationContext.self) private var sceneContext
   @Environment(AppState.self) private var appState
   @Environment(\.dismiss) private var dismiss
   @State private var store: LiveMessageRequestsStore?
@@ -54,7 +55,7 @@ struct UnifiedMessageRequestsView: View {
     guard appState.userDID == accountDID else { return }
     switch acceptance {
     case .bluesky(let convoID):
-      appState.navigationManager.targetConversationId = convoID
+      sceneContext.navigationManager.targetConversationId = convoID
       selectChatTabOnMac()
     }
     dismiss()
@@ -62,7 +63,7 @@ struct UnifiedMessageRequestsView: View {
 
   private func selectChatTabOnMac() {
     #if os(macOS)
-    appState.navigationManager.updateCurrentTab(AppNavigationManager.chatTabIndex)
+    sceneContext.navigationManager.updateCurrentTab(AppNavigationManager.chatTabIndex)
     #endif
   }
 }
@@ -156,15 +157,15 @@ struct MessageRequestsScreen: View {
       }
       Button("Cancel", role: .cancel) {}
     } message: { request in
-      Text("They won't be able to message you, and this request will be removed.")
+      Text("They won’t be able to message you, and this request will be removed.")
     }
-    .confirmationDialog("Decline all Bluesky requests?", isPresented: $showingDeclineAll, titleVisibility: .visible) {
+    .confirmationDialog("Decline All Requests?", isPresented: $showingDeclineAll, titleVisibility: .visible) {
       Button("Decline All", role: .destructive) {
         Task { await store.declineAllBluesky() }
       }
       Button("Cancel", role: .cancel) {}
     } message: {
-      Text("Every pending Bluesky request will be removed.")
+      Text("Every pending message request will be removed.")
     }
     .sheet(item: $report) { report in
       reportSheet(report)
@@ -196,7 +197,10 @@ struct MessageRequestsScreen: View {
             row(for: item)
           }
         } header: {
-          MessageRequestsSectionHeader(source: section.source, count: section.items.count)
+          // A lone source needs no label; headers return if another source is added.
+          if MessageRequestSource.allCases.count > 1 {
+            MessageRequestsSectionHeader(source: section.source, count: section.items.count)
+          }
         }
       }
     }
@@ -267,7 +271,7 @@ struct MessageRequestsScreen: View {
           Button(role: .destructive) {
             showingDeclineAll = true
           } label: {
-            Label("Decline All Bluesky Requests…", systemImage: "xmark.circle")
+            Label("Decline All Requests…", systemImage: "xmark.circle")
           }
         }
         Button {
@@ -390,7 +394,7 @@ struct MessageRequestsEmptyState: View {
     ContentUnavailableView {
       Label("No Message Requests", systemImage: "tray")
     } description: {
-      Text("When someone you don't follow messages you, their request waits here until you accept or decline it.")
+      Text("When someone you don’t follow messages you, their request waits here until you accept or decline it.")
     } actions: {
       Button("Who Can Message You", action: onOpenSettings)
         .buttonStyle(.bordered)

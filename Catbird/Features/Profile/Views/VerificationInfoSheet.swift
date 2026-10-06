@@ -11,7 +11,7 @@ struct VerificationInfoSheet: View {
   @Environment(AppState.self) private var appState
   @State private var resolvedHandles: [String: String] = [:]
 
-  private static let learnMoreURL = URL(string: "https://bsky.social/about/support/verification")!
+  private static let learnMoreURL = URL(string: "https://bsky.social/about/blog/04-21-2025-verification")!
 
   var body: some View {
     NavigationStack {

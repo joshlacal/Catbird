@@ -16,7 +16,7 @@ extension View {
         cid: CID,
         author: String,
         client: ATProtoClient,
-        presentingFrom viewController: UIViewController? = nil
+        presentingFrom viewController: UIViewController
     ) -> some View {
         self.contextMenu {
             Button {
@@ -54,7 +54,7 @@ extension View {
         did: DID,
         handle: String,
         client: ATProtoClient,
-        presentingFrom viewController: UIViewController? = nil
+        presentingFrom viewController: UIViewController
     ) -> some View {
         self.contextMenu {
             Button {
@@ -86,7 +86,7 @@ extension View {
         reportingService: ReportingService,
         subject: ComAtprotoModerationCreateReport.InputSubjectUnion,
         contentDescription: String,
-        from viewController: UIViewController?
+        from viewController: UIViewController
     ) {
         let reportForm = ReportFormView(
             reportingService: reportingService,
@@ -97,10 +97,9 @@ extension View {
         let hostingController = UIHostingController(rootView: reportForm)
         hostingController.modalPresentationStyle = .formSheet
         
-        // Use the provided view controller or find the topmost one
-let presentingVC = viewController ?? (UIApplication.shared.connectedScenes.first as? UIWindowScene)?.keyWindow?.rootViewController?.topmostPresentedViewController()
-        
-        presentingVC?.present(hostingController, animated: true)
+        // The caller must provide an attached presenter from the originating window.
+        guard viewController.viewIfLoaded?.window != nil else { return }
+        viewController.topmostPresentedViewController().present(hostingController, animated: true)
     }
 }
 

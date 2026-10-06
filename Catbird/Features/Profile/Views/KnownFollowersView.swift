@@ -16,26 +16,19 @@ struct KnownFollowersView: View {
     @State private var isLoading = false
     @State private var hasMore = true
     @State private var error: Error?
+    @State private var hasLoadedOnce = false
     @Binding var path: NavigationPath
     
     var body: some View {
         List {
-            if let error = error {
-                ErrorStateView(
-                    error: error,
-                    context: "Failed to load known followers",
-                    retryAction: { Task { await loadKnownFollowers() } }
-                )
-                .listRowSeparator(.hidden)
-                .listRowInsets(EdgeInsets())
-            } else if !knownFollowers.isEmpty {
+            if !knownFollowers.isEmpty {
                 ForEach(knownFollowers, id: \.did) { follower in
                     ProfileRowView(profile: follower, path: $path)
                         .buttonStyle(.plain)
                         .listRowInsets(EdgeInsets())
                     .onAppear {
                         // Load more when reaching the end
-                        if follower == knownFollowers.last && hasMore && !isLoading {
+                        if follower == knownFollowers.last && hasMore && !isLoading && error == nil {
                             Task { await loadKnownFollowers() }
                         }
                     }
@@ -47,22 +40,46 @@ struct KnownFollowersView: View {
                         .padding()
                         .frame(maxWidth: .infinity)
                         .listRowSeparator(.hidden)
+                } else if error != nil {
+                    HStack {
+                        Text("Couldn’t load more.")
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Try Again") {
+                            Task { await loadKnownFollowers() }
+                        }
+                    }
+                    .padding()
+                    .listRowSeparator(.hidden)
                 }
-            } else if isLoading {
-                ProgressView("Loading known followers...")
+            } else if let error = error {
+                ErrorStateView(
+                    error: error,
+                    context: "Failed to load followers you know",
+                    retryAction: { Task { await loadKnownFollowers() } }
+                )
+                .listRowSeparator(.hidden)
+                .listRowInsets(EdgeInsets())
+            } else if !hasLoadedOnce || isLoading {
+                ProgressView("Loading…")
                     .frame(maxWidth: .infinity, minHeight: 100)
                     .padding()
                     .listRowSeparator(.hidden)
             } else {
-                Text("No known followers yet.")
+                Text("No followers you know yet.")
                     .foregroundColor(.secondary)
             }
         }
         .listStyle(.plain)
-        .navigationTitle("Followers you know")
+        .navigationTitle("Followers You Know")
     #if os(iOS)
     .toolbarTitleDisplayMode(.large)
     #endif
+        .refreshable {
+            guard !isLoading else { return }
+            cursor = nil
+            await loadKnownFollowers()
+        }
         .task {
             if knownFollowers.isEmpty && !isLoading {
                 await loadKnownFollowers()
@@ -97,17 +114,20 @@ struct KnownFollowersView: View {
                     cursor = output.cursor
                     hasMore = output.cursor != nil
                     isLoading = false
+                    hasLoadedOnce = true
                 }
             } else {
                 await MainActor.run {
-                    error = NSError(domain: "KnownFollowersView", code: responseCode, userInfo: [NSLocalizedDescriptionKey: "Failed to load known followers"])
+                    error = NSError(domain: "KnownFollowersView", code: responseCode, userInfo: [NSLocalizedDescriptionKey: "Couldn’t load followers you know."])
                     isLoading = false
+                    hasLoadedOnce = true
                 }
             }
         } catch {
             await MainActor.run {
                 self.error = error
                 isLoading = false
+                hasLoadedOnce = true
             }
         }
     }

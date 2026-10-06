@@ -172,6 +172,8 @@ struct EnhancedRichTextEditor: UIViewRepresentable {
     textView.linkCreationDelegate = context.coordinator
     textView.requestFocusOnAttach = focusOnAppear
     textView.font = getAppropriateFont()
+    // The placeholder is a subview VoiceOver doesn't read, so it also names the field.
+    textView.accessibilityLabel = placeholder
     // Ensure newly typed text uses the desired font and text color
     if let font = textView.font {
       textView.typingAttributes[.font] = font

@@ -16,6 +16,7 @@ struct ThreadView: View {
     let postURI: ATProtocolURI
     @Binding var path: NavigationPath
     let visibilityContext: PostVisibilityContext
+    private let logger = Logger(subsystem: "blue.catbird", category: "ThreadView")
     
     init(
         postURI: ATProtocolURI,
@@ -38,75 +39,18 @@ struct ThreadView: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Menu {
-                    Section("Sort replies") {
-                        Button {
-                            updateSort("hot")
-                        } label: {
-                            HStack {
-                                Text("Hot")
-                                if appState.appSettings.threadSortOrder == "hot" {
-                                    Image(systemName: "checkmark")
-                                }
-                            }
-                        }
-
-                        Button {
-                            updateSort("top")
-                        } label: {
-                            HStack {
-                                Text("Top")
-                                if appState.appSettings.threadSortOrder == "top" {
-                                    Image(systemName: "checkmark")
-                                }
-                            }
-                        }
-
-                        Button {
-                            updateSort("newest")
-                        } label: {
-                            HStack {
-                                Text("Latest")
-                                if appState.appSettings.threadSortOrder == "newest" {
-                                    Image(systemName: "checkmark")
-                                }
-                            }
-                        }
-
-                        Button {
-                            updateSort("oldest")
-                        } label: {
-                            HStack {
-                                Text("Oldest")
-                                if appState.appSettings.threadSortOrder == "oldest" {
-                                    Image(systemName: "checkmark")
-                                }
-                            }
-                        }
+                    Picker("Sort Replies", selection: sortSelection) {
+                        Text("Top").tag("top")
+                        Text("Latest").tag("newest")
+                        Text("Oldest").tag("oldest")
                     }
+                    .pickerStyle(.inline)
 
-                    Section("Layout") {
-                        Button {
-                            appState.appSettings.threadedReplies = false
-                        } label: {
-                            HStack {
-                                Text("Linear")
-                                if !appState.appSettings.threadedReplies {
-                                    Image(systemName: "checkmark")
-                                }
-                            }
-                        }
-
-                        Button {
-                            appState.appSettings.threadedReplies = true
-                        } label: {
-                            HStack {
-                                Text("Threaded")
-                                if appState.appSettings.threadedReplies {
-                                    Image(systemName: "checkmark")
-                                }
-                            }
-                        }
+                    Picker("Layout", selection: threadedRepliesSelection) {
+                        Text("Linear").tag(false)
+                        Text("Threaded").tag(true)
                     }
+                    .pickerStyle(.inline)
                 } label: {
                     Image(systemName: "ellipsis")
                         .accessibilityLabel("Thread options")
@@ -115,13 +59,38 @@ struct ThreadView: View {
         }
     }
 
+    /// Every stored value other than newest/oldest ("hot", "hotness", "most-likes", …) sorts as Top.
+    private var sortSelection: Binding<String> {
+        Binding(
+            get: {
+                let sort = appState.appSettings.threadSortOrder
+                return ["newest", "oldest"].contains(sort) ? sort : "top"
+            },
+            set: { updateSort($0) }
+        )
+    }
+
+    private var threadedRepliesSelection: Binding<Bool> {
+        Binding(
+            get: { appState.appSettings.threadedReplies },
+            set: { appState.appSettings.threadedReplies = $0 }
+        )
+    }
+
     private func updateSort(_ sort: String) {
         appState.appSettings.threadSortOrder = sort
         Task {
-            try? await appState.preferencesManager.setThreadViewPreferences(
-                sort: sort,
-                prioritizeFollowedUsers: appState.appSettings.prioritizeFollowedUsers
-            )
+            do {
+                try await appState.preferencesManager.setThreadViewPreferences(
+                    sort: sort,
+                    prioritizeFollowedUsers: appState.appSettings.prioritizeFollowedUsers
+                )
+            } catch {
+                logger.error("Failed to save reply order: \(error.localizedDescription)")
+                appState.toastManager.show(
+                    ToastItem(message: "Couldn’t save reply order. Try again.", icon: "exclamationmark.triangle")
+                )
+            }
         }
     }
 }
@@ -183,7 +152,7 @@ private struct SwiftUIThreadView: View {
                 VStack(spacing: 16) {
                     ProgressView()
                         .scaleEffect(1.2)
-                    Text("Loading thread...")
+                    Text("Loading thread…")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                 }

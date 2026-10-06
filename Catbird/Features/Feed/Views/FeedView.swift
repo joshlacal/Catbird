@@ -15,7 +15,6 @@ struct FeedView: View {
   // MARK: - Properties
   @Environment(AppState.self) private var appState
   @Environment(\.modelContext) private var modelContext
-  @Environment(\.scenePhase) private var scenePhase
   @Binding var path: NavigationPath
   @Binding var selectedTab: Int
 
@@ -53,7 +52,7 @@ struct FeedView: View {
         .opacity(appState.isTransitioningAccounts ? 0.0 : 1.0)
         .animation(.easeInOut(duration: 0.3), value: appState.isTransitioningAccounts)
       } else {
-        ProgressView("Loading feed...")
+        ProgressView("Loading feed…")
       }
     }
     // Search UI removed
@@ -109,7 +108,7 @@ struct FeedView: View {
       guard currentFetch != fetch else { return }
       
       logger.debug("Feed type changed from \(currentFetch?.identifier ?? "nil") to \(fetch.identifier)")
-      appState.feedFeedbackManager.disable()
+      Task { await appState.feedFeedbackManager.flushInteractions() }
 
       // Switch to a dedicated state manager per feed to keep per-feed scroll state
       let newManager = feedStateStore.stateManager(for: fetch, appState: appState)
@@ -141,13 +140,6 @@ struct FeedView: View {
             await manager.loadInitialData()
           }
         }
-      }
-    }
-    .onChange(of: scenePhase) { oldPhase, newPhase in
-      logger.debug("Scene phase changed: \(String(describing: oldPhase)) -> \(String(describing: newPhase))")
-
-      Task { @MainActor in
-        await feedStateStore.handleScenePhaseChange(newPhase)
       }
     }
     .id((appState.userDID ?? "") + fetch.identifier) // Reset view when user or feed changes

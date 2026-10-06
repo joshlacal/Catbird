@@ -16,8 +16,6 @@ public enum FeedTypeOption: String, CaseIterable, AppEnum {
     case timeline = "timeline"
     case pinnedFeed = "pinned"
     case savedFeed = "saved"
-    case custom = "custom"
-    case profile = "profile"
 
     public static var typeDisplayRepresentation: TypeDisplayRepresentation {
         TypeDisplayRepresentation(name: "Feed Type")
@@ -25,11 +23,9 @@ public enum FeedTypeOption: String, CaseIterable, AppEnum {
 
     public static var caseDisplayRepresentations: [FeedTypeOption: DisplayRepresentation] {
         [
-            .timeline: DisplayRepresentation(title: "Home Timeline", subtitle: "Your personalized timeline"),
+            .timeline: DisplayRepresentation(title: "Following", subtitle: "Posts from people you follow"),
             .pinnedFeed: DisplayRepresentation(title: "Pinned Feed", subtitle: "Choose from your pinned feeds"),
-            .savedFeed: DisplayRepresentation(title: "Saved Feed", subtitle: "Choose from your saved feeds"),
-            .custom: DisplayRepresentation(title: "Custom Feed", subtitle: "Enter a specific feed URL"),
-            .profile: DisplayRepresentation(title: "Profile", subtitle: "Posts from a specific user")
+            .savedFeed: DisplayRepresentation(title: "Saved Feed", subtitle: "Choose from your saved feeds")
         ]
     }
 }
@@ -68,14 +64,8 @@ public struct ConfigurationAppIntent: WidgetConfigurationIntent {
     @Parameter(title: "Feed Type", description: "Choose what type of content to display", default: .timeline)
     public var feedType: FeedTypeOption
 
-    @Parameter(title: "Feed Selection", description: "Choose which pinned/saved feed to display")
+    @Parameter(title: "Feed", description: "Choose which pinned or saved feed to display")
     public var selectedFeed: SavedFeedEntity?
-
-    @Parameter(title: "Custom Feed URL", description: "Enter a custom feed URL (only used for Custom Feed type)", default: "")
-    public var customFeedURL: String
-
-    @Parameter(title: "Profile Handle", description: "Enter a profile handle (only used for Profile type, e.g., @user.bsky.social)", default: "")
-    public var profileHandle: String
 
     @Parameter(title: "Post Count", description: "Number of posts to display (1-10)", default: 3)
     public var postCount: Int
@@ -83,11 +73,8 @@ public struct ConfigurationAppIntent: WidgetConfigurationIntent {
     @Parameter(title: "Layout Style", description: "Choose how posts are displayed", default: .comfortable)
     public var layoutStyle: LayoutStyleOption
 
-    @Parameter(title: "Show Avatars", description: "Display user profile pictures", default: true)
+    @Parameter(title: "Show Avatars", description: "Show an avatar beside each post", default: true)
     public var showAvatars: Bool
-
-    @Parameter(title: "Show Images", description: "Display post media previews", default: true)
-    public var showImages: Bool
 
     @Parameter(title: "Show Engagement Stats", description: "Display like, repost, and reply counts", default: true)
     public var showEngagementStats: Bool
@@ -99,12 +86,9 @@ public struct ConfigurationAppIntent: WidgetConfigurationIntent {
         account = nil
         feedType = .timeline
         selectedFeed = nil
-        customFeedURL = ""
-        profileHandle = ""
         postCount = 3
         layoutStyle = .comfortable
         showAvatars = true
-        showImages = true
         showEngagementStats = true
         showTimestamps = true
     }
@@ -113,32 +97,29 @@ public struct ConfigurationAppIntent: WidgetConfigurationIntent {
         account: AccountEntity? = nil,
         feedType: FeedTypeOption = .timeline,
         selectedFeed: SavedFeedEntity? = nil,
-        customFeedURL: String = "",
-        profileHandle: String = "",
         postCount: Int = 3,
         layoutStyle: LayoutStyleOption = .comfortable,
         showAvatars: Bool = true,
-        showImages: Bool = true,
         showEngagementStats: Bool = true,
         showTimestamps: Bool = true
     ) {
         self.account = account
         self.feedType = feedType
         self.selectedFeed = selectedFeed
-        self.customFeedURL = customFeedURL
-        self.profileHandle = profileHandle
         self.postCount = min(max(postCount, 1), 10) // Clamp between 1-10
         self.layoutStyle = layoutStyle
         self.showAvatars = showAvatars
-        self.showImages = showImages
         self.showEngagementStats = showEngagementStats
         self.showTimestamps = showTimestamps
     }
 
-    /// Resolved account DID — uses selected account or falls back to active account
+    /// Resolved account DID — the selected account, or the active account when none is
+    /// selected. Empty when the selected account is no longer in Catbird or no account
+    /// is signed in, so the widget shows its signed-out state.
     public var resolvedAccountDID: String {
         if let account {
-            return account.id
+            let signedIn = WidgetDataReader.allAccounts().contains { $0.did == account.id }
+            return signedIn ? account.id : ""
         }
         return WidgetDataReader.activeAccountDID() ?? ""
     }
@@ -168,11 +149,6 @@ public struct ConfigurationAppIntent: WidgetConfigurationIntent {
     /// Show avatars with default value
     public var effectiveShowAvatars: Bool {
         return showAvatars
-    }
-
-    /// Show images with default value
-    public var effectiveShowImages: Bool {
-        return showImages
     }
 
     /// Show engagement stats with default value
@@ -225,133 +201,47 @@ public struct SavedFeedQuery: EntityQuery {
     }
     
     private func loadSavedFeeds() -> [SavedFeedEntity] {
-        guard let sharedDefaults = UserDefaults(suiteName: "group.blue.catbird.shared") else {
+        guard let sharedDefaults = UserDefaults(suiteName: "group.blue.catbird.shared"),
+              let accountDID = WidgetDataReader.activeAccountDID() else {
             return []
         }
-        
+
         let decoder = JSONDecoder()
-        
-        // Load saved feeds
-        let savedFeeds: [String] = {
-            guard let data = sharedDefaults.data(forKey: "savedFeeds") else { return [] }
+
+        // The app stores these per account (see FeedWidgetDataProvider.updateSharedFeedPreferences).
+        func stringList(_ key: String) -> [String] {
+            guard let data = sharedDefaults.data(forKey: "\(key).\(accountDID)") else { return [] }
             return (try? decoder.decode([String].self, from: data)) ?? []
-        }()
-        
-        // Load feed generators for display names
+        }
+
         let feedGenerators: [String: String] = {
-            guard let data = sharedDefaults.data(forKey: "feedGenerators") else { return [:] }
+            guard let data = sharedDefaults.data(forKey: "feedGenerators.\(accountDID)") else { return [:] }
             return (try? decoder.decode([String: String].self, from: data)) ?? [:]
         }()
-        
-        // Load pinned feeds
-        let pinnedFeeds: [String] = {
-            guard let data = sharedDefaults.data(forKey: "pinnedFeeds") else { return [] }
-            return (try? decoder.decode([String].self, from: data)) ?? []
-        }()
-        
+
+        // Only feed generators can be shown: the app saves widget posts for those feeds,
+        // not for lists or the Following timeline (which has its own feed type).
+        func isFeedGenerator(_ uri: String) -> Bool {
+            uri.contains("/app.bsky.feed.generator/")
+        }
+
+        let pinnedFeeds = stringList("pinnedFeeds").filter(isFeedGenerator)
+        let pinnedSet = Set(pinnedFeeds)
+        let savedFeeds = stringList("savedFeeds").filter { isFeedGenerator($0) && !pinnedSet.contains($0) }
+
         var entities: [SavedFeedEntity] = []
-        
-        // Add pinned feeds
+
         for feed in pinnedFeeds {
             let displayName = feedGenerators[feed] ?? "Pinned Feed"
             entities.append(SavedFeedEntity(id: feed, displayName: "📌 \(displayName)", uri: feed))
         }
-        
-        // Add saved feeds
+
         for feed in savedFeeds {
             let displayName = feedGenerators[feed] ?? "Saved Feed"
             entities.append(SavedFeedEntity(id: feed, displayName: "⭐ \(displayName)", uri: feed))
         }
-        
+
         return entities
-    }
-}
-
-// MARK: - App Intent for Opening Specific Feed
-
-@available(iOS 17.0, *)
-public struct OpenFeedAppIntent: AppIntent {
-    public static var title: LocalizedStringResource { "Open Feed" }
-    public static var description: IntentDescription { "Open a specific feed in Catbird." }
-
-    @Parameter(title: "Feed Type")
-    public var feedType: String
-
-    @Parameter(title: "Feed URL")
-    public var feedURL: String
-
-    @Parameter(title: "Profile Handle")
-    public var profileHandle: String
-
-    public init() {
-        feedType = "timeline"
-        feedURL = ""
-        profileHandle = ""
-    }
-
-    public func perform() async throws -> some IntentResult {
-        // Construct deep link URL
-        var urlComponents = URLComponents()
-        urlComponents.scheme = "blue.catbird"
-
-        switch feedType {
-        case "profile":
-            if !profileHandle.isEmpty {
-                urlComponents.host = "profile"
-                urlComponents.path = "/\(profileHandle)"
-            } else {
-                urlComponents.host = "feed"
-                urlComponents.path = "/timeline"
-            }
-        case "custom":
-            if !feedURL.isEmpty {
-                urlComponents.host = "feed"
-                urlComponents.queryItems = [URLQueryItem(name: "url", value: feedURL)]
-            } else {
-                urlComponents.host = "feed"
-                urlComponents.path = "/timeline"
-            }
-        default:
-            urlComponents.host = "feed"
-            urlComponents.path = "/\(feedType)"
-        }
-
-        if let url = urlComponents.url {
-            return .result(value: url)
-        }
-
-        // Return empty URL as fallback
-        return .result(value: URL(string: "blue.catbird://feed/timeline")!)
-    }
-}
-
-// MARK: - App Intent for Opening Specific Post
-
-@available(iOS 17.0, *)
-public struct OpenPostAppIntent: AppIntent {
-    public static var title: LocalizedStringResource { "Open Post" }
-    public static var description: IntentDescription { "Open a specific post in Catbird." }
-
-    @Parameter(title: "Post URI")
-    public var postURI: String
-
-    public init() {
-        postURI = ""
-    }
-
-    public func perform() async throws -> some IntentResult {
-        // Construct deep link URL for post
-        var urlComponents = URLComponents()
-        urlComponents.scheme = "blue.catbird"
-        urlComponents.host = "post"
-        urlComponents.queryItems = [URLQueryItem(name: "uri", value: postURI)]
-
-        if let url = urlComponents.url {
-            return .result(value: url)
-        }
-
-        // Return empty URL as fallback
-        return .result(value: URL(string: "blue.catbird://feed/timeline")!)
     }
 }
 #endif

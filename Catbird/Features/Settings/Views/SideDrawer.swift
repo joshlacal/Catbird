@@ -208,6 +208,7 @@ struct SideDrawer<Content: View, DrawerContent: View>: View {
             isDrawerOpen = false
           }
         }
+        .accessibilityHidden(progress == 0)
 
         // The drawer frame owns the slide gesture and bounds. FeedsStartPage
         // owns the separate concentric glass panels inside that frame.
@@ -221,6 +222,8 @@ struct SideDrawer<Content: View, DrawerContent: View>: View {
           .frame(maxHeight: .infinity, alignment: .top)
           .hoverEffect(.lift)
           .offset(x: drawerOffset)
+          // Off-screen while closed; keep VoiceOver from reaching the hidden menu.
+          .accessibilityHidden(progress == 0)
           .accessibilityAction(named: "Close Feeds Menu") {
             withAnimation {
               isDrawerOpen = false

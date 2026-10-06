@@ -16,8 +16,7 @@ enum ActorLikesRecordFetcher {
         repo: try ATIdentifier(string: actorDID),
         collection: try NSID(nsidString: "app.bsky.feed.like"),
         limit: limit,
-        cursor: cursor,
-        reverse: true
+        cursor: cursor
       )
     )
 

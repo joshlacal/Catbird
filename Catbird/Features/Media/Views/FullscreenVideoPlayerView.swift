@@ -5,7 +5,8 @@
 //  Created by Josh LaCalamito on 2/26/25.
 //
 
-// Simplified version that uses the built-in Done button
+// Full-screen video cover: AVKit's inline controls plus Catbird's own Close button,
+// because AVKit draws no Done button for a player embedded in a SwiftUI cover.
 import SwiftUI
 import AVKit
 import AVFoundation
@@ -21,6 +22,7 @@ struct FullscreenVideoPlayerView: View {
     let originalPlayer: AVPlayer
     let model: VideoModel
     @Environment(\.dismiss) private var dismiss
+    @State private var fullscreenAudioOwner = UUID()
     
     var body: some View {
         
@@ -32,7 +34,7 @@ struct FullscreenVideoPlayerView: View {
         .onAppear {
             // Respect prior mute state to avoid interrupting external audio
             if !model.isMuted {
-                AudioSessionManager.shared.handleVideoUnmute()
+                AudioSessionManager.shared.acquireVideoPlayback(owner: fullscreenAudioOwner)
                 originalPlayer.isMuted = false
                 originalPlayer.volume = 1.0
             } else {
@@ -42,6 +44,7 @@ struct FullscreenVideoPlayerView: View {
             }
         }
         .onDisappear {
+            AudioSessionManager.shared.releaseVideoPlayback(owner: fullscreenAudioOwner)
             // Restore muted state for feed if needed
             if model.isMuted {
                 originalPlayer.isMuted = true
@@ -50,15 +53,34 @@ struct FullscreenVideoPlayerView: View {
         }
         // Enable swipe to dismiss
         #elseif os(iOS)
-        AVPlayerViewControllerWrapper(player: originalPlayer, model: model, onDismiss: {
-            dismiss()
-        })
-        .platformIgnoresSafeArea()
+        VStack(spacing: 0) {
+            HStack {
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 44, height: 44)
+                        .background(.ultraThinMaterial, in: Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Close Video")
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 4)
+
+            AVPlayerViewControllerWrapper(player: originalPlayer, model: model)
+                .ignoresSafeArea(edges: .bottom)
+        }
+        .background(Color.black.ignoresSafeArea())
+        .environment(\.colorScheme, .dark)
+        .accessibilityAction(.escape) { dismiss() }
         .statusBar(hidden: true)
         .onAppear {
             // Respect prior mute state to avoid interrupting external audio
             if !model.isMuted {
-                AudioSessionManager.shared.handleVideoUnmute()
                 originalPlayer.isMuted = false
                 originalPlayer.volume = 1.0
             } else {
@@ -83,7 +105,6 @@ struct FullscreenVideoPlayerView: View {
 struct AVPlayerViewControllerWrapper: UIViewControllerRepresentable {
     let player: AVPlayer
     let model: VideoModel
-    let onDismiss: () -> Void
     
     func makeUIViewController(context: Context) -> AVPlayerViewController {
         let controller = AVPlayerViewController()
@@ -92,7 +113,7 @@ struct AVPlayerViewControllerWrapper: UIViewControllerRepresentable {
         
         // Configure for fullscreen experience
         controller.showsPlaybackControls = true
-        controller.entersFullScreenWhenPlaybackBegins = true
+        controller.entersFullScreenWhenPlaybackBegins = false
         controller.updatesNowPlayingInfoCenter = true
         controller.allowsPictureInPicturePlayback = true
         
@@ -104,6 +125,10 @@ struct AVPlayerViewControllerWrapper: UIViewControllerRepresentable {
     func updateUIViewController(_ uiViewController: AVPlayerViewController, context: Context) {
         // Nothing to update
     }
+
+    static func dismantleUIViewController(_ uiViewController: AVPlayerViewController, coordinator: Coordinator) {
+        coordinator.teardownForDismiss()
+    }
     
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -114,8 +139,12 @@ struct AVPlayerViewControllerWrapper: UIViewControllerRepresentable {
         private var isAdjustingProgrammatically = false
         private var isMutedObservation: NSKeyValueObservation?
         private var outputVolumeObservation: NSKeyValueObservation?
+        private var playbackObservation: NSKeyValueObservation?
+        private let fullscreenAudioOwner = UUID()
+        private var ownsFullscreenAudio = false
         private var loopObservation: NSObjectProtocol?
         private var isPictureInPictureActive = false
+        private let pictureInPictureAudioOwner = UUID()
         private var deferredFullScreenTeardown = false
 
         init(_ parent: AVPlayerViewControllerWrapper) {
@@ -124,9 +153,13 @@ struct AVPlayerViewControllerWrapper: UIViewControllerRepresentable {
 
         deinit {
             stopObserving()
+            AudioSessionManager.shared.releaseVideoPlayback(owner: pictureInPictureAudioOwner)
         }
 
         func startObserving(player: AVPlayer) {
+            playbackObservation = player.observe(\.timeControlStatus, options: [.initial, .new]) { [weak self] _, _ in
+                Task { @MainActor [weak self] in self?.updateFullscreenAudioOwnership() }
+            }
             // Observe player.isMuted changes (e.g., if system UI toggles it)
             isMutedObservation = player.observe(\.isMuted, options: [.new]
             ) { [weak self] player, change in
@@ -172,6 +205,10 @@ struct AVPlayerViewControllerWrapper: UIViewControllerRepresentable {
         }
 
         func stopObserving() {
+            playbackObservation?.invalidate()
+            playbackObservation = nil
+            ownsFullscreenAudio = false
+            AudioSessionManager.shared.releaseVideoPlayback(owner: fullscreenAudioOwner)
             isMutedObservation?.invalidate()
             isMutedObservation = nil
             outputVolumeObservation?.invalidate()
@@ -185,6 +222,7 @@ struct AVPlayerViewControllerWrapper: UIViewControllerRepresentable {
         @MainActor private func handleMuteStateChange(player: AVPlayer, isMuted: Bool) {
             // Avoid recursion if we are the ones changing it
             if isAdjustingProgrammatically { return }
+            defer { updateFullscreenAudioOwnership() }
 
             if isMuted == false {
                 userRequestedUnmute()
@@ -200,25 +238,38 @@ struct AVPlayerViewControllerWrapper: UIViewControllerRepresentable {
             defer { isAdjustingProgrammatically = false }
             // Route through VideoCoordinator so audio session and model state are handled uniformly
             VideoCoordinator.shared.setUnmuted(parent.model.id, unmuted: true)
+            updateFullscreenAudioOwnership()
+        }
+
+        @MainActor private func updateFullscreenAudioOwnership() {
+            guard playbackObservation != nil else { return }
+            let needsAudio = !parent.player.isMuted && parent.player.timeControlStatus != .paused
+            guard needsAudio != ownsFullscreenAudio else { return }
+            ownsFullscreenAudio = needsAudio
+            if needsAudio {
+                AudioSessionManager.shared.acquireVideoPlayback(owner: fullscreenAudioOwner)
+            } else {
+                AudioSessionManager.shared.releaseVideoPlayback(owner: fullscreenAudioOwner)
+            }
         }
 
         // MARK: - Picture in Picture
 
         func playerViewControllerWillStartPictureInPicture(_ playerViewController: AVPlayerViewController) {
+            // AVKit needs activation before this callback returns. Use the same
+            // queue/recording priority as every other managed playback surface.
+            do {
+                try AudioSessionManager.shared.acquireImmediatePlayback(owner: pictureInPictureAudioOwner)
+            } catch AudioSessionManager.PlaybackActivationError.recordingInProgress {
+                // Keep a deferred owner if AVKit proceeds. Recording retains
+                // its category, and stopping/failing PiP retires this request.
+                AudioSessionManager.shared.acquireVideoPlayback(owner: pictureInPictureAudioOwner)
+            } catch {
+                // AVKit reports transition failure through its delegate. This
+                // Void callback cannot cancel PiP, so still retain its lifecycle.
+            }
             isPictureInPictureActive = true
 
-            // PiP requires an active .playback session; muted feed playback
-            // runs ambient, which would prevent the session from starting.
-            let session = AVAudioSession.sharedInstance()
-            if session.category != .playback {
-                try? session.setCategory(
-                    .playback, mode: .moviePlayback,
-                    options: [.mixWithOthers, .allowBluetooth, .allowAirPlay]
-                )
-            }
-            try? session.setActive(true)
-
-            // Delegate callbacks arrive on the main thread
             MainActor.assumeIsolated {
                 // Retain the controller and this delegate so the PiP session
                 // survives the fullscreen cover (and this representable)
@@ -257,11 +308,12 @@ struct AVPlayerViewControllerWrapper: UIViewControllerRepresentable {
             }
             MainActor.assumeIsolated {
                 VideoCoordinator.shared.pictureInPictureDidStop(for: self.parent.model.id)
+                AudioSessionManager.shared.releaseVideoPlayback(owner: pictureInPictureAudioOwner)
             }
         }
 
-        // This is called when the user taps the built-in "Done" button
-        func playerViewControllerDidEndFullScreenPresentation(_ playerViewController: AVPlayerViewController) {
+        /// Called when the full-screen cover goes away (Close button, swipe down or escape).
+        func teardownForDismiss() {
             if isPictureInPictureActive {
                 // PiP keeps using this player and its observers (looping,
                 // mute sync); defer teardown until the session stops.
@@ -269,7 +321,6 @@ struct AVPlayerViewControllerWrapper: UIViewControllerRepresentable {
             } else {
                 stopObserving()
             }
-            parent.onDismiss()
         }
     }
 }

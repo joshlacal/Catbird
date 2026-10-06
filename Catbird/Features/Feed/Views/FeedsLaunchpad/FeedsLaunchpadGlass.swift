@@ -47,7 +47,7 @@ struct LaunchpadGlassCircle: ViewModifier {
 }
 
 /// Selection state for launchpad feed cells: the selected cell carries
-/// interactive glass with a stable glassEffectID so selection changes morph
+/// tinted glass with a stable glassEffectID so selection changes morph
 /// the glass between cells. The drop-target state shows an accent ring +
 /// scale instead of the legacy accent fill.
 struct LaunchpadSelectionGlass: ViewModifier {
@@ -79,7 +79,7 @@ struct LaunchpadSelectionGlass: ViewModifier {
       if isSelected {
         content
           .glassEffect(
-            .regular.interactive(),
+            .regular.tint(Color.accentColor.opacity(0.22)).interactive(),
             in: .rect(cornerRadius: cornerRadius, style: .continuous)
           )
           .glassEffectID("selected-feed", in: namespace)
@@ -89,7 +89,8 @@ struct LaunchpadSelectionGlass: ViewModifier {
     } else if isSelected {
       content.background(
         RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-          .fill(.ultraThinMaterial)
+          .fill(Color.accentColor.opacity(0.14))
+          .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
       )
     } else {
       content

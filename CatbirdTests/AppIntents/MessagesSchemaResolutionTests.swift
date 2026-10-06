@@ -222,19 +222,300 @@ struct MessagesSchemaResolutionTests {
 #endif
 
   @Test @MainActor func chatDraftHandoffConsumesMatchingDraftExactlyOnce() {
-    ChatDraftHandoff.shared.store(
-      PendingChatDraft(conversationID: "550e8400-e29b-41d4-a716-446655440000", text: "Draft from Siri"))
+    let handoff = ChatDraftHandoff(schedulePublication: { $0() })
+    let sceneID = UUID()
+    let draft = PendingChatDraft(
+      accountDID: "did:plc:alice", sceneID: sceneID,
+      conversationID: "conversation-a", text: "Draft from Siri")
+    handoff.store(draft)
+    handoff.bind(
+      id: draft.id, accountDID: draft.accountDID, sceneID: sceneID,
+      conversationID: draft.conversationID)
 
-    #expect(ChatDraftHandoff.shared.consume(for: "6ba7b810-9dad-41d1-80b4-00c04fd430c8") == nil)
-    #expect(ChatDraftHandoff.shared.consume(for: "550e8400-e29b-41d4-a716-446655440000") == "Draft from Siri")
-    #expect(ChatDraftHandoff.shared.consume(for: "550e8400-e29b-41d4-a716-446655440000") == nil)
+    #expect(handoff.peek(
+      sceneID: sceneID, accountDID: draft.accountDID, conversationID: "conversation-b") == nil)
+    #expect(handoff.consume(
+      sceneID: sceneID, accountDID: draft.accountDID, conversationID: "conversation-a",
+      expectedID: draft.id)?.text == "Draft from Siri")
+    #expect(handoff.consume(
+      sceneID: sceneID, accountDID: draft.accountDID, conversationID: "conversation-a",
+      expectedID: draft.id) == nil)
   }
 
-  @Test @MainActor func wildcardChatDraftTargetsNextConversation() {
-    ChatDraftHandoff.shared.store(
-      PendingChatDraft(conversationID: nil, text: "Choose a conversation"))
+  @Test @MainActor func wildcardChatDraftIsLimitedToBoundSceneAndAccount() {
+    let handoff = ChatDraftHandoff(schedulePublication: { $0() })
+    let sceneID = UUID()
+    let draft = PendingChatDraft(
+      accountDID: "did:plc:alice", conversationID: nil, text: "Choose a conversation")
+    handoff.store(draft)
+    handoff.bind(
+      id: draft.id, accountDID: draft.accountDID, sceneID: sceneID, conversationID: nil)
 
-    #expect(ChatDraftHandoff.shared.consume(for: "550e8400-e29b-41d4-a716-446655440000") == "Choose a conversation")
-    #expect(ChatDraftHandoff.shared.consume(for: "6ba7b810-9dad-41d1-80b4-00c04fd430c8") == nil)
+    #expect(handoff.peek(
+      sceneID: UUID(), accountDID: draft.accountDID, conversationID: "conversation-a") == nil)
+    #expect(handoff.consume(
+      sceneID: sceneID, accountDID: "did:plc:bob", conversationID: "conversation-a",
+      expectedID: draft.id) == nil)
+    #expect(handoff.consume(
+      sceneID: sceneID, accountDID: draft.accountDID, conversationID: "conversation-a",
+      expectedID: draft.id)?.text == "Choose a conversation")
+  }
+
+  @Test @MainActor func capturedSceneDraftRemainsUnclaimedUntilRouteAcceptance() {
+    let handoff = ChatDraftHandoff(schedulePublication: { $0() })
+    let sceneID = UUID()
+    let draft = PendingChatDraft(
+      accountDID: "did:plc:alice", sceneID: sceneID,
+      conversationID: "conversation-a", text: "Keep this while the route waits")
+    handoff.store(draft)
+
+    #expect(handoff.peek(
+      sceneID: sceneID, accountDID: draft.accountDID, conversationID: "conversation-a") == nil)
+    #expect(handoff.consume(
+      sceneID: sceneID, accountDID: draft.accountDID, conversationID: "conversation-a",
+      expectedID: draft.id) == nil)
+    #expect(handoff.bind(
+      id: draft.id, accountDID: draft.accountDID, sceneID: UUID(),
+      conversationID: draft.conversationID) == nil)
+    #expect(handoff.bind(
+      id: draft.id, accountDID: "did:plc:bob", sceneID: sceneID,
+      conversationID: draft.conversationID) == nil)
+
+    #expect(handoff.bind(
+      id: draft.id, accountDID: draft.accountDID, sceneID: sceneID,
+      conversationID: draft.conversationID) == draft)
+  }
+
+  @Test @MainActor func initiallyUnscopedDraftBindsOnlyOnce() {
+    let handoff = ChatDraftHandoff(schedulePublication: { $0() })
+    let sceneID = UUID()
+    let draft = PendingChatDraft(
+      accountDID: "did:plc:alice", conversationID: nil, text: "Retained with no scene")
+    handoff.store(draft)
+    #expect(handoff.peek(
+      sceneID: sceneID, accountDID: draft.accountDID, conversationID: "conversation-a") == nil)
+
+    let bound = handoff.bind(
+      id: draft.id, accountDID: draft.accountDID, sceneID: sceneID,
+      conversationID: "conversation-a")
+    #expect(bound?.id == draft.id)
+    #expect(bound?.text == draft.text)
+    #expect(bound?.sceneID == sceneID)
+    #expect(bound?.conversationID == "conversation-a")
+    #expect(handoff.bind(
+      id: draft.id, accountDID: draft.accountDID, sceneID: UUID(),
+      conversationID: "conversation-a") == nil)
+    #expect(handoff.bind(
+      id: draft.id, accountDID: draft.accountDID, sceneID: sceneID,
+      conversationID: "conversation-b") == nil)
+    #expect(handoff.peek(
+      sceneID: sceneID, accountDID: draft.accountDID, conversationID: "conversation-a") == bound)
+  }
+
+  @Test @MainActor func peekAndStaleClaimKeepQueuedDrafts() {
+    let handoff = ChatDraftHandoff(schedulePublication: { $0() })
+    let sceneID = UUID()
+    let first = PendingChatDraft(
+      accountDID: "did:plc:alice", sceneID: sceneID,
+      conversationID: "conversation-a", text: "First draft")
+    let second = PendingChatDraft(
+      accountDID: first.accountDID, sceneID: sceneID,
+      conversationID: first.conversationID, text: "Second draft")
+    for draft in [first, second] {
+      handoff.store(draft)
+      handoff.bind(
+        id: draft.id, accountDID: draft.accountDID, sceneID: sceneID,
+        conversationID: draft.conversationID)
+    }
+
+    // A composer with existing text can inspect repeatedly without accepting.
+    #expect(handoff.peek(
+      sceneID: sceneID, accountDID: first.accountDID, conversationID: "conversation-a") == first)
+    #expect(handoff.peek(
+      sceneID: sceneID, accountDID: first.accountDID, conversationID: "conversation-a") == first)
+    #expect(handoff.consume(
+      sceneID: sceneID, accountDID: first.accountDID, conversationID: "conversation-a",
+      expectedID: second.id) == nil)
+    #expect(handoff.consume(
+      sceneID: sceneID, accountDID: first.accountDID, conversationID: "conversation-a",
+      expectedID: first.id) == first)
+    #expect(handoff.consume(
+      sceneID: sceneID, accountDID: first.accountDID, conversationID: "conversation-a",
+      expectedID: first.id) == nil)
+    #expect(handoff.peek(
+      sceneID: sceneID, accountDID: second.accountDID, conversationID: "conversation-a") == second)
+  }
+
+  @Test @MainActor func storingSameTokenCannotReplaceItsTextOrScope() {
+    let handoff = ChatDraftHandoff(schedulePublication: { $0() })
+    let sceneID = UUID()
+    let draft = PendingChatDraft(
+      accountDID: "did:plc:alice", sceneID: sceneID,
+      conversationID: "conversation-a", text: "Original text")
+    #expect(handoff.store(draft))
+    #expect(handoff.store(draft))
+    #expect(!handoff.store(PendingChatDraft(
+      id: draft.id, accountDID: "did:plc:bob", sceneID: UUID(),
+      conversationID: "conversation-b", text: "Replacement text")))
+    handoff.bind(
+      id: draft.id, accountDID: draft.accountDID, sceneID: sceneID,
+      conversationID: draft.conversationID)
+    #expect(handoff.consume(
+      sceneID: sceneID, accountDID: draft.accountDID, conversationID: "conversation-a",
+      expectedID: draft.id) == draft)
+    #expect(handoff.peek(
+      sceneID: sceneID, accountDID: draft.accountDID, conversationID: "conversation-a") == nil)
+    #expect(!handoff.store(draft), "A consumed token must not be replayed.")
+  }
+
+  @Test @MainActor func sceneInvalidationRetainsTextWithoutRevivingDelivery() {
+    let handoff = ChatDraftHandoff(schedulePublication: { $0() })
+    let sceneID = UUID()
+    let draft = PendingChatDraft(
+      accountDID: "did:plc:alice", sceneID: sceneID,
+      conversationID: "conversation-a", text: "Keep my typed draft")
+    handoff.store(draft)
+    handoff.bind(
+      id: draft.id, accountDID: draft.accountDID, sceneID: sceneID,
+      conversationID: draft.conversationID)
+
+    handoff.invalidate(sceneID: sceneID, accountDID: "did:plc:bob")
+    #expect(handoff.peek(
+      sceneID: sceneID, accountDID: draft.accountDID, conversationID: "conversation-a") == draft)
+    handoff.invalidate(sceneID: sceneID, accountDID: draft.accountDID)
+    #expect(handoff.peek(
+      sceneID: sceneID, accountDID: draft.accountDID, conversationID: "conversation-a") == nil)
+    #expect(handoff.consume(
+      sceneID: sceneID, accountDID: draft.accountDID, conversationID: "conversation-a",
+      expectedID: draft.id) == nil)
+    #expect(handoff.bind(
+      id: draft.id, accountDID: draft.accountDID, sceneID: sceneID,
+      conversationID: draft.conversationID) == nil)
+    #expect(handoff.retainedDraft(id: draft.id, accountDID: draft.accountDID)?.text == draft.text)
+    #expect(handoff.retainedDraft(id: draft.id, accountDID: "did:plc:bob") == nil)
+  }
+
+  @MainActor
+  private final class PublicationQueue {
+    private var queued: [ChatDraftHandoff.Publication] = []
+
+    func enqueue(_ publication: @escaping ChatDraftHandoff.Publication) {
+      queued.append(publication)
+    }
+
+    func publish() {
+      let ready = queued
+      queued.removeAll()
+      for publication in ready { publication() }
+    }
+  }
+
+  @MainActor
+  private final class PublicationObservation {
+    var count = 0
+    var appliedTexts: [String] = []
+  }
+
+  @Test @MainActor func deferredPublicationSurvivesNavigationRejectionWithoutConsumption() {
+    let publications = PublicationQueue()
+    let handoff = ChatDraftHandoff(schedulePublication: publications.enqueue)
+    let observation = PublicationObservation()
+    let sceneID = UUID()
+    let conversationID = "550e8400-e29b-41d4-a716-446655440000"
+    let draft = PendingChatDraft(
+      accountDID: "did:plc:alice", sceneID: sceneID,
+      conversationID: conversationID, text: "Keep this if tab selection invalidates the scene")
+    let token = NotificationCenter.default.addObserver(
+      forName: ChatDraftHandoff.didStoreDraft, object: handoff, queue: nil
+    ) { _ in
+      MainActor.assumeIsolated {
+        observation.count += 1
+        if let pending = handoff.peek(
+          sceneID: sceneID, accountDID: draft.accountDID, conversationID: conversationID
+        ), let claimed = handoff.consume(
+          sceneID: sceneID, accountDID: draft.accountDID, conversationID: conversationID,
+          expectedID: pending.id
+        ) {
+          observation.appliedTexts.append(claimed.text)
+        }
+      }
+    }
+    defer { NotificationCenter.default.removeObserver(token) }
+
+    handoff.store(draft)
+    handoff.bind(
+      id: draft.id, accountDID: draft.accountDID, sceneID: sceneID, conversationID: conversationID)
+    #expect(observation.count == 0)
+    #expect(handoff.peek(
+      sceneID: sceneID, accountDID: draft.accountDID, conversationID: conversationID) == nil)
+    #expect(handoff.consume(
+      sceneID: sceneID, accountDID: draft.accountDID, conversationID: conversationID,
+      expectedID: draft.id) == nil)
+
+    // Simulate a synchronous tab-selection callback retiring the receiving
+    // context before the coordinator returns from delivery.
+    handoff.invalidate(sceneID: sceneID, accountDID: draft.accountDID)
+    publications.publish()
+    #expect(observation.count == 0)
+    #expect(observation.appliedTexts.isEmpty)
+    #expect(handoff.retainedDraft(id: draft.id, accountDID: draft.accountDID)?.text == draft.text)
+  }
+
+  @Test @MainActor func acceptedPublicationClaimsOnceAndKeepsRecoveryText() {
+    let publications = PublicationQueue()
+    let handoff = ChatDraftHandoff(schedulePublication: publications.enqueue)
+    let observation = PublicationObservation()
+    let sceneID = UUID()
+    let conversationID = "550e8400-e29b-41d4-a716-446655440000"
+    let draft = PendingChatDraft(
+      accountDID: "did:plc:alice", sceneID: sceneID,
+      conversationID: conversationID, text: "Apply exactly once")
+    let token = NotificationCenter.default.addObserver(
+      forName: ChatDraftHandoff.didStoreDraft, object: handoff, queue: nil
+    ) { _ in
+      MainActor.assumeIsolated {
+        observation.count += 1
+        if let pending = handoff.peek(
+          sceneID: sceneID, accountDID: draft.accountDID, conversationID: conversationID
+        ), let claimed = handoff.consume(
+          sceneID: sceneID, accountDID: draft.accountDID, conversationID: conversationID,
+          expectedID: pending.id
+        ) {
+          observation.appliedTexts.append(claimed.text)
+        }
+      }
+    }
+    defer { NotificationCenter.default.removeObserver(token) }
+
+    handoff.store(draft)
+    handoff.bind(
+      id: draft.id, accountDID: draft.accountDID, sceneID: sceneID, conversationID: conversationID)
+    #expect(observation.appliedTexts.isEmpty)
+    publications.publish()
+    publications.publish()
+    #expect(observation.count == 1)
+    #expect(observation.appliedTexts == [draft.text])
+    handoff.invalidate(sceneID: sceneID, accountDID: draft.accountDID)
+    #expect(handoff.retainedDraft(id: draft.id, accountDID: draft.accountDID) == draft)
+    #expect(handoff.retainedDraft(id: draft.id, accountDID: "did:plc:bob") == nil)
+    #expect(handoff.consume(
+      sceneID: sceneID, accountDID: draft.accountDID, conversationID: conversationID,
+      expectedID: draft.id) == nil)
+    #expect(!handoff.store(draft))
+  }
+
+  @Test @MainActor func invalidatingAnInFlightDraftPreventsLateBinding() {
+    let handoff = ChatDraftHandoff(schedulePublication: { $0() })
+    let sceneID = UUID()
+    let draft = PendingChatDraft(
+      accountDID: "did:plc:alice", sceneID: sceneID, conversationID: nil,
+      text: "Still resolving a destination")
+    handoff.store(draft)
+    handoff.invalidate(sceneID: sceneID, accountDID: draft.accountDID)
+
+    #expect(handoff.bind(
+      id: draft.id, accountDID: draft.accountDID, sceneID: sceneID,
+      conversationID: "conversation-a") == nil)
+    #expect(handoff.retainedDraft(id: draft.id, accountDID: draft.accountDID) == draft)
   }
 }

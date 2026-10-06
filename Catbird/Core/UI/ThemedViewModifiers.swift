@@ -359,9 +359,10 @@ struct ThemedContrastAwareBackground: View {
     let appSettings: AppSettings
     let colorProvider: (ColorScheme, Bool) -> Color
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.colorSchemeContrast) private var accessibilityContrast
     
     var body: some View {
-        colorProvider(colorScheme, appSettings.increaseContrast)
+        colorProvider(colorScheme, accessibilityContrast == .increased || appSettings.effectiveIncreaseContrast)
     }
 }
 
@@ -455,7 +456,7 @@ struct ThemedAccessibleTextView<Content: View>: View {
     
     var body: some View {
         let baseColor = Color.dynamicText(themeManager, style: style, currentScheme: colorScheme)
-        let accessibleColor = appState.appSettings.increaseContrast ? 
+        let accessibleColor = appState.appSettings.effectiveIncreaseContrast ? 
             Color.adaptiveForeground(appState: appState, defaultColor: baseColor) : baseColor
             
         content.foregroundColor(accessibleColor)
@@ -480,6 +481,7 @@ struct ThemedBorderView: View {
     let isProminent: Bool
     let appSettings: AppSettings?
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.colorSchemeContrast) private var accessibilityContrast
     
     init(themeManager: ThemeManager, isProminent: Bool, appSettings: AppSettings? = nil) {
         self.themeManager = themeManager
@@ -488,7 +490,7 @@ struct ThemedBorderView: View {
     }
     
     var body: some View {
-        let increaseContrast = appSettings?.increaseContrast ?? false
+        let increaseContrast = accessibilityContrast == .increased || (appSettings?.effectiveIncreaseContrast ?? false)
         RoundedRectangle(cornerRadius: 12)
             .stroke(
                 Color.dynamicBorder(

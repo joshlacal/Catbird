@@ -49,6 +49,19 @@ actor SpotlightEntityDonator {
     index(entities)
   }
 
+  /// Removes every indexed post and profile so a signed-out or removed account's
+  /// content stops appearing in Spotlight. Content is indexed again as it's viewed.
+  func removeAll() async {
+    donatedIDs.removeAll()
+    donationOrder.removeAll()
+    do {
+      try await CSSearchableIndex.default().deleteAppEntities(ofType: PostEntity.self)
+      try await CSSearchableIndex.default().deleteAppEntities(ofType: ProfileEntity.self)
+    } catch {
+      logger.warning("Spotlight removal failed: \(error.localizedDescription)")
+    }
+  }
+
   private func index<Entity: IndexedEntity>(_ entities: [Entity]) where Entity.ID == String {
     let fresh = Array(entities.filter { !donatedIDs.contains($0.id) }.prefix(batchLimit))
     guard !fresh.isEmpty else { return }

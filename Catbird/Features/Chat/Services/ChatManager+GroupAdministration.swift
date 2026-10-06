@@ -14,15 +14,19 @@ enum GroupAdminError: LocalizedError {
   var errorDescription: String? {
     switch self {
     case .noClient:
-      return "You're not signed in. Please try again after signing in."
+      return "You’re not signed in. Sign in and try again."
     case .network(let code):
-      return "The request failed (HTTP \(code)). Please try again."
+      switch code {
+      case 401: return "Your session expired. Sign in again."
+      case 403: return "You don’t have permission to do that."
+      default: return "Something went wrong. Please try again."
+      }
     case .emptyResponse:
-      return "The server returned no data. Please try again."
+      return "Something went wrong. Please try again."
     case .invalidDID:
-      return "One of the selected accounts couldn't be resolved."
+      return "One of the selected accounts couldn’t be found."
     case .underlying(let error):
-      return error.localizedDescription
+      return UserFacingError.message(for: error, action: "make this change") ?? "Something went wrong. Please try again."
     }
   }
 }

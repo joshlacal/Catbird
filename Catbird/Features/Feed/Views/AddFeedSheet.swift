@@ -2,6 +2,7 @@ import Petrel
 import SwiftUI
 
 struct AddFeedSheet: View {
+  @Environment(SceneNavigationContext.self) private var sceneContext
   @Environment(AppState.self) private var appState
   @Environment(\.dismiss) private var dismiss
   @State private var model: FeedDiscoveryViewModel?
@@ -37,7 +38,7 @@ struct AddFeedSheet: View {
           .navigationTitle(route.feed.displayName)
           .toolbar {
             ToolbarItem(placement: .primaryAction) {
-              Button("Open feed") { open(route.feed) }
+              Button("Open Feed") { open(route.feed) }
             }
           }
       }
@@ -73,7 +74,7 @@ struct AddFeedSheet: View {
     return ScrollView {
       LazyVStack(alignment: .leading, spacing: 16) {
         if let error = appState.feedLibraryActions.refreshError {
-          errorView("Saved feeds could not be loaded: \(error)") {
+          errorView(error) {
             Task { await appState.feedLibraryActions.refresh() }
           }
         }
@@ -112,6 +113,7 @@ struct AddFeedSheet: View {
           ForEach(model.items) { feed in
             FeedDiscoveryHeaderView(
               feed: feed,
+              libraryControlsTrailing: true,
               onTap: { path.append(FeedPreviewRoute(feed: feed)) },
               onLikedByTap: { path.append(NavigationDestination.postLikes(feed.uri.uriString())) },
               onOpenFeed: { open(feed) }
@@ -123,7 +125,7 @@ struct AddFeedSheet: View {
             ProgressView("Loading more feeds…")
               .frame(maxWidth: .infinity)
           } else if model.cursor != nil {
-            Button("Load more") { model.loadMore() }
+            Button("Load More") { model.loadMore() }
               .buttonStyle(.bordered)
               .frame(maxWidth: .infinity)
               .disabled(model.isRefreshing || model.normalizedQuery != model.resultQuery)
@@ -155,7 +157,7 @@ struct AddFeedSheet: View {
 
   private func open(_ feed: AppBskyFeedDefs.GeneratorView) {
     if let onOpen { onOpen(feed) }
-    else { appState.navigationManager.navigate(to: .feed(feed.uri)) }
+    else { sceneContext.navigationManager.navigate(to: .feed(feed.uri)) }
     dismiss()
   }
 }

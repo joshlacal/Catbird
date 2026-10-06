@@ -73,7 +73,7 @@ struct ListRow: View {
         }
 
         // Item count
-        Text("\(list.listItemCount ?? 0) items")
+        Text("^[\(list.listItemCount ?? 0) person](inflect: true)")
           .appFont(AppTextRole.caption)
           .foregroundColor(.secondary)
       }

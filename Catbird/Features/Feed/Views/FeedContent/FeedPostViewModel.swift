@@ -13,12 +13,49 @@ import SwiftUI
 import Petrel
 import os
 
+/// A value snapshot survives in-place SwiftData mutations. Cache bookkeeping such
+/// as pagination cursors and timestamps must not invalidate a rendered row.
+struct FeedPostContentSignature: Equatable {
+    let serializedPost: Data
+    let serializedSliceItems: Data?
+    let threadDisplayMode: String?
+    let threadPostCount: Int?
+    let threadHiddenCount: Int?
+    let isPartOfThread: Bool
+    let isIncompleteThread: Bool
+    let isTemporary: Bool
+    let isRepost: Bool
+    let repostIndexedAt: Date?
+    let smartFilterCollapseRuleID: String?
+    let isSmartFilterPending: Bool
+    let intentHiddenRuleText: String?
+    let isIntentDemoted: Bool
+
+    init(_ post: CachedFeedViewPost) {
+        serializedPost = post.serializedPost
+        serializedSliceItems = post.serializedSliceItems
+        threadDisplayMode = post.threadDisplayMode
+        threadPostCount = post.threadPostCount
+        threadHiddenCount = post.threadHiddenCount
+        isPartOfThread = post.isPartOfThread
+        isIncompleteThread = post.isIncompleteThread
+        isTemporary = post.isTemporary
+        isRepost = post.isRepost
+        repostIndexedAt = post.repostIndexedAt
+        smartFilterCollapseRuleID = post.smartFilterCollapseRuleID
+        isSmartFilterPending = post.isSmartFilterPending
+        intentHiddenRuleText = post.intentHiddenRuleText
+        isIntentDemoted = post.isIntentDemoted
+    }
+}
+
 @Observable
 final class FeedPostViewModel {
     // MARK: - Properties
     
     /// The current post data
     private(set) var post: CachedFeedViewPost
+    private var contentSignature: FeedPostContentSignature
     
     /// UI state that persists across cell reuse
     var isBookmarked = false
@@ -62,6 +99,7 @@ final class FeedPostViewModel {
 
     init(post: CachedFeedViewPost, appState: AppState? = nil) {
         self.post = post
+        self.contentSignature = FeedPostContentSignature(post)
         self.appState = appState
 
         // Initialize bookmark state from preferences
@@ -94,34 +132,15 @@ final class FeedPostViewModel {
             return
         }
 
-        // Skip update if data hasn't changed (prevents observation loops on macOS SwiftUI List)
-        guard newPost.serializedPost != post.serializedPost
-            || newPost.serializedSliceItems != post.serializedSliceItems
-            || newPost.threadDisplayMode != post.threadDisplayMode
-            || newPost.threadPostCount != post.threadPostCount
-            || newPost.threadHiddenCount != post.threadHiddenCount
-            || newPost.isPartOfThread != post.isPartOfThread
-            || newPost.isIncompleteThread != post.isIncompleteThread
-            || newPost.smartFilterCollapseRuleID != post.smartFilterCollapseRuleID
-            || newPost.isSmartFilterPending != post.isSmartFilterPending
-            || newPost.intentHiddenRuleText != post.intentHiddenRuleText
-        else { return }
+        let newSignature = FeedPostContentSignature(newPost)
+        guard newSignature != contentSignature else { return }
 
-        // Clear cached FeedViewPost since we're getting new data
-        _cachedFeedViewPost = nil
-
-        // Clear cached properties if content changed
-        if let oldPost = feedViewPost,
-           let newFVP = try? newPost.feedViewPost {
-            let oldText = extractTextFromRecord(oldPost.post.record)
-            let newText = extractTextFromRecord(newFVP.post.record)
-            if oldText != newText {
-                clearAllCache()
-            }
-        }
-
+        // Assign the new data before recomputing derived properties. Reading the
+        // old post here used to refill the decoded cache with stale viewer state.
         post = newPost
-        
+        contentSignature = newSignature
+        clearAllCache()
+
         // Update bookmark state from preferences
         self.isBookmarked = checkBookmarkState()
         
@@ -150,7 +169,7 @@ final class FeedPostViewModel {
         let text = displayText
         let maxLength = 280
         let truncated = text.count > maxLength 
-            ? String(text.prefix(maxLength)) + "..."
+            ? String(text.prefix(maxLength)) + "…"
             : text
         _truncatedText = truncated
         return truncated
@@ -544,6 +563,11 @@ final class FeedPostViewModel {
     func clearCache() {
         clearAllCache()
     }
+
+    /// Relative labels age even when a server post is unchanged.
+    func invalidateRelativeTime() {
+        _timeAgoString = nil
+    }
     
     /// Clears all cached properties
     private func clearAllCache() {
@@ -781,58 +805,26 @@ final class FeedPostViewModel {
     
     /// Performs the actual mute operation on the server
     private func performMuteAuthor() async throws {
-        guard let client = appState?.atProtoClient else {
+        guard let appState, let fvp = feedViewPost else {
             throw PostInteractionError.clientUnavailable
         }
-
-        guard let fvp = feedViewPost else {
-            logger.error("Missing feedViewPost while muting author for: \(self.post.id, privacy: .public)")
-            throw PostInteractionError.clientUnavailable
+        guard try await appState.graphManager.mute(did: fvp.post.author.did.didString()) else {
+            throw PostInteractionError.moderationFailed
         }
-
-        let authorDID = fvp.post.author.did
-
-        let (responseCode) = try await client.app.bsky.graph.muteActor(
-            input: AppBskyGraphMuteActor.Input(actor: ATIdentifier.did(authorDID))
-        )
-
-        guard responseCode >= 200 && responseCode < 300 else {
-            throw PostInteractionError.serverError(responseCode)
-        }
-
         logger.debug("Successfully muted author: \(fvp.post.author.handle)")
     }
-    
-    /// Performs the actual block operation on the server
+
+    /// Performs the block and updates the shared graph state before refreshing previews.
     private func performBlockAuthor() async throws {
-        guard let client = appState?.atProtoClient else {
+        guard let appState, let fvp = feedViewPost else {
             throw PostInteractionError.clientUnavailable
         }
-
-        guard let fvp = feedViewPost else {
-            logger.error("Missing feedViewPost while blocking author for: \(self.post.id, privacy: .public)")
-            throw PostInteractionError.clientUnavailable
+        guard try await appState.graphManager.block(did: fvp.post.author.did.didString()) else {
+            throw PostInteractionError.moderationFailed
         }
-
-        let blockRecord = AppBskyGraphBlock(
-            subject: fvp.post.author.did,
-            createdAt: ATProtocolDate(date: Date())
-        )
-
-        let (responseCode, _) = try await client.com.atproto.repo.createRecord(
-            input: ComAtprotoRepoCreateRecord.Input(
-                repo: ATIdentifier(string: try client.getDid()),
-                collection: try NSID(nsidString: "app.bsky.graph.block"),
-                record: ATProtocolValueContainer.knownType(blockRecord)
-            )
-        )
-
-        guard responseCode >= 200 && responseCode < 300 else {
-            throw PostInteractionError.serverError(responseCode)
-        }
-
         logger.debug("Successfully blocked author: \(fvp.post.author.handle)")
     }
+
 }
 
 // MARK: - Errors

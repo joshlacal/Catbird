@@ -9,6 +9,40 @@ import Petrel
 
 final class NotificationPreferencesV2Tests: XCTestCase {
 
+  func testUnchangedPartialUpdateOmitsEveryCategoryWithoutChangingFullSerializer() {
+    let preferences = NotificationPreferences()
+    let partial = preferences.toPutPreferencesInput(changedFrom: preferences)
+    XCTAssertTrue(partial.isEmptyNotificationUpdate)
+    let full = preferences.toPutPreferencesInput()
+    XCTAssertNotNil(full.chat)
+    XCTAssertNotNil(full.like)
+    XCTAssertNotNil(full.starterpackJoined)
+    XCTAssertNotNil(full.verified)
+    XCTAssertNotNil(full.unverified)
+  }
+
+  func testChatOnlyPartialUpdatePreservesItsAudienceAndOmitsActivityRules() {
+    var confirmed = NotificationPreferences()
+    confirmed.chat = .init(include: "accepted", push: true)
+    var updated = confirmed
+    updated.chat = .init(include: updated.chat.include, push: false)
+    let input = updated.toPutPreferencesInput(changedFrom: confirmed)
+    XCTAssertEqual(input.chat?.include, "accepted")
+    XCTAssertEqual(input.chat?.push, false)
+    XCTAssertNil(input.follow)
+    XCTAssertNil(input.like)
+    XCTAssertNil(input.likeViaRepost)
+    XCTAssertNil(input.mention)
+    XCTAssertNil(input.quote)
+    XCTAssertNil(input.reply)
+    XCTAssertNil(input.repost)
+    XCTAssertNil(input.repostViaRepost)
+    XCTAssertNil(input.starterpackJoined)
+    XCTAssertNil(input.subscribedPost)
+    XCTAssertNil(input.unverified)
+    XCTAssertNil(input.verified)
+  }
+
   func testServerSnapshotRoundTripsAllChannelsAndFilters() {
     let serverSnapshot = AppBskyNotificationDefs.Preferences(
       chat: .init(include: "all", push: false),

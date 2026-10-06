@@ -1,10 +1,234 @@
 import Foundation
 import SwiftUI
+import SwiftData
+import Petrel
 import Testing
 @testable import Catbird
 
 @Suite("Recovered settings runtime wiring", .serialized)
 struct SettingsRuntimeWiringTests {
+  @Test("Appearance reset preserves accessibility, content, privacy, and inactive preference keys")
+  @MainActor
+  func appearanceResetScope() {
+    let settings = AppSettingsModel(accountDID: "did:plc:settings-reset-fixture")
+    settings.theme = "dark"
+    settings.darkThemeMode = "black"
+    settings.accentColor = "lavender"
+    settings.fontStyle = "serif"
+    settings.fontSize = "extraLarge"
+    settings.lineSpacing = "relaxed"
+    settings.letterSpacing = "loose"
+    settings.dynamicTypeEnabled = false
+    settings.maxDynamicTypeSize = "accessibility5"
+    settings.requireAltText = true
+    settings.largerAltTextBadges = true
+    settings.disableHaptics = true
+    settings.reduceMotion = true
+    settings.prefersCrossfade = true
+    settings.increaseContrast = true
+    settings.boldText = true
+    settings.displayScale = 1.2
+    settings.showReadingTimeEstimates = true
+    settings.highlightLinks = false
+    settings.linkStyle = "both"
+    settings.confirmBeforeActions = true
+    settings.longPressDuration = 1.7
+    settings.shakeToUndo = false
+    settings.enableViaAttribution = false
+    settings.sensitiveContentScanningEnabled = false
+    settings.autoplayVideos = false
+    settings.useInAppBrowser = false
+    settings.showTrendingTopics = false
+    settings.showTrendingVideos = false
+    settings.threadSortOrder = "oldest"
+    settings.prioritizeFollowedUsers = false
+    settings.threadedReplies = true
+    settings.showHiddenPosts = true
+    settings.showSavedFeedSamples = true
+    settings.setConsent(.hide, for: .youtube)
+    settings.setConsent(.allow, for: .spotify)
+    settings.useWebViewEmbeds = false
+    settings.appLanguage = "fr"
+    settings.primaryLanguage = "fr"
+    settings.contentLanguages = ["fr", "es"]
+    settings.hideNonPreferredLanguages = true
+    settings.showLanguageIndicators = false
+    settings.loggedOutVisibility = false
+    let preserved = nonAppearanceValues(settings)
+
+    settings.resetAppearanceToDefaults()
+
+    #expect(settings.theme == "system")
+    #expect(settings.darkThemeMode == "dim")
+    #expect(settings.accentColor == "default")
+    #expect(settings.fontStyle == "system")
+    #expect(settings.fontSize == "default")
+    #expect(settings.lineSpacing == "normal")
+    #expect(settings.letterSpacing == "normal")
+    #expect(nonAppearanceValues(settings) == preserved)
+  }
+
+  @Test("Appearance reset persists only to its account's SwiftData row")
+  @MainActor
+  func appearanceResetAccountPersistence() throws {
+    let configuration = ModelConfiguration(isStoredInMemoryOnly: true, cloudKitDatabase: .none)
+    let container = try ModelContainer(for: AppSettingsModel.self, configurations: configuration)
+    let context = ModelContext(container)
+    let first = AppSettingsModel(accountDID: "did:plc:first-reset-fixture")
+    let second = AppSettingsModel(accountDID: "did:plc:second-reset-fixture")
+    first.theme = "dark"
+    first.requireAltText = true
+    first.setConsent(.hide, for: .youtube)
+    second.theme = "light"
+    second.fontSize = "extraLarge"
+    context.insert(first)
+    context.insert(second)
+    try context.save()
+
+    first.resetAppearanceToDefaults()
+    try context.save()
+
+    let reloadedContext = ModelContext(container)
+    let rows = try reloadedContext.fetch(FetchDescriptor<AppSettingsModel>())
+    let reloadedFirst = try #require(rows.first { $0.id == first.id })
+    let reloadedSecond = try #require(rows.first { $0.id == second.id })
+    #expect(rows.count == 2)
+    #expect(reloadedFirst.theme == "system")
+    #expect(reloadedFirst.requireAltText)
+    #expect(reloadedFirst.consent(for: .youtube) == .hide)
+    #expect(reloadedSecond.theme == "light")
+    #expect(reloadedSecond.fontSize == "extraLarge")
+  }
+
+  @MainActor
+  private func nonAppearanceValues(_ settings: AppSettingsModel) -> [String] {
+    [
+      settings.id, String(settings.dynamicTypeEnabled), settings.maxDynamicTypeSize,
+      String(settings.requireAltText), String(settings.largerAltTextBadges),
+      String(settings.disableHaptics), String(settings.reduceMotion), String(settings.prefersCrossfade),
+      String(settings.increaseContrast), String(settings.boldText), String(settings.displayScale),
+      String(settings.showReadingTimeEstimates), String(settings.highlightLinks), settings.linkStyle,
+      String(settings.confirmBeforeActions), String(settings.longPressDuration), String(settings.shakeToUndo),
+      String(settings.enableViaAttribution), String(settings.sensitiveContentScanningEnabled),
+      String(settings.autoplayVideos), String(settings.useInAppBrowser), String(settings.showTrendingTopics),
+      String(settings.showTrendingVideos), settings.threadSortOrder, String(settings.prioritizeFollowedUsers),
+      String(settings.threadedReplies), String(settings.showHiddenPosts), String(settings.showSavedFeedSamples),
+      String(settings.useWebViewEmbeds), settings.appLanguage, settings.primaryLanguage,
+      settings.contentLanguages.joined(separator: ","), String(settings.hideNonPreferredLanguages),
+      String(settings.showLanguageIndicators), String(settings.loggedOutVisibility),
+    ] + ExternalMediaProvider.allCases.map { settings.consent(for: $0).rawValue }
+  }
+
+  @Test("Clearing minimum reply likes differs from omitting the preference")
+  func explicitReplyThresholdClear() {
+    let existing = FeedViewPreference(
+      hideReplies: false, hideRepliesByUnfollowed: true,
+      hideRepliesByLikeCount: 12, hideReposts: true, hideQuotePosts: false
+    )
+    let omitted = PreferencesManager.applyingFeedViewChanges(to: existing, hideReposts: false)
+    #expect(omitted.hideRepliesByLikeCount == 12)
+    #expect(omitted.hideReposts == false)
+
+    let cleared = PreferencesManager.applyingFeedViewChanges(to: existing, clearReplyLikeThreshold: true)
+    #expect(cleared.hideRepliesByLikeCount == nil)
+    #expect(cleared.hideReplies == existing.hideReplies)
+    #expect(cleared.hideRepliesByUnfollowed == existing.hideRepliesByUnfollowed)
+    #expect(cleared.hideReposts == existing.hideReposts)
+    #expect(cleared.hideQuotePosts == existing.hideQuotePosts)
+
+    let reenabled = PreferencesManager.applyingFeedViewChanges(to: cleared, hideRepliesByLikeCount: 2)
+    #expect(reenabled.hideRepliesByLikeCount == 2)
+    let zero = PreferencesManager.applyingFeedViewChanges(to: existing, hideRepliesByLikeCount: 0)
+    #expect(zero.hideRepliesByLikeCount == 0)
+    #expect(PreferencesManager.applyingFeedViewChanges(to: nil).hideRepliesByLikeCount == nil)
+  }
+
+  @Test("Settings refresh rejects a missing client instead of accepting cached defaults")
+  @MainActor
+  func settingsRefreshRequiresClient() async {
+    let manager = PreferencesManager()
+    do {
+      _ = try await manager.refreshSettingsPreferences()
+      Issue.record("A settings refresh must require a client")
+    } catch PreferencesManagerError.clientNotInitialized {
+      // No storage or network is consulted when the account client is unavailable.
+    } catch {
+      Issue.record("Unexpected refresh failure: \(error)")
+    }
+  }
+
+  @Test("Clearing interests sends an empty list and preserves unrelated server preferences", arguments: [false, true])
+  @MainActor
+  func removeLastInterest(replaceAll: Bool) async throws {
+    let transport = SettingsInterestsTransportFixture(tags: ["Art"])
+    let (manager, context, local) = try makeInterestsManager(transport: transport, localTags: ["Art"])
+    if replaceAll {
+      try await manager.updateInterests([])
+    } else {
+      try await manager.removeInterest("Art")
+    }
+
+    #expect(transport.writes.count == 1)
+    #expect(transport.tags.isEmpty)
+    #expect(transport.serverPreferences.count == 3)
+    if case .adultContentPref(let pref) = transport.serverPreferences[0] {
+      #expect(pref.enabled)
+    } else { Issue.record("Unrelated adult-content preference was replaced") }
+    if case .threadViewPref(let pref) = transport.serverPreferences[2] {
+      #expect(pref.sort == "top")
+    } else { Issue.record("Unrelated thread preference was replaced") }
+    #expect(local.interests.isEmpty)
+    let fetched = try context.fetch(FetchDescriptor<Preferences>())
+    #expect(fetched.first?.interests.isEmpty == true)
+  }
+
+  @Test("Failed interest replacement keeps the previously saved local and server selections")
+  @MainActor
+  func failedInterestsSavePreservesSelection() async throws {
+    let transport = SettingsInterestsTransportFixture(tags: ["Art"])
+    transport.writeStatus = 500
+    let (manager, context, local) = try makeInterestsManager(transport: transport, localTags: ["Art"])
+    do {
+      try await manager.updateInterests([])
+      Issue.record("A failed write must surface an error")
+    } catch {
+      #expect((error as NSError).code == 500)
+    }
+    #expect(transport.writes.count == 1)
+    #expect(transport.tags == ["Art"])
+    #expect(local.interests == ["Art"])
+    #expect(try context.fetch(FetchDescriptor<Preferences>()).first?.interests == ["Art"])
+  }
+
+  @Test("Adding an interest preserves newer server selections missing from the local cache")
+  @MainActor
+  func addInterestUsesServerSnapshot() async throws {
+    let transport = SettingsInterestsTransportFixture(tags: ["Art", "Travel"])
+    let (manager, _, local) = try makeInterestsManager(transport: transport, localTags: ["Art"])
+    try await manager.addInterest("Music")
+    #expect(transport.tags == ["Art", "Travel", "Music"])
+    #expect(local.interests == transport.tags)
+    try await manager.addInterest("Music")
+    #expect(transport.writes.count == 1)
+  }
+
+  @MainActor
+  private func makeInterestsManager(
+    transport: SettingsInterestsTransportFixture, localTags: [String]
+  ) throws -> (PreferencesManager, ModelContext, Preferences) {
+    let configuration = ModelConfiguration(isStoredInMemoryOnly: true, cloudKitDatabase: .none)
+    let container = try ModelContainer(for: Preferences.self, configurations: configuration)
+    let context = ModelContext(container)
+    let did = "did:plc:settings-interests-fixture"
+    let local = Preferences(accountDID: did)
+    local.interests = localTags
+    context.insert(local)
+    try context.save()
+    let manager = PreferencesManager(modelContext: context, specificPreferencesTransport: transport.transport)
+    manager.configure(accountDID: did)
+    return (manager, context, local)
+  }
+
   @Test("Required alt text exposes an actionable composer reason")
   func missingAltTextReason() {
     let state = PostComposerSubmitValidationState(canSubmit: false, reason: .missingAltText)
@@ -40,7 +264,7 @@ struct SettingsRuntimeWiringTests {
     #expect(ThreadSortAPIMapper.apiValue(for: "top") == "top")
     #expect(ThreadSortAPIMapper.apiValue(for: "newest") == "newest")
     #expect(ThreadSortAPIMapper.apiValue(for: "oldest") == "oldest")
-    #expect(ThreadSortAPIMapper.apiValue(for: "invalid") == "oldest")
+    #expect(ThreadSortAPIMapper.apiValue(for: "invalid") == "top")
   }
 
   @Test("Reading-time estimates start at one hundred words")
@@ -189,15 +413,16 @@ struct SettingsRuntimeWiringTests {
   func accountDeactivationWiring() throws {
     let source = try settingsSource(named: "AccountSettingsView.swift")
     
-    #expect(source.contains("deactivateConfirmText == \"DEACTIVATE\""))
+    #expect(source.contains("caseInsensitiveCompare(\"DEACTIVATE\")"))
     #expect(source.contains("ensurePermission(.accountStatusManage)"))
     #expect(source.contains("client.com.atproto.server.deactivateAccount("))
     #expect(source.contains("input: .init(deleteAfter: nil)"))
     #expect(source.contains("(200...299).contains(responseCode)"))
     #expect(source.contains("handleLogout()"))
-    // Verify dormant delete account UI/methods are removed
+    // OAuth sessions can't delete accounts: "Delete Account" hands off to the provider's account page
     #expect(!source.contains("deleteAccount("))
-    #expect(!source.contains("Delete Account"))
+    #expect(source.contains("Button(\"Delete Account\", role: .destructive)"))
+    #expect(source.contains("rawValue: \"account.delete\""))
   }
 
   @Test("Two-Factor Authentication wires to emailAuthFactor and JIT account:email?action=manage")
@@ -326,7 +551,7 @@ struct SettingsRuntimeWiringTests {
     let appearanceSource = try settingsSource(named: "AppearanceSettingsView.swift")
     let iconSource = try settingsSource(named: "AppIconSettingsView.swift")
     
-    #expect(appearanceSource.contains("AppIconSettingsView()"))
+    #expect(appearanceSource.contains("SettingsLink(screen: .appIcon"))
     #expect(appearanceSource.contains("supportsAlternateIcons"))
     #expect(iconSource.contains("CatbirdClassic"))
     #expect(iconSource.contains("setAlternateIconName"))
@@ -359,6 +584,39 @@ private func sourceSlice(_ source: String, from start: String, through end: Stri
     throw SettingsRuntimeSourceError.missingBoundary
   }
   return source[startRange.lowerBound..<endRange.lowerBound]
+}
+
+@MainActor
+private final class SettingsInterestsTransportFixture {
+  var serverPreferences: [AppBskyActorDefs.PreferencesForUnionArray]
+  var writes: [[AppBskyActorDefs.PreferencesForUnionArray]] = []
+  var writeStatus = 200
+
+  init(tags: [String]) {
+    self.serverPreferences = [
+      .adultContentPref(.init(enabled: true)),
+      .interestsPref(.init(tags: tags)),
+      .threadViewPref(.init(sort: "top")),
+    ]
+  }
+
+  var tags: [String] {
+    for item in self.serverPreferences {
+      if case .interestsPref(let value) = item { return value.tags }
+    }
+    return []
+  }
+
+  var transport: PreferencesManager.SpecificPreferencesTransport {
+    .init(
+      getPreferences: { self.serverPreferences },
+      putPreferences: { items in
+        self.writes.append(items)
+        if self.writeStatus == 200 { self.serverPreferences = items }
+        return self.writeStatus
+      }
+    )
+  }
 }
 
 private enum SettingsRuntimeSourceError: Error {

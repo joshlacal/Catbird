@@ -63,11 +63,11 @@ struct StarterPackCardView: View {
                     }
                     
                     if let weekCount = starterPack.joinedWeekCount {
-                        statView(count: weekCount, label: "This week")
+                        statView(count: weekCount, label: "Joined This Week")
                     }
                     
                     if let allTimeCount = starterPack.joinedAllTimeCount {
-                        statView(count: allTimeCount, label: "Total joins")
+                        statView(count: allTimeCount, label: "Total Joins")
                     }
                     
                     Spacer()

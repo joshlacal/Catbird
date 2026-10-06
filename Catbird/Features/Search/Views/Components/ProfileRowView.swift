@@ -9,6 +9,7 @@ struct ProfileRowView: View {
     @Environment(AppState.self) private var appState
     @State private var currentUserDid: String?
     @State private var viewerStatus: ViewerStatus = .unknown
+    @State private var showUnblockConfirmation = false
     
     private enum ViewerStatus {
         case unknown
@@ -155,19 +156,32 @@ struct ProfileRowView: View {
         switch viewerStatus {
         case .blocking:
             Button {
-                Task {
-                    let previous = viewerStatus
-                    viewerStatus = .notFollowing
-                    do {
-                        _ = try await appState.unblock(did: profile.did.didString())
-                    } catch {
-                        viewerStatus = previous
-                    }
-                }
+                showUnblockConfirmation = true
             } label: {
-                buttonLabel("Blocked", color: .white, backgroundColor: .red)
+                buttonLabel("Unblock", color: .white, backgroundColor: .red)
             }
             .buttonStyle(.plain)
+            .accessibilityHint("You blocked this account")
+            .confirmationDialog(
+                "Unblock @\(profile.handle)?",
+                isPresented: $showUnblockConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("Unblock", role: .destructive) {
+                    Task {
+                        let previous = viewerStatus
+                        viewerStatus = .notFollowing
+                        do {
+                            _ = try await appState.unblock(did: profile.did.didString())
+                        } catch {
+                            viewerStatus = previous
+                        }
+                    }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("They’ll be able to see your posts and interact with you again.")
+            }
             
         case .following:
             Button {

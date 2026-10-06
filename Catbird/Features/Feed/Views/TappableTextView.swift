@@ -9,6 +9,7 @@ import Foundation
 import SwiftUI
 
 struct TappableTextView: View {
+  @Environment(SceneNavigationContext.self) private var sceneContext
   let attributedString: AttributedString
     @Environment(AppState.self) private var appState
     @Environment(\.openURL) private var openURL
@@ -103,7 +104,7 @@ struct TappableTextView: View {
                         .environment(
                             \.openURL,
                              OpenURLAction { url in
-                                 return appState.urlHandler.handle(url)
+                                 return sceneContext.urlHandler.handle(url)
                              })
                 } else {
                     Text(attributedString)
@@ -121,7 +122,7 @@ struct TappableTextView: View {
                         .environment(
                             \.openURL,
                              OpenURLAction { url in
-                                 return appState.urlHandler.handle(url)
+                                 return sceneContext.urlHandler.handle(url)
                              })
                 }
             }

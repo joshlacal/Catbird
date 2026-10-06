@@ -59,30 +59,121 @@ struct CatbirdDraftMessageSchemaIntent {
       ? " Attachments, audio, locations, and scheduling aren't supported yet — the text was carried over."
       : ""
 
-    guard let destination else {
-      await MainActor.run {
-        ChatDraftHandoff.shared.store(PendingChatDraft(conversationID: nil, text: draftText))
-        AppStateManager.shared.lifecycle.appState?.navigationManager.navigate(to: .chatTab, in: 4)
+    // Capture identity and preserve the text before client resolution can
+    // suspend. A known scene can never be replaced by a later focused window.
+    let textToStore = draftText
+    let draft = try await MainActor.run {
+      let coordinator = SceneRouteCoordinator.shared
+      let sceneID = coordinator.preferredSceneIDForExternalEvent()
+      guard let accountDID = IntentAccountResolver.activeDID() else {
+        throw IntentError.notSignedIn
       }
-      return .result(
-        dialog: IntentDialog(
-          stringLiteral:
-            "Pick a conversation in Catbird to start your draft.\(unsupportedNote)"))
+      let draft = PendingChatDraft(
+        accountDID: accountDID, sceneID: sceneID, conversationID: nil, text: textToStore)
+      guard ChatDraftHandoff.shared.store(draft) else {
+        throw IntentError.serviceUnavailable("Catbird couldn't retain this draft. Please try again.")
+      }
+      return draft
     }
 
-    let client = try await MessagesSchemaRuntime.client()
-    let directory = try await MessagesSchemaRuntime.directory(client: client)
-    let recipients = try MessagesSchemaRuntime.recipients(for: destination, directory: directory)
-    let convoId = try await MessagesSchemaRuntime.resolveDestination(
-      recipients: recipients, client: client, directory: directory)
-    await MainActor.run {
-      ChatDraftHandoff.shared.store(PendingChatDraft(conversationID: convoId, text: draftText))
-      AppStateManager.shared.lifecycle.appState?.navigationManager.navigate(to: .conversation(convoId), in: 4)
+    let accountIsCurrent: @MainActor @Sendable () -> Bool = {
+      let manager = AppStateManager.shared
+      return !manager.isTransitioning
+        && IntentAccountResolver.activeDID() == draft.accountDID
+        && (manager.lifecycle.userDID == nil || manager.lifecycle.userDID == draft.accountDID)
+    }
+    let accountChanged = IntentError.serviceUnavailable(
+      "Your account changed while preparing the draft. Its text has been retained in Catbird.")
+    try Task.checkCancellation()
+    guard await accountIsCurrent() else { throw accountChanged }
+
+    let conversationID: String?
+    if let destination {
+      let client = try await IntentClientProvider.shared.client(for: draft.accountDID)
+      try Task.checkCancellation()
+      guard await accountIsCurrent() else { throw accountChanged }
+      let continuity = await client.authContinuitySnapshot()
+      let clientDID = try await client.getDid()
+      guard continuity.did == draft.accountDID, clientDID == draft.accountDID,
+        await accountIsCurrent()
+      else { throw accountChanged }
+
+      // Each exact-auth scope must contain one generated request. Keep the
+      // cached conversation match outside those scopes because it makes none.
+      let listed = try await client.performGeneratedRequestWithExactAuthContinuity(matching: continuity) {
+        try await client.chat.bsky.convo.listConvos(input: .init(limit: 100))
+      }
+      try Task.checkCancellation()
+      guard await accountIsCurrent(), await client.authContinuitySnapshot() == continuity,
+        case .performed(let response) = listed
+      else { throw accountChanged }
+      let output = try unwrapIntentResponse(response)
+      var membersByConvoID: [String: [MessagesSchemaRuntime.Member]] = [:]
+      for conversation in output.convos {
+        membersByConvoID[conversation.id] = conversation.members.map {
+          MessagesSchemaRuntime.Member(
+            did: $0.did.didString(), displayName: $0.displayName, handle: $0.handle.value)
+        }
+      }
+      let directory = MessagesSchemaRuntime.ChatDirectory(
+        conversations: output.convos, membersByConvoID: membersByConvoID,
+        currentUserDID: clientDID)
+      let recipients = try MessagesSchemaRuntime.recipients(for: destination, directory: directory)
+      if let existing = MessagesSchemaRuntime.conversationID(
+        matching: recipients.map(\.did),
+        in: membersByConvoID.mapValues { $0.map(\.did) },
+        conversationOrder: output.convos.map(\.id), selfDID: clientDID
+      ) {
+        conversationID = existing
+      } else {
+        let members = try recipients.map { try DID(didString: $0.did) }
+        let resolved = try await client.performGeneratedRequestWithExactAuthContinuity(matching: continuity) {
+          try await client.chat.bsky.convo.getConvoForMembers(input: .init(members: members))
+        }
+        try Task.checkCancellation()
+        guard await accountIsCurrent(), await client.authContinuitySnapshot() == continuity,
+          case .performed(let response) = resolved
+        else { throw accountChanged }
+        let output = try unwrapIntentResponse(response)
+        conversationID = output.convo.id
+      }
+    } else {
+      conversationID = nil
     }
 
-    return .result(
-      dialog: IntentDialog(
-        stringLiteral: "Draft started in Catbird.\(unsupportedNote)"))
+    let result = try await MainActor.run {
+      try Task.checkCancellation()
+      guard accountIsCurrent() else { throw accountChanged }
+      let command: SceneRouteCommand = conversationID.map {
+        .navigate(.conversation($0), tabIndex: 4)
+      } ?? .showTab(4, resetPath: false)
+      return SceneRouteCoordinator.shared.submit(
+        SceneRouteRequest(
+          id: draft.id, accountDID: draft.accountDID, command: command,
+          preferredSceneID: draft.sceneID),
+        beforeDelivery: { context in
+          guard accountIsCurrent(), !context.isInvalidated,
+            context.accountDID == draft.accountDID,
+            draft.sceneID == nil || draft.sceneID == context.sceneID
+          else { return false }
+          return ChatDraftHandoff.shared.bind(
+            id: draft.id, accountDID: draft.accountDID, sceneID: context.sceneID,
+            conversationID: conversationID) != nil
+        })
+    }
+
+    let message: String
+    switch result {
+    case .delivered:
+      message = conversationID == nil
+        ? "Pick a conversation in Catbird to start your draft."
+        : "Draft started in Catbird."
+    case .queued, .duplicate:
+      message = "Your draft is waiting for its Catbird window to become available."
+    case .dropped:
+      message = "Catbird couldn't open the intended window. Your draft text has been retained."
+    }
+    return .result(dialog: IntentDialog(stringLiteral: message + unsupportedNote))
   }
 }
 

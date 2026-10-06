@@ -21,7 +21,11 @@ struct ConversationManagementView: View {
   @State private var showingLockConfirmation = false
   @State private var showingAddMembers = false
   @State private var showingReportConversation = false
+  @State private var showingBlockAlert = false
   @State private var editedName = ""
+  /// The sheet's own stack, so member and profile taps push here whether the
+  /// sheet was opened from a conversation or from the conversation list.
+  @State private var sheetPath = NavigationPath()
 
   private let logger = Logger(subsystem: "blue.catbird", category: "ConversationManagementView")
 
@@ -71,12 +75,31 @@ struct ConversationManagementView: View {
     convo.members.map { $0.did.didString() }
   }
 
+  /// The other person in a 1:1 conversation, when their account still exists.
+  private var directMember: ChatBskyActorDefs.ProfileViewBasic? {
+    guard !convo.isGroupConversation,
+          let member = convo.directDisplayMember(currentUserDID: appState.userDID),
+          !member.isDeletedBlueskyChatAccount else { return nil }
+    return member
+  }
+
   var body: some View {
-    NavigationStack {
+    NavigationStack(path: $sheetPath) {
       List {
         headerSection
         if convo.isGroupConversation {
           membersSection
+        }
+        if let directMember,
+           !convo.moderationBlockState(currentUserDID: appState.userDID).isBlocked {
+          Section {
+            Button(role: .destructive) {
+              showingBlockAlert = true
+            } label: {
+              Label("Block @\(directMember.handle.description)", systemImage: "hand.raised")
+            }
+            .disabled(isProcessing)
+          }
         }
         if isOwnedGroup {
           groupAdministrationSection
@@ -86,19 +109,14 @@ struct ConversationManagementView: View {
             Button(role: .destructive) {
               showingReportConversation = true
             } label: {
-              HStack {
-                Image(systemName: "exclamationmark.bubble")
-                  .foregroundColor(.red)
-                Text("Report Conversation")
-                  .foregroundColor(.red)
-              }
+              Label("Report Conversation", systemImage: "exclamationmark.bubble")
             }
           }
         }
         leaveSection
       }
       .animation(.spring(response: 0.35, dampingFraction: 0.8), value: memberIDs)
-      .navigationTitle("Details")
+      .navigationTitle("Conversation Info")
     #if os(iOS)
       .toolbarTitleDisplayMode(.inline)
     #endif
@@ -116,6 +134,14 @@ struct ConversationManagementView: View {
           }
         }
       }
+      .navigationDestination(for: NavigationDestination.self) { destination in
+        NavigationHandler.viewForDestination(
+          destination,
+          path: $sheetPath,
+          appState: appState,
+          selectedTab: .constant(AppNavigationManager.chatTabIndex)
+        )
+      }
       .sheet(isPresented: $showingAddMembers) {
         AddGroupMembersSheet(convoId: convo.id, existingMemberDIDs: Set(memberIDs))
       }
@@ -127,13 +153,24 @@ struct ConversationManagementView: View {
           }
         )
       }
-      .alert("Leave Conversation", isPresented: $showingLeaveAlert) {
+      .alert("Leave Conversation?", isPresented: $showingLeaveAlert) {
         Button("Cancel", role: .cancel) { }
         Button("Leave", role: .destructive) {
           leaveConversation()
         }
       } message: {
-        Text("Are you sure you want to leave this conversation? You will no longer receive messages from this conversation.")
+        Text("The conversation will be removed from your list. Your messages will be deleted for you, but not for the other participants.")
+      }
+      .alert(
+        "Block \(directMember.map { "@\($0.handle.description)" } ?? "This Account")?",
+        isPresented: $showingBlockAlert
+      ) {
+        Button("Cancel", role: .cancel) { }
+        Button("Block", role: .destructive) {
+          blockDirectMember()
+        }
+      } message: {
+        Text("They won’t be able to message you or interact with your posts, and you won’t see their content.")
       }
       .alert("Lock & Leave Group", isPresented: $showingOwnerLeaveAlert) {
         Button("Cancel", role: .cancel) { }
@@ -160,12 +197,12 @@ struct ConversationManagementView: View {
       } message: {
         Text("Locking stops all new messages and reactions for every member. You can unlock the group later.")
       }
-      .alert("Error", isPresented: errorAlertBinding) {
+      .alert("Something Went Wrong", isPresented: errorAlertBinding) {
         Button("OK") {
           errorMessage = nil
         }
       } message: {
-        Text(errorMessage ?? "An unknown error occurred")
+        Text(errorMessage ?? "")
       }
     }
   }
@@ -220,6 +257,15 @@ struct ConversationManagementView: View {
         markAsRead()
       }
 
+      if let directMember {
+        QuickActionButton(
+          title: "Profile",
+          systemImage: "person.crop.circle"
+        ) {
+          sheetPath.append(NavigationDestination.profile(directMember.did.didString()))
+        }
+      }
+
       if isOwnedGroup {
         QuickActionButton(
           title: "Edit Name",
@@ -247,10 +293,7 @@ struct ConversationManagementView: View {
       }
 
       ForEach(convo.members, id: \.did) { member in
-        GroupMemberRow(
-          member: member,
-          isCurrentUser: member.did.didString() == appState.userDID
-        )
+        memberRow(member)
         .modifier(
           RemovableMemberModifier(
             canRemove: canRemove(member),
@@ -273,6 +316,18 @@ struct ConversationManagementView: View {
     } footer: {
       if isOwnedGroup && atMemberLimit {
         Text("This group is at its member limit.")
+      }
+    }
+  }
+
+  @ViewBuilder
+  private func memberRow(_ member: ChatBskyActorDefs.ProfileViewBasic) -> some View {
+    let isCurrentUser = member.did.didString() == appState.userDID
+    if isCurrentUser || member.isDeletedBlueskyChatAccount {
+      GroupMemberRow(member: member, isCurrentUser: isCurrentUser)
+    } else {
+      NavigationLink(value: NavigationDestination.profile(member.did.didString())) {
+        GroupMemberRow(member: member, isCurrentUser: false)
       }
     }
   }
@@ -329,7 +384,7 @@ struct ConversationManagementView: View {
       Text("Group Administration")
     } footer: {
       if groupMetadata?.lockStatusModerationOverride == true {
-        Text("This group was locked by moderation and can't be unlocked.")
+        Text("This group was locked by moderation and can’t be unlocked.")
       } else if joinLinkEnabled {
         Text("Anyone with the invite link can join this group.")
       }
@@ -366,7 +421,7 @@ struct ConversationManagementView: View {
       if isOwnedGroup {
         Text("As the owner, you must lock this group before leaving. Locking stops all new messages and reactions for every member.")
       } else {
-        Text("Leaving this conversation will remove it from your chat list. You won't receive new messages unless someone starts a new conversation with you.")
+        Text("Leaving this conversation will remove it from your chat list. You won’t receive new messages unless someone starts a new conversation with you.")
       }
     }
   }
@@ -396,9 +451,12 @@ struct ConversationManagementView: View {
       } else {
         await appState.chatManager.muteConversation(convoId: convoId)
       }
-      // Mute endpoints don't return the ConvoView; re-fetch so the live copy
-      // this sheet renders picks up the new muted flag.
-      await appState.chatManager.refreshConversation(convoId: convoId)
+      // The mute endpoints update the cached ConvoView; surface failures
+      // here because the global chat alert can't present over this sheet.
+      if let error = appState.chatManager.errorState {
+        appState.chatManager.errorState = nil
+        errorMessage = error.localizedDescription
+      }
     }
   }
 
@@ -444,7 +502,7 @@ struct ConversationManagementView: View {
         throw GroupAdminError.underlying(
           NSError(
             domain: "ChatManager", code: 500,
-            userInfo: [NSLocalizedDescriptionKey: "Couldn't lock this group. Please try again."]))
+            userInfo: [NSLocalizedDescriptionKey: "Couldn’t lock this group. Please try again."]))
       }
     }
   }
@@ -474,8 +532,28 @@ struct ConversationManagementView: View {
         // Show the failure in-sheet; the global alert can't present over
         // this sheet, so move the message here instead.
         errorMessage = appState.chatManager.errorState?.localizedDescription
-          ?? "Couldn't leave this conversation. Please try again."
+          ?? "Couldn’t leave this conversation. Please try again."
         appState.chatManager.errorState = nil
+      }
+    }
+  }
+
+  private func blockDirectMember() {
+    guard let member = directMember else { return }
+    let did = member.did.didString()
+    let handle = member.handle.description
+    let convoId = convo.id
+    Task {
+      isProcessing = true
+      defer { isProcessing = false }
+      do {
+        _ = try await appState.block(did: did)
+        appState.toastManager.show(ToastItem(message: "Blocked @\(handle)", icon: "hand.raised.fill"))
+        await appState.chatManager.refreshConversation(convoId: convoId)
+        appState.chatManager.errorState = nil
+      } catch {
+        logger.error("Failed to block from conversation info: \(error.localizedDescription)")
+        errorMessage = UserFacingError.message(for: error, action: "block this account")
       }
     }
   }
@@ -491,7 +569,7 @@ struct ConversationManagementView: View {
         // Show the failure in-sheet; the global alert can't present over
         // this sheet, so move the message here instead.
         errorMessage = appState.chatManager.errorState?.localizedDescription
-          ?? "Couldn't lock and leave this group. Please try again."
+          ?? "Couldn’t lock and leave this group. Please try again."
         appState.chatManager.errorState = nil
       }
     }
@@ -787,7 +865,7 @@ struct ConversationInvitationView: View {
         }
         
         if otherMembers.count > 3 {
-          Text("and \(otherMembers.count - 3) more...")
+          Text("and \(otherMembers.count - 3) more")
             .appFont(AppTextRole.caption)
             .foregroundColor(.secondary)
         }

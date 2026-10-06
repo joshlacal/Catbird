@@ -65,11 +65,34 @@ struct ErrorStateView: View {
   
   // MARK: - Computed Properties
   
+  /// Plain-language explanation of the failure. Raw error text (HTTP codes, decoder
+  /// messages) stays in the logs of whoever produced the error.
   private var errorDescription: String {
-    if let localizedError = error as? LocalizedError {
-      return localizedError.localizedDescription
-    } else {
-      return error.localizedDescription
+    switch UserFacingError.kind(of: error) {
+    case .offline:
+      return "You’re offline. Check your connection and try again."
+    case .timedOut:
+      return "This is taking longer than usual. Try again in a moment."
+    case .rateLimited:
+      return "Too many requests. Wait a moment and try again."
+    case .notFound:
+      return "This content isn’t available. It may have been deleted."
+    case .notAllowed:
+      return "You don’t have permission to view this."
+    case .signInRequired:
+      return "Sign in again to continue."
+    case .server:
+      return "The server is having trouble right now. Try again in a moment."
+    case .cancelled, .other:
+      // View models often wrap a bad HTTP response in an NSError whose code is the status.
+      let code = (error as NSError).code
+      if code == 429 {
+        return "Too many requests. Wait a moment and try again."
+      }
+      if (500...599).contains(code) {
+        return "The server is having trouble right now. Try again in a moment."
+      }
+      return "Please try again."
     }
   }
 }
@@ -181,7 +204,6 @@ struct ContentUnavailableStateView: View {
         }
         .buttonStyle(.borderedProminent)
         .controlSize(.large)
-        .accessibilityHint("Takes action to resolve the empty state")
       }
     }
     .padding(32)
@@ -202,7 +224,7 @@ let message: String
   
   // MARK: - Initialization
   
-  init(message: String = "Loading...", showProgress: Bool = true) {
+  init(message: String = "Loading…", showProgress: Bool = true) {
     self.message = message
     self.showProgress = showProgress
   }
@@ -252,10 +274,17 @@ extension ErrorStateView {
 extension ContentUnavailableStateView {
   /// Create an empty feed state view
   static func emptyFeed(feedName: String = "feed", onRefresh: (() -> Void)? = nil, onExplore: (() -> Void)? = nil) -> ContentUnavailableStateView {
+    // Uncached feeds and lists fall back to "Feed: <record key>" / "List: <record key>",
+    // which must never reach the title.
+    let hasName = !feedName.isEmpty
+      && feedName.lowercased() != "feed"
+      && !feedName.hasPrefix("Feed: ")
+      && !feedName.hasPrefix("List: ")
+    let title = hasName ? "No Posts in \(feedName)" : "No Posts Yet"
     if let onExplore = onExplore {
       return ContentUnavailableStateView(
-        title: "No Posts in \(feedName)",
-        description: "This \(feedName) doesn't have any posts yet. Try refreshing or explore other feeds to discover new content.",
+        title: title,
+        description: "This feed doesn’t have any posts yet. Try refreshing, or explore other feeds to discover new posts.",
         systemImage: "tray",
         actionTitle: "Explore Feeds"
       ) {
@@ -263,8 +292,8 @@ extension ContentUnavailableStateView {
       }
     } else if let onRefresh = onRefresh {
       return ContentUnavailableStateView(
-        title: "No Posts in \(feedName)",
-        description: "This \(feedName) doesn't have any posts yet. Pull down to refresh or try again later.",
+        title: title,
+        description: "This feed doesn’t have any posts yet. Pull down to refresh or try again later.",
         systemImage: "tray",
         actionTitle: "Refresh"
       ) {
@@ -272,8 +301,8 @@ extension ContentUnavailableStateView {
       }
     } else {
       return ContentUnavailableStateView(
-        title: "No Posts in \(feedName)",
-        description: "This \(feedName) doesn't have any posts yet. Check back later for new content.",
+        title: title,
+        description: "This feed doesn’t have any posts yet. Check back later for new posts.",
         systemImage: "tray"
       )
     }
@@ -306,7 +335,7 @@ extension ContentUnavailableStateView {
   /// Create a network error state view for feeds
   static func feedNetworkError(onRetry: @escaping () -> Void) -> ContentUnavailableStateView {
     ContentUnavailableStateView(
-      title: "Can't Load Feed",
+      title: "Can’t Load Feed",
       description: "There was a problem loading this feed. Check your internet connection and try again.",
       systemImage: "wifi.slash",
       actionTitle: "Try Again"

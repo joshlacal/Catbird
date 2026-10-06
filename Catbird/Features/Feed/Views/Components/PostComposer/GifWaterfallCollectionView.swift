@@ -273,6 +273,10 @@ final class GifCollectionViewCell: UICollectionViewCell {
         guard currentGifId != gif.id else { return }
         
         currentGifId = gif.id
+
+        isAccessibilityElement = true
+        accessibilityTraits = .button
+        accessibilityLabel = gif.content_description.isEmpty ? "GIF" : gif.content_description
         
         let gifView = GifVideoView(gif: gif, onTap: {})
             .allowsHitTesting(false) // Disable tap since we handle it at cell level

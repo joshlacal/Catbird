@@ -1102,18 +1102,14 @@ struct InterestPickerSheet: View {
     @State private var selectedInterests: Set<String>
     @State private var isSaving = false
     
-    // Common interest tags
-    private let availableInterests = [
-        "Technology", "Science", "Art", "Music", "Sports", "Politics",
-        "Photography", "Travel", "Food", "Books", "Movies", "Gaming",
-        "Fashion", "Health", "Fitness", "Business", "Education",
-        "Environment", "News", "Comedy", "Design", "Programming"
-    ].sorted()
+    // Bluesky's canonical interest tags; selections store the tag, not the display name
+    private let availableInterests = BlueskyInterest.allCases.sorted { $0.displayName < $1.displayName }
     
     init(currentInterests: [String], onSave: @escaping ([String]) async -> Void) {
         self.currentInterests = currentInterests
         self.onSave = onSave
-        self._selectedInterests = State(initialValue: Set(currentInterests))
+        // Older Catbird builds saved display words; keep the ones Bluesky recognizes as canonical tags
+        self._selectedInterests = State(initialValue: Set(currentInterests.compactMap { BlueskyInterest.normalize($0)?.rawValue }))
     }
     
     var body: some View {
@@ -1125,15 +1121,15 @@ struct InterestPickerSheet: View {
                         .foregroundColor(.secondary)
                     
                     FlowLayout(horizontalSpacing: 8, verticalSpacing: 8) {
-                        ForEach(Array(availableInterests), id: \.self) { interest in
+                        ForEach(availableInterests) { interest in
                             InterestTag(
-                                interest: interest,
-                                isSelected: selectedInterests.contains(interest),
+                                interest: interest.displayName,
+                                isSelected: selectedInterests.contains(interest.rawValue),
                                 onTap: {
-                                    if selectedInterests.contains(interest) {
-                                        selectedInterests.remove(interest)
+                                    if selectedInterests.contains(interest.rawValue) {
+                                        selectedInterests.remove(interest.rawValue)
                                     } else {
-                                        selectedInterests.insert(interest)
+                                        selectedInterests.insert(interest.rawValue)
                                     }
                                 }
                             )

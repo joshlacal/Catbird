@@ -62,13 +62,20 @@ struct AccountDeactivatedView: View {
                 .fontWeight(.bold)
                 .multilineTextAlignment(.center)
             
-            let handle = appState.currentUserProfile?.handle.description ?? appState.userDID
-            Text("Your account (@\(handle)) is currently deactivated. Social features, posts, and feeds are disabled until reactivated.")
+            Text(statusMessage)
                 .font(.body)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 8)
         }
+    }
+    
+    private var statusMessage: String {
+        let details = "is deactivated. Posts, feeds, and other social features are unavailable until you reactivate it."
+        if let handle = appState.currentUserProfile?.handle.description ?? appStateManager.authentication.handle {
+            return "Your account (@\(handle)) \(details)"
+        }
+        return "Your account \(details)"
     }
     
     // MARK: - Actions
@@ -161,7 +168,7 @@ struct AccountDeactivatedView: View {
         do {
             try await appStateManager.reactivateAccount(appState: appState)
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = UserFacingError.message(for: error, action: "reactivate your account")
         }
         
         isReactivating = false

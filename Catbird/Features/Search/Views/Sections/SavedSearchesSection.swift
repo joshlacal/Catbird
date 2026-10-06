@@ -3,7 +3,7 @@
 //  Catbird
 //
 //  Created on 10/13/25.
-//  SRCH-015: Saved Searches with Notifications
+//  SRCH-015: Saved Searches
 //
 
 import SwiftUI
@@ -22,46 +22,26 @@ struct SavedSearchesSection: View {
     var body: some View {
         if !savedSearches.isEmpty {
             VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 6) {
-                    Image(systemName: "bookmark.fill")
-                        .appFont(AppTextRole.subheadline)
-                        .foregroundColor(.purple)
-                    
-                    Text("Saved Searches")
-                        .appFont(.customSystemFont(size: 17, weight: .bold, width: 120, relativeTo: .headline))
-                    
-                    Spacer()
-                    
+                DiscoverySectionHeader("Saved Searches") {
                     if savedSearches.count > 3 {
-                        Button {
-                            onShowAll()
-                        } label: {
-                            HStack(spacing: 4) {
-                                Text("See All")
-                                Image(systemName: "chevron.right")
-                                    .appFont(AppTextRole.caption)
-                            }
-                            .appFont(AppTextRole.subheadline)
-                            .foregroundColor(.accentColor)
+                        Button(action: onShowAll) {
+                            Label("All Saved", systemImage: "chevron.right")
+                                .appFont(size: Typography.Size.subheadline, weight: .medium, relativeTo: .subheadline)
+                                .frame(minHeight: 44)
                         }
                     }
                 }
-                .padding(.horizontal)
-                
+
                 VStack(spacing: 0) {
                     ForEach(Array(savedSearches.prefix(3).enumerated()), id: \.element.id) { index, search in
                         savedSearchRow(search)
                         
                         if index < min(2, savedSearches.count - 1) {
                             Divider()
-                                .padding(.leading, 48)
                         }
                     }
                 }
-                .background(Color.elevatedBackground(appState.themeManager, elevation: .low, currentScheme: colorScheme))
-                .cornerRadius(12)
-                .shadow(color: Color.dynamicShadow(appState.themeManager, currentScheme: colorScheme), radius: 4, y: 2)
-                .padding(.horizontal)
+                .background(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))
             }
         }
     }
@@ -71,50 +51,12 @@ struct SavedSearchesSection: View {
         Button {
             onSelect(search)
         } label: {
-            HStack(spacing: 12) {
-                Image(systemName: "bookmark.fill")
-                    .appFont(AppTextRole.subheadline)
-                    .foregroundColor(.purple)
-                    .frame(width: 20, height: 20)
-                
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(search.name)
-                        .appFont(AppTextRole.body.weight(.medium))
-                        .foregroundColor(Color.dynamicText(appState.themeManager, style: .primary, currentScheme: colorScheme))
-                        .lineLimit(1)
-                    
-                    HStack(spacing: 8) {
-                        Text(search.query)
-                            .appFont(AppTextRole.caption)
-                            .foregroundColor(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
-                            .lineLimit(1)
-                        
-                        if search.filters.activeFilterCount > 0 {
-                            Text("• \(search.filters.activeFilterCount) filter\(search.filters.activeFilterCount == 1 ? "" : "s")")
-                                .appFont(AppTextRole.caption)
-                                .foregroundColor(Color(platformColor: PlatformColor.platformTertiaryLabel))
-                        }
-                    }
-                }
-                
-                Spacer()
-                
-                Text(formatLastUsed(search.lastUsed))
-                    .appFont(AppTextRole.caption2)
-                    .foregroundColor(Color(platformColor: PlatformColor.platformTertiaryLabel))
-            }
-            .padding(.vertical, 12)
-            .padding(.horizontal, 16)
-            .contentShape(Rectangle())
+            savedSearchLabel(search)
         }
         .buttonStyle(.plain)
-        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-            Button(role: .destructive) {
-                withAnimation {
-                    onDelete(search)
-                }
-            } label: {
-                Label("Delete", systemImage: "trash")
+        .accessibilityAction(named: "Delete") {
+            withAnimation {
+                onDelete(search)
             }
         }
         .contextMenu {
@@ -132,6 +74,47 @@ struct SavedSearchesSection: View {
         }
     }
     
+    private func savedSearchLabel(_ search: SavedSearch) -> some View {
+            HStack(spacing: 12) {
+                Image(systemName: "bookmark.fill")
+                    .appFont(AppTextRole.subheadline)
+                    .foregroundColor(.purple)
+                    .frame(width: 20, height: 20)
+                
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(search.name)
+                        .appFont(AppTextRole.body.weight(.medium))
+                        .foregroundColor(Color.dynamicText(appState.themeManager, style: .primary, currentScheme: colorScheme))
+                        .lineLimit(2)
+                    
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(search.query)
+                            .appFont(AppTextRole.caption)
+                            .foregroundColor(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
+                            .lineLimit(1)
+                        
+                        Text("Last used \(formatLastUsed(search.lastUsed))")
+                            .appFont(AppTextRole.caption2)
+                            .foregroundStyle(.secondary)
+
+                        if search.filters.activeFilterCount > 0 {
+                            Text("\(search.filters.activeFilterCount) filter\(search.filters.activeFilterCount == 1 ? "" : "s")")
+                                .appFont(AppTextRole.caption)
+                                .foregroundColor(Color(platformColor: PlatformColor.platformTertiaryLabel))
+                        }
+                    }
+                }
+                
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .appFont(AppTextRole.caption)
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.vertical, 12)
+            .padding(.horizontal, 16)
+            .contentShape(Rectangle())
+    }
+
     private func formatLastUsed(_ date: Date) -> String {
         let now = Date()
         let components = Calendar.current.dateComponents([.day, .hour, .minute], from: date, to: now)
@@ -249,6 +232,7 @@ struct AllSavedSearchesView: View {
                     } label: {
                         Image(systemName: "arrow.up.arrow.down")
                     }
+                    .accessibilityLabel("Sort")
                 }
                 
                 ToolbarItem(placement: .cancellationAction) {
@@ -257,6 +241,7 @@ struct AllSavedSearchesView: View {
                     } label: {
                         Image(systemName: "xmark")
                     }
+                    .accessibilityLabel("Close")
                 }
             }
         }
@@ -331,16 +316,12 @@ struct AllSavedSearchesView: View {
     private func filtersPreview(_ filters: SearchFilterState) -> some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                if let language = filters.language {
-                    filterChip(icon: "globe", text: language.uppercased())
-                }
-                
-                if filters.dateRange != .anytime {
-                    filterChip(icon: "calendar", text: filters.dateRange.displayName)
-                }
-                
                 if filters.sort != .top {
                     filterChip(icon: "arrow.up.arrow.down", text: filters.sort.displayName)
+                }
+                
+                ForEach(filters.summaryItems) { item in
+                    filterChip(icon: item.icon, text: item.text)
                 }
             }
         }
@@ -365,9 +346,7 @@ struct AllSavedSearchesView: View {
     }
     
     private func hasActiveFilters(_ filters: SearchFilterState) -> Bool {
-        return filters.language != nil ||
-               filters.dateRange != .anytime ||
-               filters.sort != .top
+        filters.sort != .top || !filters.summaryItems.isEmpty
     }
     
     @ViewBuilder
@@ -381,8 +360,8 @@ struct AllSavedSearchesView: View {
                 .appFont(AppTextRole.headline)
             
             Text(searchFilter.isEmpty ? 
-                 "Save your frequent searches for quick access" :
-                 "No searches match '\(searchFilter)'")
+                 "Save your frequent searches for quick access." :
+                 "No searches match “\(searchFilter)”.")
                 .appFont(AppTextRole.subheadline)
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)

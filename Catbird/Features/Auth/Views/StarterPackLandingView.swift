@@ -37,7 +37,7 @@ public struct StarterPackLandingView: View {
         NavigationStack {
             ZStack {
                 if isLoading {
-                    ProgressView("Loading starter pack...")
+                    ProgressView("Loading starter pack…")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 } else if let error = errorMessage {
@@ -58,11 +58,11 @@ public struct StarterPackLandingView: View {
                 }
             }
             .sheet(isPresented: $showSignupSheet) {
-                LoginView(initialAuthMode: .signup)
+                LoginView(initialAuthMode: .signup, isPresentedModally: true)
                     .environment(appStateManager)
             }
             .sheet(isPresented: $showLoginSheet) {
-                LoginView(initialAuthMode: .login)
+                LoginView(initialAuthMode: .login, isPresentedModally: true)
                     .environment(appStateManager)
             }
             .onChange(of: appStateManager.lifecycle) { _, newLifecycle in
@@ -195,7 +195,7 @@ public struct StarterPackLandingView: View {
                 // Action Buttons
                 VStack(spacing: 12) {
                     Button(action: joinStarterPackAction) {
-                        Text("Join this starter pack")
+                        Text("Join This Starter Pack")
                             .font(.headline)
                             .frame(maxWidth: .infinity)
                             .frame(height: 52)
@@ -390,6 +390,7 @@ public struct StarterPackLandingView: View {
         )
         StarterPackOnboardingManager.shared.setPendingContext(pending)
         logger.info("Saved pending starter pack context for sign-in: \(pack.uri.uriString()) (flow: \(self.flowID.uuidString))")
+        showLoginSheet = true
     }
 
     private func signupWithoutPackAction() {
@@ -439,7 +440,7 @@ public struct StarterPackLandingView: View {
         } catch {
             await MainActor.run {
                 self.logger.error("Failed to fetch starter pack: \(error)")
-                self.errorMessage = "Unable to load starter pack details. Please check your internet connection."
+                self.errorMessage = "Couldn’t load this starter pack. Check your connection and try again."
                 self.isLoading = false
                 StarterPackOnboardingManager.shared.clearPendingContext()
             }

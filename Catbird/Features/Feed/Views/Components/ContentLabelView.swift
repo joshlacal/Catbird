@@ -211,29 +211,39 @@ struct ContentLabelManager<Content: View>: View {
     // Used only for visibility decisions; not displayed as badges.
     let selfLabelValues: [String]?
     let contentType: String
+    let onReveal: (() -> Void)?
+    let visibilityResolver: (@MainActor ([ComAtprotoLabelDefs.Label], [String]) async -> ContentVisibility)?
     @State private var isBlurred: Bool
     @State private var contentVisibility: ContentVisibility
+    @State private var visibilityRequest = UUID()
     @Environment(AppState.self) private var appState
     let content: Content
     
-    init(labels: [ComAtprotoLabelDefs.Label]?, selfLabelValues: [String]? = nil, contentType: String = "content", @ViewBuilder content: () -> Content) {
+    init(labels: [ComAtprotoLabelDefs.Label]?, selfLabelValues: [String]? = nil, contentType: String = "content", onReveal: (() -> Void)? = nil, visibilityResolver: (@MainActor ([ComAtprotoLabelDefs.Label], [String]) async -> ContentVisibility)? = nil, @ViewBuilder content: () -> Content) {
         self.labels = labels
         self.selfLabelValues = selfLabelValues
         self.contentType = contentType
+        self.onReveal = onReveal
+        self.visibilityResolver = visibilityResolver
         self.content = content()
         // Use a more conservative initial visibility that will be updated by async task
-        let initialVisibility = ContentLabelManager.getInitialContentVisibility(labels: labels)
+        let initialVisibility = ContentLabelManager.getInitialContentVisibility(
+            labels: labels, selfLabelValues: selfLabelValues
+        )
         self._contentVisibility = State(initialValue: initialVisibility)
         self._isBlurred = State(initialValue: initialVisibility == .warn)
     }
     
     /// Conservative initial visibility determination without user preferences
     /// This is used before async preference loading completes
-    static func getInitialContentVisibility(labels: [ComAtprotoLabelDefs.Label]?) -> ContentVisibility {
-        guard let labels = labels, !labels.isEmpty else { return .show }
-
-        // Check for the most restrictive content type first
-        let labelValues = labels.map { $0.val.lowercased() }.filter { ContentLabels.contentWarningLabels.contains($0) }
+    static func getInitialContentVisibility(
+        labels: [ComAtprotoLabelDefs.Label]?, selfLabelValues: [String]? = nil
+    ) -> ContentVisibility {
+        // Apply the same conservative policy to record self-labels before async
+        // preferences resolve, so media cannot appear briefly without its warning.
+        let labelValues = ((labels ?? []).map(\.val) + (selfLabelValues ?? []))
+            .map { $0.lowercased() }
+            .filter { ContentLabels.contentWarningLabels.contains($0) }
 
         // Ignore labels that are not content warnings
         guard !labelValues.isEmpty else { return .show }
@@ -341,11 +351,7 @@ struct ContentLabelManager<Content: View>: View {
                         .foregroundStyle(.white.opacity(0.8))
                         .padding(.bottom, 12)
 
-                    Button {
-                        withAnimation {
-                            isBlurred = false
-                        }
-                    } label: {
+                    Button(action: revealContent) {
                         Text("Show Content")
                             .appFont(AppTextRole.footnote)
                             .foregroundStyle(.white)
@@ -390,11 +396,7 @@ struct ContentLabelManager<Content: View>: View {
 
                             strongBlurOverlay
                         }
-                        .onTapGesture {
-                            withAnimation {
-                                isBlurred = false
-                            }
-                        }
+                        .onTapGesture(perform: revealContent)
                     } else {
                         // When revealed under warn, allow collapsing again to a compact placeholder
                         VStack(alignment: .leading, spacing: 6) {
@@ -448,10 +450,20 @@ struct ContentLabelManager<Content: View>: View {
                 }
             }
         }
-        .task {
-            // Update visibility immediately when view appears
+        .task(id: appState.userDID) {
+            // Update visibility immediately when view appears and after account changes.
             await updateContentVisibility()
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("FeedPreferencesChanged"))) { notification in
+            if let account = notification.userInfo?["accountDID"] as? String, account != appState.userDID { return }
+            Task { await updateContentVisibility() }
+        }
+    }
+
+    private func revealContent() {
+        guard isBlurred else { return }
+        withAnimation { isBlurred = false }
+        onReveal?()
     }
     
     private var hiddenContentPlaceholder: some View {
@@ -481,16 +493,33 @@ struct ContentLabelManager<Content: View>: View {
     }
     
     private func updateContentVisibility() async {
-        // Consider both canonical labels and any self-applied label values
-        let visibility = await getEffectiveContentVisibility(for: labels ?? [], selfLabelValues: selfLabelValues ?? [])
+        let request = UUID()
+        visibilityRequest = request
+        let account = appState.userDID
+        let client = appState.atProtoClient
+        // Consider both canonical labels and any self-applied label values.
+        let visibility: ContentVisibility
+        if let visibilityResolver {
+            visibility = await visibilityResolver(labels ?? [], selfLabelValues ?? [])
+        } else {
+            visibility = await getEffectiveContentVisibility(for: labels ?? [], selfLabelValues: selfLabelValues ?? [])
+        }
+        guard !Task.isCancelled, visibilityRequest == request, appState.userDID == account,
+              appState.atProtoClient === client else { return }
         await MainActor.run {
-            self.contentVisibility = visibility
-            self.isBlurred = (visibility == .warn)
+            // Retain a user's reveal when a refresh produces the same warning policy.
+            if self.contentVisibility != visibility {
+                self.contentVisibility = visibility
+                self.isBlurred = (visibility == .warn)
+            }
         }
     }
-    
+
     private func getEffectiveContentVisibility(for labels: [ComAtprotoLabelDefs.Label], selfLabelValues: [String]) async -> ContentVisibility {
-        let visibleLabels = labels.filter { ContentLabels.contentWarningLabels.contains($0.val.lowercased()) }
+        let visibleLabels = labels.filter {
+            ContentLabels.contentWarningLabels.contains($0.val.lowercased())
+              || (!$0.val.hasPrefix("!") && ReportingService.isLabelActive($0))
+        }
         let visibleSelfLabels = selfLabelValues.filter { ContentLabels.contentWarningLabels.contains($0.lowercased()) }
 
         // If no warning-eligible labels exist, show content normally
@@ -533,9 +562,9 @@ struct ContentLabelManager<Content: View>: View {
     private func getVisibilityForLabel(_ label: ComAtprotoLabelDefs.Label) async -> ContentVisibility {
         let normalizedValue = label.val.lowercased()
 
-        // Skip labels that are not content warnings
+        // Builtin policy, including existing adult/nudity/suggestive gates, stays unchanged.
         guard ContentLabels.contentWarningLabels.contains(normalizedValue) else {
-            return .show
+            return await getVisibilityForCustomLabel(label)
         }
 
         do {
@@ -575,6 +604,52 @@ struct ContentLabelManager<Content: View>: View {
             }
             return .warn
         }
+    }
+
+    private func getVisibilityForCustomLabel(_ label: ComAtprotoLabelDefs.Label) async -> ContentVisibility {
+        guard ReportingService.isLabelActive(label), !label.val.hasPrefix("!") else { return .show }
+        let account = appState.userDID
+        let manager = appState.preferencesManager
+        let client = appState.atProtoClient
+        do {
+            let preferences = try await manager.getPreferences()
+            guard appState.userDID == account, appState.atProtoClient === client else { return .show }
+            let explicitPreferences = preferences.contentLabelPrefs
+            var definition: ComAtprotoLabelDefs.LabelValueDefinition?
+            if let client {
+                var dids = [try DID(didString: "did:plc:ar7c4by46qjdydhdevvrndac")]
+                for item in preferences.labelers where !dids.contains(item.did) { dids.append(item.did) }
+                dids = Array(dids.prefix(20))
+                if dids.contains(label.src) {
+                    let key = ContentLabelDefinitionLookup.Key(accountDID: account,
+                      clientIdentity: ObjectIdentifier(client), subscriptions: dids.map { $0.didString() })
+                    do {
+                        let definitions = try await ContentLabelDefinitionLookup.shared.definitions(for: key,
+                          isCurrent: { appState.userDID == account && appState.atProtoClient === client && manager.accountDID == account },
+                          load: {
+                            let finishAccountIO = try manager.beginSettingsAccountIO()
+                            defer { finishAccountIO?() }
+                            let (code, output) = try await client.app.bsky.labeler.getServices(input: .init(dids: dids, detailed: true))
+                            guard (200..<300).contains(code), let output else { throw PreferencesManagerError.invalidData }
+                            var result: ContentLabelDefinitionLookup.Definitions = [:]
+                            for value in output.views {
+                                if case .appBskyLabelerDefsLabelerViewDetailed(let service) = value {
+                                    result[service.creator.did.didString()] = service.policies.labelValueDefinitions ?? []
+                                }
+                            }
+                            return result
+                          })
+                        definition = definitions[label.src.didString()]?.first { $0.identifier == label.val }
+                    } catch {
+                        // Exact stored overrides remain usable; failed metadata invents no inherited policy.
+                    }
+                }
+            }
+            guard !Task.isCancelled, appState.userDID == account, appState.atProtoClient === client else { return .show }
+            return CustomContentLabelPolicy.visibility(labelValue: label.val, labelerDID: label.src,
+              preferences: explicitPreferences, definition: definition, contentType: contentType,
+              isActive: true) ?? .show
+        } catch { return .show }
     }
 
     private func getVisibilityForLabelValue(_ value: String) async -> ContentVisibility {

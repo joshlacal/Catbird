@@ -291,6 +291,24 @@ struct ViewImageGridView: View {
         }
       }
     }
+    .accessibilityElement(children: .ignore)
+    .accessibilityLabel(accessibilityLabel(for: viewImage))
+    .accessibilityAddTraits([.isImage, .isButton])
+    .accessibilityHint(imageAccessibilityHint)
+  }
+
+  private var imageAccessibilityHint: String {
+    guard shouldBlur else { return "Opens image viewer" }
+    return isBlurred ? "Shows the hidden image" : "Hides the image"
+  }
+
+  /// The author's alt text when there is one, otherwise the image's position.
+  private func accessibilityLabel(for viewImage: AppBskyEmbedImages.ViewImage) -> String {
+    let position = (viewImages.firstIndex(where: { $0.id == viewImage.id }) ?? 0) + 1
+    let fallback = "Image \(position) of \(viewImages.count)"
+    if isBlurred { return "Hidden image, \(fallback)" }
+    let alt = viewImage.alt.trimmingCharacters(in: .whitespacesAndNewlines)
+    return alt.isEmpty ? fallback : alt
   }
 
   @ViewBuilder
@@ -358,6 +376,10 @@ struct ViewImageGridView: View {
           activeTransitionID = viewImage.id
         }
       }
+      .accessibilityElement(children: .ignore)
+      .accessibilityLabel(accessibilityLabel(for: viewImage))
+      .accessibilityAddTraits([.isImage, .isButton])
+      .accessibilityHint(imageAccessibilityHint)
     }
     .aspectRatio(aspectRatio, contentMode: .fit)
     .frame(maxHeight: maxHeight)
@@ -455,6 +477,59 @@ struct AltTextPreviewView: View {
 
 // MARK: - ImageViewerItemView with VisionKit Support
 #if os(iOS)
+/// Captures the initiating view weakly so delayed presentation cannot migrate to another window.
+@MainActor
+final class ImageSharePresentationOrigin {
+  private weak var sourceView: UIView?
+  private weak var window: UIWindow?
+
+  init?(sourceView: UIView) {
+    guard let window = sourceView.window else { return nil }
+    self.sourceView = sourceView
+    self.window = window
+  }
+
+  func resolve() -> (sourceView: UIView, presenter: UIViewController)? {
+    guard let sourceView, let window,
+          sourceView.window === window, !window.isHidden else { return nil }
+
+    var responder: UIResponder? = sourceView
+    var owningController: UIViewController?
+    while let current = responder {
+      if let controller = current as? UIViewController,
+         controller.viewIfLoaded?.window === window {
+        owningController = controller
+        break
+      }
+      responder = current.next
+    }
+
+    guard var presenter = owningController ?? window.rootViewController else { return nil }
+    while let presented = presenter.presentedViewController {
+      guard !presented.isBeingDismissed else { return nil }
+      presenter = presented
+    }
+    guard presenter.viewIfLoaded?.window === window,
+          !presenter.isBeingDismissed, !presenter.isBeingPresented else { return nil }
+    return (sourceView, presenter)
+  }
+}
+
+private struct ImageViewerShareItem: Identifiable {
+  let id = UUID()
+  let url: URL
+}
+
+private struct ImageViewerActivitySheet: UIViewControllerRepresentable {
+  let imageURL: URL
+
+  func makeUIViewController(context: Context) -> UIActivityViewController {
+    UIActivityViewController(activityItems: [imageURL], applicationActivities: nil)
+  }
+
+  func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+
 struct ImageViewerItemView: UIViewRepresentable {
   let image: AppBskyEmbedImages.ViewImage
   @Binding var liveTextEnabled: Bool
@@ -549,11 +624,10 @@ struct ImageViewerItemView: UIViewRepresentable {
   
   private func loadImage(into imageView: UIImageView, context: Context) {
     guard let imageUrl = URL(string: image.fullsize.uriString()) else { return }
-    let jxlUrl = ImageLoadingManager.cdnURL(imageUrl)
 
     // Use the shared pipeline to load the image
     ImageLoadingManager.shared.pipeline.loadImage(
-      with: jxlUrl,
+      with: imageUrl,
       completion: { result in
         if case .success(let response) = result {
           imageView.image = response.image
@@ -568,10 +642,11 @@ struct ImageViewerItemView: UIViewRepresentable {
     )
   }
   
+  @MainActor
   class Coordinator: NSObject {
     private let parent: ImageViewerItemView
     var imageView: UIImageView?
-    var containerView: UIView?
+    weak var containerView: UIView?
     var currentImage: UIImage?
     var imageAnalysisInteraction: ImageAnalysisInteraction?
     private var imageAnalyzer = ImageAnalyzer()
@@ -671,6 +746,8 @@ struct ImageViewerItemView: UIViewRepresentable {
     }
     
     func shareImage(_ image: UIImage) {
+      guard let containerView,
+            let origin = ImageSharePresentationOrigin(sourceView: containerView) else { return }
       // Create temporary URL for the image to share
       if let imageData = image.jpegData(compressionQuality: 0.9) {
         let tempDirectoryURL = FileManager.default.temporaryDirectory
@@ -686,35 +763,22 @@ struct ImageViewerItemView: UIViewRepresentable {
             applicationActivities: nil
           )
           
-          // Find the top-most presented view controller
-          if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-             let keyWindow = windowScene.windows.first(where: { $0.isKeyWindow }),
-             let rootViewController = keyWindow.rootViewController {
-            
-            var topController = rootViewController
-            while let presentedVC = topController.presentedViewController {
-              // Stop at a specific level - don't try to present from an already presenting controller
-              if presentedVC is UINavigationController {
-                break
-              }
-              topController = presentedVC
+          DispatchQueue.main.async {
+            // Re-resolve after the queue hop: the image view may have moved or disappeared.
+            guard let context = origin.resolve() else { return }
+            if let popover = activityViewController.popoverPresentationController {
+              popover.sourceView = context.sourceView
+              popover.sourceRect = CGRect(
+                x: context.sourceView.bounds.midX,
+                y: context.sourceView.bounds.midY,
+                width: 0,
+                height: 0
+              )
+              popover.permittedArrowDirections = []
             }
-            
-            // Configure for iPad
-            if let popoverController = activityViewController.popoverPresentationController {
-              if let containerView = containerView {
-                popoverController.sourceView = containerView
-                popoverController.sourceRect = CGRect(x: containerView.bounds.midX, y: containerView.bounds.midY, width: 0, height: 0)
-                popoverController.permittedArrowDirections = []
-              }
-            }
-            
-            // Present the share sheet
-            DispatchQueue.main.async {
-              topController.present(activityViewController, animated: true)
-            }
+            context.presenter.present(activityViewController, animated: true)
           }
-          
+
           // Clean up the temporary file after a delay
           DispatchQueue.main.asyncAfter(deadline: .now() + 60) {
             try? FileManager.default.removeItem(at: imageURL)
@@ -737,7 +801,7 @@ struct ImageViewerItemView: View {
   private let logger = Logger(subsystem: "blue.catbird", category: "ImageViewerItemView")
   
   var body: some View {
-    AsyncImage(url: image.fullsize.url.map { ImageLoadingManager.cdnURL($0) }) { phase in
+    AsyncImage(url: image.fullsize.url) { phase in
       switch phase {
       case .empty:
         ProgressView()
@@ -781,6 +845,9 @@ struct EnhancedImageViewer: View {
   // Reference to current view controllers
   #if os(iOS)
   @State private var pagerViewControllers: [Int: UIViewController] = [:]
+  @State private var imageShareItem: ImageViewerShareItem?
+  @State private var shareLoadTask: Task<Void, Never>?
+  @State private var shareRequestID: UUID?
   #elseif os(macOS)
   @State private var pagerViewControllers: [Int: NSViewController] = [:]
   #endif
@@ -1008,6 +1075,11 @@ struct EnhancedImageViewer: View {
         
       }
       .background(Color.black)
+#if os(iOS)
+      .sheet(item: $imageShareItem) { item in
+        ImageViewerActivitySheet(imageURL: item.url)
+      }
+#endif
       // Use a dynamic sourceID based on the current index
 #if os(iOS)
       .navigationTransition(.zoom(sourceID: images[currentIndex].id, in: namespace))
@@ -1020,9 +1092,13 @@ struct EnhancedImageViewer: View {
       }
       .onDisappear {
         removeNotificationHandlers()
+        #if os(iOS)
+        cancelImageShareLoad()
+        #endif
       }
       .onChange(of: currentIndex) { _, newValue in
         #if os(iOS)
+        cancelImageShareLoad()
         // Announce the image change to VoiceOver
         if UIAccessibility.isVoiceOverRunning {
           let imageCount = images.count
@@ -1089,30 +1165,44 @@ struct EnhancedImageViewer: View {
   }
 
   private func prefetchFullSizeImages() async {
-    let urls = images.compactMap { $0.fullsize.url.map { ImageLoadingManager.cdnURL($0) } }
+    let urls = images.compactMap { $0.fullsize.url }
     let manager = ImageLoadingManager.shared
     await manager.prefetchImages(urls: urls)
   }
   
 #if os(iOS)
   private func shareCurrentImage() {
-    // Create and present share sheet using UIKit
-    guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-          let window = windowScene.windows.first(where: { $0.isKeyWindow }),
-          let topVC = window.rootViewController?.topmostPresentedViewController() else { return }
-    
-    // Load the image to be shared
-    let imageUrl = ImageLoadingManager.cdnURL(URL(string: images[currentIndex].fullsize.uriString())!)
-
-    ImageLoadingManager.shared.pipeline.loadImage(
-      with: imageUrl,
-      completion: { result in
-        if case .success(let response) = result {
-          // Got the image, now share it
-          shareImage(response.image, from: topVC)
+    guard let image = images[safe: currentIndex],
+          let imageURL = image.fullsize.url else { return }
+    cancelImageShareLoad()
+    let requestID = UUID()
+    let imageID = image.id
+    shareRequestID = requestID
+    shareLoadTask = Task { @MainActor in
+      defer {
+        if self.shareRequestID == requestID {
+          self.shareLoadTask = nil
+          self.shareRequestID = nil
         }
       }
-    )
+      do {
+        let image = try await ImageLoadingManager.shared.pipeline.image(for: imageURL)
+        try Task.checkCancellation()
+        guard self.shareRequestID == requestID, self.isPresented,
+              self.images[safe: self.currentIndex]?.id == imageID else { return }
+        self.shareImage(image)
+      } catch is CancellationError {
+        // Closing or paging the viewer cancels this presentation request.
+      } catch {
+        self.logger.error("Failed to load image for sharing: \(error.localizedDescription)")
+      }
+    }
+  }
+
+  private func cancelImageShareLoad() {
+    shareRequestID = nil
+    shareLoadTask?.cancel()
+    shareLoadTask = nil
   }
 #else
   private func shareCurrentImage() {
@@ -1122,7 +1212,7 @@ struct EnhancedImageViewer: View {
 #endif
   
 #if os(iOS)
-  private func shareImage(_ image: UIImage, from viewController: UIViewController) {
+  private func shareImage(_ image: UIImage) {
     guard let imageData = image.jpegData(compressionQuality: 0.9) else { return }
 
     let tempDirectoryURL = FileManager.default.temporaryDirectory
@@ -1132,28 +1222,7 @@ struct EnhancedImageViewer: View {
     do {
       try imageData.write(to: imageURL)
 
-      // Create share sheet
-      let activityVC = UIActivityViewController(
-        activityItems: [imageURL],
-        applicationActivities: nil
-      )
-
-      // Configure for iPad
-      if PlatformDeviceInfo.isIPad {
-        activityVC.popoverPresentationController?.sourceView = viewController.view
-        activityVC.popoverPresentationController?.sourceRect = CGRect(
-          x: viewController.view.bounds.midX,
-          y: viewController.view.bounds.midY,
-          width: 0,
-          height: 0
-        )
-        activityVC.popoverPresentationController?.permittedArrowDirections = []
-      }
-
-      // Present the share sheet
-      DispatchQueue.main.async {
-        viewController.present(activityVC, animated: true)
-      }
+      imageShareItem = ImageViewerShareItem(url: imageURL)
 
       // Clean up temp file after sharing
       DispatchQueue.main.asyncAfter(deadline: .now() + 60) {
@@ -1322,8 +1391,8 @@ class ZoomableImageViewController: UIViewController, UIScrollViewDelegate {
   }
 
   init(image: AppBskyEmbedImages.ViewImage, liveTextEnabled: Bool, liveTextSupported: Bool) {
-    let fullsize = ImageLoadingManager.cdnURL(URL(string: image.fullsize.uriString()) ?? URL(string: "about:blank")!)
-    let thumbnail = URL(string: image.thumb.uriString()).map { ImageLoadingManager.cdnURL($0) }
+    let fullsize = URL(string: image.fullsize.uriString()) ?? URL(string: "about:blank")!
+    let thumbnail = URL(string: image.thumb.uriString())
     self.imageSource = .url(fullsize: fullsize, thumbnail: thumbnail)
     self.accessibilityAltText = image.alt
     self.liveTextSupported = liveTextSupported
@@ -1580,7 +1649,7 @@ private struct ImageGridPreviewLoader: View {
         ViewImageGridView(viewImages: images, shouldBlur: false)
           .frame(height: 300)
       } else {
-        ProgressView("Loading images...")
+        ProgressView("Loading images…")
       }
     }
     .task {

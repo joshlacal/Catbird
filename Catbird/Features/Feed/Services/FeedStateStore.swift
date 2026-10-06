@@ -20,8 +20,8 @@ final class FeedStateStore: StateInvalidationSubscriber {
   private var modelContext: ModelContext?
   private weak var appState: AppState?
   
-  // iOS 18+: Track app lifecycle state
-  private var currentScenePhase: ScenePhase = .active
+  // Scene roots register independently; data managers remain account/feed scoped.
+  private var sceneLifecycle = FeedSceneLifecycle()
   private var lastBackgroundTime: TimeInterval = 0
   
   private init() {
@@ -64,10 +64,11 @@ final class FeedStateStore: StateInvalidationSubscriber {
         if existing.currentFeedType.identifier != feedType.identifier {
           logger.warning("⚠️ Feed type mismatch in existing state manager - updating from \(existing.currentFeedType.identifier) to \(feedType.identifier)")
           Task {
-            await existing.updateFetchType(feedType, preserveScrollPosition: true)
+            await existing.updateFetchType(feedType)
           }
         }
 
+        makeActive(existing)
         return existing
       } else {
         // AppState mismatch - this is a stale cached manager from a different account
@@ -92,10 +93,12 @@ final class FeedStateStore: StateInvalidationSubscriber {
     let stateManager = FeedStateManager(
       appState: appState,
       feedModel: feedModel,
-      feedType: feedType
+      feedType: feedType,
+      initialScenePhase: sceneLifecycle.phase
     )
 
     stateManagers[cacheKey] = stateManager
+    makeActive(stateManager)
     logger.debug("📦 Stored new state manager for \(cacheKey) in cache")
 
     // Attempt to restore persisted data
@@ -106,6 +109,14 @@ final class FeedStateStore: StateInvalidationSubscriber {
     return stateManager
   }
   
+  /// Feeds the user has moved away from keep their posts for a quick return but
+  /// stop auto-refreshing, so only the feed on screen polls the network.
+  private func makeActive(_ active: FeedStateManager) {
+    for manager in stateManagers.values {
+      manager.setAutomaticRefreshEligible(manager === active)
+    }
+  }
+
   private func restorePersistedData(for stateManager: FeedStateManager, feedIdentifier: String) async {
     // Try to load persisted feed data
     if let bundle = await PersistentFeedStateManager.shared.loadFeedBundle(for: feedIdentifier),
@@ -118,39 +129,49 @@ final class FeedStateStore: StateInvalidationSubscriber {
     }
   }
   
-  // iOS 18+: Enhanced scene phase handling with state restoration coordination
-  func handleScenePhaseChange(_ newPhase: ScenePhase) async {
-    let oldPhase = currentScenePhase
-    currentScenePhase = newPhase
-    
-    logger.debug("Scene phase changed: \(String(describing: oldPhase)) -> \(String(describing: newPhase))")
-    
-    switch newPhase {
-    case .background:
-      lastBackgroundTime = Date().timeIntervalSince1970
-      await saveAllStatesEnhanced()
-      await notifyControllersOfBackgrounding()
-      
-    case .active:
-      let backgroundDuration = Date().timeIntervalSince1970 - lastBackgroundTime
-      await handleAppBecameActive(backgroundDuration: backgroundDuration, oldPhase: oldPhase)
-      await notifyControllersOfForegrounding()
-      
-    case .inactive:
-      // Prepare for potential backgrounding - save state proactively
-      await prepareForBackgrounding()
-      await notifyControllersOfInactive()
-      
-    @unknown default:
-      break
-    }
+  /// Register once per scene-root lifetime. Repeated registration is idempotent.
+  func registerScene(_ sceneID: UUID, phase: ScenePhase) async {
+    guard let transition = sceneLifecycle.register(sceneID, phase: phase) else { return }
+    await applySceneTransition(transition)
   }
-  
+
+  /// A feed view may forward phase changes, but it does not own scene teardown.
+  func updateScenePhase(_ phase: ScenePhase, for sceneID: UUID) async {
+    guard let transition = sceneLifecycle.update(phase, for: sceneID) else { return }
+    await applySceneTransition(transition)
+  }
+
+  /// Called when the owning scene disconnects or replaces its account context.
+  func unregisterScene(_ sceneID: UUID) async {
+    guard let transition = sceneLifecycle.unregister(sceneID) else { return }
+    await applySceneTransition(transition)
+  }
+
+  private func applySceneTransition(_ transition: FeedSceneLifecycle.Transition) async {
+    logger.debug("Aggregate feed scene phase: \(String(describing: transition.previousPhase)) -> \(String(describing: transition.phase)), scenes: \(self.sceneLifecycle.phases.count)")
+    if transition.phase == .background { lastBackgroundTime = Date().timeIntervalSince1970 }
+    var resumedManagers: Set<ObjectIdentifier> = []
+    await FeedSceneLifecycleEffects.apply(
+      transition,
+      isCurrent: { self.sceneLifecycle.isCurrent(transition) },
+      save: { await self.saveAllStatesEnhanced(transition: transition) },
+      notify: { phase in
+        resumedManagers = await self.notifyManagers(of: phase, transition: transition)
+        return !resumedManagers.isEmpty
+      },
+      resume: { duration in
+        await self.handleAppBecameActive(
+          backgroundDuration: duration, transition: transition, resumedManagers: resumedManagers
+        )
+      }
+    )
+  }
+
   // iOS 18+: Enhanced state saving with batch operations and pixel-perfect scroll positions
-  private func saveAllStatesEnhanced() async {
+  private func saveAllStatesEnhanced(transition: FeedSceneLifecycle.Transition) async {
     logger.debug("Enhanced state saving for iOS 18+ backgrounding")
 
-    guard !stateManagers.isEmpty else { return }
+    guard sceneLifecycle.isCurrent(transition), !stateManagers.isEmpty else { return }
 
     // Collect all feed data for batch saving
     var feedDataBatch: [(identifier: String, posts: [CachedFeedViewPost])] = []
@@ -165,13 +186,13 @@ final class FeedStateStore: StateInvalidationSubscriber {
 
     // Save individual feeds (remove iOS 18 batch saving since method doesn't exist)
     for (identifier, posts) in feedDataBatch {
+      guard sceneLifecycle.isCurrent(transition) else { return }
       await PersistentFeedStateManager.shared.saveFeedData(posts, for: identifier)
     }
 
     logger.debug("Enhanced state saving completed for \(feedDataBatch.count) feeds")
   }
-  
-  
+
   private func saveAllStates() async {
     logger.debug("Saving all feed states before backgrounding")
 
@@ -205,10 +226,14 @@ final class FeedStateStore: StateInvalidationSubscriber {
   }
   
   // iOS 18+: Smart refresh for all active feeds after long background
-  private func performSmartRefreshForAllFeeds() async {
+  private func performSmartRefreshForAllFeeds(
+    transition: FeedSceneLifecycle.Transition, resumedManagers: Set<ObjectIdentifier>
+  ) async {
     logger.debug("Performing smart refresh for all feeds after long background")
     
     for (identifier, stateManager) in stateManagers {
+      guard sceneLifecycle.isCurrent(transition) else { return }
+      guard resumedManagers.contains(ObjectIdentifier(stateManager)) else { continue }
       // Only refresh feeds that have posts (indicating they were actively used)
       if !stateManager.posts.isEmpty {
         logger.debug("Smart refreshing feed: \(identifier)")
@@ -218,18 +243,21 @@ final class FeedStateStore: StateInvalidationSubscriber {
   }
   
   // iOS 18+: Check for new content without disrupting UI
-  private func checkForNewContentNonDisruptive() async {
+  private func checkForNewContentNonDisruptive(
+    transition: FeedSceneLifecycle.Transition, resumedManagers: Set<ObjectIdentifier>
+  ) async {
     logger.debug("Checking for new content non-disruptively")
     
     for (identifier, stateManager) in stateManagers {
+      guard sceneLifecycle.isCurrent(transition) else { return }
+      guard resumedManagers.contains(ObjectIdentifier(stateManager)) else { continue }
       if !stateManager.posts.isEmpty {
         // Check if refresh is needed based on feed-specific logic
         if await shouldRefreshFeed(identifier) {
           logger.debug("Background refresh needed for: \(identifier)")
           // Perform background refresh that doesn't disrupt current UI
-          Task.detached(priority: .background) {
-            await stateManager.backgroundRefresh()
-          }
+          guard sceneLifecycle.isCurrent(transition) else { return }
+          await stateManager.backgroundRefresh()
         }
       }
     }
@@ -267,95 +295,38 @@ final class FeedStateStore: StateInvalidationSubscriber {
     logger.debug("Cleared all state managers")
   }
   
-  // iOS 18+: Handle app becoming active after backgrounding with intelligent refresh logic
-  private func handleAppBecameActive(backgroundDuration: TimeInterval, oldPhase: ScenePhase) async {
-    logger.debug("App became active after \(backgroundDuration) seconds in background from \(String(describing: oldPhase))")
-    
-    // Only refresh if actually coming from background (not from inactive due to control center, etc.)
-    guard oldPhase == .background else {
-      logger.debug("Not coming from background - skipping refresh logic and preserving state")
-      // For non-background transitions, ensure all state managers maintain their state
-      await preserveExistingStateForAllManagers()
-      return
+  // Only managers actually suspended by the aggregate can need restoration.
+  private func handleAppBecameActive(
+    backgroundDuration: TimeInterval, transition: FeedSceneLifecycle.Transition,
+    resumedManagers: Set<ObjectIdentifier>
+  ) async {
+    guard sceneLifecycle.isCurrent(transition), !resumedManagers.isEmpty else { return }
+    if backgroundDuration > 1800 {
+      await performSmartRefreshForAllFeeds(transition: transition, resumedManagers: resumedManagers)
+    } else if backgroundDuration > 600 {
+      await checkForNewContentNonDisruptive(transition: transition, resumedManagers: resumedManagers)
     }
-    
-    // Intelligent refresh based on background duration
-    if backgroundDuration > 1800 { // 30 minutes - full refresh for all feeds
-      logger.debug("Long background duration (\(backgroundDuration)s) - performing full refresh")
-      await performSmartRefreshForAllFeeds()
-    } else if backgroundDuration > 600 { // 10 minutes - non-disruptive content check
-      logger.debug("Medium background duration (\(backgroundDuration)s) - checking for new content")
-      await checkForNewContentNonDisruptive()
-    } else {
-      logger.debug("Short background duration (\(backgroundDuration)s) - preserving existing state")
-      // For short backgrounds (< 10 minutes), preserve state completely
-      await restoreExistingStateWithoutRefresh()
-    }
-    
-    // Clean up any stale data (but don't remove recent cache)
+    // A short background needs no store-driven loading-state reset. Each
+    // manager restores only its own canceled work when it actually resumes.
+    guard sceneLifecycle.isCurrent(transition) else { return }
     await cleanupStaleData()
   }
-  
-  // iOS 18+: Prepare for potential backgrounding
-  private func prepareForBackgrounding() async {
-    logger.debug("Preparing for potential backgrounding")
-    
-    // Save current states proactively
-    await saveAllStatesEnhanced()
-  }
-  
-  // iOS 18+: Coordinate with UIKit controllers for unified lifecycle management
-  private func notifyControllersOfBackgrounding() async {
-    logger.debug("Notifying controllers of backgrounding phase")
-    
+
+  private func notifyManagers(
+    of phase: ScenePhase, transition: FeedSceneLifecycle.Transition
+  ) async -> Set<ObjectIdentifier> {
+    var resumedManagers: Set<ObjectIdentifier> = []
+    guard sceneLifecycle.isCurrent(transition) else { return resumedManagers }
     for (identifier, stateManager) in stateManagers {
-      // Signal each state manager about background transition
-      await stateManager.handleScenePhaseTransition(.background)
-      logger.debug("Notified state manager \(identifier) of background transition")
+      guard sceneLifecycle.isCurrent(transition) else { return resumedManagers }
+      if await stateManager.handleScenePhaseTransition(phase) {
+        resumedManagers.insert(ObjectIdentifier(stateManager))
+      }
+      logger.debug("Notified state manager \(identifier) of aggregate \(String(describing: phase)) transition")
     }
+    return resumedManagers
   }
-  
-  private func notifyControllersOfForegrounding() async {
-    logger.debug("Notifying controllers of foregrounding phase")
-    
-    for (identifier, stateManager) in stateManagers {
-      // Signal each state manager about active transition
-      await stateManager.handleScenePhaseTransition(.active)
-      logger.debug("Notified state manager \(identifier) of active transition")
-    }
-  }
-  
-  private func notifyControllersOfInactive() async {
-    logger.debug("Notifying controllers of inactive phase")
-    
-    for (identifier, stateManager) in stateManagers {
-      // Signal each state manager about inactive transition  
-      await stateManager.handleScenePhaseTransition(.inactive)
-      logger.debug("Notified state manager \(identifier) of inactive transition")
-    }
-  }
-  
-  // iOS 18+: Restore existing state without triggering refresh
-  private func restoreExistingStateWithoutRefresh() async {
-    logger.debug("Restoring existing state without refresh for short background duration")
-    
-    for (identifier, stateManager) in stateManagers {
-      // Each state manager should restore its UI state without network operations
-      await stateManager.restoreUIStateWithoutRefresh()
-      logger.debug("Restored UI state for \(identifier) without refresh")
-    }
-  }
-  
-  // iOS 18+: Preserve existing state for all managers without any modifications
-  private func preserveExistingStateForAllManagers() async {
-    logger.debug("Preserving existing state for all feed managers")
-    
-    for (identifier, stateManager) in stateManagers {
-      // Ensure each state manager maintains its current state exactly as is
-      // This is important for preventing state loss during app switching, control center, etc.
-      logger.debug("Preserved existing state for \(identifier)")
-    }
-  }
+
 }
 
 // MARK: - StateInvalidationSubscriber

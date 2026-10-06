@@ -298,19 +298,9 @@ struct EnhancedFeedPost: View {
         path.append(NavigationDestination.post(postView.uri))
       }
     case .appBskyFeedDefsNotFoundPost(let notFound):
-      HStack(alignment: .top, spacing: DesignTokens.Spacing.xs) {
-        AuthorAvatarColumn(
-          author: createPlaceholderAuthor(for: notFound.uri),
-          isParentPost: true,
-          isAvatarLoaded: .constant(false),
-          path: $path
-        )
-
-        VStack(alignment: .leading, spacing: 0) {
-          PostNotFoundView(uri: notFound.uri, reason: .notFound, path: $path)
-            .padding(.top, Self.baseUnit)
-        }
-      }
+      PostNotFoundView(uri: notFound.uri, reason: .notFound, path: $path)
+        .padding(.top, Self.baseUnit)
+        .padding(.bottom, Self.baseUnit * 2)
 
     case .appBskyFeedDefsBlockedPost(let blocked):
       BlockedContentCard(
@@ -323,7 +313,7 @@ struct EnhancedFeedPost: View {
       .padding(.top, Self.baseUnit)
 
     case .unexpected:
-      Text("Unexpected post type")
+      Text("Post unavailable")
         .appFont(AppTextRole.caption)
         .foregroundColor(.secondary)
         .padding(.vertical, Self.baseUnit * 2)
@@ -357,27 +347,5 @@ struct EnhancedFeedPost: View {
     .onTapGesture {
       path.append(NavigationDestination.post(feedViewPost.post.uri))
     }
-  }
-
-  // MARK: - Placeholder Author Helpers
-  private func createPlaceholderAuthor(
-    for uri: ATProtocolURI
-  ) -> AppBskyActorDefs.ProfileViewBasic {
-    let placeholderDID = try! DID(didString: "did:plc:unknown")
-    let placeholderHandle = try! Handle(handleString: "deleted.user")
-    return AppBskyActorDefs.ProfileViewBasic(
-      did: placeholderDID,
-      handle: placeholderHandle,
-      displayName: nil,
-      pronouns: nil, avatar: nil,
-      associated: nil,
-      viewer: nil,
-      labels: nil,
-      createdAt: nil,
-      verification: nil,
-      status: nil,
-      debug: nil
-
-    )
   }
 }

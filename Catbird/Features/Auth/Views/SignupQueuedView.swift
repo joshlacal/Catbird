@@ -59,11 +59,11 @@ public struct SignupQueuedView: View {
                     
                     // Title & Description
                     VStack(spacing: 8) {
-                        Text("You're in Line!")
+                        Text("You’re in Line")
                             .font(.title)
                             .fontWeight(.bold)
                         
-                        Text("Bluesky is currently experiencing high demand. Your account is queued and will be ready shortly.")
+                        Text("Bluesky is getting a lot of new sign-ups right now. Your account is in line and will be ready soon.")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)
@@ -101,7 +101,7 @@ public struct SignupQueuedView: View {
                                 } else {
                                     Image(systemName: "arrow.clockwise")
                                 }
-                                Text(isCheckingStatus ? "Checking Status..." : "Check My Status")
+                                Text(isCheckingStatus ? "Checking…" : "Check My Status")
                                     .fontWeight(.semibold)
                             }
                             .frame(maxWidth: .infinity)
@@ -115,7 +115,7 @@ public struct SignupQueuedView: View {
                         Button(role: .destructive) {
                             handleSignOut()
                         } label: {
-                            Text("Sign Out & Cancel")
+                            Text("Sign Out")
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
                         }
@@ -126,7 +126,7 @@ public struct SignupQueuedView: View {
                     .padding(.bottom, 24)
                 }
             }
-            .navigationTitle("Account Queue")
+            .navigationTitle("Waiting List")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
@@ -202,7 +202,7 @@ public struct SignupQueuedView: View {
     }
     
     public static func formatEstimate(ms: Int?) -> String {
-        guard let ms, ms > 0 else { return "Estimating wait time..." }
+        guard let ms, ms > 0 else { return "Estimating wait time…" }
         let totalSeconds = ms / 1000
         let minutes = totalSeconds / 60
         let hours = minutes / 60
@@ -212,7 +212,7 @@ public struct SignupQueuedView: View {
         } else if minutes > 0 {
             return "Estimated wait: ~\(minutes) minute\(minutes == 1 ? "" : "s")"
         } else {
-            return "Estimated wait: Less than a minute"
+            return "Estimated wait: less than a minute"
         }
     }
     
@@ -238,7 +238,7 @@ public struct SignupQueuedView: View {
         guard !isCheckingStatus else { return }
         guard let client = appState.atProtoClient else {
             if isManual {
-                errorMessage = "Service unavailable. Please try again."
+                errorMessage = "Couldn’t check your place in line. Try again."
             }
             return
         }
@@ -256,7 +256,8 @@ public struct SignupQueuedView: View {
                 
                 guard code == 200, let queueOutput = output else {
                     if isManual {
-                        self.errorMessage = "Could not check queue status (HTTP \(code)). Retrying automatically."
+                        self.logger.error("checkSignupQueue returned HTTP \(code)")
+                        self.errorMessage = "Couldn’t check your place in line. Retrying automatically."
                     }
                     return
                 }
@@ -281,7 +282,7 @@ public struct SignupQueuedView: View {
                 self.isCheckingStatus = false
                 self.logger.error("Signup queue check failed: \(error.localizedDescription)")
                 if isManual {
-                    self.errorMessage = "Status check failed. Will retry in a moment."
+                    self.errorMessage = "Couldn’t check your place in line. Retrying automatically."
                 }
             }
         }
@@ -293,7 +294,7 @@ public struct SignupQueuedView: View {
         
         Task { @MainActor in
             guard let client = appState.atProtoClient else {
-                errorMessage = "Service unavailable. Please tap Check My Status to retry."
+                errorMessage = "Couldn’t finish setting up your account. Tap Check My Status to try again."
                 startPolling()
                 return
             }
@@ -307,7 +308,7 @@ public struct SignupQueuedView: View {
                 let (sessionCode, sessionOutput) = try await client.com.atproto.server.getSession()
                 guard sessionCode == 200, sessionOutput != nil else {
                     logger.error("Session probe returned HTTP \(sessionCode) after activation")
-                    errorMessage = "Session verification failed (HTTP \(sessionCode)). Please retry."
+                    errorMessage = "Couldn’t verify your account yet. Tap Check My Status to try again."
                     startPolling()
                     return
                 }
@@ -325,7 +326,7 @@ public struct SignupQueuedView: View {
                 }
             } catch {
                 logger.error("Token refresh / verification after activation failed: \(error.localizedDescription)")
-                errorMessage = "Activation refresh failed: \(error.localizedDescription). Please retry."
+                errorMessage = "Couldn’t verify your account yet. Tap Check My Status to try again."
                 startPolling()
             }
         }
@@ -341,8 +342,9 @@ public struct SignupQueuedView: View {
         } else {
             Task { @MainActor in
                 let did = appState.userDID
-                try? await appState.removeAccount(did: did)
                 dismiss()
+                // Removing the signed-in account signs it out first and returns to sign-in.
+                try? await AppStateManager.shared.authentication.removeAccount(did: did)
             }
         }
     }

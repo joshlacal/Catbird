@@ -23,6 +23,19 @@ struct NotificationWidgetData: Codable {
 /// Manages push notifications registration and handling for the Catbird app
 @Observable
 final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
+  /// Captured before account switching or network resolution can suspend.
+  private struct NavigationTarget: Sendable {
+    let accountDID: String
+    let preferredSceneID: UUID?
+  }
+
+  @MainActor
+  private func captureNavigationTarget(accountDID: String?) -> NavigationTarget? {
+    guard let accountDID = accountDID ?? AppStateManager.shared.lifecycle.userDID else { return nil }
+    return NavigationTarget(accountDID: accountDID,
+      preferredSceneID: SceneRouteCoordinator.shared.preferredSceneIDForExternalEvent())
+  }
+
   // MARK: - Properties
 
   /// Logger for notification-related events
@@ -191,6 +204,69 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   /// Notification preferences
   private(set) var preferences = NotificationPreferences()
 
+  enum PreferencesState: Equatable {
+    case unavailable, loading, ready, saving
+    case loadFailed(String), saveFailed(String)
+  }
+
+  private(set) var preferencesState: PreferencesState = .unavailable
+  private(set) var systemAuthorizationStatus: UNAuthorizationStatus?
+
+  var notificationAccountDID: String? { currentAccountDID }
+  var hasConfirmedNotificationPreferences: Bool { serverPreferencesSnapshot != nil }
+  var pendingNotificationChangesDescription: String? { failedPreferencesMutation?.input.notificationChangesDescription }
+
+  var systemPermissionSummary: String {
+    switch systemAuthorizationStatus {
+    case .authorized: return "Allowed"
+    case .provisional: return "Quiet delivery"
+    case .ephemeral: return "Temporary permission"
+    case .denied: return "Off in System Settings"
+    case .notDetermined: return "Not requested"
+    default: return "Not checked"
+    }
+  }
+
+  var canEditNotificationPreferences: Bool {
+    preferencesState == .ready
+  }
+
+  /// Delivery and service preferences have distinct states; neither implies the other is ready.
+  var settingsSummary: String {
+    switch preferencesState {
+    case .loading: return "Loading"
+    case .loadFailed: return "Couldn’t load"
+    case .saving: return "Saving"
+    case .saveFailed: return "Couldn’t save"
+    case .unavailable: return "Not connected"
+    case .ready: return pushDeliverySummary
+    }
+  }
+
+  var pushDeliverySummary: String {
+    guard isPushRequested else { return "Push paused" }
+    switch status {
+    case .permissionDenied: return "System permission off"
+    case .registrationFailed: return "Connection failed"
+    case .waitingForPermission: return "Waiting for permission"
+    case .registered: return notificationsEnabled ? "Push ready" : "Push paused"
+    case .disabled: return "Push paused"
+    case .unknown: return notificationsEnabled ? "Connecting" : "Not set up"
+    }
+  }
+
+  @ObservationIgnored private let preferencesService: NotificationPreferencesService
+  @ObservationIgnored private let accountDIDProvider: (() -> String?)?
+  @ObservationIgnored private var failedPreferencesMutation: FailedPreferencesMutation?
+
+  private struct FailedPreferencesMutation {
+    let requested: NotificationPreferences
+    let input: AppBskyNotificationPutPreferencesV2.Input
+    let client: ATProtoClient
+    let clientGeneration: UInt64
+    let accountDID: String
+  }
+
   /// Dedicated notification namespace routed to the Nest push service.
   private let notificationServiceNamespace = "app.bsky.notification"
 
@@ -207,8 +283,15 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   /// Persisted key prefix for per-account chat notification preference
   private let chatNotificationsDefaultsKeyPrefix = "chatNotificationsEnabled"
 
+  /// Invalidates asynchronous work when the configured account or client changes.
+  @ObservationIgnored private var clientGeneration: UInt64 = 0
+  @ObservationIgnored private var chatPreferenceChangeGeneration: UInt64 = 0
+  @ObservationIgnored private let notificationDefaults: UserDefaults?
+
   /// Generation counter for serializing preference mutations
   @ObservationIgnored private var preferenceMutationGeneration: UInt64 = 0
+  @ObservationIgnored private var preferenceLoadGeneration: UInt64 = 0
+  @ObservationIgnored private var activePreferenceLoadTask: Task<AppBskyNotificationDefs.Preferences, Error>?
 
   /// Current active mutation task to serialize PUT operations
   @ObservationIgnored private var activePreferenceMutationTask: Task<AppBskyNotificationDefs.Preferences?, Error>?
@@ -218,13 +301,25 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   @ObservationIgnored private var priorConfirmedServerSnapshot: AppBskyNotificationDefs.Preferences?
 
   private var currentAccountDID: String? {
+    if let accountDIDProvider { return accountDIDProvider() }
     guard let did = appState?.userDID, !did.isEmpty else { return nil }
     return did
   }
 
+  private func isCurrentNotificationClient(
+    _ client: ATProtoClient,
+    generation: UInt64,
+    accountDID: String
+  ) -> Bool {
+    !pollingBarrier.isSuspended && self.client === client
+      && clientGeneration == generation && currentAccountDID == accountDID
+  }
+
+  var isPushRequested: Bool { currentAccountDID != nil && isMasterPushEnabled() }
+
   /// Checks if push notifications are enabled by the user for the current account
   private func isMasterPushEnabled() -> Bool {
-    guard let defaults = UserDefaults(suiteName: "group.blue.catbird.shared"),
+    guard let defaults = notificationDefaults,
       let did = currentAccountDID
     else {
       return true
@@ -238,7 +333,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
   /// Sets the user-controlled master push preference for the current account
   private func setMasterPushEnabled(_ enabled: Bool) {
-    guard let defaults = UserDefaults(suiteName: "group.blue.catbird.shared"),
+    guard let defaults = notificationDefaults,
       let did = currentAccountDID
     else {
       return
@@ -257,42 +352,67 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     }
   }
 
-  /// Save chat notification preference for the current account
+  /// Save chat notification preference for the current account.
   private func saveChatNotificationPreference() {
-    guard let defaults = UserDefaults(suiteName: "group.blue.catbird.shared"),
-      let did = appState?.userDID
-    else {
+    guard let defaults = notificationDefaults, let did = currentAccountDID, let client else {
       return
     }
 
-    let key = "\(chatNotificationsDefaultsKeyPrefix)_\(did)"
-    defaults.set(chatNotificationsEnabled, forKey: key)
-    notificationLogger.info(
-      "Chat notification preference updated for \(did): \(self.chatNotificationsEnabled ? "enabled" : "disabled")"
-    )
-
-    // Sync chat push preference to Nest via putPreferencesV2
+    defaults.set(chatNotificationsEnabled, forKey: "\(chatNotificationsDefaultsKeyPrefix)_\(did)")
+    chatPreferenceChangeGeneration &+= 1
+    let changeGeneration = chatPreferenceChangeGeneration
+    let generation = clientGeneration
     let chatEnabled = chatNotificationsEnabled
-    Task {
-      await syncChatPushPreferenceToServer(enabled: chatEnabled)
+    Task { [weak self] in
+      await self?.syncChatPushPreferenceToServer(
+        enabled: chatEnabled, client: client, generation: generation,
+        accountDID: did, changeGeneration: changeGeneration
+      )
     }
   }
 
-  /// Syncs the chat push preference to Nest so the server can filter chat pushes.
-  /// Non-fatal: the server will pick up the change on the next background sync.
-  private func syncChatPushPreferenceToServer(enabled: Bool) async {
-    guard let client = client else { return }
-
-    var updated = preferences
-    if let snapshot = await currentNotificationPreferencesSnapshot(using: client) {
-      updated = NotificationPreferences(serverPreferences: snapshot)
+  /// Keep the local delivery gate and stored value aligned without scheduling another PUT.
+  private func syncChatNotificationPreferenceFromPreferences() {
+    let previousPersist = shouldPersistChatPreference
+    shouldPersistChatPreference = false
+    chatNotificationsEnabled = preferences.chat.push
+    shouldPersistChatPreference = previousPersist
+    if let did = currentAccountDID {
+      notificationDefaults?.set(
+        chatNotificationsEnabled, forKey: "\(chatNotificationsDefaultsKeyPrefix)_\(did)"
+      )
     }
-    updated.chat = AppBskyNotificationDefs.ChatPreference(
-      include: updated.chat.include,
-      push: enabled
-    )
+  }
+
+  /// Sync a user edit only through the account and client that originated it.
+  private func syncChatPushPreferenceToServer(
+    enabled: Bool,
+    client: ATProtoClient,
+    generation: UInt64,
+    accountDID: String,
+    changeGeneration: UInt64
+  ) async {
+    guard !Task.isCancelled,
+      isCurrentNotificationClient(client, generation: generation, accountDID: accountDID),
+      changeGeneration == chatPreferenceChangeGeneration
+    else { return }
+
+    if serverPreferencesSnapshot == nil {
+      _ = await currentNotificationPreferencesSnapshot(using: client)
+    }
+    guard !Task.isCancelled,
+      isCurrentNotificationClient(client, generation: generation, accountDID: accountDID),
+      changeGeneration == chatPreferenceChangeGeneration
+    else { return }
+
     do {
-      try await updatePreferences(updated)
+      try await updatePreferences({ updated in
+        updated.chat = AppBskyNotificationDefs.ChatPreference(
+          include: updated.chat.include, push: enabled
+        )
+      }, expectedAccountDID: accountDID)
+    } catch is CancellationError {
+      return
     } catch {
       notificationLogger.error(
         "Failed to sync chat push preference to server: \(error.localizedDescription)"
@@ -301,14 +421,13 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   }
 
   /// Load chat notification preference for the current account without triggering didSet sync
-  private func loadChatNotificationPreference() async {
+  private func loadChatNotificationPreference() {
     let previousPersist = shouldPersistChatPreference
     shouldPersistChatPreference = false
     defer { shouldPersistChatPreference = previousPersist }
 
-    guard let defaults = UserDefaults(suiteName: "group.blue.catbird.shared"),
-      let client = client,
-      let did = try? await client.getDid()
+    guard !Task.isCancelled, let defaults = notificationDefaults,
+      let did = currentAccountDID
     else {
       notificationLogger.debug(
         "Cannot load chat notification preference - client or DID unavailable")
@@ -327,6 +446,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         "No chat notification preference found for \(did), defaulting to enabled")
       chatNotificationsEnabled = true
     }
+    preferences.chat = .init(include: preferences.chat.include, push: chatNotificationsEnabled)
   }
 
   /// Flag to avoid persisting chat preference before it is initially loaded from disk
@@ -347,19 +467,87 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
   /// Timer for checking unread notifications
   private var unreadCheckTimer: Timer?
+  @ObservationIgnored private let pollingBarrier = AccountPollingBarrier()
+  @ObservationIgnored private var unreadCheckTask: Task<Void, Never>?
+  @ObservationIgnored private var foregroundCheckTask: Task<Void, Never>?
+  @ObservationIgnored private var resumeUnreadChecking = false
+
+  @MainActor
+  func suspendForAccountSwitch() async {
+    if !pollingBarrier.isSuspended { resumeUnreadChecking = unreadCheckTimer != nil }
+    pollingBarrier.suspend(accountDID: currentAccountDID)
+    clientGeneration &+= 1
+    unreadCheckTimer?.invalidate()
+    unreadCheckTimer = nil
+    let tasks = [unreadCheckTask, foregroundCheckTask].compactMap { $0 }
+    for task in tasks { task.cancel() }
+    let mutation = activePreferenceMutationTask
+    let preferenceLoad = activePreferenceLoadTask
+    preferenceLoad?.cancel()
+    mutation?.cancel()
+    for task in tasks { await task.value }
+    _ = try? await mutation?.value
+    _ = try? await preferenceLoad?.value
+    await pollingBarrier.drain()
+    unreadCheckTask = nil
+    foregroundCheckTask = nil
+    activePreferenceMutationTask = nil
+    activePreferenceLoadTask = nil
+    // Canceled optimistic edits retain their last confirmed server/local snapshot.
+    if let confirmed = priorConfirmedPreferences {
+      preferences = confirmed
+      serverPreferencesSnapshot = priorConfirmedServerSnapshot
+      syncChatNotificationPreferenceFromPreferences()
+    }
+    priorConfirmedPreferences = nil
+    priorConfirmedServerSnapshot = nil
+    failedPreferencesMutation = nil
+    preferencesState = serverPreferencesSnapshot == nil ? .unavailable : .ready
+  }
+
+  @MainActor
+  func resumeAfterInterruptedAccountSwitch(accountDID: String) async -> Bool {
+    guard let generation = pollingBarrier.suspensionGeneration,
+      currentAccountDID == accountDID, let client
+    else { return false }
+    let authenticatedDID = try? await client.getDid()
+    guard self.client === client, currentAccountDID == accountDID,
+      authenticatedDID == accountDID, pollingBarrier.resume(accountDID: accountDID, generation: generation)
+    else { return false }
+    if resumeUnreadChecking { startUnreadNotificationChecking() }
+    resumeUnreadChecking = false
+    return true
+  }
+
+  @MainActor
+  private func scheduleUnreadCheck() {
+    guard !pollingBarrier.isSuspended, unreadCheckTask == nil else { return }
+    unreadCheckTask = Task { [weak self] in
+      guard let self else { return }
+      defer { self.unreadCheckTask = nil }
+      await self.checkUnreadNotifications()
+    }
+  }
 
   // MARK: - Initialization
 
   init(
-    notificationServiceDIDString: String = CatbirdGatewayConfiguration.current.serviceDID
+    notificationServiceDIDString: String = CatbirdGatewayConfiguration.current.serviceDID,
+    notificationDefaults: UserDefaults? = UserDefaults(suiteName: "group.blue.catbird.shared"),
+    preferencesService: NotificationPreferencesService = .live,
+    accountDIDProvider: (() -> String?)? = nil,
+    seedsDebugWidgetData: Bool = true
   ) {
     self.notificationServiceDIDString = notificationServiceDIDString
+    self.notificationDefaults = notificationDefaults
+    self.preferencesService = preferencesService
+    self.accountDIDProvider = accountDIDProvider
     super.init()
 
     // Chat notification preference will be enabled after initial load in updateClient
     // Initialize widget with a test value to ensure it's populated
     #if DEBUG
-      setupTestWidgetData()
+      if seedsDebugWidgetData { setupTestWidgetData() }
     #endif
 
     // Register for app lifecycle notifications to handle token registration
@@ -382,6 +570,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
   /// Configure with app state reference for navigation
   func configure(with appState: AppState) {
+    guard !pollingBarrier.isSuspended else { return }
     self.appState = appState
     notificationLogger.debug("NotificationManager configured with AppState reference")
 
@@ -401,52 +590,53 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   // MARK: - Public API
 
   /// Update the client reference when authentication changes
+  @MainActor
   func updateClient(_ newClient: ATProtoClient?) async {
+    guard let ticket = pollingBarrier.begin(accountDID: currentAccountDID) else { return }
+    defer { pollingBarrier.finish(ticket) }
     let previousClient = client
+    clientGeneration &+= 1
+    preferenceMutationGeneration &+= 1
+    chatPreferenceChangeGeneration &+= 1
+    let generation = clientGeneration
     self.client = newClient
+    shouldPersistChatPreference = false
+    activePreferenceMutationTask?.cancel()
+    activePreferenceMutationTask = nil
+    activePreferenceLoadTask?.cancel()
+    activePreferenceLoadTask = nil
+    preferences = NotificationPreferences()
+    preferencesState = .unavailable
+    failedPreferencesMutation = nil
+    serverPreferencesSnapshot = nil
+    priorConfirmedPreferences = nil
+    priorConfirmedServerSnapshot = nil
+    lastRegisteredDeviceToken = nil
 
-    notificationLogger.info(
-      "🔄 Client updated: hasNewClient=\(newClient != nil), hasDeviceToken=\(self.deviceToken != nil)"
-    )
-
-    // Clear notification preferences when switching accounts to prevent state leakage
-    if newClient != nil && previousClient != nil {
-      notificationLogger.info("🧹 Clearing notification preferences for account switch")
-      preferences = NotificationPreferences()
-      serverPreferencesSnapshot = nil
-      priorConfirmedPreferences = nil
-      priorConfirmedServerSnapshot = nil
-      activePreferenceMutationTask = nil
-    }
-
-    // Load preferences and chat configuration for the new account
     if let newClient {
-      let masterEnabled = isMasterPushEnabled()
-      if !masterEnabled {
+      guard let did = currentAccountDID, !Task.isCancelled else { return }
+      if !isMasterPushEnabled() {
         notificationsEnabled = false
         status = .disabled
       }
-      await configureNotificationServiceRouting(on: newClient)
-      await refreshNotificationPreferences()
-      await loadChatNotificationPreference()
+      // Stored preferences are the fallback; a successful server refresh is authoritative.
+      loadChatNotificationPreference()
       shouldPersistChatPreference = true
+      await configureNotificationServiceRouting(on: newClient)
+      guard !Task.isCancelled,
+        isCurrentNotificationClient(newClient, generation: generation, accountDID: did)
+      else { return }
+      await refreshNotificationPreferences()
+      guard !Task.isCancelled,
+        isCurrentNotificationClient(newClient, generation: generation, accountDID: did)
+      else { return }
+      if let deviceToken {
+        if isMasterPushEnabled() {
+          await registerDeviceToken(deviceToken)
+        }
+      }
     } else {
-      shouldPersistChatPreference = false
-    }
-    // If we have a valid token and a new client, register the device
-    if newClient != nil, let deviceToken = deviceToken {
-      notificationLogger.info("🚀 Triggering device registration from updateClient")
-      await registerDeviceToken(deviceToken)
-    } else if newClient == nil {
-      notificationLogger.info("🧹 Client cleared - cleaning up notifications")
-      // Client was cleared (user logged out), clean up notifications
       await cleanupNotifications(previousClient: previousClient)
-    } else if newClient != nil && deviceToken == nil {
-      // Client available but no device token - notification preferences are stored locally
-      notificationLogger.info(
-        "⚠️ Client available but no device token yet - local preferences remain active")
-    } else {
-      notificationLogger.info("ℹ️ No action needed - no client and no token")
     }
   }
 
@@ -483,42 +673,102 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     Bundle.main.bundleIdentifier ?? "blue.catbird"
   }
 
-  func refreshNotificationPreferences() async {
-    guard let client else { return }
+  @MainActor
+  func refreshNotificationPreferences(expectedAccountDID: String? = nil) async {
+    guard expectedAccountDID == nil || expectedAccountDID == currentAccountDID,
+      let client else { return }
     _ = await fetchNotificationPreferences(using: client)
   }
 
+  @MainActor
+  func retryNotificationPreferences(expectedAccountDID: String) async {
+    guard expectedAccountDID == currentAccountDID else { return }
+    if let failed = failedPreferencesMutation {
+      guard isCurrentNotificationClient(failed.client, generation: failed.clientGeneration,
+        accountDID: failed.accountDID) else { return }
+      do {
+        _ = try await updatePreferences(failed.requested, expectedAccountDID: failed.accountDID,
+          retryInput: failed.input)
+      } catch { /* The retained attempt and its error remain available to this account. */ }
+    } else {
+      await refreshNotificationPreferences(expectedAccountDID: expectedAccountDID)
+    }
+  }
+
   @discardableResult
+  @MainActor
   func fetchNotificationPreferences(using client: ATProtoClient) async
     -> AppBskyNotificationDefs.Preferences? {
-    do {
-      await configureNotificationServiceRouting(on: client)
-      let (responseCode, output) = try await client.app.bsky.notification.getPreferences(input: .init())
-
-      guard responseCode == 200, let output else {
-        notificationLogger.warning(
-          "Failed to fetch notification preferences via XRPC: HTTP \(responseCode)")
-        return nil
+    guard let pollingTicket = pollingBarrier.begin(accountDID: currentAccountDID) else { return nil }
+    defer { pollingBarrier.finish(pollingTicket) }
+    guard let did = currentAccountDID, self.client === client, !Task.isCancelled,
+      activePreferenceMutationTask == nil, failedPreferencesMutation == nil else { return nil }
+    let generation = clientGeneration
+    let mutationGeneration = preferenceMutationGeneration
+    activePreferenceLoadTask?.cancel()
+    preferenceLoadGeneration &+= 1
+    let loadGeneration = preferenceLoadGeneration
+    preferencesState = .loading
+    defer {
+      if isCurrentNotificationClient(client, generation: generation, accountDID: did),
+        loadGeneration == preferenceLoadGeneration, preferencesState == .loading {
+        preferencesState = serverPreferencesSnapshot == nil ? .unavailable : .ready
       }
-
-      applyNotificationPreferencesSnapshot(output.preferences)
-      return output.preferences
+    }
+    let loadTask = Task { @MainActor [weak self] in
+      guard let self else { throw CancellationError() }
+      await self.configureNotificationServiceRouting(on: client)
+      let authenticatedDID = try await self.preferencesService.authenticatedDID(client)
+      guard !Task.isCancelled, authenticatedDID == did,
+        self.isCurrentNotificationClient(client, generation: generation, accountDID: did),
+        mutationGeneration == self.preferenceMutationGeneration,
+        loadGeneration == self.preferenceLoadGeneration, self.activePreferenceMutationTask == nil
+      else { throw CancellationError() }
+      return try await self.preferencesService.fetch(client)
+    }
+    activePreferenceLoadTask = loadTask
+    defer {
+      if loadGeneration == preferenceLoadGeneration, clientGeneration == generation {
+        activePreferenceLoadTask = nil
+      }
+    }
+    do {
+      let snapshot = try await withTaskCancellationHandler {
+        try await loadTask.value
+      } onCancel: { loadTask.cancel() }
+      guard !Task.isCancelled,
+        isCurrentNotificationClient(client, generation: generation, accountDID: did),
+        mutationGeneration == preferenceMutationGeneration,
+        loadGeneration == preferenceLoadGeneration, activePreferenceMutationTask == nil
+      else { return nil }
+      applyNotificationPreferencesSnapshot(snapshot)
+      return snapshot
     } catch {
-      notificationLogger.error(
-        "Failed to fetch notification preferences via XRPC: \(error.localizedDescription)")
+      guard !Task.isCancelled, !(error is CancellationError),
+        isCurrentNotificationClient(client, generation: generation, accountDID: did),
+        mutationGeneration == preferenceMutationGeneration, loadGeneration == preferenceLoadGeneration
+      else { return nil }
+      preferencesState = .loadFailed(error.localizedDescription)
+      notificationLogger.error("Failed to load notification preferences: \(error.localizedDescription)")
       return nil
     }
   }
 
-  func applyNotificationPreferencesSnapshot(
-    _ serverPreferences: AppBskyNotificationDefs.Preferences
-  ) {
+  func applyNotificationPreferencesSnapshot(_ serverPreferences: AppBskyNotificationDefs.Preferences) {
     serverPreferencesSnapshot = serverPreferences
     preferences = NotificationPreferences(serverPreferences: serverPreferences)
+    failedPreferencesMutation = nil
+    preferencesState = .ready
+    syncChatNotificationPreferenceFromPreferences()
   }
 
+  @MainActor
   func currentNotificationPreferencesSnapshot(using client: ATProtoClient) async
     -> AppBskyNotificationDefs.Preferences? {
+    guard let pollingTicket = pollingBarrier.begin(accountDID: currentAccountDID) else { return nil }
+    defer { pollingBarrier.finish(pollingTicket) }
+
+    guard self.client === client, !Task.isCancelled else { return nil }
     if let serverPreferencesSnapshot {
       return serverPreferencesSnapshot
     }
@@ -528,32 +778,48 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
   /// Enable all notifications
   @MainActor
-  func enableNotifications() async {
+  func enableNotifications(expectedAccountDID: String? = nil) async {
+    guard expectedAccountDID == nil || expectedAccountDID == currentAccountDID else { return }
+    guard let pollingTicket = pollingBarrier.begin(accountDID: currentAccountDID) else { return }
+    defer { pollingBarrier.finish(pollingTicket) }
+
     setMasterPushEnabled(true)
     notificationsEnabled = true
     if deviceToken == nil {
       await requestNotificationPermission()
+      guard !Task.isCancelled, pollingBarrier.isCurrent(pollingTicket, accountDID: currentAccountDID) else { return }
     } else if let token = deviceToken {
       await registerDeviceToken(token)
+      guard !Task.isCancelled, pollingBarrier.isCurrent(pollingTicket, accountDID: currentAccountDID) else { return }
     }
   }
 
   /// Disable all notifications
   @MainActor
-  func disableNotifications() async {
+  func disableNotifications(expectedAccountDID: String? = nil) async {
+    guard expectedAccountDID == nil || expectedAccountDID == currentAccountDID else { return }
+    guard let pollingTicket = pollingBarrier.begin(accountDID: currentAccountDID) else { return }
+    defer { pollingBarrier.finish(pollingTicket) }
+
     setMasterPushEnabled(false)
     notificationsEnabled = false
     status = .disabled
     if let deviceToken = deviceToken {
       if let did = try? await client?.getDid() {
+        guard !Task.isCancelled, pollingBarrier.isCurrent(pollingTicket, accountDID: currentAccountDID) else { return }
         await unregisterDeviceToken(deviceToken, did: did)
+        guard !Task.isCancelled, pollingBarrier.isCurrent(pollingTicket, accountDID: currentAccountDID) else { return }
       }
     }
   }
 
   /// Request notification permissions from the user
   @MainActor
-  func requestNotificationPermission() async {
+  func requestNotificationPermission(expectedAccountDID: String? = nil) async {
+    guard expectedAccountDID == nil || expectedAccountDID == currentAccountDID else { return }
+    guard let pollingTicket = pollingBarrier.begin(accountDID: currentAccountDID) else { return }
+    defer { pollingBarrier.finish(pollingTicket) }
+
     notificationLogger.info("Requesting notification permission")
     status = .waitingForPermission
 
@@ -562,6 +828,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
       let center = UNUserNotificationCenter.current()
       let options: UNAuthorizationOptions = [.alert, .sound, .badge]
       let granted = try await center.requestAuthorization(options: options)
+      guard !Task.isCancelled, pollingBarrier.isCurrent(pollingTicket, accountDID: currentAccountDID) else { return }
 
       // Update state based on user's choice
       if granted {
@@ -569,6 +836,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         setMasterPushEnabled(true)
         notificationsEnabled = true
         await MainActor.run {
+          guard !Task.isCancelled, pollingBarrier.isCurrent(pollingTicket, accountDID: currentAccountDID) else { return }
           #if os(iOS)
             UIApplication.shared.registerForRemoteNotifications()
             notificationLogger.info(
@@ -582,6 +850,8 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
         // Check current settings to confirm
         let settings = await center.notificationSettings()
+        guard !Task.isCancelled, pollingBarrier.isCurrent(pollingTicket, accountDID: currentAccountDID) else { return }
+        systemAuthorizationStatus = settings.authorizationStatus
         if settings.authorizationStatus == .authorized {
           notificationLogger.info("Notification settings confirmed authorized")
         } else {
@@ -591,9 +861,11 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
       } else {
         notificationLogger.notice("Notification permission denied by user")
         status = .permissionDenied
+        systemAuthorizationStatus = .denied
         notificationsEnabled = false
       }
     } catch {
+      guard !Task.isCancelled, pollingBarrier.isCurrent(pollingTicket, accountDID: currentAccountDID) else { return }
       notificationLogger.error(
         "Error requesting notification permission: \(error.localizedDescription)")
       status = .registrationFailed(error)
@@ -604,23 +876,36 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   /// Request notifications after successful login
   @MainActor
   func requestNotificationsAfterLogin() async {
+    guard let pollingTicket = pollingBarrier.begin(accountDID: currentAccountDID) else { return }
+    defer { pollingBarrier.finish(pollingTicket) }
+
     // Only request if we haven't already been granted permission
     let center = UNUserNotificationCenter.current()
     let settings = await center.notificationSettings()
+    guard !Task.isCancelled, pollingBarrier.isCurrent(pollingTicket, accountDID: currentAccountDID) else { return }
 
     if settings.authorizationStatus == .notDetermined {
       await requestNotificationPermission()
+      guard !Task.isCancelled, pollingBarrier.isCurrent(pollingTicket, accountDID: currentAccountDID) else { return }
     }
   }
 
   /// Check the current notification permission status
   @MainActor
-  func checkNotificationStatus() async {
+  func checkNotificationStatus(expectedAccountDID: String? = nil) async {
+    guard expectedAccountDID == nil || expectedAccountDID == currentAccountDID else { return }
+    guard let pollingTicket = pollingBarrier.begin(accountDID: currentAccountDID) else { return }
+    defer { pollingBarrier.finish(pollingTicket) }
+
     notificationLogger.debug("Checking notification status")
 
     let center = UNUserNotificationCenter.current()
     let settings = await center.notificationSettings()
 
+    guard !Task.isCancelled,
+      pollingBarrier.isCurrent(pollingTicket, accountDID: currentAccountDID)
+    else { return }
+    systemAuthorizationStatus = settings.authorizationStatus
     switch settings.authorizationStatus {
     case .authorized, .provisional, .ephemeral:
       notificationLogger.info("Notifications are authorized")
@@ -679,6 +964,8 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
       "📱 Processing device token from APNS: \(tokenHex.prefix(16))... (length: \(deviceToken.count))"
     )
     self.deviceToken = deviceToken
+    guard let pollingTicket = pollingBarrier.begin(accountDID: currentAccountDID) else { return }
+    defer { pollingBarrier.finish(pollingTicket) }
 
     if status == .registered,
       let previousToken = lastRegisteredDeviceToken,
@@ -708,11 +995,34 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
   /// Update notification preferences with serialized execution and rollback on failure.
   @discardableResult
-  func updatePreferences(_ newPreferences: NotificationPreferences) async throws -> AppBskyNotificationDefs.Preferences? {
+  @MainActor
+  func updatePreferences(_ newPreferences: NotificationPreferences, expectedAccountDID: String? = nil) async throws -> AppBskyNotificationDefs.Preferences? {
+    try await updatePreferences(newPreferences, expectedAccountDID: expectedAccountDID, retryInput: nil)
+  }
+
+  @MainActor
+  private func updatePreferences(_ newPreferences: NotificationPreferences, expectedAccountDID: String?,
+    retryInput: AppBskyNotificationPutPreferencesV2.Input?) async throws -> AppBskyNotificationDefs.Preferences? {
+    guard let pollingTicket = pollingBarrier.begin(accountDID: currentAccountDID) else { throw CancellationError() }
+    defer { pollingBarrier.finish(pollingTicket) }
+
     guard let client = client else {
       notificationLogger.warning("Cannot update preferences - no client available")
       throw NotificationServiceError.clientUnavailable
     }
+
+    guard let did = currentAccountDID, !Task.isCancelled,
+      expectedAccountDID == nil || expectedAccountDID == did else { throw CancellationError() }
+    guard preferencesState != .saving else {
+      throw NotificationServiceError.serverError("Wait for your current notification changes to finish saving.")
+    }
+    guard serverPreferencesSnapshot != nil, canEditNotificationPreferences || retryInput != nil else {
+      throw NotificationServiceError.serverError("Load your saved notification preferences before making changes.")
+    }
+    let input = retryInput ?? newPreferences.toPutPreferencesInput(changedFrom: preferences)
+    guard !input.isEmptyNotificationUpdate else { return serverPreferencesSnapshot }
+    let generation = clientGeneration
+    failedPreferencesMutation = nil
 
     // Save prior confirmed snapshot if this is the first uncommitted mutation in flight
     if priorConfirmedPreferences == nil {
@@ -724,6 +1034,8 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     preferenceMutationGeneration &+= 1
     let mutationGeneration = preferenceMutationGeneration
     preferences = newPreferences
+    preferencesState = .saving
+    syncChatNotificationPreferenceFromPreferences()
 
     let previousTask = activePreferenceMutationTask
     let mutationTask = Task { [weak self] () -> AppBskyNotificationDefs.Preferences? in
@@ -734,31 +1046,52 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         throw NotificationServiceError.clientUnavailable
       }
 
-      return try await self.performPreferencesMutation(newPreferences, generation: mutationGeneration, client: client)
+      try Task.checkCancellation()
+      guard self.isCurrentNotificationClient(client, generation: generation, accountDID: did) else {
+        throw CancellationError()
+      }
+      return try await self.performPreferencesMutation(
+        input: input, generation: mutationGeneration, client: client,
+        clientGeneration: generation, accountDID: did
+      )
     }
 
     activePreferenceMutationTask = mutationTask
 
     do {
-      let result = try await mutationTask.value
-      if mutationGeneration == self.preferenceMutationGeneration {
+      let result = try await withTaskCancellationHandler {
+        try await mutationTask.value
+      } onCancel: {
+        mutationTask.cancel()
+      }
+      if isCurrentNotificationClient(client, generation: generation, accountDID: did),
+        mutationGeneration == self.preferenceMutationGeneration {
+        self.activePreferenceMutationTask = nil
         self.priorConfirmedPreferences = nil
         self.priorConfirmedServerSnapshot = nil
+        self.preferencesState = .ready
       }
       return result
     } catch {
-      if mutationGeneration == self.preferenceMutationGeneration {
+      if isCurrentNotificationClient(client, generation: generation, accountDID: did),
+        mutationGeneration == self.preferenceMutationGeneration {
+        self.activePreferenceMutationTask = nil
         if let prior = self.priorConfirmedPreferences {
           self.notificationLogger.warning(
             "Reverting notification preferences to prior confirmed snapshot due to mutation failure: \(error.localizedDescription)"
           )
           self.preferences = prior
           self.serverPreferencesSnapshot = self.priorConfirmedServerSnapshot
+          self.syncChatNotificationPreferenceFromPreferences()
         }
         self.priorConfirmedPreferences = nil
         self.priorConfirmedServerSnapshot = nil
-        Task { [weak self] in
-          await self?.refreshNotificationPreferences()
+        if error is CancellationError {
+          self.preferencesState = self.serverPreferencesSnapshot == nil ? .unavailable : .ready
+        } else {
+          self.failedPreferencesMutation = FailedPreferencesMutation(requested: newPreferences,
+            input: input, client: client, clientGeneration: generation, accountDID: did)
+          self.preferencesState = .saveFailed(error.localizedDescription)
         }
       }
       throw error
@@ -767,67 +1100,70 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
   /// Mutates notification preferences using a closure, serialized with rollback on failure.
   @discardableResult
-  func updatePreferences(_ mutate: (inout NotificationPreferences) -> Void) async throws -> AppBskyNotificationDefs.Preferences? {
+  @MainActor
+  func updatePreferences(_ mutate: (inout NotificationPreferences) -> Void, expectedAccountDID: String? = nil) async throws -> AppBskyNotificationDefs.Preferences? {
     var updated = preferences
     mutate(&updated)
-    return try await updatePreferences(updated)
+    return try await updatePreferences(updated, expectedAccountDID: expectedAccountDID)
   }
 
+  @MainActor
   private func performPreferencesMutation(
-    _ newPreferences: NotificationPreferences,
+    input: AppBskyNotificationPutPreferencesV2.Input,
     generation: UInt64,
-    client: ATProtoClient
+    client: ATProtoClient,
+    clientGeneration: UInt64,
+    accountDID: String
   ) async throws -> AppBskyNotificationDefs.Preferences? {
+    try Task.checkCancellation()
     await configureNotificationServiceRouting(on: client)
-    let input = newPreferences.toPutPreferencesInput()
-    let (responseCode, output) = try await client.app.bsky.notification.putPreferencesV2(
-      input: input
-    )
-
-    guard (200 ... 299).contains(responseCode) else {
-      notificationLogger.error(
-        "Notification preferences update failed via XRPC: HTTP \(responseCode)")
-      throw NotificationServiceError.serverError("HTTP \(responseCode)")
+    let authenticatedDID = try await preferencesService.authenticatedDID(client)
+    try Task.checkCancellation()
+    guard isCurrentNotificationClient(client, generation: clientGeneration, accountDID: accountDID),
+      authenticatedDID == accountDID
+    else { throw CancellationError() }
+    let updatedPreferences = try await preferencesService.save(client, input)
+    try Task.checkCancellation()
+    guard isCurrentNotificationClient(client, generation: clientGeneration, accountDID: accountDID) else {
+      throw CancellationError()
     }
 
-    if let updatedPreferences = output?.preferences {
-      if generation == self.preferenceMutationGeneration {
-        applyNotificationPreferencesSnapshot(updatedPreferences)
-      }
-      notificationLogger.info("Successfully updated notification preferences via XRPC (generation: \(generation))")
-      return updatedPreferences
-    } else {
-      if generation == self.preferenceMutationGeneration {
-        serverPreferencesSnapshot = nil
-      }
-      return nil
+    guard let updatedPreferences else {
+      throw NotificationServiceError.serverError("The service did not confirm your saved notification preferences. Try saving again.")
     }
+    // Keep the accepted baseline even if another edit arrives before the awaiting caller resumes.
+    priorConfirmedPreferences = NotificationPreferences(serverPreferences: updatedPreferences)
+    priorConfirmedServerSnapshot = updatedPreferences
+    if generation == self.preferenceMutationGeneration {
+      applyNotificationPreferencesSnapshot(updatedPreferences)
+    }
+    return updatedPreferences
   }
 
   /// Starts periodic checking of unread notifications
+  @MainActor
   func startUnreadNotificationChecking() {
-    // Stop any existing timer
+    guard !pollingBarrier.isSuspended else { return }
     unreadCheckTimer?.invalidate()
-
-    // Create a new timer (every 60 seconds)
-    unreadCheckTimer = Timer.scheduledTimer(withTimeInterval: 60.0, repeats: true) {
-      [weak self] _ in
-      Task { [weak self] in
-        await self?.checkUnreadNotifications()
-      }
+    unreadCheckTimer = Timer.scheduledTimer(withTimeInterval: 60.0, repeats: true) { [weak self] _ in
+      Task { @MainActor [weak self] in self?.scheduleUnreadCheck() }
     }
-
-    // Initial check
-    Task {
-      await checkUnreadNotifications()
-    }
-
+    scheduleUnreadCheck()
     notificationLogger.info("Started background notification checking")
   }
 
   /// Cleanup notifications when user logs out
   func cleanupNotifications(previousClient: ATProtoClient? = nil) async {
     notificationLogger.info("Cleaning up notifications after logout")
+    clientGeneration &+= 1
+    preferenceMutationGeneration &+= 1
+    chatPreferenceChangeGeneration &+= 1
+    let generation = clientGeneration
+    let accountDID = currentAccountDID
+    shouldPersistChatPreference = false
+    activePreferenceMutationTask?.cancel()
+    activePreferenceLoadTask?.cancel()
+    activePreferenceLoadTask = nil
 
     // Stop unread checking timer
     unreadCheckTimer?.invalidate()
@@ -846,11 +1182,15 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
       }
     }
 
+    guard clientGeneration == generation, currentAccountDID == accountDID else { return }
+
     // Reset state
     status = .unknown
     notificationsEnabled = false
     unreadCount = 0
     preferences = NotificationPreferences()
+    preferencesState = .unavailable
+    failedPreferencesMutation = nil
     serverPreferencesSnapshot = nil
     priorConfirmedPreferences = nil
     priorConfirmedServerSnapshot = nil
@@ -897,25 +1237,30 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   /// Checks for unread notifications and updates count
   @MainActor
   func checkUnreadNotifications() async {
-    // Only check when notifications are enabled and we are registered
-    guard notificationsEnabled, status == .registered, let client = client else {
-      notificationLogger.warning("Cannot check unread notifications - not properly configured")
+    guard let pollingTicket = pollingBarrier.begin(accountDID: currentAccountDID) else { return }
+    defer { pollingBarrier.finish(pollingTicket) }
+
+    // Inbox activity belongs to the authenticated account, independently of push delivery.
+    guard let client = client else {
+      notificationLogger.warning("Cannot check unread notifications - no client")
       return
     }
 
     do {
+      let generation = clientGeneration
+      guard let did = currentAccountDID else { return }
       await configureNotificationServiceRouting(on: client)
-      let (responseCode, output) = try await client.app.bsky.notification.getUnreadCount(
-        input: .init()
-      )
+      let authenticatedDID = try await preferencesService.authenticatedDID(client)
+      guard !Task.isCancelled, authenticatedDID == did,
+        isCurrentNotificationClient(client, generation: generation, accountDID: did)
+      else { return }
+      let count = try await preferencesService.unreadCount(client)
 
-      guard responseCode == 200, let output = output else {
-        notificationLogger.error("Failed to get unread notification count: \(responseCode)")
-        return
-      }
-
-      if output.count != unreadCount {
-        unreadCount = output.count
+      guard !Task.isCancelled,
+        isCurrentNotificationClient(client, generation: generation, accountDID: did)
+      else { return }
+      if count != unreadCount {
+        unreadCount = count
 
         // Update app badge
         #if os(iOS)
@@ -963,7 +1308,10 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
   /// Update unread count after notifications are marked as seen
   func updateUnreadCountAfterSeen() {
+    let generation = clientGeneration
+    let accountDID = currentAccountDID
     Task { @MainActor in
+      guard !pollingBarrier.isSuspended, clientGeneration == generation, currentAccountDID == accountDID else { return }
       unreadCount = 0
 
       // Update app badge
@@ -1009,18 +1357,27 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   // MARK: - Relationship Sync Methods
 
   /// Synchronizes muted and blocked users with the notification server
+  @MainActor
   func syncRelationships() async {
+    guard let pollingTicket = pollingBarrier.begin(accountDID: currentAccountDID) else { return }
+    defer { pollingBarrier.finish(pollingTicket) }
+
     guard notificationsEnabled else {
       notificationLogger.info("Not syncing relationships - notifications are disabled")
       return
     }
 
     await gatherRelationships()
+    guard !Task.isCancelled, pollingBarrier.isCurrent(pollingTicket, accountDID: currentAccountDID) else { return }
     lastRelationshipSync = Date()
   }
 
   /// Gathers current relationships from the graph manager
+  @MainActor
   private func gatherRelationships() async {
+    guard let pollingTicket = pollingBarrier.begin(accountDID: currentAccountDID) else { return }
+    defer { pollingBarrier.finish(pollingTicket) }
+
     guard let appState = appState else {
       notificationLogger.warning("Cannot gather relationships - no AppState reference")
       return
@@ -1029,10 +1386,12 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     do {
       // Use existing graph manager to refresh caches
       try await appState.graphManager.refreshMuteCache()
+      guard !Task.isCancelled, pollingBarrier.isCurrent(pollingTicket, accountDID: currentAccountDID) else { return }
       try await appState.graphManager.refreshBlockCache()
 
       // Get muted and blocked users
       await MainActor.run {
+        guard !Task.isCancelled, pollingBarrier.isCurrent(pollingTicket, accountDID: currentAccountDID) else { return }
         // Access GraphManager's cached values
         mutedUsers = appState.graphManager.muteCache
         blockedUsers = appState.graphManager.blockCache
@@ -1069,7 +1428,11 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   }
 
   /// Syncs all user data (preferences and relationships) with the notification server
+  @MainActor
   func syncAllUserData() async {
+    guard let pollingTicket = pollingBarrier.begin(accountDID: currentAccountDID) else { return }
+    defer { pollingBarrier.finish(pollingTicket) }
+
     guard notificationsEnabled else {
       notificationLogger.info("Not syncing user data - notifications are disabled")
       return
@@ -1081,9 +1444,11 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     }
 
     await refreshNotificationPreferences()
+    guard !Task.isCancelled, pollingBarrier.isCurrent(pollingTicket, accountDID: currentAccountDID) else { return }
     await syncRelationships()
     if let appState {
       let service = await MainActor.run { appState.activitySubscriptionService }
+      guard !Task.isCancelled, pollingBarrier.isCurrent(pollingTicket, accountDID: currentAccountDID) else { return }
       await service.refreshSubscriptions()
     }
 
@@ -1099,10 +1464,14 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   }
 
   /// Fetches moderation lists from AT Protocol
+  @MainActor
   private func fetchModerationLists(
     client: ATProtoClient,
     type: String
   ) async throws -> [(uri: String, purpose: String, name: String?)] {
+    guard let pollingTicket = pollingBarrier.begin(accountDID: currentAccountDID) else { throw CancellationError() }
+    defer { pollingBarrier.finish(pollingTicket) }
+
     var allLists: [(uri: String, purpose: String, name: String?)] = []
     var cursor: String?
 
@@ -1115,6 +1484,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         params = AppBskyGraphGetListBlocks.Parameters(limit: 100, cursor: cursor)
         result = try await client.app.bsky.graph.getListBlocks(
           input: params as! AppBskyGraphGetListBlocks.Parameters)
+        guard !Task.isCancelled, pollingBarrier.isCurrent(pollingTicket, accountDID: currentAccountDID) else { throw CancellationError() }
 
         if result.responseCode == 200, let output = result.data as? AppBskyGraphGetListBlocks.Output {
           for list in output.lists {
@@ -1133,6 +1503,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         params = AppBskyGraphGetListMutes.Parameters(limit: 100, cursor: cursor)
         result = try await client.app.bsky.graph.getListMutes(
           input: params as! AppBskyGraphGetListMutes.Parameters)
+        guard !Task.isCancelled, pollingBarrier.isCurrent(pollingTicket, accountDID: currentAccountDID) else { throw CancellationError() }
 
         if result.responseCode == 200, let output = result.data as? AppBskyGraphGetListMutes.Output {
           for list in output.lists {
@@ -1157,29 +1528,41 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   }
 
   /// Mutes a thread for push notifications
+  @MainActor
   func muteThreadNotifications(threadRootURI: String) async throws {
+    guard let pollingTicket = pollingBarrier.begin(accountDID: currentAccountDID) else { throw CancellationError() }
+    defer { pollingBarrier.finish(pollingTicket) }
+
     guard let client = client else {
       throw NotificationServiceError.clientNotConfigured
     }
 
     let input = AppBskyGraphMuteThread.Input(root: try ATProtocolURI(uriString: threadRootURI))
     let responseCode = try await client.app.bsky.graph.muteThread(input: input)
+    guard !Task.isCancelled, pollingBarrier.isCurrent(pollingTicket, accountDID: currentAccountDID) else { throw CancellationError() }
     guard responseCode == 200 else {
       throw NotificationServiceError.serverError("HTTP \(responseCode)")
     }
+    NotificationCenter.default.post(name: NSNotification.Name("UserGraphChanged"), object: nil)
   }
 
   /// Unmutes a thread for push notifications
+  @MainActor
   func unmuteThreadNotifications(threadRootURI: String) async throws {
+    guard let pollingTicket = pollingBarrier.begin(accountDID: currentAccountDID) else { throw CancellationError() }
+    defer { pollingBarrier.finish(pollingTicket) }
+
     guard let client = client else {
       throw NotificationServiceError.clientNotConfigured
     }
 
     let input = AppBskyGraphUnmuteThread.Input(root: try ATProtocolURI(uriString: threadRootURI))
     let responseCode = try await client.app.bsky.graph.unmuteThread(input: input)
+    guard !Task.isCancelled, pollingBarrier.isCurrent(pollingTicket, accountDID: currentAccountDID) else { throw CancellationError() }
     guard responseCode == 200 else {
       throw NotificationServiceError.serverError("HTTP \(responseCode)")
     }
+    NotificationCenter.default.post(name: NSNotification.Name("UserGraphChanged"), object: nil)
   }
 
   // MARK: - Private Methods
@@ -1189,7 +1572,11 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   }
 
   /// Fetch the current set of activity subscriptions from the notification server.
+  @MainActor
   func fetchActivitySubscriptionsFromServer() async -> [ActivitySubscriptionServerRecord]? {
+    guard let pollingTicket = pollingBarrier.begin(accountDID: currentAccountDID) else { return nil }
+    defer { pollingBarrier.finish(pollingTicket) }
+
     guard notificationsEnabled else {
       notificationLogger.debug("Skipping activity subscription fetch - notifications disabled")
       return nil
@@ -1208,9 +1595,11 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
     do {
       await configureNotificationServiceRouting(on: client)
+      guard !Task.isCancelled, pollingBarrier.isCurrent(pollingTicket, accountDID: currentAccountDID) else { return nil }
       let (responseCode, output) = try await client.app.bsky.notification.listActivitySubscriptions(
         input: .init(limit: 100)
       )
+      guard !Task.isCancelled, pollingBarrier.isCurrent(pollingTicket, accountDID: currentAccountDID) else { return nil }
 
       guard responseCode == 200, let output else {
         notificationLogger.error(
@@ -1231,6 +1620,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         )
       }
     } catch {
+      guard !Task.isCancelled, pollingBarrier.isCurrent(pollingTicket, accountDID: currentAccountDID) else { return nil }
       notificationLogger.error(
         "Error fetching activity subscriptions via XRPC: \(error.localizedDescription)")
     }
@@ -1239,15 +1629,20 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   }
 
   /// Create or update an activity subscription on the notification server.
+  @MainActor
   func updateActivitySubscriptionOnServer(
     subjectDid: String,
     includePosts: Bool,
     includeReplies: Bool
   ) async {
+    guard let pollingTicket = pollingBarrier.begin(accountDID: currentAccountDID) else { return }
+    defer { pollingBarrier.finish(pollingTicket) }
+
     guard includePosts || includeReplies else {
       await removeActivitySubscriptionFromServer(
         subjectDid: subjectDid
       )
+      guard !Task.isCancelled, pollingBarrier.isCurrent(pollingTicket, accountDID: currentAccountDID) else { return }
       return
     }
 
@@ -1269,6 +1664,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
     do {
       await configureNotificationServiceRouting(on: client)
+      guard !Task.isCancelled, pollingBarrier.isCurrent(pollingTicket, accountDID: currentAccountDID) else { return }
       let input = AppBskyNotificationPutActivitySubscription.Input(
         subject: try DID(didString: subjectDid),
         activitySubscription: AppBskyNotificationDefs.ActivitySubscription(
@@ -1279,6 +1675,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
       let (responseCode, _) = try await client.app.bsky.notification.putActivitySubscription(
         input: input
       )
+      guard !Task.isCancelled, pollingBarrier.isCurrent(pollingTicket, accountDID: currentAccountDID) else { return }
 
       switch responseCode {
       case 200 ... 299:
@@ -1290,6 +1687,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         )
       }
     } catch {
+      guard !Task.isCancelled, pollingBarrier.isCurrent(pollingTicket, accountDID: currentAccountDID) else { return }
       notificationLogger.error(
         "Error syncing activity subscription for \(subjectDid) via XRPC: \(error.localizedDescription)"
       )
@@ -1297,9 +1695,13 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   }
 
   /// Remove an activity subscription from the notification server.
+  @MainActor
   func removeActivitySubscriptionFromServer(
     subjectDid: String
   ) async {
+    guard let pollingTicket = pollingBarrier.begin(accountDID: currentAccountDID) else { return }
+    defer { pollingBarrier.finish(pollingTicket) }
+
     guard notificationsEnabled else {
       notificationLogger.debug("Skipping activity subscription removal - notifications disabled")
       return
@@ -1318,6 +1720,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
     do {
       await configureNotificationServiceRouting(on: client)
+      guard !Task.isCancelled, pollingBarrier.isCurrent(pollingTicket, accountDID: currentAccountDID) else { return }
       let input = AppBskyNotificationPutActivitySubscription.Input(
         subject: try DID(didString: subjectDid),
         activitySubscription: AppBskyNotificationDefs.ActivitySubscription(
@@ -1328,6 +1731,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
       let (responseCode, _) = try await client.app.bsky.notification.putActivitySubscription(
         input: input
       )
+      guard !Task.isCancelled, pollingBarrier.isCurrent(pollingTicket, accountDID: currentAccountDID) else { return }
 
       switch responseCode {
       case 200 ... 299:
@@ -1339,6 +1743,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         )
       }
     } catch {
+      guard !Task.isCancelled, pollingBarrier.isCurrent(pollingTicket, accountDID: currentAccountDID) else { return }
       notificationLogger.error(
         "Error removing activity subscription for \(subjectDid) via XRPC: \(error.localizedDescription)"
       )
@@ -1384,7 +1789,14 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   }
 
   /// Register the device token with our notification service
+  @MainActor
   private func registerDeviceToken(_ token: Data) async {
+    guard let pollingTicket = pollingBarrier.begin(accountDID: currentAccountDID) else { return }
+    defer { pollingBarrier.finish(pollingTicket) }
+
+    guard !Task.isCancelled, isMasterPushEnabled() else { return }
+    guard let client, let did = currentAccountDID else { return }
+    let generation = clientGeneration
     let tokenHex = hexString(from: token)
     notificationLogger.info("🔄 Starting device token registration: \(tokenHex.prefix(16))...")
 
@@ -1396,14 +1808,16 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
       Task { await registrationCoordinator.finish() }
     }
 
-    guard let client = client else {
-      notificationLogger.warning("❌ Cannot register device token - no client available")
-      status = .disabled
-      return
-    }
+    guard !Task.isCancelled, isMasterPushEnabled(),
+      isCurrentNotificationClient(client, generation: generation, accountDID: did)
+    else { return }
 
     do {
       await configureNotificationServiceRouting(on: client)
+      let authenticatedDID = try await client.getDid()
+      guard !Task.isCancelled, isMasterPushEnabled(), authenticatedDID == did,
+        isCurrentNotificationClient(client, generation: generation, accountDID: did)
+      else { return }
       let input = AppBskyNotificationRegisterPush.Input(
         serviceDid: try notificationServiceDID(),
         token: tokenHex,
@@ -1411,6 +1825,18 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         appId: pushAppID
       )
       let responseCode = try await client.app.bsky.notification.registerPush(input: input)
+      guard isCurrentNotificationClient(client, generation: generation, accountDID: did) else { return }
+      guard isMasterPushEnabled() else {
+        notificationsEnabled = false
+        status = .disabled
+        lastRegisteredDeviceToken = nil
+        // Disabling may have raced a successful registration that was already in flight.
+        if (200 ... 299).contains(responseCode) {
+          await unregisterDeviceToken(token, did: did, using: client)
+        }
+        return
+      }
+      guard !Task.isCancelled else { return }
 
       switch responseCode {
       case 200 ... 299:
@@ -1418,6 +1844,9 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         status = .registered
         lastRegisteredDeviceToken = token
         await refreshNotificationPreferences()
+        guard !Task.isCancelled,
+          isCurrentNotificationClient(client, generation: generation, accountDID: did)
+        else { return }
         await syncRelationships()
       default:
         status = .registrationFailed(
@@ -1429,6 +1858,9 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         )
       }
     } catch {
+      guard !Task.isCancelled, isMasterPushEnabled(),
+        isCurrentNotificationClient(client, generation: generation, accountDID: did)
+      else { return }
       notificationLogger.error(
         "❌ Error registering device token via XRPC: \(error.localizedDescription)")
       status = .registrationFailed(error)
@@ -1436,7 +1868,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   }
 
   private func createNavigationDestination(from uriString: String, type: String) throws -> NavigationDestination {
-    switch type {
+    switch type.lowercased() {
     case "follow":
       if uriString.hasPrefix("at://") {
         let uri = try ATProtocolURI(uriString: uriString)
@@ -1455,22 +1887,26 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
   // MARK: - App Lifecycle
 
+  @MainActor
   @objc private func appDidBecomeActive() {
-    // Check notification status when app becomes active
-    Task {
-      await checkNotificationStatus()
-
-      // Also check for unread notifications
-      await checkUnreadNotifications()
-
-      // Sync relationships if we haven't in a while
-      if let lastSync = lastRelationshipSync,
-        Date().timeIntervalSince(lastSync) > 3600 {  // If it's been over an hour
-        await syncRelationships()
+    guard !pollingBarrier.isSuspended, foregroundCheckTask == nil else { return }
+    foregroundCheckTask = Task { [weak self] in
+      guard let self,
+        let ticket = self.pollingBarrier.begin(accountDID: self.currentAccountDID)
+      else { return }
+      defer {
+        self.pollingBarrier.finish(ticket)
+        self.foregroundCheckTask = nil
       }
-
-      // Force update widget with current count to ensure it has data
-      updateWidgetUnreadCount(unreadCount)
+      await self.checkNotificationStatus()
+      guard !Task.isCancelled, self.pollingBarrier.isCurrent(ticket, accountDID: self.currentAccountDID) else { return }
+      await self.checkUnreadNotifications()
+      guard !Task.isCancelled, self.pollingBarrier.isCurrent(ticket, accountDID: self.currentAccountDID) else { return }
+      if let lastSync = self.lastRelationshipSync, Date().timeIntervalSince(lastSync) > 3600 {
+        await self.syncRelationships()
+      }
+      guard !Task.isCancelled, self.pollingBarrier.isCurrent(ticket, accountDID: self.currentAccountDID) else { return }
+      self.updateWidgetUnreadCount(self.unreadCount)
     }
   }
 
@@ -1589,16 +2025,17 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
       let recipientDid =
         (userInfo["recipientDid"] as? String) ?? resolveRecipientDID(from: userInfo)
 
-      Task {
-        // Switch to correct account if needed
-        if let did = recipientDid {
-          await ensureActiveAccount(for: did)
+      Task { @MainActor in
+        guard let target = captureNavigationTarget(accountDID: recipientDid) else {
+          completionHandler()
+          return
         }
+        await ensureActiveAccount(for: target.accountDID)
 
         notificationLogger.info(
           "Chat notification tapped - navigating to conversation: \(convoId)")
         #if os(iOS)
-        await handleChatNotificationNavigation(convoId)
+        await handleChatNotificationNavigation(convoId, target: target)
         #endif
 
         await MainActor.run {
@@ -1608,16 +2045,47 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
       return
     }
 
-    if targetDid != nil || (uriString != nil && typeString != nil) {
-      Task {
-        if let did = targetDid {
-          await ensureActiveAccount(for: did)
+    // Social pushes from the push gateway identify the event with `reason`, `actorDid`,
+    // `subjectUri` and `eventPath` rather than `uri`/`type`.
+    if let reason = userInfo["reason"] as? String, let actorDid = userInfo["actorDid"] as? String {
+      let destination = Self.socialPushDestination(
+        reason: reason,
+        actorDid: actorDid,
+        subjectUri: userInfo["subjectUri"] as? String,
+        eventPath: userInfo["eventPath"] as? String)
+      let recipientDid =
+        (userInfo["recipientDid"] as? String) ?? resolveRecipientDID(from: userInfo)
+
+      Task { @MainActor in
+        defer { completionHandler() }
+        guard let target = captureNavigationTarget(accountDID: recipientDid) else { return }
+        await ensureActiveAccount(for: target.accountDID)
+        guard AppStateManager.shared.lifecycle.userDID == target.accountDID else { return }
+
+        let command: SceneRouteCommand
+        if let destination {
+          notificationLogger.info("Social notification tapped (\(reason, privacy: .public)) - opening its subject")
+          command = .navigate(destination, tabIndex: 2)
+        } else {
+          notificationLogger.info("Social notification tapped (\(reason, privacy: .public)) - opening Notifications")
+          command = .showTab(2, resetPath: false)
         }
+        SceneRouteCoordinator.shared.submit(SceneRouteRequest(accountDID: target.accountDID,
+          command: command, preferredSceneID: target.preferredSceneID))
+      }
+      return
+    }
+
+    if targetDid != nil || (uriString != nil && typeString != nil) {
+      Task { @MainActor in
+        guard let target = captureNavigationTarget(accountDID: targetDid) else { return }
+        await ensureActiveAccount(for: target.accountDID)
+        guard AppStateManager.shared.lifecycle.userDID == target.accountDID else { return }
 
         if let uri = uriString, let type = typeString {
           notificationLogger.info("Notification contains URI: \(uri) of type: \(type)")
           await prefetchNotificationContent(uri: uri, type: type)
-          await handleNotificationNavigation(uriString: uri, type: type)
+          await handleNotificationNavigation(uriString: uri, type: type, target: target)
         }
       }
     }
@@ -1654,6 +2122,35 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
       return nil
     }
     return (userInfo["convoId"] as? String) ?? (userInfo["conversationID"] as? String)
+  }
+
+  /// Where a tap on a social push should go. Follows open the follower's profile; likes and
+  /// reposts open the post they were about; replies, mentions, quotes and subscribed posts
+  /// open the new post itself. Returns nil when the payload does not identify a destination.
+  nonisolated static func socialPushDestination(
+    reason: String,
+    actorDid: String,
+    subjectUri: String?,
+    eventPath: String?
+  ) -> NavigationDestination? {
+    let eventURI = eventPath.flatMap { path -> ATProtocolURI? in
+      guard !path.isEmpty else { return nil }
+      return try? ATProtocolURI(uriString: "at://\(actorDid)/\(path)")
+    }
+    let subjectURI = subjectUri.flatMap { try? ATProtocolURI(uriString: $0) }
+
+    switch reason.lowercased() {
+    case "follow":
+      return .profile(actorDid)
+    case "like", "repost", "via_like", "via_repost", "like-via-repost", "repost-via-repost":
+      return subjectURI.map { .post($0) }
+    case "reply", "mention", "quote", "activity_post", "activity_reply", "subscribed-post":
+      return (eventURI ?? subjectURI).map { .post($0) }
+    case "starterpack-joined":
+      return subjectURI.map { .starterPack($0) }
+    default:
+      return nil
+    }
   }
 
   // MARK: - Notification Navigation Handling
@@ -1852,7 +2349,11 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
     // Use AppStateManager to switch accounts - it manages multiple AppState instances
     _ = await appStateManager.switchAccount(to: did)
-    notificationLogger.info("✅ Switched to account \(did) for notification navigation")
+    guard appStateManager.lifecycle.userDID == did else {
+      notificationLogger.warning("Notification account switch did not reach the requested account")
+      return
+    }
+    notificationLogger.info("Switched to the requested account for notification navigation")
   }
 
   // MARK: - Privacy-Preserving Account Matching
@@ -1889,11 +2390,11 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   }
 
   /// Handle navigation from a notification tap
-  private func handleNotificationNavigation(uriString: String, type: String) async {
+  private func handleNotificationNavigation(uriString: String, type: String, target: NavigationTarget) async {
     #if os(iOS)
     // Handle chat notifications differently
     if type == "chat" {
-      await handleChatNotificationNavigation(uriString)
+      await handleChatNotificationNavigation(uriString, target: target)
       return
     }
     #endif
@@ -1902,7 +2403,8 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     // After account switch, self.appState may point to the OLD account's AppState
     guard
       let currentAppState = await MainActor.run(body: {
-        if case .authenticated(let state) = AppStateManager.shared.lifecycle {
+        if case .authenticated(let state) = AppStateManager.shared.lifecycle,
+           state.userDID == target.accountDID {
           return state
         }
         return nil
@@ -1919,7 +2421,9 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
       // Use main actor to update UI
       await MainActor.run {
         // Navigate to destination in home tab (index 0)
-        currentAppState.navigationManager.navigate(to: destination, in: 0)
+        guard AppStateManager.shared.lifecycle.userDID == target.accountDID else { return }
+        SceneRouteCoordinator.shared.submit(SceneRouteRequest(accountDID: target.accountDID,
+          command: .navigate(destination, tabIndex: 0), preferredSceneID: target.preferredSceneID))
         notificationLogger.info("Successfully navigated to destination from notification")
       }
     } catch {
@@ -1930,12 +2434,13 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
   /// Handle navigation from a chat notification tap
   #if os(iOS)
-  private func handleChatNotificationNavigation(_ uriString: String) async {
+  private func handleChatNotificationNavigation(_ uriString: String, target: NavigationTarget) async {
     // CRITICAL FIX: Get the CURRENT AppState from AppStateManager, not the cached reference
     // After account switch, self.appState may point to the OLD account's AppState
     guard
       let currentAppState = await MainActor.run(body: {
-        if case .authenticated(let state) = AppStateManager.shared.lifecycle {
+        if case .authenticated(let state) = AppStateManager.shared.lifecycle,
+           state.userDID == target.accountDID {
           return state
         }
         return nil
@@ -1949,14 +2454,10 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     let conversationID = uriString
 
     await MainActor.run {
-      // Switch to chat tab using the tab selection callback (this actually changes the tab)
-      if let tabSelection = currentAppState.navigationManager.tabSelection {
-        tabSelection(4)  // Switch to chat tab
-      }
-      currentAppState.navigationManager.updateCurrentTab(4)
-
-      // Navigate to the specific conversation
-      currentAppState.navigationManager.navigate(to: .conversation(conversationID))
+      guard AppStateManager.shared.lifecycle.userDID == target.accountDID else { return }
+      SceneRouteCoordinator.shared.submit(SceneRouteRequest(accountDID: target.accountDID,
+        command: .navigate(.conversation(conversationID), tabIndex: 4),
+        preferredSceneID: target.preferredSceneID))
     }
   }
   #endif
@@ -1965,6 +2466,39 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 // MARK: - Notification Preferences Model
 
 /// Represents user preferences for notifications (channels and filters)
+/// The authenticated preference/inbox boundary can be isolated without APNs or OS permission work.
+struct NotificationPreferencesService: Sendable {
+  var authenticatedDID: @MainActor @Sendable (ATProtoClient) async throws -> String
+  var fetch: @MainActor @Sendable (ATProtoClient) async throws -> AppBskyNotificationDefs.Preferences
+  var save: @MainActor @Sendable (ATProtoClient, AppBskyNotificationPutPreferencesV2.Input) async throws -> AppBskyNotificationDefs.Preferences?
+  var unreadCount: @MainActor @Sendable (ATProtoClient) async throws -> Int
+
+  static let live = Self(
+    authenticatedDID: { try await $0.getDid() },
+    fetch: { client in
+      let (code, output) = try await client.app.bsky.notification.getPreferences(input: .init())
+      guard code == 200, let output else {
+        throw NotificationManager.NotificationServiceError.serverError("Couldn’t load notification preferences (HTTP \(code)).")
+      }
+      return output.preferences
+    },
+    save: { client, input in
+      let (code, output) = try await client.app.bsky.notification.putPreferencesV2(input: input)
+      guard (200 ... 299).contains(code) else {
+        throw NotificationManager.NotificationServiceError.serverError("Couldn’t save notification preferences (HTTP \(code)).")
+      }
+      return output?.preferences
+    },
+    unreadCount: { client in
+      let (code, output) = try await client.app.bsky.notification.getUnreadCount(input: .init())
+      guard code == 200, let output else {
+        throw NotificationManager.NotificationServiceError.serverError("Couldn’t load unread activity (HTTP \(code)).")
+      }
+      return output.count
+    }
+  )
+}
+
 public struct NotificationPreferences: Codable, Equatable, Sendable {
   public var chat: AppBskyNotificationDefs.ChatPreference
   public var follow: AppBskyNotificationDefs.FilterablePreference
@@ -2047,6 +2581,49 @@ public struct NotificationPreferences: Codable, Equatable, Sendable {
       verified: verified
     )
   }
+
+  /// Omitted categories are preserved by putPreferencesV2, including custom service fields.
+  public func toPutPreferencesInput(changedFrom prior: NotificationPreferences) -> AppBskyNotificationPutPreferencesV2.Input {
+    AppBskyNotificationPutPreferencesV2.Input(
+      chat: chat == prior.chat ? nil : chat,
+      follow: follow == prior.follow ? nil : follow,
+      like: like == prior.like ? nil : like,
+      likeViaRepost: likeViaRepost == prior.likeViaRepost ? nil : likeViaRepost,
+      mention: mention == prior.mention ? nil : mention,
+      quote: quote == prior.quote ? nil : quote,
+      reply: reply == prior.reply ? nil : reply,
+      repost: repost == prior.repost ? nil : repost,
+      repostViaRepost: repostViaRepost == prior.repostViaRepost ? nil : repostViaRepost,
+      starterpackJoined: starterpackJoined == prior.starterpackJoined ? nil : starterpackJoined,
+      subscribedPost: subscribedPost == prior.subscribedPost ? nil : subscribedPost,
+      unverified: unverified == prior.unverified ? nil : unverified,
+      verified: verified == prior.verified ? nil : verified
+    )
+  }
+}
+
+extension AppBskyNotificationPutPreferencesV2.Input {
+  var isEmptyNotificationUpdate: Bool {
+    chat == nil && follow == nil && like == nil && likeViaRepost == nil && mention == nil && quote == nil && reply == nil && repost == nil && repostViaRepost == nil && starterpackJoined == nil && subscribedPost == nil && unverified == nil && verified == nil
+  }
+
+  var notificationChangesDescription: String {
+    var changes: [String] = []
+    if let chat { changes.append("Direct Messages: \(chat.push ? "Push" : "Off")") }
+    if let follow { changes.append("New Followers: \(follow.summaryDescription)") }
+    if let like { changes.append("Likes: \(like.summaryDescription)") }
+    if let likeViaRepost { changes.append("Likes of Your Reposts: \(likeViaRepost.summaryDescription)") }
+    if let mention { changes.append("Mentions: \(mention.summaryDescription)") }
+    if let quote { changes.append("Quotes: \(quote.summaryDescription)") }
+    if let reply { changes.append("Replies: \(reply.summaryDescription)") }
+    if let repost { changes.append("Reposts: \(repost.summaryDescription)") }
+    if let repostViaRepost { changes.append("Reposts of Your Reposts: \(repostViaRepost.summaryDescription)") }
+    if let starterpackJoined { changes.append("Starter Pack Signups: \(starterpackJoined.summaryDescription)") }
+    if let subscribedPost { changes.append("Posts from Your Subscriptions: \(subscribedPost.summaryDescription)") }
+    if let unverified { changes.append("Verification Removed: \(unverified.summaryDescription)") }
+    if let verified { changes.append("Account Verified: \(verified.summaryDescription)") }
+    return changes.joined(separator: "\n")
+  }
 }
 
 extension AppBskyNotificationDefs.FilterablePreference {
@@ -2060,7 +2637,12 @@ extension AppBskyNotificationDefs.FilterablePreference {
     } else {
       channelText = "Push"
     }
-    let audienceText = (include == "follows") ? "People I follow" : "Everyone"
+    let audienceText: String
+    switch include {
+    case "follows": audienceText = "People I follow"
+    case "all": audienceText = "Everyone"
+    default: audienceText = "Existing audience"
+    }
     return "\(channelText), \(audienceText)"
   }
 }

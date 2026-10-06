@@ -24,6 +24,10 @@ final class VideoCoordinator {
   private var currentlyPlayingVideoId: String?
   private var loopingWrappers: [String: LoopingPlayerWrapper] = [:]
   private var statusObservers: [String: Task<Void, Never>] = [:]
+  private var playbackObservers: [String: NSKeyValueObservation] = [:]
+  private let playbackAudioOwner = UUID()
+  private var ownsPlaybackAudio = false
+  private var isApplicationActive = true
 
   private let logger = Logger(subsystem: "blue.catbird", category: "VideoCoordinator")
 
@@ -88,11 +92,10 @@ final class VideoCoordinator {
       "📹 Registering video: \(model.id) - type: \(model.type.isGif ? "GIF" : "HLS") - URL: \(model.url.absoluteString)"
     )
 
-    // CRITICAL: Always start with muted playback
-    player.isMuted = true
-    player.volume = 0
-    model.isMuted = true
-    model.volume = 0
+    // A fresh model defaults to muted. Re-registering a returning model must
+    // preserve the user's choice even though its old audio lease was retired.
+    player.isMuted = model.isMuted
+    player.volume = model.isMuted ? 0 : model.volume
     player.preventsDisplaySleepDuringVideoPlayback = false
 
     // Check cache for last position
@@ -159,6 +162,10 @@ final class VideoCoordinator {
     }
 
     logger.debug("📹 Total active videos: \(self.activeVideos.count)")
+
+    playbackObservers[model.id] = player.observe(\.timeControlStatus, options: [.new]) { [weak self] _, _ in
+      Task { @MainActor [weak self] in self?.updateAudioSessionOwnership() }
+    }
 
     // Update playback states after registration
     updatePlaybackStates()
@@ -271,7 +278,7 @@ final class VideoCoordinator {
 
     // Ensure video is marked as visible
     visibleVideoIDs.insert(modelId)
-
+    updateAudioSessionOwnership()
   }
 
   // MARK: - Private Methods
@@ -344,10 +351,8 @@ final class VideoCoordinator {
   /// Update the playback state of all managed videos
   private func updatePlaybackStates() {
     Task { @MainActor in
-      guard !Task.isCancelled else { return }
-
-      // Don't configure audio session at all - let videos play muted
-      // Only configure when user explicitly unmutes a video
+      guard !Task.isCancelled, isApplicationActive else { return }
+      defer { updateAudioSessionOwnership() }
 
       let autoplayEnabled = shouldAutoplayVideos()
       logger.debug(
@@ -455,6 +460,7 @@ final class VideoCoordinator {
     if currentlyPlayingVideoId == modelId {
       currentlyPlayingVideoId = nil
     }
+    updateAudioSessionOwnership()
   }
 
   /// Unregister a video from management
@@ -505,9 +511,11 @@ final class VideoCoordinator {
     }
 
     activeVideos.removeValue(forKey: modelId)
+    playbackObservers.removeValue(forKey: modelId)?.invalidate()
     visibleVideoIDs.remove(modelId)
     markedForCleanup.remove(modelId)
     preservedStreams.removeValue(forKey: modelId)
+    updateAudioSessionOwnership()
 
     logger.debug("🧹 Fully unregistered video \(modelId)")
     updatePlaybackStates()
@@ -535,8 +543,8 @@ final class VideoCoordinator {
         queue: .main
       ) { [weak self] _ in
         Task { @MainActor [weak self] in
-          // Don't configure audio session at all when app becomes active
-          // This preserves music playback
+          // Reacquire only if an unmuted visible player actually resumes.
+          self?.isApplicationActive = true
           self?.updatePlaybackStates()
         }
       }
@@ -558,8 +566,8 @@ final class VideoCoordinator {
         queue: .main
       ) { [weak self] _ in
         Task { @MainActor [weak self] in
-          // Don't configure audio session at all when app becomes active
-          // This preserves music playback
+          // Reacquire only if an unmuted visible player actually resumes.
+          self?.isApplicationActive = true
           self?.updatePlaybackStates()
         }
       }
@@ -591,21 +599,21 @@ final class VideoCoordinator {
 
   /// Handle transition to background mode
   private func handleBackgroundTransition() {
+    isApplicationActive = false
     for (modelId, (model, player, _)) in activeVideos {
       // PiP keeps playing in the background; muting or pausing here kills it
       if pipActiveVideoIDs.contains(modelId) { continue }
 
-      // CRITICAL: Ensure videos are muted when going to background
-      player.isMuted = true
-      player.volume = 0
-
-      if model.isPlaying {
+      if model.isPlaying || player.timeControlStatus != .paused {
         // Save position to cache when going to background
         let seconds = CMTimeGetSeconds(player.currentTime())
         positionCache.setObject(NSNumber(value: seconds), forKey: modelId as NSString)
-        pauseVideo(modelId)
       }
+      // Pausing silences the player without turning lifecycle cleanup into a
+      // user mute action through fullscreen's mute observer.
+      pauseVideo(modelId)
     }
+    updateAudioSessionOwnership()
   }
 
   // MARK: - Playback Position Persistence
@@ -638,6 +646,7 @@ final class VideoCoordinator {
   // Only use this method when explicitly requested by user action
   func setUnmuted(_ id: String, unmuted: Bool) {
     guard let (model, player, _) = activeVideos[id] else { return }
+    defer { updateAudioSessionOwnership() }
 
     logger.debug("🎬 SetUnmuted called for \(id), unmuted: \(unmuted)")
 
@@ -646,8 +655,6 @@ final class VideoCoordinator {
       if model.isMuted == false && player.isMuted == false && player.volume > 0 {
         return
       }
-      // User explicitly wants sound - now we configure audio session
-      AudioSessionManager.shared.handleVideoUnmute()
       if player.isMuted { player.isMuted = false }
       if player.volume == 0 { player.volume = 1.0 }
       model.isMuted = false
@@ -661,14 +668,23 @@ final class VideoCoordinator {
       if player.volume != 0 { player.volume = 0 }
       model.isMuted = true
       model.volume = 0
+    }
+  }
 
-      // If no other videos are unmuted, restore ambient audio
-      let hasOtherUnmutedVideo = activeVideos.values.contains {
-        $0.model.id != id && !$0.model.isMuted
-      }
-      if !hasOtherUnmutedVideo {
-        AudioSessionManager.shared.handleVideoMute()
-      }
+  /// Mute preference belongs to the model; session ownership belongs only to a
+  /// visible, running player. Fullscreen/PiP hold their own scoped leases.
+  private func updateAudioSessionOwnership() {
+    let needsAudio = isApplicationActive && activeVideos.contains { id, entry in
+      visibleVideoIDs.contains(id) && !pipActiveVideoIDs.contains(id)
+        && !entry.model.isMuted && !entry.player.isMuted
+        && entry.player.timeControlStatus != .paused
+    }
+    guard needsAudio != ownsPlaybackAudio else { return }
+    ownsPlaybackAudio = needsAudio
+    if needsAudio {
+      AudioSessionManager.shared.acquireVideoPlayback(owner: playbackAudioOwner)
+    } else {
+      AudioSessionManager.shared.releaseVideoPlayback(owner: playbackAudioOwner)
     }
   }
 
@@ -688,6 +704,7 @@ final class VideoCoordinator {
     pipRetainedObjects[modelId] = objects
     markedForCleanup.remove(modelId)
     preservedStreams.removeValue(forKey: modelId)
+    updateAudioSessionOwnership()
   }
 
   /// Mark a video as having left PiP and run any teardown that was deferred

@@ -37,6 +37,12 @@ struct EditProfileView: View {
 
   private let logger = Logger(subsystem: "blue.catbird", category: "EditProfileView")
   private let bioCharLimit = 256
+  private let displayNameCharLimit = 64
+  private let pronounsCharLimit = 20
+  /// Bluesky rejects profile image blobs over 1,000,000 bytes; stay safely below that.
+  private static let maxImageBytes = 976_000
+  private static let avatarPixelSize = CGSize(width: 1000, height: 1000)
+  private static let bannerPixelSize = CGSize(width: 3000, height: 1000)
 
   enum ImagePickerType {
     case avatar, banner
@@ -60,9 +66,9 @@ struct EditProfileView: View {
 
           // Form fields
           VStack(spacing: 20) {
-            profileTextField("Display Name", text: $displayName, icon: "person.fill")
+            profileTextField("Display Name", text: $displayName, icon: "person.fill", limit: displayNameCharLimit)
 
-            profileTextField("Pronouns", text: $pronouns, icon: "text.quote", placeholder: "e.g. they/them")
+            profileTextField("Pronouns", text: $pronouns, icon: "text.quote", placeholder: "e.g. they/them", limit: pronounsCharLimit)
 
             profileTextField("Website", text: $website, icon: "link", placeholder: "https://example.com")
               #if os(iOS)
@@ -138,7 +144,7 @@ struct EditProfileView: View {
                 .fontWeight(.semibold)
             }
           }
-          .disabled(isUploading)
+          .disabled(isUploading || isOverLimit)
         }
       }
       .photosPicker(
@@ -180,6 +186,7 @@ struct EditProfileView: View {
         .frame(height: 150)
       }
       .buttonStyle(.plain)
+      .accessibilityLabel("Change Banner Image")
 
       // Avatar
       Button {
@@ -205,6 +212,7 @@ struct EditProfileView: View {
         )
       }
       .buttonStyle(.plain)
+      .accessibilityLabel("Change Profile Picture")
       .offset(x: 20, y: 40)
     }
     .padding(.bottom, 44)
@@ -273,7 +281,8 @@ struct EditProfileView: View {
     _ title: String,
     text: Binding<String>,
     icon: String,
-    placeholder: String? = nil
+    placeholder: String? = nil,
+    limit: Int? = nil
   ) -> some View {
     VStack(alignment: .leading, spacing: 8) {
       Label(title, systemImage: icon)
@@ -290,7 +299,22 @@ struct EditProfileView: View {
           RoundedRectangle(cornerRadius: 10)
             .stroke(Color.systemGray4, lineWidth: 0.5)
         )
+
+      if let limit {
+        HStack {
+          Spacer()
+          Text("\(text.wrappedValue.count)/\(limit)")
+            .font(.caption2)
+            .foregroundStyle(text.wrappedValue.count > limit ? .red : .secondary)
+        }
+      }
     }
+  }
+
+  private var isOverLimit: Bool {
+    displayName.count > displayNameCharLimit
+      || pronouns.count > pronounsCharLimit
+      || description.count > bioCharLimit
   }
 
   // MARK: - Actions
@@ -314,7 +338,7 @@ struct EditProfileView: View {
         }
       } catch {
         await MainActor.run {
-          self.errorMessage = "Failed to load image: \(error.localizedDescription)"
+          self.errorMessage = "Couldn’t load that image. Try a different one."
           logger.error("Failed to load image: \(error.localizedDescription)")
         }
       }
@@ -331,6 +355,52 @@ struct EditProfileView: View {
     return "https://\(trimmed)"
   }
 
+  /// Center-crops `image` to the aspect ratio of `targetSize`, scales it down to at most
+  /// `targetSize` pixels, and JPEG-encodes it under the profile image size limit.
+  private static func preparedImageData(_ image: PlatformImage, targetSize: CGSize) -> Data? {
+    let sourceSize = image.imageSize
+    guard sourceSize.width > 0, sourceSize.height > 0 else { return nil }
+
+    let aspect = targetSize.width / targetSize.height
+    let cropWidth = min(sourceSize.width, sourceSize.height * aspect)
+    let cropHeight = cropWidth / aspect
+    let outputWidth = min(targetSize.width, cropWidth).rounded()
+    let outputSize = CGSize(width: outputWidth, height: (outputWidth / aspect).rounded())
+    let drawScale = outputSize.width / cropWidth
+    let drawRect = CGRect(
+      x: -((sourceSize.width - cropWidth) / 2) * drawScale,
+      y: -((sourceSize.height - cropHeight) / 2) * drawScale,
+      width: sourceSize.width * drawScale,
+      height: sourceSize.height * drawScale
+    )
+
+    guard let rendered = renderImage(image, in: drawRect, canvasSize: outputSize) else { return nil }
+
+    var quality: CGFloat = 0.85
+    while quality > 0.3 {
+      if let data = rendered.jpegData(compressionQuality: quality), data.count <= maxImageBytes {
+        return data
+      }
+      quality -= 0.15
+    }
+    return rendered.jpegData(compressionQuality: 0.3)
+  }
+
+  private static func renderImage(_ image: PlatformImage, in drawRect: CGRect, canvasSize: CGSize) -> PlatformImage? {
+    #if os(iOS)
+    // Render at 1x so the output's pixel size matches `canvasSize`.
+    let format = UIGraphicsImageRendererFormat()
+    format.scale = 1
+    return UIGraphicsImageRenderer(size: canvasSize, format: format).image { _ in
+      image.draw(in: drawRect)
+    }
+    #else
+    return CrossPlatformImageRenderer(size: canvasSize).image { _ in
+      image.draw(in: drawRect)
+    }
+    #endif
+  }
+
   private func saveProfile() {
     Task {
       await MainActor.run {
@@ -343,20 +413,21 @@ struct EditProfileView: View {
         var bannerBlob: Blob?
 
         if let avatarImage,
-           let avatarData = avatarImage.jpegData(compressionQuality: 0.8) {
+           let avatarData = Self.preparedImageData(avatarImage, targetSize: Self.avatarPixelSize) {
           avatarBlob = try await viewModel.uploadImageBlob(avatarData)
         }
 
         if let bannerImage,
-           let bannerData = bannerImage.jpegData(compressionQuality: 0.8) {
+           let bannerData = Self.preparedImageData(bannerImage, targetSize: Self.bannerPixelSize) {
           bannerBlob = try await viewModel.uploadImageBlob(bannerData)
         }
 
+        // Pass every text field (empty strings included) so cleared fields are removed.
         try await viewModel.updateProfile(
-          displayName: displayName.isEmpty ? nil : displayName,
-          description: description.isEmpty ? nil : description,
-          pronouns: pronouns.isEmpty ? nil : pronouns,
-          website: normalizedWebsite(website),
+          displayName: displayName,
+          description: description,
+          pronouns: pronouns,
+          website: normalizedWebsite(website) ?? "",
           avatar: avatarBlob,
           banner: bannerBlob
         )
@@ -368,7 +439,8 @@ struct EditProfileView: View {
       } catch {
         await MainActor.run {
           isUploading = false
-          errorMessage = "Failed to save: \(error.localizedDescription)"
+          errorMessage = UserFacingError.message(for: error, action: "save your profile")
+            ?? "Couldn’t save your profile. Try again."
           logger.error("Failed to save profile: \(error.localizedDescription)")
         }
       }

@@ -17,6 +17,8 @@ import SwiftUI
   let type: VideoType
   let aspectRatio: CGFloat
   let thumbnailURL: URL?
+  /// The author's description of the video, read by VoiceOver.
+  let alt: String?
   var currentTime: Double = 0
   var duration: Double?
   var isLoading = false
@@ -64,11 +66,15 @@ import SwiftUI
     let height: Int
   }
 
-  init(id: String, url: URL, type: VideoType, aspectRatio: CGFloat, thumbnailURL: URL? = nil) {
+  init(
+    id: String, url: URL, type: VideoType, aspectRatio: CGFloat, thumbnailURL: URL? = nil,
+    alt: String? = nil
+  ) {
     self.id = id
     self.url = url
     self.type = type
     self.aspectRatio = aspectRatio
     self.thumbnailURL = thumbnailURL
+    self.alt = alt
   }
 }

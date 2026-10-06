@@ -194,9 +194,9 @@ final class EnhancedAudioVisualizerService {
   }
   
   private func generateOutputURL() -> URL {
-    let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+    // Intermediate render; the composer copies it into draft storage.
     let fileName = "enhanced_audio_visualizer_\(UUID().uuidString).mp4"
-    return documentsPath.appendingPathComponent(fileName)
+    return FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
   }
   
   // MARK: - Cleanup

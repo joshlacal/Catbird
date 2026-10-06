@@ -40,9 +40,28 @@ enum SentryService {
             let build = (bundle.infoDictionary?["CFBundleVersion"] as? String) ?? ""
             options.releaseName = "Catbird@\(version)+\(build)"
 
+            // Crash and diagnostic data is declared as not linked to the user, so no
+            // user identity is attached and account identifiers are scrubbed everywhere.
+            options.sendDefaultPii = false
+
             // Filter out noisy/benign errors
             options.beforeSend = { event in
-                return filterEvent(event)
+                guard let event = filterEvent(event) else { return nil }
+                return redactEvent(event)
+            }
+            options.beforeBreadcrumb = { crumb in
+                redactBreadcrumb(crumb)
+            }
+            options.beforeSendSpan = { span in
+                if let description = span.spanDescription {
+                    span.spanDescription = redactingAccountIdentifiers(description)
+                }
+                for (key, value) in span.data {
+                    if let text = value as? String {
+                        span.setData(value: redactingAccountIdentifiers(text), key: key)
+                    }
+                }
+                return span
             }
         }
         #endif
@@ -51,7 +70,7 @@ enum SentryService {
     static func addBreadcrumb(level: String, category: String, message: String) {
         #if canImport(Sentry)
         let crumb = Breadcrumb(level: mapLevel(level), category: category)
-        crumb.message = message
+        crumb.message = redactingAccountIdentifiers(message)
         SentrySDK.addBreadcrumb(crumb)
         #endif
     }
@@ -59,7 +78,7 @@ enum SentryService {
     static func captureMessage(_ message: String, level: String, category: String) {
         #if canImport(Sentry)
         let event = Event(level: mapLevel(level))
-        event.message = SentryMessage(formatted: message)
+        event.message = SentryMessage(formatted: redactingAccountIdentifiers(message))
         event.tags = ["category": category]
         SentrySDK.capture(event: event)
         #endif
@@ -68,12 +87,12 @@ enum SentryService {
     static func captureMessage(_ message: String, level: String, category: String, extras: [String: Any]?) {
         #if canImport(Sentry)
         let event = Event(level: mapLevel(level))
-        event.message = SentryMessage(formatted: message)
+        event.message = SentryMessage(formatted: redactingAccountIdentifiers(message))
         event.tags = ["category": category]
         if let extras {
             // Filter extras to JSON-serializable values
             var filtered: [String: Any] = [:]
-            for (k, v) in extras { filtered[k] = v }
+            for (k, v) in extras { filtered[k] = redactingAccountIdentifiers(in: v) }
             event.extra = filtered
         }
         SentrySDK.capture(event: event)
@@ -90,13 +109,13 @@ enum SentryService {
     ) {
         #if canImport(Sentry)
         let event = Event(level: mapLevel(level))
-        event.message = SentryMessage(formatted: message)
+        event.message = SentryMessage(formatted: redactingAccountIdentifiers(message))
         var combinedTags = tags ?? [:]
         combinedTags["category"] = category
         event.tags = combinedTags
         if let extras {
             var filtered: [String: Any] = [:]
-            for (k, v) in extras { filtered[k] = v }
+            for (k, v) in extras { filtered[k] = redactingAccountIdentifiers(in: v) }
             event.extra = filtered
         }
         if let fingerprint {
@@ -105,6 +124,66 @@ enum SentryService {
         SentrySDK.capture(event: event)
         #endif
     }
+
+    // MARK: - Account Identifier Redaction
+
+    /// Matches AT Protocol DIDs, including percent-encoded ones inside URLs.
+    private static let accountIdentifierPattern = try? NSRegularExpression(
+        pattern: "did(?::|%3A)(?:plc|web|key)(?::|%3A)[A-Za-z0-9._:%-]+",
+        options: [.caseInsensitive]
+    )
+
+    /// Replaces every DID in `text` so diagnostics can't be tied back to an account.
+    static func redactingAccountIdentifiers(_ text: String) -> String {
+        guard let pattern = accountIdentifierPattern, text.range(of: "did", options: .caseInsensitive) != nil else {
+            return text
+        }
+        let range = NSRange(text.startIndex..., in: text)
+        return pattern.stringByReplacingMatches(in: text, options: [], range: range, withTemplate: "did:redacted")
+    }
+
+    private static func redactingAccountIdentifiers(in value: Any) -> Any {
+        if let text = value as? String {
+            return redactingAccountIdentifiers(text)
+        }
+        return value
+    }
+
+    private static func redactingAccountIdentifiers(in dictionary: [String: Any]?) -> [String: Any]? {
+        guard let dictionary else { return nil }
+        return dictionary.mapValues { redactingAccountIdentifiers(in: $0) }
+    }
+
+    #if canImport(Sentry)
+    private static func redactBreadcrumb(_ crumb: Breadcrumb) -> Breadcrumb {
+        if let message = crumb.message {
+            crumb.message = redactingAccountIdentifiers(message)
+        }
+        crumb.data = redactingAccountIdentifiers(in: crumb.data)
+        return crumb
+    }
+
+    private static func redactEvent(_ event: Event) -> Event {
+        if let message = event.message?.formatted {
+            event.message = SentryMessage(formatted: redactingAccountIdentifiers(message))
+        }
+        event.extra = redactingAccountIdentifiers(in: event.extra)
+        event.user = nil
+        event.breadcrumbs = event.breadcrumbs?.map { redactBreadcrumb($0) }
+        event.exceptions?.forEach { exception in
+            exception.value = redactingAccountIdentifiers(exception.value)
+        }
+        if let request = event.request {
+            if let url = request.url {
+                request.url = redactingAccountIdentifiers(url)
+            }
+            if let query = request.queryString {
+                request.queryString = redactingAccountIdentifiers(query)
+            }
+        }
+        return event
+    }
+    #endif
 
     // MARK: - Helpers
 

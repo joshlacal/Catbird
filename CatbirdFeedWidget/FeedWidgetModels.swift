@@ -39,13 +39,32 @@ struct FeedWidgetEntry: TimelineEntry {
   let posts: [WidgetPost]
   let configuration: ConfigurationAppIntent
   let isPlaceholder: Bool
-  
-  init(date: Date, posts: [WidgetPost], configuration: ConfigurationAppIntent, isPlaceholder: Bool = false) {
+  /// When Catbird last saved these posts; nil when nothing has been saved.
+  let lastUpdated: Date?
+  /// False when no account is signed in for this widget.
+  let isSignedIn: Bool
+
+  init(
+    date: Date,
+    posts: [WidgetPost],
+    configuration: ConfigurationAppIntent,
+    isPlaceholder: Bool = false,
+    lastUpdated: Date? = nil,
+    isSignedIn: Bool = true
+  ) {
     self.date = date
     self.posts = posts
     self.configuration = configuration
     self.isPlaceholder = isPlaceholder
+    self.lastUpdated = lastUpdated
+    self.isSignedIn = isSignedIn
   }
+}
+
+/// Posts saved by the app for one widget configuration, with the time they were saved.
+struct WidgetFeedSnapshot {
+  let posts: [WidgetPost]
+  let lastUpdated: Date
 }
 
 /// Enhanced widget data with additional metadata
@@ -78,5 +97,18 @@ struct FeedWidgetConstants {
   static let sharedSuiteName = "group.blue.catbird.shared"
   static let feedDataKey = "feedWidgetData"
   static let updateInterval: TimeInterval = 15 * 60 // 15 minutes
+
+  /// Storage key for the Following timeline's posts. Must match the app's
+  /// FeedWidgetConstants in FeedWidgetDataProvider.swift.
+  static let timelineConfigKey = "widgetData_timeline"
+
+  /// Storage key for one feed generator's posts. Must match the app's
+  /// FeedWidgetConstants.configKey(forFeedURI:) in FeedWidgetDataProvider.swift.
+  static func configKey(forFeedURI uri: String) -> String {
+    let sanitized = uri
+      .replacingOccurrences(of: "at://", with: "")
+      .replacingOccurrences(of: "/", with: "_")
+    return "widgetData_feed_\(sanitized)"
+  }
 }
 #endif

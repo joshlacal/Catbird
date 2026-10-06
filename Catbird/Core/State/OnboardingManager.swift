@@ -35,6 +35,9 @@ final class OnboardingManager {
     static let currentStep = "onboarding.currentStep"
   }
   
+  /// Set when the user asks to replay tips; the app resets TipKit's datastore before configuring it on next launch.
+  static let resetTipsOnNextLaunchKey = "tips.resetOnNextLaunch"
+  
   // Current onboarding version - increment when adding new flows
   private let currentOnboardingVersion = 1
   
@@ -222,15 +225,11 @@ final class OnboardingManager {
     if let targetDID {
       setCompletedWelcome(false, for: targetDID)
       saveStep(0, for: targetDID)
-    } else {
-      saveOnboardingState()
     }
+    saveOnboardingState(for: targetDID)
     
-    // Reset TipKit tips to make them eligible to show again
-    Task {
-      try? Tips.resetDatastore()
-      logger.info("TipKit datastore reset")
-    }
+    // TipKit can only reset its datastore before Tips.configure runs, so defer it to the next launch.
+    defaults.set(true, forKey: Self.resetTipsOnNextLaunchKey)
     
     logger.info("All onboarding state reset for: \(targetDID ?? "global")")
   }

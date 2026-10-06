@@ -57,7 +57,7 @@ struct BlueskySystemMessageTests {
       )
     )
     let removeAdapter = BlueskyMessageAdapter(systemMessageView: removeMsg, relatedProfiles: profiles)
-    #expect(removeAdapter.text.contains("Alice removed did:plc:bob"))
+    #expect(removeAdapter.text.contains("Alice removed Someone"))
     #expect(removeAdapter.systemEvent?.iconName == "person.badge.minus")
     #expect(removeAdapter.systemEvent?.actionTarget == .profile(did: "did:plc:bob"))
     // 3. Member join
@@ -146,7 +146,7 @@ struct BlueskySystemMessageTests {
       )
     )
     let editAdapter = BlueskyMessageAdapter(systemMessageView: editMsg, relatedProfiles: profiles)
-    #expect(editAdapter.text.contains("Group name changed to \"New Group\""))
+    #expect(editAdapter.text.contains("Group name changed to “New Group”"))
     #expect(editAdapter.systemEvent?.actionTarget == nil)
     // 9. Join links
     // 9. Join link created
@@ -159,7 +159,7 @@ struct BlueskySystemMessageTests {
       )
     )
     let linkCreateAdapter = BlueskyMessageAdapter(systemMessageView: linkCreateMsg)
-    #expect(linkCreateAdapter.text == "Join link created")
+    #expect(linkCreateAdapter.text == "Invite link created")
     #expect(linkCreateAdapter.systemEvent?.actionTarget == .inviteLink)
     // 10. Join link edited
     let linkEditMsg = ChatBskyConvoDefs.SystemMessageView(
@@ -171,7 +171,7 @@ struct BlueskySystemMessageTests {
       )
     )
     let linkEditAdapter = BlueskyMessageAdapter(systemMessageView: linkEditMsg)
-    #expect(linkEditAdapter.text == "Join link updated")
+    #expect(linkEditAdapter.text == "Invite link updated")
     #expect(linkEditAdapter.systemEvent?.actionTarget == .inviteLink)
     // 11. Join link enabled
     let linkEnableMsg = ChatBskyConvoDefs.SystemMessageView(
@@ -183,7 +183,7 @@ struct BlueskySystemMessageTests {
       )
     )
     let linkEnableAdapter = BlueskyMessageAdapter(systemMessageView: linkEnableMsg)
-    #expect(linkEnableAdapter.text == "Join link enabled")
+    #expect(linkEnableAdapter.text == "Invite link enabled")
     #expect(linkEnableAdapter.systemEvent?.actionTarget == .inviteLink)
     // 12. Join link disabled
     let linkDisableMsg = ChatBskyConvoDefs.SystemMessageView(
@@ -195,7 +195,7 @@ struct BlueskySystemMessageTests {
       )
     )
     let linkDisableAdapter = BlueskyMessageAdapter(systemMessageView: linkDisableMsg)
-    #expect(linkDisableAdapter.text == "Join link disabled")
+    #expect(linkDisableAdapter.text == "Invite link disabled")
     #expect(linkDisableAdapter.systemEvent?.actionTarget == .inviteLink)
   }
   @Test("Grouping keeps 1 to 3 events separate")

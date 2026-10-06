@@ -174,7 +174,7 @@ public struct FindContactsFlowView: View {
                     )
                     privacyBullet(
                         icon: "hand.raised",
-                        title: "You're in Control",
+                        title: "You’re in Control",
                         detail: "You can remove synced contact data at any time from your settings."
                     )
                 }
@@ -250,7 +250,7 @@ public struct FindContactsFlowView: View {
                     .font(.title2)
                     .fontWeight(.bold)
                 
-                Text("We'll send a one-time SMS verification code to verify your phone number before matching contacts.")
+                Text("We’ll send a one-time SMS verification code to verify your phone number before matching contacts.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -292,7 +292,7 @@ public struct FindContactsFlowView: View {
                         ProgressView()
                             .tint(.white)
                     }
-                    Text(isSendingCode ? "Sending Code..." : "Send Verification Code")
+                    Text(isSendingCode ? "Sending code…" : "Send Verification Code")
                         .fontWeight(.semibold)
                 }
                 .frame(maxWidth: .infinity)
@@ -372,7 +372,7 @@ public struct FindContactsFlowView: View {
                         ProgressView()
                             .tint(.white)
                     }
-                    Text(isVerifyingCode ? "Verifying..." : "Verify & Continue")
+                    Text(isVerifyingCode ? "Verifying…" : "Verify & Continue")
                         .fontWeight(.semibold)
                 }
                 .frame(maxWidth: .infinity)
@@ -397,7 +397,7 @@ public struct FindContactsFlowView: View {
                 .scaleEffect(1.5)
                 .tint(Color.accentColor)
             
-            Text("Finding Contacts on Bluesky...")
+            Text("Finding contacts on Bluesky…")
                 .font(.headline)
                 .foregroundStyle(.secondary)
             
@@ -665,7 +665,7 @@ public struct FindContactsFlowView: View {
                     .font(.title2)
                     .fontWeight(.bold)
                 
-                Text("To find your friends, please enable Contacts access for Catbird in your device's Settings.")
+                Text("To find your friends, turn on Contacts access for Catbird in Settings.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -718,7 +718,7 @@ public struct FindContactsFlowView: View {
                 .foregroundStyle(.red)
             
             VStack(spacing: 8) {
-                Text("Couldn't Find Contacts")
+                Text("Couldn’t Find Contacts")
                     .font(.title2)
                     .fontWeight(.bold)
                 
@@ -777,14 +777,15 @@ public struct FindContactsFlowView: View {
             } catch ContactMatchingError.permissionDenied, ContactMatchingError.permissionRestricted {
                 step = .permissionDenied
             } catch {
-                step = .error(error.localizedDescription)
+                logger.error("Contacts access failed: \(error.localizedDescription)")
+                step = .error(Self.message(for: error, action: "read your contacts"))
             }
         }
     }
     
     private func handleSendVerificationCode() {
         guard let client = appState.atProtoClient else {
-            errorMessage = "Not connected to Bluesky."
+            errorMessage = "Sign in to Bluesky to find your contacts."
             return
         }
         
@@ -799,7 +800,7 @@ public struct FindContactsFlowView: View {
                 startResendTimer()
             } catch {
                 isSendingCode = false
-                errorMessage = error.localizedDescription
+                errorMessage = Self.message(for: error, action: "send a verification code")
             }
         }
     }
@@ -818,7 +819,7 @@ public struct FindContactsFlowView: View {
     
     private func handleVerifyCodeAndImport() {
         guard let client = appState.atProtoClient else {
-            errorMessage = "Not connected to Bluesky."
+            errorMessage = "Sign in to Bluesky to find your contacts."
             return
         }
         
@@ -832,7 +833,7 @@ public struct FindContactsFlowView: View {
                 await performImport()
             } catch {
                 isVerifyingCode = false
-                errorMessage = error.localizedDescription
+                errorMessage = Self.message(for: error, action: "verify your phone number")
             }
         }
     }
@@ -859,7 +860,8 @@ public struct FindContactsFlowView: View {
             self.matches = fetchedMatches
             step = .results
         } catch {
-            step = .error(error.localizedDescription)
+            logger.error("Contact import failed: \(error.localizedDescription)")
+            step = .error(Self.message(for: error, action: "check your contacts"))
         }
     }
     
@@ -881,12 +883,12 @@ public struct FindContactsFlowView: View {
                 if !success {
                     logger.warning("Follow/unfollow returned false for \(match.profile.did.didString())")
                     matches[index].isFollowing = !newStatus
-                    errorMessage = "Could not update follow status for \(match.profile.displayName ?? match.profile.handle.description)"
+                    errorMessage = "Couldn’t update your follow for \(match.profile.displayName ?? match.profile.handle.description). Try again."
                 }
             } catch {
                 logger.error("Failed to update follow status: \(error.localizedDescription)")
                 matches[index].isFollowing = !newStatus
-                errorMessage = "Failed to update follow status: \(error.localizedDescription)"
+                errorMessage = UserFacingError.message(for: error, action: "update this follow")
             }
         }
     }
@@ -925,7 +927,7 @@ public struct FindContactsFlowView: View {
             }
             isFollowingAll = false
             if failureCount > 0 {
-                errorMessage = "Could not follow \(failureCount) contact\(failureCount == 1 ? "" : "s"). Please try again."
+                errorMessage = "Couldn’t follow \(failureCount) contact\(failureCount == 1 ? "" : "s"). Try again."
             }
         }
     }
@@ -944,5 +946,13 @@ public struct FindContactsFlowView: View {
         } else {
             dismiss()
         }
+    }
+    
+    /// Contact-matching errors already carry friendly copy; anything else gets the shared wording.
+    private static func message(for error: Error, action: String) -> String {
+        if let contactError = error as? ContactMatchingError, let description = contactError.errorDescription {
+            return description
+        }
+        return UserFacingError.message(for: error, action: action) ?? "Couldn’t \(action). Try again."
     }
 }

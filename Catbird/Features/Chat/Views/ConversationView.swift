@@ -9,6 +9,7 @@ import Petrel
 
 struct ConversationView: View {
   @Environment(AppState.self) private var appState
+  @Environment(SceneNavigationContext.self) private var sceneContext
   @Environment(\.colorScheme) private var colorScheme
   @Environment(\.horizontalSizeClass) private var hSizeClass
   @Environment(\.dismiss) private var dismiss
@@ -19,8 +20,12 @@ struct ConversationView: View {
   }
   @State private var unifiedDataSource: BlueskyConversationDataSource?
   @State private var isInitialized = false
+  @State private var draftAccountDID: String?
+  @State private var draftSceneID: UUID?
+  @State private var shareAwaitingReplacement: PendingChatShare?
+  @State private var showShareReplacement = false
   private var chatNavigationPath: Binding<NavigationPath> {
-    appState.navigationManager.pathBinding(for: 4)
+    sceneContext.navigationManager.pathBinding(for: AppNavigationManager.chatTabIndex)
   }
 
   @State private var showingReportSheet = false
@@ -37,11 +42,17 @@ struct ConversationView: View {
 
   private let logger = Logger(subsystem: "blue.catbird", category: "ConversationView")
 
+  private var isCurrentScene: Bool {
+    !sceneContext.isInvalidated && sceneContext.accountDID == appState.userDID
+  }
+
   // MARK: - Data Source Management
 
   @MainActor
   private func ensureUnifiedDataSource() {
-    guard unifiedDataSource == nil else { return }
+    guard isCurrentScene, unifiedDataSource == nil else { return }
+    draftAccountDID = sceneContext.accountDID
+    draftSceneID = sceneContext.sceneID
     unifiedDataSource = BlueskyConversationDataSource(
       chatManager: chatManager,
       convoID: convoId,
@@ -51,22 +62,52 @@ struct ConversationView: View {
 
   @MainActor
   private func consumePendingShareIfNeeded() {
-    guard let pending = appState.navigationManager.pendingChatShare,
-          pending.convoId == convoId else { return }
-    guard let draft = unifiedDataSource?.draft else { return }
-    draft.value.attachedEmbed = pending.previewEmbed
-    draft.value.postRef = pending.postRef
-    appState.navigationManager.pendingChatShare = nil
+    guard isCurrentScene,
+          draftAccountDID == sceneContext.accountDID,
+          draftSceneID == sceneContext.sceneID,
+          let pending = PendingChatShareStore.shared.peek(
+            sceneID: sceneContext.sceneID, accountDID: sceneContext.accountDID, convoId: convoId
+          ),
+          let draft = unifiedDataSource?.draft else { return }
+    if let existing = draft.value.postRef, existing != pending.postRef {
+      shareAwaitingReplacement = pending
+      showShareReplacement = true
+      return
+    }
+    applyPendingShare(pending)
+  }
+
+  @MainActor
+  private func applyPendingShare(_ pending: PendingChatShare) {
+    guard isCurrentScene,
+          draftAccountDID == sceneContext.accountDID,
+          draftSceneID == sceneContext.sceneID,
+          let draft = unifiedDataSource?.draft,
+          let owned = PendingChatShareStore.shared.consume(
+            sceneID: sceneContext.sceneID, accountDID: sceneContext.accountDID,
+            convoId: convoId, expectedID: pending.id
+          ) else { return }
+    owned.apply(to: &draft.value)
   }
 
   /// Applies a Siri/Shortcuts draft (Messages-schema intents) targeting this
   /// conversation, only when the composer is empty so typed text is never lost.
   @MainActor
   private func consumePendingDraftIfNeeded() {
-    guard let dataSource = unifiedDataSource,
+    guard isCurrentScene,
+          draftAccountDID == sceneContext.accountDID,
+          draftSceneID == sceneContext.sceneID,
+          let dataSource = unifiedDataSource,
           dataSource.draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-          let text = ChatDraftHandoff.shared.consume(for: convoId) else { return }
-    dataSource.draftText = text
+          let pending = ChatDraftHandoff.shared.peek(
+            sceneID: sceneContext.sceneID, accountDID: sceneContext.accountDID,
+            conversationID: convoId
+          ),
+          let owned = ChatDraftHandoff.shared.consume(
+            sceneID: sceneContext.sceneID, accountDID: sceneContext.accountDID,
+            conversationID: convoId, expectedID: pending.id
+          ) else { return }
+    dataSource.draftText = owned.text
   }
 
   var body: some View {
@@ -93,9 +134,12 @@ struct ConversationView: View {
           Text(conversationTitle)
             .font(.headline)
             .lineLimit(1)
-          Image(systemName: conversationIconName)
-            .font(.system(size: 10))
-            .foregroundStyle(.secondary)
+          if currentConversation?.isGroupConversation == true {
+            Image(systemName: "person.3.fill")
+              .font(.caption2)
+              .foregroundStyle(.secondary)
+              .accessibilityHidden(true)
+          }
         }
       }
       ToolbarItem(placement: .primaryAction) {
@@ -112,31 +156,66 @@ struct ConversationView: View {
       chatManager.startMessagePolling(for: convoId)
       appState.chatHeartbeatManager.viewAppeared()
     }
+    .onChange(of: PendingChatShareStore.shared.revision) { _, _ in
+      consumePendingShareIfNeeded()
+    }
+    .onChange(of: sceneContext.isInvalidated) { _, isInvalidated in
+      if isInvalidated {
+        shareAwaitingReplacement = nil
+        showShareReplacement = false
+      }
+    }
+    .alert("Replace Shared Post?", isPresented: $showShareReplacement) {
+      Button("Keep Current", role: .cancel) {
+        if isCurrentScene, let pending = shareAwaitingReplacement {
+          PendingChatShareStore.shared.consume(
+            sceneID: sceneContext.sceneID, accountDID: sceneContext.accountDID,
+            convoId: convoId, expectedID: pending.id
+          )
+        }
+        shareAwaitingReplacement = nil
+      }
+      Button("Replace Post") {
+        if let pending = shareAwaitingReplacement { applyPendingShare(pending) }
+        shareAwaitingReplacement = nil
+      }
+    } message: {
+      Text("Your message already has a post attached. Your text and reply will be kept.")
+    }
     .onReceive(NotificationCenter.default.publisher(for: ChatDraftHandoff.didStoreDraft)) { _ in
       consumePendingDraftIfNeeded()
+    }
+    .onChange(of: unifiedDataSource?.draftText) { _, text in
+      if text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true {
+        consumePendingDraftIfNeeded()
+      }
     }
     .onDisappear {
       chatManager.stopMessagePolling(for: convoId)
       appState.chatHeartbeatManager.viewDisappeared()
     }
-    .alert("Delete Message", isPresented: $showingDeleteAlert) {
-      Button("Cancel", role: .cancel) { }
+    .alert("Delete for Me?", isPresented: $showingDeleteAlert) {
+      Button("Cancel", role: .cancel) {
+        messageToDelete = nil
+      }
       Button("Delete", role: .destructive) {
         if let messageId = messageToDelete {
           Task {
             await unifiedDataSource?.deleteMessage(messageID: messageId)
           }
         }
+        messageToDelete = nil
       }
     } message: {
-      Text("This will delete the message for you. Others will still be able to see it.")
+      Text("The message will be removed for you. Others in the conversation will still see it.")
     }
-    .sheet(isPresented: $showingReportSheet) {
+    .sheet(isPresented: $showingReportSheet, onDismiss: { messageToReport = nil }) {
       if let messageId = messageToReport,
          !convoId.isEmpty,
          let originalMessage = chatManager.originalMessagesMap[convoId]?[messageId] {
         ReportChatMessageView(
           message: originalMessage,
+          convoId: convoId,
           onDismiss: { showingReportSheet = false }
         )
       }
@@ -162,8 +241,19 @@ struct ConversationView: View {
         onReply: { message in
           guard !message.isSystemMessage else { return }
           dataSource.draft.value.replyTarget = message
+        },
+        onDeleteMessage: { message in
+          messageToDelete = message.id
+          showingDeleteAlert = true
+        },
+        onReportMessage: { message in
+          messageToReport = message.id
+          showingReportSheet = true
         }
       )
+      .overlay {
+        transcriptStateOverlay(dataSource: dataSource)
+      }
       .onChange(of: selectedEmoji) { _, newEmoji in
         guard let messageID = emojiPickerMessageID, !newEmoji.isEmpty else { return }
         dataSource.addReaction(messageID: messageID, emoji: newEmoji)
@@ -215,6 +305,26 @@ struct ConversationView: View {
     }
   }
   
+  // MARK: - Transcript States
+
+  @ViewBuilder
+  private func transcriptStateOverlay(dataSource: BlueskyConversationDataSource) -> some View {
+    if dataSource.messages.isEmpty {
+      Group {
+        if dataSource.isLoading || !dataSource.hasCompletedInitialLoad {
+          ProgressView()
+        } else {
+          ContentUnavailableView(
+            "No Messages Yet",
+            systemImage: "bubble.left",
+            description: Text("Send a message to start the conversation.")
+          )
+        }
+      }
+      .allowsHitTesting(false)
+    }
+  }
+
   // MARK: - Input Bar
   
 
@@ -295,7 +405,7 @@ struct ConversationView: View {
       }
       .frame(maxWidth: .infinity)
       .padding(.vertical, 16)
-      .background(Color(.systemBackground))
+      .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
   }
 
     // MARK: - Locked Conversation Banner
@@ -310,17 +420,13 @@ struct ConversationView: View {
       }
       .frame(maxWidth: .infinity)
       .padding(.vertical, 16)
-      .background(Color(.systemBackground))
+      .themedPrimaryBackground(appState.themeManager, appSettings: appState.appSettings)
     }
   
   // MARK: - Message Actions
   
   private func presentMessageActions(for message: BlueskyMessageAdapter) {
     PlatformHaptics.soft()
-    
-    // Store for potential report/delete
-    messageToReport = message.id
-    messageToDelete = message.id
   }
 
     private var currentConversation: ChatBskyConvoDefs.ConvoView? {
@@ -346,13 +452,6 @@ struct ConversationView: View {
 
     private var isConversationLocked: Bool {
       chatManager.conversations.first(where: { $0.id == convoId })?.isLockedForSending ?? false
-    }
-
-    private var conversationIconName: String {
-      guard let convo = chatManager.conversations.first(where: { $0.id == convoId }) else {
-        return "bubble.left.and.bubble.right"
-      }
-      return convo.isGroupConversation ? "person.3.fill" : "bubble.left.and.bubble.right"
     }
 
   // Compute conversation title based on the other member

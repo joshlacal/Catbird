@@ -24,19 +24,30 @@ final class ListsManagerViewModel {
   
   // Search and filtering
   var searchText = ""
+  /// When set, only lists with this purpose are shown.
+  let purposeFilter: AppBskyGraphDefs.ListPurpose?
   
   // MARK: - Computed Properties
   
-  var hasLists: Bool {
-    !userLists.isEmpty
+  /// Lists this screen manages. Starter pack backing lists are edited with their starter pack.
+  private var manageableLists: [AppBskyGraphDefs.ListView] {
+    userLists.filter { list in
+      guard list.purpose != .appbskygraphdefsreferencelist else { return false }
+      guard let purposeFilter else { return true }
+      return list.purpose == purposeFilter
+    }
   }
-  
+
+  var hasLists: Bool {
+    !manageableLists.isEmpty
+  }
+
   var filteredLists: [AppBskyGraphDefs.ListView] {
     if searchText.isEmpty {
-      return userLists
+      return manageableLists
     } else {
       let searchTerm = searchText.lowercased()
-      return userLists.filter { list in
+      return manageableLists.filter { list in
         list.name.lowercased().contains(searchTerm) ||
         (list.description?.lowercased().contains(searchTerm) ?? false)
       }
@@ -47,11 +58,9 @@ final class ListsManagerViewModel {
     Dictionary(grouping: filteredLists) { list in
       switch list.purpose {
       case .appbskygraphdefscuratelist:
-        return "Curated Lists"
+        return "People Lists"
       case .appbskygraphdefsmodlist:
         return "Moderation Lists"
-      case .appbskygraphdefsreferencelist:
-        return "Reference Lists"
       default:
         return "Other Lists"
       }
@@ -60,8 +69,9 @@ final class ListsManagerViewModel {
   
   // MARK: - Initialization
   
-  init(appState: AppState) {
+  init(appState: AppState, purposeFilter: AppBskyGraphDefs.ListPurpose? = nil) {
     self.appState = appState
+    self.purposeFilter = purposeFilter
   }
   
   // MARK: - Data Loading
@@ -105,6 +115,12 @@ final class ListsManagerViewModel {
     isRefreshing = false
   }
   
+  /// Picks up lists created from this screen, which `ListManager` adds to its cache.
+  @MainActor
+  func syncFromCache() {
+    userLists = appState.listManager.userLists
+  }
+
   // MARK: - List Management
   
   @MainActor
@@ -131,12 +147,19 @@ final class ListsManagerViewModel {
 }
 
 struct ListsManagerView: View {
+  @Environment(SceneNavigationContext.self) private var sceneContext
   @Environment(AppState.self) private var appState
   @Environment(\.dismiss) private var dismiss
   @State private var viewModel: ListsManagerViewModel?
+  @State private var localDestination: ListLocalDestination?
+
+  /// True when shown inside Settings › Moderation. The Settings sheet has its own navigation
+  /// stack, so rows push there instead of onto the tab behind the sheet, and only moderation
+  /// lists are shown to match the Settings row.
+  private let isHostedInSettings: Bool
   
-  init() {
-    // ViewModel will be initialized in .task
+  init(isHostedInSettings: Bool = false) {
+    self.isHostedInSettings = isHostedInSettings
   }
   
   var body: some View {
@@ -148,10 +171,8 @@ struct ListsManagerView: View {
       }
     }
     .themedGroupedBackground(appState.themeManager, appSettings: appState.appSettings)
-    .navigationTitle("My Lists")
-    #if os(iOS)
-    .toolbarTitleDisplayMode(.large)
-    #endif
+    .navigationTitle(isHostedInSettings ? "Moderation Lists" : "My Lists")
+    .modifier(ListsManagerTitleDisplayModifier(isInline: isHostedInSettings))
     .toolbar {
       if let viewModel = viewModel {
         ToolbarItem(placement: .primaryAction) {
@@ -160,12 +181,18 @@ struct ListsManagerView: View {
           } label: {
             Image(systemName: "plus")
           }
+          .accessibilityLabel("New List")
         }
       }
     }
+    .listLocalNavigationDestination($localDestination)
+    .environment(\.listsUseLocalNavigation, isHostedInSettings)
     .task {
       if viewModel == nil {
-        viewModel = ListsManagerViewModel(appState: appState)
+        viewModel = ListsManagerViewModel(
+          appState: appState,
+          purposeFilter: isHostedInSettings ? .appbskygraphdefsmodlist : nil
+        )
         await viewModel?.loadData()
       }
     }
@@ -176,7 +203,7 @@ struct ListsManagerView: View {
       get: { viewModel?.searchText ?? "" },
       set: { viewModel?.searchText = $0 }
     ), prompt: "Search your lists")
-    .alert("Error", isPresented: Binding(
+    .alert("Something Went Wrong", isPresented: Binding(
       get: { viewModel?.showingError ?? false },
       set: { if !$0 { viewModel?.showingError = false } }
     )) {
@@ -205,14 +232,31 @@ struct ListsManagerView: View {
       }
     } message: {
       if let list = viewModel?.listToDelete {
-        Text("Are you sure you want to delete \"\(list.name)\"? This action cannot be undone.")
+        Text("Delete “\(list.name)”? This can’t be undone.")
       }
     }
     .sheet(isPresented: Binding(
       get: { viewModel?.showingCreateList ?? false },
       set: { if !$0 { viewModel?.showingCreateList = false } }
-    )) {
-      CreateListView()
+    ), onDismiss: {
+      viewModel?.syncFromCache()
+    }) {
+      CreateListView(initialPurpose: isHostedInSettings ? .appbskygraphdefsmodlist : .appbskygraphdefscuratelist)
+    }
+  }
+
+  private func navigate(to destination: ListLocalDestination) {
+    if isHostedInSettings {
+      localDestination = destination
+      return
+    }
+    switch destination {
+    case .detail(let uri):
+      sceneContext.navigationManager.navigate(to: .listFeed(uri))
+    case .edit(let uri):
+      sceneContext.navigationManager.navigate(to: .editList(uri))
+    case .members(let uri):
+      sceneContext.navigationManager.navigate(to: .listMembers(uri))
     }
   }
   
@@ -231,7 +275,7 @@ struct ListsManagerView: View {
     VStack(spacing: 16) {
       ProgressView()
         .scaleEffect(1.5)
-      Text("Loading your lists...")
+      Text("Loading your lists…")
         .font(.headline)
         .foregroundStyle(.secondary)
     }
@@ -245,11 +289,13 @@ struct ListsManagerView: View {
         .foregroundStyle(.secondary)
       
       VStack(spacing: 8) {
-        Text("No Lists Yet")
+        Text(isHostedInSettings ? "No Moderation Lists Yet" : "No Lists Yet")
           .font(.title2)
           .fontWeight(.semibold)
         
-        Text("Create your first list to organize and curate accounts")
+        Text(isHostedInSettings
+          ? "Create a moderation list to mute or block a group of accounts at once."
+          : "Create your first list to organize and curate accounts.")
           .font(.subheadline)
           .foregroundStyle(.secondary)
           .multilineTextAlignment(.center)
@@ -275,6 +321,7 @@ struct ListsManagerView: View {
             ForEach(categoryLists, id: \.uri) { list in
               ListManagerRow(
                 list: list,
+                onNavigate: { navigate(to: $0) },
                 onDelete: {
                   viewModel.confirmDelete(list)
                 }
@@ -298,11 +345,12 @@ struct ListsManagerView: View {
 struct ListManagerRow: View {
   @Environment(AppState.self) private var appState
   let list: AppBskyGraphDefs.ListView
+  let onNavigate: (ListLocalDestination) -> Void
   let onDelete: () -> Void
   
   var body: some View {
     Button {
-      appState.navigationManager.navigate(to: .listFeed(list.uri))
+      onNavigate(.detail(list.uri))
     } label: {
       HStack(spacing: 12) {
         // List Avatar
@@ -340,7 +388,7 @@ struct ListManagerRow: View {
           }
           
           HStack {
-            Text("\(list.listItemCount ?? 0) members")
+            Text("^[\(list.listItemCount ?? 0) member](inflect: true)")
               .font(.caption2)
               .foregroundStyle(.tertiary)
             
@@ -348,15 +396,18 @@ struct ListManagerRow: View {
             
             // Manage Members button
             Button(action: {
-              appState.navigationManager.navigate(to: .listMembers(list.uri))
+              onNavigate(.members(list.uri))
             }) {
               Image(systemName: "person.2.badge.gearshape")
                 .font(.caption)
                 .foregroundStyle(.blue)
                 .padding(4)
                 .background(Circle().fill(.blue.opacity(0.1)))
+                .frame(minWidth: 44, minHeight: 44)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Manage Members")
             
             Text(purposeText)
               .font(.caption2)
@@ -373,13 +424,13 @@ struct ListManagerRow: View {
     .buttonStyle(.plain)
     .contextMenu {
       Button {
-        appState.navigationManager.navigate(to: .editList(list.uri))
+        onNavigate(.edit(list.uri))
       } label: {
         Label("Edit List", systemImage: "pencil")
       }
       
       Button {
-        appState.navigationManager.navigate(to: .listMembers(list.uri))
+        onNavigate(.members(list.uri))
       } label: {
         Label("Manage Members", systemImage: "person.2.badge.gearshape")
       }
@@ -439,7 +490,7 @@ struct ListManagerRow: View {
   private var purposeText: String {
     switch list.purpose {
     case .appbskygraphdefscuratelist:
-      return "Curated"
+      return "People"
     case .appbskygraphdefsmodlist:
       return "Moderation"
     case .appbskygraphdefsreferencelist:
@@ -447,6 +498,18 @@ struct ListManagerRow: View {
     default:
       return "Unknown"
     }
+  }
+}
+
+private struct ListsManagerTitleDisplayModifier: ViewModifier {
+  let isInline: Bool
+
+  func body(content: Content) -> some View {
+    #if os(iOS)
+    content.toolbarTitleDisplayMode(isInline ? .inline : .large)
+    #else
+    content
+    #endif
   }
 }
 

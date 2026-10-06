@@ -7,16 +7,21 @@ struct LoginView: View {
     // MARK: - Properties
     /// Indicates if this LoginView is being used to add a new account (vs initial login or re-authentication)
     let isAddingNewAccount: Bool
+    /// Shows a Cancel button when presented as a sheet, so there's an explicit way out.
+    let isPresentedModally: Bool
     
     // MARK: - Environment
     @Environment(AppStateManager.self) private var appStateManager
     @Environment(\.webAuthenticationSession) private var webAuthenticationSession
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dismiss) private var dismiss
     
     // MARK: - Initialization
-    init(isAddingNewAccount: Bool = false, initialAuthMode: AuthMode = .selection) {
+    init(isAddingNewAccount: Bool = false, initialAuthMode: AuthMode = .selection, isPresentedModally: Bool = false) {
         self.isAddingNewAccount = isAddingNewAccount
+        self.isPresentedModally = isPresentedModally
         self._authMode = State(initialValue: initialAuthMode)
     }
     
@@ -82,7 +87,7 @@ struct LoginView: View {
                 CloudView(
                     opacity: 1.0,          // Full opacity - shader handles complete scene
                     cloudScale: 1.1,       // Match original Shadertoy scale
-                    animationSpeed: 1.0,   // Match original speed
+                    animationSpeed: reduceMotion ? 0 : 1.0,   // Match original speed; still sky with Reduce Motion
                     shaderMode: .basic     // Use basic shader that matches original closest
                 )
                 .allowsHitTesting(false)
@@ -109,8 +114,21 @@ struct LoginView: View {
                                     .background(.ultraThinMaterial)
                                     .clipShape(Circle())
                             }
+                            .accessibilityLabel("Back")
                             .padding(.leading, 4)
                             .zIndex(1) // Keep above other elements
+                        }
+                        
+                        if isPresentedModally {
+                            HStack {
+                                Spacer()
+                                Button("Cancel") {
+                                    cancelAndDismiss()
+                                }
+                                .buttonStyle(.bordered)
+                                .padding(.trailing, 4)
+                            }
+                            .zIndex(1)
                         }
                         
                         // Center logo and text
@@ -192,7 +210,8 @@ struct LoginView: View {
                             
                             validatingTextFieldWithBackground(geometry: geometry)
                             
-                            // Advanced AppView options toggle for login
+                            #if DEBUG
+                            // Advanced AppView options toggle for login (developer builds only)
                             Button {
                                 withAnimation(.spring(duration: 0.4)) {
                                     showAppViewAdvancedOptions.toggle()
@@ -212,6 +231,7 @@ struct LoginView: View {
                             if showAppViewAdvancedOptions {
                                 appViewAdvancedFields(geometry: geometry)
                             }
+                            #endif
                         }
                         
                         // PDS URL field (for advanced mode)
@@ -235,7 +255,7 @@ struct LoginView: View {
                                     }
                                 }
                             } label: {
-                                Text(showAdvancedOptions ? "Basic Options" : "Advanced Options")
+                                Text(showAdvancedOptions ? "Use Bluesky Instead" : "Use Another Provider")
                                     .appFont(AppTextRole.footnote)
                                     .foregroundStyle(.secondary)
                             }
@@ -251,7 +271,7 @@ struct LoginView: View {
                                 Image(systemName: "exclamationmark.triangle.fill")
                                     .foregroundStyle(.orange)
                                     .symbolEffect(.pulse)
-                                Text(appStateManager.authentication.expiredAccountInfo != nil ? "Session Expired" : "Login Error")
+                                Text(appStateManager.authentication.expiredAccountInfo != nil ? "Session Expired" : "Couldn’t Sign In")
                                     .appFont(AppTextRole.headline)
                                 Spacer()
                                 Button(action: {
@@ -264,6 +284,7 @@ struct LoginView: View {
                                         .imageScale(.large)
                                 }
                                 .buttonStyle(.plain)
+                                .accessibilityLabel("Dismiss Error")
                             }
 
                             Text(appStateManager.authentication.expiredAccountInfo != nil ?
@@ -303,12 +324,12 @@ struct LoginView: View {
                             HStack {
                                 Image(systemName: "xmark.circle.fill")
                                     .foregroundColor(.secondary)
-                                Text("Authentication cancelled")
+                                Text("Sign-in canceled")
                                     .appFont(AppTextRole.subheadline)
                                     .foregroundColor(.secondary)
                             }
                             
-                            Button("Return to sign in options") {
+                            Button("Back to Sign-In Options") {
                                 withAnimation {
                                     authenticationCancelled = false
                                     authMode = .selection
@@ -411,11 +432,7 @@ struct LoginView: View {
             // Reset the re-authentication flag so it can trigger again if the user returns to this view
             hasStartedReAuthentication = false
         }
-        .onTapGesture(count: 5) {
-            // Hidden gesture: tap 5 times to enable debug mode
-            showDebugInfo.toggle()
-            PlatformHaptics.success()
-        }
+        .modifier(DebugInfoTapGesture(showDebugInfo: $showDebugInfo))
         .task {
             // Check biometric authentication availability
             biometricAuthAvailable = (appStateManager.authentication.biometricType != .none)
@@ -477,9 +494,11 @@ struct LoginView: View {
                 text: $handle,
                 prompt: "username.bsky.social",
                 icon: "at",
+                label: "Handle",
                 validationError: validationError,
                 isDisabled: isLoggingIn,
                 keyboardType: .emailAddress,
+                textContentType: .username,
                 submitLabel: .go,
                 onSubmit: {
                     handleLogin()
@@ -579,6 +598,14 @@ struct LoginView: View {
                     .padding(.vertical, 12)
             }
             .modifier(PrimaryButtonModifier(authMode: authMode))
+            
+            Text(CommunityStandards.signInFootnote)
+                .appFont(AppTextRole.footnote)
+                .foregroundStyle(Color.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
         }
     }
     
@@ -652,7 +679,7 @@ struct LoginView: View {
     
     private func advancedPDSField(geometry: GeometryProxy) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("Create account on custom PDS")
+            Text("Create an account with another provider")
                 .appFont(AppTextRole.headline)
                 .frame(maxWidth: min(geometry.size.width * 0.9, 400), alignment: .leading)
             
@@ -660,11 +687,13 @@ struct LoginView: View {
 #if os(iOS)
                 ValidatingTextField(
                     text: $pdsURL,
-                    prompt: "PDS URL (e.g., https://bsky.social)",
+                    prompt: "Provider address, like https://bsky.social",
                     icon: "link",
+                    label: "Server Address",
                     validationError: validationError,
                     isDisabled: isLoggingIn,
                     keyboardType: .URL,
+                    textContentType: .URL,
                     submitLabel: .go,
                     onSubmit: {
                         handleAdvancedSignup()
@@ -673,7 +702,7 @@ struct LoginView: View {
 #elseif os(macOS)
                 ValidatingTextField(
                     text: $pdsURL,
-                    prompt: "PDS URL (e.g., https://bsky.social)",
+                    prompt: "Provider address, like https://bsky.social",
                     icon: "link",
                     validationError: validationError,
                     isDisabled: isLoggingIn,
@@ -844,21 +873,6 @@ struct LoginView: View {
                 }
                 .buttonStyle(.plain)
             }
-            
-            // Timeout countdown
-            if showTimeoutCountdown {
-                HStack {
-                    Image(systemName: "clock")
-                        .foregroundStyle(.orange)
-                        .imageScale(.small)
-                    
-                    Text("Timeout in \(timeoutCountdown)s")
-                        .appFont(AppTextRole.caption2)
-                        .foregroundStyle(.secondary)
-                    
-                    Spacer()
-                }
-            }
         }
         .frame(maxWidth: min(geometry.size.width * 0.9, 400))
         .padding()
@@ -942,6 +956,18 @@ struct LoginView: View {
         appStateManager.authentication.resetError()
     }
     
+    /// Stops any sign-in in progress and closes the sheet.
+    private func cancelAndDismiss() {
+        if isLoggingIn {
+            cancelAuthenticationTaskAndPendingAttempt()
+            isLoggingIn = false
+            loginProgress = .idle
+            showTimeoutCountdown = false
+            appStateManager.authentication.resetError()
+        }
+        dismiss()
+    }
+    
     /// Starts the timeout countdown
     private func startTimeoutCountdown() {
         showTimeoutCountdown = true
@@ -964,11 +990,11 @@ struct LoginView: View {
     private func authModeActionText() -> String {
         switch authMode {
         case .login:
-            return "Signing In..."
+            return "Signing in…"
         case .signup:
-            return "Creating Account..."
+            return "Creating account…"
         case .advanced:
-            return "Connecting to PDS..."
+            return "Connecting to your provider…"
         case .selection:
             return "" // Should never be used
         }
@@ -985,13 +1011,13 @@ struct LoginView: View {
         case .idle:
             return ""
         case .startingAuth:
-            return "Starting authentication flow"
+            return "Starting sign-in"
         case .authenticating:
-            return "Opening browser for secure login"
+            return "Opening a secure sign-in page"
         case .processingCallback:
-            return "Processing authentication"
+            return "Finishing sign-in"
         case .completing:
-            return "Finalizing login"
+            return "Almost done"
         }
     }
 
@@ -1007,7 +1033,7 @@ struct LoginView: View {
         case .signup:
             return "Create Account on Bluesky"
         case .advanced:
-            return "Create Account on Custom PDS" // Fixed typo in "Create"
+            return "Create Account"
         case .selection:
             return "" // Should never be used
         }
@@ -1066,7 +1092,7 @@ struct LoginView: View {
     private func handleAdvancedSignup() {
         // Validate PDS URL
         guard let url = URL(string: pdsURL), isValidURL(pdsURL) else {
-            validationError = "Please enter a valid URL"
+            validationError = "Enter a full web address, like https://example.com."
             showInvalidAnimation = true
             // Reset animation flag after a delay
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
@@ -1087,7 +1113,7 @@ struct LoginView: View {
         // Simple validation - must contain a dot or @ symbol
         guard trimmedHandle.contains(".") || trimmedHandle.contains("@") else {
             logger.warning("Invalid handle format: \(trimmedHandle)")
-            validationError = "Please include a domain (example.bsky.social)"
+            validationError = "Enter your full handle, like name.bsky.social."
             showInvalidAnimation = true
             // Reset animation flag after a delay
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
@@ -1196,7 +1222,7 @@ struct LoginView: View {
                     // Other authentication errors (including timeout)
                     logger.error("Authentication error: \(error.localizedDescription)")
                     // Don't show authenticationCancelled for errors, use error state instead
-                    self.error = error.localizedDescription
+                    self.error = AuthenticationManager.userFacingMessage(for: error)
                     authenticationCancelled = false
                     isLoggingIn = false
                     loginProgress = .idle
@@ -1215,7 +1241,7 @@ struct LoginView: View {
                 
                 // Don't show cancellation errors as user-facing errors
                 if !isCancellationError {
-                    self.error = error.localizedDescription
+                    self.error = AuthenticationManager.userFacingMessage(for: error)
                 }
                 
                 isLoggingIn = false
@@ -1260,7 +1286,7 @@ struct LoginView: View {
 
                 guard let authURL else {
                     logger.error("Failed to get auth URL for expired account re-authentication")
-                    error = "Failed to get authentication URL for expired account"
+                    error = "Couldn’t start signing in. Try again."
                     isLoggingIn = false
                     showTimeoutCountdown = false
                     hasStartedReAuthentication = false
@@ -1328,7 +1354,7 @@ struct LoginView: View {
                     // Other authentication errors (including timeout)
                     logger.error("Re-authentication error: \(error.localizedDescription)")
                     // Don't show authenticationCancelled for errors, use error state instead
-                    self.error = error.localizedDescription
+                    self.error = AuthenticationManager.userFacingMessage(for: error)
                     authenticationCancelled = false
                     isLoggingIn = false
                     loginProgress = .idle
@@ -1348,7 +1374,7 @@ struct LoginView: View {
 
                 // Don't show cancellation errors as user-facing errors
                 if !isCancellationError {
-                    self.error = error.localizedDescription
+                    self.error = AuthenticationManager.userFacingMessage(for: error)
                 }
 
                 isLoggingIn = false
@@ -1364,6 +1390,8 @@ struct LoginView: View {
 
     private func startSignup(pdsURL: URL) async {
         logger.info("Starting signup with PDS URL: \(pdsURL.absoluteString)")
+        // New accounts get the welcome flow once they're signed in; existing accounts don't.
+        NewAccountOnboardingMarker.markSignupStarted()
         
         // Cancel any existing authentication task
         authenticationTask?.cancel()
@@ -1420,7 +1448,7 @@ struct LoginView: View {
                     logger.error("Signup authentication error: \(error.localizedDescription)")
                     
                     // Don't show authenticationCancelled for errors, use error state instead
-                    self.error = error.localizedDescription
+                    self.error = AuthenticationManager.userFacingMessage(for: error)
                     authenticationCancelled = false
                     isLoggingIn = false
                     showTimeoutCountdown = false
@@ -1438,7 +1466,7 @@ struct LoginView: View {
                 
                 // Don't show cancellation errors as user-facing errors
                 if !isCancellationError {
-                    self.error = error.localizedDescription
+                    self.error = AuthenticationManager.userFacingMessage(for: error)
                 }
                 
                 isLoggingIn = false
@@ -1512,6 +1540,22 @@ struct LoginView: View {
 }
 
 // MARK: - View Modifiers
+
+/// Developer builds only: tapping the sign-in background five times shows technical sign-in progress.
+private struct DebugInfoTapGesture: ViewModifier {
+    @Binding var showDebugInfo: Bool
+    
+    func body(content: Content) -> some View {
+        #if DEBUG
+        content.onTapGesture(count: 5) {
+            showDebugInfo.toggle()
+            PlatformHaptics.success()
+        }
+        #else
+        content
+        #endif
+    }
+}
 
 struct TextFieldShadowModifier: ViewModifier {
     let colorScheme: ColorScheme

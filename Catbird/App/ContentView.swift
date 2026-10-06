@@ -7,11 +7,11 @@ import UIKit
 
 struct ContentView: View {
   @Environment(AppState.self) private var appState
+  @Environment(SceneNavigationContext.self) private var sceneContext
   @Environment(AppStateManager.self) private var appStateManager
   @State private var selectedTab = 0
   @State private var lastTappedTab: Int?
   @State private var hasRestoredState = false
-  @State private var showingComposerFromAccountSwitch = false
 
   private let logger = Logger(subsystem: "blue.catbird", category: "ContentView")
 
@@ -36,8 +36,7 @@ struct ContentView: View {
       }
     }
     .modifier(ContentViewModifiers(
-      appStateManager: appStateManager,
-      showingComposerFromAccountSwitch: $showingComposerFromAccountSwitch
+      appStateManager: appStateManager
       ))
   }
 }
@@ -55,10 +54,12 @@ private extension ContentView {
     case .deactivated(let appState):
       AccountDeactivatedView(appState: appState)
         .applyAppStateEnvironment(appState)
+        .environment(sceneContext)
         .environment(appStateManager)
     case .takendown(let appState):
       AccountTakedownView(appState: appState)
         .applyAppStateEnvironment(appState)
+        .environment(sceneContext)
         .environment(appStateManager)
     }
   }
@@ -70,6 +71,7 @@ private extension ContentView {
       lastTappedTab: $lastTappedTab
     )
     .applyAppStateEnvironment(appState)
+        .environment(sceneContext)
     .environment(appStateManager)
     .onAppear {
       // Finish extended launch measurement when main content appears
@@ -77,11 +79,29 @@ private extension ContentView {
         MetricKitManager.shared.finishExtendedLaunchMeasurement()
       }
     }
+    .task(id: appState.userDID) {
+      await evaluateWelcomeOnboarding(for: appState)
+    }
+  }
+
+  /// Runs when an account's main content appears (this view is rebuilt for every account).
+  /// Only accounts created on this device, or joining via a starter pack, get the welcome flow;
+  /// existing accounts signing in here skip it, so it never offers to replace their avatar.
+  func evaluateWelcomeOnboarding(for appState: AppState) async {
+    let did = appState.userDID
+    let onboarding = appState.onboardingManager
+    guard !onboarding.hasCompletedWelcome(for: did) else { return }
+    let isNewAccount = NewAccountOnboardingMarker.consumeRecentSignup()
+    if isNewAccount || StarterPackOnboardingManager.shared.pendingContext != nil {
+      await onboarding.checkForWelcomeOnboarding(client: appState.client, for: did)
+    } else {
+      onboarding.completeWelcomeOnboarding(for: did)
+    }
   }
 
   @ViewBuilder
   var launchingView: some View {
-    ContentViewLoadingView(message: "Loading...")
+    ContentViewLoadingView(message: "Loading…")
   }
 
   @ViewBuilder
@@ -195,6 +215,7 @@ private struct ComposeSourceModifier: ViewModifier {
 @available(iOS 18.0, *)
 struct MainContentView: View {
   @Environment(AppState.self) private var appState
+  @Environment(SceneNavigationContext.self) private var sceneContext
   @Binding var selectedTab: Int
   @Binding var lastTappedTab: Int?
 
@@ -207,7 +228,7 @@ struct MainContentView: View {
   // Add state for showing post composer
   @State private var showingPostComposer = false
   @State private var showingComposerDrafts = false
-  @State private var pendingSelectedDraft: PostComposerDraft?
+  @State private var pendingSelectedDraft: DraftPostViewModel?
   @State private var showingSettings = false
   @State private var showingNewMessageSheet = false
   @State private var hasInitializedFeed = false
@@ -219,6 +240,7 @@ struct MainContentView: View {
   @State private var drawerNavigationPath = NavigationPath()
   // Snapshot the draft at presentation time so autosave mutations don't recreate the sheet content
   @State private var composerInitialDraft: PostComposerDraft?
+  @State private var composerEditingClaim: ComposerDraftClaim?
   #if os(iOS)
   @State private var pendingCameraCapture: CameraCaptureMode?
   @State private var composerCapturedMedia: CapturedMedia?
@@ -228,7 +250,7 @@ struct MainContentView: View {
 
   // Access the navigation manager directly
   private var navigationManager: AppNavigationManager {
-    appState.navigationManager
+    sceneContext.navigationManager
   }
 
   // Whether the drawer's native toolbar chrome (close button + bottom-bar
@@ -401,18 +423,18 @@ struct MainContentView: View {
             // Profile Tab - Hidden on iPhone to save space
             if !PlatformDeviceInfo.isPhone {
               Tab("Profile", systemImage: "person", value: 3) {
-                NavigationStack(path: appState.navigationManager.pathBinding(for: 3)) {
+                NavigationStack(path: sceneContext.navigationManager.pathBinding(for: 3)) {
                   UnifiedProfileView(
                     appState: appState,
                     selectedTab: $selectedTab,
                     lastTappedTab: $lastTappedTab,
-                    path: appState.navigationManager.pathBinding(for: 3)
+                    path: sceneContext.navigationManager.pathBinding(for: 3)
                   )
                   .id(appState.userDID)
                   .navigationDestination(for: NavigationDestination.self) { destination in
                     NavigationHandler.viewForDestination(
                       destination,
-                      path: appState.navigationManager.pathBinding(for: 3),
+                      path: sceneContext.navigationManager.pathBinding(for: 3),
                       appState: appState,
                       selectedTab: $selectedTab
                     )
@@ -489,7 +511,7 @@ struct MainContentView: View {
                   ToolbarItem(placement: .bottomBar) {
                       Button {
                           let did = appState.userDID
-                          appState.navigationManager.navigate(to: .profile(did))
+                          sceneContext.navigationManager.navigate(to: .profile(did))
                           isDrawerOpen = false
                       } label: { Label("Profile", systemImage: "person") }
                           .opacity(drawerChromeVisible ? 1 : 0)
@@ -499,7 +521,7 @@ struct MainContentView: View {
                   }
                   ToolbarItem(placement: .bottomBar) {
                       Button {
-                          appState.navigationManager.navigate(to: .bookmarks)
+                          sceneContext.navigationManager.navigate(to: .bookmarks)
                           isDrawerOpen = false
                       } label: { Label("Bookmarks", systemImage: "bookmark") }
                           .opacity(drawerChromeVisible ? 1 : 0)
@@ -510,7 +532,7 @@ struct MainContentView: View {
                   }
                   ToolbarItem(placement: .bottomBar) {
                       Button {
-                          appState.navigationManager.navigate(to: .listManager)
+                          sceneContext.navigationManager.navigate(to: .listManager)
                           isDrawerOpen = false
                       } label: { Label("My Lists", systemImage: "list.bullet") }
                           .opacity(drawerChromeVisible ? 1 : 0)
@@ -524,7 +546,7 @@ struct MainContentView: View {
       }
       .platformIgnoresSafeArea()
       .scrollDismissesKeyboard(.interactively)
-      .toastContainer()
+      .toastContainer(using: appState.toastManager)
       .onAppear {
         // Theme is already applied during AppState initialization - no need to reapply here
         
@@ -558,32 +580,44 @@ struct MainContentView: View {
           if let media = composerCapturedMedia {
             PostComposerViewUIKit(
               initialCapturedMedia: media,
-              appState: appState
+              appState: appState,
+              editingSession: sceneContext.composerEditingSession,
+              editingClaim: composerEditingClaim
             )
           } else if let draft = composerInitialDraft {
             PostComposerViewUIKit(
               restoringFromDraft: draft,
-              appState: appState
+              appState: appState,
+              editingSession: sceneContext.composerEditingSession,
+              editingClaim: composerEditingClaim
             )
           } else {
             PostComposerViewUIKit(
-              appState: appState
+              appState: appState,
+              editingSession: sceneContext.composerEditingSession,
+              editingClaim: composerEditingClaim
             )
           }
           #else
           if let draft = composerInitialDraft {
             PostComposerViewUIKit(
               restoringFromDraft: draft,
-              appState: appState
+              appState: appState,
+              editingSession: sceneContext.composerEditingSession,
+              editingClaim: composerEditingClaim
             )
           } else {
             PostComposerViewUIKit(
-              appState: appState
+              appState: appState,
+              editingSession: sceneContext.composerEditingSession,
+              editingClaim: composerEditingClaim
             )
           }
           #endif
         }
         .applyAppStateEnvironment(appState)
+        .environment(sceneContext)
+        .toastContainer(using: appState.toastManager)
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
         .applyComposerNavigationTransition(
@@ -599,10 +633,11 @@ struct MainContentView: View {
         }
       }) {
         DraftsListView(appState: appState) { draftViewModel in
-          pendingSelectedDraft = appState.composerDraftManager.loadSavedDraft(draftViewModel)
+          pendingSelectedDraft = draftViewModel
           showingComposerDrafts = false
         }
         .applyAppStateEnvironment(appState)
+        .environment(sceneContext)
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
       }
@@ -617,6 +652,7 @@ struct MainContentView: View {
           onCapture: { media in
             composerCapturedMedia = media
             composerInitialDraft = nil
+            composerEditingClaim = nil
             pendingCameraCapture = nil
           },
           onCancel: {
@@ -629,29 +665,33 @@ struct MainContentView: View {
       .sheet(isPresented: $showingNewMessageSheet) {
         NewConversationView()
           .applyAppStateEnvironment(appState)
+        .environment(sceneContext)
           .presentationDetents([.large])
           .presentationDragIndicator(.visible)
       }
       .sheet(isPresented: $showingOnboarding) {
         WelcomeOnboardingView()
           .applyAppStateEnvironment(appState)
+        .environment(sceneContext)
       }
       .sheet(isPresented: Binding(
         get: { showingVerifyEmailCode != nil },
-        set: { if !$0 { showingVerifyEmailCode = nil; appState.urlHandler.externalIntentPresenter.clearActiveIntent() } }
+        set: { if !$0 { showingVerifyEmailCode = nil; sceneContext.urlHandler.externalIntentPresenter.clearActiveIntent() } }
       )) {
         if let code = showingVerifyEmailCode {
           VerifyEmailIntentView(code: code)
             .applyAppStateEnvironment(appState)
+        .environment(sceneContext)
         }
       }
       .sheet(isPresented: Binding(
         get: { showingGroupChatCode != nil },
-        set: { if !$0 { showingGroupChatCode = nil; appState.urlHandler.externalIntentPresenter.clearActiveIntent() } }
+        set: { if !$0 { showingGroupChatCode = nil; sceneContext.urlHandler.externalIntentPresenter.clearActiveIntent() } }
       )) {
         if let code = showingGroupChatCode {
           GroupChatJoinIntentView(code: code)
             .applyAppStateEnvironment(appState)
+        .environment(sceneContext)
         }
       }
       .sheet(isPresented: Binding(
@@ -666,15 +706,16 @@ struct MainContentView: View {
             appState.nuxPresenter.dismissActiveAnnouncement()
           }
           .applyAppStateEnvironment(appState)
+        .environment(sceneContext)
         }
       }
-      .onChange(of: appState.urlHandler.externalIntentPresenter.activeIntent) { _, newIntent in
+      .onChange(of: sceneContext.urlHandler.externalIntentPresenter.activeIntent) { _, newIntent in
         guard let intent = newIntent else { return }
         switch intent {
         case .compose(let text):
           Task { @MainActor in
             await openFreshComposerWithPrefilledText(text ?? "")
-            appState.urlHandler.externalIntentPresenter.clearActiveIntent()
+            sceneContext.urlHandler.externalIntentPresenter.clearActiveIntent()
           }
         case .verifyEmail(let code):
           showingVerifyEmailCode = code
@@ -694,12 +735,13 @@ struct MainContentView: View {
           scheduleNuxEvaluation(delay: 300_000_000)
         }
       }
-      .onChange(of: appState.onboardingManager.showWelcomeSheet) { _, newValue in
+      .onChange(of: appState.onboardingManager.showWelcomeSheet, initial: true) { _, newValue in
         showingOnboarding = newValue
       }
       .onChange(of: showingPostComposer) { _, isPresented in
         if !isPresented {
           composerInitialDraft = nil
+          composerEditingClaim = nil
           #if os(iOS)
           composerCapturedMedia = nil
           #endif
@@ -717,7 +759,7 @@ struct MainContentView: View {
         // button and SideDrawer canOpen stay in sync.
         if isDrawerOpen && newPath.count > 0 {
           isRootView = false
-        } else if newPath.count == 0 && appState.navigationManager.tabPaths[0]?.count == 0 {
+        } else if newPath.count == 0 && sceneContext.navigationManager.tabPaths[0]?.count == 0 {
           isRootView = true
         }
       }
@@ -813,8 +855,9 @@ struct MainContentView: View {
         .sheet(isPresented: $showingOnboarding) {
           WelcomeOnboardingView()
             .applyAppStateEnvironment(appState)
+        .environment(sceneContext)
         }
-        .onChange(of: appState.onboardingManager.showWelcomeSheet) { _, newValue in
+        .onChange(of: appState.onboardingManager.showWelcomeSheet, initial: true) { _, newValue in
           showingOnboarding = newValue
         }
         .onChange(of: showingOnboarding) { _, newValue in
@@ -835,6 +878,7 @@ struct MainContentView: View {
     .sheet(isPresented: $showingSettings) {
       SettingsView()
         .applyAppStateEnvironment(appState)
+        .environment(sceneContext)
         .environment(appState)
     }
     .modifier(CatalystToolbarBridge(
@@ -873,7 +917,19 @@ extension MainContentView {
     #if os(iOS)
     composerCapturedMedia = nil
     #endif
-    composerInitialDraft = appState.composerDraftManager.currentDraft
+    let session = sceneContext.composerEditingSession
+    guard !sceneContext.isInvalidated else { return }
+    if let claim = session.activeClaim {
+      guard session.resume(claim: claim) else {
+        showComposerIssue(session.lastIssue ?? "Could not reopen your draft")
+        return
+      }
+      composerEditingClaim = claim
+      composerInitialDraft = session.currentDraft
+    } else {
+      composerEditingClaim = nil
+      composerInitialDraft = nil
+    }
     showingPostComposer = true
   }
 
@@ -893,18 +949,21 @@ extension MainContentView {
   private func stashWorkingDraft(
     destinationAvailable: Bool = true
   ) async -> WorkingDraftStashPolicy.Result {
-    let manager = appState.composerDraftManager
-    let workingDraft = manager.currentDraft
+    let session = sceneContext.composerEditingSession
+    let snapshot = session.snapshot()
     return await WorkingDraftStashPolicy.perform(
-      hasWorkingDraft: workingDraft != nil,
+      hasWorkingDraft: snapshot != nil,
       destinationAvailable: destinationAvailable,
       save: {
-        guard let workingDraft else { return false }
-        return await manager.createSavedDraftAndWait(workingDraft)
+        guard let snapshot else { return false }
+        do {
+          try session.stash(snapshot)
+          return true
+        } catch {
+          return false
+        }
       },
-      clearAfterSave: {
-        manager.clearWorkingDraftAfterStash()
-      }
+      clearAfterSave: {} // The session detaches only the successfully saved snapshot.
     )
   }
 
@@ -942,16 +1001,29 @@ extension MainContentView {
     #if os(iOS)
     composerCapturedMedia = nil
     #endif
+    guard !sceneContext.isInvalidated else { return }
     composerInitialDraft = initialDraft
+    composerEditingClaim = nil
     showingPostComposer = true
   }
 
-  private func openComposerRestoring(_ draft: PostComposerDraft) {
-    #if os(iOS)
-    composerCapturedMedia = nil
-    #endif
-    composerInitialDraft = draft
-    showingPostComposer = true
+  private func openComposerRestoring(_ draft: DraftPostViewModel) {
+    guard !sceneContext.isInvalidated else { return }
+    do {
+      let session = sceneContext.composerEditingSession
+      composerEditingClaim = try session.restoreSaved(draft)
+      composerInitialDraft = session.currentDraft
+      #if os(iOS)
+      composerCapturedMedia = nil
+      #endif
+      showingPostComposer = true
+    } catch {
+      showComposerIssue(error.localizedDescription)
+    }
+  }
+
+  private func showComposerIssue(_ message: String) {
+    appState.toastManager.show(ToastItem(message: message, icon: "exclamationmark.triangle.fill"))
   }
 
   private func openDraftsBrowser() {
@@ -982,7 +1054,7 @@ extension MainContentView {
       composeAction: { openComposerResumingDraft() },
       feedsAction: {},
       showFeedsButton: false,
-      hasMinimizedComposer: appState.composerDraftManager.currentDraft != nil,
+      hasMinimizedComposer: sceneContext.composerEditingSession.isMinimized,
       newPostAction: {
         Task { @MainActor in
           await openFreshComposerStashingDraft()
@@ -1004,7 +1076,10 @@ extension MainContentView {
         #endif
       },
       clearDraftAction: {
-        appState.composerDraftManager.clearDraft()
+        let session = sceneContext.composerEditingSession
+        if let claim = session.activeClaim, !session.discard(claim: claim) {
+          showComposerIssue(session.lastIssue ?? "Could not discard your draft")
+        }
       }
     )
     .padding(.bottom, 79) // Tab bar (49) + spacing (30)
@@ -1065,67 +1140,18 @@ private struct SoftScrollEdgeEffectModifier: ViewModifier {
 
 private struct ContentViewModifiers: ViewModifier {
   let appStateManager: AppStateManager
-  @Binding var showingComposerFromAccountSwitch: Bool
 
-  private var pendingAlertBinding: Binding<AuthenticationManager.AuthAlert?> {
-    Binding(
-      get: { appStateManager.authentication.pendingAuthAlert },
-      set: { _ in Task { await appStateManager.authentication.clearPendingAuthAlert() } }
-    )
-  }
-
+  // Auth alerts are presented by CatbirdApp's scene root so they also show over the sign-in screen.
   func body(content: Content) -> some View {
     content
-      .alert(item: pendingAlertBinding, content: authAlertContent)
       .onChange(of: appStateManager.lifecycle) { _, newValue in
-        if case .authenticated(let appState) = newValue {
+        if case .authenticated = newValue {
           Task { @MainActor in
             await FeedStateStore.shared.triggerPostAuthenticationFeedLoad()
-            await appState.onboardingManager.checkForWelcomeOnboarding(client: appState.client, for: appState.userDID)
           }
-        }
-      }
-      .onChange(of: appStateManager.pendingComposerDraft) { _, newValue in
-        if let draft = newValue {
-          logger.info("[ContentView] Pending composer draft detected after account switch - will reopen composer")
-          logger.debug("[ContentView] Draft preview: text length \(draft.postText.count), media items \(draft.mediaItems.count)")
-
-          Task { @MainActor in
-            // Wait for transition overlay to clear (typically ~500ms)
-            try? await Task.sleep(nanoseconds: 600_000_000)  // 600ms
-
-            // Verify draft hasn't been manually cleared
-            guard appStateManager.pendingComposerDraft != nil else {
-              logger.debug("[ContentView] pendingComposerDraft was cleared before reopen - skipping")
-              return
-            }
-
-            logger.info("[ContentView] Reopening composer with transferred draft")
-            showingComposerFromAccountSwitch = true
-
-            // Clear after presenting
-            try? await Task.sleep(nanoseconds: 100_000_000)  // 100ms buffer
-            appStateManager.clearPendingComposerDraft()
-            logger.debug("[ContentView] Cleared pendingComposerDraft after reopen")
-          }
-        }
-      }
-      .sheet(isPresented: $showingComposerFromAccountSwitch) {
-        if let appState = appStateManager.lifecycle.appState {
-          PostComposerViewUIKit(appState: appState)
         }
       }
       .modifier(AppStateThemeModifier(appStateManager: appStateManager))
-  }
-
-  private func authAlertContent(_ alert: AuthenticationManager.AuthAlert) -> Alert {
-    Alert(
-      title: Text(alert.title),
-      message: Text(alert.message),
-      dismissButton: .default(Text("OK"), action: {
-        Task { await appStateManager.authentication.clearPendingAuthAlert() }
-      })
-    )
   }
 }
 

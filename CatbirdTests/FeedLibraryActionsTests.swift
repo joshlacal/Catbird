@@ -10,6 +10,69 @@ struct FeedLibraryActionsTests {
     try ATProtocolURI(uriString: "at://did:plc:feedcreator/app.bsky.feed.generator/\(key)")
   }
 
+  @Test func pinnedOrderPreservesMembershipAndOtherPreferences() async throws {
+    let prefs = Preferences(accountDID: did)
+    prefs.pinnedFeeds = ["following", "unknown-type", "selected", "remote-new"]
+    prefs.savedFeeds = ["saved"]
+    prefs.primaryLanguage = "fr"
+    var writes = 0
+    let actions = FeedLibraryActions(accountDID: did, read: { prefs }, persist: { _ in writes += 1; return .synced })
+    await actions.refresh()
+    #expect(writes == 0)
+    try await actions.reorderPinned(["selected", "following", "unknown-type"])
+    #expect(prefs.pinnedFeeds == ["selected", "following", "unknown-type", "remote-new"])
+    #expect(prefs.savedFeeds == ["saved"])
+    #expect(prefs.primaryLanguage == "fr")
+    #expect(writes == 1)
+  }
+
+  @Test func pinnedOrderFailureRetainsRetryWithoutChangingConfirmedOrder() async throws {
+    let prefs = Preferences(accountDID: did)
+    prefs.pinnedFeeds = ["following", "selected"]
+    var fails = true
+    let actions = FeedLibraryActions(accountDID: did, read: { prefs }, persist: { _ in
+      if fails { throw NSError(domain: "Local", code: 1) }
+      return .synced
+    })
+    do { try await actions.reorderPinned(["selected", "following"]); Issue.record("Failure returned success") } catch {}
+    #expect(prefs.pinnedFeeds == ["following", "selected"])
+    fails = false
+    try await actions.retryPinnedOrder()
+    #expect(prefs.pinnedFeeds == ["selected", "following"])
+  }
+
+  @Test func pendingPinnedOrderSurvivesRecreationAndNewRemoteMembership() async throws {
+    let suite = "FeedLibraryOrderTests.\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let store = FeedLibraryPendingStore(defaults: defaults)
+    let prefs = Preferences(accountDID: did)
+    prefs.pinnedFeeds = ["following", "selected"]
+    let original = FeedLibraryActions(accountDID: did, pendingStore: store, read: { prefs }, persist: { _ in .pendingSync("Offline") })
+    do { try await original.reorderPinned(["selected", "following"]) } catch {}
+    prefs.pinnedFeeds = ["following", "remote-new", "selected"]
+    let recreated = FeedLibraryActions(accountDID: did, pendingStore: store, read: { prefs }, persist: { _ in .synced })
+    await recreated.refresh()
+    #expect(recreated.pinnedFeeds == ["selected", "following", "remote-new"])
+    try await recreated.retryPinnedOrder()
+    #expect(prefs.pinnedFeeds == ["selected", "following", "remote-new"])
+    #expect(store.pinnedOrder(accountDID: did) == nil)
+  }
+
+  @Test func pinnedServerOrderKeepsIDsTypesAndUnpinnedSlots() {
+    let order = FeedLibraryPendingStore.PinnedOrder(uris: ["chosen", "following"], revision: UUID())
+    let feeds: [AppBskyActorDefs.SavedFeed] = [
+      .init(id: "timeline-id", type: "timeline", value: "following", pinned: true),
+      .init(id: "saved-id", type: "future", value: "saved", pinned: false),
+      .init(id: "chosen-id", type: "future", value: "chosen", pinned: true),
+      .init(id: "remote-id", type: "feed", value: "remote-new", pinned: true)
+    ]
+    let result = FeedLibraryServerMerge.applyPinnedOrder(order, to: feeds)
+    #expect(result.map(\.id) == ["chosen-id", "saved-id", "timeline-id", "remote-id"])
+    #expect(result.map(\.type) == ["future", "future", "timeline", "feed"])
+    #expect(result.map(\.value) == ["chosen", "saved", "following", "remote-new"])
+  }
+
   @Test func addPreservesDefaultAndOtherFields() async throws {
     let prefs = Preferences(accountDID: did)
     prefs.pinnedFeeds = ["following", "existing"]
@@ -73,7 +136,7 @@ struct FeedLibraryActionsTests {
     let feed = try uri()
     do { _ = try await actions.add(feed); Issue.record("Pending sync returned success") } catch {}
     #expect(actions.membership(for: feed) == .saved)
-    #expect(actions.state(for: feed) == .pendingSync("Offline"))
+    #expect(actions.state(for: feed) == .pendingSync(FeedLibraryActions.pendingSyncMessage))
     #expect(notifications == 1)
     #expect(try await actions.add(feed) == .saved)
     #expect(writes == 2)

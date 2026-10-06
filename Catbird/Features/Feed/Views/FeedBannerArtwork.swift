@@ -1,14 +1,16 @@
 import SwiftUI
 
-/// Keeps sharp banner artwork below top controls while extending its colors
-/// behind them. The enclosing header owns stretching and concentric clipping.
+/// Extends banner colors behind the top controls with a compact blurred band.
+/// The enclosing header owns safe-area sizing, stretching and clipping.
 struct FeedBannerArtwork<Artwork: View>: View {
   let topInset: CGFloat
   @ViewBuilder var artwork: () -> Artwork
 
   var body: some View {
     GeometryReader { geometry in
-      let inset = max(0, topInset)
+      // The safe area sizes the whole header, not the amount of artwork to blur.
+      // Keep half the previous extension and blend so sharp art starts sooner.
+      let inset = min(max(0, topInset) * 0.5, max(0, geometry.size.height) * 0.5)
       let artworkHeight = max(1, geometry.size.height - inset)
 
       ZStack(alignment: .top) {
@@ -28,10 +30,10 @@ struct FeedBannerArtwork<Artwork: View>: View {
 
         artwork()
           .frame(width: geometry.size.width, height: artworkHeight)
-          .mask {
+          .mask(alignment: .top) {
             VStack(spacing: 0) {
               LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
-                .frame(height: inset > 0 ? min(56, artworkHeight) : 0)
+                .frame(height: inset > 0 ? min(14, artworkHeight) : 0)
               Color.black
             }
           }

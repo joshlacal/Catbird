@@ -189,23 +189,40 @@ final class ShareViewController: UIViewController {
     return data
   }
 
-  private func notifyContainerApp() {
-    // Optionally attempt to open container app via custom URL scheme if configured.
-    // If no scheme, silently finish.
-    finish()
+  /// Share extensions can't open their app, so confirm the save and say where to finish the post.
+  private func showSavedAndFinish() {
+    presentMessage(
+      title: "Saved to Catbird",
+      message: "Open Catbird to finish your post.",
+      buttonTitle: "Done"
+    )
   }
 
-  private func showErrorAndFinish() {
-    finish()
+  private func showErrorAndFinish(message: String) {
+    presentMessage(title: "Couldn’t Add to Catbird", message: message, buttonTitle: "OK")
+  }
+
+  private func presentMessage(title: String, message: String, buttonTitle: String) {
+    let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
+    alert.addAction(UIAlertAction(title: buttonTitle, style: .default) { [weak self] _ in
+      self?.finish()
+    })
+    present(alert, animated: true)
   }
 
   private func processItems() async {
     let (text, urls, images, videos) = await loadAll()
+    let hasText = !(text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+    guard hasText || !urls.isEmpty || !images.isEmpty || !videos.isEmpty else {
+      logger.warning("SharedDraftImporter: Nothing shareable was found")
+      showErrorAndFinish(message: "This item can’t be shared to Catbird.")
+      return
+    }
     if let data = encodePayload(text: text, urls: urls, imageURLs: images, videos: videos) {
       storeDraft(data)
-      notifyContainerApp()
+      showSavedAndFinish()
     } else {
-      showErrorAndFinish()
+      showErrorAndFinish(message: "Catbird can share text, links, up to 4 images, or 1 video.")
     }
   }
 }

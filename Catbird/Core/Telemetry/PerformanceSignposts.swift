@@ -129,6 +129,41 @@ enum PerformanceSignposts {
   }
   
   // MARK: - Cell Configuration
+
+  /// Aggregate feed work only: never include account IDs, post IDs, or content.
+  static func beginFeedPreparation(itemCount: Int) -> OSSignpostID {
+    let id = nextID()
+    os_signpost(.begin, log: feedLog, name: "FeedPreparation", signpostID: id,
+      "items: %d, main_thread: %d", itemCount, Thread.isMainThread ? 1 : 0)
+    return id
+  }
+
+  static func endFeedPreparation(id: OSSignpostID, itemCount: Int) {
+    os_signpost(.end, log: feedLog, name: "FeedPreparation", signpostID: id,
+      "items: %d, main_thread: %d", itemCount, Thread.isMainThread ? 1 : 0)
+  }
+
+  static func beginFeedSnapshot(itemCount: Int, reconfiguredCount: Int) -> OSSignpostID {
+    let id = nextID()
+    os_signpost(.begin, log: feedLog, name: "FeedSnapshot", signpostID: id,
+      "items: %d, reconfigured: %d", itemCount, reconfiguredCount)
+    return id
+  }
+
+  /// Offset and size deltas explain layout movement separately from CPU duration.
+  /// A missing anchor is represented explicitly instead of reporting a false zero.
+  static func endFeedSnapshot(
+    id: OSSignpostID,
+    offsetDelta: Double,
+    heightDelta: Double,
+    anchorDeltaBeforeRestore: Double?,
+    anchorDeltaAfterRestore: Double?
+  ) {
+    os_signpost(.end, log: feedLog, name: "FeedSnapshot", signpostID: id,
+      "offset_delta: %.2f, height_delta: %.2f, anchor_before_restore: %.2f, anchor_after_restore: %.2f, has_before: %d, has_after: %d",
+      offsetDelta, heightDelta, anchorDeltaBeforeRestore ?? 0, anchorDeltaAfterRestore ?? 0,
+      anchorDeltaBeforeRestore == nil ? 0 : 1, anchorDeltaAfterRestore == nil ? 0 : 1)
+  }
   
   static func beginCellConfiguration(postId: String) -> OSSignpostID {
     let id = nextID()

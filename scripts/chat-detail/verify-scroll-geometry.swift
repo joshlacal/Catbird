@@ -48,6 +48,22 @@ struct VerifyChatScrollGeometry {
       contentHeight: 2400, offsetY: 600, viewportHeight: 700,
       topInset: 40, bottomInset: 100, isInteracting: false
     ) == 0)
-    print("PASS: delayed out-of-order growth/shrink, viewport anchoring, idle bottom follow, active touch, near-bottom reader, short transcript, warm sizing")
+    // No geometry delta means no correction, even inside a rubber-band region.
+    for bottom: CGFloat in [0, 1800] {
+      for offset: CGFloat in [-18, bottom + 18] {
+        precondition(ChatScrollGeometry.readingOffset(target: offset, current: offset,
+          bottom: bottom, top: 0, isInteracting: false) == nil)
+      }
+    }
+    // A late size delta preserves the elastic position instead of clamping it.
+    precondition(ChatScrollGeometry.readingOffset(target: -30, current: -18,
+      bottom: 1800, top: 0, isInteracting: true) == -30)
+    precondition(ChatScrollGeometry.readingOffset(target: 1838, current: 1818,
+      bottom: 1800, top: 0, isInteracting: false) == 1838)
+    precondition(ChatScrollGeometry.readingOffset(target: -30, current: 10,
+      bottom: 1800, top: 0, isInteracting: false) == 0)
+    precondition(ChatScrollGeometry.readingOffset(target: .nan, current: 10,
+      bottom: 1800, top: 0, isInteracting: false) == nil)
+    print("PASS: rubber-band preservation, real geometry correction, invalid geometry; delayed out-of-order growth/shrink, viewport anchoring, idle bottom follow, active touch, near-bottom reader, short transcript, warm sizing")
   }
 }

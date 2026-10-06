@@ -17,6 +17,50 @@ import os
 #endif
 
 #if os(iOS)
+  /// Opt-in aggregate counters used by controlled feed update measurements.
+  struct FeedCollectionUpdateDiagnostics {
+    var updateRequests = 0
+    var snapshotApplications = 0
+    var skippedSnapshots = 0
+    var postConfigurations = 0
+    var trendingConfigurations = 0
+    var reconfiguredItems = 0
+  }
+
+  /// UIKit snapshot application is asynchronous and does not stop when its
+  /// caller is cancelled. Drain publications behind one apply, using the newest
+  /// state for the next pass instead of overlapping collection mutations.
+  @MainActor
+  final class FeedSnapshotUpdateScheduler {
+    private var task: Task<Void, Never>?
+    private var needsUpdate = false
+    private(set) var requestCount = 0
+
+    func perform(_ apply: @escaping @MainActor () async -> Void) async {
+      requestCount += 1
+      needsUpdate = true
+      if let task {
+        await task.value
+        return
+      }
+      let task = Task { @MainActor in
+        defer { self.task = nil }
+        while self.needsUpdate && !Task.isCancelled {
+          self.needsUpdate = false
+          await apply()
+        }
+      }
+      self.task = task
+      await task.value
+    }
+
+    /// Discard queued publications. UIKit still owns the in-flight apply; a
+    /// request arriving afterward must be allowed to drain behind its completion.
+    func cancel() {
+      needsUpdate = false
+    }
+  }
+
   @available(iOS 16.0, *)
   final class FeedCollectionViewControllerIntegrated: UIViewController {
     // MARK: - Types
@@ -26,9 +70,16 @@ import os
       case header
       case trendingInterstitial
       case post(account: String, feed: String, id: String)
+      case footer
     }
 
     // MARK: - Properties
+
+    private(set) var updateDiagnostics: FeedCollectionUpdateDiagnostics?
+
+    func enableUpdateDiagnostics() {
+      updateDiagnostics = FeedCollectionUpdateDiagnostics()
+    }
 
     var collectionView: UICollectionView!
     private var dataSource: UICollectionViewDiffableDataSource<Section, Item>!
@@ -38,6 +89,9 @@ import os
 
     /// State management
     var stateManager: FeedStateManager
+    private var sceneContext: SceneNavigationContext
+    private(set) var viewportState: FeedViewportState
+    private let viewportOwnerID = UUID()
 
     /// Navigation
     private let navigationPath: Binding<NavigationPath>
@@ -53,8 +107,7 @@ import os
     private let seenTrackingDedupInterval: TimeInterval = 0.75
 
     /// Update serialization - prevents concurrent performUpdate calls
-    private var updateTask: Task<Void, Never>?
-    private var isPerformingUpdate = false
+    private let updateScheduler = FeedSnapshotUpdateScheduler()
 
     /// Initial load serialization - de-dupes overlapping loadInitialData calls
     /// (viewWillAppear, account-switch observer, updateStateManager can race)
@@ -67,9 +120,9 @@ import os
     var themeObserver: UIKitStateObserver<ThemeManager>?
     /// AppState observation for account switch boundaries
     var appStateObserver: UIKitStateObserver<AppState>?
-    var feedbackObserver: UIKitStateObserver<FeedFeedbackManager>?
+    var feedbackObserver: UIKitStateObserver<FeedStateManager>?
     /// Observer for tab tap to scroll to top
-    var tabTapObserver: UIKitStateObserver<AppState>?
+    var tabTapObserver: UIKitStateObserver<SceneNavigationContext>?
 
     /// Callbacks
     private let onScrollOffsetChanged: ((CGFloat) -> Void)?
@@ -94,9 +147,14 @@ import os
 
     /// Apply a full reload on the next snapshot (set when feed switches)
     private var shouldReloadDataOnce = false
+    private var shouldReconfigureAllOnce = false
     /// O(1) post lookup used during cell configuration
     private var postsByID: [String: CachedFeedViewPost] = [:]
     private var trendingContent = TrendingFeedContent()
+    private var appliedTrendingContent = TrendingFeedContent()
+    private var appliedFooterState: FeedPaginationFooterState?
+    private var appliedPostSignatures: [String: FeedPostContentSignature] = [:]
+    private var viewportInteractionGeneration = 0
     private var feedGeneration = 0
     private var appliedSnapshotGeneration: Int?
     private let scrollRestoration: FeedViewportRestoration
@@ -115,19 +173,34 @@ import os
 
     init(
       stateManager: FeedStateManager,
+      viewportState: FeedViewportState,
+      sceneContext: SceneNavigationContext,
       navigationPath: Binding<NavigationPath>,
       onScrollOffsetChanged: ((CGFloat) -> Void)? = nil
     ) {
       self.stateManager = stateManager
+      self.sceneContext = sceneContext
+      self.viewportState = viewportState
       self.navigationPath = navigationPath
       self.onScrollOffsetChanged = onScrollOffsetChanged
-      self.scrollRestoration = FeedViewportRestoration(anchor: stateManager.getScrollAnchor()?.viewportAnchor)
+      self.scrollRestoration = FeedViewportRestoration(anchor: viewportState.getScrollAnchor()?.viewportAnchor)
 
       super.init(nibName: nil, bundle: nil)
     }
 
     required init?(coder: NSCoder) {
       fatalError("init(coder:) has not been implemented")
+    }
+
+    /// Rebind hosted roots and observation if SwiftUI retains the controller.
+    func updateSceneContext(_ context: SceneNavigationContext) {
+      guard sceneContext !== context else { return }
+      tabTapObserver?.stopObserving()
+      sceneContext = context
+      guard isViewLoaded else { return }
+      setupTabTapObserver()
+      reloadAllCells()
+      updateBackgroundState()
     }
 
     // MARK: - Theme Support
@@ -169,44 +242,32 @@ import os
     }
 
     private func forceCellReconfiguration() {
-      guard let dataSource = dataSource else { return }
-
-      // Get current snapshot and reapply it to force cell reconfiguration
-      let currentSnapshot = dataSource.snapshot()
-      dataSource.apply(currentSnapshot, animatingDifferences: false)
+      guard dataSource != nil else { return }
+      shouldReconfigureAllOnce = true
+      Task { @MainActor [weak self] in await self?.performUpdate() }
     }
 
     private func reloadAllCells() {
-      guard let dataSource = dataSource else { return }
-      let snapshot = dataSource.snapshot()
-      #if os(iOS)
-        if #available(iOS 15.0, *) {
-          dataSource.applySnapshotUsingReloadData(snapshot)
-        } else {
-          dataSource.apply(snapshot, animatingDifferences: false)
-        }
-      #else
-        dataSource.apply(snapshot, animatingDifferences: false)
-      #endif
+      guard dataSource != nil else { return }
+      shouldReloadDataOnce = true
+      Task { @MainActor [weak self] in await self?.performUpdate() }
     }
 
     private func setupFeedbackObserver() {
-      let feedback = stateManager.appState.feedFeedbackManager
-      var previousEnabled = feedback.isEnabled
-      var previousFeedID = feedback.currentFeedType?.identifier
-      feedbackObserver = UIKitStateObserver(observing: feedback) {
-        [weak self] manager in
-        let currentEnabled = manager.isEnabled
-        let currentFeedID = manager.currentFeedType?.identifier
-        guard currentEnabled != previousEnabled || currentFeedID != previousFeedID else { return }
-        previousEnabled = currentEnabled
-        previousFeedID = currentFeedID
+      var previousTarget = stateManager.feedInteractionTarget
+      feedbackObserver = UIKitStateObserver(
+        observing: stateManager,
+        tracking: { _ = $0.feedInteractionTarget }
+      ) { [weak self] manager in
+        let currentTarget = manager.feedInteractionTarget
+        guard currentTarget != previousTarget else { return }
+        previousTarget = currentTarget
         self?.handleFeedFeedbackChange()
       }
     }
 
     private func handleFeedFeedbackChange() {
-      // When feed feedback enablement or feed identity changes, cells must rebuild
+      // When this feed starts or stops accepting feedback, cells must rebuild
       reloadAllCells()
       updateBackgroundState()
     }
@@ -236,11 +297,11 @@ import os
     
     // Observe tab tap to scroll to top and refresh
     private func setupTabTapObserver() {
-      tabTapObserver = UIKitStateObserver(observing: stateManager.appState) { [weak self] _ in
+      tabTapObserver = UIKitStateObserver(observing: sceneContext) { [weak self] _ in
         guard let self else { return }
-        if self.stateManager.appState.tabTappedAgain == 0 {
+        if self.sceneContext.tabTappedAgain == 0 {
           self.controllerLogger.debug("🏠 Home tab tapped again - scrolling to top and refreshing")
-          self.stateManager.appState.tabTappedAgain = nil
+          self.sceneContext.tabTappedAgain = nil
           self.scrollToTopAndRefresh()
         }
       }
@@ -269,10 +330,11 @@ import os
 
     override func viewWillAppear(_ animated: Bool) {
       super.viewWillAppear(animated)
+      setupScrollToTopCallback()
 
       // Update theme colors when view appears to catch any missed theme changes
       updateThemeColors()
-      stateManager.appState.urlHandler.registerTopViewController(self)
+      sceneContext.urlHandler.registerTopViewController(self)
 
       Task { @MainActor in
         if stateManager.posts.isEmpty {
@@ -288,6 +350,7 @@ import os
     override func viewWillDisappear(_ animated: Bool) {
       // Capture before navigation changes the outgoing view's effective insets.
       captureCurrentScrollPosition()
+      viewportState.unregisterScrollToTopHandler(ownerID: viewportOwnerID)
       super.viewWillDisappear(animated)
     }
 
@@ -313,9 +376,10 @@ import os
     }
 
 
-    deinit {
+    isolated deinit {
+      viewportState.unregisterScrollToTopHandler(ownerID: viewportOwnerID)
       cancelPendingLoadMoreRequest()
-      updateTask?.cancel()
+      updateScheduler.cancel()
       initialLoadTask?.cancel()
 
       if let backgroundObserver = backgroundObserver {
@@ -408,14 +472,15 @@ import os
           return nil
         }
 
-        // Check if feed feedback is enabled
-        guard self.stateManager.appState.feedFeedbackManager.isEnabled else {
+        // Only feeds whose generator accepts feedback offer these actions
+        guard let target = self.stateManager.feedInteractionTarget else {
           return nil
         }
 
-        // Get the post for this index
-        guard indexPath.item < self.stateManager.posts.count else { return nil }
-        let post = self.stateManager.posts[indexPath.item]
+        // Resolve the row's own post; header and interstitial rows shift item indexes.
+        guard case .post(_, _, let postID) = self.dataSource?.itemIdentifier(for: indexPath),
+          let post = self.postsByID[postID]
+        else { return nil }
 
         // Create Show More action
         let showMoreAction = UIContextualAction(style: .normal, title: nil) {
@@ -426,7 +491,7 @@ import os
           }
 
           if let postURI = try? post.feedViewPost.post.uri {
-            self.stateManager.appState.feedFeedbackManager.sendShowMore(postURI: postURI)
+            self.stateManager.appState.feedFeedbackManager.sendShowMore(postURI: postURI, target: target)
             self.controllerLogger.debug("Sent 'show more' feedback for post: \(postURI)")
 
             // Show confirmation toast
@@ -442,6 +507,7 @@ import os
         }
         showMoreAction.backgroundColor = .systemGreen
         showMoreAction.image = UIImage(systemName: "hand.thumbsup.fill")
+        showMoreAction.accessibilityLabel = "Show More Like This"
 
         // Create Show Less action
         let showLessAction = UIContextualAction(style: .normal, title: nil) {
@@ -452,7 +518,7 @@ import os
           }
 
           if let postURI = try? post.feedViewPost.post.uri {
-            self.stateManager.appState.feedFeedbackManager.sendShowLess(postURI: postURI)
+            self.stateManager.appState.feedFeedbackManager.sendShowLess(postURI: postURI, target: target)
             self.controllerLogger.debug("Sent 'show less' feedback for post: \(postURI)")
 
             // Show confirmation toast
@@ -468,6 +534,7 @@ import os
         }
         showLessAction.backgroundColor = .systemRed
         showLessAction.image = UIImage(systemName: "hand.thumbsdown.fill")
+        showLessAction.accessibilityLabel = "Show Less Like This"
 
         let configuration = UISwipeActionsConfiguration(actions: [showLessAction, showMoreAction])
         configuration.performsFirstActionWithFullSwipe = false
@@ -493,6 +560,8 @@ import os
           return
         }
 
+        self.updateDiagnostics?.postConfigurations += 1
+
         // Reset cell margins
         cell.layoutMargins = .zero
         cell.directionalLayoutMargins = NSDirectionalEdgeInsets.zero
@@ -516,7 +585,9 @@ import os
             tracksVisibilityForFeedback: false
           )
           .applyAppStateEnvironment(appState)
+          .environment(self.sceneContext)
           .environment(\.fontManager, appState.fontManager)
+          .environment(\.feedInteractionTarget, self.stateManager.feedInteractionTarget)
           .id(hostingIdentity)
           .padding(0)
           .background(Color.clear)
@@ -553,11 +624,39 @@ import os
         cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
         cell.selectedBackgroundView = nil
 
-        cell.contentConfiguration = UIHostingConfiguration { header }
+        cell.contentConfiguration = UIHostingConfiguration {
+          header
+            .applyAppStateEnvironment(self.stateManager.appState)
+            .environment(\.fontManager, self.stateManager.appState.fontManager)
+            .environment(self.sceneContext)
+        }
           .margins(.all, 0)
       }
       // Registration for trending interstitial cell
       let trendingInterstitialRegistration = UICollectionView.CellRegistration<UICollectionViewListCell, Void> {
+        [weak self] cell, indexPath, _ in
+        guard let self = self else {
+          cell.contentConfiguration = nil
+          return
+        }
+        self.updateDiagnostics?.trendingConfigurations += 1
+        let appState = self.stateManager.appState
+        cell.layoutMargins = .zero
+        cell.directionalLayoutMargins = NSDirectionalEdgeInsets.zero
+        cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
+        cell.selectedBackgroundView = nil
+
+        cell.contentConfiguration = UIHostingConfiguration {
+          TrendingFeedInterstitialView(content: self.trendingContent)
+            .applyAppStateEnvironment(appState)
+            .environment(\.fontManager, appState.fontManager)
+          .environment(self.sceneContext)
+        }
+        .margins(.all, 0)
+      }
+
+      // Registration for the pagination footer
+      let footerRegistration = UICollectionView.CellRegistration<UICollectionViewListCell, Void> {
         [weak self] cell, indexPath, _ in
         guard let self = self else {
           cell.contentConfiguration = nil
@@ -569,13 +668,19 @@ import os
         cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
         cell.selectedBackgroundView = nil
 
+        let state = self.currentFooterState
         cell.contentConfiguration = UIHostingConfiguration {
-          TrendingFeedInterstitialView(content: self.trendingContent)
-            .applyAppStateEnvironment(appState)
+          FeedPaginationFooterView(state: state) { [weak self] in
+            guard let self else { return }
+            Task { @MainActor in
+              await self.stateManager.loadMore()
+            }
+          }
+          .applyAppStateEnvironment(appState)
+          .environment(\.fontManager, appState.fontManager)
         }
         .margins(.all, 0)
       }
-
 
       dataSource = UICollectionViewDiffableDataSource<Section, Item>(
         collectionView: collectionView
@@ -590,6 +695,9 @@ import os
         case .post(_, _, let id):
           return collectionView.dequeueConfiguredReusableCell(
             using: postRegistration, for: indexPath, item: id)
+        case .footer:
+          return collectionView.dequeueConfiguredReusableCell(
+            using: footerRegistration, for: indexPath, item: ())
         }
       }
       // Defensive: provide a no-op supplementary provider to satisfy any unexpected requests
@@ -631,6 +739,14 @@ import os
         // User-initiated refresh should override background flag
         // This ensures pull-to-refresh works even if background flag is stuck
         await stateManager.refreshUserInitiated()
+        if case .error = stateManager.loadingState, !stateManager.posts.isEmpty {
+          stateManager.appState.toastManager.show(
+            ToastItem(
+              message: "Couldn’t refresh. Check your connection and try again.",
+              icon: "wifi.exclamationmark"
+            )
+          )
+        }
         await performUpdate()
       }
     }
@@ -639,121 +755,140 @@ import os
 
     @MainActor
     func performUpdate() async {
-      guard !isAppInBackground else {
-        controllerLogger.debug("⏸️ Skipping update - app in background")
-        return
+      updateDiagnostics?.updateRequests += 1
+      await updateScheduler.perform { [weak self] in
+        await self?.applyCurrentState()
       }
+    }
 
-      // Prevent concurrent updates - if already updating, cancel previous and wait
-      if isPerformingUpdate {
-        controllerLogger.debug("⚠️ Update already in progress, cancelling previous")
-        updateTask?.cancel()
-        // Brief wait to allow cancellation to complete
-        try? await Task.sleep(nanoseconds: 10_000_000) // 10ms
-      }
-
-      // Cancel any pending update task
-      updateTask?.cancel()
-
+    private func applyCurrentState() async {
+      guard !isAppInBackground, let dataSource, let collectionView else { return }
       let generation = feedGeneration
       let manager = stateManager
-      // Create new update task
-      updateTask = Task { @MainActor in
-        // Mark as performing update
-        isPerformingUpdate = true
-        defer {
-          isPerformingUpdate = false
-        }
 
-        guard !Task.isCancelled else { return }
-
-        // Always end refreshing, even on error
-        if isRefreshing {
-          #if !targetEnvironment(macCatalyst)
-            refreshControl.endRefreshing()
-          #endif
-          isRefreshing = false
-        }
-
-        // Check for errors before updating UI
-        if case .error(let error) = stateManager.loadingState {
-          controllerLogger.error("❌ Feed update error: \(error.localizedDescription)")
-          // Keep existing posts visible, user can retry
+      if isRefreshing {
+        #if !targetEnvironment(macCatalyst)
+          refreshControl.endRefreshing()
+        #endif
+        isRefreshing = false
+      }
+      if case .error(let error) = manager.loadingState {
+        controllerLogger.error("Feed update error: \(error.localizedDescription)")
+        // A failed load still permits theme and feedback changes on retained rows.
+        if !shouldReloadDataOnce && !shouldReconfigureAllOnce {
           updateBackgroundState()
           return
         }
-
-        controllerLogger.debug("🔄 Fast update: Creating snapshot")
-
-        // CRITICAL: Capture state at this moment to prevent race conditions
-        // Do NOT read from stateManager during snapshot application
-        let capturedPosts = stateManager.posts
-        let capturedPostsByID = Dictionary(
-          capturedPosts.map { ($0.id, $0) },
-          uniquingKeysWith: { first, _ in first }
-        )
-        let capturedHeaderPresent = FeedDiscoveryHeaderVisibility.shouldShowHeader(
-          headerIsPresent: headerView != nil,
-          postCount: capturedPosts.count
-        )
-        let accountID = stateManager.appState.userDID ?? "unknown-account"
-        let feedID = stateManager.currentFeedType.identifier
-
-        guard !Task.isCancelled else { return }
-
-        // Build snapshot from captured immutable state
-        var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
-        snapshot.appendSections([.main])
-
-        // Prepend header cell when available
-        if capturedHeaderPresent {
-          snapshot.appendItems([.header], toSection: .main)
-        }
-
-        var items: [Item] = []
-        let shouldShowTrending = !trendingContent.isEmpty
-        let isEligibleFeed = stateManager.currentFeedType == .timeline || feedID.contains("discover") || feedID == "timeline"
-        let insertIndex = 6
-
-        for (index, post) in capturedPosts.enumerated() {
-          if shouldShowTrending && isEligibleFeed && capturedPosts.count >= 7 && index == insertIndex {
-            items.append(.trendingInterstitial)
-          }
-          items.append(.post(account: accountID, feed: feedID, id: post.id))
-        }
-
-        snapshot.appendItems(items, toSection: .main)
-        postsByID = capturedPostsByID
-        guard !Task.isCancelled else { return }
-
-        let currentItemIdentifiers = dataSource.snapshot().itemIdentifiers
-
-        // Apply snapshot with targeted reconfiguration to avoid full reload churn
-        if #available(iOS 15.0, *), shouldReloadDataOnce {
-          shouldReloadDataOnce = false
-          await dataSource.applySnapshotUsingReloadData(snapshot)
-        } else if #available(iOS 15.0, *) {
-          // Existing rows may gain thread context in the same update that inserts
-          // other posts. Reconfigure survivors even when the identifier list changes.
-          let existingItems = Set(currentItemIdentifiers)
-          snapshot.reconfigureItems(items.filter { existingItems.contains($0) })
-          await dataSource.apply(snapshot, animatingDifferences: false)
-        } else {
-          // Fallback for iOS 14 (though minimum is iOS 16)
-          await dataSource.apply(snapshot, animatingDifferences: false)
-        }
-
-        guard !Task.isCancelled, generation == feedGeneration, manager === stateManager else { return }
-
-        appliedSnapshotGeneration = generation
-        collectionView.layoutIfNeeded()
-        restoreScrollPositionIfReady()
-        view.setNeedsLayout()
-        controllerLogger.debug("✅ Fast update complete - \\(items.count) items")
-        updateBackgroundState()
       }
 
-      await updateTask?.value
+      let capturedPosts = manager.posts
+      let capturedPostsByID = Dictionary(
+        capturedPosts.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+      let capturedSignatures = capturedPostsByID.mapValues(FeedPostContentSignature.init)
+      let capturedTrendingContent = trendingContent
+      let capturedFooterState = currentFooterState
+      let capturedHeaderPresent = FeedDiscoveryHeaderVisibility.shouldShowHeader(
+        headerIsPresent: headerView != nil, postCount: capturedPosts.count)
+      let accountID = manager.appState.userDID ?? "unknown-account"
+      let feedID = manager.currentFeedType.identifier
+      let isEligibleFeed = manager.currentFeedType == .timeline
+        || feedID.contains("discover") || feedID == "timeline"
+
+      var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
+      snapshot.appendSections([.main])
+      var items: [Item] = capturedHeaderPresent ? [.header] : []
+      for (index, post) in capturedPosts.enumerated() {
+        if !capturedTrendingContent.isEmpty && isEligibleFeed
+          && capturedPosts.count >= 7 && index == 6 {
+          items.append(.trendingInterstitial)
+        }
+        items.append(.post(account: accountID, feed: feedID, id: post.id))
+      }
+      if !capturedPosts.isEmpty {
+        items.append(.footer)
+      }
+      snapshot.appendItems(items, toSection: .main)
+
+      let currentItems = dataSource.snapshot().itemIdentifiers
+      let existingItems = Set(currentItems)
+      let reconfiguredItems = items.filter { item in
+        guard existingItems.contains(item) else { return false }
+        if shouldReconfigureAllOnce { return true }
+        switch item {
+        case .post(_, _, let id):
+          return appliedPostSignatures[id] != capturedSignatures[id]
+        case .trendingInterstitial:
+          return appliedTrendingContent != capturedTrendingContent
+        case .footer:
+          return appliedFooterState != capturedFooterState
+        case .header:
+          return false
+        }
+      }
+      postsByID = capturedPostsByID
+      guard shouldReloadDataOnce || currentItems != items || !reconfiguredItems.isEmpty else {
+        updateDiagnostics?.skippedSnapshots += 1
+        restoreScrollPositionIfReady()
+        updateBackgroundState()
+        return
+      }
+
+      let offsetBefore = collectionView.contentOffset.y
+      let heightBefore = collectionView.contentSize.height
+      let interactionGeneration = viewportInteractionGeneration
+      let readingAnchor = FeedViewportAnchor.capture(in: collectionView, postIDAt: postIDAt)
+      let shouldPreserveReadingAnchor = !scrollRestoration.isPending
+        && !collectionView.isTracking && !collectionView.isDragging && !collectionView.isDecelerating
+      let signpost = PerformanceSignposts.beginFeedSnapshot(
+        itemCount: items.count, reconfiguredCount: reconfiguredItems.count)
+      var anchorDeltaBeforeRestore: Double?
+      var anchorDeltaAfterRestore: Double?
+      defer {
+        PerformanceSignposts.endFeedSnapshot(id: signpost,
+          offsetDelta: Double(collectionView.contentOffset.y - offsetBefore),
+          heightDelta: Double(collectionView.contentSize.height - heightBefore),
+          anchorDeltaBeforeRestore: anchorDeltaBeforeRestore,
+          anchorDeltaAfterRestore: anchorDeltaAfterRestore)
+      }
+
+      updateDiagnostics?.snapshotApplications += 1
+      shouldReconfigureAllOnce = false
+      if shouldReloadDataOnce {
+        shouldReloadDataOnce = false
+        await dataSource.applySnapshotUsingReloadData(snapshot)
+      } else {
+        updateDiagnostics?.reconfiguredItems += reconfiguredItems.count
+        snapshot.reconfigureItems(reconfiguredItems)
+        await dataSource.apply(snapshot, animatingDifferences: false)
+      }
+      guard !Task.isCancelled, generation == feedGeneration, manager === stateManager else { return }
+
+      appliedPostSignatures = capturedSignatures
+      appliedTrendingContent = capturedTrendingContent
+      appliedFooterState = capturedFooterState
+      appliedSnapshotGeneration = generation
+      collectionView.layoutIfNeeded()
+      if let readingAnchor,
+        let indexPath = dataSource.indexPath(for: .post(
+          account: accountID, feed: feedID, id: readingAnchor.postID)),
+        let attributes = collectionView.layoutAttributesForItem(at: indexPath) {
+        anchorDeltaBeforeRestore = Double(attributes.frame.minY - collectionView.contentOffset.y
+          - collectionView.adjustedContentInset.top - readingAnchor.viewportY)
+        if shouldPreserveReadingAnchor && !readingAnchor.isAtTop
+          && interactionGeneration == viewportInteractionGeneration
+          && !collectionView.isTracking && !collectionView.isDragging && !collectionView.isDecelerating {
+          readingAnchor.restore(in: collectionView, indexPath: indexPath)
+        }
+      }
+      restoreScrollPositionIfReady()
+      if let readingAnchor,
+        let indexPath = dataSource.indexPath(for: .post(
+          account: accountID, feed: feedID, id: readingAnchor.postID)),
+        let attributes = collectionView.layoutAttributesForItem(at: indexPath) {
+        anchorDeltaAfterRestore = Double(attributes.frame.minY - collectionView.contentOffset.y
+          - collectionView.adjustedContentInset.top - readingAnchor.viewportY)
+      }
+      updateBackgroundState()
     }
 
     @MainActor
@@ -806,8 +941,8 @@ import os
     }
 
     private func setupScrollToTopCallback() {
-      // Register the callback so FeedStateManager can trigger scroll-to-top
-      stateManager.scrollToTopCallback = { [weak self] in
+      // Commands belong to this scene's viewport, even when feed data is shared.
+      viewportState.registerScrollToTopHandler(ownerID: viewportOwnerID) { [weak self] in
         self?.scrollToTopAnimated()
       }
     }
@@ -817,6 +952,7 @@ import os
       guard let collectionView = collectionView else { return }
 
       scrollRestoration.cancel()
+      viewportInteractionGeneration += 1
       let minOffsetY = -collectionView.adjustedContentInset.top
       let minOffsetX = -collectionView.adjustedContentInset.left
 
@@ -870,11 +1006,11 @@ import os
 
     // MARK: - Scroll Position Management
 
-    /// Captures the current scroll position and saves it to the state manager
+    /// Captures this scene's position without mutating the shared feed manager.
     private func captureCurrentScrollPosition() {
       guard let collectionView = collectionView else { return }
       #if os(iOS)
-        stateManager.captureScrollAnchor(from: collectionView, postIDAt: postIDAt)
+        viewportState.captureScrollAnchor(from: collectionView, postIDAt: postIDAt)
       #endif
     }
 
@@ -941,11 +1077,28 @@ import os
       if let postURI = try? ATProtocolURI(
         uriString: postViewModel.feedViewPost.post.uri.uriString())
       {
-        stateManager.appState.feedFeedbackManager.trackPostSeen(postURI: postURI)
+        stateManager.appState.feedFeedbackManager.trackPostSeen(
+          postURI: postURI, target: stateManager.feedInteractionTarget)
       }
     }
     
     private func triggerLoadMoreIfNeeded(at indexPath: IndexPath) {
+      // Reaching the footer while more pages exist means an earlier page
+      // request finished without filling the screen; ask for the next one.
+      if case .footer = dataSource.itemIdentifier(for: indexPath) {
+        guard currentFooterState == .loading, !isLoadMoreRequestInFlight else { return }
+        isLoadMoreRequestInFlight = true
+        loadMoreTask = Task { @MainActor [weak self] in
+          guard let self else { return }
+          defer {
+            self.loadMoreTask = nil
+            self.isLoadMoreRequestInFlight = false
+          }
+          guard !self.stateManager.posts.isEmpty, !self.isAppInBackground else { return }
+          await self.stateManager.loadMore()
+        }
+        return
+      }
       guard let postIndex = postIndexForRow(at: indexPath) else { return }
       let totalItems = stateManager.posts.count
       guard totalItems > .zero else { return }
@@ -1014,8 +1167,9 @@ import os
 
     // MARK: - State Manager Updates
 
-    func updateStateManager(_ newStateManager: FeedStateManager) {
-      guard newStateManager !== stateManager else { return }
+    func updateStateManager(_ newStateManager: FeedStateManager, viewportState newViewportState: FeedViewportState) {
+      let dataManagerChanged = newStateManager !== stateManager
+      guard dataManagerChanged || newViewportState !== viewportState else { return }
 
       controllerLogger.info(
         "🔄 Fast switching state manager: \\(self.stateManager.currentFeedType.identifier) → \\(newStateManager.currentFeedType.identifier)"
@@ -1023,10 +1177,10 @@ import os
 
       // Capture scroll position for the current feed before switching
       captureCurrentScrollPosition()
+      viewportState.unregisterScrollToTopHandler(ownerID: viewportOwnerID)
 
       // Cancel ongoing operations and invalidate completions from the old feed.
       feedGeneration += 1
-      updateTask?.cancel()
       cancelPendingLoadMoreRequest()
       initialLoadTask?.cancel()
       initialLoadTask = nil
@@ -1038,7 +1192,8 @@ import os
 
       // Update the state manager
       stateManager = newStateManager
-      scrollRestoration.reset(to: newStateManager.getScrollAnchor()?.viewportAnchor)
+      viewportState = newViewportState
+      scrollRestoration.reset(to: newViewportState.getScrollAnchor()?.viewportAnchor)
       resetTriggerDedupState()
 
       // Restart observations
@@ -1054,7 +1209,11 @@ import os
       let generation = feedGeneration
       Task { @MainActor [weak self] in
         guard let self, self.feedGeneration == generation else { return }
-        await self.loadInitialData()
+        if dataManagerChanged {
+          await self.loadInitialData()
+        } else {
+          await self.performUpdate()
+        }
       }
     }
   }
@@ -1076,6 +1235,7 @@ import os
 
     func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
       scrollRestoration.cancel()
+      viewportInteractionGeneration += 1
     }
 
     func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
@@ -1136,8 +1296,9 @@ import os
   enum FeedBackgroundState {
     case content
     case loading(message: String)
+    case error(message: String, retry: () -> Void)
     case emptyTimeline(action: () -> Void)
-    case emptyFeed(feedName: String, action: () -> Void)
+    case emptyFeed(action: () -> Void)
 
     var isContent: Bool {
       if case .content = self {
@@ -1150,23 +1311,25 @@ import os
   @available(iOS 16.0, *)
   extension FeedCollectionViewControllerIntegrated {
     private var currentBackgroundState: FeedBackgroundState {
-      if stateManager.posts.isEmpty && stateManager.isLoading {
-        let message: String
-        switch stateManager.currentFeedType {
-        case .timeline:
-          message = "Loading your timeline..."
-        default:
-          message = "Loading \(stateManager.currentFeedType.displayName.lowercased())..."
+      if stateManager.posts.isEmpty, case .error(let error) = stateManager.loadingState {
+        let message = UserFacingError.message(for: error, action: "load this feed")
+          ?? "Couldn’t load this feed. Try again."
+        return .error(message: message) { [weak self] in
+          guard let self else { return }
+          Task { @MainActor in
+            await self.stateManager.retry()
+          }
         }
-        return .loading(message: message)
+      } else if stateManager.posts.isEmpty && stateManager.isLoading {
+        return .loading(message: "Loading feed…")
       } else if stateManager.posts.isEmpty && !stateManager.isLoading {
         switch stateManager.currentFeedType {
         case .timeline:
           return .emptyTimeline { [weak self] in
-            self?.stateManager.appState.navigationManager.tabSelection?(1)
+            self?.sceneContext.navigationManager.tabSelection?(1)
           }
         default:
-          return .emptyFeed(feedName: stateManager.currentFeedType.displayName) { [weak self] in
+          return .emptyFeed { [weak self] in
             guard let self else { return }
             Task { @MainActor in
               await self.stateManager.refreshUserInitiated()
@@ -1186,13 +1349,36 @@ import os
       case .loading(let message):
         LoadingStateView(message: message)
           .background(Color.clear)
+      case .error(let message, let retry):
+        ContentUnavailableStateView(
+          title: "Couldn’t Load Feed",
+          description: message,
+          systemImage: "wifi.exclamationmark",
+          actionTitle: "Try Again",
+          action: retry
+        )
+        .background(Color.clear)
       case .emptyTimeline(let action):
         ContentUnavailableStateView.emptyFollowingFeed(onDiscover: action)
           .background(Color.clear)
-      case .emptyFeed(let feedName, let action):
-        ContentUnavailableStateView.emptyFeed(feedName: feedName, onRefresh: action, onExplore: nil)
-          .background(Color.clear)
+      case .emptyFeed(let action):
+        ContentUnavailableStateView(
+          title: "No Posts Yet",
+          description: "There’s nothing in this feed right now. Pull down to refresh or try again later.",
+          systemImage: "tray",
+          actionTitle: "Refresh",
+          action: action
+        )
+        .background(Color.clear)
       }
+    }
+
+    /// What the end of a non-empty feed shows: a spinner while more pages may load,
+    /// a retry after a failed page, or a quiet end-of-feed line.
+    private var currentFooterState: FeedPaginationFooterState {
+      if stateManager.paginationError != nil { return .failed }
+      if stateManager.hasReachedEnd { return .end }
+      return .loading
     }
 
     private func updateBackgroundState() {
@@ -1206,7 +1392,11 @@ import os
         backgroundHostingController = nil
       } else {
         // Show appropriate background view
-        let backgroundView = AnyView(backgroundViewForState(currentState))
+        let backgroundView = AnyView(
+          backgroundViewForState(currentState)
+            .environment(stateManager.appState)
+            .environment(\.fontManager, stateManager.appState.fontManager)
+        )
 
         // Create or update hosting controller
         if let host = backgroundHostingController {
@@ -1225,21 +1415,62 @@ import os
 
   }
 
+  // MARK: - Pagination Footer
+
+  enum FeedPaginationFooterState: Equatable {
+    case loading
+    case failed
+    case end
+  }
+
+  struct FeedPaginationFooterView: View {
+    let state: FeedPaginationFooterState
+    let onRetry: () -> Void
+
+    var body: some View {
+      Group {
+        switch state {
+        case .loading:
+          ProgressView()
+            .accessibilityLabel("Loading more posts")
+        case .failed:
+          VStack(spacing: 8) {
+            Text("Couldn’t load more posts.")
+              .appFont(AppTextRole.subheadline)
+              .foregroundStyle(Color.secondary)
+              .multilineTextAlignment(.center)
+            Button("Try Again", action: onRetry)
+              .buttonStyle(.bordered)
+          }
+        case .end:
+          Text("You’re all caught up")
+            .appFont(AppTextRole.footnote)
+            .foregroundStyle(Color.secondary)
+        }
+      }
+      .frame(maxWidth: .infinity)
+      .padding(.vertical, 24)
+    }
+  }
+
 #else
   // MARK: - macOS Stub
 
   @available(macOS 13.0, *)
   final class FeedCollectionViewControllerIntegrated: NSViewController {
     var stateManager: FeedStateManager
+    private var sceneContext: SceneNavigationContext
     private let navigationPath: Binding<NavigationPath>
     private let onScrollOffsetChanged: ((CGFloat) -> Void)?
 
     init(
       stateManager: FeedStateManager,
+      sceneContext: SceneNavigationContext,
       navigationPath: Binding<NavigationPath>,
       onScrollOffsetChanged: ((CGFloat) -> Void)? = nil
     ) {
       self.stateManager = stateManager
+      self.sceneContext = sceneContext
       self.navigationPath = navigationPath
       self.onScrollOffsetChanged = onScrollOffsetChanged
       super.init(nibName: nil, bundle: nil)

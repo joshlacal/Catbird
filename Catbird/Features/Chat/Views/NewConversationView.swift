@@ -4,6 +4,7 @@ import SwiftUI
 
 /// New conversation view with a segmented picker for Bluesky DM and Bluesky group modes.
 struct NewConversationView: View {
+  @Environment(SceneNavigationContext.self) private var sceneContext
   @Environment(AppState.self) private var appState
   @Environment(\.dismiss) private var dismiss
 
@@ -19,13 +20,14 @@ struct NewConversationView: View {
   @State private var creationProgress = ""
   @State private var creationTask: Task<Void, Never>?
   @State private var showingError = false
+  @State private var errorTitle = "Couldn’t Start Conversation"
   @State private var errorMessage: String?
 
   private let logger = Logger(subsystem: "blue.catbird", category: "NewConversation")
 
   enum ConversationMode: String, CaseIterable {
-    case bluesky = "Bluesky DM"
-    case blueskyGroup = "Bluesky Group"
+    case bluesky = "Message"
+    case blueskyGroup = "Group"
   }
 
   enum Step {
@@ -82,7 +84,7 @@ struct NewConversationView: View {
           confirmationButton
         }
       }
-      .alert("Error", isPresented: $showingError) {
+      .alert(errorTitle, isPresented: $showingError) {
         Button("OK", role: .cancel) {}
       } message: {
         if let errorMessage {
@@ -271,22 +273,23 @@ struct NewConversationView: View {
 
   @MainActor
   private func createBlueskyGroup() async {
+    errorTitle = "Couldn’t Create Group"
     guard !selectedDIDs.isEmpty else {
-      errorMessage = "Select at least one person"
+      errorMessage = "Select at least one person."
       showingError = true
       return
     }
 
     let trimmedName = groupName.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmedName.isEmpty else {
-      errorMessage = "Enter a group name"
+      errorMessage = "Enter a name for the group."
       showingError = true
       return
     }
 
     isCreating = true
     step = .creating
-    creationProgress = "Creating Bluesky group chat..."
+    creationProgress = "Creating group chat…"
 
     if let convoId = await appState.chatManager.startGroupConversation(
       memberDIDs: Array(selectedDIDs),
@@ -296,13 +299,16 @@ struct NewConversationView: View {
       isCreating = false
       dismiss()
       #if os(iOS)
-      appState.navigationManager.navigate(to: .conversation(convoId), in: 4)
+      sceneContext.navigationManager.navigate(to: .conversation(convoId), in: 4)
       #else
-      appState.navigationManager.targetConversationId = convoId
+      sceneContext.navigationManager.targetConversationId = convoId
       #endif
     } else {
       logger.error("Failed to create Bluesky group conversation")
-      errorMessage = "Failed to create group chat. Please try again."
+      // Show the specific reason here; the sheet hides the Messages tab's alert
+      errorMessage = appState.chatManager.errorState?.localizedDescription
+        ?? "Couldn’t create the group chat. Please try again."
+      appState.chatManager.errorState = nil
       showingError = true
       step = .configureGroup
       isCreating = false
@@ -311,26 +317,25 @@ struct NewConversationView: View {
 
   // MARK: - Bluesky DM Creation
 
-  private func startBlueskyConversation(_ profile: any ProfileDisplayable) {
-    Task {
-      logger.debug("Starting Bluesky conversation with: \(profile.handle.description)")
-      if let convoId = await appState.chatManager.startConversationWith(
-        userDID: profile.did.didString()
-      ) {
-        await MainActor.run {
-          dismiss()
-          #if os(iOS)
-          appState.navigationManager.navigate(to: .conversation(convoId), in: 4)
-          #else
-          appState.navigationManager.targetConversationId = convoId
-          #endif
-        }
-      } else {
-        await MainActor.run {
-          errorMessage = "Failed to start conversation. Please try again."
-          showingError = true
-        }
-      }
+  @MainActor
+  private func startBlueskyConversation(_ profile: any ProfileDisplayable) async {
+    logger.debug("Starting Bluesky conversation with: \(profile.handle.description)")
+    if let convoId = await appState.chatManager.startConversationWith(
+      userDID: profile.did.didString()
+    ) {
+      dismiss()
+      #if os(iOS)
+      sceneContext.navigationManager.navigate(to: .conversation(convoId), in: 4)
+      #else
+      sceneContext.navigationManager.targetConversationId = convoId
+      #endif
+    } else {
+      // Show the specific reason here; the sheet hides the Messages tab's alert
+      errorTitle = "Couldn’t Start Conversation"
+      errorMessage = appState.chatManager.errorState?.localizedDescription
+        ?? "Couldn’t start this conversation. Please try again."
+      appState.chatManager.errorState = nil
+      showingError = true
     }
   }
 }

@@ -342,7 +342,7 @@ struct AudioVisualizerPreview: View {
           .progressViewStyle(CircularProgressViewStyle(tint: Color.accentColor))
           .scaleEffect(1.5)
         
-        Text("Generating Video...")
+        Text("Generating Video…")
           .font(.title2)
           .fontWeight(.medium)
           .foregroundColor(.primary)
@@ -371,17 +371,17 @@ struct AudioVisualizerPreview: View {
     
     switch progress {
     case 0..<0.2:
-      return "Analyzing audio waveform..."
+      return "Analyzing audio waveform…"
     case 0.2..<0.4:
-      return "Setting up video encoder..."
+      return "Setting up video encoder…"
     case 0.4..<0.8:
-      return "Rendering video frames..."
+      return "Rendering video frames…"
     case 0.8..<0.9:
-      return "Adding audio track..."
+      return "Adding audio track…"
     case 0.9..<1.0:
-      return "Finalizing video..."
+      return "Finalizing video…"
     default:
-      return "Almost done..."
+      return "Almost done…"
     }
   }
   

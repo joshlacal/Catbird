@@ -2,141 +2,132 @@ import SwiftUI
 import Petrel
 
 public struct TrendingFeedInterstitialView: View {
-    @Environment(AppState.self) private var appState
-    @Environment(\.colorScheme) private var colorScheme
+  @Environment(SceneNavigationContext.self) private var sceneContext
+  @Environment(AppState.self) private var appState
+  @Environment(\.colorScheme) private var colorScheme
 
-    let content: TrendingFeedContent
+  let content: TrendingFeedContent
 
-    init(content: TrendingFeedContent) {
-        self.content = content
-    }
+  init(content: TrendingFeedContent) {
+    self.content = content
+  }
 
-    private var showTopics: Bool {
-        appState.appSettings.showTrendingTopics
-    }
-
-    private var showVideos: Bool {
-        appState.appSettings.showTrendingVideos
-    }
-
-    private var hasContent: Bool {
-        (showTopics && !content.trends.isEmpty) || (showVideos && !content.videos.isEmpty)
-    }
-
-    public var body: some View {
-        if hasContent {
-            VStack(alignment: .leading, spacing: 14) {
-                // Header with title and options menu
-                HStack {
-                    HStack(spacing: 6) {
-                        Image(systemName: "chart.line.uptrend.xyaxis")
-                            .font(.subheadline.bold())
-                            .foregroundColor(.orange)
-                        Text("Trending on Bluesky")
-                            .font(.headline)
-                    }
-
-                    Spacer()
-
-                    Menu {
-                        if showTopics {
-                            Button(role: .destructive) {
-                                appState.appSettings.showTrendingTopics = false
-                            } label: {
-                                Label("Hide Trending Topics", systemImage: "eye.slash")
-                            }
-                        }
-                        if showVideos {
-                            Button(role: .destructive) {
-                                appState.appSettings.showTrendingVideos = false
-                            } label: {
-                                Label("Hide Trending Videos", systemImage: "eye.slash")
-                            }
-                        }
-                    } label: {
-                        Image(systemName: "ellipsis")
-                            .font(.system(size: 16))
-                            .foregroundColor(.secondary)
-                            .padding(6)
-                    }
-                }
-                .padding(.horizontal)
-
-                // Topics section
-                if showTopics && !content.trends.isEmpty {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
-                            ForEach(content.trends.prefix(6), id: \.topic) { trend in
-                                Button {
-                                    openTopic(trend)
-                                } label: {
-                                    HStack(spacing: 6) {
-                                        Text(trend.displayName)
-                                            .font(.subheadline.bold())
-                                            .foregroundColor(.primary)
-
-                                        if trend.postCount > 0 {
-                                            Text(formatCount(trend.postCount))
-                                                .font(.caption2)
-                                                .foregroundColor(.secondary)
-                                        }
-                                    }
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 8)
-                                    .background(Color.dynamicSecondaryBackground(appState.themeManager, currentScheme: colorScheme))
-                                    .clipShape(Capsule())
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                        .padding(.horizontal)
-                    }
-                }
-
-                // Videos section (reusing WS-A G03 TrendingVideosSection)
-                if showVideos && !content.videos.isEmpty {
-                    TrendingVideosSection(
-                        videos: content.videos,
-                        onSelectPost: { post in
-                            openPost(post)
-                        },
-                        onSeeAll: {
-                            openVideoFeed()
-                        }
-                    )
-                }
-            }
-            .padding(.vertical, 12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))
-            .overlay(alignment: .bottom) {
-                Rectangle()
-                    .fill(Color.separator)
-                    .frame(height: 0.5)
-            }
-        }
-    }
-
-    private func openTopic(_ trend: AppBskyUnspeccedDefs.TrendView) {
+  public var body: some View {
+    TrendingFeedPresentation(
+      content: content,
+      showTopics: appState.appSettings.showTrendingTopics,
+      showVideos: appState.appSettings.showTrendingVideos,
+      onSelectTopic: { trend in
         guard let url = URL(string: trend.link, relativeTo: URL(string: "https://bsky.app")) else { return }
-        _ = appState.urlHandler.handle(url.absoluteURL)
+        _ = sceneContext.urlHandler.handle(url.absoluteURL)
+      },
+      onSelectPost: { post in
+        sceneContext.navigationManager.navigate(to: .videoFeedStartingAt(post))
+      },
+      onOpenVideos: {
+        sceneContext.navigationManager.navigate(to: .videoFeed)
+      },
+      onHideTopics: { appState.appSettings.showTrendingTopics = false },
+      onHideVideos: { appState.appSettings.showTrendingVideos = false }
+    )
+    .background(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))
+    .onChange(of: appState.appSettings.showTrendingTopics) { _, showTopics in
+      if !showTopics { appState.cancelTopicPreviewPrefetch(owner: .timeline) }
     }
+  }
+}
 
-    private func openVideoFeed() {
-        appState.navigationManager.navigate(to: .videoFeed)
-    }
+/// Shared production layout; topic artwork reads the enclosing account’s moderated preview cache.
+struct TrendingFeedPresentation: View {
+  let content: TrendingFeedContent
+  let showTopics: Bool
+  let showVideos: Bool
+  let onSelectTopic: (AppBskyUnspeccedDefs.TrendView) -> Void
+  let onSelectPost: (AppBskyFeedDefs.PostView) -> Void
+  let onOpenVideos: () -> Void
+  let onHideTopics: () -> Void
+  let onHideVideos: () -> Void
 
-    private func openPost(_ post: AppBskyFeedDefs.PostView) {
-        appState.navigationManager.navigate(to: .post(post.uri))
-    }
+  @State private var hideTarget: HideTarget?
 
+  private enum HideTarget {
+    case topics, videos
 
-    private func formatCount(_ count: Int) -> String {
-        if count >= 1000 {
-            return String(format: "%.1fk", Double(count) / 1000.0)
+    var name: String { self == .topics ? "trending topics" : "trending videos" }
+  }
+
+  private var hasContent: Bool {
+    (showTopics && !content.trends.isEmpty) || (showVideos && !content.videos.isEmpty)
+  }
+
+  var body: some View {
+    if hasContent {
+      VStack(alignment: .leading, spacing: DesignTokens.Spacing.base) {
+        DiscoverySectionHeader("Trending on Bluesky") {
+          Menu {
+            if showTopics {
+              Button { hideTarget = .topics } label: {
+                Label("Hide trending topics…", systemImage: "eye.slash")
+              }
+            }
+            if showVideos {
+              Button { hideTarget = .videos } label: {
+                Label("Hide trending videos…", systemImage: "eye.slash")
+              }
+            }
+          } label: {
+            Image(systemName: "ellipsis")
+              .appFont(AppTextRole.subheadline)
+              .foregroundStyle(.secondary)
+              .frame(width: 44, height: 44)
+              .contentShape(Rectangle())
+          }
+          .accessibilityLabel("Trending options")
         }
-        return "\(count)"
+
+        if showTopics && !content.trends.isEmpty {
+          ScrollView(.horizontal, showsIndicators: false) {
+            // Every card has the same fixed size, so the lazy stack's height does not depend on which cards are built.
+            LazyHStack(alignment: .top, spacing: DesignTokens.Spacing.sm) {
+              ForEach(content.trends.prefix(6), id: \.topic) { trend in
+                TrendingTimelineTopicCard(trend: trend, onSelect: { onSelectTopic(trend) })
+              }
+            }
+            .padding(.horizontal, 16)
+          }
+        }
+
+        if showVideos && !content.videos.isEmpty {
+          TrendingVideosSection(
+            videos: content.videos,
+            presentation: .timeline,
+            onSelectPost: onSelectPost,
+            onSeeAll: onOpenVideos
+          )
+        }
+      }
+      .padding(.vertical, DesignTokens.Spacing.base)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .overlay(alignment: .bottom) { Divider() }
+      .modifier(TrendingTimelinePreviewPrefetch(trends: showTopics ? content.trends : []))
+      .confirmationDialog(
+        "Hide \(hideTarget?.name ?? "trending content")?",
+        isPresented: Binding(
+          get: { hideTarget != nil },
+          set: { if !$0 { hideTarget = nil } }
+        ),
+        titleVisibility: .visible,
+        presenting: hideTarget
+      ) { target in
+        Button("Hide in Feeds and Search", role: .destructive) {
+          if target == .topics { onHideTopics() } else { onHideVideos() }
+        }
+        Button("Cancel", role: .cancel) {}
+      } message: { target in
+        Text("This hides \(target.name) for this account in Feeds and Search. You can show \(target.name) again in Settings → Content & Media.")
+      }
     }
+  }
 }
 
 struct TrendingFeedContent: Equatable {
@@ -158,8 +149,12 @@ struct TrendingFeedContent: Equatable {
             return []
         }
         do {
+            let viewerDID = appState.userDID
             let (_, output) = try await client.app.bsky.unspecced.getTrends(input: .init(limit: 10))
-            return output?.trends ?? []
+            guard !Task.isCancelled, !appState.isAccountSwitchSuspended, appState.userDID == viewerDID else { return [] }
+            let trends = output?.trends ?? []
+            appState.prefetchTopicPreviews(trends: trends, owner: .timeline)
+            return trends
         } catch {
             return []
         }
@@ -182,4 +177,55 @@ struct TrendingFeedContent: Equatable {
             return []
         }
     }
+}
+
+private struct TrendingTimelinePreviewPrefetch: ViewModifier {
+  @Environment(AppState.self) private var appState
+  let trends: [AppBskyUnspeccedDefs.TrendView]
+
+  func body(content: Content) -> some View {
+    content.task(id: appState.topicPreviewPrefetchIdentity(links: trends.map(\.link))) {
+      appState.prefetchTopicPreviews(trends: trends, owner: .timeline)
+    }
+  }
+}
+
+/// Every timeline trend card has one size: a fixed heading box (titles truncate at two lines),
+/// the fixed-size artwork and a single caption line, so media arrival or title length never
+/// changes a card's width or height.
+private struct TrendingTimelineTopicCard: View {
+  let trend: AppBskyUnspeccedDefs.TrendView
+  let onSelect: () -> Void
+  @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+  /// Category caption plus two title lines at the default text size; scales with the title font.
+  @ScaledMetric(relativeTo: .title3) private var headingHeight: CGFloat = 72
+
+  var body: some View {
+    Button(action: onSelect) {
+      VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+        TrendingTopicHeading(title: trend.displayName, category: trend.category, size: 20, titleLineLimit: 2)
+          .frame(height: headingHeight, alignment: .topLeading)
+          .clipped()
+        TrendingTopicArtwork(link: trend.link, actors: trend.actors)
+        Text(postCountText)
+          .appFont(AppTextRole.caption)
+          .foregroundStyle(.secondary)
+          .lineLimit(1)
+          .opacity(trend.postCount > 0 ? 1 : 0)
+          .accessibilityHidden(trend.postCount <= 0)
+      }
+      .multilineTextAlignment(.leading)
+      .frame(width: dynamicTypeSize.isAccessibilitySize ? 300 : 240, alignment: .topLeading)
+      .padding(.horizontal, DesignTokens.Spacing.base)
+      .padding(.vertical, DesignTokens.Spacing.md)
+      .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: DesignTokens.Size.radiusMD))
+    }
+    .buttonStyle(.plain)
+    .accessibilityElement(children: .combine)
+    .accessibilityHint("Open posts about this topic")
+  }
+
+  private var postCountText: String {
+    "\(trend.postCount.formatted(.number.notation(.compactName))) posts"
+  }
 }

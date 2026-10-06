@@ -51,80 +51,83 @@ enum PetrelSentryBridge {
 
     // MARK: - Auth Event Helpers
 
+    // Account identifiers (DIDs) are deliberately left out of everything sent to Sentry:
+    // crash and diagnostic data is declared as not linked to the user.
+
     private static func authEventToExtras(_ event: AuthEvent) -> [String: Any] {
         switch event {
-        case let .autoLogoutTriggered(did, reason):
-            return ["type": "AutoLogoutTriggered", "did": did, "reason": reason]
+        case let .autoLogoutTriggered(_, reason):
+            return ["type": "AutoLogoutTriggered", "reason": reason]
 
-        case let .logoutStarted(did, reason):
-            return ["type": "LogoutStarted", "did": did, "reason": reason ?? "unknown"]
+        case let .logoutStarted(_, reason):
+            return ["type": "LogoutStarted", "reason": reason ?? "unknown"]
 
-        case let .logoutNoAutoSwitch(did):
-            return ["type": "LogoutNoAutoSwitch", "did": did]
+        case .logoutNoAutoSwitch:
+            return ["type": "LogoutNoAutoSwitch"]
 
-        case let .logoutAutoSwitched(previousDid, newDid):
-            return ["type": "LogoutAutoSwitched", "previousDid": previousDid, "newDid": newDid]
+        case .logoutAutoSwitched:
+            return ["type": "LogoutAutoSwitched"]
 
-        case let .refreshTokenInvalid(did, statusCode, error):
-            return ["type": "RefreshTokenInvalid", "did": did, "statusCode": statusCode, "error": error]
+        case let .refreshTokenInvalid(_, statusCode, error):
+            return ["type": "RefreshTokenInvalid", "statusCode": statusCode, "error": error]
 
-        case let .invalidClientMetadata(did, statusCode, error):
-            return ["type": "InvalidClientMetadata", "did": did, "statusCode": statusCode, "error": error]
+        case let .invalidClientMetadata(_, statusCode, error):
+            return ["type": "InvalidClientMetadata", "statusCode": statusCode, "error": error]
 
-        case let .invalidClient(did, statusCode, error):
-            return ["type": "InvalidClient", "did": did, "statusCode": statusCode, "error": error]
+        case let .invalidClient(_, statusCode, error):
+            return ["type": "InvalidClient", "statusCode": statusCode, "error": error]
 
-        case let .sessionMissing(did, context):
-            return ["type": "SessionMissing", "did": did, "context": context]
+        case let .sessionMissing(_, context):
+            return ["type": "SessionMissing", "context": context]
 
-        case let .accountAutoSwitched(previousDid, newDid, reason):
-            return ["type": "AccountAutoSwitched", "previousDid": previousDid, "newDid": newDid ?? "nil", "reason": reason]
+        case let .accountAutoSwitched(_, newDid, reason):
+            return ["type": "AccountAutoSwitched", "hasNewAccount": newDid != nil, "reason": reason]
 
-        case let .currentAccountChanged(previousDid, newDid):
-            return ["type": "CurrentAccountChanged", "previousDid": previousDid ?? "nil", "newDid": newDid]
+        case let .currentAccountChanged(previousDid, _):
+            return ["type": "CurrentAccountChanged", "hadPreviousAccount": previousDid != nil]
 
-        case let .dpopNonceMismatch(did, retryAttempt):
-            return ["type": "DPoPNonceMismatch", "did": did, "retryAttempt": retryAttempt]
+        case let .dpopNonceMismatch(_, retryAttempt):
+            return ["type": "DPoPNonceMismatch", "retryAttempt": retryAttempt]
 
-        case let .startupInconsistentState(did, hasAccount, hasSession, hasDPoPKey):
-            return ["type": "StartupInconsistentState", "did": did, "hasAccount": hasAccount, "hasSession": hasSession, "hasDPoPKey": hasDPoPKey]
+        case let .startupInconsistentState(_, hasAccount, hasSession, hasDPoPKey):
+            return ["type": "StartupInconsistentState", "hasAccount": hasAccount, "hasSession": hasSession, "hasDPoPKey": hasDPoPKey]
 
-        case let .startupMissingSession(did, hasDPoPKey):
-            return ["type": "StartupMissingSession", "did": did, "hasDPoPKey": hasDPoPKey]
+        case let .startupMissingSession(_, hasDPoPKey):
+            return ["type": "StartupMissingSession", "hasDPoPKey": hasDPoPKey]
 
-        case let .startupMissingDPoPKey(did, hasSession):
-            return ["type": "StartupMissingDPoPKey", "did": did, "hasSession": hasSession]
+        case let .startupMissingDPoPKey(_, hasSession):
+            return ["type": "StartupMissingDPoPKey", "hasSession": hasSession]
 
-        case let .startupStateHealthy(did):
-            return ["type": "StartupStateHealthy", "did": did]
+        case .startupStateHealthy:
+            return ["type": "StartupStateHealthy"]
 
-        case let .logoutClearedCurrentAccount(previousDid):
-            return ["type": "LogoutClearedCurrentAccount", "previousDid": previousDid]
+        case .logoutClearedCurrentAccount:
+            return ["type": "LogoutClearedCurrentAccount"]
 
-        case let .accountNotFound(did):
-            return ["type": "AccountNotFound", "did": did]
+        case .accountNotFound:
+            return ["type": "AccountNotFound"]
 
-        case let .setCurrentAccountNoSession(did):
-            return ["type": "SetCurrentAccountNoSession", "did": did]
+        case .setCurrentAccountNoSession:
+            return ["type": "SetCurrentAccountNoSession"]
 
-        case let .storageFailure(did, error):
-            return ["type": "StorageFailure", "did": did, "error": error]
+        case let .storageFailure(_, error):
+            return ["type": "StorageFailure", "error": error]
 
-        case let .inconsistentStateMissingSession(did):
-            return ["type": "InconsistentStateMissingSession", "did": did]
+        case .inconsistentStateMissingSession:
+            return ["type": "InconsistentStateMissingSession"]
 
-        case let .inconsistentStateMissingAccount(did):
-            return ["type": "InconsistentStateMissingAccount", "did": did]
+        case .inconsistentStateMissingAccount:
+            return ["type": "InconsistentStateMissingAccount"]
         }
     }
 
     private static func authEventToSentry(_ event: AuthEvent) -> (level: String, message: String) {
         switch event {
-        case let .autoLogoutTriggered(did, reason):
-            return ("error", "Auto logout triggered for \(did): \(reason)")
+        case let .autoLogoutTriggered(_, reason):
+            return ("error", "Auto logout triggered: \(reason)")
 
-        case let .logoutStarted(did, _):
-            return ("info", "Logout started for \(did)")
+        case .logoutStarted:
+            return ("info", "Logout started")
 
         case .logoutNoAutoSwitch:
             return ("warning", "No account available after logout")
@@ -132,17 +135,17 @@ enum PetrelSentryBridge {
         case .logoutAutoSwitched:
             return ("info", "Account auto-switched after logout")
 
-        case let .refreshTokenInvalid(did, statusCode, _):
-            return ("error", "Refresh token invalid for \(did) (status: \(statusCode))")
+        case let .refreshTokenInvalid(_, statusCode, _):
+            return ("error", "Refresh token invalid (status: \(statusCode))")
 
-        case let .invalidClientMetadata(did, _, _):
-            return ("error", "Invalid client metadata for \(did)")
+        case .invalidClientMetadata:
+            return ("error", "Invalid client metadata")
 
-        case let .invalidClient(did, _, _):
-            return ("error", "Invalid client for \(did)")
+        case .invalidClient:
+            return ("error", "Invalid client")
 
-        case let .sessionMissing(did, context):
-            return ("warning", "Session missing for \(did) in \(context)")
+        case let .sessionMissing(_, context):
+            return ("warning", "Session missing in \(context)")
 
         case .accountAutoSwitched:
             return ("info", "Account auto-switched")
@@ -150,17 +153,17 @@ enum PetrelSentryBridge {
         case .currentAccountChanged:
             return ("info", "Current account changed")
 
-        case let .dpopNonceMismatch(did, attempt):
-            return ("warning", "DPoP nonce mismatch for \(did) (attempt \(attempt))")
+        case let .dpopNonceMismatch(_, attempt):
+            return ("warning", "DPoP nonce mismatch (attempt \(attempt))")
 
-        case let .startupInconsistentState(did, _, _, _):
-            return ("warning", "Startup: inconsistent state for \(did)")
+        case .startupInconsistentState:
+            return ("warning", "Startup: inconsistent state")
 
-        case let .startupMissingSession(did, _):
-            return ("warning", "Startup: missing session for \(did)")
+        case .startupMissingSession:
+            return ("warning", "Startup: missing session")
 
-        case let .startupMissingDPoPKey(did, _):
-            return ("warning", "Startup: missing DPoP key for \(did)")
+        case .startupMissingDPoPKey:
+            return ("warning", "Startup: missing DPoP key")
 
         case .startupStateHealthy:
             return ("info", "Startup: auth state healthy")
@@ -168,20 +171,20 @@ enum PetrelSentryBridge {
         case .logoutClearedCurrentAccount:
             return ("info", "Logout cleared current account")
 
-        case let .accountNotFound(did):
-            return ("warning", "Account not found: \(did)")
+        case .accountNotFound:
+            return ("warning", "Account not found")
 
-        case let .setCurrentAccountNoSession(did):
-            return ("warning", "No session when setting current account: \(did)")
+        case .setCurrentAccountNoSession:
+            return ("warning", "No session when setting current account")
 
-        case let .storageFailure(did, error):
-            return ("error", "Storage failure for \(did): \(error)")
+        case let .storageFailure(_, error):
+            return ("error", "Storage failure: \(error)")
 
-        case let .inconsistentStateMissingSession(did):
-            return ("warning", "Inconsistent state: missing session for \(did)")
+        case .inconsistentStateMissingSession:
+            return ("warning", "Inconsistent state: missing session")
 
-        case let .inconsistentStateMissingAccount(did):
-            return ("warning", "Inconsistent state: missing account for \(did)")
+        case .inconsistentStateMissingAccount:
+            return ("warning", "Inconsistent state: missing account")
         }
     }
 }

@@ -6,6 +6,7 @@ import OrderedCollections
 /// Feed filtering preferences for FeedTuner
 /// Matches Bluesky's app.bsky.actor.defs#feedViewPref specification
 struct FeedTunerSettings {
+    var mutedWords: [MutedWord] = []
     // Server-synced FeedViewPref settings
     let hideReplies: Bool
     let hideRepliesByUnfollowed: Bool 
@@ -250,13 +251,14 @@ actor FeedTuner {
     }
     
     // If no quick filters are active, return original slice
-    if !settings.hideLinks && !settings.onlyTextPosts && !settings.onlyMediaPosts {
+    if !settings.hideLinks && !settings.onlyTextPosts && !settings.onlyMediaPosts && settings.mutedWords.isEmpty {
       return slice
     }
     
     var filteredItems: [FeedSliceItem] = []
     
     for item in slice.items {
+      if MutedWordMatcher.matches(post: item.post, words: settings.mutedWords, now: Date()) { continue }
       var shouldInclude = true
       
       // Check for links

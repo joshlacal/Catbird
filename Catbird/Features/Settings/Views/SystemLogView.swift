@@ -4,7 +4,6 @@ import OSLog
 /// System log viewer for debugging and diagnostics
 struct SystemLogView: View {
   @Environment(AppState.self) private var appState
-  @Environment(\.dismiss) private var dismiss
   
   @State private var logService: SystemLogService?
   @State private var error: Error?
@@ -14,84 +13,77 @@ struct SystemLogView: View {
   @State private var exportText = ""
   
   var body: some View {
-    NavigationStack {
-      Group {
-        if let logService = logService {
-          LogContentView(
-            logService: logService,
-            showingFilters: $showingFilters,
-            showingLogDetail: $showingLogDetail,
-            showingExportSheet: $showingExportSheet,
-            exportText: $exportText
-          )
-        } else if let error = error {
-          ErrorView(error: error, onRetry: initializeLogService)
-        } else {
-          SystemLogLoadingView()
-        }
+    Group {
+      if let logService = logService {
+        LogContentView(
+          logService: logService,
+          showingFilters: $showingFilters,
+          showingLogDetail: $showingLogDetail,
+          showingExportSheet: $showingExportSheet,
+          exportText: $exportText
+        )
+      } else if let error = error {
+        ErrorView(error: error, onRetry: initializeLogService)
+      } else {
+        SystemLogLoadingView()
       }
-      .navigationTitle("System Logs")
+    }
+    .navigationTitle("System Logs")
     #if os(iOS)
     .toolbarTitleDisplayMode(.inline)
     #endif
-      .toolbar {
-        ToolbarItem(placement: .cancellationAction) {
-          Button("Done") {
-            dismiss()
-          }
-        }
-        
-        if logService != nil {
-          ToolbarItem(placement: .primaryAction) {
-            Menu {
-              Button {
-                Task {
-                  await logService?.loadRecentLogs()
-                }
-              } label: {
-                Label("Refresh", systemImage: "arrow.clockwise")
-              }
-              
-              Button {
-                showingFilters = true
-              } label: {
-                Label("Filters", systemImage: "line.3.horizontal.decrease.circle")
-              }
-              
-              Button {
-                logService?.clearLogs()
-              } label: {
-                Label("Clear", systemImage: "trash")
-              }
-              
-              Button {
-                exportText = logService?.exportLogsAsText() ?? ""
-                showingExportSheet = true
-              } label: {
-                Label("Export", systemImage: "square.and.arrow.up")
+    .toolbar {
+      if logService != nil {
+        ToolbarItem(placement: .primaryAction) {
+          Menu {
+            Button {
+              Task {
+                await logService?.loadRecentLogs()
               }
             } label: {
-              Image(systemName: "ellipsis.circle")
+              Label("Refresh", systemImage: "arrow.clockwise")
             }
+            
+            Button {
+              showingFilters = true
+            } label: {
+              Label("Filters", systemImage: "line.3.horizontal.decrease.circle")
+            }
+            
+            Button {
+              logService?.clearLogs()
+            } label: {
+              Label("Clear", systemImage: "trash")
+            }
+            
+            Button {
+              exportText = logService?.exportLogsAsText() ?? ""
+              showingExportSheet = true
+            } label: {
+              Label("Export", systemImage: "square.and.arrow.up")
+            }
+          } label: {
+            Image(systemName: "ellipsis.circle")
+              .accessibilityLabel("More")
           }
         }
       }
-      .sheet(isPresented: $showingFilters) {
-        if let logService = logService {
-          LogFilterView(logService: logService)
-        }
+    }
+    .sheet(isPresented: $showingFilters) {
+      if let logService = logService {
+        LogFilterView(logService: logService)
       }
-      .sheet(item: $showingLogDetail) { logEntry in
-        LogDetailView(logEntry: logEntry)
-      }
-      .sheet(isPresented: $showingExportSheet) {
-        LogExportView(exportText: exportText)
-      }
-      .appDisplayScale(appState: appState)
-      .contrastAwareBackground(appState: appState, defaultColor: Color.systemBackground)
-      .task {
-        await initializeLogService()
-      }
+    }
+    .sheet(item: $showingLogDetail) { logEntry in
+      LogDetailView(logEntry: logEntry)
+    }
+    .sheet(isPresented: $showingExportSheet) {
+      LogExportView(exportText: exportText)
+    }
+    .appDisplayScale(appState: appState)
+    .contrastAwareBackground(appState: appState, defaultColor: Color.systemBackground)
+    .task {
+      await initializeLogService()
     }
   }
   
@@ -319,7 +311,7 @@ private struct SystemLogLoadingView: View {
       ProgressView()
         .scaleEffect(1.2)
       
-      Text("Initializing log service...")
+      Text("Loading logs…")
         .appBody()
         .foregroundStyle(.secondary)
     }

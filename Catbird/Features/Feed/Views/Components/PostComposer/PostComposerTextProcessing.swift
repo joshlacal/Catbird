@@ -178,7 +178,9 @@ extension PostComposerViewModel {
         
         // Apply red background to characters beyond 300-char limit
         if postText.count > 300 {
-            let overflowRange = NSRange(location: 300, length: postText.count - 300)
+            // Characters are graphemes; the attributed string is indexed in UTF-16.
+            let overflowStart = postText.index(postText.startIndex, offsetBy: 300)
+            let overflowRange = NSRange(overflowStart..<postText.endIndex, in: postText)
             #if os(iOS)
             mutableAttrString.addAttribute(.backgroundColor, value: UIColor.systemRed.withAlphaComponent(0.3), range: overflowRange)
             #else
@@ -209,7 +211,7 @@ extension PostComposerViewModel {
         // For paths, show domain + truncated path
         let maxPathLength = 15
         if path.count > maxPathLength {
-            let truncatedPath = String(path.prefix(maxPathLength)) + "..."
+            let truncatedPath = String(path.prefix(maxPathLength)) + "…"
             return "\(host)\(truncatedPath)"
         }
         
@@ -241,9 +243,10 @@ extension PostComposerViewModel {
             logger.info("PostComposerTextProcessing: Using saved default language: \(savedLanguageCode)")
             selectedLanguages = [LanguageCodeContainer(languageCode: savedLanguageCode)]
         } else {
-            // No saved preference - leave empty and let user choose or use detection
-            logger.info("PostComposerTextProcessing: No saved preference, leaving language unset")
-            selectedLanguages = []
+            // No saved preference - post in the device language, which is what the composer shows
+            let deviceLanguage = Locale.current.language.languageCode?.identifier ?? "en"
+            logger.info("PostComposerTextProcessing: No saved preference, using device language: \(deviceLanguage)")
+            selectedLanguages = [LanguageCodeContainer(languageCode: deviceLanguage)]
         }
     }
     
@@ -489,10 +492,12 @@ extension PostComposerViewModel {
     }
     
     private func getCurrentTypingMention() -> String? {
-        // Use cursor position to detect mention at current typing location
-        guard cursorPosition <= postText.count else { return nil }
+        // Use cursor position to detect mention at current typing location.
+        // The cursor position is a UTF-16 offset from the text view.
+        let nsText = postText as NSString
+        guard cursorPosition >= 0, cursorPosition <= nsText.length else { return nil }
         
-        let textUpToCursor = String(postText.prefix(cursorPosition))
+        let textUpToCursor = nsText.substring(to: cursorPosition)
         
         // Find the last @ symbol before the cursor
         guard let lastAtIndex = textUpToCursor.lastIndex(of: "@") else { return nil }
@@ -580,19 +585,22 @@ extension PostComposerViewModel {
     private func insertMentionDirectly(_ profile: AppBskyActorDefs.ProfileViewBasic, in textView: UITextView) -> Int {
         // Get current selection
         let currentRange = textView.selectedRange
-        let text = textView.text ?? ""
+        let nsText = (textView.text ?? "") as NSString
+        guard currentRange.location <= nsText.length else { return currentRange.location }
         
-        // Find the @ symbol before cursor
-        guard let lastAtIndex = text.prefix(currentRange.location).lastIndex(of: "@") else {
+        // Find the @ symbol before cursor (all offsets are UTF-16, matching NSRange)
+        let atRange = nsText.range(of: "@", options: .backwards, range: NSRange(location: 0, length: currentRange.location))
+        guard atRange.location != NSNotFound else {
             return currentRange.location
         }
         
-        let atPosition = text.distance(from: text.startIndex, to: lastAtIndex)
+        let atPosition = atRange.location
         let mentionText = "@\(profile.handle.description) "
+        let mentionLength = (mentionText as NSString).length
         
         // Calculate ranges
         let replaceRange = NSRange(location: atPosition, length: currentRange.location - atPosition)
-        let cursorPosition = atPosition + mentionText.count
+        let cursorPosition = atPosition + mentionLength
         
         // Store resolved profile for facet generation
         resolvedProfiles[profile.handle.description] = profile
@@ -609,7 +617,7 @@ extension PostComposerViewModel {
         mentionAttributedText.addAttributes([
             .font: font,
             .foregroundColor: UIColor.label
-        ], range: NSRange(location: 0, length: mentionText.count))
+        ], range: NSRange(location: 0, length: mentionLength))
         
         // Replace the range in the text view
         textView.textStorage.replaceCharacters(in: replaceRange, with: mentionAttributedText)
@@ -648,7 +656,7 @@ extension PostComposerViewModel {
         let newText = beforeMention + mentionText + afterMention
         
         // Calculate cursor position: right after the inserted mention (including the space)
-        let cursorPosition = beforeMention.count + mentionText.count
+        let cursorPosition = (beforeMention as NSString).length + (mentionText as NSString).length
         
         // Store resolved profile for facet generation
         resolvedProfiles[profile.handle.description] = profile

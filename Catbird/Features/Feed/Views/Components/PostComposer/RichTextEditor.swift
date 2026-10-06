@@ -37,7 +37,7 @@ struct GenmojiData {
 
 struct RichTextEditor: UIViewRepresentable {
     @Binding var attributedText: NSAttributedString
-    var placeholder: String = "What's on your mind?"
+    var placeholder: String = "What’s on your mind?"
     var onImagePasted: ((UIImage) -> Void)?
     var onGenmojiDetected: (([GenmojiData]) -> Void)?
     var onTextChanged: ((NSAttributedString) -> Void)?
@@ -388,7 +388,7 @@ struct GenmojiData {
 
 struct RichTextEditor: View {
     @Binding var attributedText: NSAttributedString
-    var placeholder: String = "What's on your mind?"
+    var placeholder: String = "What’s on your mind?"
     var onImagePasted: ((NSImage) -> Void)?
     var onGenmojiDetected: (([GenmojiData]) -> Void)?
     var onTextChanged: ((NSAttributedString) -> Void)?

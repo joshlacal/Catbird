@@ -216,11 +216,11 @@ final class FeedsStartPageViewModel {
           await loadFeedsIfNeeded(forceRefresh: true)
           return
         default:
-          errorMessage = "Failed to fetch preferences: \(prefError.localizedDescription)"
+          errorMessage = "Couldn’t load your feeds. Check your connection and try again."
           logger.error("Error loading feeds: \(prefError.localizedDescription)")
         }
       } else {
-        errorMessage = "Failed to fetch preferences: \(error.localizedDescription)"
+        errorMessage = "Couldn’t load your feeds. Check your connection and try again."
         logger.error("Error loading feeds: \(error.localizedDescription)")
       }
     }
@@ -285,6 +285,7 @@ final class FeedsStartPageViewModel {
         for generator in generators {
           feedGenerators[generator.uri] = generator
         }
+        appState.feedGeneratorInfoCache.store(generators)
       } else if responseCode == 401 {
         // Don't clear existing generators on auth failure - keep stale data for better UX
         logger.warning("Unauthorized when fetching feed generators (attempt \(attempt + 1)); scheduling retry")
@@ -392,6 +393,15 @@ final class FeedsStartPageViewModel {
     return uri.recordKey ?? "Unknown Feed"
   }
 
+  /// The name to show for a pinned or saved feed or list. Never a record key:
+  /// until details load (or when they can't), this is a generic "Feed" or "List".
+  func displayName(for uri: ATProtocolURI) -> String {
+    if uri.uriString().contains("/app.bsky.graph.list/") {
+      return listDetails[uri]?.name ?? "List"
+    }
+    return feedGenerators[uri]?.displayName ?? "Feed"
+  }
+
   // MARK: - Feed Management Functions
 
   /// Checks if a feed is pinned
@@ -463,7 +473,7 @@ final class FeedsStartPageViewModel {
       // Notify state invalidation bus that feeds have changed
       await appState.stateInvalidationBus.notify(.feedListChanged)
     } catch {
-      errorMessage = "Failed to toggle pin status: \(error.localizedDescription)"
+      errorMessage = "Couldn’t update this pin. Try again."
       logger.error("Error toggling pin status: \(error.localizedDescription)")
     }
   }
@@ -499,7 +509,7 @@ final class FeedsStartPageViewModel {
       // Notify state invalidation bus that feeds have changed
       await appState.stateInvalidationBus.notify(.feedListChanged)
     } catch {
-      errorMessage = "Failed to remove feed: \(error.localizedDescription)"
+      errorMessage = "Couldn’t remove this feed. Try again."
       logger.error("Error removing feed: \(error.localizedDescription)")
     }
   }
@@ -551,7 +561,7 @@ final class FeedsStartPageViewModel {
       await updateCaches()
       await appState.stateInvalidationBus.notify(.feedListChanged)
     } catch {
-      errorMessage = "Failed to reorder feed: \(error.localizedDescription)"
+      errorMessage = "Couldn’t save the new order. Try again."
       logger.error("Failed to apply native feed reorder: \(error.localizedDescription)")
     }
   }
@@ -603,7 +613,7 @@ final class FeedsStartPageViewModel {
       // Notify state invalidation bus that feeds have changed
       await appState.stateInvalidationBus.notify(.feedListChanged)
     } catch {
-      errorMessage = "Failed to reorder pinned feed: \(error.localizedDescription)"
+      errorMessage = "Couldn’t save the new order. Try again."
       logger.error("Error reordering pinned feed: \(error.localizedDescription)")
     }
   }
@@ -653,7 +663,7 @@ final class FeedsStartPageViewModel {
       // Notify state invalidation bus that feeds have changed
       await appState.stateInvalidationBus.notify(.feedListChanged)
     } catch {
-      errorMessage = "Failed to reorder saved feed: \(error.localizedDescription)"
+      errorMessage = "Couldn’t save the new order. Try again."
       logger.error("Error reordering saved feed: \(error.localizedDescription)")
     }
   }
@@ -662,7 +672,7 @@ final class FeedsStartPageViewModel {
   func addFeed(_ feedURI: String, pinned: Bool = false) async {
     // Validate the URI first
     guard (try? ATProtocolURI(uriString: feedURI)) != nil else {
-      errorMessage = "Invalid feed URI"
+      errorMessage = "This feed link isn’t valid."
       logger.error("Attempted to add invalid feed URI: \(feedURI)")
       return
     }
@@ -689,7 +699,7 @@ final class FeedsStartPageViewModel {
       await appState.stateInvalidationBus.notify(.feedListChanged)
 
     } catch {
-      errorMessage = "Failed to add feed: \(error.localizedDescription)"
+      errorMessage = "Couldn’t add this feed. Try again."
       logger.error("Error adding feed '\(feedURI)': \(error.localizedDescription)")
     }
   }
@@ -758,7 +768,7 @@ final class FeedsStartPageViewModel {
       await appState.stateInvalidationBus.notify(.feedListChanged)
 
     } catch {
-      errorMessage = "Failed to set default feed: \(error.localizedDescription)"
+      errorMessage = "Couldn’t change your default feed. Try again."
       logger.error("❌ Failed to set default feed: \(error.localizedDescription)")
     }
   }

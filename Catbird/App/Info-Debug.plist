@@ -19,7 +19,6 @@
 			<array>
 				<string>blue.catbird</string>
 				<string>catbird</string>
-				<string>bluesky</string>
 			</array>
 		</dict>
 	</array>
@@ -47,12 +46,6 @@
 			</dict>
 		</dict>
 	</dict>
-	<key>NSUserActivityTypes</key>
-	<array>
-		<string>FeedIntentIntent</string>
-	</array>
-	<key>NSUserNotificationUsageDescription</key>
-	<string>Catbird needs permission to send you notifications about mentions, replies, and interactions with your posts.</string>
 	<key>SentryLaunchProfilingEnabled</key>
 	<false/>
 	<key>SupportURL</key>
@@ -62,13 +55,8 @@
 		<string>audio</string>
 		<string>remote-notification</string>
 		<string>fetch</string>
-		<string>processing</string>
 	</array>
 	<key>UIObservationTrackingEnabled</key>
 	<true/>
-	<key>com.apple.developer.associated-domains</key>
-	<array>
-		<string>applinks:catbird.blue</string>
-	</array>
 </dict>
 </plist>

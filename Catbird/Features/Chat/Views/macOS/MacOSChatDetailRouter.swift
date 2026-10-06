@@ -8,13 +8,14 @@ import SwiftUI
 /// Wraps content in a NavigationStack for navigation destinations.
 @available(macOS 13.0, *)
 struct MacOSChatDetailRouter: View {
+  @Environment(SceneNavigationContext.self) private var sceneContext
   @Environment(AppState.self) private var appState
   let coordinator: UnifiedChatCoordinator
   let selectedConvoId: String?
   @Binding var selectedTab: Int
 
   private var chatNavigationPath: Binding<NavigationPath> {
-    appState.navigationManager.pathBinding(for: 4)
+    sceneContext.navigationManager.pathBinding(for: 4)
   }
 
   var body: some View {

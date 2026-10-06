@@ -40,18 +40,9 @@ struct LikesView: View {
                 ProgressView()
                     .padding()
             } else if let initialError = initialError, likes.isEmpty {
-                VStack(spacing: 12) {
-                    Text("Error loading likes: \(initialError.localizedDescription)")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                        .multilineTextAlignment(.center)
-                    
-                    Button("Retry") {
-                        Task { await loadLikes() }
-                    }
-                    .buttonStyle(.borderedProminent)
+                ListLoadFailureView(title: "Couldn’t Load Likes", error: initialError) {
+                    Task { await loadLikes() }
                 }
-                .padding()
             } else if likes.isEmpty {
                 Text("No likes yet")
                     .padding()
@@ -67,20 +58,10 @@ struct LikesView: View {
                             .listRowInsets(EdgeInsets())
                     }
 
-                    if let pageError = pageError {
-                        VStack(spacing: 8) {
-                            Text("Failed to load more: \(pageError.localizedDescription)")
-                                .font(.footnote)
-                                .foregroundColor(.secondary)
-                                .multilineTextAlignment(.center)
-                            Button("Retry") {
-                                Task { await loadMoreLikes() }
-                            }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
+                    if pageError != nil {
+                        ListPageFailureRow {
+                            Task { await loadMoreLikes() }
                         }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
                         .listRowSeparator(.hidden)
                     } else if cursor != nil {
                         ProgressView()

@@ -25,6 +25,7 @@ struct FeedPostRow: View, Identifiable {
     var tracksVisibilityForFeedback: Bool = true
     var visibilityContext: PostVisibilityContext = .public
     @Environment(AppState.self) private var appState
+    @Environment(\.feedInteractionTarget) private var feedInteractionTarget
     @State private var isSmartFilterRevealed = false
     @State private var isIntentRevealed = false
     @State private var isPendingIndicatorVisible = true
@@ -113,11 +114,11 @@ struct FeedPostRow: View, Identifiable {
         #if os(macOS)
         // macOS uses SwiftUI List - add swipe actions here
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-            if appState.feedFeedbackManager.isEnabled {
+            if let feedInteractionTarget {
                 VStack {
                         Button {
-                            guard let postURI = try? viewModel.post.feedViewPost.post.uri, appState.feedFeedbackManager.isEnabled else { return }
-                            appState.feedFeedbackManager.sendShowMore(postURI: postURI)
+                            guard let postURI = try? viewModel.post.feedViewPost.post.uri else { return }
+                            appState.feedFeedbackManager.sendShowMore(postURI: postURI, target: feedInteractionTarget)
                             logger.debug("Sent 'show more' feedback for post: \(postURI)")
                             
                             // Show confirmation toast
@@ -137,8 +138,8 @@ struct FeedPostRow: View, Identifiable {
                     
                     
                     Button {
-                        guard let postURI = try? viewModel.post.feedViewPost.post.uri, appState.feedFeedbackManager.isEnabled else { return }
-                        appState.feedFeedbackManager.sendShowLess(postURI: postURI)
+                        guard let postURI = try? viewModel.post.feedViewPost.post.uri else { return }
+                        appState.feedFeedbackManager.sendShowLess(postURI: postURI, target: feedInteractionTarget)
                         logger.debug("Sent 'show less' feedback for post: \(postURI)")
                         
                         // Show confirmation toast
@@ -166,11 +167,11 @@ struct FeedPostRow: View, Identifiable {
         .onScrollVisibilityChange(threshold: 0.5) { isVisible in
             if tracksVisibilityForFeedback, isVisible {
                 if let postURI = try? ATProtocolURI(uriString: viewModel.post.feedViewPost.post.uri.uriString()) {
-                    appState.feedFeedbackManager.trackPostSeen(postURI: postURI)
+                    appState.feedFeedbackManager.trackPostSeen(postURI: postURI, target: feedInteractionTarget)
                 }
             }
         }
-        .id("\(feedTypeIdentifier)-\(viewModel.post.id)-feedback:\(appState.feedFeedbackManager.isEnabled)")
+        .id("\(feedTypeIdentifier)-\(viewModel.post.id)-feedback:\(feedInteractionTarget != nil)")
     }
     
 }

@@ -27,7 +27,7 @@ public struct SearchFiltersSheet: View {
         // MARK: - Authors & Mentions
         Section("People & Accounts") {
           VStack(alignment: .leading, spacing: 4) {
-            TextField("Author (handle or DID)", text: Binding(
+            TextField("Author (e.g. alice.bsky.social)", text: Binding(
               get: { draft.author ?? "" },
               set: { draft.author = $0.isEmpty ? nil : $0 }
             ))
@@ -42,7 +42,7 @@ public struct SearchFiltersSheet: View {
           }
 
           VStack(alignment: .leading, spacing: 4) {
-            TextField("Mentions (handle or DID)", text: Binding(
+            TextField("Mentions (e.g. alice.bsky.social)", text: Binding(
               get: { draft.mentions ?? "" },
               set: { draft.mentions = $0.isEmpty ? nil : $0 }
             ))
@@ -105,7 +105,7 @@ public struct SearchFiltersSheet: View {
           }
 
           VStack(alignment: .leading, spacing: 4) {
-            TextField("Exact URL (e.g. https://...)", text: Binding(
+            TextField("Exact URL (e.g. https://example.com/page)", text: Binding(
               get: { draft.url ?? "" },
               set: { draft.url = $0.isEmpty ? nil : $0 }
             ))
@@ -168,7 +168,7 @@ public struct SearchFiltersSheet: View {
         }
 
         // MARK: - Date Range
-        Section("Date range") {
+        Section("Date Range") {
           Picker("Date range", selection: $draft.dateRange) {
             ForEach(SearchDateRange.allCases) { range in
               Text(range.displayName).tag(range)
@@ -218,7 +218,7 @@ public struct SearchFiltersSheet: View {
 
         // MARK: - Reset
         Section {
-          Button("Reset filters") {
+          Button("Reset Filters") {
             draft.reset()
           }
           .disabled(draft.activeFilterCount == 0)

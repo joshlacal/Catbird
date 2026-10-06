@@ -44,54 +44,53 @@ enum WidgetAvatarSize {
 
 // MARK: - Shared Views
 
+/// Initial-letter avatar. Widgets can't load remote images at render time, so
+/// every account and author is shown by the first letter of their name.
 struct WidgetAvatar: View {
-  let url: URL?
+  let name: String?
   let size: CGFloat
 
+  private var initial: String {
+    let trimmed = (name ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "@ "))
+    return trimmed.first.map { String($0).uppercased() } ?? ""
+  }
+
   var body: some View {
-    if url != nil {
-      Circle()
-        .fill(
-          LinearGradient(
-            colors: [Color.blue, Color.cyan],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-          )
-        )
-        .frame(width: size, height: size)
-    } else {
-      Circle()
-        .fill(Color.gray.opacity(0.3))
-        .frame(width: size, height: size)
-    }
+    Circle()
+      .fill(Color.accentColor.opacity(0.2))
+      .frame(width: size, height: size)
+      .overlay {
+        if !initial.isEmpty {
+          Text(initial)
+            .font(.system(size: size * 0.45, weight: .semibold, design: .rounded))
+            .foregroundStyle(Color.accentColor)
+        }
+      }
+      .accessibilityHidden(true)
   }
 }
 
-@available(iOS 17.0, *)
 struct WidgetHeader: View {
-  let avatarURL: URL?
+  let avatarName: String?
   let title: String
   let subtitle: String?
   let lastUpdated: Date?
-  let refreshIntent: RefreshFeedWidgetIntent?
 
   init(
-    avatarURL: URL? = nil,
+    avatarName: String? = nil,
     title: String,
     subtitle: String? = nil,
-    lastUpdated: Date? = nil,
-    refreshIntent: RefreshFeedWidgetIntent? = nil
+    lastUpdated: Date? = nil
   ) {
-    self.avatarURL = avatarURL
+    self.avatarName = avatarName
     self.title = title
     self.subtitle = subtitle
     self.lastUpdated = lastUpdated
-    self.refreshIntent = refreshIntent
   }
 
   var body: some View {
     HStack(spacing: WidgetSpacing.md) {
-      WidgetAvatar(url: avatarURL, size: WidgetAvatarSize.md)
+      WidgetAvatar(name: avatarName, size: WidgetAvatarSize.md)
 
       VStack(alignment: .leading, spacing: 0) {
         Text(title)
@@ -108,15 +107,6 @@ struct WidgetHeader: View {
       }
 
       Spacer()
-
-      if let refreshIntent {
-        Button(intent: refreshIntent) {
-          Image(systemName: WidgetSymbol.refresh)
-            .font(.system(size: 11, weight: .medium))
-            .foregroundStyle(.secondary)
-        }
-        .buttonStyle(.plain)
-      }
 
       if let lastUpdated {
         Text(lastUpdated, style: .relative)
@@ -194,7 +184,9 @@ struct PostRow: View {
 
   var body: some View {
     HStack(alignment: .top, spacing: WidgetSpacing.md) {
-      WidgetAvatar(url: post.authorAvatarURL.flatMap(URL.init), size: avatarSize)
+      if avatarSize > 0 {
+        WidgetAvatar(name: post.authorName, size: avatarSize)
+      }
 
       VStack(alignment: .leading, spacing: WidgetSpacing.xs) {
         // Author line

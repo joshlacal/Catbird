@@ -275,12 +275,12 @@ final class SmartFeedRefreshCoordinator {
       // Show appropriate loading state
       switch strategy {
       case .immediate:
-        onProgress?("Refreshing...")
+        onProgress?("Refreshing…")
       case .background:
-        onProgress?("Updating in background...")
+        onProgress?("Updating in background…")
         continuityManager.showLoadingGapBanner()
       case .scheduled:
-        onProgress?("Checking for updates...")
+        onProgress?("Checking for updates…")
       default:
         break
       }

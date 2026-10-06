@@ -5,6 +5,7 @@ import SwiftUI
 
 /// Interactive multi-step onboarding flow (Avatar, Interests, Suggested Accounts, Finish)
 public struct WelcomeOnboardingView: View {
+  @Environment(SceneNavigationContext.self) private var sceneContext
     @Environment(AppState.self) private var appState
     @Environment(\.dismiss) private var dismiss
     
@@ -18,14 +19,13 @@ public struct WelcomeOnboardingView: View {
     @State private var isFinalizingStarterPack: Bool = false
     @State private var starterPackResult: StarterPackFinalizationResult?
     @State private var starterPackContext: StarterPackPendingContext?
+    @State private var starterPackError: String?
     private let logger = Logger(subsystem: "blue.catbird", category: "WelcomeOnboarding")
     
-    private let availableInterests = [
-        "Technology", "Science", "Art", "Music", "Sports", "Politics",
-        "Photography", "Travel", "Food", "Books", "Movies", "Gaming",
-        "Fashion", "Health", "Fitness", "Business", "Education",
-        "Environment", "News", "Comedy", "Design", "Programming"
-    ].sorted()
+    /// Bluesky interest ids, ordered by their display names.
+    private let availableInterests = BlueskyInterests.ids.sorted {
+        BlueskyInterests.displayName(for: $0) < BlueskyInterests.displayName(for: $1)
+    }
     
     public init() {}
     
@@ -44,8 +44,9 @@ public struct WelcomeOnboardingView: View {
                         appState.onboardingManager.isSignupQueued = false
                         appState.onboardingManager.signupQueueState = nil
                         appState.onboardingManager.showWelcomeSheet = false
-                        try? await appState.removeAccount(did: did)
                         dismiss()
+                        // Removing the signed-in account signs it out first and returns to sign-in.
+                        try? await AppStateManager.shared.authentication.removeAccount(did: did)
                     }
                 }
             )
@@ -144,7 +145,7 @@ public struct WelcomeOnboardingView: View {
                     FlowLayout(horizontalSpacing: 8, verticalSpacing: 8) {
                         ForEach(availableInterests, id: \.self) { interest in
                             InterestTag(
-                                interest: interest,
+                                interest: BlueskyInterests.displayName(for: interest),
                                 isSelected: selectedInterests.contains(interest),
                                 onTap: {
                                     if selectedInterests.contains(interest) {
@@ -154,6 +155,7 @@ public struct WelcomeOnboardingView: View {
                                     }
                                 }
                             )
+                            .accessibilityAddTraits(selectedInterests.contains(interest) ? .isSelected : [])
                         }
                     }
                     .padding(.horizontal, 24)
@@ -182,7 +184,7 @@ public struct WelcomeOnboardingView: View {
                                 .tint(.white)
                                 .padding(.trailing, 4)
                         }
-                        Text(isSavingInterests ? "Saving..." : (selectedInterests.isEmpty ? "Continue" : "Save & Continue (\(selectedInterests.count))"))
+                        Text(isSavingInterests ? "Saving…" : (selectedInterests.isEmpty ? "Continue" : "Save & Continue (\(selectedInterests.count))"))
                             .fontWeight(.semibold)
                     }
                     .frame(maxWidth: .infinity)
@@ -193,7 +195,7 @@ public struct WelcomeOnboardingView: View {
                 }
                 .disabled(isSavingInterests)
                 
-                Button("Skip for now") {
+                Button("Skip for Now") {
                     advanceStep()
                 }
                 .font(.subheadline)
@@ -220,7 +222,7 @@ public struct WelcomeOnboardingView: View {
                     .symbolEffect(.bounce.wholeSymbol, options: .repeat(1))
                 
                 VStack(spacing: 12) {
-                    Text("You're All Set!")
+                    Text("You’re All Set")
                         .font(.largeTitle)
                         .fontWeight(.bold)
                     
@@ -242,7 +244,7 @@ public struct WelcomeOnboardingView: View {
                     Button {
                         isShowingFeedDiscovery = true
                     } label: {
-                        Label("Choose feeds", systemImage: "plus.circle")
+                        Label("Choose Feeds", systemImage: "plus.circle")
                             .font(.headline)
                             .frame(maxWidth: .infinity, minHeight: 52)
                     }
@@ -266,7 +268,7 @@ public struct WelcomeOnboardingView: View {
         .sheet(isPresented: $isShowingFeedDiscovery) {
             AddFeedSheet(onOpen: { feed in
                 finishOnboarding()
-                appState.navigationManager.navigate(to: .feed(feed.uri))
+                sceneContext.navigationManager.navigate(to: .feed(feed.uri))
             })
         }
         .task {
@@ -284,7 +286,7 @@ public struct WelcomeOnboardingView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(context.name ?? "Starter Pack")
                         .font(.headline)
-                    Text("Joining starter pack...")
+                    Text(starterPackStatusText)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -296,7 +298,20 @@ public struct WelcomeOnboardingView: View {
                 } else if starterPackResult != nil {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundStyle(.green)
+                        .accessibilityHidden(true)
+                } else if starterPackError != nil {
+                    Button("Try Again") {
+                        Task { await finalizeStarterPackIfNeeded() }
+                    }
+                    .font(.caption.bold())
                 }
+            }
+            
+            if let starterPackError {
+                Text(starterPackError)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
             
             if let result = starterPackResult {
@@ -316,6 +331,13 @@ public struct WelcomeOnboardingView: View {
         .background(Color.secondary.opacity(0.1))
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .padding(.horizontal, 24)
+    }
+    
+    private var starterPackStatusText: String {
+        if isFinalizingStarterPack { return "Joining starter pack…" }
+        if starterPackResult != nil { return "Joined" }
+        if starterPackError != nil { return "Couldn’t join" }
+        return "Joining starter pack…"
     }
     
     // MARK: - Navigation & State Helpers
@@ -351,9 +373,11 @@ public struct WelcomeOnboardingView: View {
     private func loadExistingPreferences() async {
         do {
             let prefs = try await appState.preferencesManager.getPreferences()
-            if !prefs.interests.isEmpty {
+            // Only interests with a Bluesky id can be shown as chips; others would be selected invisibly.
+            let knownInterests = Set(prefs.interests.compactMap(BlueskyInterests.normalizedID))
+            if !knownInterests.isEmpty {
                 await MainActor.run {
-                    self.selectedInterests = Set(prefs.interests)
+                    self.selectedInterests = knownInterests
                 }
             }
         } catch {
@@ -379,7 +403,7 @@ public struct WelcomeOnboardingView: View {
             } catch {
                 await MainActor.run {
                     isSavingInterests = false
-                    interestsErrorMessage = "Failed to save interests: \(error.localizedDescription). Please try again."
+                    interestsErrorMessage = UserFacingError.message(for: error, action: "save your interests")
                     logger.error("Failed to save interests: \(error)")
                 }
             }
@@ -396,6 +420,7 @@ public struct WelcomeOnboardingView: View {
         
         guard !isFinalizingStarterPack else { return }
         isFinalizingStarterPack = true
+        starterPackError = nil
         do {
             let result = try await StarterPackOnboardingManager.shared.finalizeStarterPackOnboarding(
                 client: client,
@@ -409,6 +434,8 @@ public struct WelcomeOnboardingView: View {
         } catch {
             await MainActor.run {
                 self.isFinalizingStarterPack = false
+                self.starterPackError = UserFacingError.message(for: error, action: "follow everyone in this starter pack")
+                    ?? "Couldn’t follow everyone in this starter pack. Try again."
                 logger.error("Failed starter pack finalization: \(error)")
             }
         }

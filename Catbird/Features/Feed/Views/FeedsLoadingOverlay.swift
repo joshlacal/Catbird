@@ -13,7 +13,7 @@ struct FeedsLoadingOverlay: View {
       Color.dynamicBackground(appState.themeManager, currentScheme: currentColorScheme)
         .ignoresSafeArea()
         .overlay {
-          ProgressView("Loading feeds...")
+          ProgressView("Loading feeds…")
         }
         .contentShape(Rectangle())
         .allowsHitTesting(true)

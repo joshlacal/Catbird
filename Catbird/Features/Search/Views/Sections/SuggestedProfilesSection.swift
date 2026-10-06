@@ -22,6 +22,7 @@ public struct SuggestedProfilesSection: View {
 
   @Environment(AppState.self) private var appState
   @Environment(\.colorScheme) private var colorScheme
+  @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
   public static let standardCategories: [String] = [
     "Art",
@@ -88,30 +89,16 @@ public struct SuggestedProfilesSection: View {
   }
 
   private var headerView: some View {
-    HStack {
-      HStack(spacing: 6) {
-        Image(systemName: "person.2.fill")
-          .appFont(AppTextRole.subheadline)
-          .foregroundColor(.accentColor)
-
-        Text("Suggested Accounts")
-          .appFont(.customSystemFont(size: 17, weight: .bold, width: 120, relativeTo: .headline))
-      }
-
-      Spacer()
-
+    DiscoverySectionHeader("Suggested Accounts", subtitle: "Find your people, one interest at a time.") {
       Button(action: onRefresh) {
-        Image(systemName: "arrow.triangle.2.circlepath")
+        Image(systemName: "arrow.clockwise")
           .appFont(AppTextRole.subheadline)
-          .foregroundColor(.accentColor)
-          .frame(width: 32, height: 32)
-          .background(
-            Circle()
-              .fill(Color.accentColor.opacity(0.1))
-          )
+          .frame(width: 44, height: 44)
+          .contentShape(Rectangle())
       }
+      .disabled(isLoading)
+      .accessibilityLabel("Refresh suggested accounts")
     }
-    .padding(.horizontal)
   }
 
   private var categoryTabBar: some View {
@@ -136,7 +123,8 @@ public struct SuggestedProfilesSection: View {
         .appFont(AppTextRole.subheadline)
         .fontWeight(isSelected ? .semibold : .regular)
         .padding(.horizontal, 14)
-        .padding(.vertical, 6)
+        .padding(.vertical, 8)
+        .frame(minHeight: 44)
         .foregroundStyle(isSelected ? Color.white : Color.primary)
         .background(
           Capsule()
@@ -153,7 +141,7 @@ public struct SuggestedProfilesSection: View {
       VStack(spacing: 12) {
         ProgressView()
           .scaleEffect(1.1)
-        Text("Loading accounts...")
+        Text("Loading accounts…")
           .appFont(AppTextRole.subheadline)
           .foregroundColor(.secondary)
       }
@@ -167,9 +155,12 @@ public struct SuggestedProfilesSection: View {
         Image(systemName: "person.slash")
           .font(.system(size: 28))
           .foregroundColor(.secondary)
-        Text("No suggestions available")
+        Text("No suggestions right now")
           .appFont(AppTextRole.subheadline)
           .foregroundColor(.secondary)
+        Button("Try Again", action: onRefresh)
+          .appFont(size: Typography.Size.subheadline, weight: .medium, relativeTo: .subheadline)
+          .frame(minHeight: 44)
       }
       .frame(maxWidth: .infinity)
       .padding(.vertical, 20)
@@ -177,69 +168,59 @@ public struct SuggestedProfilesSection: View {
       .cornerRadius(12)
       .padding(.horizontal)
     } else {
-      VStack(spacing: 10) {
-        ForEach(profiles.prefix(5), id: \.did) { profile in
+      VStack(spacing: 0) {
+        ForEach(Array(profiles.prefix(5).enumerated()), id: \.element.did) { index, profile in
+          if index > 0 { Divider() }
           profileCard(profile: profile)
         }
       }
-      .padding(.horizontal)
     }
   }
 
   private func profileCard(profile: AppBskyActorDefs.ProfileView) -> some View {
-    Button {
-      onSelectProfile(profile)
-    } label: {
-      HStack(alignment: .center, spacing: 12) {
-        AsyncProfileImage(url: URL(string: profile.avatar?.uriString() ?? ""), size: 48)
+    let layout = dynamicTypeSize.isAccessibilitySize
+      ? AnyLayout(VStackLayout(alignment: .leading, spacing: DesignTokens.Spacing.base))
+      : AnyLayout(HStackLayout(alignment: .center, spacing: DesignTokens.Spacing.base))
 
-        VStack(alignment: .leading, spacing: 3) {
-          HStack(alignment: .center, spacing: 4) {
-            Text(profile.displayName ?? profile.handle.description)
-              .appFont(AppTextRole.body.weight(.semibold))
-              .foregroundColor(Color.dynamicText(appState.themeManager, style: .primary, currentScheme: colorScheme))
+    return layout {
+      Button { onSelectProfile(profile) } label: {
+        HStack(alignment: .top, spacing: DesignTokens.Spacing.base) {
+          AsyncProfileImage(url: URL(string: profile.avatar?.uriString() ?? ""), size: 48, labels: profile.labels)
+          VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+              Text(profile.displayName ?? profile.handle.description)
+                .appFont(size: Typography.Size.body, weight: .semibold, relativeTo: .body)
+                .foregroundStyle(.primary)
+                .lineLimit(2)
+              if let badgeKind = VerificationBadge.kind(for: profile.verification, did: profile.did) {
+                VerificationBadgeView(kind: badgeKind).font(.caption)
+              }
+            }
+            Text("@\(profile.handle)")
+              .appFont(AppTextRole.subheadline)
+              .foregroundStyle(.secondary)
               .lineLimit(1)
-              .truncationMode(.tail)
-
-            if let badgeKind = VerificationBadge.kind(
-              for: profile.verification,
-              did: profile.did
-            ) {
-              VerificationBadgeView(kind: badgeKind)
-                .font(.caption)
+              .truncationMode(.middle)
+            if let description = profile.description, !description.isEmpty {
+              Text(description)
+                .appFont(AppTextRole.footnote)
+                .foregroundStyle(.secondary)
+                .lineLimit(dynamicTypeSize.isAccessibilitySize ? 4 : 2)
             }
           }
-
-          Text("@\(profile.handle)")
-            .appFont(AppTextRole.subheadline)
-            .foregroundColor(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
-            .lineLimit(1)
-            .truncationMode(.middle)
-
-          if let description = profile.description, !description.isEmpty {
-            Text(description)
-              .appFont(AppTextRole.footnote)
-              .foregroundColor(Color.dynamicText(appState.themeManager, style: .tertiary, currentScheme: colorScheme))
-              .lineLimit(2)
-              .multilineTextAlignment(.leading)
-          }
+          .frame(maxWidth: .infinity, alignment: .leading)
         }
-
-        Spacer(minLength: 8)
-
-        EnhancedFollowButton(profile: profile)
+        .multilineTextAlignment(.leading)
+        .contentShape(Rectangle())
       }
-      .padding(12)
-      .frame(maxWidth: .infinity)
-      .background(
-        Color.dynamicSecondaryBackground(appState.themeManager, currentScheme: colorScheme)
-      )
-      .overlay(
-        RoundedRectangle(cornerRadius: 12)
-          .stroke(Color.dynamicBorder(appState.themeManager, currentScheme: colorScheme).opacity(0.3), lineWidth: 0.5)
-      )
-      .cornerRadius(12)
+      .buttonStyle(.plain)
+      .accessibilityHint("Open profile")
+
+      // Keep Follow outside the profile-navigation button so each action has its own hit target.
+      EnhancedFollowButton(profile: profile)
     }
-    .buttonStyle(.plain)
+    .padding(.horizontal, 16)
+    .padding(.vertical, DesignTokens.Spacing.base)
+    .frame(maxWidth: .infinity, alignment: .leading)
   }
 }

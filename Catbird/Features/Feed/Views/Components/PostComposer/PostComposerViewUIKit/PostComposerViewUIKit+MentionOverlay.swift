@@ -6,23 +6,11 @@
 import SwiftUI
 import Petrel
 import os
-#if os(iOS)
-import UIKit
-#endif
 
 private let pcMentionLogger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "Catbird", category: "PostComposerMention")
 
 extension PostComposerViewUIKit {
   
-  func updateMentionOverlay(vm: PostComposerViewModel, proxy: GeometryProxy) {
-    ComposerMentionOverlayHost.shared.hide()
-  }
-  
-  @ViewBuilder
-  func mentionOverlayView(vm: PostComposerViewModel, proxy: GeometryProxy) -> some View {
-    EmptyView()
-  }
-
   @ViewBuilder
   func mentionSuggestionsSection(vm: PostComposerViewModel) -> some View {
     if Date.now >= mentionOverlayCooldownUntil, !vm.mentionSuggestions.isEmpty {
@@ -56,7 +44,6 @@ extension PostComposerViewUIKit {
     vm.mentionSearchTask?.cancel()
     vm.mentionSuggestions.removeAll()
     mentionOverlayCooldownUntil = Date.now.addingTimeInterval(0.6)
-    ComposerMentionOverlayHost.shared.hide()
   }
 
   @ViewBuilder
@@ -126,86 +113,3 @@ extension PostComposerViewUIKit {
     return nil
   }
 }
-
-#if os(iOS)
-extension PostComposerViewUIKit {
-  final class ComposerMentionOverlayHost {
-    static let shared = ComposerMentionOverlayHost()
-    private var window: PassthroughWindow?
-    private let hosting = UIHostingController(rootView: AnyView(EmptyView()))
-    private var activeConstraints: [NSLayoutConstraint] = []
-    
-    func show(content: AnyView, horizontalPadding: CGFloat, topInset: CGFloat) {
-      guard let scene = UIApplication.shared.connectedScenes
-        .compactMap({ $0 as? UIWindowScene })
-        .first(where: { $0.activationState == .foregroundActive }) else { 
-        pcMentionLogger.warning("PostComposerMention: ComposerMentionOverlayHost - no active scene found")
-        return 
-      }
-      
-      let win: PassthroughWindow
-      if let existing = window, existing.windowScene == scene {
-        win = existing
-      } else {
-        win = PassthroughWindow(windowScene: scene)
-        win.windowLevel = .statusBar + 1
-        win.backgroundColor = .clear
-        let container = UIViewController()
-        container.view.backgroundColor = .clear
-        win.rootViewController = container
-        window = win
-      }
-      
-      hosting.rootView = content
-      hosting.view.backgroundColor = .clear
-      hosting.view.translatesAutoresizingMaskIntoConstraints = false
-      
-      if hosting.view.superview == nil {
-        win.rootViewController?.view.addSubview(hosting.view)
-      }
-      
-      NSLayoutConstraint.deactivate(activeConstraints)
-      if let root = win.rootViewController?.view {
-        activeConstraints = [
-          hosting.view.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: horizontalPadding),
-          hosting.view.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -horizontalPadding),
-          hosting.view.topAnchor.constraint(equalTo: root.topAnchor, constant: topInset)
-        ]
-        NSLayoutConstraint.activate(activeConstraints)
-      }
-      
-      win.passthroughView = hosting.view
-      win.isHidden = false
-    }
-    
-    func hide() {
-      pcMentionLogger.trace("PostComposerMention: ComposerMentionOverlayHost - hiding overlay window")
-      hosting.rootView = AnyView(EmptyView())
-      window?.isHidden = true
-    }
-  }
-  
-  final class PassthroughWindow: UIWindow {
-    weak var passthroughView: UIView?
-    
-    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
-      guard let target = passthroughView else {
-        return nil
-      }
-      let local = target.convert(point, from: self)
-      if target.point(inside: local, with: event) {
-        return super.hitTest(point, with: event)
-      }
-      return nil
-    }
-  }
-}
-#else
-extension PostComposerViewUIKit {
-  final class ComposerMentionOverlayHost {
-    static let shared = ComposerMentionOverlayHost()
-    func show(content: AnyView, horizontalPadding: CGFloat, topInset: CGFloat) {}
-    func hide() {}
-  }
-}
-#endif

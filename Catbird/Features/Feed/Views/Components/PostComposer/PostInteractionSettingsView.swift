@@ -106,6 +106,10 @@ public struct PostInteractionSettingsView: View {
             }
           }
           .buttonStyle(.plain)
+          .accessibilityAddTraits(
+            localSettings.threadgate.primaryOption == .everybody
+              && localSettings.threadgate.enabledOptions.isEmpty ? .isSelected : []
+          )
           .disabled(!canEditThreadgate || loadFailed || isLoadingRecords)
 
           Button(action: {
@@ -130,6 +134,10 @@ public struct PostInteractionSettingsView: View {
             }
           }
           .buttonStyle(.plain)
+          .accessibilityAddTraits(
+            localSettings.threadgate.primaryOption == .nobody
+              && localSettings.threadgate.enabledOptions.isEmpty ? .isSelected : []
+          )
           .disabled(!canEditThreadgate || loadFailed || isLoadingRecords)
         } header: {
           Text("Who can reply")
@@ -169,6 +177,7 @@ public struct PostInteractionSettingsView: View {
                 }
               }
               .buttonStyle(.plain)
+              .accessibilityAddTraits(localSettings.threadgate.enabledOptions.contains(option) ? .isSelected : [])
               .disabled(loadFailed || isLoadingRecords)
             }
           } header: {
@@ -207,6 +216,9 @@ public struct PostInteractionSettingsView: View {
                     }
                   }
                   .buttonStyle(.plain)
+                  .accessibilityAddTraits(
+                    localSettings.threadgate.selectedLists.contains(list.uri.uriString()) ? .isSelected : []
+                  )
                   .disabled(loadFailed || isLoadingRecords)
                 }
               }
@@ -230,12 +242,12 @@ public struct PostInteractionSettingsView: View {
         } header: {
           Text("Quote posts")
         } footer: {
-          Text("If turned off, other users won't be able to quote this post.")
+          Text("If turned off, other people won’t be able to quote this post.")
             .font(.caption)
             .foregroundStyle(.secondary)
         }
       }
-      .navigationTitle("Interaction settings")
+      .navigationTitle("Interaction Settings")
       .platformInlineNavigationTitle()
       .toolbar {
         if isPostPublishMode {
@@ -361,7 +373,7 @@ public struct PostInteractionSettingsView: View {
           existingTg = nil
         } else {
           loadFailed = true
-          errorMessage = "Failed to load threadgate settings: \(error.localizedDescription)"
+          errorMessage = "Couldn’t load reply settings. Try again."
           return
         }
       }
@@ -388,7 +400,7 @@ public struct PostInteractionSettingsView: View {
           existingPg = nil
         } else {
           loadFailed = true
-          errorMessage = "Failed to load postgate settings: \(error.localizedDescription)"
+          errorMessage = "Couldn’t load reply settings. Try again."
           return
         }
       }
@@ -433,7 +445,7 @@ public struct PostInteractionSettingsView: View {
         dismiss()
       }
     } catch {
-      errorMessage = "Failed to update interaction settings: \(error.localizedDescription)"
+      errorMessage = "Couldn’t update reply settings. Try again."
       isSaving = false
     }
   }

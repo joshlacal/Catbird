@@ -167,7 +167,7 @@ public final class StarterPackService: Sendable {
                 throw NSError(
                     domain: "StarterPackService",
                     code: responseCode,
-                    userInfo: [NSLocalizedDescriptionKey: "Failed to apply follow writes (HTTP \(responseCode))"]
+                    userInfo: [NSLocalizedDescriptionKey: "Couldn’t follow everyone. Try again."]
                 )
             }
             
@@ -228,7 +228,7 @@ public final class StarterPackService: Sendable {
                 throw NSError(
                     domain: "StarterPackService",
                     code: responseCode,
-                    userInfo: [NSLocalizedDescriptionKey: "Failed to fetch list members (HTTP \(responseCode))"]
+                    userInfo: [NSLocalizedDescriptionKey: "Couldn’t load the people in this starter pack."]
                 )
             }
             allItems.append(contentsOf: data.items)
@@ -369,7 +369,7 @@ public final class StarterPackService: Sendable {
             throw NSError(
                 domain: "StarterPackService",
                 code: firstCode,
-                userInfo: [NSLocalizedDescriptionKey: "Failed to create backing list (HTTP \(firstCode))"]
+                userInfo: [NSLocalizedDescriptionKey: "Couldn’t create the starter pack. Try again."]
             )
         }
         
@@ -390,7 +390,7 @@ public final class StarterPackService: Sendable {
                     throw NSError(
                         domain: "StarterPackService",
                         code: chunkCode,
-                        userInfo: [NSLocalizedDescriptionKey: "Failed writing member list items (HTTP \(chunkCode))"]
+                        userInfo: [NSLocalizedDescriptionKey: "Couldn’t add everyone to the starter pack. Try again."]
                     )
                 }
             }
@@ -406,7 +406,7 @@ public final class StarterPackService: Sendable {
             throw NSError(
                 domain: "StarterPackService",
                 code: finalCode,
-                userInfo: [NSLocalizedDescriptionKey: "Failed to create starter pack record (HTTP \(finalCode))"]
+                userInfo: [NSLocalizedDescriptionKey: "Couldn’t create the starter pack. Try again."]
             )
         }
         
@@ -426,7 +426,7 @@ public final class StarterPackService: Sendable {
             throw NSError(
                 domain: "StarterPackService",
                 code: 403,
-                userInfo: [NSLocalizedDescriptionKey: "Cannot edit a starter pack owned by another user."]
+                userInfo: [NSLocalizedDescriptionKey: "You can only edit your own starter packs."]
             )
         }
         guard draft.isValid else {
@@ -440,7 +440,7 @@ public final class StarterPackService: Sendable {
             throw NSError(
                 domain: "StarterPackService",
                 code: 400,
-                userInfo: [NSLocalizedDescriptionKey: "Starter pack is missing its backing list URI."]
+                userInfo: [NSLocalizedDescriptionKey: "This starter pack can’t be edited."]
             )
         }
         
@@ -494,7 +494,7 @@ public final class StarterPackService: Sendable {
                     throw NSError(
                         domain: "StarterPackService",
                         code: code,
-                        userInfo: [NSLocalizedDescriptionKey: "Failed updating member list items (HTTP \(code))"]
+                        userInfo: [NSLocalizedDescriptionKey: "Couldn’t update the people in this starter pack. Try again."]
                     )
                 }
             }
@@ -505,7 +505,7 @@ public final class StarterPackService: Sendable {
             throw NSError(
                 domain: "StarterPackService",
                 code: 400,
-                userInfo: [NSLocalizedDescriptionKey: "Cannot determine starter pack record key."]
+                userInfo: [NSLocalizedDescriptionKey: "This starter pack can’t be edited."]
             )
         }
         
@@ -541,13 +541,98 @@ public final class StarterPackService: Sendable {
             throw NSError(
                 domain: "StarterPackService",
                 code: putCode,
-                userInfo: [NSLocalizedDescriptionKey: "Failed to update starter pack record (HTTP \(putCode))"]
+                userInfo: [NSLocalizedDescriptionKey: "Couldn’t save the starter pack. Try again."]
             )
         }
         
         logger.info("Successfully updated starter pack: \(starterPack.uri.uriString())")
     }
     
+    // MARK: - Deletion
+
+    /// Deletes a starter pack owned by `accountDID`: the starter pack record first (so it
+    /// disappears immediately), then its backing list's items and the list itself.
+    public func deleteStarterPack(
+        client: ATProtoClient,
+        starterPack: AppBskyGraphDefs.StarterPackView,
+        accountDID: String,
+        batchSize: Int = 50
+    ) async throws {
+        guard starterPack.creator.did.didString() == accountDID else {
+            throw NSError(
+                domain: "StarterPackService",
+                code: 403,
+                userInfo: [NSLocalizedDescriptionKey: "You can only delete your own starter packs."]
+            )
+        }
+        guard let packRkey = starterPack.uri.recordKey else {
+            throw NSError(
+                domain: "StarterPackService",
+                code: 400,
+                userInfo: [NSLocalizedDescriptionKey: "This starter pack can’t be deleted."]
+            )
+        }
+
+        let repoIdentifier = try ATIdentifier(string: accountDID)
+        let packCollection = try NSID(nsidString: AppBskyGraphStarterpack.typeIdentifier)
+        let (deleteCode, _) = try await client.com.atproto.repo.deleteRecord(
+            input: ComAtprotoRepoDeleteRecord.Input(
+                repo: repoIdentifier,
+                collection: packCollection,
+                rkey: try RecordKey(keyString: packRkey)
+            )
+        )
+        guard (200...299).contains(deleteCode) else {
+            logger.error("Deleting starter pack record failed with response code \(deleteCode)")
+            throw NSError(
+                domain: "StarterPackService",
+                code: deleteCode,
+                userInfo: [NSLocalizedDescriptionKey: "Couldn’t delete the starter pack. Try again."]
+            )
+        }
+
+        // The backing list is only reachable through the pack, so clean it up as well. The pack
+        // is already gone at this point, so a failure here is logged rather than surfaced.
+        guard let listUri = starterPack.list?.uri,
+              listUri.authority == accountDID,
+              let listRkey = listUri.recordKey else { return }
+
+        do {
+            let itemCollection = try NSID(nsidString: AppBskyGraphListitem.typeIdentifier)
+            let listCollection = try NSID(nsidString: AppBskyGraphList.typeIdentifier)
+            let members = try await fetchAllMembers(client: client, listUri: listUri)
+
+            var writes: [ComAtprotoRepoApplyWrites.InputWritesUnion] = members.compactMap { member in
+                guard let rkey = member.uri.recordKey, let parsedRkey = try? RecordKey(keyString: rkey) else {
+                    return nil
+                }
+                return ComAtprotoRepoApplyWrites.InputWritesUnion(
+                    ComAtprotoRepoApplyWrites.Delete(collection: itemCollection, rkey: parsedRkey)
+                )
+            }
+            writes.append(ComAtprotoRepoApplyWrites.InputWritesUnion(
+                ComAtprotoRepoApplyWrites.Delete(collection: listCollection, rkey: try RecordKey(keyString: listRkey))
+            ))
+
+            let chunks = stride(from: 0, to: writes.count, by: batchSize).map {
+                Array(writes[$0..<min($0 + batchSize, writes.count)])
+            }
+            for chunk in chunks {
+                let (code, _) = try await client.com.atproto.repo.applyWrites(
+                    input: .init(repo: repoIdentifier, validate: true, writes: chunk)
+                )
+                guard code == 200 else {
+                    logger.error("Deleting starter pack list items failed with response code \(code)")
+                    return
+                }
+            }
+        } catch {
+            logger.error("Failed to clean up starter pack list: \(error.localizedDescription)")
+        }
+
+        logger.info("Deleted starter pack: \(starterPack.uri.uriString())")
+    }
+
     // MARK: - List Cloning (G73)
     
     /// Builds `app.bsky.graph.listitem` write operations for copying members to a target list.
@@ -599,7 +684,7 @@ public final class StarterPackService: Sendable {
                 throw NSError(
                     domain: "StarterPackService",
                     code: code,
-                    userInfo: [NSLocalizedDescriptionKey: "Failed copying list items batch (HTTP \(code))"]
+                    userInfo: [NSLocalizedDescriptionKey: "Couldn’t copy everyone to the list. Try again."]
                 )
             }
             totalCopied += chunk.count

@@ -38,41 +38,18 @@ extension EnvironmentValues {
 import UIKit
 
 /// Reads the window hosting this view, including UIKit-hosted feed cells.
-struct WindowViewportReader: UIViewControllerRepresentable {
+// UIHostingConfiguration does not supply a view-controller hierarchy. A native
+// view can read its receiving window in both feed cells and controller hosts.
+struct WindowViewportReader: UIViewRepresentable {
   var onChange: (CGSize) -> Void
 
-  func makeUIViewController(context: Context) -> ViewportController {
-    ViewportController(onChange: onChange)
+  func makeUIView(context: Context) -> ViewportView {
+    ViewportView(onChange: onChange)
   }
 
-  func updateUIViewController(_ controller: ViewportController, context: Context) {
-    controller.viewportView.onChange = onChange
-    controller.viewportView.publishViewportSize()
-  }
-
-  final class ViewportController: UIViewController {
-    let viewportView: ViewportView
-
-    init(onChange: @escaping (CGSize) -> Void) {
-      viewportView = ViewportView(onChange: onChange)
-      super.init(nibName: nil, bundle: nil)
-    }
-
-    required init?(coder: NSCoder) { return nil }
-
-    override func loadView() { view = viewportView }
-
-    override func viewWillLayoutSubviews() {
-      super.viewWillLayoutSubviews()
-      viewportView.publishViewportSize()
-    }
-
-    override func viewWillTransition(to size: CGSize, with coordinator: UIViewControllerTransitionCoordinator) {
-      super.viewWillTransition(to: size, with: coordinator)
-      coordinator.animate(alongsideTransition: nil) { [weak self] _ in
-        self?.viewportView.publishViewportSize()
-      }
-    }
+  func updateUIView(_ view: ViewportView, context: Context) {
+    view.onChange = onChange
+    view.publishViewportSize()
   }
 
   final class ViewportView: UIView {
@@ -82,6 +59,8 @@ struct WindowViewportReader: UIViewControllerRepresentable {
     init(onChange: @escaping (CGSize) -> Void) {
       self.onChange = onChange
       super.init(frame: .zero)
+      backgroundColor = .clear
+      isOpaque = false
       isUserInteractionEnabled = false
       isAccessibilityElement = false
     }
@@ -90,6 +69,7 @@ struct WindowViewportReader: UIViewControllerRepresentable {
 
     override func didMoveToWindow() {
       super.didMoveToWindow()
+      lastSize = nil
       publishViewportSize()
     }
 
@@ -98,15 +78,22 @@ struct WindowViewportReader: UIViewControllerRepresentable {
       publishViewportSize()
     }
 
+    override func safeAreaInsetsDidChange() {
+      super.safeAreaInsetsDidChange()
+      publishViewportSize()
+    }
+
     func publishViewportSize() {
-      guard let size = window?.bounds.size,
+      guard let receivingWindow = window else { return }
+      let size = receivingWindow.bounds.size
+      guard
         size.width.isFinite, size.height.isFinite,
         size.width > 0, size.height > 0, size != lastSize else { return }
       lastSize = size
-      DispatchQueue.main.async { [weak self] in
-        guard let self, let currentSize = self.window?.bounds.size,
-          currentSize == self.lastSize else { return }
-        self.onChange(currentSize)
+      DispatchQueue.main.async { [weak self, weak receivingWindow] in
+        guard let self, let receivingWindow, self.window === receivingWindow,
+          receivingWindow.bounds.size == size, self.lastSize == size else { return }
+        self.onChange(size)
       }
     }
   }

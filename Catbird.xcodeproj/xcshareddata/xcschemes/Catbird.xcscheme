@@ -75,6 +75,9 @@
             ReferencedContainer = "container:Catbird.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
+      <StoreKitConfigurationFileReference
+         identifier = "../../Catbird/Resources/StoreKit/SupportCatbird.storekit">
+      </StoreKitConfigurationFileReference>
    </LaunchAction>
    <ProfileAction
       buildConfiguration = "Release"

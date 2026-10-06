@@ -40,7 +40,8 @@ final class LoadMoreCell: UICollectionViewCell {
     activityIndicator.isAccessibilityElement = false
     
     label.translatesAutoresizingMaskIntoConstraints = false
-    label.text = "Loading more parents..."
+    label.text = "Loading earlier posts…"
+    label.isHidden = true
       label.font = UIFont.preferredFont(forTextStyle: UIFont.TextStyle.subheadline)
     label.textColor = UIColor.systemGray
     label.isAccessibilityElement = false
@@ -71,7 +72,7 @@ final class LoadMoreCell: UICollectionViewCell {
     if isLoading {
       activityIndicator.startAnimating()
       label.isHidden = false
-      label.text = "Loading more parents..."
+      label.text = "Loading earlier posts…"
       label.alpha = 1.0
     } else {
       activityIndicator.stopAnimating()
@@ -82,6 +83,8 @@ final class LoadMoreCell: UICollectionViewCell {
   override func prepareForReuse() {
     super.prepareForReuse()
     activityIndicator.stopAnimating()
+    isCurrentlyLoading = false
+    label.isHidden = true
   }
 }
 

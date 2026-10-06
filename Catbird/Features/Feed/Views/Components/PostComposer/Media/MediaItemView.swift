@@ -60,7 +60,7 @@ struct MediaItemView: View {
             .clipShape(RoundedRectangle(cornerRadius: 12))
 
             // Top-left: Edit image button (only for images, not videos)
-            if !isVideo, let onEditImage = onEditImage {
+            if !isVideo, item.image != nil, !item.isLoading, let onEditImage = onEditImage {
                 VStack {
                     HStack {
                         if #available(iOS 26.0, macOS 26.0, *) {
@@ -72,7 +72,7 @@ struct MediaItemView: View {
                             }
                             .buttonStyle(.plain)
                             .glassEffect(.regular.interactive())
-                            .accessibilityLabel("Edit image")
+                            .accessibilityLabel("Edit Image")
                         } else {
                             Button(action: onEditImage) {
                                 Image(systemName: "slider.horizontal.3")
@@ -81,7 +81,7 @@ struct MediaItemView: View {
                                     .padding(8)
                             }
                             .buttonStyle(.plain)
-                            .accessibilityLabel("Edit image")
+                            .accessibilityLabel("Edit Image")
                         }
                         Spacer()
                     }
@@ -101,7 +101,7 @@ struct MediaItemView: View {
                             .background(Circle().fill(Color.black.opacity(0.3)))
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("Remove \(isVideo ? "video" : "image")")
+                    .accessibilityLabel(isVideo ? "Remove Video" : "Remove Image")
                 }
                 Spacer()
             }

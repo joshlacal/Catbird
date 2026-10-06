@@ -5,12 +5,10 @@ import SwiftUI
 extension View {
     /// Apply animation that respects the user's reduce motion preference
     func accessibleAnimation<V: Equatable>(_ animation: Animation?, value: V, appState: AppState?) -> some View {
-        let shouldReduceMotion = appState?.appSettings.reduceMotion ?? false
-        let prefersCrossfade = appState?.appSettings.prefersCrossfade ?? false
-        
+        let shouldReduceMotion = appState?.appSettings.effectiveReduceMotion ?? false
         let finalAnimation: Animation? = {
             if shouldReduceMotion {
-                return prefersCrossfade ? .easeInOut(duration: 0.2) : nil
+                return nil
             }
             return animation
         }()
@@ -20,12 +18,10 @@ extension View {
     
     /// Apply withAnimation that respects the user's reduce motion preference
     func accessibleWithAnimation<Result>(_ animation: Animation?, appState: AppState?, _ body: () throws -> Result) rethrows -> Result {
-        let shouldReduceMotion = appState?.appSettings.reduceMotion ?? false
-        let prefersCrossfade = appState?.appSettings.prefersCrossfade ?? false
-        
+        let shouldReduceMotion = appState?.appSettings.effectiveReduceMotion ?? false
         let finalAnimation: Animation? = {
             if shouldReduceMotion {
-                return prefersCrossfade ? .easeInOut(duration: 0.2) : nil
+                return nil
             }
             return animation
         }()
@@ -35,8 +31,8 @@ extension View {
     
     /// Apply transition that respects the user's reduce motion preference
     func accessibleTransition(_ transition: AnyTransition, appState: AppState?) -> some View {
-        let shouldReduceMotion = appState?.appSettings.reduceMotion ?? false
-        let prefersCrossfade = appState?.appSettings.prefersCrossfade ?? false
+        let shouldReduceMotion = appState?.appSettings.effectiveReduceMotion ?? false
+        let prefersCrossfade = appState?.appSettings.effectivePrefersCrossfade ?? false
         
         let finalTransition: AnyTransition = {
             if shouldReduceMotion {
@@ -51,7 +47,7 @@ extension View {
     /// Apply scale animation that respects reduce motion
     @ViewBuilder
     func accessibleScaleEffect(_ scale: CGFloat, anchor: UnitPoint = .center, appState: AppState?) -> some View {
-        let shouldReduceMotion = appState?.appSettings.reduceMotion ?? false
+        let shouldReduceMotion = appState?.appSettings.effectiveReduceMotion ?? false
 
         if shouldReduceMotion {
             // Use subtle opacity change instead of scale
@@ -64,7 +60,7 @@ extension View {
     /// Apply rotation animation that respects reduce motion
     @ViewBuilder
     func accessibleRotationEffect(_ angle: Angle, anchor: UnitPoint = .center, appState: AppState?) -> some View {
-        let shouldReduceMotion = appState?.appSettings.reduceMotion ?? false
+        let shouldReduceMotion = appState?.appSettings.effectiveReduceMotion ?? false
 
         if shouldReduceMotion {
             // Skip rotation entirely when reduce motion is on
@@ -76,12 +72,9 @@ extension View {
     
     /// Apply offset animation that respects reduce motion
     func accessibleOffset(x: CGFloat = 0, y: CGFloat = 0, appState: AppState?) -> some View {
-        let shouldReduceMotion = appState?.appSettings.reduceMotion ?? false
-        let prefersCrossfade = appState?.appSettings.prefersCrossfade ?? false
-        
-        if shouldReduceMotion && !prefersCrossfade {
-            // Reduce offset to minimal movement
-            return self.offset(x: x * 0.2, y: y * 0.2)
+        let shouldReduceMotion = appState?.appSettings.effectiveReduceMotion ?? false
+        if shouldReduceMotion {
+            return self.offset(x: 0, y: 0)
         } else {
             return self.offset(x: x, y: y)
         }

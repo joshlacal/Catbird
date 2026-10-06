@@ -7,149 +7,43 @@
 import WidgetKit
 import SwiftUI
 
-// MARK: - Notification Data Model
-
-struct NotificationCountData: Codable {
-  let unreadCount: Int
-}
-
-// MARK: - Notification Entry
-
-struct NotificationWidgetEntry: TimelineEntry {
-  let date: Date
-  let unreadCount: Int
-}
-
-// MARK: - Notification Provider
-
-struct NotificationWidgetProvider: TimelineProvider {
-  func placeholder(in context: Context) -> NotificationWidgetEntry {
-    NotificationWidgetEntry(date: Date(), unreadCount: 3)
-  }
-
-  func getSnapshot(in context: Context, completion: @escaping (NotificationWidgetEntry) -> Void) {
-    completion(NotificationWidgetEntry(date: Date(), unreadCount: loadUnreadCount()))
-  }
-
-  func getTimeline(in context: Context, completion: @escaping (Timeline<NotificationWidgetEntry>) -> Void) {
-    let entry = NotificationWidgetEntry(date: Date(), unreadCount: loadUnreadCount())
-    let nextUpdate = Calendar.current.date(byAdding: .minute, value: 10, to: Date())!
-    completion(Timeline(entries: [entry], policy: .after(nextUpdate)))
-  }
-
-  private func loadUnreadCount() -> Int {
-    guard let defaults = UserDefaults(suiteName: FeedWidgetConstants.sharedSuiteName) else {
-      return 0
-    }
-    let decoder = JSONDecoder()
-
-    // Try DID-scoped key first
-    if let activeDID = defaults.string(forKey: "activeAccountDID"),
-       let data = defaults.data(forKey: "notificationWidgetData.\(activeDID)"),
-       let decoded = try? decoder.decode(NotificationCountData.self, from: data) {
-      return decoded.unreadCount
-    }
-
-    // Fallback to unscoped key
-    if let data = defaults.data(forKey: "notificationWidgetData"),
-       let decoded = try? decoder.decode(NotificationCountData.self, from: data) {
-      return decoded.unreadCount
-    }
-
-    return 0
-  }
-}
-
-// MARK: - Notification Circular Widget
-
-struct NotificationCircularWidget: Widget {
-  let kind = "CatbirdNotificationCircular"
-
-  var body: some WidgetConfiguration {
-    StaticConfiguration(kind: kind, provider: NotificationWidgetProvider()) { entry in
-      NotificationCircularView(entry: entry)
-        .containerBackground(.clear, for: .widget)
-    }
-    .configurationDisplayName("Notifications")
-    .description("See your unread notification count.")
-    .supportedFamilies([.accessoryCircular])
-  }
-}
-
-struct NotificationCircularView: View {
-  let entry: NotificationWidgetEntry
-
-  var body: some View {
-    VStack(spacing: 1) {
-      Text("\(entry.unreadCount)")
-        .font(.system(size: 24, weight: .bold))
-        .widgetAccentable()
-      Text("NEW")
-        .font(.system(size: 8, weight: .semibold))
-        .foregroundStyle(.secondary)
-    }
-  }
-}
-
-// MARK: - Notification Inline Widget
-
-struct NotificationInlineWidget: Widget {
-  let kind = "CatbirdNotificationInline"
-
-  var body: some WidgetConfiguration {
-    StaticConfiguration(kind: kind, provider: NotificationWidgetProvider()) { entry in
-      NotificationInlineView(entry: entry)
-        .containerBackground(.clear, for: .widget)
-    }
-    .configurationDisplayName("Notifications")
-    .description("See your unread notifications inline.")
-    .supportedFamilies([.accessoryInline])
-  }
-}
-
-struct NotificationInlineView: View {
-  let entry: NotificationWidgetEntry
-
-  var body: some View {
-    let count = entry.unreadCount
-    Label(
-      "\(count) new \(count == 1 ? "notification" : "notifications")",
-      systemImage: WidgetSymbol.notificationsBadge
-    )
-  }
-}
-
 // MARK: - Feed Rectangular Entry
 
 struct FeedRectangularEntry: TimelineEntry {
   let date: Date
   let posts: [WidgetPost]
+  let isSignedIn: Bool
 }
 
 // MARK: - Feed Rectangular Provider
 
 struct FeedRectangularProvider: TimelineProvider {
   func placeholder(in context: Context) -> FeedRectangularEntry {
-    FeedRectangularEntry(date: Date(), posts: placeholderPosts())
+    FeedRectangularEntry(date: Date(), posts: placeholderPosts(), isSignedIn: true)
   }
 
   func getSnapshot(in context: Context, completion: @escaping (FeedRectangularEntry) -> Void) {
-    completion(FeedRectangularEntry(date: Date(), posts: loadPosts()))
+    let entry = currentEntry()
+    // Sample posts are only for the widget gallery preview; a real widget never shows them.
+    if entry.posts.isEmpty && context.isPreview {
+      completion(FeedRectangularEntry(date: Date(), posts: placeholderPosts(), isSignedIn: true))
+    } else {
+      completion(entry)
+    }
   }
 
   func getTimeline(in context: Context, completion: @escaping (Timeline<FeedRectangularEntry>) -> Void) {
-    let entry = FeedRectangularEntry(date: Date(), posts: loadPosts())
+    let entry = currentEntry()
     let nextUpdate = Calendar.current.date(byAdding: .minute, value: 10, to: Date())!
     completion(Timeline(entries: [entry], policy: .after(nextUpdate)))
   }
 
-  private func loadPosts() -> [WidgetPost] {
+  private func currentEntry() -> FeedRectangularEntry {
     let activeDID = WidgetDataReader.activeAccountDID() ?? ""
-    let configKey = "widgetData_timeline"
-    if let posts = WidgetDataReader.feedData(accountDID: activeDID, configKey: configKey) {
-      return Array(posts.prefix(2))
-    }
-    return []
+    let posts = WidgetDataReader.feedData(
+      accountDID: activeDID, configKey: FeedWidgetConstants.timelineConfigKey
+    )?.posts ?? []
+    return FeedRectangularEntry(date: Date(), posts: Array(posts.prefix(2)), isSignedIn: !activeDID.isEmpty)
   }
 
   private func placeholderPosts() -> [WidgetPost] {
@@ -197,7 +91,7 @@ struct FeedRectangularWidget: Widget {
         .containerBackground(.clear, for: .widget)
     }
     .configurationDisplayName("Latest Posts")
-    .description("Preview your latest posts on the lock screen.")
+    .description("See the latest posts from your Following feed.")
     .supportedFamilies([.accessoryRectangular])
   }
 }
@@ -212,7 +106,7 @@ struct FeedRectangularView: View {
         .foregroundStyle(.secondary)
 
       if entry.posts.isEmpty {
-        Text("No posts available")
+        Text(entry.isSignedIn ? "Open Catbird to load posts" : "Open Catbird to sign in")
           .font(.system(size: 10))
           .foregroundStyle(.tertiary)
       } else {

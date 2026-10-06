@@ -1,593 +1,336 @@
 import SwiftUI
-import OSLog
 import Petrel
 
-/// View that allows users to configure their notification settings
 struct NotificationSettingsView: View {
-    // MARK: - Environment
-    @Environment(AppState.self) private var appState
-    
-    // MARK: - State
-    @State private var isRequestingPermission = false
-    @State private var showSystemSettingsPrompt = false
-    
-    // MARK: - Properties
-    private var notificationManager: NotificationManager {
-        appState.notificationManager
+  @Environment(AppState.self) private var appState
+  let initialFocus: SettingsControlID?
+  @State private var isChangingPush = false
+
+  init(initialFocus: SettingsControlID? = nil) {
+    self.initialFocus = initialFocus
+  }
+
+  private var manager: NotificationManager { appState.notificationManager }
+
+  var body: some View {
+    SettingsFocusedForm(initialFocus: initialFocus) {
+      SettingsScopeSection()
+      deviceSection
+      NotificationPreferencesStatusSection(manager: manager, accountDID: appState.userDID)
+      Section {
+        ForEach(NotificationPreferenceCategory.activity) { category in
+          categoryLink(category)
+        }
+      } header: {
+        Text("Activity Notifications")
+      } footer: {
+        Text("Choose what appears in your Notifications tab and which events can send a push alert. Turning off push on this device keeps your in-app activity available.")
+      }
+      Section("Other Activity") {
+        ForEach(NotificationPreferenceCategory.otherActivity) { category in
+          categoryLink(category)
+        }
+      }
+      Section {
+        if manager.hasConfirmedNotificationPreferences {
+          Toggle("Direct Message Push Alerts", isOn: Binding(
+            get: { manager.preferences.chat.push },
+            set: { enabled in
+              let origin = manager
+              let did = appState.userDID
+              Task {
+                _ = try? await origin.updatePreferences({ preferences in
+                  preferences.chat = .init(include: preferences.chat.include, push: enabled)
+                }, expectedAccountDID: did)
+              }
+            }
+          ))
+          .disabled(!manager.canEditNotificationPreferences)
+          .settingsControl(.init(rawValue: "notifications.messages"))
+        } else {
+          Text("Load saved preferences to see message alert settings.").foregroundStyle(.secondary)
+            .settingsControl(.init(rawValue: "notifications.messages"))
+        }
+      } header: {
+        Text("Messages")
+      } footer: {
+        Text("Choose direct message alerts for this account. Push delivery also needs device permission and a ready connection.")
+      }
+      Section("Post Notification Subscriptions") {
+        SettingsLink(screen: .activitySubscriptions, systemImage: "bell.badge", family: .notifications)
+          .settingsControl(.init(rawValue: "notifications.subscriptions"))
+        SettingsLink(screen: .activityPrivacy, systemImage: "person.badge.clock", family: .privacy)
+      }
     }
-    
-    // Logger
-    private let logger = Logger(subsystem: "blue.catbird", category: "NotificationSettings")
-    
-    var body: some View {
-        List {
-            // MARK: - Master Toggle Section
-            Section {
-                VStack(alignment: .leading, spacing: 8) {
-                    Label {
-                        Text("Push Notifications")
-                            .appFont(AppTextRole.headline)
-                    } icon: {
-                        Image(systemName: "bell.badge.fill")
-                            .foregroundStyle(.blue)
-                    }
-                    
-                    Text("Receive notifications about activity on your account")
-                        .foregroundStyle(.secondary)
-                        .appFont(AppTextRole.subheadline)
-                }
-                .padding(.vertical, 4)
-                
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Enable All Notifications")
-                            .appFont(AppTextRole.body)
-                        Text("Master control for all push notifications")
-                            .foregroundStyle(.secondary)
-                            .appFont(AppTextRole.caption)
-                    }
-                    
-                    Spacer()
-                    
-                    Toggle("", isOn: Binding(
-                        get: { notificationManager.notificationsEnabled },
-                        set: { newValue in
-                            Task {
-                                isRequestingPermission = true
-                                if newValue {
-                                    await enableAllNotifications()
-                                } else {
-                                    await disableAllNotifications()
-                                }
-                                isRequestingPermission = false
-                            }
-                        }
-                    ))
-                    .disabled(isRequestingPermission || notificationManager.status == .waitingForPermission)
-                }
-                .opacity(notificationManager.status == .permissionDenied ? 0.6 : 1.0)
-                
-                if notificationManager.status == .permissionDenied {
-                    HStack {
-                        Text("Notifications Disabled")
-                            .foregroundStyle(.secondary)
-
-                        Spacer()
-
-                        Button("Enable in Settings") {
-                            showSystemSettingsPrompt = true
-                        }
-                        .buttonStyle(.bordered)
-                        .tint(.blue)
-                    }
-                } else if case .registrationFailed(let error) = notificationManager.status {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Label {
-                            Text("Registration Failed")
-                                .foregroundStyle(.red)
-                                .appFont(AppTextRole.body)
-                        } icon: {
-                            Image(systemName: "exclamationmark.triangle.fill")
-                                .foregroundStyle(.red)
-                        }
-
-                        Text(error.localizedDescription)
-                            .foregroundStyle(.secondary)
-                            .appFont(AppTextRole.caption)
-
-                        Button("Try Again Later") {
-                            Task {
-                                await disableAllNotifications()
-                            }
-                        }
-                        .buttonStyle(.bordered)
-                        .tint(.red)
-                    }
-                    .padding(.vertical, 4)
-                } else if notificationManager.status == .unknown || notificationManager.status == .disabled {
-                    HStack {
-                        Text("Notifications Not Set Up")
-                            .foregroundStyle(.secondary)
-                        
-                        Spacer()
-                        
-                        Button(action: {
-                            Task {
-                                isRequestingPermission = true
-                                await requestNotificationPermission()
-                                isRequestingPermission = false
-                            }
-                        }) {
-                            if isRequestingPermission {
-                                ProgressView()
-                                    .controlSize(.small)
-                            } else {
-                                Text("Enable")
-                            }
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(isRequestingPermission)
-                    }
-                }
-            }
-            
-            #if os(iOS)
-            if notificationManager.status == .registered && notificationManager.notificationsEnabled {
-                chatNotificationsSection
-            }
-            #endif
-            
-            notificationPreferencesSection
-        }
-        .navigationTitle("Notifications")
-        #if os(iOS)
-        .toolbarTitleDisplayMode(.inline)
-        #endif
-        .alert("Enable Notifications", isPresented: $showSystemSettingsPrompt) {
-            Button("Cancel", role: .cancel) { }
-            Button("Open Settings") {
-                #if os(iOS)
-                if let url = URL(string: UIApplication.openSettingsURLString) {
-                    UIApplication.shared.open(url)
-                }
-                #elseif os(macOS)
-                NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.notifications")!)
-                #endif
-            }
-        } message: {
-            Text("To receive notifications, you need to enable them in the system settings.")
-        }
-        .task {
-            await appState.notificationManager.checkNotificationStatus()
-            await appState.notificationManager.refreshNotificationPreferences()
-        }
+    .navigationTitle("Notifications")
+    .modifier(NotificationSettingsTitleStyle())
+    .appFont(AppTextRole.body)
+    .appDisplayScale(appState: appState)
+    .contrastAwareBackground(appState: appState, defaultColor: .systemBackground)
+    .task(id: appState.userDID) {
+      let origin = manager
+      let did = appState.userDID
+      await origin.checkNotificationStatus(expectedAccountDID: did)
+      await origin.refreshNotificationPreferences(expectedAccountDID: did)
     }
+  }
 
+  private var deviceSection: some View {
+    Section {
+      Toggle("Push Alerts on This Device", isOn: Binding(
+        get: { manager.isPushRequested },
+        set: { enabled in
+          let origin = manager
+          let did = appState.userDID
+          isChangingPush = true
+          Task { @MainActor in
+            if enabled { await origin.enableNotifications(expectedAccountDID: did) }
+            else { await origin.disableNotifications(expectedAccountDID: did) }
+            isChangingPush = false
+          }
+        }
+      ))
+      .disabled(isChangingPush || manager.status == .waitingForPermission)
+      .settingsControl(.init(rawValue: "notifications.push"))
+      LabeledContent("Push Connection", value: manager.pushDeliverySummary)
+        .fixedSize(horizontal: false, vertical: true)
+      LabeledContent("System Permission", value: manager.systemPermissionSummary)
+        .fixedSize(horizontal: false, vertical: true)
+      Button("Open System Notification Settings", action: openSystemSettings)
+        .settingsControl(.init(rawValue: "notifications.systemPermission"))
+      if case .registrationFailed(let error) = manager.status {
+        Text(UserFacingError.message(for: error, action: "connect push alerts on this device")
+          ?? "Couldn’t connect push alerts on this device. Try again.").foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+        Button("Try Push Connection Again") {
+          let origin = manager
+          let did = appState.userDID
+          Task { await origin.enableNotifications(expectedAccountDID: did) }
+        }
+        .disabled(isChangingPush)
+      }
+      if isChangingPush { ProgressView("Updating push delivery…") }
+    } header: {
+      Text("On This Device")
+    } footer: {
+      Text("Push alerts apply to this account on this device. System notification permission applies to Catbird across your accounts.")
+    }
+  }
+
+  private func categoryLink(_ category: NotificationPreferenceCategory) -> some View {
+    NavigationLink {
+      NotificationPreferenceEditorView(category: category, manager: manager, accountDID: appState.userDID)
+    } label: {
+      NotificationCategoryRow(title: category.title,
+        summary: manager.hasConfirmedNotificationPreferences ? category.summary(in: manager.preferences) : "Not loaded")
+    }
+    .disabled(!manager.canEditNotificationPreferences)
+    .settingsControl(.init(rawValue: "notifications.\(category.rawValue)"))
+  }
+
+  private func openSystemSettings() {
     #if os(iOS)
-    private var chatNotificationsSection: some View {
-        Group {
-            Section("Bluesky Direct Messages") {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Label {
-                            Text("Direct Messages")
-                                .appFont(AppTextRole.body)
-                        } icon: {
-                            Image(systemName: "bubble.left.and.bubble.right.fill")
-                                .foregroundStyle(.green)
-                        }
-
-                        Spacer()
-
-                        Toggle("", isOn: Binding(
-                            get: { notificationManager.chatNotificationsEnabled },
-                            set: { newValue in
-                                notificationManager.chatNotificationsEnabled = newValue
-                                logger.info("Chat notifications toggled to: \(newValue)")
-                            }
-                        ))
-                        .disabled(!notificationManager.notificationsEnabled)
-                    }
-
-                    Text("Get notifications for new chat messages when the app is not active")
-                        .appFont(AppTextRole.caption)
-                        .foregroundStyle(.secondary)
-                        .padding(.leading, 32)
-                }
-                .opacity(notificationManager.notificationsEnabled ? 1.0 : 0.6)
-            }
-        }
+    if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+    #elseif os(macOS)
+    if let url = URL(string: "x-apple.systempreferences:com.apple.preference.notifications") {
+      NSWorkspace.shared.open(url)
     }
     #endif
-
-    // Section for granular notification preferences
-    private var notificationPreferencesSection: some View {
-        Section("Notification Types") {
-            NavigationLink {
-                FilterablePreferenceEditorView(
-                    title: "Mentions",
-                    preference: notificationManager.preferences.mention,
-                    onSave: { updated in
-                        updatePreferences { $0.mention = updated }
-                    }
-                )
-            } label: {
-                NotificationCategoryRow(
-                    title: "Mentions",
-                    summary: notificationManager.preferences.mention.summaryDescription
-                )
-            }
-
-            NavigationLink {
-                FilterablePreferenceEditorView(
-                    title: "Replies",
-                    preference: notificationManager.preferences.reply,
-                    onSave: { updated in
-                        updatePreferences { $0.reply = updated }
-                    }
-                )
-            } label: {
-                NotificationCategoryRow(
-                    title: "Replies",
-                    summary: notificationManager.preferences.reply.summaryDescription
-                )
-            }
-
-            NavigationLink {
-                FilterablePreferenceEditorView(
-                    title: "Likes",
-                    preference: notificationManager.preferences.like,
-                    onSave: { updated in
-                        updatePreferences { $0.like = updated }
-                    }
-                )
-            } label: {
-                NotificationCategoryRow(
-                    title: "Likes",
-                    summary: notificationManager.preferences.like.summaryDescription
-                )
-            }
-
-            NavigationLink {
-                FilterablePreferenceEditorView(
-                    title: "New followers",
-                    preference: notificationManager.preferences.follow,
-                    onSave: { updated in
-                        updatePreferences { $0.follow = updated }
-                    }
-                )
-            } label: {
-                NotificationCategoryRow(
-                    title: "New followers",
-                    summary: notificationManager.preferences.follow.summaryDescription
-                )
-            }
-
-            NavigationLink {
-                FilterablePreferenceEditorView(
-                    title: "Reposts",
-                    preference: notificationManager.preferences.repost,
-                    onSave: { updated in
-                        updatePreferences { $0.repost = updated }
-                    }
-                )
-            } label: {
-                NotificationCategoryRow(
-                    title: "Reposts",
-                    summary: notificationManager.preferences.repost.summaryDescription
-                )
-            }
-
-            NavigationLink {
-                FilterablePreferenceEditorView(
-                    title: "Quotes",
-                    preference: notificationManager.preferences.quote,
-                    onSave: { updated in
-                        updatePreferences { $0.quote = updated }
-                    }
-                )
-            } label: {
-                NotificationCategoryRow(
-                    title: "Quotes",
-                    summary: notificationManager.preferences.quote.summaryDescription
-                )
-            }
-
-            NavigationLink {
-                FilterablePreferenceEditorView(
-                    title: "Likes of your reposts",
-                    preference: notificationManager.preferences.likeViaRepost,
-                    onSave: { updated in
-                        updatePreferences { $0.likeViaRepost = updated }
-                    }
-                )
-            } label: {
-                NotificationCategoryRow(
-                    title: "Likes of your reposts",
-                    summary: notificationManager.preferences.likeViaRepost.summaryDescription
-                )
-            }
-
-            NavigationLink {
-                FilterablePreferenceEditorView(
-                    title: "Reposts of your reposts",
-                    preference: notificationManager.preferences.repostViaRepost,
-                    onSave: { updated in
-                        updatePreferences { $0.repostViaRepost = updated }
-                    }
-                )
-            } label: {
-                NotificationCategoryRow(
-                    title: "Reposts of your reposts",
-                    summary: notificationManager.preferences.repostViaRepost.summaryDescription
-                )
-            }
-
-            NavigationLink {
-                PlainPreferenceEditorView(
-                    title: "Activity from others",
-                    preference: notificationManager.preferences.subscribedPost,
-                    onSave: { updated in
-                        updatePreferences { $0.subscribedPost = updated }
-                    }
-                )
-            } label: {
-                NotificationCategoryRow(
-                    title: "Activity from others",
-                    summary: notificationManager.preferences.subscribedPost.summaryDescription
-                )
-            }
-
-            NavigationLink {
-                EverythingElsePreferenceEditorView(
-                    starterpackJoined: notificationManager.preferences.starterpackJoined,
-                    verified: notificationManager.preferences.verified,
-                    unverified: notificationManager.preferences.unverified,
-                    onSave: { list, push in
-                        updatePreferences { prefs in
-                            let pref = AppBskyNotificationDefs.Preference(list: list, push: push)
-                            prefs.starterpackJoined = pref
-                            prefs.verified = pref
-                            prefs.unverified = pref
-                        }
-                    }
-                )
-            } label: {
-                NotificationCategoryRow(
-                    title: "Everything else",
-                    summary: everythingElseSummary
-                )
-            }
-        }
-    }
-
-    private var everythingElseSummary: String {
-        let starterpackJoined = notificationManager.preferences.starterpackJoined
-        let verified = notificationManager.preferences.verified
-        let unverified = notificationManager.preferences.unverified
-        return AppBskyNotificationDefs.Preference(
-            list: starterpackJoined.list || verified.list || unverified.list,
-            push: starterpackJoined.push || verified.push || unverified.push
-        ).summaryDescription
-    }
-    
-    // Request notification permission
-    private func requestNotificationPermission() async {
-        await notificationManager.requestNotificationPermission()
-    }
-    
-    // Enable all notifications
-    @MainActor
-    private func enableAllNotifications() async {
-        logger.info("User enabling all notifications via master toggle")
-        await notificationManager.enableNotifications()
-    }
-    
-    // Disable all notifications
-    @MainActor
-    private func disableAllNotifications() async {
-        logger.info("User disabling all notifications via master toggle")
-        await notificationManager.disableNotifications()
-    }
-    
-    // Mutate preferences via serialized mutation API
-    private func updatePreferences(_ mutate: @escaping (inout NotificationPreferences) -> Void) {
-        Task {
-            do {
-                try await notificationManager.updatePreferences(mutate)
-            } catch {
-                logger.error("Failed to update notification preferences: \(error.localizedDescription)")
-            }
-        }
-    }
+  }
 }
-
-// MARK: - Row Component
 
 struct NotificationCategoryRow: View {
-    let title: String
-    let summary: String
-
-    var body: some View {
-        HStack {
-            Text(title)
-                .appFont(AppTextRole.body)
-            Spacer()
-            Text(summary)
-                .foregroundStyle(.secondary)
-                .appFont(AppTextRole.subheadline)
-        }
+  let title: String
+  let summary: String
+  var body: some View {
+    VStack(alignment: .leading, spacing: 4) {
+      Text(title).appFont(AppTextRole.body)
+      Text(summary).appFont(AppTextRole.subheadline).foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
     }
+    .accessibilityElement(children: .combine)
+  }
 }
 
-// MARK: - Filterable Preference Editor View
-
-struct FilterablePreferenceEditorView: View {
-    let title: String
-    let preference: AppBskyNotificationDefs.FilterablePreference
-    let onSave: (AppBskyNotificationDefs.FilterablePreference) -> Void
-
-    init(
-        title: String,
-        preference: AppBskyNotificationDefs.FilterablePreference,
-        onSave: @escaping (AppBskyNotificationDefs.FilterablePreference) -> Void
-    ) {
-        self.title = title
-        self.preference = preference
-        self.onSave = onSave
+private enum NotificationPreferenceCategory: String, Identifiable {
+  case mention, reply, like, follow, repost, quote, likeViaRepost, repostViaRepost
+  case subscribedPost, starterpackJoined, verified, unverified
+  var id: String { rawValue }
+  static let activity: [Self] = [.mention, .reply, .like, .follow, .repost, .quote, .likeViaRepost, .repostViaRepost, .subscribedPost]
+  static let otherActivity: [Self] = [.starterpackJoined, .verified, .unverified]
+  var title: String {
+    switch self {
+    case .mention: "Mentions"
+    case .reply: "Replies"
+    case .like: "Likes"
+    case .follow: "New Followers"
+    case .repost: "Reposts"
+    case .quote: "Quotes"
+    case .likeViaRepost: "Likes of Your Reposts"
+    case .repostViaRepost: "Reposts of Your Reposts"
+    case .subscribedPost: "Posts from Your Subscriptions"
+    case .starterpackJoined: "Starter Pack Signups"
+    case .verified: "Account Verified"
+    case .unverified: "Verification Removed"
     }
-
-    var body: some View {
-        Form {
-            Section("Notification Channels") {
-                Toggle("In-App", isOn: Binding(
-                    get: { preference.list },
-                    set: { newValue in
-                        let updated = AppBskyNotificationDefs.FilterablePreference(
-                            include: preference.include,
-                            list: newValue,
-                            push: preference.push
-                        )
-                        onSave(updated)
-                    }
-                ))
-
-                Toggle("Push Notifications", isOn: Binding(
-                    get: { preference.push },
-                    set: { newValue in
-                        let updated = AppBskyNotificationDefs.FilterablePreference(
-                            include: preference.include,
-                            list: preference.list,
-                            push: newValue
-                        )
-                        onSave(updated)
-                    }
-                ))
-            }
-
-            Section("Audience") {
-                Picker("Show from", selection: Binding(
-                    get: { preference.include },
-                    set: { newValue in
-                        let updated = AppBskyNotificationDefs.FilterablePreference(
-                            include: newValue,
-                            list: preference.list,
-                            push: preference.push
-                        )
-                        onSave(updated)
-                    }
-                )) {
-                    Text("Everyone").tag("all")
-                    Text("People I follow").tag("follows")
-                }
-                .pickerStyle(.inline)
-                .labelsHidden()
-                .disabled(!preference.list && !preference.push)
-            }
-        }
-        .navigationTitle(title)
-        #if os(iOS)
-        .toolbarTitleDisplayMode(.inline)
-        #endif
+  }
+  var filterablePath: WritableKeyPath<NotificationPreferences, AppBskyNotificationDefs.FilterablePreference>? {
+    switch self {
+    case .mention: \.mention
+    case .reply: \.reply
+    case .like: \.like
+    case .follow: \.follow
+    case .repost: \.repost
+    case .quote: \.quote
+    case .likeViaRepost: \.likeViaRepost
+    case .repostViaRepost: \.repostViaRepost
+    default: nil
     }
+  }
+  var plainPath: WritableKeyPath<NotificationPreferences, AppBskyNotificationDefs.Preference>? {
+    switch self {
+    case .subscribedPost: \.subscribedPost
+    case .starterpackJoined: \.starterpackJoined
+    case .verified: \.verified
+    case .unverified: \.unverified
+    default: nil
+    }
+  }
+  func summary(in preferences: NotificationPreferences) -> String {
+    if let path = filterablePath { return preferences[keyPath: path].summaryDescription }
+    if let path = plainPath { return preferences[keyPath: path].summaryDescription }
+    return "Not loaded"
+  }
 }
 
-// MARK: - Plain Preference Editor View
+private struct NotificationPreferenceEditorView: View {
+  let category: NotificationPreferenceCategory
+  let manager: NotificationManager
+  let accountDID: String
+  private var canEdit: Bool { manager.notificationAccountDID == accountDID && manager.canEditNotificationPreferences }
 
-struct PlainPreferenceEditorView: View {
-    let title: String
-    let preference: AppBskyNotificationDefs.Preference
-    let onSave: (AppBskyNotificationDefs.Preference) -> Void
-
-    init(
-        title: String,
-        preference: AppBskyNotificationDefs.Preference,
-        onSave: @escaping (AppBskyNotificationDefs.Preference) -> Void
-    ) {
-        self.title = title
-        self.preference = preference
-        self.onSave = onSave
-    }
-
-    var body: some View {
-        Form {
-            Section("Notification Channels") {
-                Toggle("In-App", isOn: Binding(
-                    get: { preference.list },
-                    set: { newValue in
-                        let updated = AppBskyNotificationDefs.Preference(
-                            list: newValue,
-                            push: preference.push
-                        )
-                        onSave(updated)
-                    }
-                ))
-
-                Toggle("Push Notifications", isOn: Binding(
-                    get: { preference.push },
-                    set: { newValue in
-                        let updated = AppBskyNotificationDefs.Preference(
-                            list: preference.list,
-                            push: newValue
-                        )
-                        onSave(updated)
-                    }
-                ))
-            }
+  var body: some View {
+    Form {
+      NotificationPreferencesStatusSection(manager: manager, accountDID: accountDID)
+      Section {
+        Toggle("Show in Notifications Tab", isOn: channelBinding(push: false))
+        Toggle("Send Push Alerts", isOn: channelBinding(push: true))
+        if manager.pushDeliverySummary != "Push ready" {
+          Text("Push delivery: \(manager.pushDeliverySummary). Your channel choices are retained.")
+            .appFont(AppTextRole.caption).foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
         }
-        .navigationTitle(title)
-        #if os(iOS)
-        .toolbarTitleDisplayMode(.inline)
-        #endif
+      } header: { Text("Notification Channels") }
+      .disabled(!canEdit)
+      if let path = category.filterablePath {
+        Section {
+          Picker("Activity From", selection: Binding(
+            get: { manager.preferences[keyPath: path].include },
+            set: { include in
+              save { preferences in
+                let preference = preferences[keyPath: path]
+                preferences[keyPath: path] = .init(
+                  include: include, list: preference.list, push: preference.push
+                )
+              }
+            }
+          )) {
+            Text("Everyone").tag("all")
+            Text("People I Follow").tag("follows")
+            if !["all", "follows"].contains(manager.preferences[keyPath: path].include) {
+              Text("Existing Audience").tag(manager.preferences[keyPath: path].include)
+            }
+          }
+          .pickerStyle(.inline)
+        } header: { Text("Audience") }
+          footer: { Text("This audience applies to both the Notifications tab and push alerts.") }
+          .disabled(!canEdit)
+      }
     }
+    .navigationTitle(category.title)
+    .modifier(NotificationSettingsTitleStyle())
+    .appFont(AppTextRole.body)
+  }
+
+  private func channelBinding(push: Bool) -> Binding<Bool> {
+    Binding(get: {
+      if let path = category.filterablePath {
+        let preference = manager.preferences[keyPath: path]
+        return push ? preference.push : preference.list
+      }
+      if let path = category.plainPath {
+        let preference = manager.preferences[keyPath: path]
+        return push ? preference.push : preference.list
+      }
+      return false
+    }, set: { value in
+      save { preferences in
+        if let path = category.filterablePath {
+          let preference = preferences[keyPath: path]
+          preferences[keyPath: path] = .init(
+            include: preference.include,
+            list: push ? preference.list : value,
+            push: push ? value : preference.push
+          )
+        } else if let path = category.plainPath {
+          let preference = preferences[keyPath: path]
+          preferences[keyPath: path] = .init(
+            list: push ? preference.list : value,
+            push: push ? value : preference.push
+          )
+        }
+      }
+    })
+  }
+
+  private func save(_ update: @escaping (inout NotificationPreferences) -> Void) {
+    guard canEdit else { return }
+    Task { _ = try? await manager.updatePreferences(update, expectedAccountDID: accountDID) }
+  }
 }
 
-// MARK: - Everything Else Preference Editor View
-
-struct EverythingElsePreferenceEditorView: View {
-    let starterpackJoined: AppBskyNotificationDefs.Preference
-    let verified: AppBskyNotificationDefs.Preference
-    let unverified: AppBskyNotificationDefs.Preference
-    let onSave: (Bool, Bool) -> Void
-
-    init(
-        starterpackJoined: AppBskyNotificationDefs.Preference,
-        verified: AppBskyNotificationDefs.Preference,
-        unverified: AppBskyNotificationDefs.Preference,
-        onSave: @escaping (Bool, Bool) -> Void
-    ) {
-        self.starterpackJoined = starterpackJoined
-        self.verified = verified
-        self.unverified = unverified
-        self.onSave = onSave
+private struct NotificationPreferencesStatusSection: View {
+  let manager: NotificationManager
+  let accountDID: String
+  var body: some View {
+    switch manager.preferencesState {
+    case .loading:
+      Section { ProgressView("Loading saved notification preferences…") }
+    case .saving:
+      Section { ProgressView("Saving notification preferences…") }
+    case .loadFailed(let error):
+      statusSection(title: "Couldn’t Load Preferences", error: error,
+        explanation: "Your saved rules have not been replaced. Load them before making changes.", retry: "Try Loading Again")
+    case .saveFailed(let error):
+      statusSection(title: "Couldn’t Save Preferences", error: error,
+        explanation: "Your last saved rules are shown. Try saving again to apply the changes below.", retry: "Try Saving Again")
+    case .unavailable:
+      Section { Text("Notification preferences are not connected for this account.").foregroundStyle(.secondary) }
+    case .ready:
+      EmptyView()
     }
+  }
+  private func statusSection(title: String, error: String, explanation: String, retry: String) -> some View {
+    Section {
+      Text(explanation).fixedSize(horizontal: false, vertical: true)
+      Text(error).appFont(AppTextRole.caption).foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
+      if let pending = manager.pendingNotificationChangesDescription {
+        Text(pending).appFont(AppTextRole.caption).fixedSize(horizontal: false, vertical: true)
+      }
+      Button(retry) { Task { await manager.retryNotificationPreferences(expectedAccountDID: accountDID) } }
+        .accessibilityIdentifier("NotificationPreferencesRetry")
+    } header: { Text(title) }
+    .disabled(manager.notificationAccountDID != accountDID)
+  }
+}
 
-    var body: some View {
-        Form {
-            Section(
-                header: Text("Notification Channels"),
-                footer: Text("Includes starter pack signups and account verification updates.")
-            ) {
-                Toggle("In-App", isOn: Binding(
-                    get: { starterpackJoined.list || verified.list || unverified.list },
-                    set: { newValue in
-                        let push = starterpackJoined.push || verified.push || unverified.push
-                        onSave(newValue, push)
-                    }
-                ))
-
-                Toggle("Push Notifications", isOn: Binding(
-                    get: { starterpackJoined.push || verified.push || unverified.push },
-                    set: { newValue in
-                        let list = starterpackJoined.list || verified.list || unverified.list
-                        onSave(list, newValue)
-                    }
-                ))
-            }
-        }
-        .navigationTitle("Everything else")
-        #if os(iOS)
-        .toolbarTitleDisplayMode(.inline)
-        #endif
-    }
+private struct NotificationSettingsTitleStyle: ViewModifier {
+  func body(content: Content) -> some View {
+    #if os(iOS)
+    content.toolbarTitleDisplayMode(.inline)
+    #else
+    content
+    #endif
+  }
 }

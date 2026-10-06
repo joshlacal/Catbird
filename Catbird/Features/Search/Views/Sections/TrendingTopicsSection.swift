@@ -10,10 +10,13 @@ import Petrel
 
 /// A section showing trending topics from the Bluesky network
 struct TrendingTopicsSection: View {
+  @Environment(SceneNavigationContext.self) private var sceneContext
     @Environment(AppState.self) private var appState
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     
     let topics: [AppBskyUnspeccedDefs.TrendView]
+    let isLoading: Bool
     let onSelect: (String) -> Void
     let onSeeAll: () -> Void
     let maxItems: Int
@@ -23,11 +26,13 @@ struct TrendingTopicsSection: View {
     @State private var showHideConfirmation = false
     init(
         topics: [AppBskyUnspeccedDefs.TrendView],
+        isLoading: Bool = false,
         onSelect: @escaping (String) -> Void,
         onSeeAll: @escaping () -> Void,
         maxItems: Int = 5
     ) {
         self.topics = topics
+        self.isLoading = isLoading
         self.onSelect = onSelect
         self.onSeeAll = onSeeAll
         self.maxItems = maxItems
@@ -35,49 +40,42 @@ struct TrendingTopicsSection: View {
     
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {                
-                Label("Trending", systemImage: "chart.line.uptrend.xyaxis")
-                    .appFont(.customSystemFont(size: 17, weight: .medium, width: 120, relativeTo: .headline))
-
-                Spacer()
-                
-                HStack(spacing: 8) {
+            DiscoverySectionHeader("Trending Topics") {
+                HStack(spacing: DesignTokens.Spacing.sm) {
                     if topics.count > maxItems {
                         Button(action: onSeeAll) {
-                            HStack(spacing: 4) {
-                                Text("See All")
-                                Image(systemName: "chevron.right")
-                                    .appFont(AppTextRole.caption)
-                            }
-                            .appFont(AppTextRole.subheadline)
-                            .foregroundColor(.accentColor)
+                            Label("All Topics", systemImage: "chevron.right")
+                                .appFont(size: Typography.Size.subheadline, weight: .medium, relativeTo: .subheadline)
+                                .frame(minHeight: 44)
                         }
                     }
-
                     Menu {
-                        Button(role: .destructive) {
-                            showHideConfirmation = true
-                        } label: {
-                            Label("Hide trending topics", systemImage: "eye.slash")
+                        Button { showHideConfirmation = true } label: {
+                            Label("Hide Trending Topics…", systemImage: "eye.slash")
                         }
                     } label: {
                         Image(systemName: "ellipsis")
                             .appFont(AppTextRole.subheadline)
-                            .foregroundColor(.secondary)
-                            .frame(width: 28, height: 28)
+                            .foregroundStyle(.secondary)
+                            .frame(width: 44, height: 44)
                             .contentShape(Rectangle())
                     }
-                    .accessibilityLabel("Trending options")
+                    .accessibilityLabel("Trending topic options")
                 }
             }
-            .padding(.horizontal)
-            
-            if topics.isEmpty {
+
+            if topics.isEmpty && isLoading {
+                loadingView
+            } else if topics.isEmpty {
                 emptyStateView
             } else {
                 topicsListView
             }
         }
+        .task(id: appState.topicPreviewPrefetchIdentity(links: topics.map(\.link))) {
+            appState.prefetchTopicPreviews(trends: topics, owner: .search)
+        }
+        .onDisappear { appState.cancelTopicPreviewPrefetch(owner: .search) }
         .sheet(isPresented: $isShowingCopilot) {
             if let topic = copilotTopic {
                 let context = CopilotContext.topic(
@@ -97,12 +95,12 @@ struct TrendingTopicsSection: View {
             if wasShowing && !isShowing, let proposal = pendingDedicatedProposal {
                 pendingDedicatedProposal = nil
                 if case .preparePostDraft(let text) = proposal {
-                    appState.presentPostComposer(initialText: text)
+                    sceneContext.presentPostComposer(initialText: text)
                 }
             }
         }
         .confirmationDialog(
-            "Hide trending topics?",
+            "Hide Trending Topics?",
             isPresented: $showHideConfirmation,
             titleVisibility: .visible
         ) {
@@ -111,222 +109,140 @@ struct TrendingTopicsSection: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("You can turn trending topics back on anytime in Settings > Content & Media.")
+            Text("This hides trending topics for this account in Feeds and Search. You can turn them back on in Settings › Feeds & Discovery › Discovery.")
         }
     }
     
+    private var loadingView: some View {
+        HStack(spacing: DesignTokens.Spacing.sm) {
+            ProgressView()
+            Text("Loading trending topics…")
+                .appFont(AppTextRole.subheadline)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 16)
+        .padding(.vertical, DesignTokens.Spacing.base)
+    }
+
     private var emptyStateView: some View {
-        HStack {
-            Spacer()
-            
-            VStack(spacing: 6) {
-                ProgressView()
-                    .padding(.bottom, 4)
-                
-                Text("Loading trending topics...")
-                    .appFont(AppTextRole.caption)
-                    .foregroundColor(.secondary)
-            }
-            .padding(.vertical, 12)
-            
-            Spacer()
-        }
+        Text("No trending topics right now. Pull to refresh.")
+            .appFont(AppTextRole.subheadline)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 16)
+            .padding(.vertical, DesignTokens.Spacing.base)
     }
-    
+
     private var topicsListView: some View {
         VStack(spacing: 0) {
-            let limitedTopics = Array(topics.prefix(maxItems))
-            
-            // Only show up to maxItems
-            Group {
-                // Manually create the views to avoid ForEach
-                if limitedTopics.count > 0 {
-                    topicRow(topic: limitedTopics[0])
-                    if limitedTopics.count > 1 {
-                        Divider().padding(.leading)
-                        topicRow(topic: limitedTopics[1])
-                    }
-                    if limitedTopics.count > 2 {
-                        Divider().padding(.leading)
-                        topicRow(topic: limitedTopics[2])
-                    }
-                    if limitedTopics.count > 3 {
-                        Divider().padding(.leading)
-                        topicRow(topic: limitedTopics[3])
-                    }
-                    if limitedTopics.count > 4 {
-                        Divider().padding(.leading)
-                        topicRow(topic: limitedTopics[4])
-                    }
-                }
+            ForEach(Array(topics.prefix(maxItems).enumerated()), id: \.element.topic) { index, topic in
+                if index > 0 { Divider() }
+                topicRow(topic: topic)
             }
         }
-        .background(Color.elevatedBackground(appState.themeManager, elevation: .low, currentScheme: colorScheme))
-        .cornerRadius(12)
-        .shadow(color: Color.dynamicShadow(appState.themeManager, currentScheme: colorScheme), radius: 8, y: 4)
-        .padding(.horizontal)
+        .background(Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))
     }
-    
+
     // Extract the row view to a separate function
     private func topicRow(topic: AppBskyUnspeccedDefs.TrendView) -> some View {
         Button {
             // Create a full URL from the relative path
             if topic.link.starts(with: "http"), let fullURL = URL(string: topic.link) {
-                _ = appState.urlHandler.handle(fullURL, tabIndex: 1)
+                _ = sceneContext.urlHandler.handle(fullURL, tabIndex: 1)
             } else if let url = URL(string: "https://bsky.app\(topic.link)") {
-                _ = appState.urlHandler.handle(url, tabIndex: 1)
+                _ = sceneContext.urlHandler.handle(url, tabIndex: 1)
             }
             
-            // Uncomment to use onSelect instead of direct URL handling
-            // onSelect(topic.displayName ?? topic.topic)
         } label: {
-            HStack(alignment: .top, spacing: 12) {
-                categoryIcon(for: topic.category)
-                    .appFont(AppTextRole.title3)
-                    .foregroundColor(categoryColor(for: topic.category))
-                    .padding(12)
-                    .frame(width: 32, height: 32)
-                    .background(
-                        Circle().stroke(categoryColor(for: topic.category), lineWidth: 1)
-                            .fill(categoryColor(for: topic.category).opacity(0.1))
-                            .scaleEffect(1.2)
-                    )
-                    .padding(.top, 10)
-                
-                VStack(alignment: .leading, spacing: 4) {
-                    
-                    if let category = topic.category {
-                        Text(formatCategory(category))
-                            .appFont(AppTextRole.subheadline)
-                            .textCase(.uppercase)
-                            .textScale(.secondary)
-                            .foregroundColor(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
-//                            .padding(.vertical, 2)
-//                            .padding(.horizontal, 6)
-//                            .background(
-//                                Capsule()
-//                                    .fill(Color(.systemGray6))
-//                            )
-                    }
-                    
-                    HStack(alignment: .top, spacing: 8) {
-                        Text(topic.displayName)
-                            .appFont(.customSystemFont(size: 23, weight: .medium, width: 120, relativeTo: .title3))
-                            .lineLimit(nil)
-                            .multilineTextAlignment(.leading)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .layoutPriority(1)
-                            .padding(.bottom, 3)
-                            .foregroundColor(Color.dynamicText(appState.themeManager, style: .primary, currentScheme: colorScheme))
-                        
-                        if let status = topic.status, status == "hot" {
-                            trendingBadge(status: status)
-                                .fixedSize()
-                        }
-                    }
-                    
-                    HStack(spacing: 12) {
-                        Label(formatPostCount(topic.postCount), systemImage: "text.bubble")
-                            .appFont(AppTextRole.caption2)
-                            .foregroundColor(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
-                        
-                        Label(formatTimeSince(topic.startedAt.date), systemImage: "clock")
-                                .appFont(AppTextRole.caption2)
-                                .foregroundColor(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
-                    }
-                    .padding(.top, 2)
-
-                    if let description = TrendingTopicPresentation.description(for: topic) {
-                        Text(description)
-                            .appFont(AppTextRole.footnote)
-                            .foregroundColor(Color.dynamicText(appState.themeManager, style: .secondary, currentScheme: colorScheme))
-                            .lineLimit(nil)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                
-                Image(systemName: "arrow.up.right")
-                    .appFont(AppTextRole.footnote)
-                    .foregroundColor(.accentColor)
-                    .padding(8)
-                    .background(
-                        Circle()
-                            .fill(Color.accentColor.opacity(0.1))
-                    )
-            }
-            .padding(.vertical, 16)
-            .padding(.horizontal, 16)
-            .contentShape(Rectangle())
+            topicLabel(topic)
         }
-        .buttonStyle(PlainButtonStyle())
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
+        .accessibilityHint("Open posts about this topic")
         .contentShape(Rectangle())
         .contextMenu {
-            Button {
-                copilotTopic = topic
-                isShowingCopilot = true
-            } label: {
-                Label("Ask Catbird", systemImage: "sparkles")
+            if CopilotAvailability.isAvailable {
+                Button {
+                    copilotTopic = topic
+                    isShowingCopilot = true
+                } label: {
+                    Label("Ask Catbird", systemImage: "sparkles")
+                }
             }
         }
     }
     
-    private func trendingBadge(status: String) -> some View {
-        Text(status.uppercased())
-            .appFont(size: 10)
-            .foregroundColor(.white)
-            .padding(.vertical, 2)
-            .padding(.horizontal, 6)
-            .background(
-                Capsule()
-                    .fill(Color.red)
-            )
-    }
-    
-    private func categoryIcon(for category: String?) -> some View {
-        guard let category = category else {
-            return Image(systemName: "number")
+    /// Media leads the row; title, description, metadata and "who is chatting" avatars
+    /// share one leading text edge beside it.
+    @ViewBuilder
+    private func topicLabel(_ topic: AppBskyUnspeccedDefs.TrendView) -> some View {
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+                    topicMedia(topic)
+                    topicText(topic)
+                }
+            } else {
+                HStack(alignment: .top, spacing: DesignTokens.Spacing.base) {
+                    topicMedia(topic)
+                    topicText(topic)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Image(systemName: "chevron.right")
+                        .appFont(AppTextRole.caption)
+                        .foregroundStyle(.tertiary)
+                        .accessibilityHidden(true)
+                        .padding(.top, DesignTokens.Spacing.xs)
+                }
+            }
         }
-        
-        // Dictionary of category icons
-        let categoryIcons: [String: String] = [
-            "pop-culture": "music.note.tv",
-            "politics": "building.columns",
-            "sports": "figure.basketball",
-            "video-games": "gamecontroller",
-            "tech": "laptopcomputer",
-            "business": "chart.bar",
-            "science": "atom",
-            "news": "newspaper",
-            "other": "number"
-        ]
-        
-        // Return the icon if it exists, otherwise use a default
-        return Image(systemName: categoryIcons[category.lowercased()] ?? "number")
+        .padding(.vertical, DesignTokens.Spacing.base)
+        .padding(.horizontal, 16)
+        .contentShape(Rectangle())
     }
-    
-    private func categoryColor(for category: String?) -> Color {
-        guard let category = category else {
-            return .gray
+
+    private func topicMedia(_ topic: AppBskyUnspeccedDefs.TrendView) -> some View {
+        TrendingTopicArtwork(link: topic.link, actors: topic.actors, showParticipants: false,
+                             fallbackCategory: topic.category)
+    }
+
+    private func topicText(_ topic: AppBskyUnspeccedDefs.TrendView) -> some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+            TrendingTopicHeading(title: topic.displayName, category: topic.category, showsMark: false)
+            if topic.status == "hot" {
+                Label("Trending", systemImage: "flame.fill")
+                    .appFont(AppTextRole.caption)
+                    .foregroundStyle(.orange)
+            }
+            topicDetails(topic)
+            TrendingTopicParticipants(link: topic.link, actors: topic.actors)
         }
-        
-        // Dictionary of category colors
-        let categoryColors: [String: Color] = [
-            "pop-culture": .purple,
-            "politics": .blue,
-            "sports": .orange,
-            "video-games": .green,
-            "tech": .cyan,
-            "business": .yellow,
-            "science": .mint,
-            "news": .red,
-            "other": .gray
-        ]
-        
-        // Return the color if it exists, otherwise use a default
-        return categoryColors[category.lowercased()] ?? .gray
     }
-    
+
+    private func topicDetails(_ topic: AppBskyUnspeccedDefs.TrendView) -> some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+            if let description = TrendingTopicPresentation.description(for: topic) {
+                Text(description)
+                    .appFont(AppTextRole.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: DesignTokens.Spacing.base) { topicMetadata(topic) }
+                VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) { topicMetadata(topic) }
+            }
+            .appFont(AppTextRole.caption)
+            .foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private func topicMetadata(_ topic: AppBskyUnspeccedDefs.TrendView) -> some View {
+        Text(formatPostCount(topic.postCount)).fixedSize()
+        Text(formatTimeSince(topic.startedAt.date)).fixedSize()
+    }
+
     private func formatPostCount(_ count: Int) -> String {
         if count >= 1_000_000 {
             let formatted = Double(count) / 1_000_000.0
@@ -352,21 +268,51 @@ struct TrendingTopicsSection: View {
         }
     }
     
-    private func formatCategory(_ category: String) -> String {
-        // Special cases dictionary
-        let specialCases: [String: String] = [
-            "pop-culture": "Entertainment",
-            "video-games": "Video Games"
-        ]
-        
-        // Check for special cases first
-        if let specialCase = specialCases[category.lowercased()] {
-            return specialCase
+
+}
+
+/// A common discovery heading with a second row when the title and actions need more room.
+struct DiscoverySectionHeader<Actions: View>: View {
+  @Environment(\.fontManager) private var fontManager
+  let title: String
+  let subtitle: String?
+  @ViewBuilder let actions: Actions
+
+  init(_ title: String, subtitle: String? = nil, @ViewBuilder actions: () -> Actions) {
+    self.title = title
+    self.subtitle = subtitle
+    self.actions = actions()
+  }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+      ViewThatFits(in: .horizontal) {
+        HStack(alignment: .center, spacing: DesignTokens.Spacing.base) {
+          heading.fixedSize(horizontal: true, vertical: false)
+          Spacer(minLength: 0)
+          actions.fixedSize(horizontal: true, vertical: false)
         }
-        
-        // Otherwise format normally
-        let words = category.components(separatedBy: "-")
-        let capitalizedWords = words.map { $0.capitalized }
-        return capitalizedWords.joined(separator: " ")
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+          heading
+          actions
+        }
+      }
+      if let subtitle {
+        Text(subtitle)
+          .appFont(AppTextRole.subheadline)
+          .foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+      }
     }
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .padding(.horizontal, 16)
+  }
+
+  private var heading: some View {
+    Text(title)
+      .appFont(fontManager.scaledCustomFont(size: 17, weight: .bold, width: 120, relativeTo: .headline))
+      .foregroundStyle(.primary)
+      .fixedSize(horizontal: false, vertical: true)
+      .accessibilityAddTraits(.isHeader)
+  }
 }

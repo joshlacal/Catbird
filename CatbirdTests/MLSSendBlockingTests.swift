@@ -23,7 +23,8 @@ struct MLSSendBlockingTests {
     let source = MLSConversationDataSource(
       conversationId: "550e8400-e29b-41d4-a716-446655440000", currentUserDID: userDID, appState: nil)
     let controller = ChatCollectionViewController(dataSource: source,
-      navigationPath: .constant(NavigationPath()), appState: appState)
+      navigationPath: .constant(NavigationPath()), appState: appState,
+      sceneContext: SceneNavigationContext(appState: appState, sceneID: UUID()))
     controller.loadViewIfNeeded()
     var sent: [String] = []
     var attachments = 0

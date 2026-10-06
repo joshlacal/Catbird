@@ -19,7 +19,6 @@ struct SaveSearchSheet: View {
     let onSave: (String) -> Void
     
     @State private var searchName = ""
-    @State private var enableNotifications = false
     @FocusState private var isNameFieldFocused: Bool
     
     var body: some View {
@@ -45,7 +44,7 @@ struct SaveSearchSheet: View {
                 } header: {
                     Text("Search Details")
                 } footer: {
-                    Text("Give this search a memorable name for quick access later")
+                    Text("Give this search a memorable name for quick access later.")
                 }
                 
                 if hasActiveFilters {
@@ -55,22 +54,6 @@ struct SaveSearchSheet: View {
                         Text("Active Filters")
                     }
                 }
-                
-                Section {
-                    Toggle(isOn: $enableNotifications) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Enable Notifications")
-                                .appFont(AppTextRole.body)
-                            
-                            Text("Get notified when new results appear")
-                                .appFont(AppTextRole.caption)
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                } header: {
-                    Text("Notifications")
-                }
-                .disabled(true) // Future feature
             }
             .navigationTitle("Save Search")
             #if os(iOS)
@@ -107,58 +90,44 @@ struct SaveSearchSheet: View {
     @ViewBuilder
     private var activeFiltersView: some View {
         VStack(alignment: .leading, spacing: 12) {
-            if let language = filters.language {
-                filterRow(icon: "globe", title: "Language", value: language.uppercased())
-            }
-            
-            if filters.dateRange != .anytime {
-                filterRow(icon: "calendar", title: "Date Range", value: filters.dateRange.displayName)
-            }
-            
             if filters.sort != .top {
-                filterRow(icon: "arrow.up.arrow.down", title: "Sort By", value: filters.sort.displayName)
+                filterRow(icon: "arrow.up.arrow.down", text: "Sorted by \(filters.sort.displayName)")
+            }
+            
+            ForEach(filters.summaryItems) { item in
+                filterRow(icon: item.icon, text: item.text)
             }
         }
     }
     
     @ViewBuilder
-    private func filterRow(icon: String, title: String, value: String) -> some View {
+    private func filterRow(icon: String, text: String) -> some View {
         HStack(spacing: 12) {
             Image(systemName: icon)
                 .appFont(AppTextRole.subheadline)
                 .foregroundColor(.accentColor)
                 .frame(width: 24, height: 24)
+                .accessibilityHidden(true)
             
-            Text(title)
+            Text(text)
                 .appFont(AppTextRole.subheadline)
-                .foregroundColor(.secondary)
-            
-            Spacer()
-            
-            Text(value)
-                .appFont(AppTextRole.subheadline.weight(.medium))
                 .foregroundColor(.primary)
+            
+            Spacer(minLength: 0)
         }
     }
     
     private var hasActiveFilters: Bool {
-        return filters.language != nil ||
-               filters.dateRange != .anytime ||
-               filters.sort != .top
+        filters.sort != .top || !filters.summaryItems.isEmpty
     }
     
     private func generateSearchName() -> String {
-        // Try to generate a smart name based on query and filters
-        var name = query.capitalized
+        // Keep the user's own casing ("iOS", "#WWDC"); only shorten long queries.
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        var name = trimmed.count > 30 ? String(trimmed.prefix(30)) + "…" : trimmed
         
-        if query.count > 30 {
-            name = String(query.prefix(30)) + "..."
-        }
-        
-        if let language = filters.language {
-            name += " (\(language.uppercased()))"
-        } else if filters.dateRange != .anytime {
-            name += " (\(filters.dateRange.displayName))"
+        if let summary = filters.summaryItems.first {
+            name += " (\(summary.text))"
         }
         
         return name

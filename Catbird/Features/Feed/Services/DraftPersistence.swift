@@ -2,17 +2,16 @@
 //  DraftPersistence.swift
 //  Catbird
 //
-//  Thin wrapper for draft persistence operations using DatabaseModelActor.
-//  Operations are delegated to the actor to run off the main thread.
+//  Account-scoped saved draft persistence and durable sync metadata.
 //
 
 import Foundation
 import SwiftData
 import OSLog
 
-/// Wrapper for draft persistence operations that delegates to DatabaseModelActor.
-/// This class provides async methods that run database operations off the main thread.
-/// Note: Requires @MainActor for initialization due to ModelContainer.mainContext access.
+/// Draft editing and synchronization share one context so an in-flight save
+/// cannot overwrite a newer sync baseline or deletion tombstone. Legacy import
+/// and explicit physical removal retain their existing database actor path.
 @MainActor
 final class DraftPersistence {
     private let logger = Logger(subsystem: "blue.catbird", category: "DraftPersistence")
@@ -26,7 +25,7 @@ final class DraftPersistence {
     init(modelContext: ModelContext) {
         // Extract the container from the context to create our own actor
         self.modelContainer = modelContext.container
-        logger.info("🗄️ DraftPersistence initialized with ModelActor (off main thread)")
+        logger.info("DraftPersistence initialized with the shared draft context")
     }
     
     init(modelContainer: ModelContainer) {
@@ -34,21 +33,25 @@ final class DraftPersistence {
         logger.info("🗄️ DraftPersistence initialized with ModelContainer")
     }
     
-    // MARK: - Async CRUD Operations (preferred - run off main thread)
+    // MARK: - Async CRUD compatibility
     
     func saveDraftAsync(_ draft: PostComposerDraft, accountDID: String) async throws -> UUID {
         logger.info("💾 saveDraft (async) - Account: \(accountDID)")
-        return try await databaseActor.saveDraft(draft, accountDID: accountDID)
+        return try saveDraft(draft, accountDID: accountDID)
     }
     
     func updateDraft(id: UUID, draft: PostComposerDraft, accountDID: String) async throws {
         logger.info("♻️ updateDraft (async) - ID: \(id.uuidString)")
-        try await databaseActor.updateDraft(id: id, draft: draft, accountDID: accountDID)
+        guard let model = try fetchDraftModel(id: id), model.accountDID == accountDID,
+              try syncState(for: model).deletedAt == nil else { throw DraftError.draftNotFound }
+        try model.apply(draft)
+        model.touch()
+        try modelContainer.mainContext.save()
     }
     
     func fetchDraftsAsync(for accountDID: String) async throws -> [DraftPost] {
         logger.debug("📥 fetchDrafts (async) - Account: \(accountDID)")
-        return try await databaseActor.fetchDrafts(for: accountDID)
+        return try fetchDrafts(for: accountDID)
     }
     
     func deleteDraft(id: UUID) async throws {
@@ -58,7 +61,7 @@ final class DraftPersistence {
     }
     
     func countDrafts(for accountDID: String) async throws -> Int {
-        return try await databaseActor.countDrafts(for: accountDID)
+        return try fetchDrafts(for: accountDID).count
     }
     
     func migrateLegacyDraft(
@@ -101,7 +104,7 @@ final class DraftPersistence {
         var descriptor = FetchDescriptor(predicate: predicate)
         descriptor.sortBy = [SortDescriptor(\.modifiedDate, order: .reverse)]
 
-        return try modelContext.fetch(descriptor)
+        return try modelContext.fetch(descriptor).filter { (try? syncState(for: $0))?.deletedAt == nil }
     }
 
     // MARK: - Remote Sync Support (MainActor, main context)
@@ -113,40 +116,46 @@ final class DraftPersistence {
         return try modelContext.fetch(FetchDescriptor(predicate: predicate)).first
     }
 
-    /// Look up the server-assigned remote ID for a local draft, if any
-    func remoteId(for id: UUID) throws -> String? {
-        try fetchDraftModel(id: id)?.remoteId
+    func allDrafts(for accountDID: String) throws -> [DraftPost] {
+        let predicate = #Predicate<DraftPost> { $0.accountDID == accountDID }
+        return try modelContainer.mainContext.fetch(FetchDescriptor(predicate: predicate))
     }
 
-    /// Record a successful push to the AppView without disturbing modifiedDate
-    func markSynced(id: UUID, remoteId: String, at date: Date) throws {
-        guard let model = try fetchDraftModel(id: id) else {
-            throw DraftError.draftNotFound
-        }
-        model.remoteId = remoteId
-        model.lastSyncedAt = date
-        model.remoteMediaDeviceName = nil
-        try modelContainer.mainContext.save()
-        logger.debug("🔗 Marked draft \(id.uuidString) synced - remoteId: \(remoteId)")
+    func syncState(for model: DraftPost) throws -> DraftSyncState {
+        guard let data = model.syncMetadata else { return DraftSyncState() }
+        return try JSONDecoder().decode(DraftSyncState.self, from: data)
     }
 
-    /// Overwrite a local draft with content pulled from the AppView (remote won last-write-wins)
-    func applyRemoteDraft(
-        _ draft: PostComposerDraft,
-        toDraftWithId id: UUID,
-        modifiedDate: Date,
-        syncedAt: Date,
-        remoteMediaDeviceName: String? = nil
-    ) throws {
-        guard let model = try fetchDraftModel(id: id) else {
+    func saveSyncState(_ state: DraftSyncState, for model: DraftPost) throws {
+        model.syncMetadata = try JSONEncoder().encode(state)
+        try modelContainer.mainContext.save()
+    }
+
+    /// Keep deletion intent in the same durable row as its remote identity. A
+    /// failed request or an app restart cannot re-import a deleted draft.
+    func markDeleted(id: UUID, accountDID: String) throws {
+        guard let model = try fetchDraftModel(id: id), model.accountDID == accountDID else {
             throw DraftError.draftNotFound
         }
-        try model.apply(draft)
-        model.modifiedDate = modifiedDate
-        model.lastSyncedAt = syncedAt
-        model.remoteMediaDeviceName = remoteMediaDeviceName
+        var state = try syncState(for: model)
+        state.deletedAt = Date()
+        try saveSyncState(state, for: model)
+    }
+
+    @discardableResult
+    func preserveRecoveryCopy(of model: DraftPost, reason: String) throws -> UUID {
+        let copy = try DraftPost.create(from: model.decodeDraft(), accountDID: model.accountDID)
+        copy.createdDate = model.createdDate
+        copy.modifiedDate = model.modifiedDate
+        copy.remoteMediaDeviceName = model.remoteMediaDeviceName
+        var state = try syncState(for: model)
+        state.recoveryReason = reason
+        state.pendingCreate = nil
+        state.deletedAt = nil
+        copy.syncMetadata = try JSONEncoder().encode(state)
+        modelContainer.mainContext.insert(copy)
         try modelContainer.mainContext.save()
-        logger.info("⬇️ Applied remote draft content to \(id.uuidString)")
+        return copy.id
     }
 
     /// Materialize a remote-only draft locally with its remote identity attached
@@ -171,12 +180,6 @@ final class DraftPersistence {
         try modelContext.save()
         logger.info("⬇️ Materialized remote draft \(remoteId) as local \(model.id.uuidString)")
         return model.id
-    }
-
-    /// Delete a local draft without remote propagation (used when the remote copy is already gone)
-    func deleteDraftLocally(id: UUID) async throws {
-        try await deleteDraft(id: id)
-        logger.info("🗑️ Deleted local draft \(id.uuidString) (remote deletion propagated)")
     }
 
     /// Remove only capture files owned by Catbird, and only after the saved

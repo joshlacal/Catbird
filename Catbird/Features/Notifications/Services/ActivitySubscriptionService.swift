@@ -35,11 +35,11 @@ final class ActivitySubscriptionService {
     var errorDescription: String? {
       switch self {
       case .clientUnavailable:
-        return "ATProto client unavailable"
-      case .invalidResponse(let code):
-        return "Unexpected response code: \(code)"
+        return "You’re signed out. Sign in again to manage activity alerts."
+      case .invalidResponse:
+        return "Couldn’t reach Bluesky. Try again."
       case .profileLookupFailed:
-        return "Unable to load profile information"
+        return "Couldn’t load this profile. Try again."
       }
     }
   }
@@ -96,6 +96,7 @@ final class ActivitySubscriptionService {
       let (code, data) = try await client.app.bsky.notification.listActivitySubscriptions(input: params)
 
       guard code == 200, let output = data else {
+        logger.error("listActivitySubscriptions returned HTTP \(code, privacy: .public)")
         throw ServiceError.invalidResponse(code)
       }
 
@@ -147,6 +148,7 @@ final class ActivitySubscriptionService {
     let (code, response) = try await client.app.bsky.notification.putActivitySubscription(input: input)
 
     guard (200 ... 299).contains(code) else {
+      logger.error("putActivitySubscription returned HTTP \(code, privacy: .public)")
       throw ServiceError.invalidResponse(code)
     }
 

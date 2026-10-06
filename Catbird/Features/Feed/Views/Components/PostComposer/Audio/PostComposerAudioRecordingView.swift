@@ -8,6 +8,9 @@
 import SwiftUI
 import AVFoundation
 import Observation
+import OSLog
+
+private let composerAudioLogger = Logger(subsystem: "blue.catbird", category: "ComposerAudio")
 
 #if os(iOS)
 import UIKit
@@ -21,6 +24,7 @@ struct PostComposerAudioRecordingView: View {
   @Environment(\.colorScheme) private var colorScheme
   
   @State private var audioRecorder = AudioRecorderService()
+  @State private var recordingStart = ComposerRecordingStart()
   @State private var showingPermissionAlert = false
   @State private var recordingPhase: RecordingPhase = .ready
   @State private var showingDiscardAlert = false
@@ -75,6 +79,7 @@ struct PostComposerAudioRecordingView: View {
       }
       .task {
         await audioRecorder.checkMicrophonePermission()
+        guard !Task.isCancelled, recordingStart.isPresented else { return }
         if !audioRecorder.hasPermission {
           showingPermissionAlert = true
         }
@@ -84,6 +89,7 @@ struct PostComposerAudioRecordingView: View {
           openAppSettings()
         }
         Button("Cancel", role: .cancel) {
+          recordingStart.cancelPendingStart()
           onCancel()
           dismiss()
         }
@@ -92,6 +98,8 @@ struct PostComposerAudioRecordingView: View {
       }
       .alert("Start New Recording?", isPresented: $showingDiscardAlert) {
         Button("Start New", role: .destructive) {
+          recordingStart.cancelPendingStart()
+          audioPlaybackService.stop()
           audioRecorder.cancelRecording()
           recordingPhase = .ready
         }
@@ -99,6 +107,18 @@ struct PostComposerAudioRecordingView: View {
       } message: {
         Text("This will replace your current recording.")
       }
+    }
+    .onAppear { recordingStart.activate() }
+    .onChange(of: audioRecorder.isRecording) { _, isRecording in
+      if !isRecording, recordingStart.isPresented, !recordingStart.isPending,
+         recordingPhase == .recording {
+        recordingPhase = .finished
+      }
+    }
+    .onDisappear {
+      recordingStart.invalidate()
+      audioRecorder.stopRecording()
+      audioPlaybackService.stop()
     }
   }
   
@@ -296,7 +316,7 @@ struct PostComposerAudioRecordingView: View {
         }
       }
     }
-    .disabled(!audioRecorder.hasPermission)
+    .disabled(!audioRecorder.hasPermission || recordingStart.isPending)
     .opacity(audioRecorder.hasPermission ? 1.0 : 0.5)
     .accessibilityLabel(accessibilityLabel)
     .accessibilityHint(accessibilityHint)
@@ -305,6 +325,7 @@ struct PostComposerAudioRecordingView: View {
   // MARK: - Computed Properties
   
   private var recordingStatusText: String {
+    if recordingStart.isPending { return "Starting Recording…" }
     switch recordingPhase {
     case .ready:
       return "Tap to Record"
@@ -338,6 +359,7 @@ struct PostComposerAudioRecordingView: View {
   }
   
   private var accessibilityLabel: String {
+    if recordingStart.isPending { return "Starting recording" }
     switch recordingPhase {
     case .ready:
       return "Record audio"
@@ -380,19 +402,15 @@ struct PostComposerAudioRecordingView: View {
       return 
     }
     
-    Task {
-      do {
+    recordingStart.start(
+      operation: {
         try await audioRecorder.startRecording()
-        await MainActor.run {
-          recordingPhase = .recording
-        }
-      } catch {
-        await MainActor.run {
-          // Reset to ready state if recording fails
-          recordingPhase = .ready
-        }
-      }
-    }
+        return audioRecorder.isRecording
+      },
+      cancel: { audioRecorder.cancelRecording() },
+      onStarted: { recordingPhase = .recording },
+      onFailure: { recordingPhase = .ready }
+    )
   }
   
   private func stopRecording() {
@@ -406,19 +424,19 @@ struct PostComposerAudioRecordingView: View {
     if audioPlaybackService.isPlaying {
       audioPlaybackService.stop()
     } else {
-      Task {
-        try? await audioPlaybackService.play(url: url)
-      }
+      try? audioPlaybackService.play(url: url)
     }
   }
   
   private func handleCancel() {
+    recordingStart.cancelPendingStart()
     // Stop any playback first
     audioPlaybackService.stop()
     
     if audioRecorder.isRecording {
       // If actively recording, stop and then ask about discarding
       audioRecorder.stopRecording()
+      recordingPhase = .finished
       showingDiscardAlert = true
     } else if recordingPhase == .finished {
       // If finished recording, ask about discarding
@@ -447,6 +465,65 @@ struct PostComposerAudioRecordingView: View {
 
 // MARK: - Supporting Types
 
+/// Owns one activation attempt for this recording sheet, including its teardown.
+@MainActor
+@Observable
+final class ComposerRecordingStart {
+  private(set) var isPending = false
+  private(set) var isPresented = false
+  @ObservationIgnored private var task: Task<Void, Never>?
+  @ObservationIgnored private var cancelOperation: (@MainActor () -> Void)?
+  @ObservationIgnored private var requestID: UUID?
+
+  func activate() { isPresented = true }
+
+  @discardableResult
+  func start(operation: @escaping @MainActor () async throws -> Bool,
+             cancel: @escaping @MainActor () -> Void,
+             onStarted: @escaping @MainActor () -> Void,
+             onFailure: @escaping @MainActor () -> Void) -> Bool {
+    guard isPresented, task == nil else { return false }
+    let request = UUID()
+    requestID = request
+    isPending = true
+    cancelOperation = cancel
+    task = Task { @MainActor in
+      defer {
+        isPending = false
+        cancelOperation = nil
+        requestID = nil
+        task = nil
+      }
+      guard requestID == request, isPresented, !Task.isCancelled else { return }
+      do {
+        let started = try await operation()
+        guard requestID == request, !Task.isCancelled, isPresented else {
+          cancel()
+          return
+        }
+        if started { onStarted() } else { onFailure() }
+      } catch {
+        cancel()
+        guard requestID == request, !Task.isCancelled, isPresented else { return }
+        onFailure()
+      }
+    }
+    return true
+  }
+
+  func cancelPendingStart() {
+    requestID = nil
+    task?.cancel()
+    cancelOperation?()
+    // Keep the attempt occupied until its suspension returns and cleanup ends.
+  }
+
+  func invalidate() {
+    isPresented = false
+    cancelPendingStart()
+  }
+}
+
 enum RecordingPhase {
   case ready
   case recording
@@ -455,44 +532,61 @@ enum RecordingPhase {
 
 // MARK: - Audio Playback Service
 
+@MainActor
+protocol ComposerAudioPreviewPlayer: AnyObject {
+  var delegate: (any AVAudioPlayerDelegate)? { get set }
+  var currentTime: TimeInterval { get }
+  @discardableResult func prepareToPlay() -> Bool
+  func play() -> Bool
+  func stop()
+}
+
+extension AVAudioPlayer: ComposerAudioPreviewPlayer { }
+
 @MainActor @Observable
 final class AudioPlaybackService: NSObject, AVAudioPlayerDelegate {
-  private var audioPlayer: AVAudioPlayer?
+  private var audioPlayer: (any ComposerAudioPreviewPlayer)?
   private var progressTimer: Timer?
-  
+  private let audioSession: any ImmediatePlaybackAudioSession
+  private let makePlayer: (URL) throws -> any ComposerAudioPreviewPlayer
+  private var playbackOwner: UUID?
+
+  init(audioSession: any ImmediatePlaybackAudioSession = AudioSessionManager.shared,
+       makePlayer: @escaping (URL) throws -> any ComposerAudioPreviewPlayer = { try AVAudioPlayer(contentsOf: $0) }) {
+    self.audioSession = audioSession
+    self.makePlayer = makePlayer
+    super.init()
+  }
+
   var isPlaying = false
   var progress: TimeInterval = 0.0
   
-  func play(url: URL) async throws {
+  func play(url: URL) throws {
     // Stop any current playback
     stop()
     
+    let owner = UUID()
     do {
-      audioPlayer = try AVAudioPlayer(contentsOf: url)
-      audioPlayer?.delegate = self
-      audioPlayer?.prepareToPlay()
-      
-      #if os(iOS)
-      try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
-      try AVAudioSession.sharedInstance().setActive(true)
-      #endif
-      
-      guard audioPlayer?.play() == true else {
-        throw AudioPlaybackError.playbackFailed
-      }
-      
+      try audioSession.acquireImmediatePlayback(owner: owner)
+      playbackOwner = owner
+      let player = try makePlayer(url)
+      audioPlayer = player
+      player.delegate = self
+      guard player.prepareToPlay() else { throw AudioPlaybackError.playbackFailed }
+      guard !Task.isCancelled, playbackOwner == owner else { throw CancellationError() }
+      guard player.play() else { throw AudioPlaybackError.playbackFailed }
       isPlaying = true
       
       // Start progress timer
       progressTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
-        guard let self = self, let player = self.audioPlayer else { return }
         Task { @MainActor in
+          guard let self, self.playbackOwner == owner, let player = self.audioPlayer else { return }
           self.progress = player.currentTime
         }
       }
       
     } catch {
-      stop()
+      if playbackOwner == owner { stop() }
       throw error
     }
   }
@@ -505,35 +599,36 @@ final class AudioPlaybackService: NSObject, AVAudioPlayerDelegate {
     progressTimer = nil
     progress = 0.0
     
-    #if os(iOS)
-    try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-    #endif
+    if let owner = playbackOwner {
+      playbackOwner = nil
+      audioSession.releaseVideoPlayback(owner: owner)
+    }
   }
   
   // MARK: - AVAudioPlayerDelegate
+
+  func retirePlayback(_ player: any ComposerAudioPreviewPlayer) {
+    guard audioPlayer === player else { return }
+    stop()
+  }
   
   nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
     Task { @MainActor in
-      self.isPlaying = false
-      self.progressTimer?.invalidate()
-      self.progressTimer = nil
-      
-      if flag {
-        self.progress = 0.0
-      }
+      self.retirePlayback(player)
     }
   }
   
   nonisolated func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: Error?) {
     Task { @MainActor in
-      self.isPlaying = false
-      self.progressTimer?.invalidate()
-      self.progressTimer = nil
-      
-      if let error = error {
-        logger.debug("Audio playback decode error: \(error)")
-      }
+      self.retirePlayback(player)
+      if let error { composerAudioLogger.debug("Audio playback decode error: \(error)") }
     }
+  }
+
+  isolated deinit {
+    audioPlayer?.stop()
+    progressTimer?.invalidate()
+    if let owner = playbackOwner { audioSession.releaseVideoPlayback(owner: owner) }
   }
 }
 

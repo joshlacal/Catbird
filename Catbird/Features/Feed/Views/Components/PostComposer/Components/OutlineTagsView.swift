@@ -107,7 +107,10 @@ struct OutlineTagsView: View {
             Image(systemName: isAddingTag ? "xmark.circle.fill" : "plus.circle.fill")
               .appFont(size: 20)
               .foregroundColor(.accentColor)
+              .frame(minWidth: 44, minHeight: 44)
+              .contentShape(Rectangle())
           }
+          .accessibilityLabel(isAddingTag ? "Cancel Adding Hashtag" : "Add Hashtag")
           .disabled(tags.count >= maxTags && !isAddingTag)
           .opacity(tags.count >= maxTags && !isAddingTag ? 0.5 : 1.0)
         }

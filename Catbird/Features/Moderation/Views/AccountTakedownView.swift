@@ -5,6 +5,7 @@
 //  Created by Josh LaCalamito on 8/24/26.
 //
 
+import OSLog
 import SwiftUI
 import Petrel
 
@@ -19,7 +20,9 @@ struct AccountTakedownView: View {
     @State private var appealSubmitted: Bool = false
     @State private var errorMessage: String? = nil
     @State private var isSigningOut: Bool = false
+    @State private var showingAccountSwitcher: Bool = false
     
+    private let logger = Logger(subsystem: "blue.catbird", category: "AccountTakedownView")
     private let maxAppealCharacters: Int = 1000
     
     private var isOverLimit: Bool {
@@ -59,6 +62,10 @@ struct AccountTakedownView: View {
             #if os(iOS)
             .toolbarTitleDisplayMode(.inline)
             #endif
+            .sheet(isPresented: $showingAccountSwitcher) {
+                AccountSwitcherView()
+                    .environment(appStateManager)
+            }
         }
     }
     
@@ -76,12 +83,20 @@ struct AccountTakedownView: View {
                 .fontWeight(.bold)
                 .multilineTextAlignment(.center)
             
-            Text("Your account (@\(appState.currentUserProfile?.handle.description ?? appState.userDID)) has been taken down due to violations of terms of service or community guidelines.")
+            Text(statusMessage)
                 .font(.body)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 8)
         }
+    }
+    
+    private var statusMessage: String {
+        let reason = "has been taken down for violating the Terms of Service or Community Guidelines."
+        if let handle = appState.currentUserProfile?.handle.description ?? appStateManager.authentication.handle {
+            return "Your account (@\(handle)) \(reason)"
+        }
+        return "Your account \(reason)"
     }
     
     // MARK: - Initial Actions
@@ -101,6 +116,20 @@ struct AccountTakedownView: View {
                 .padding(.vertical, 14)
             }
             .buttonStyle(.borderedProminent)
+            
+            Button {
+                showingAccountSwitcher = true
+            } label: {
+                HStack {
+                    Image(systemName: "person.2.circle")
+                    Text("Switch / Add Account")
+                }
+                .fontWeight(.medium)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 14)
+            }
+            .buttonStyle(.bordered)
+            .disabled(isSigningOut)
             
             Button {
                 Task {
@@ -134,7 +163,7 @@ struct AccountTakedownView: View {
                 .font(.headline)
                 .fontWeight(.semibold)
             
-            Text("Please explain why you believe your account should be reinstated. Your appeal will be reviewed by moderation.")
+            Text("Explain why you believe your account should be restored. A moderator will review your appeal.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
             
@@ -202,7 +231,7 @@ struct AccountTakedownView: View {
                 .font(.headline)
                 .fontWeight(.bold)
             
-            Text("Your appeal has been received and is currently under review by moderation. You will be notified once a decision has been reached.")
+            Text("Your appeal was received and is waiting for a moderator to review it. You’ll be notified when a decision is made.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -254,7 +283,7 @@ struct AccountTakedownView: View {
         errorMessage = nil
         
         guard let client = appState.atProtoClient else {
-            errorMessage = "Authentication client is not available."
+            errorMessage = "You’re signed out. Sign in again to submit an appeal."
             isSubmitting = false
             return
         }
@@ -271,16 +300,18 @@ struct AccountTakedownView: View {
                 appealSubmitted = true
                 showingAppealForm = false
             } else {
-                errorMessage = "Failed to submit appeal. Please try again later."
+                errorMessage = "Couldn’t send your appeal. Try again later."
             }
         } catch let appealError as LabelAppealError {
+            logger.error("Account appeal rejected: \(appealError.localizedDescription, privacy: .public)")
             if appealError == .alreadyAppealed {
-                errorMessage = "This account takedown has already been appealed and is currently under review."
+                errorMessage = "You’ve already appealed this decision, and it’s under review."
             } else {
-                errorMessage = appealError.localizedDescription
+                errorMessage = "Couldn’t send your appeal. Check your connection and try again."
             }
         } catch {
-            errorMessage = error.localizedDescription
+            logger.error("Account appeal failed: \(error.localizedDescription, privacy: .public)")
+            errorMessage = "Couldn’t send your appeal. Check your connection and try again."
         }
         
         isSubmitting = false

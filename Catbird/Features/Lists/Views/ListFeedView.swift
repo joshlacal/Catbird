@@ -174,7 +174,7 @@ struct ListFeedView: View {
         membersList(viewModel: viewModel)
       }
     }
-    .alert("Error", isPresented: $viewModel.showingError) {
+    .alert("Something Went Wrong", isPresented: $viewModel.showingError) {
       Button("OK") {
         viewModel.showingError = false
       }
@@ -228,7 +228,7 @@ struct ListFeedView: View {
           }
           
           HStack(spacing: 16) {
-            Text("\(viewModel.members.count) members")
+            Text("^[\(listDetails.listItemCount ?? viewModel.members.count) member](inflect: true)")
               .font(.caption)
               .foregroundStyle(.tertiary)
             

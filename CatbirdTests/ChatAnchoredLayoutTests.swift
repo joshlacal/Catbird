@@ -103,6 +103,9 @@ final class ChatAnchoredLayoutTests: XCTestCase {
 
     func waitForHeight(_ id: Int, expected: CGFloat, file: StaticString = #filePath, line: UInt = #line) async throws {
       try await waitForMeasuredChange(id, file: file, line: line) { abs($0 - expected) <= 2 }
+      // Reading attributes can re-prepare the layout after layoutSubviews ran;
+      // let the transcript complete its pass (as the next frame would) first.
+      collection.layoutIfNeeded()
       XCTAssertEqual(try height(id), expected, accuracy: 2, file: file, line: line)
       XCTAssertEqual(try XCTUnwrap(rows.renderedEmbedHeights[id]), try XCTUnwrap(rows.heights[id]), accuracy: 1, file: file, line: line)
       let index = try XCTUnwrap(source.indexPath(for: id))
@@ -177,6 +180,17 @@ final class ChatAnchoredLayoutTests: XCTestCase {
     XCTAssertEqual(fixture.collection.contentOffset.y, fixture.bottom, accuracy: 2)
     fixture.rows.heights[29] = 40
     try await fixture.waitForHeight(29, expected: height29 - 40)
+    let gap = fixture.bottom - fixture.collection.contentOffset.y
+    if abs(gap) > 2 {
+      let content = fixture.collection.contentSize.height
+      try await fixture.settle()
+      XCTFail("""
+        Bottom gap diagnostic: gap \(gap) content \(content); after settle gap \
+        \(fixture.bottom - fixture.collection.contentOffset.y) content \(fixture.collection.contentSize.height) \
+        tracking \(fixture.collection.isTracking) decelerating \(fixture.collection.isDecelerating) \
+        heights28/29 \((try? fixture.height(28)) ?? -1)/\((try? fixture.height(29)) ?? -1)
+        """)
+    }
     XCTAssertEqual(fixture.collection.contentOffset.y, fixture.bottom, accuracy: 2)
   }
 
@@ -263,5 +277,45 @@ final class ChatAnchoredLayoutTests: XCTestCase {
     XCTAssertGreaterThan(try fixture.height(item), initialHeight + 10)
     XCTAssertEqual(fixture.viewportY(item), y, accuracy: 2)
   }
+  func testLayoutDoesNotClampTopRubberBandForShortAndLongContent() async throws {
+    for count in [3, 30] {
+      let fixture = try Fixture(count: count)
+      defer { fixture.window.isHidden = true }
+      try await fixture.settle()
+      XCTAssertTrue(fixture.collection.bounces)
+      XCTAssertTrue(fixture.collection.alwaysBounceVertical)
+      fixture.collection.contentOffset.y = -18
+      fixture.collection.layoutIfNeeded()
+      XCTAssertEqual(fixture.collection.contentOffset.y, -18, accuracy: 1)
+    }
+  }
+
+  func testLayoutDoesNotSnapSmallBottomOverscrollBackToBottom() async throws {
+    let fixture = try Fixture()
+    defer { fixture.window.isHidden = true }
+    fixture.pinBottom()
+    try await fixture.settle()
+    let elasticY = fixture.bottom + 18
+    fixture.collection.contentOffset.y = elasticY
+    fixture.collection.layoutIfNeeded()
+    XCTAssertEqual(fixture.collection.contentOffset.y, elasticY, accuracy: 1)
+  }
+
+  func testWidthChangeKeepsVisibleMessageIdentity() async throws {
+    let fixture = try Fixture()
+    defer { fixture.window.isHidden = true }
+    fixture.collection.contentOffset.y = 900
+    try await fixture.settle()
+    let anchor = try XCTUnwrap(ChatVisibleItemAnchor<Int>.capture(
+      in: fixture.collection, itemAt: { fixture.source.itemIdentifier(for: $0) }, include: { _ in true }
+    ))
+    fixture.collection.bounds.size.width = 320
+    try await fixture.settle()
+    let index = try XCTUnwrap(fixture.source.indexPath(for: anchor.item))
+    let attributes = try XCTUnwrap(fixture.collection.layoutAttributesForItem(at: index))
+    XCTAssertEqual(attributes.frame.minY - fixture.collection.contentOffset.y, anchor.viewportY, accuracy: 2)
+    XCTAssertEqual(attributes.frame.width, 320, accuracy: 1)
+  }
+
 }
 #endif

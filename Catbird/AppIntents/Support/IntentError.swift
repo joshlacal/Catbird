@@ -28,12 +28,12 @@ enum IntentError: LocalizedError {
     switch self {
     case .notSignedIn:
       return "You need to sign in to Catbird before using this shortcut."
-    case .accountUnavailable(let did):
-      return "The account \(did) is no longer available. Try signing in again."
-    case .httpError(let code):
-      return "The server returned an error (\(code)). Please try again."
+    case .accountUnavailable:
+      return "That account is no longer signed in to Catbird. Open Catbird to sign in again."
+    case .httpError:
+      return "Bluesky couldn’t complete the request. Please try again."
     case .emptyResponse:
-      return "The server didn't return the expected data. Please try again."
+      return "Bluesky didn’t return the expected information. Please try again."
     case .invalidParameter(let detail):
       return detail
     case .serviceUnavailable(let detail):

@@ -111,7 +111,7 @@ struct ConversationListView: View {
                             !chatManager.acceptedConversations.isEmpty
     
     if shouldShowLoadMore {
-      ProgressView("Loading more...")
+      ProgressView("Loading more…")
         .frame(maxWidth: .infinity)
         .padding()
         .onAppear {
@@ -155,7 +155,7 @@ struct ConversationListView: View {
   @ViewBuilder
   private var loadingOverlay: some View {
     if chatManager.loadingConversations && chatManager.acceptedConversations.isEmpty && searchText.isEmpty {
-      ProgressView("Loading Chats...")
+      ProgressView("Loading chats…")
     }
   }
   

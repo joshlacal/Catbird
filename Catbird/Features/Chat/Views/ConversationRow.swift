@@ -28,10 +28,21 @@ struct ConversationRow: View {
   private var accessibilityDescription: String {
     let unreadText = convo.unreadCount > 0 ? ", \(convo.unreadCount) unread message\(convo.unreadCount == 1 ? "" : "s")" : ""
     let conversationKind = convo.isGroupConversation ? "Group chat" : "Conversation with"
-    
-    let messageText = convo.lastMessage == nil ? "No messages yet" : "Has messages"
-    
-    return "\(conversationKind) \(displayLabel)\(unreadText). \(messageText)"
+    let mutedText = convo.muted ? ", muted" : ""
+
+    var messageText = "No messages yet"
+    if let lastMessage = convo.lastMessage {
+      messageText = LastMessagePreview.previewText(
+        for: lastMessage,
+        currentUserDID: currentUserDID,
+        groupMembers: convo.isGroupConversation ? convo.members : []
+      )
+      if let date = lastMessageDate(lastMessage) {
+        messageText += ", \(formatDate(date))"
+      }
+    }
+
+    return "\(conversationKind) \(displayLabel)\(unreadText)\(mutedText). \(messageText)"
   }
 
   var body: some View {
@@ -58,24 +69,24 @@ struct ConversationRow: View {
               .font(.caption)
           }
 
-          Image(systemName: "bubble.left.and.bubble.right")
-            .font(.system(size: 12))
-            .foregroundStyle(.secondary)
-            .accessibilityHidden(true)
+          if convo.muted {
+            Image(systemName: "bell.slash.fill")
+              .font(.caption)
+              .foregroundStyle(.secondary)
+              .accessibilityHidden(true)
+          }
 
           Spacer()
 
           // Unread message count badge
           if convo.unreadCount > 0 {
-            ZStack {
-              Circle()
-                .fill(Color.accentColor)
-                .frame(width: 22, height: 22)
-              Text(convo.unreadCount > 99 ? "99+" : "\(convo.unreadCount)")
-                .font(.system(size: 11, weight: .bold))
-                .foregroundColor(.white)
-            }
-            .accessibilityLabel("\(convo.unreadCount) unread message\(convo.unreadCount == 1 ? "" : "s")")
+            Text(convo.unreadCount > 99 ? "99+" : "\(convo.unreadCount)")
+              .font(.caption2.weight(.bold))
+              .foregroundColor(.white)
+              .padding(.horizontal, 6)
+              .frame(minWidth: 22, minHeight: 22)
+              .background(Capsule().fill(Color.accentColor))
+              .accessibilityLabel("\(convo.unreadCount) unread message\(convo.unreadCount == 1 ? "" : "s")")
           }
 
           // Timestamp of the last message
@@ -107,7 +118,9 @@ struct ConversationRow: View {
     .accessibilityAddTraits(.isButton)
     .accessibilityHint("Double tap to open conversation")
     .spacingSM(.vertical)
-    .alignmentGuide(.listRowSeparatorLeading) { _ in 0 }
+    .alignmentGuide(.listRowSeparatorLeading) { _ in
+      DesignTokens.Size.avatarLG + DesignTokens.Spacing.base
+    }
     .alignmentGuide(.listRowSeparatorTrailing) { dimensions in dimensions.width }
     // Consider adding context menu for mute/leave actions
   }
@@ -173,9 +186,13 @@ struct LastMessagePreview: View {
   let lastMessage: ChatBskyConvoDefs.ConvoViewLastMessageUnion
   var groupMembers: [ChatBskyActorDefs.ProfileViewBasic] = []
 
-  private func senderPrefix(for messageView: ChatBskyConvoDefs.MessageView) -> String {
+  private static func senderPrefix(
+    for messageView: ChatBskyConvoDefs.MessageView,
+    currentUserDID: String,
+    groupMembers: [ChatBskyActorDefs.ProfileViewBasic]
+  ) -> String {
     let senderDID = messageView.sender.did.didString()
-    if senderDID == appState.userDID {
+    if senderDID == currentUserDID {
       return "You: "
     }
     guard let sender = groupMembers.first(where: { $0.did.didString() == senderDID }) else {
@@ -186,11 +203,44 @@ struct LastMessagePreview: View {
     return firstName.isEmpty ? "" : "\(firstName): "
   }
 
+  /// Plain-text preview of a conversation's last message, shared by the row
+  /// and its VoiceOver label.
+  static func previewText(
+    for lastMessage: ChatBskyConvoDefs.ConvoViewLastMessageUnion,
+    currentUserDID: String,
+    groupMembers: [ChatBskyActorDefs.ProfileViewBasic]
+  ) -> String {
+    switch lastMessage {
+    case .chatBskyConvoDefsMessageView(let messageView):
+      let prefix = senderPrefix(for: messageView, currentUserDID: currentUserDID, groupMembers: groupMembers)
+      guard messageView.text.isEmpty, let embed = messageView.embed else {
+        return "\(prefix)\(messageView.text)"
+      }
+      switch embed {
+      case .chatBskyEmbedJoinLinkView:
+        return "\(prefix)Sent a group invite"
+      default:
+        return "\(prefix)Shared a post"
+      }
+    case .chatBskyConvoDefsDeletedMessageView:
+      return "Message deleted"
+    case .chatBskyConvoDefsSystemMessageView(let systemMessage):
+      let profiles = Dictionary(
+        groupMembers.map { ($0.did.didString(), $0) },
+        uniquingKeysWith: { first, _ in first }
+      )
+      let event = BlueskyMessageAdapter.parseSystemEvent(systemMessageView: systemMessage, relatedProfiles: profiles)
+      return event.messageText.isEmpty ? "Group updated" : event.messageText
+    case .unexpected:
+      return "Unsupported message"
+    }
+  }
+
   var body: some View {
     Group {
       switch lastMessage {
-      case .chatBskyConvoDefsMessageView(let messageView):
-        Text("\(senderPrefix(for: messageView))\(messageView.text)")
+      case .chatBskyConvoDefsMessageView:
+        Text(Self.previewText(for: lastMessage, currentUserDID: appState.userDID, groupMembers: groupMembers))
           .designFootnote()
           .foregroundColor(.secondary)
           .lineLimit(2)
@@ -200,7 +250,7 @@ struct LastMessagePreview: View {
           .foregroundColor(.secondary)
           .italic()
       case .chatBskyConvoDefsSystemMessageView:
-        Text("System message")
+        Text(Self.previewText(for: lastMessage, currentUserDID: appState.userDID, groupMembers: groupMembers))
           .designFootnote()
           .foregroundColor(.secondary)
           .italic()

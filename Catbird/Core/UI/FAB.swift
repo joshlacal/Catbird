@@ -50,7 +50,6 @@ struct FAB: View {
     let recordVideoAction: () -> Void
     let clearDraftAction: (() -> Void)?
     @Environment(\.colorScheme) var colorScheme
-    @Environment(\.toastManager) private var toastManager
     // When Reduce Transparency is on, the clear glass is swapped for the opaque
     // `.regular` material so the white glyph keeps its contrast.
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
@@ -85,14 +84,6 @@ struct FAB: View {
         VStack {
             Spacer()
             HStack(spacing: 12) {
-                // Toast on the left
-                if let toast = toastManager.currentToast {
-                    ToastView(toast: toast) {
-                        toastManager.dismiss()
-                    }
-                    .transition(.move(edge: .leading).combined(with: .opacity))
-                }
-                
                 if showFeedsButton {
                     if #available(iOS 26.0, macOS 26.0, *) {
                         feedsButton

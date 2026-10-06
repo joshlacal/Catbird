@@ -16,106 +16,75 @@ import Petrel
 @available(iOS 26.0, *)
 struct TabViewBottomAccessoryWrapper: View {
   @ObservationIgnored @Environment(AppState.self) private var appState
+  @Environment(SceneNavigationContext.self) private var sceneContext
   @State private var showingFullComposer = false
-  // Capture the draft at sheet presentation time to avoid rebuilds from autosave mutations
-  @State private var composerInitialDraft: PostComposerDraft?
-  @State private var draftText = ""
-  @State private var draftContext = ""
+  @State private var composerInitialClaim: ComposerDraftClaim?
+  @State private var showingLegacyRecovery = false
+  private var editingSession: SceneComposerEditingSession { sceneContext.composerEditingSession }
   
   var body: some View {
     Group {
-      if let draft = appState.composerDraftManager.currentDraft {
-        // Minimized state with draft indicator
+      if let draft = editingSession.currentDraft, editingSession.isMinimized {
         minimizedComposerButton(draft: draft)
-      } else if !draftText.isEmpty {
-        // Legacy draft state
-        legacyDraftButton
       } else {
-        // Normal accessory button
-        normalAccessoryButton
+        VStack(spacing: 0) {
+          normalAccessoryButton
+          if editingSession.hasLegacyRecovery {
+            Button("Recover Earlier Draft") { showingLegacyRecovery = true }
+              .font(.footnote)
+              .padding(.bottom, 8)
+          }
+        }
       }
     }
     .sheet(isPresented: $showingFullComposer) {
-      if let draft = composerInitialDraft ?? appState.composerDraftManager.currentDraft {
-        // Restore minimized composer
-        PostComposerViewUIKit(
-          restoringFromDraft: draft,
-          appState: appState
-        )
-      } else {
-        // Create new composer
-        PostComposerViewUIKit(
-          appState: appState
-        )
-      }
+      PostComposerViewUIKit(
+        appState: appState,
+        editingSession: editingSession,
+        editingClaim: composerInitialClaim
+      )
+      .toastContainer(using: appState.toastManager)
     }
-    .onChange(of: showingFullComposer) { _, isPresented in
-      composerInitialDraft = isPresented ? appState.composerDraftManager.currentDraft : nil
+    .confirmationDialog("Recover Earlier Draft?", isPresented: $showingLegacyRecovery, titleVisibility: .visible) {
+      Button("Recover for Current Account") {
+        do {
+          composerInitialClaim = try editingSession.recoverLegacyDraft()
+          showingFullComposer = true
+        } catch {
+          appState.toastManager.show(ToastItem(
+            message: error.localizedDescription, icon: "exclamationmark.triangle.fill"
+          ))
+        }
+      }
+      Button("Cancel", role: .cancel) { }
+    } message: {
+      Text("This earlier draft has no verified account. Recovering it opens a copy for your current account in this window.")
     }
   }
-  
+
   private var normalAccessoryButton: some View {
     Button(action: {
+      composerInitialClaim = nil
       showingFullComposer = true
-      appState.composerDraftManager.clearDraft()  // Clear any minimized state when starting fresh
     }) {
       HStack(spacing: 8) {
         Image(systemName: "square.and.pencil")
           .font(.system(size: 16, weight: .medium))
-        
-        Text(draftText.isEmpty ? "What's on your mind?" : "Continue writing...")
+        Text("What’s on your mind?")
           .font(.system(size: 15))
           .foregroundColor(.secondary)
-        
         Spacer()
-        
-        if !draftText.isEmpty {
-          // Draft indicator
-          Circle()
-            .fill(Color.accentColor)
-            .frame(width: 8, height: 8)
-        }
       }
       .padding(.horizontal, 16)
       .padding(.vertical, 12)
     }
     .buttonStyle(.plain)
   }
-  
-  private var legacyDraftButton: some View {
-    Button(action: {
-      showingFullComposer = true
-      appState.composerDraftManager.clearDraft()
-    }) {
-      HStack(spacing: 8) {
-        Circle()
-          .fill(Color.accentColor)
-          .frame(width: 8, height: 8)
-        
-        Text("Draft: \(String(draftText.prefix(30)))\(draftText.count > 30 ? "..." : "")")
-          .font(.system(size: 14))
-          .foregroundColor(.primary)
-          .lineLimit(1)
-        
-        Spacer()
-        
-        Button(action: {
-          draftText = ""
-        }) {
-          Image(systemName: "xmark.circle.fill")
-            .font(.system(size: 16))
-            .foregroundColor(.secondary)
-        }
-        .buttonStyle(.plain)
-      }
-      .padding(.horizontal, 16)
-      .padding(.vertical, 12)
-    }
-    .buttonStyle(.plain)
-  }
-  
+
   private func minimizedComposerButton(draft: PostComposerDraft) -> some View {
     Button(action: {
+      guard let snapshot = editingSession.snapshot() else { return }
+      composerInitialClaim = snapshot.claim
       showingFullComposer = true
     }) {
       HStack(spacing: 8) {
@@ -138,8 +107,8 @@ struct TabViewBottomAccessoryWrapper: View {
         }
         
         // Draft content preview
-        let previewText = draft.postText.isEmpty ? "Draft in progress..." : draft.postText
-        Text("Draft: \(String(previewText.prefix(30)))\(previewText.count > 30 ? "..." : "")")
+        let previewText = draft.postText.isEmpty ? "Draft in progress…" : draft.postText
+        Text("Draft: \(String(previewText.prefix(30)))\(previewText.count > 30 ? "…" : "")")
           .font(.system(size: 14))
           .foregroundColor(.primary)
           .lineLimit(1)
@@ -186,7 +155,9 @@ struct TabViewBottomAccessoryWrapper: View {
         
         // Dismiss button
         Button(action: {
-          appState.composerDraftManager.clearDraft()
+          if let claim = editingSession.activeClaim {
+            _ = editingSession.discard(claim: claim)
+          }
         }) {
           Image(systemName: "xmark.circle.fill")
             .font(.system(size: 16))
@@ -200,16 +171,7 @@ struct TabViewBottomAccessoryWrapper: View {
     .buttonStyle(.plain)
   }
   
-  // Helper methods to get posts from URIs (simplified - in real implementation would fetch from cache)
-  private func getParentPost(for draft: PostComposerDraft) -> AppBskyFeedDefs.PostView? {
-    // Lookup deferred: implement URI-based cache fetch via appState when available.
-    return nil
-  }
-  
-  private func getQuotedPost(for draft: PostComposerDraft) -> AppBskyFeedDefs.PostView? {
-    // Lookup deferred: implement URI-based cache fetch via appState when available.
-    return nil
-  }
+
 }
 
 @available(iOS 26.0, macOS 26.0, *)

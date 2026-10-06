@@ -10,7 +10,9 @@ import AppKit
 struct FeedDiscoveryHeaderView: View {
   @Environment(AppState.self) private var appState
   @Environment(\.themeManager) private var themeManager
+  @Environment(\.dynamicTypeSize) private var dynamicTypeSize
   let feed: AppBskyFeedDefs.GeneratorView
+  var libraryControlsTrailing = false
   /// Invoked when the row body (avatar + text) is tapped. When `nil` the row is
   /// non-tappable — used when this view is the header of an already-open feed.
   var onTap: (() -> Void)? = nil
@@ -22,39 +24,43 @@ struct FeedDiscoveryHeaderView: View {
   @State private var liked = false
   @State private var likeUri: ATProtocolURI?
   @State private var didSeedViewerState = false
+  /// The server's like count already includes a like the viewer made earlier.
+  @State private var countIncludesViewerLike = false
   @State private var isShowingReportSheet = false
   
   private let logger = Logger(subsystem: "blue.catbird", category: "FeedDiscoveryHeaderView")
   
   private var displayedLikeCount: Int? {
-    let base = feed.likeCount ?? 0
+    let base = max(0, (feed.likeCount ?? 0) - (countIncludesViewerLike ? 1 : 0))
     let total = base + (liked ? 1 : 0)
     return total > 0 ? total : nil
   }
   
   var body: some View {
-    VStack(alignment: .leading, spacing: 8) {
-      // Tappable content region — avatar + text. Disabled (non-tappable) when
-      // no onTap is provided, e.g. the header of an already-open feed.
-      Button {
-        onTap?()
-      } label: {
+    Group {
+      if libraryControlsTrailing {
         HStack(alignment: .top, spacing: 12) {
-          feedAvatar
-          feedInfo
-          Spacer(minLength: 8)
+          previewButton
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .layoutPriority(1)
+          VStack(alignment: .trailing, spacing: 4) {
+            FeedLibraryControls(feed: feed, onOpen: onOpenFeed,
+                                compactLabels: dynamicTypeSize.isAccessibilitySize,
+                                alignsTrailing: true)
+            moreMenu
+          }
+          .frame(width: dynamicTypeSize.isAccessibilitySize ? 76 : 104, alignment: .trailing)
+          .fixedSize(horizontal: false, vertical: true)
         }
-        .contentShape(Rectangle())
-      }
-      .buttonStyle(.plain)
-      .disabled(onTap == nil)
-
-      // Trailing actions are separate hit targets, so tapping them never
-      // triggers row navigation.
-      HStack(alignment: .top) {
-        FeedLibraryControls(feed: feed, onOpen: onOpenFeed)
-        Spacer(minLength: 8)
-        moreMenu
+      } else {
+        VStack(alignment: .leading, spacing: 8) {
+          previewButton
+          HStack(alignment: .top) {
+            FeedLibraryControls(feed: feed, onOpen: onOpenFeed)
+            Spacer(minLength: 8)
+            moreMenu
+          }
+        }
       }
     }
     .padding(.vertical, 8)
@@ -72,6 +78,33 @@ struct FeedDiscoveryHeaderView: View {
     .task(id: feed.uri.uriString()) {
       seedFromFeedViewer()
     }
+  }
+
+  /// Preview and library controls stay separate buttons in both arrangements.
+  private var previewButton: some View {
+    Button {
+      onTap?()
+    } label: {
+      Group {
+        if libraryControlsTrailing && dynamicTypeSize.isAccessibilitySize {
+          VStack(alignment: .leading, spacing: 8) {
+            feedAvatar
+            feedInfo
+          }
+        } else {
+          HStack(alignment: .top, spacing: 12) {
+            feedAvatar
+            feedInfo
+            if !libraryControlsTrailing { Spacer(minLength: 8) }
+          }
+        }
+      }
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .disabled(onTap == nil)
+    .accessibilityIdentifier("feed.discovery.preview.\(feed.uri.uriString())")
   }
   // MARK: - Avatar
 
@@ -112,7 +145,9 @@ struct FeedDiscoveryHeaderView: View {
       Text(feed.displayName)
         .appFont(AppTextRole.headline)
         .foregroundStyle(.primary)
-        .lineLimit(1)
+        .lineLimit(libraryControlsTrailing ? nil : 1)
+        .multilineTextAlignment(.leading)
+        .fixedSize(horizontal: false, vertical: true)
 
       subtitleLine
 
@@ -125,6 +160,7 @@ struct FeedDiscoveryHeaderView: View {
           .fixedSize(horizontal: false, vertical: true)
       }
     }
+    .frame(maxWidth: .infinity, alignment: .leading)
   }
 
   private var subtitleLine: some View {
@@ -133,7 +169,9 @@ struct FeedDiscoveryHeaderView: View {
     return Text(text)
       .appFont(AppTextRole.subheadline)
       .foregroundStyle(.secondary)
-      .lineLimit(1)
+      .lineLimit(libraryControlsTrailing ? nil : 1)
+      .multilineTextAlignment(.leading)
+      .fixedSize(horizontal: false, vertical: true)
   }
 
   // MARK: - Trailing actions
@@ -158,13 +196,15 @@ struct FeedDiscoveryHeaderView: View {
         Button {
           onLikedByTap()
         } label: {
-          Label("Liked by", systemImage: "heart")
+          Label("Liked By", systemImage: "heart")
         }
       }
 
 
-      Button { shareFeed() } label: {
-        Label("Share", systemImage: "square.and.arrow.up")
+      if let shareURL {
+        ShareLink(item: shareURL) {
+          Label("Share", systemImage: "square.and.arrow.up")
+        }
       }
 
       Button(role: .destructive) {
@@ -181,7 +221,8 @@ struct FeedDiscoveryHeaderView: View {
       Image(systemName: "ellipsis")
         .appFont(AppTextRole.headline)
         .foregroundStyle(.secondary)
-        .frame(width: 32, height: 32)
+        .frame(width: libraryControlsTrailing ? 44 : 32,
+               height: libraryControlsTrailing ? 44 : 32)
         .contentShape(Rectangle())
     }
     .buttonStyle(.plain)
@@ -223,9 +264,14 @@ struct FeedDiscoveryHeaderView: View {
               likeUri = data.uri
             }
           }
+        } else {
+          showFailureToast("Couldn’t like this feed. Try again.")
         }
       } catch {
         logger.error("Like feed failed: \(error.localizedDescription)")
+        if let message = UserFacingError.message(for: error, action: "like this feed") {
+          showFailureToast(message)
+        }
       }
       await MainActor.run {
         isLiking = false
@@ -250,43 +296,35 @@ struct FeedDiscoveryHeaderView: View {
           collection: try NSID(nsidString: "app.bsky.feed.like"),
           rkey: try RecordKey(keyString: rkey)
         )
-        _ = try await client.com.atproto.repo.deleteRecord(input: input)
-        await MainActor.run {
-          liked = false
-          self.likeUri = nil
+        let responseCode = try await client.com.atproto.repo.deleteRecord(input: input).responseCode
+        if responseCode == 200 {
+          await MainActor.run {
+            liked = false
+            self.likeUri = nil
+          }
+        } else {
+          logger.error("Unlike feed returned status \(responseCode)")
+          showFailureToast("Couldn’t remove your like. Try again.")
         }
       } catch {
         logger.error("Unlike feed failed: \(error.localizedDescription)")
+        if let message = UserFacingError.message(for: error, action: "remove your like") {
+          showFailureToast(message)
+        }
       }
       await MainActor.run { isLiking = false }
     }
   }
   
-  private func shareFeed() {
-    PlatformHaptics.light()
-
-    // Build a bsky.app web URL from the AT URI (at://did/collection/rkey)
-    let creatorHandle = feed.creator.handle.description
-    guard let rkey = feed.uri.recordKey,
-          let url = URL(string: "https://bsky.app/profile/\(creatorHandle)/feed/\(rkey)") else { return }
-    
-    #if os(iOS)
-    guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-          let rootViewController = windowScene.windows.first?.rootViewController else {
-      return
-    }
-    let vc = UIActivityViewController(activityItems: [url], applicationActivities: nil)
-    if let pop = vc.popoverPresentationController {
-      pop.sourceView = rootViewController.view
-      pop.sourceRect = CGRect(x: rootViewController.view.bounds.midX, y: rootViewController.view.bounds.midY, width: 0, height: 0)
-      pop.permittedArrowDirections = []
-    }
-    rootViewController.present(vc, animated: true)
-    #elseif os(macOS)
-    NSSharingService.sharingServices(forItems: [url]).first?.perform(withItems: [url])
-    #endif
+  /// The feed's bsky.app web link, built from its AT URI (at://did/collection/rkey).
+  private var shareURL: URL? {
+    guard let rkey = feed.uri.recordKey else { return nil }
+    return URL(string: "https://bsky.app/profile/\(feed.creator.handle.description)/feed/\(rkey)")
   }
-  
+
+  private func showFailureToast(_ message: String) {
+    appState.toastManager.show(ToastItem(message: message, icon: "exclamationmark.triangle.fill"))
+  }
   
   /// Seed from inline viewer state exposed by Petrel's GeneratorView
   private func seedFromFeedViewer() {
@@ -294,6 +332,7 @@ struct FeedDiscoveryHeaderView: View {
     if let uri = feed.viewer?.like {
       liked = true
       likeUri = uri
+      countIncludesViewerLike = true
     }
     didSeedViewerState = true
   }
@@ -308,6 +347,7 @@ struct FeedDiscoveryHeaderView: View {
         await MainActor.run {
           self.liked = true
           self.likeUri = uri
+          self.countIncludesViewerLike = true
           self.didSeedViewerState = true
         }
       } else {

@@ -14,10 +14,11 @@ import os
 enum ThreadSortAPIMapper {
   static func apiValue(for setting: String) -> String {
     switch setting {
-    case "hot", "top": return "top"
     case "newest": return "newest"
     case "oldest": return "oldest"
-    default: return "oldest"
+    // "hot", "top", and the official app's "hotness"/"most-likes"/"random"
+    // all map to the AppView's engagement ordering.
+    default: return "top"
     }
   }
 }
@@ -142,7 +143,7 @@ final class ThreadManager: StateInvalidationSubscriber {
       guard let client = client else {
         self.error = NSError(
           domain: "ThreadManager", code: -1,
-          userInfo: [NSLocalizedDescriptionKey: "Network client unavailable. Please check your connection."]
+          userInfo: [NSLocalizedDescriptionKey: "Couldn’t load this thread. Check your connection and try again."]
         )
         isLoading = false
         return
@@ -182,19 +183,20 @@ final class ThreadManager: StateInvalidationSubscriber {
         if responseCode == 404 {
           self.error = NSError(
             domain: "ThreadManager", code: 404,
-            userInfo: [NSLocalizedDescriptionKey: "Post not found"])
+            userInfo: [NSLocalizedDescriptionKey: "This post may have been deleted."])
         } else if responseCode == 403 {
           // Genuine forbidden fetch (no body). A blocked *anchor* is NOT this
           // case — it arrives as a 200 with a `threadItemBlocked` at depth 0 and
           // is surfaced via `blockedAnchor`, not as an error.
           self.error = NSError(
             domain: "ThreadManager", code: 403,
-            userInfo: [NSLocalizedDescriptionKey: "This post isn't available."])
+            userInfo: [NSLocalizedDescriptionKey: "This post isn’t available."])
         } else {
+          logger.error("Thread fetch failed with response code \(responseCode)")
           self.error = NSError(
             domain: "ThreadManager", code: responseCode,
             userInfo: [
-              NSLocalizedDescriptionKey: "Failed to fetch thread, response code: \(responseCode)"
+              NSLocalizedDescriptionKey: "Couldn’t load this thread. Please try again."
             ])
         }
       }
@@ -225,11 +227,13 @@ final class ThreadManager: StateInvalidationSubscriber {
   /// Load hidden replies for a thread using getPostThreadOtherV2
   /// This fetches replies that are hidden by threadgate settings
   /// - Parameter uri: The anchor post URI to load hidden replies for
+  /// - Returns: `true` when the hidden replies were fetched successfully
   @MainActor
-  func loadHiddenReplies(uri: ATProtocolURI) async {
+  @discardableResult
+  func loadHiddenReplies(uri: ATProtocolURI) async -> Bool {
     guard !isLoadingHiddenReplies else {
       logger.debug("Already loading hidden replies, skipping request.")
-      return
+      return false
     }
 
     isLoadingHiddenReplies = true
@@ -240,7 +244,7 @@ final class ThreadManager: StateInvalidationSubscriber {
     do {
       guard let client = client else {
         logger.error("Network client unavailable for loading hidden replies")
-        return
+        return false
       }
 
       let params = AppBskyUnspeccedGetPostThreadOtherV2.Parameters(
@@ -252,13 +256,16 @@ final class ThreadManager: StateInvalidationSubscriber {
       if responseCode == 200, let output = output {
         logger.debug("Loaded \(output.thread.count) hidden replies for thread: \(uri.uriString())")
         self.hiddenReplies = output.thread
+        return true
       } else {
         logger.warning("Failed to load hidden replies, response code: \(responseCode)")
         self.hiddenReplies = []
+        return false
       }
     } catch {
       logger.error("Error loading hidden replies: \(error.localizedDescription)")
       self.hiddenReplies = []
+      return false
     }
   }
 
@@ -319,11 +326,21 @@ final class ThreadManager: StateInvalidationSubscriber {
 
         // Merge the new parent posts with existing thread data
         var mergedThread = currentData.thread
-        
-        // Add new parents that aren't already in the thread
+        var addedCount = 0
+
+        // The new parents' depths are relative to the topmost parent we used as
+        // the anchor, so rebase them onto the current thread's depth scale.
+        let depthOffset = topmostParent.depth
         for newItem in output.thread.filter({ $0.depth < 0 }) {
           if !mergedThread.contains(where: { $0.uri == newItem.uri }) {
-            mergedThread.append(newItem)
+            mergedThread.append(
+              AppBskyUnspeccedGetPostThreadV2.ThreadItem(
+                uri: newItem.uri,
+                depth: newItem.depth + depthOffset,
+                value: newItem.value
+              )
+            )
+            addedCount += 1
           }
         }
         
@@ -337,7 +354,7 @@ final class ThreadManager: StateInvalidationSubscriber {
           hasOtherReplies: currentData.hasOtherReplies
         )
 
-        return newParentCount > parentItems.count
+        return addedCount > 0
       } else {
         logger.error("Failed to load more parents, response code: \(responseCode)")
         return false

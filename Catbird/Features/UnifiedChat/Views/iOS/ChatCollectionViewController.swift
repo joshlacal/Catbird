@@ -7,7 +7,7 @@ import UIKit
 
 @available(iOS 16.0, *)
 final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIViewController,
-  UICollectionViewDelegate,
+  UICollectionViewDelegateFlowLayout,
   UICollectionViewDataSourcePrefetching
 {
   typealias Message = DataSource.Message
@@ -68,8 +68,11 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
   private var navigationPath: Binding<NavigationPath>
   let dataSource: DataSource
   private weak var appState: AppState?
+  private var sceneContext: SceneNavigationContext
 
   private var observationTask: Task<Void, Never>?
+  private let embedPrefetchAdmission = ChatEmbedPrefetchAdmission()
+  private var embedPrefetchTasks: [String: (id: UUID, task: Task<Void, Never>)] = [:]
   private var lastMessageSignaturesByID: [String: String] = [:]
   private var lastSnapshotItems: [Item] = []
   private var lastOldestMessageID: String?
@@ -87,6 +90,8 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
   var onEditMessage: ((Message) -> Void)?
   var onUnsendMessage: ((Message) -> Void)?
   var onReply: ((Message) -> Void)?
+  var onDeleteMessage: ((Message) -> Void)?
+  var onReportMessage: ((Message) -> Void)?
   private var hasPerformedInitialScroll = false
   private var lastScrollToBottomTrigger: Int = 0
 
@@ -131,11 +136,13 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
   init(
     dataSource: DataSource,
     navigationPath: Binding<NavigationPath>,
-    appState: AppState
+    appState: AppState,
+    sceneContext: SceneNavigationContext
   ) {
     self.dataSource = dataSource
     self.navigationPath = navigationPath
     self.appState = appState
+    self.sceneContext = sceneContext
     super.init(nibName: nil, bundle: nil)
   }
 
@@ -145,6 +152,7 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
 
   deinit {
     observationTask?.cancel()
+    for request in embedPrefetchTasks.values { request.task.cancel() }
     NotificationCenter.default.removeObserver(self)
   }
 
@@ -152,8 +160,12 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
 
   override func viewDidLoad() {
     super.viewDidLoad()
+    view.backgroundColor = .clear
     setupCollectionView()
     setupDataSource()
+    (collectionView.collectionViewLayout as? ChatAnchoredLayout)?.measuredItemKey = { [weak self] indexPath in
+      self?.diffableDataSource.itemIdentifier(for: indexPath).map(AnyHashable.init)
+    }
     setupObservation()
     setupNewMessagesPill()
   }
@@ -165,6 +177,20 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
       setupObservation()
     }
     Task { await dataSource.loadMessages() }
+  }
+
+  override func viewDidAppear(_ animated: Bool) {
+    super.viewDidAppear(animated)
+    embedPrefetchAdmission.update(
+      isVisible: true, cancel: cancelEmbedPrefetch, warm: warmNewestEmbeds
+    )
+  }
+
+  override func viewWillDisappear(_ animated: Bool) {
+    embedPrefetchAdmission.update(
+      isVisible: false, cancel: cancelEmbedPrefetch, warm: warmNewestEmbeds
+    )
+    super.viewWillDisappear(animated)
   }
 
   override func viewDidDisappear(_ animated: Bool) {
@@ -188,6 +214,7 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
     collectionView.delegate = self
     collectionView.prefetchDataSource = self
     collectionView.keyboardDismissMode = .interactive
+    collectionView.bounces = true
     collectionView.alwaysBounceVertical = true
     collectionView.showsVerticalScrollIndicator = true
     #if compiler(>=6.2)
@@ -287,9 +314,11 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
             onRetry: { [weak self] in
               self?.onRetryMessage?(messageID)
             },
+            showSenderName: (self.dataSource as? BlueskyConversationDataSource)?.isGroupConversation ?? true,
             groupPosition: UnifiedMessageGrouping.groupPosition(for: messageID, in: self.dataSource.messages)
           )
           .environment(appState)
+          .environment(self.sceneContext)
         }
       }
       .margins(.all, 0)
@@ -385,6 +414,7 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
   @MainActor
   private func processObservationCycle() async {
     let newItems = currentSnapshotItems()
+    warmNewestEmbeds()
     let itemsChanged = newItems != lastSnapshotItems
     let newSignaturesByID = currentMessageSignaturesByID()
     let stableIDs = Set(lastMessageSignaturesByID.keys).intersection(newSignaturesByID.keys)
@@ -439,7 +469,7 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
       ((previousItemCount == 0) || wasLockedToBottom)
     let shouldPinBottomAfterUpdate =
       !userIsInteracting &&
-      (forceScrollToBottom || wasLockedToBottom || shouldAutoScrollForNewItems)
+      (forceScrollToBottom || (!UIAccessibility.isVoiceOverRunning && (wasLockedToBottom || shouldAutoScrollForNewItems)))
     let currentOldestMessageID = dataSource.messages.first?.id
     let currentMessageCount = dataSource.messages.count
     let didPrependOlderMessages =
@@ -548,11 +578,28 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
     anchor?.restore(in: collectionView, indexPathFor: { self.diffableDataSource.indexPath(for: $0) })
   }
 
+  func updateTranscriptBottomInset(_ height: CGFloat) {
+    loadViewIfNeeded()
+    guard height.isFinite, abs(collectionView.contentInset.bottom - height) > 0.5 else { return }
+    collectionView.contentInset.bottom = max(0, height)
+    collectionView.verticalScrollIndicatorInsets.bottom = max(0, height)
+    pillBottomConstraint?.constant = -12 - max(0, height)
+  }
+
   func updateNavigationBinding(_ binding: Binding<NavigationPath>) {
     navigationPath = binding
   }
 
+  func updateSceneContext(_ context: SceneNavigationContext) {
+    guard sceneContext !== context else { return }
+    reactionDetailsController?.dismiss(animated: false)
+    dismissReactionOverlay()
+    sceneContext = context
+    collectionView?.reloadData()
+  }
+
   func updateAppState(_ newAppState: AppState) {
+    if appState !== newAppState { cancelEmbedPrefetch() }
     if appState?.userDID != newAppState.userDID {
       reactionDetailsController?.dismiss(animated: false)
       dismissReactionOverlay()
@@ -660,6 +707,31 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
           self?.onUnsendMessage?(message)
         })
         self.present(alert, animated: true)
+      },
+      showsMessageActions: !message.isSystemMessage && !message.isTombstone,
+      canCopy: !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+      canReply: onReply != nil,
+      canDeleteForMe: onDeleteMessage != nil,
+      canReport: onReportMessage != nil && !message.isFromCurrentUser,
+      onCopyTapped: { [weak self] in
+        UIPasteboard.general.string = message.text
+        PlatformHaptics.light()
+        self?.dismissReactionOverlay()
+      },
+      onReplyTapped: { [weak self] in
+        guard let self else { return }
+        self.dismissReactionOverlay()
+        self.onReply?(message)
+      },
+      onDeleteForMeTapped: { [weak self] in
+        guard let self else { return }
+        self.dismissReactionOverlay()
+        self.onDeleteMessage?(message)
+      },
+      onReportTapped: { [weak self] in
+        guard let self else { return }
+        self.dismissReactionOverlay()
+        self.onReportMessage?(message)
       }
     )
 
@@ -905,17 +977,74 @@ final class ChatCollectionViewController<DataSource: UnifiedChatDataSource>: UIV
     }
   }
 
+  /// With self-sizing enabled this is each item's starting estimate: the last
+  /// fitted height for the same message, so off-screen rows keep their measured
+  /// size across snapshot applies instead of collapsing to the default.
+  func collectionView(
+    _ collectionView: UICollectionView,
+    layout collectionViewLayout: UICollectionViewLayout,
+    sizeForItemAt indexPath: IndexPath
+  ) -> CGSize {
+    guard let layout = collectionViewLayout as? ChatAnchoredLayout else {
+      return CGSize(width: collectionView.bounds.width, height: ChatAnchoredLayout.defaultEstimatedHeight)
+    }
+    return layout.estimatedSize(at: indexPath)
+  }
+
   // MARK: - UICollectionViewDataSourcePrefetching
 
   func collectionView(_ collectionView: UICollectionView, prefetchItemsAt indexPaths: [IndexPath]) {
-    // Hook for future media prefetching
+    for index in indexPaths {
+      guard case .message(let id) = diffableDataSource.itemIdentifier(for: index),
+        let uri = dataSource.message(for: id)?.embed?.recordURI else { continue }
+      prefetchEmbed(uri: uri)
+    }
   }
 
   func collectionView(
     _ collectionView: UICollectionView,
     cancelPrefetchingForItemsAt indexPaths: [IndexPath]
   ) {
-    // Hook for cancelling prefetch work when cells leave the screen
+    for index in indexPaths {
+      guard case .message(let id) = diffableDataSource.itemIdentifier(for: index),
+        let uri = dataSource.message(for: id)?.embed?.recordURI else { continue }
+      embedPrefetchTasks.removeValue(forKey: uri)?.task.cancel()
+    }
+  }
+
+  func updatePrefetchSceneActivity(isActive: Bool) {
+    embedPrefetchAdmission.update(
+      isSceneActive: isActive, cancel: cancelEmbedPrefetch, warm: warmNewestEmbeds
+    )
+  }
+
+  private func warmNewestEmbeds() {
+    // Observation remains live when covered; only optional metadata work stops.
+    embedPrefetchAdmission.performIfAllowed {
+      for message in dataSource.messages.suffix(8).reversed() {
+        if let uri = message.embed?.recordURI { prefetchEmbed(uri: uri) }
+      }
+    }
+  }
+
+  private func prefetchEmbed(uri: String) {
+    guard embedPrefetchAdmission.isAllowed,
+      embedPrefetchTasks.count < 4, embedPrefetchTasks[uri] == nil,
+      let appState, ChatRecordEmbedStore.shared.cachedRecord(uri: uri, appState: appState) == nil else { return }
+    let requestID = UUID()
+    let task = Task { @MainActor [weak self] in
+      guard !Task.isCancelled, self?.embedPrefetchAdmission.isAllowed == true else { return }
+      _ = try? await ChatRecordEmbedStore.shared.load(uri: uri, appState: appState)
+      if self?.embedPrefetchTasks[uri]?.id == requestID {
+        self?.embedPrefetchTasks.removeValue(forKey: uri)
+      }
+    }
+    embedPrefetchTasks[uri] = (requestID, task)
+  }
+
+  private func cancelEmbedPrefetch() {
+    for request in embedPrefetchTasks.values { request.task.cancel() }
+    embedPrefetchTasks.removeAll()
   }
 
   // MARK: - New Messages Pill Actions
@@ -1024,6 +1153,20 @@ struct MessageLongPressOverlay: View {
   let canUnsend: Bool
   let onEditTapped: () -> Void
   let onUnsendTapped: () -> Void
+  /// Copy, Reply, Delete for Me and Report for regular (non-system) messages.
+  var showsMessageActions: Bool = false
+  var canCopy: Bool = false
+  var canReply: Bool = false
+  var canDeleteForMe: Bool = false
+  var canReport: Bool = false
+  var onCopyTapped: () -> Void = {}
+  var onReplyTapped: () -> Void = {}
+  var onDeleteForMeTapped: () -> Void = {}
+  var onReportTapped: () -> Void = {}
+
+  private var hasMessageActions: Bool {
+    showsMessageActions && (canCopy || canReply || canDeleteForMe || canReport)
+  }
 
   var body: some View {
     VStack(alignment: .trailing, spacing: 8) {
@@ -1032,6 +1175,10 @@ struct MessageLongPressOverlay: View {
         onReactionSelected: onReactionSelected,
         onMoreTapped: onMoreTapped
       )
+
+      if hasMessageActions {
+        messageActionsMenu
+      }
 
       if canEdit || canUnsend {
         HStack(spacing: 16) {
@@ -1057,6 +1204,49 @@ struct MessageLongPressOverlay: View {
         .shadow(color: .black.opacity(0.1), radius: 4, x: 0, y: 2)
       }
     }
+  }
+
+  private var messageActionsMenu: some View {
+    VStack(spacing: 0) {
+      if canReply {
+        actionRow("Reply", systemImage: "arrowshape.turn.up.left", action: onReplyTapped)
+      }
+      if canCopy {
+        actionRow("Copy", systemImage: "doc.on.doc", action: onCopyTapped)
+      }
+      if canDeleteForMe {
+        actionRow("Delete for Me", systemImage: "trash", role: .destructive, action: onDeleteForMeTapped)
+      }
+      if canReport {
+        actionRow("Report", systemImage: "exclamationmark.bubble", role: .destructive, action: onReportTapped)
+      }
+    }
+    .frame(minWidth: 200)
+    .fixedSize()
+    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    .shadow(color: .black.opacity(0.1), radius: 4, x: 0, y: 2)
+  }
+
+  private func actionRow(
+    _ title: String,
+    systemImage: String,
+    role: ButtonRole? = nil,
+    action: @escaping () -> Void
+  ) -> some View {
+    Button(role: role, action: action) {
+      HStack(spacing: 12) {
+        Text(title)
+        Spacer(minLength: 16)
+        Image(systemName: systemImage)
+      }
+      .font(.body)
+      .foregroundStyle(role == .destructive ? Color.red : Color.primary)
+      .padding(.horizontal, 16)
+      .padding(.vertical, 11)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
   }
 }
 #endif

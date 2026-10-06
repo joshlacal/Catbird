@@ -14,7 +14,7 @@ extension PostComposerViewUIKit {
   @ViewBuilder
   func threadEntriesSection(vm: PostComposerViewModel) -> some View {
     if vm.isThreadMode && vm.threadEntries.count > 1 {
-      LazyVStack(spacing: 0) {
+      VStack(spacing: 0) {
         ForEach(Array(vm.threadEntries.enumerated()), id: \.element.id) { index, entry in
           VStack(spacing: 6) {
             HStack(alignment: .top, spacing: 12) {
@@ -23,18 +23,19 @@ extension PostComposerViewUIKit {
                 Button(action: {
                   pcThreadLogger.info("PostComposerThread: Avatar tapped in thread entry - opening account switcher")
                   if hasContent(vm: vm) {
-                    appState.composerDraftManager.storeDraft(from: vm)
+                    vm.saveDraftIfNeeded()
                   }
-                  showingAccountSwitcher = true
+                  accountSwitchSnapshot = vm.captureEditingSnapshot()
+                  showingAccountSwitcher = accountSwitchSnapshot != nil
                 }) {
                   #if os(iOS)
                   UIKitAvatarView(
                     did: appState.userDID,
                     client: appState.atProtoClient,
-                    size: 60,
+                    size: Self.composerAvatarSize,
                     avatarURL: appState.currentUserProfile?.finalAvatarURL()
                   )
-                  .frame(width: 60, height: 60)
+                  .frame(width: Self.composerAvatarSize, height: Self.composerAvatarSize)
                   #else
                   if let profile = appState.currentUserProfile, let avatarURL = profile.avatar {
                     AsyncImage(url: URL(string: avatarURL.description)) { image in
@@ -42,24 +43,18 @@ extension PostComposerViewUIKit {
                     } placeholder: {
                       Circle().fill(Color.systemGray5)
                     }
-                    .frame(width: 60, height: 60)
+                    .frame(width: Self.composerAvatarSize, height: Self.composerAvatarSize)
                     .clipShape(Circle())
                   } else {
                     Circle()
                       .fill(Color.systemGray5)
-                      .frame(width: 60, height: 60)
+                      .frame(width: Self.composerAvatarSize, height: Self.composerAvatarSize)
                   }
                   #endif
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Switch account")
-
-                if index < vm.threadEntries.count - 1 {
-                  Rectangle()
-                    .fill(Color.systemGray4)
-                    .frame(width: 2)
-                    .frame(maxHeight: .infinity)
-                }
+                .disabled(hasPendingMediaIntent)
               }
 
               if index == vm.currentThreadIndex {
@@ -76,15 +71,21 @@ extension PostComposerViewUIKit {
                   Image(systemName: "xmark.circle.fill")
                     .appFont(size: 20)
                     .foregroundStyle(.white, Color.systemGray3)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .padding(.top, 2)
+                .padding(.top, -10)
+                .padding(.trailing, -12)
+                .accessibilityLabel("Remove Post \(index + 1)")
+                .disabled(hasPendingMediaIntent)
               }
             }
             .padding(.horizontal, 16)
-            .padding(.top, 12)
+            .padding(.top, index == 0 ? 12 : 4)
             .contentShape(Rectangle())
             .onTapGesture {
+              guard !hasPendingMediaIntent else { return }
               pcThreadLogger.info("PostComposerThread: Switching to thread entry at index \(index)")
               withAnimation(.easeInOut(duration: 0.2)) {
                 vm.updateCurrentThreadEntry()
@@ -96,18 +97,27 @@ extension PostComposerViewUIKit {
             if index == vm.currentThreadIndex {
               mentionSuggestionsSection(vm: vm)
               activeEntryMediaSection(vm: vm)
+              activeEntryEmbedSection(vm: vm)
               submitValidationMessageView(vm: vm)
                 .padding(.horizontal, 16)
             } else {
               inactiveEntryMediaSection(entry: entry)
+              inactiveEntryEmbedSummary(entry: entry)
             }
-
+          }
+          .background(alignment: .topLeading) {
             if index < vm.threadEntries.count - 1 {
-              Divider()
-                .padding(.leading, 88)
+              Rectangle()
+                .fill(Color.systemGray4)
+                .frame(width: 2)
+                .padding(.top, (index == 0 ? 12 : 4) + Self.composerAvatarSize + 4)
+                .padding(.leading, 16 + (Self.composerAvatarSize - 2) / 2)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
             }
           }
           .opacity(index == vm.currentThreadIndex ? 1.0 : 0.55)
+          .id(entry.id)
         }
       }
       .onAppear {
@@ -126,10 +136,12 @@ extension PostComposerViewUIKit {
         ),
         linkFacets: $linkFacets,
         pendingSelectionRange: $pendingSelectionRange,
-        placeholder: "What's on your mind?",
+        placeholder: "What’s on your mind?",
         onImagePasted: { image in
           #if os(iOS)
+          pendingPasteCount += 1
           Task {
+            defer { pendingPasteCount -= 1 }
             await vm.handleMediaPaste([NSItemProvider(object: image)])
           }
         #endif
@@ -150,12 +162,16 @@ extension PostComposerViewUIKit {
       focusActivationID: activeEditorFocusID,
       onPhotosAction: { presentPhotoPicker(vm: vm) },
       onVideoAction: { videoPickerVisible = true },
-      onAudioAction: { showingAudioRecorder = true },
+      onAudioAction: {
+        if vm.pendingAudioURL != nil { showingAudioVisualizerPreview = true }
+        else { showingAudioRecorder = true }
+      },
       onGifAction: { showingGifPicker = true },
       onLabelsAction: { showingLabelSelector = true },
       onThreadgateAction: { showingThreadgate = true },
       onLanguageAction: { showingLanguagePicker = true },
       onThreadAction: {
+        guard !hasPendingMediaIntent else { return }
         if vm.isThreadMode {
           pcThreadLogger.info("PostComposerThread: Adding new thread entry to existing thread")
           withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
@@ -174,7 +190,7 @@ extension PostComposerViewUIKit {
       onLinkAction: {
         presentLinkCreation(vm: vm)
       },
-      		allowTenor: appState.appSettings.externalMediaConsent(for: .tenor) != .hide,
+      		allowTenor: appState.appSettings.externalMediaConsent(for: .klipy) != .hide,
       onTextViewCreated: { textView in
         pcThreadLogger.debug("PostComposerThread: Text view created for active thread entry")
         #if os(iOS)
@@ -206,6 +222,13 @@ extension PostComposerViewUIKit {
         .multilineTextAlignment(.leading)
         .lineLimit(6)
         .frame(maxWidth: .infinity, minHeight: 60, alignment: .topLeading)
+
+      if entry.text.count > vm.maxCharacterCount {
+        let over = entry.text.count - vm.maxCharacterCount
+        Text("\(over) character\(over == 1 ? "" : "s") over the limit")
+          .appFont(AppTextRole.caption)
+          .foregroundStyle(Color.red)
+      }
     }
     .padding(.vertical, 12)
     .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -214,6 +237,7 @@ extension PostComposerViewUIKit {
   @ViewBuilder
   private func activeEntryMediaSection(vm: PostComposerViewModel) -> some View {
     Group {
+      pendingAudioAttachmentSection(vm: vm)
       if let gif = vm.selectedGif {
         selectedGifView(gif, vm: vm)
       } else if let videoItem = vm.videoItem, let image = videoItem.image {
@@ -290,6 +314,46 @@ extension PostComposerViewUIKit {
 #endif
       }
     }
+  }
+
+  /// The quote and link card for the entry being edited, which thread mode would otherwise hide.
+  @ViewBuilder
+  private func activeEntryEmbedSection(vm: PostComposerViewModel) -> some View {
+    if let quoted = vm.quotedPost {
+      quotedPostView(quoted: quoted, vm: vm)
+        .padding(.horizontal, 16)
+    }
+    if let embedURL = vm.selectedEmbedURL, let card = vm.urlCards[embedURL] {
+      ComposeURLCardView(
+        card: card,
+        onRemove: { vm.removeURLCard(for: embedURL) },
+        willBeUsedAsEmbed: vm.willBeUsedAsEmbed(for: embedURL),
+        onRemoveURLFromText: { vm.removeURLFromText(for: embedURL) }
+      )
+      .padding(.horizontal, 16)
+    }
+  }
+
+  /// A compact summary of the quote or link card attached to an entry that isn't being edited.
+  @ViewBuilder
+  private func inactiveEntryEmbedSummary(entry: ThreadEntry) -> some View {
+    VStack(alignment: .leading, spacing: 4) {
+      if let quoted = entry.quotedPost {
+        Label("Quoting @\(quoted.author.handle.description)", systemImage: "quote.bubble")
+      } else if entry.draftQuotedPostURI != nil {
+        Label("Quoting a post", systemImage: "quote.bubble")
+      }
+      if entry.mediaItems.isEmpty, entry.videoItem == nil, entry.selectedGif == nil,
+         let embedURL = entry.selectedEmbedURL, let card = entry.urlCards[embedURL] {
+        Label(card.title.isEmpty ? embedURL : card.title, systemImage: "link")
+          .lineLimit(1)
+      }
+    }
+    .appFont(AppTextRole.caption)
+    .foregroundStyle(Color.secondary)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .padding(.leading, 16 + Self.composerAvatarSize + 12)
+    .padding(.trailing, 16)
   }
 
   @ViewBuilder

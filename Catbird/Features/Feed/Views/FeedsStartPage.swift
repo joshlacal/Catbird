@@ -35,15 +35,43 @@ enum FeedsStartPageLayoutMetrics {
   static func iconSize(itemWidth: CGFloat) -> CGFloat {
     max(64, min(itemWidth * 0.8, 110))
   }
+
+  static func bannerHeight(viewportSize: CGSize) -> CGFloat {
+    let preferredHeight: CGFloat
+    switch viewportSize.width {
+    case ..<360: preferredHeight = 90
+    case ..<480: preferredHeight = 108
+    default: preferredHeight = 126
+    }
+    return ContainerLayoutMetrics.bannerHeight(
+      viewportHeight: viewportSize.height,
+      preferredHeight: preferredHeight
+    )
+  }
+
+  static func columnCount(
+    width: CGFloat,
+    horizontalPadding: CGFloat,
+    spacing: CGFloat,
+    usesLargeText: Bool
+  ) -> Int {
+    guard width.isFinite, horizontalPadding.isFinite, spacing.isFinite else { return 1 }
+    let minimumWidth: CGFloat = usesLargeText ? 130 : 88
+    let usableWidth = max(0, width - horizontalPadding * 2)
+    let safeSpacing = max(0, spacing)
+    return max(1, min(4, Int((usableWidth + safeSpacing) / (minimumWidth + safeSpacing))))
+  }
 }
 
 // MARK: - FeedsStartPage
 struct FeedsStartPage: View {
+  @Environment(SceneNavigationContext.self) private var sceneContext
   // Environment and State properties
   @Environment(AppState.self) private var appState
   @Environment(\.modelContext) private var modelContext
   @Environment(\.horizontalSizeClass) private var sizeClass
   @Environment(\.colorScheme) private var colorScheme
+  @Environment(\.dynamicTypeSize) private var dynamicTypeSize
   @Environment(\.containerViewportSize) private var parentViewportSize
   @State private var measuredContainerSize = CGSize.zero
   #if os(iOS)
@@ -89,6 +117,7 @@ struct FeedsStartPage: View {
   @State private var dropTargetItem: String?
   @State private var isDefaultFeedDropTarget = false
   @Namespace private var glassNamespace
+  @Namespace private var defaultFeedGlassNamespace
 
   // Profile state
   @State private var profile: AppBskyActorDefs.ProfileViewDetailed?
@@ -117,32 +146,11 @@ struct FeedsStartPage: View {
   }
 
   // MARK: - Layout Calculations
-  // Responsive banner height based on screen size and drawer width
+  // The artwork is deliberately compact; account identity has its own row below.
   private var bannerHeight: CGFloat {
-    // Container-driven banner height. Wide drawers (large iPad / Mac, where
-    // drawerWidth reaches 480–600) get a taller banner so the header keeps its
-    // proportions. Never exceed a quarter of the screen height.
-    let baseHeight: CGFloat
-    switch drawerWidth {
-    case ..<360: baseHeight = 150
-    case ..<480: baseHeight = 190
-    default: baseHeight = 220
-    }
-    return ContainerLayoutMetrics.bannerHeight(viewportHeight: viewportSize.height, preferredHeight: baseHeight)
+    FeedsStartPageLayoutMetrics.bannerHeight(viewportSize: viewportSize)
   }
 
-  // Interior insets for the profile row inside the banner. In the drawer the
-  // banner is clipped by a ~28pt concentric corner, so the avatar and handle
-  // need more clearance than the grid's horizontal padding or they crowd into
-  // the corner curvature and read as cut off.
-  private var bannerContentInset: CGFloat {
-    inSideDrawer ? DesignTokens.Spacing.section : horizontalPadding  // 24
-  }
-
-  private var bannerContentBottomInset: CGFloat {
-    inSideDrawer ? DesignTokens.Spacing.xxl : max(12, bannerHeight * 0.08)  // 21
-  }
-  
   // Responsive avatar size
   private var avatarSize: CGFloat {
     isNarrowDrawer ? 54 : 64
@@ -165,20 +173,16 @@ struct FeedsStartPage: View {
     isNarrowDrawer ? DesignTokens.Spacing.base : DesignTokens.Spacing.xl  // 12 / 18
   }
   private var columns: Int {
-    switch drawerWidth {
-    case ..<300: return 3  // Very small screens
-    case ..<380: return 4  // Standard layout
-    case ..<500: return 4  // Still prefer 3 columns for readability
-    case ..<600: return 4  // Large iPad/Mac - can fit 4 nicely
-    default: return 4      // Very large displays
-    }
+    FeedsStartPageLayoutMetrics.columnCount(
+      width: drawerWidth,
+      horizontalPadding: horizontalPadding,
+      spacing: gridSpacing,
+      usesLargeText: dynamicTypeSize.isAccessibilitySize
+    )
   }
   private var itemWidth: CGFloat {
     let availableWidth = drawerWidth - (horizontalPadding * 2) - (gridSpacing * CGFloat(columns - 1))
-    let calculatedWidth = availableWidth / CGFloat(columns)
-    
-    // Ensure minimum and maximum item widths for usability
-    return max(80, min(calculatedWidth, 140))
+    return max(1, min(availableWidth / CGFloat(columns), 140))
   }
   private var iconSize: CGFloat {
     FeedsStartPageLayoutMetrics.iconSize(itemWidth: itemWidth)
@@ -254,7 +258,7 @@ struct FeedsStartPage: View {
       let uri = try? ATProtocolURI(uriString: feed)
     {
       defaultFeedName =
-        viewModel.feedGenerators[uri]?.displayName ?? viewModel.extractTitle(from: uri)
+        viewModel.displayName(for: uri)
     } else if defaultFeed != nil && SystemFeedTypes.isTimelineFeed(defaultFeed!) {
       defaultFeedName = "Timeline"
     } else {
@@ -311,38 +315,22 @@ struct FeedsStartPage: View {
 
   @ViewBuilder
   private func sectionHeader(_ title: String) -> some View {
-    HStack {
+    HStack(spacing: DesignTokens.Spacing.sm) {
       if title == "Pinned" {
         Image(systemName: "pin.fill")
-          .font(
-            Font.customSystemFont(
-              size: 21, weight: .bold, width: 120, opticalSize: true, design: .default,
-              relativeTo: .title3)
-          )
-          .foregroundColor(drawerPrimaryTextColor)
+          .accessibilityHidden(true)
       } else if title == "Saved" {
         Image(systemName: "bookmark.fill")
-          .font(
-            Font.customSystemFont(
-              size: 21, weight: .bold, width: 120, opticalSize: true, design: .default,
-              relativeTo: .title3)
-          )
-          .foregroundColor(drawerPrimaryTextColor)
+          .accessibilityHidden(true)
       }
-
       Text(title)
-        .font(
-          Font.customSystemFont(
-            size: 21, weight: .bold, width: 120, opticalSize: true, design: .default,
-            relativeTo: .title3)
-        )
-        .foregroundColor(drawerPrimaryTextColor)
-
       Spacer()
     }
+    .appFont(AppTextRole.headline)
+    .foregroundStyle(drawerSecondaryTextColor)
     .frame(maxWidth: .infinity, alignment: .leading)
-    .padding(.top, DesignTokens.Spacing.lg)     // 15
-    .padding(.bottom, DesignTokens.Spacing.md)  // 9
+    .padding(.top, DesignTokens.Spacing.lg)
+    .padding(.bottom, DesignTokens.Spacing.md)
   }
 
   @ViewBuilder
@@ -403,25 +391,12 @@ struct FeedsStartPage: View {
 
       isDrawerOpen = false
     } label: {
-      HStack(spacing: 21) {
-        ZStack {
-          HStack {
-            defaultFeedIcon(iconSize: iconSize)
-
-            // Feed name
-            Text(defaultFeedName)
-              .padding(.leading, 6)
-              .appFont(AppTextRole.headline)
-              .foregroundStyle(drawerPrimaryTextColor)
-              .multilineTextAlignment(.leading)
-              .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-
-            Spacer()
-
-            Image(systemName: "chevron.right")
-              .appFont(AppTextRole.caption)
-              .foregroundColor(drawerSecondaryTextColor)
-          }
+      HStack(spacing: DesignTokens.Spacing.base) {
+        FeedsDefaultFeedLabel(
+          name: defaultFeedName,
+          isSelected: isDefaultFeedSelected()
+        ) {
+          defaultFeedIcon(iconSize: DesignTokens.Size.avatarLG)
         }
         .padding(12)
         .background {
@@ -436,7 +411,17 @@ struct FeedsStartPage: View {
               )
           }
         }
-        .modifier(LaunchpadGlassChip(cornerRadius: 24, isEnabled: inSideDrawer))
+        .modifier(LaunchpadGlassChip(
+          cornerRadius: 24,
+          isEnabled: inSideDrawer && !isDefaultFeedSelected()
+        ))
+        .modifier(LaunchpadSelectionGlass(
+          isSelected: isDefaultFeedSelected(),
+          isDropTarget: false,
+          cornerRadius: 24,
+          namespace: defaultFeedGlassNamespace,
+          isEnabled: inSideDrawer
+        ))
         .overlay {
           if inSideDrawer && isDefaultFeedDropTarget {
             RoundedRectangle(cornerRadius: 24, style: .continuous)
@@ -468,7 +453,8 @@ struct FeedsStartPage: View {
       )
     }
     .accessibility(label: Text("Open \(defaultFeedName) feed"))
-    .accessibility(hint: Text("Double tap to open this feed and close the menu"))
+    .accessibility(hint: Text("Your default feed. Double tap to open it and close the menu"))
+    .accessibilityValue(isDefaultFeedSelected() ? "Selected" : "")
     .accessibilityAddTraits(.isButton)
   }
 
@@ -605,12 +591,7 @@ struct FeedsStartPage: View {
               iconView: AnyView(timelineListIcon())
             )
           } else if let uri = try? ATProtocolURI(uriString: feed) {
-            let title: String = {
-              if uri.uriString().contains("/app.bsky.graph.list/") {
-                return viewModel.listDetails[uri]?.name ?? viewModel.extractTitle(from: uri)
-              }
-              return viewModel.feedGenerators[uri]?.displayName ?? viewModel.extractTitle(from: uri)
-            }()
+            let title = viewModel.displayName(for: uri)
             let subtitle: String? = {
               if uri.uriString().contains("/app.bsky.graph.list/") {
                 return viewModel.listDetails[uri]?.description
@@ -744,9 +725,10 @@ struct FeedsStartPage: View {
           .buttonStyle(PlainButtonStyle())
           .accessibilityLabel("Remove feed")
         } else {
-          Image(systemName: "chevron.right")
+          Image(systemName: isSelected(feedURI: feedURI) ? "checkmark.circle.fill" : "chevron.right")
             .appFont(AppTextRole.caption)
-            .foregroundStyle(drawerTertiaryTextColor)
+            .foregroundStyle(isSelected(feedURI: feedURI) ? Color.accentColor : drawerTertiaryTextColor)
+            .accessibilityHidden(true)
         }
       }
       .padding(.vertical, 8)
@@ -787,6 +769,7 @@ struct FeedsStartPage: View {
     }
     .opacity(draggedFeedItem == feedURI && isDragging ? 0.4 : 1.0)
     .accessibility(label: Text(title))
+    .accessibilityValue(isSelected(feedURI: feedURI) ? "Selected" : "")
     .accessibility(hint: Text(isEditingFeeds ? "Editing — tap minus to remove" : "Double tap to open this feed"))
     .accessibilityAddTraits(.isButton)
   }
@@ -808,10 +791,15 @@ struct FeedsStartPage: View {
         selectedFeed = .feed(uri)
       }
       currentFeedName =
-        viewModel.feedGenerators[uri]?.displayName ?? viewModel.extractTitle(from: uri)
+        viewModel.displayName(for: uri)
       isDrawerOpen = false
     } label: {
-      VStack(spacing: 6) {
+      FeedsGridFeedLabel(
+        title: viewModel.displayName(for: uri),
+        isSelected: isSelected(feedURI: feedURI),
+        iconSize: iconSize,
+        itemWidth: itemWidth
+      ) {
         // Feed icon
         Group {
           if uri.uriString().contains("/app.bsky.graph.list/"), let list = viewModel.listDetails[uri] {
@@ -838,27 +826,7 @@ struct FeedsStartPage: View {
             feedPlaceholder(for: viewModel.extractTitle(from: uri))
           }
         }
-        .frame(width: iconSize, height: iconSize)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-
-        // Feed/List name
-        Text(
-          uri.uriString().contains("/app.bsky.graph.list/")
-            ? (viewModel.listDetails[uri]?.name ?? viewModel.extractTitle(from: uri))
-            : (viewModel.feedGenerators[uri]?.displayName ?? viewModel.extractTitle(from: uri))
-        )
-          .appFont(AppTextRole.caption2)
-          .foregroundStyle(drawerPrimaryTextColor)
-          .padding(.top, 4)
-          .lineLimit(2)
-          .frame(minHeight: 28, alignment: .top)
-          .multilineTextAlignment(.center)
-          .fixedSize(horizontal: false, vertical: true)
-
-        
       }
-      .padding(6)
-      .frame(width: itemWidth)
       .background(
         Group {
           if !inSideDrawer {
@@ -915,8 +883,9 @@ struct FeedsStartPage: View {
       )
     }
     .accessibility(
-      label: Text(viewModel.feedGenerators[uri]?.displayName ?? viewModel.extractTitle(from: uri))
+      label: Text(viewModel.displayName(for: uri))
     )
+    .accessibilityValue(isSelected(feedURI: feedURI) ? "Selected" : "")
     .accessibility(hint: Text("Double tap to open this feed"))
     .accessibilityAddTraits(.isButton)
   }
@@ -934,7 +903,12 @@ struct FeedsStartPage: View {
       currentFeedName = "Timeline"
       isDrawerOpen = false
     } label: {
-      VStack(spacing: 6) {
+      FeedsGridFeedLabel(
+        title: "Timeline",
+        isSelected: isSelected(feedURI: feedURI),
+        iconSize: iconSize,
+        itemWidth: itemWidth
+      ) {
         // Timeline icon
         ZStack {
           LinearGradient(
@@ -947,21 +921,7 @@ struct FeedsStartPage: View {
             .appFont(size: 24)
             .foregroundColor(.white)
         }
-        .frame(width: iconSize, height: iconSize)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-
-        // Feed name
-        Text("Timeline")
-          .appFont(AppTextRole.caption2)
-          .foregroundStyle(drawerPrimaryTextColor)
-          .padding(.top, 4)
-          .lineLimit(2)
-          .frame(minHeight: 28, alignment: .top)
-          .multilineTextAlignment(.center)
-          .fixedSize(horizontal: false, vertical: true)
       }
-      .padding(6)
-      .frame(width: itemWidth)
       .background(
         Group {
           if !inSideDrawer {
@@ -1011,6 +971,7 @@ struct FeedsStartPage: View {
     .opacity(draggedFeedItem == feedURI && isDragging ? 0.4 : 1.0)
     .scaleEffect(draggedFeedItem == feedURI && isDragging ? 0.95 : 1.0)
     .accessibility(label: Text("Timeline"))
+    .accessibilityValue(isSelected(feedURI: feedURI) ? "Selected" : "")
     .accessibility(hint: Text("Double tap to open the Timeline feed"))
     .accessibilityAddTraits(.isButton)
   }
@@ -1129,12 +1090,7 @@ struct FeedsStartPage: View {
   private func standardContent(contentWidth: CGFloat, topInset: CGFloat) -> some View {
       ScrollView {
         VStack(spacing: 0) {
-          // The concentric clip must be inside `flexibleHeaderContent()` so
-          // the mask stretches and stays pinned with the image.
-          bannerHeaderView(topInset: topInset)
-            .modifier(DrawerBannerInset())
-            .flexibleHeaderContent(height: ContainerLayoutMetrics.bannerHeight(viewportHeight: viewportSize.height) + topInset)
-            .background(inSideDrawer ? Color.clear : Color.accentColor.opacity(0.05))
+          accountHeaderView(topInset: topInset)
 
           // Main content below the banner
           feedsContent()
@@ -1222,76 +1178,38 @@ struct FeedsStartPage: View {
   // (Drawer-level close/search/bookmarks moved to ContentView native toolbar)
 
   @ViewBuilder
-  private func bannerHeaderView(topInset: CGFloat) -> some View {
-    ZStack(alignment: .bottomLeading) {
+  private func accountHeaderView(topInset: CGFloat) -> some View {
+    VStack(spacing: 0) {
+      // Keep the concentric clip inside the stretch transform, and preserve
+      // the safe-area reflection behind the drawer's native top controls.
       FeedBannerArtwork(topInset: topInset) {
         bannerImageView
       }
-      .frame(maxWidth: drawerWidth)
+      .modifier(DrawerBannerInset())
+      .flexibleHeaderContent(height: bannerHeight + topInset)
+      .background(inSideDrawer ? Color.clear : Color.accentColor.opacity(0.05))
 
-      // Scrim overlay for text visibility
-      LinearGradient(
-        colors: [.black.opacity(0.6), .clear],
-        startPoint: .bottom,
-        endPoint: .center
-      )
-      .frame(maxWidth: drawerWidth)
-      
-      // Profile Info - responsive layout
-      HStack(spacing: max(8, horizontalPadding * 0.4)) {
-        // Avatar with responsive sizing
-        Group {
-          if let avatarURL = profile?.finalAvatarURL() {
-            AsyncProfileImage(url: avatarURL, size: avatarSize)
-          } else {
-            // Fallback avatar
-            ZStack {
-              Circle()
-                .fill(Color.white.opacity(0.9))
-                .frame(width: avatarSize, height: avatarSize)
-              
-              Text(profile?.handle.description.prefix(1).uppercased() ?? "?")
-                .appFont(size: avatarSize * 0.4)
-                .foregroundColor(.accentColor)
-            }
-          }
-        }
-        .overlay(Circle().stroke(Color.white.opacity(0.8), lineWidth: max(1.5, avatarSize * 0.025)))
-        .frame(width: avatarSize, height: avatarSize)
-        
-        // Display Name and Handle - responsive text sizing
-        VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {  // 3
-          if let displayName = profile?.displayName, !displayName.isEmpty {
-            Text(displayName)
-              .appFont(AppTextRole.headline)
-              .foregroundStyle(.white)
-              .shadow(radius: 2)
-              .lineLimit(1)
-              .truncationMode(.tail)
-          }
-          if let handle = profile?.handle {
-            Text("@\(handle.description)")
-              .appFont(AppTextRole.subheadline)
-              .foregroundStyle(.white.opacity(0.9))
-              .shadow(radius: 2)
-              .lineLimit(1)
-              .truncationMode(.tail)
-          }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        
-        Spacer(minLength: 0)
+      FeedsAccountIdentity(
+        displayName: profile?.displayName,
+        handle: profile?.handle.description,
+        avatarSize: avatarSize
+      ) {
+        accountAvatar
       }
-      .padding(.horizontal, bannerContentInset)
-      .padding(.bottom, bannerContentBottomInset)
-      .frame(maxWidth: drawerWidth)
+      .padding(.horizontal, horizontalPadding)
+      .padding(.top, DesignTokens.Spacing.base)
+      .padding(.bottom, DesignTokens.Spacing.sm)
+      .background(
+        inSideDrawer
+          ? Color.clear
+          : Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme)
+      )
     }
     .frame(maxWidth: drawerWidth)
-    .clipped()
     .contentShape(Rectangle())
     .onTapGesture {
       let userDID = appState.userDID
-      appState.navigationManager.navigate(to: .profile(userDID))
+      sceneContext.navigationManager.navigate(to: .profile(userDID))
       isDrawerOpen = false
     }
     .onLongPressGesture {
@@ -1302,12 +1220,35 @@ struct FeedsStartPage: View {
     }
     .accessibilityElement(children: .combine)
     .accessibilityLabel("My Profile")
+    .accessibilityValue(profile?.displayName ?? profile?.handle.description ?? "Your account")
     .accessibilityHint("Double tap to view your profile. Long press to switch accounts.")
+    .accessibilityAddTraits(.isButton)
+    .accessibilityAction(named: "Switch account") {
+      isShowingAccountSwitcher = true
+    }
+  }
+
+  @ViewBuilder
+  private var accountAvatar: some View {
+    if let avatarURL = profile?.finalAvatarURL() {
+      AsyncProfileImage(url: avatarURL, size: avatarSize)
+    } else {
+      Circle()
+        .fill(Color.accentColor.opacity(0.12))
+        .overlay {
+          Text(profile?.handle.description.prefix(1).uppercased() ?? "?")
+            .appFont(size: avatarSize * 0.4)
+            .foregroundStyle(Color.accentColor)
+        }
+    }
   }
 
   @ViewBuilder
   private var feedsTitleRow: some View {
-    HStack {
+    let layout = dynamicTypeSize.isAccessibilitySize || drawerWidth < 320
+      ? AnyLayout(VStackLayout(alignment: .leading, spacing: DesignTokens.Spacing.base))
+      : AnyLayout(HStackLayout(spacing: DesignTokens.Spacing.base))
+    layout {
         Text("Feeds")
             .font(
                 Font.customSystemFont(
@@ -1316,8 +1257,6 @@ struct FeedsStartPage: View {
             )
             .foregroundStyle(drawerPrimaryTextColor)
             .frame(maxWidth: .infinity, alignment: .leading)
-        Spacer()
-
         HStack(spacing: 12) {
             addFeedButton()
 
@@ -1399,8 +1338,8 @@ struct FeedsStartPage: View {
               feedsTitleRow
             }
           }
-              .padding(.top, DesignTokens.Spacing.section)     // 24
-              .padding(.bottom, DesignTokens.Spacing.section)  // 24
+              .padding(.top, DesignTokens.Spacing.sm)
+              .padding(.bottom, DesignTokens.Spacing.base)
 
           VStack(spacing: gridSpacing) {
               if isSearchBarVisible {
@@ -1468,7 +1407,7 @@ struct FeedsStartPage: View {
                   currentFeedName = "Timeline"
                 } else if let uri = try? ATProtocolURI(uriString: feed) {
                   selectedFeed = feed.contains("/app.bsky.graph.list/") ? .list(uri) : .feed(uri)
-                  currentFeedName = viewModel.feedGenerators[uri]?.displayName ?? viewModel.extractTitle(from: uri)
+                  currentFeedName = viewModel.displayName(for: uri)
                 }
               }
             }
@@ -1477,7 +1416,7 @@ struct FeedsStartPage: View {
           .animation(.easeInOut(duration: 0.25), value: layoutMode)
       }
       .padding(.horizontal, horizontalPadding)
-      .padding(.vertical, DesignTokens.Spacing.xl)  // 18
+      .padding(.bottom, DesignTokens.Spacing.xl)
       .frame(maxWidth: .infinity)
       .background(
         inSideDrawer
@@ -1495,7 +1434,7 @@ struct FeedsStartPage: View {
         : Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))
         .ignoresSafeArea()
         .overlay {
-          ProgressView("Loading feeds...")
+          ProgressView("Loading feeds…")
         }
         .contentShape(Rectangle())
         .allowsHitTesting(true)
@@ -1510,7 +1449,7 @@ struct FeedsStartPage: View {
         : Color.dynamicBackground(appState.themeManager, currentScheme: colorScheme))
         .ignoresSafeArea()
         .overlay {
-          ProgressView("Loading your feeds...")
+          ProgressView("Loading your feeds…")
         }
         .contentShape(Rectangle())
         .allowsHitTesting(true)
@@ -1573,6 +1512,122 @@ struct FeedsStartPage: View {
       startPoint: .topLeading,
       endPoint: .bottomTrailing
     )
+  }
+}
+
+/// Readable account identity shared by the live header and visual fixtures.
+/// Artwork remains a separate surface so banner colors cannot obscure text.
+struct FeedsAccountIdentity<Avatar: View>: View {
+  @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+  let displayName: String?
+  let handle: String?
+  let avatarSize: CGFloat
+  @ViewBuilder var avatar: () -> Avatar
+
+  private var name: String {
+    if let displayName, !displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+      return displayName
+    }
+    return handle.flatMap { $0.isEmpty ? nil : $0 } ?? "Your account"
+  }
+
+  var body: some View {
+    let layout = dynamicTypeSize.isAccessibilitySize
+      ? AnyLayout(VStackLayout(alignment: .leading, spacing: DesignTokens.Spacing.base))
+      : AnyLayout(HStackLayout(alignment: .center, spacing: DesignTokens.Spacing.base))
+    layout {
+      avatar()
+        .frame(width: avatarSize, height: avatarSize)
+        .clipShape(Circle())
+        .accessibilityHidden(true)
+
+      HStack(spacing: DesignTokens.Spacing.sm) {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+          Text(name)
+            .appFont(AppTextRole.headline)
+            .foregroundStyle(.primary)
+            .lineLimit(2)
+            .fixedSize(horizontal: false, vertical: true)
+          if let handle, !handle.isEmpty {
+            Text("@\(handle)")
+              .appFont(AppTextRole.subheadline)
+              .foregroundStyle(.secondary)
+              .lineLimit(1)
+              .truncationMode(.middle)
+          }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+
+        Image(systemName: "chevron.right")
+          .appFont(AppTextRole.caption)
+          .foregroundStyle(.tertiary)
+          .accessibilityHidden(true)
+      }
+    }
+  }
+}
+
+struct FeedsDefaultFeedLabel<Icon: View>: View {
+  let name: String
+  let isSelected: Bool
+  @ViewBuilder var icon: () -> Icon
+
+  var body: some View {
+    HStack(spacing: DesignTokens.Spacing.base) {
+      icon()
+      VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+        Text("Default feed")
+          .appFont(AppTextRole.caption)
+          .foregroundStyle(.secondary)
+        Text(name)
+          .appFont(AppTextRole.headline)
+          .foregroundStyle(.primary)
+          .lineLimit(2)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+      .frame(maxWidth: .infinity, alignment: .leading)
+      Image(systemName: isSelected ? "checkmark.circle.fill" : "chevron.right")
+        .appFont(AppTextRole.subheadline)
+        .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
+        .accessibilityHidden(true)
+    }
+    .multilineTextAlignment(.leading)
+  }
+}
+
+struct FeedsGridFeedLabel<Icon: View>: View {
+  let title: String
+  let isSelected: Bool
+  let iconSize: CGFloat
+  let itemWidth: CGFloat
+  @ViewBuilder var icon: () -> Icon
+
+  var body: some View {
+    VStack(spacing: DesignTokens.Spacing.sm) {
+      icon()
+        .frame(width: iconSize, height: iconSize)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(alignment: .bottomTrailing) {
+          if isSelected {
+            Image(systemName: "checkmark.circle.fill")
+              .font(.system(size: 18, weight: .semibold))
+              .foregroundStyle(.white, Color.accentColor)
+              .background(Color.accentColor, in: Circle())
+              .padding(3)
+              .accessibilityHidden(true)
+          }
+        }
+      Text(title)
+        .appFont(AppTextRole.footnote)
+        .fontWeight(isSelected ? .semibold : .regular)
+        .foregroundStyle(.primary)
+        .lineLimit(2)
+        .frame(minHeight: 32, alignment: .top)
+        .multilineTextAlignment(.center)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+    .padding(DesignTokens.Spacing.sm)
+    .frame(width: itemWidth)
   }
 }
 
@@ -1770,7 +1825,7 @@ private extension View {
                     onAccountSwitch()
                 }
             }
-            .alert("Error", isPresented: showErrorAlert) {
+            .alert("Something Went Wrong", isPresented: showErrorAlert) {
                 Button("OK", role: .cancel) {}
             } message: {
                 Text(errorAlertMessage.wrappedValue)

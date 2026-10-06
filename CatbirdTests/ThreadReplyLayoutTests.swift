@@ -487,6 +487,7 @@ struct ThreadReplyLayoutTests {
       threadItem: threadItem,
       parentAuthor: nil,
       appState: appState,
+      sceneContext: SceneNavigationContext(appState: appState, sceneID: UUID()),
       path: .constant(NavigationPath())
     )
     #expect(cell.contentConfiguration != nil)

@@ -7,10 +7,26 @@ struct MuteWordsSettingsView: View {
   @State private var filteredMuteWords: [MutedWord] = []
   @State private var searchText: String = ""
   @State private var isLoading: Bool = true
+  @State private var hasConfirmedPreferences = false
+  @State private var isSaving = false
+  @State private var loadedIdentity: AccountReadIdentity?
+  @State private var loadRequest = UUID()
   @State private var errorMessage: String?
   @State private var showingDeleteConfirmation = false
   @State private var wordToDelete: MutedWord?
+  @State private var deleteConfirmationRequest: UUID?
   @State private var showingAddWordSuccess = false
+
+  private struct AccountReadIdentity: Hashable {
+    let accountDID: String
+    let state: ObjectIdentifier
+    let manager: ObjectIdentifier
+  }
+
+  private var accountReadIdentity: AccountReadIdentity {
+    .init(accountDID: appState.userDID, state: ObjectIdentifier(appState),
+          manager: ObjectIdentifier(appState.preferencesManager))
+  }
   
   private var hasSearchText: Bool {
     !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -20,42 +36,47 @@ struct MuteWordsSettingsView: View {
     hasSearchText ? filteredMuteWords : muteWords
   }
 
+  private var canEdit: Bool {
+    hasConfirmedPreferences && !isLoading && !isSaving
+      && loadedIdentity == accountReadIdentity
+      && appState.preferencesManager.accountDID == appState.userDID
+  }
+
   var body: some View {
-    NavigationStack {
-      List {
-        addWordSection
-        
-        muteWordsSection
-        
-        if !hasSearchText && !muteWords.isEmpty {
-          aboutSection
-        }
-      }
-      #if os(iOS)
-      .listStyle(.insetGrouped)
-      #else
-      .listStyle(.sidebar)
-      #endif
-      .searchable(text: $searchText, prompt: "Search mute words")
-      .onChange(of: searchText) {
-        filterMuteWords()
+    List {
+      addWordSection
+
+      muteWordsSection
+
+      if !hasSearchText && !muteWords.isEmpty {
+        aboutSection
       }
     }
-    .navigationTitle("Mute Words")
     #if os(iOS)
-    .toolbarTitleDisplayMode(.large)
+    .listStyle(.insetGrouped)
+    #else
+    .listStyle(.sidebar)
+    #endif
+    .searchable(text: $searchText, prompt: "Search muted words")
+    .onChange(of: searchText) {
+      filterMuteWords()
+    }
+    .navigationTitle("Muted Words & Tags")
+    #if os(iOS)
+    .toolbarTitleDisplayMode(.inline)
     #endif
     .themedSecondaryBackground(appState.themeManager, appSettings: appState.appSettings)
-    .alert("Delete Mute Word", isPresented: $showingDeleteConfirmation) {
-      Button("Delete", role: .destructive) {
-        if let word = wordToDelete {
+    .alert("Remove Muted Word", isPresented: $showingDeleteConfirmation) {
+      Button("Remove", role: .destructive) {
+        if let word = wordToDelete, deleteConfirmationRequest == loadRequest {
           removeMuteWord(word.id)
         }
       }
+      .disabled(!canEdit)
       Button("Cancel", role: .cancel) {}
     } message: {
       if let word = wordToDelete {
-        Text("Are you sure you want to remove \"\(word.value)\" from your mute words?")
+        Text("Remove “\(word.value)” from your muted words?")
       }
     }
     .overlay(
@@ -65,8 +86,14 @@ struct MuteWordsSettingsView: View {
         }
       }
     )
-    .task {
+    .task(id: accountReadIdentity) {
       await loadMuteWords()
+    }
+    .onDisappear {
+      loadRequest = UUID()
+      hasConfirmedPreferences = false
+      showingDeleteConfirmation = false
+      deleteConfirmationRequest = nil
     }
   }
   
@@ -78,16 +105,18 @@ struct MuteWordsSettingsView: View {
     Section {
       HStack(spacing: DesignTokens.Spacing.sm) {
 #if os(iOS)
-        TextField("Add new mute word", text: $newMuteWord)
+        TextField("Add a word or tag", text: $newMuteWord)
           .textFieldStyle(.plain)
           .autocorrectionDisabled(true)
           .textInputAutocapitalization(.never)
+          .accessibilityIdentifier("settings.mutedWords.input")
           .onSubmit {
             addWordIfValid()
           }
 #else
-        TextField("Add new mute word", text: $newMuteWord)
+        TextField("Add a word or tag", text: $newMuteWord)
           .textFieldStyle(.plain)
+          .accessibilityIdentifier("settings.mutedWords.input")
           .onSubmit {
             addWordIfValid()
           }
@@ -97,16 +126,20 @@ struct MuteWordsSettingsView: View {
           Image(systemName: "plus.circle.fill")
             .foregroundStyle(newMuteWord.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 
                 .secondary : Color.blue)
+            .frame(minWidth: 44, minHeight: 44)
+            .contentShape(Rectangle())
         }
-        .disabled(newMuteWord.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        .disabled(!canEdit || newMuteWord.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         .buttonStyle(.plain)
+        .accessibilityLabel("Add Muted Word")
+        .accessibilityIdentifier("settings.mutedWords.add")
       }
+      .disabled(!canEdit)
       
       if !newMuteWord.isEmpty && muteWords.contains(where: { $0.value.lowercased() == newMuteWord.lowercased() }) {
-        Label("This word is already in your mute list", systemImage: "exclamationmark.triangle.fill")
+        Label("This word is already muted", systemImage: "exclamationmark.triangle.fill")
           .designFootnote()
           .foregroundStyle(.orange)
-          .transition(.opacity.combined(with: .scale))
       }
     }
   }
@@ -116,16 +149,21 @@ struct MuteWordsSettingsView: View {
     Section {
       if isLoading {
         loadingView
-      } else if let error = errorMessage {
+      }
+      if isSaving {
+        ProgressView("Saving muted words…")
+      }
+      if let error = errorMessage {
         errorView(error)
-      } else if displayedMuteWords.isEmpty {
-        emptyStateView
-      } else {
+      }
+      if !displayedMuteWords.isEmpty {
         muteWordsList
+      } else if hasConfirmedPreferences && !isLoading && errorMessage == nil {
+        emptyStateView
       }
     } header: {
       if !muteWords.isEmpty {
-        Text(hasSearchText ? "Search Results" : "Mute Words")
+        Text(hasSearchText ? "Search Results" : "Muted Words")
           .designCallout()
       }
     }
@@ -133,14 +171,12 @@ struct MuteWordsSettingsView: View {
   
   @ViewBuilder
   private var muteWordsList: some View {
-    ForEach(displayedMuteWords, id: \.id) { word in
+    // Imported rules can lack IDs; retain every rule without inventing an identity for server edits.
+    ForEach(Array(displayedMuteWords.enumerated()), id: \.offset) { _, word in
       muteWordRow(word)
-        .transition(.asymmetric(
-          insertion: .scale.combined(with: .opacity),
-          removal: .opacity.combined(with: .move(edge: .trailing))
-        ))
+        .deleteDisabled(!canEdit || !hasUniqueIdentifier(word.id))
     }
-    .onDelete(perform: hasSearchText ? nil : deleteMuteWords)
+    .onDelete(perform: hasSearchText || !canEdit ? nil : deleteMuteWords)
   }
   
   @ViewBuilder
@@ -152,7 +188,32 @@ struct MuteWordsSettingsView: View {
           .foregroundStyle(.primary)
         
         if !word.targets.isEmpty {
-          Text("Targets: \(word.targets.joined(separator: ", "))")
+          Text(targetsDescription(word.targets))
+            .designCaption()
+            .foregroundStyle(.secondary)
+        } else {
+          Text("Not muting anything")
+            .designCaption()
+            .foregroundStyle(.secondary)
+        }
+        if let actorTarget = word.actorTarget, actorTarget != "all" {
+          Text(actorTarget == "exclude-following" ? "Accounts you follow are excluded"
+            : "Custom account rule")
+            .designCaption()
+            .foregroundStyle(.secondary)
+        } else {
+          Text("Applies to all accounts")
+            .designCaption()
+            .foregroundStyle(.secondary)
+        }
+        if let expiresAt = word.expiresAt {
+          Text(expiresAt <= Date() ? "Expired \(expiresAt.formatted(date: .abbreviated, time: .shortened))"
+            : "Expires: \(expiresAt.formatted(date: .abbreviated, time: .shortened))")
+            .designCaption()
+            .foregroundStyle(.secondary)
+        }
+        if !hasUniqueIdentifier(word.id) {
+          Text("This muted word can only be removed from the Bluesky app.")
             .designCaption()
             .foregroundStyle(.secondary)
         }
@@ -161,28 +222,32 @@ struct MuteWordsSettingsView: View {
       Spacer()
       
       Button {
-        wordToDelete = word
-        showingDeleteConfirmation = true
+        confirmRemoval(of: word)
       } label: {
         Image(systemName: "trash")
           .foregroundStyle(.red)
           .frame(width: DesignTokens.Size.iconMD, height: DesignTokens.Size.iconMD)
+          .frame(minWidth: 44, minHeight: 44)
+          .contentShape(Rectangle())
       }
       .buttonStyle(.plain)
+      .disabled(!canEdit || !hasUniqueIdentifier(word.id))
+      .accessibilityLabel("Remove “\(word.value)”")
     }
     .spacingSM(.vertical)
     #if os(iOS)
     .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-      Button("Delete", role: .destructive) {
+      Button("Remove", role: .destructive) {
         removeMuteWord(word.id)
       }
+      .disabled(!canEdit || !hasUniqueIdentifier(word.id))
     }
     #endif
     .contextMenu {
-      Button("Delete", role: .destructive) {
-        wordToDelete = word
-        showingDeleteConfirmation = true
+      Button("Remove", role: .destructive) {
+        confirmRemoval(of: word)
       }
+      .disabled(!canEdit || !hasUniqueIdentifier(word.id))
     }
   }
   
@@ -191,7 +256,7 @@ struct MuteWordsSettingsView: View {
     HStack(spacing: DesignTokens.Spacing.base) {
       ProgressView()
         .scaleEffect(0.8)
-      Text("Loading mute words...")
+      Text("Loading muted words…")
         .designBody()
         .foregroundStyle(.secondary)
       Spacer()
@@ -205,7 +270,7 @@ struct MuteWordsSettingsView: View {
       HStack(spacing: DesignTokens.Spacing.sm) {
         Image(systemName: "exclamationmark.triangle.fill")
           .foregroundStyle(.red)
-        Text("Error")
+        Text("Something Went Wrong")
           .designCallout()
           .foregroundStyle(.red)
         Spacer()
@@ -217,12 +282,14 @@ struct MuteWordsSettingsView: View {
         .multilineTextAlignment(.leading)
         .frame(maxWidth: .infinity, alignment: .leading)
       
-      Button("Retry") {
+      Button("Try Again") {
         Task {
           await loadMuteWords()
         }
       }
       .buttonStyle(.borderedProminent)
+      .disabled(isLoading || isSaving)
+      .accessibilityIdentifier("settings.mutedWords.retry")
       .controlSize(.small)
       .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -239,13 +306,13 @@ struct MuteWordsSettingsView: View {
         .font(.title2)
         .foregroundStyle(.tertiary)
       
-      Text(hasSearchText ? "No matching words found" : "No mute words yet")
+      Text(hasSearchText ? "No matching words" : "No muted words yet")
         .designBody()
         .foregroundStyle(.secondary)
         .multilineTextAlignment(.center)
       
       if !hasSearchText {
-        Text("Add words to hide posts containing them")
+        Text("Add words or tags to hide posts that contain them.")
           .designFootnote()
           .foregroundStyle(.tertiary)
           .multilineTextAlignment(.center)
@@ -262,13 +329,13 @@ struct MuteWordsSettingsView: View {
         HStack(spacing: DesignTokens.Spacing.xs) {
           Image(systemName: "info.circle")
             .foregroundStyle(.blue)
-            .font(.caption)
-          Text("How Mute Words Work")
+            .designCaption()
+          Text("How Muted Words Work")
             .designCallout()
             .foregroundStyle(.primary)
         }
         
-        Text("Posts containing these words will be hidden from your feeds. Changes take effect immediately and sync across all your devices.")
+        Text("Posts matching each rule’s targets are hidden from your feeds. Saved changes sync across your devices.")
           .designFootnote()
           .foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
@@ -285,7 +352,7 @@ struct MuteWordsSettingsView: View {
       HStack(spacing: DesignTokens.Spacing.sm) {
         Image(systemName: "checkmark.circle.fill")
           .foregroundStyle(.green)
-        Text("Mute word added")
+        Text("Word muted")
           .designCallout()
           .foregroundStyle(.primary)
       }
@@ -295,29 +362,24 @@ struct MuteWordsSettingsView: View {
       .cornerRadiusLG()
       .shadowSoft()
       .spacingBase(.bottom)
-      .transition(.asymmetric(
-        insertion: .move(edge: .bottom).combined(with: .opacity),
-        removal: .opacity
-      ))
     }
     .frame(maxHeight: .infinity, alignment: .bottom)
     .allowsHitTesting(false)
-    .onAppear {
-      DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-        withAnimation(.easeInOut(duration: DesignTokens.Duration.normal)) {
-          showingAddWordSuccess = false
-        }
-      }
+    .task {
+      let request = loadRequest
+      try? await Task.sleep(for: .seconds(2))
+      guard !Task.isCancelled, loadRequest == request else { return }
+      showingAddWordSuccess = false
     }
   }
 
   // MARK: - Helper Methods
   
   private func addWordIfValid() {
+    guard canEdit else { return }
     let trimmedWord = newMuteWord.trimmingCharacters(in: .whitespacesAndNewlines)
     if !trimmedWord.isEmpty && !muteWords.contains(where: { $0.value.lowercased() == trimmedWord.lowercased() }) {
       addMuteWord(trimmedWord)
-      newMuteWord = ""
     }
   }
   
@@ -333,114 +395,166 @@ struct MuteWordsSettingsView: View {
   }
   
   private func deleteMuteWords(at offsets: IndexSet) {
-    let idsToDelete = offsets.map { muteWords[$0].id }
-    
-    withAnimation(.easeInOut(duration: DesignTokens.Duration.fast)) {
-      muteWords.remove(atOffsets: offsets)
-      filterMuteWords()
+    guard canEdit, !hasSearchText else { return }
+    let ids = offsets.compactMap { offset in
+      muteWords.indices.contains(offset) && hasUniqueIdentifier(muteWords[offset].id) ? muteWords[offset].id : nil
     }
-    
-    Task {
-      for id in idsToDelete {
-        do {
-          try await appState.preferencesManager.removeMutedWord(id: id)
-          updateMuteWordFilter()
-        } catch {
-          await MainActor.run {
-            errorMessage = "Failed to remove mute word: \(error.localizedDescription)"
-          }
-          await loadMuteWords()
-        }
-      }
-    }
+    removeMuteWords(ids)
   }
 
+  @MainActor
   private func loadMuteWords() async {
-    withAnimation(.easeInOut(duration: DesignTokens.Duration.fast)) {
-      isLoading = true
-      errorMessage = nil
+    let originatingState = appState
+    let manager = originatingState.preferencesManager
+    let account = originatingState.userDID
+    let request = UUID()
+    let identity = AccountReadIdentity(accountDID: account, state: ObjectIdentifier(originatingState),
+                                       manager: ObjectIdentifier(manager))
+    loadRequest = request
+    wordToDelete = nil
+    deleteConfirmationRequest = nil
+    showingDeleteConfirmation = false
+    if loadedIdentity != identity {
+      muteWords = []
+      filteredMuteWords = []
+      newMuteWord = ""
+      searchText = ""
+      showingAddWordSuccess = false
+    }
+    loadedIdentity = identity
+    hasConfirmedPreferences = false
+    isSaving = false
+    isLoading = true
+    errorMessage = nil
+    defer {
+      if isCurrent(request, account: account, state: originatingState, manager: manager) {
+        isLoading = false
+      }
     }
     
     do {
-      let preferences = try await appState.preferencesManager.getPreferences()
-      
-      withAnimation(.easeInOut(duration: DesignTokens.Duration.normal)) {
-        // Dedup words by ID to prevent ForEach crashes
-        var seen = Set<String>()
-        muteWords = preferences.mutedWords.filter { seen.insert($0.id).inserted }
-        isLoading = false
+      let preferences = try await manager.refreshSettingsPreferences(expectedAccountDID: account)
+      guard isCurrent(request, account: account, state: originatingState, manager: manager) else { return }
+      guard preferences.accountDID == account, preferences.hasConfirmedServerPreferences else {
+        throw PreferencesManagerError.invalidData
       }
-      
-      // Filter the words based on current search
+      muteWords = preferences.mutedWords
+      hasConfirmedPreferences = true
       filterMuteWords()
-      
-      // Also update the local filter
-      updateMuteWordFilter()
     } catch {
-      withAnimation(.easeInOut(duration: DesignTokens.Duration.fast)) {
-        errorMessage = "Failed to load mute words: \(error.localizedDescription)"
-        isLoading = false
-      }
+      guard isCurrent(request, account: account, state: originatingState, manager: manager) else { return }
+      errorMessage = UserFacingError.message(for: error, action: "load your muted words") ?? "Couldn’t load your muted words. Try again."
     }
   }
 
   private func addMuteWord(_ word: String) {
-    Task {
+    guard canEdit else { return }
+    let originatingState = appState
+    let manager = originatingState.preferencesManager
+    let account = originatingState.userDID
+    let request = loadRequest
+    let submittedText = newMuteWord
+    isSaving = true
+    errorMessage = nil
+    Task { @MainActor in
+      defer {
+        if isCurrent(request, account: account, state: originatingState, manager: manager) { isSaving = false }
+      }
       do {
-        // Add to server preferences - using default targets of "content"
-        try await appState.preferencesManager.addMutedWord(
+        guard isCurrent(request, account: account, state: originatingState, manager: manager) else { return }
+        try await manager.addMutedWord(
           word: word,
           targets: ["content"],
           actorTarget: nil,
-          expiresAt: nil
+          expiresAt: nil,
+          expectedAccountDID: account
         )
-        
-        // Show success feedback
-        withAnimation(.easeInOut(duration: DesignTokens.Duration.normal)) {
-          showingAddWordSuccess = true
-        }
-        
-        // Refresh mute words list from server
-        await loadMuteWords()
+        guard isCurrent(request, account: account, state: originatingState, manager: manager) else { return }
+        try publishAcceptedWords(from: manager, account: account)
+        if newMuteWord == submittedText { newMuteWord = "" }
+        showingAddWordSuccess = true
       } catch {
-        withAnimation(.easeInOut(duration: DesignTokens.Duration.fast)) {
-          errorMessage = "Failed to add mute word: \(error.localizedDescription)"
-          isLoading = false
-        }
+        guard isCurrent(request, account: account, state: originatingState, manager: manager) else { return }
+        hasConfirmedPreferences = false
+        errorMessage = UserFacingError.message(for: error, action: "mute this word") ?? "Couldn’t mute this word. Try again."
       }
     }
   }
 
   private func removeMuteWord(_ id: String) {
-    // Optimistically remove from UI with animation
-    withAnimation(.easeInOut(duration: DesignTokens.Duration.normal)) {
-      muteWords.removeAll { $0.id == id }
-      filterMuteWords()
-    }
-    
-    Task {
+    removeMuteWords([id])
+  }
+
+  private func removeMuteWords(_ ids: [String]) {
+    guard canEdit, !ids.isEmpty, ids.allSatisfy(hasUniqueIdentifier) else { return }
+    let originatingState = appState
+    let manager = originatingState.preferencesManager
+    let account = originatingState.userDID
+    let request = loadRequest
+    isSaving = true
+    errorMessage = nil
+    Task { @MainActor in
+      defer {
+        if isCurrent(request, account: account, state: originatingState, manager: manager) { isSaving = false }
+      }
+      var isConfirmingRemoval = false
       do {
-        // Remove from server preferences
-        try await appState.preferencesManager.removeMutedWord(id: id)
-        
-        // Update the local filter
-        updateMuteWordFilter()
-      } catch {
-        // Revert the optimistic update and show error
-        await loadMuteWords()
-        
-        withAnimation(.easeInOut(duration: DesignTokens.Duration.fast)) {
-          errorMessage = "Failed to remove mute word: \(error.localizedDescription)"
+        for id in ids {
+          isConfirmingRemoval = false
+          guard isCurrent(request, account: account, state: originatingState, manager: manager) else { return }
+          try await manager.removeMutedWord(id: id, expectedAccountDID: account)
+          guard isCurrent(request, account: account, state: originatingState, manager: manager) else { return }
+          isConfirmingRemoval = true
+          // A missing remote ID is a no-op; confirm the actual list before removing a retained row.
+          let preferences = try await manager.refreshSettingsPreferences(expectedAccountDID: account)
+          guard isCurrent(request, account: account, state: originatingState, manager: manager) else { return }
+          guard preferences.accountDID == account, preferences.hasConfirmedServerPreferences else {
+            throw PreferencesManagerError.invalidData
+          }
+          muteWords = preferences.mutedWords
+          filterMuteWords()
         }
+      } catch {
+        guard isCurrent(request, account: account, state: originatingState, manager: manager) else { return }
+        hasConfirmedPreferences = false
+        let action = isConfirmingRemoval ? "refresh your muted words" : "remove this muted word"
+        errorMessage = UserFacingError.message(for: error, action: action) ?? "Couldn’t \(action). Try again."
       }
     }
   }
 
-  private func updateMuteWordFilter() {
-    // Update the mute words filter in FeedFilterSettings
-    let wordValues = muteWords.map { $0.value }
-    let processor = MuteWordProcessor(muteWords: wordValues)
-    appState.feedFilterSettings.updateMuteWordProcessor(processor)
+  /// Plain-language summary of a rule's protocol targets ("content" covers post text and tags).
+  private func targetsDescription(_ targets: [String]) -> String {
+    if targets.contains("content") { return "Mutes post text and tags" }
+    if targets.contains("tag") { return "Mutes tags only" }
+    return "Custom rule"
+  }
+
+  private func hasUniqueIdentifier(_ id: String) -> Bool {
+    !id.isEmpty && muteWords.filter { $0.id == id }.count == 1
+  }
+
+  private func confirmRemoval(of word: MutedWord) {
+    guard canEdit, hasUniqueIdentifier(word.id) else { return }
+    wordToDelete = word
+    deleteConfirmationRequest = loadRequest
+    showingDeleteConfirmation = true
+  }
+
+  @MainActor
+  private func publishAcceptedWords(from manager: PreferencesManager, account: String) throws {
+    guard let preferences = try manager.confirmedFeedFilterPreferences(),
+          preferences.accountDID == account else { throw PreferencesManagerError.invalidData }
+    muteWords = preferences.mutedWords
+    filterMuteWords()
+  }
+
+  @MainActor
+  private func isCurrent(_ request: UUID, account: String, state: AppState, manager: PreferencesManager) -> Bool {
+    !Task.isCancelled && loadRequest == request && loadedIdentity == accountReadIdentity
+      && loadedIdentity?.accountDID == account
+      && appState === state && state.userDID == account
+      && state.preferencesManager === manager && manager.accountDID == account
   }
 }
 

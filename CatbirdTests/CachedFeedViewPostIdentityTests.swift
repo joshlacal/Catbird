@@ -2,6 +2,7 @@ import Foundation
 import Petrel
 import SwiftData
 import SwiftUI
+import Synchronization
 import Testing
 import UIKit
 import Vision
@@ -12,6 +13,417 @@ import Vision
 /// distinguish organic and repost variants, and must remain scoped to its feed.
 @Suite("CachedFeedViewPost identity")
 struct CachedFeedViewPostIdentityTests {
+  @Test("Freshly cached posts reuse the already decoded API value")
+  @MainActor
+  func freshPostAvoidsJSONRoundTrip() throws {
+    let counter = DecodeCounter()
+    let debug = countingDebugValue(counter)
+    let entry = try makeFeedViewPost(rkey: "fresh-cache", debug: debug)
+    let cached = try #require(CachedFeedViewPost(from: entry, feedType: "timeline"))
+
+    #expect(try cached.feedViewPost == entry)
+    #expect(try cached.feedViewPost == entry)
+    #expect(counter.value == 0)
+  }
+
+  @Test("Repeated thread rendering decodes cold slice storage once")
+  @MainActor
+  func coldSliceDecodesOnce() throws {
+    let counter = DecodeCounter()
+    let debug = countingDebugValue(counter)
+    let root = try makeFeedViewPost(rkey: "cached-root", debug: debug)
+    let reply = try makeFeedViewPost(rkey: "cached-reply", debug: debug)
+    let items = try [root, reply].map(sliceItem)
+    let cached = try #require(CachedFeedViewPost(from: reply, feedType: "timeline"))
+    _ = try cached.feedViewPost
+    counter.reset()
+    cached.serializedSliceItems = try JSONEncoder().encode(items)
+
+    #expect(cached.isThreadSlice)
+    #expect(cached.sliceItems?.map(\.id) == items.map(\.id))
+    #expect(cached.threadSlice?.items.map(\.id) == items.map(\.id))
+    #expect(counter.value == 2)
+  }
+
+  @Test("Replacing serialized payload invalidates the decoded post and slice")
+  @MainActor
+  func serializedReplacementInvalidatesCache() throws {
+    let first = try makeFeedViewPost(rkey: "first-cache")
+    let second = try makeFeedViewPost(rkey: "second-cache")
+    let firstItems = try [first].map(sliceItem)
+    let secondItems = try [second].map(sliceItem)
+    let cached = try #require(CachedFeedViewPost(from: first, feedType: "timeline"))
+    cached.serializedSliceItems = try JSONEncoder().encode(firstItems)
+    _ = try cached.feedViewPost
+    _ = cached.sliceItems
+
+    cached.serializedPost = try JSONEncoder().encode(second)
+    cached.serializedSliceItems = try JSONEncoder().encode(secondItems)
+    #expect(try cached.feedViewPost == second)
+    #expect(cached.sliceItems?.map(\.id) == secondItems.map(\.id))
+
+    cached.serializedSliceItems = Data("malformed".utf8)
+    #expect(cached.sliceItems == nil)
+    cached.serializedSliceItems = nil
+    #expect(cached.sliceItems == nil)
+    cached.serializedSliceItems = try JSONEncoder().encode(firstItems)
+    #expect(cached.sliceItems?.map(\.id) == firstItems.map(\.id))
+  }
+
+  @Test("Cache upsert retains the source's decoded post")
+  @MainActor
+  func upsertRetainsDecodedSource() throws {
+    let counter = DecodeCounter()
+    let debug = countingDebugValue(counter)
+    let entry = try makeFeedViewPost(rkey: "upsert-cache", debug: debug)
+    let original = try #require(CachedFeedViewPost(from: entry, feedType: "timeline"))
+    let replacement = try #require(CachedFeedViewPost(from: entry, feedType: "timeline"))
+    _ = try replacement.feedViewPost
+    counter.reset()
+
+    original.update(from: replacement)
+    #expect(try original.feedViewPost == entry)
+    #expect(counter.value == 0)
+  }
+
+  @Test("Upserting a source with unread storage changes cannot transfer stale decoded values")
+  @MainActor
+  func upsertFromMutatedSourceValidatesCacheBytes() throws {
+    let counter = DecodeCounter()
+    let first = try makeFeedViewPost(rkey: "upsert-first")
+    let second = try makeFeedViewPost(rkey: "upsert-second", debug: countingDebugValue(counter))
+    let firstItem = try sliceItem(first)
+    let secondItem = try sliceItem(second)
+    let source = try #require(CachedFeedViewPost(
+      from: FeedSlice(items: [firstItem], rootUri: firstItem.id, feedPostUri: firstItem.id),
+      feedType: "timeline"
+    ))
+    let target = try #require(CachedFeedViewPost(from: first, feedType: "timeline"))
+    source.serializedPost = try JSONEncoder().encode(second)
+    source.serializedSliceItems = try JSONEncoder().encode([secondItem])
+
+    target.update(from: source)
+    #expect(try withoutDecodeCounter(target.feedViewPost) == withoutDecodeCounter(second))
+    #expect(target.sliceItems?.map(\.id) == [secondItem.id])
+    #expect(counter.value == 2)
+    #expect(try withoutDecodeCounter(target.feedViewPost) == withoutDecodeCounter(second))
+    #expect(target.sliceItems?.map(\.id) == [secondItem.id])
+    #expect(counter.value == 2)
+  }
+
+  @Test("Fetched storage decodes once and validates replacements after materialization")
+  @MainActor
+  func fetchedCacheValidatesStoredBytes() throws {
+    let counter = DecodeCounter()
+    let first = try makeFeedViewPost(rkey: "fetched-first", debug: countingDebugValue(counter))
+    let second = try makeFeedViewPost(rkey: "fetched-second", debug: countingDebugValue(counter))
+    let firstItem = try sliceItem(first)
+    let secondItem = try sliceItem(second)
+    let container = try makeInMemoryContainer()
+    let writer = ModelContext(container)
+    let saved = try #require(CachedFeedViewPost(
+      from: FeedSlice(items: [firstItem], rootUri: firstItem.id, feedPostUri: firstItem.id),
+      feedType: "timeline"
+    ))
+    writer.insert(saved)
+    try writer.save()
+
+    let reader = ModelContext(container)
+    let fetched = try #require(reader.fetch(FetchDescriptor<CachedFeedViewPost>()).first)
+    #expect(fetched !== saved)
+    counter.reset()
+    #expect(try fetched.feedViewPost.post.uri == first.post.uri)
+    #expect(fetched.sliceItems?.map(\.id) == [firstItem.id])
+    #expect(try fetched.feedViewPost.post.uri == first.post.uri)
+    #expect(fetched.sliceItems?.map(\.id) == [firstItem.id])
+    #expect(counter.value == 2)
+
+    fetched.serializedPost = try JSONEncoder().encode(second)
+    fetched.serializedSliceItems = try JSONEncoder().encode([secondItem])
+    #expect(try withoutDecodeCounter(fetched.feedViewPost) == withoutDecodeCounter(second))
+    #expect(fetched.sliceItems?.map(\.id) == [secondItem.id])
+    #expect(try withoutDecodeCounter(fetched.feedViewPost) == withoutDecodeCounter(second))
+    #expect(fetched.sliceItems?.map(\.id) == [secondItem.id])
+    #expect(counter.value == 4)
+  }
+
+  private func withoutDecodeCounter(
+    _ entry: AppBskyFeedDefs.FeedViewPost
+  ) -> AppBskyFeedDefs.FeedViewPost {
+    // The counting decoder returns .object rather than .knownType, so Petrel
+    // preserves its synthetic $type as .unknownType after decoding. Exclude only
+    // that instrumentation field; compare every production payload field.
+    let post = entry.post
+    return AppBskyFeedDefs.FeedViewPost(
+      post: AppBskyFeedDefs.PostView(
+        uri: post.uri, cid: post.cid, author: post.author, record: post.record,
+        embed: post.embed, bookmarkCount: post.bookmarkCount, replyCount: post.replyCount,
+        repostCount: post.repostCount, likeCount: post.likeCount, quoteCount: post.quoteCount,
+        indexedAt: post.indexedAt, viewer: post.viewer, labels: post.labels,
+        threadgate: post.threadgate, debug: nil
+      ),
+      reply: entry.reply, reason: entry.reason, feedContext: entry.feedContext, reqId: entry.reqId
+    )
+  }
+
+  @Test("Persisting the same model instance preserves decoded post and slice caches")
+  @MainActor
+  func sameInstanceUpsertPreservesCaches() throws {
+    let counter = DecodeCounter()
+    let entry = try makeFeedViewPost(rkey: "same-instance", debug: countingDebugValue(counter))
+    let item = try sliceItem(entry)
+    let slice = FeedSlice(items: [item], rootUri: item.id, feedPostUri: item.id)
+    let cached = try #require(CachedFeedViewPost(from: slice, feedType: "timeline"))
+    cached.update(from: cached)
+    #expect(try cached.feedViewPost.post.uri == entry.post.uri)
+    #expect(cached.sliceItems?.map(\.id) == [item.id])
+    #expect(counter.value == 0)
+  }
+
+  private final class DecodeCounter: Sendable {
+    private let count = Mutex(0)
+    var value: Int { count.withLock { $0 } }
+    func increment() { count.withLock { $0 += 1 } }
+    func reset() { count.withLock { $0 = 0 } }
+  }
+
+  private func countingDebugValue(_ counter: DecodeCounter) -> ATProtocolValueContainer {
+    // Each fixture owns a decoder name, so parallel tests cannot replace a
+    // production decoder or observe one another's work.
+    let type = "blue.catbird.test.cache-\(UUID().uuidString.lowercased())"
+    ATProtocolValueContainer.registerDecoder(forType: type) { _ in
+      counter.increment()
+      return .object(["$type": .string(type)])
+    }
+    return .object(["$type": .string(type)])
+  }
+
+  private func sliceItem(_ entry: AppBskyFeedDefs.FeedViewPost) throws -> FeedSliceItem {
+    guard case .knownType(let value) = entry.post.record,
+          let record = value as? AppBskyFeedPost else {
+      throw NSError(domain: "FeedCacheFixture", code: 1)
+    }
+    return FeedSliceItem(post: entry.post, record: record)
+  }
+
+  @Test("Prepared pages preserve ordering and thread metadata without redecoding")
+  @MainActor
+  func preparedPagePreservesSlices() async throws {
+    let entries = try ["prepared-one", "prepared-two", "prepared-three"].map { try makeFeedViewPost(rkey: $0) }
+    let items = try entries.map(sliceItem)
+    let slices = [
+      FeedSlice(items: [items[0]], rootUri: items[0].id, feedPostUri: items[0].id),
+      FeedSlice(items: [], rootUri: "empty", feedPostUri: "empty"),
+      FeedSlice(items: items, isIncompleteThread: true, rootUri: items[0].id,
+                feedPostUri: items[2].id, feedContext: "fixture-context")
+    ]
+    let prepared = try await PreparedFeedSlice.prepare(slices)
+    let cached = prepared.map { CachedFeedViewPost(prepared: $0, feedType: "fixture-timeline") }
+    #expect(cached.map { try? $0.feedViewPost.post.uri.uriString() } == [items[0].id, items[2].id])
+    #expect(cached.last?.sliceItems?.map(\.id) == items.map(\.id))
+    #expect(cached.last?.isIncompleteThread == true)
+    #expect(cached.last?.threadDisplayMode == "collapsed")
+    #expect(try cached.last?.feedViewPost.feedContext == "fixture-context")
+  }
+
+  @Test("Canceled preparation returns no partial page")
+  @MainActor
+  func canceledPreparationDoesNotReturnPartialPage() async throws {
+    let entry = try makeFeedViewPost(rkey: "cancel-prepare")
+    let item = try sliceItem(entry)
+    let slice = FeedSlice(items: [item], rootUri: item.id, feedPostUri: item.id)
+    let task = Task { try await PreparedFeedSlice.prepare([slice]) }
+    task.cancel()
+    do {
+      _ = try await task.value
+      Issue.record("Canceled preparation must throw before publication")
+    } catch is CancellationError {
+      // Expected: the throwing structured call observes the caller's cancellation.
+    }
+  }
+
+  @Test("A newer accepted cached page rejects a suspended older page")
+  @MainActor
+  func newGenerationRejectsOlderPreparation() async throws {
+    let gate = PreparationGate()
+    let model = await makePreparationModel(gate: gate)
+    let oldEntry = try makeFeedViewPost(rkey: "older-page")
+    let newEntry = try makeFeedViewPost(rkey: "newer-page")
+    let older = Task { await model.setCachedFeed([oldEntry], cursor: "older-cursor") }
+    await gate.waitUntilStarted()
+    await model.setCachedFeed([newEntry], cursor: "newer-cursor")
+    await gate.release()
+    await older.value
+    #expect(try model.posts.first?.feedViewPost.post.uri == newEntry.post.uri)
+    #expect(model.currentCursor() == "newer-cursor")
+  }
+
+  @Test("An already canceled replacement cannot supersede active preparation")
+  @MainActor
+  func canceledReplacementDoesNotTakeGeneration() async throws {
+    let gate = PreparationGate()
+    let model = await makePreparationModel(gate: gate)
+    let accepted = try makeFeedViewPost(rkey: "accepted-page")
+    let discarded = try makeFeedViewPost(rkey: "already-canceled-page")
+    let active = Task { await model.setCachedFeed([accepted], cursor: "accepted-cursor") }
+    await gate.waitUntilStarted()
+    let canceled = Task { await model.setCachedFeed([discarded], cursor: "discarded-cursor") }
+    canceled.cancel()
+    await canceled.value
+    await gate.release()
+    await active.value
+    #expect(try model.posts.first?.feedViewPost.post.uri == accepted.post.uri)
+    #expect(model.currentCursor() == "accepted-cursor")
+    #expect(await gate.preparationCount == 1)
+  }
+
+  @Test("A feed switch rejects suspended work from the previous feed")
+  @MainActor
+  func feedSwitchRejectsOlderPreparation() async throws {
+    let gate = PreparationGate()
+    let model = await makePreparationModel(gate: gate)
+    let entry = try makeFeedViewPost(rkey: "prior-feed")
+    let older = Task { await model.setCachedFeed([entry], cursor: "prior-cursor") }
+    await gate.waitUntilStarted()
+    // FeedManager has no client, so this changes the selected feed without
+    // performing transport or an authenticated account action.
+    await model.loadFeed(fetch: .author("did:plc:anotherauthor"))
+    await gate.release()
+    await older.value
+    #expect(model.posts.isEmpty)
+    #expect(model.currentCursor() == nil)
+    #expect(model.lastFeedType == .author("did:plc:anotherauthor"))
+    #expect(!model.isLoading)
+  }
+
+  @Test("An account reset rejects suspended preparation and retains cleared pagination")
+  @MainActor
+  func resetRejectsOlderPreparation() async throws {
+    let gate = PreparationGate()
+    let model = await makePreparationModel(gate: gate)
+    let entry = try makeFeedViewPost(rkey: "before-reset")
+    let older = Task { await model.setCachedFeed([entry], cursor: "before-reset-cursor") }
+    await gate.waitUntilStarted()
+    await model.handleStateInvalidation(.accountSwitched)
+    await gate.release()
+    await older.value
+    #expect(model.posts.isEmpty)
+    #expect(model.currentCursor() == nil)
+    #expect(!model.isLoading)
+  }
+
+  @Test("Canceling a suspended preparation leaves the current page untouched")
+  @MainActor
+  func cancelRejectsSuspendedPreparation() async throws {
+    let gate = PreparationGate()
+    let model = await makePreparationModel(gate: gate)
+    let current = try makeFeedViewPost(rkey: "current-page")
+    let incoming = try makeFeedViewPost(rkey: "canceled-page")
+    model.posts = [try #require(CachedFeedViewPost(from: current, feedType: "fixture"))]
+    let task = Task { await model.setCachedFeed([incoming], cursor: "canceled-cursor") }
+    await gate.waitUntilStarted()
+    task.cancel()
+    await gate.release()
+    await task.value
+    #expect(try model.posts.first?.feedViewPost.post.uri == current.post.uri)
+    #expect(model.currentCursor() == nil)
+  }
+
+  @Test("Cached custom-feed preparation uses the selected feed's identity")
+  @MainActor
+  func customFeedPreparationKeepsScope() async throws {
+    let model = await makePreparationModel(fetch: .author("did:plc:customauthor"))
+    let entry = try makeFeedViewPost(rkey: "custom-scope")
+    await model.setCachedFeed([entry], cursor: "custom-cursor")
+    #expect(model.posts.count == 1)
+    #expect(model.posts.first?.feedType == "did:plc:cachepublicationfixture-\(model.lastFeedType.identifier)")
+    #expect(model.currentCursor() == "custom-cursor")
+  }
+
+  @Test("Refilter retries against the current page when pagination appends during preparation")
+  @MainActor
+  func refilterKeepsPostsAppendedWhileSuspended() async throws {
+    let gate = PreparationGate()
+    let model = await makePreparationModel(gate: gate, fetch: .author("did:plc:customauthor"))
+    let original = try makeFeedViewPost(rkey: "before-append")
+    let appended = try makeFeedViewPost(rkey: "appended-page")
+    let feedKey = "did:plc:cachepublicationfixture-\(model.lastFeedType.identifier)"
+    model.posts = [try #require(CachedFeedViewPost(from: original, feedType: feedKey))]
+    let refilter = Task { await model.handleSocialGraphChange() }
+    await gate.waitUntilStarted()
+    model.posts.append(try #require(CachedFeedViewPost(from: appended, feedType: feedKey)))
+    await gate.release()
+    await refilter.value
+    #expect(model.posts.compactMap { try? $0.feedViewPost.post.uri } == [original.post.uri, appended.post.uri])
+    #expect(await gate.preparationCount == 2)
+  }
+
+  @Test("Preparation failure propagates instead of becoming an empty filtered page")
+  @MainActor
+  func preparationFailureDoesNotPublishEmptyPage() async throws {
+    let fetch = FetchType.author("did:plc:customauthor")
+    let model = await makePreparationModel(fetch: fetch, failPreparation: true)
+    let entry = try makeFeedViewPost(rkey: "kept-on-failure")
+    model.posts = [try #require(CachedFeedViewPost(from: entry, feedType: "fixture"))]
+    do {
+      _ = try await model.processAndFilterPosts(
+        fetchedPosts: [entry], newCursor: "failed-cursor",
+        filterSettings: FeedFilterSettings(accountDID: "did:plc:cachepublicationfixture"), feedType: fetch
+      )
+      Issue.record("Preparation failures must propagate to the loading operation")
+    } catch PreparationFailure.injected {
+      #expect(try model.posts.first?.feedViewPost.post.uri == entry.post.uri)
+      #expect(model.currentCursor() == nil)
+    }
+  }
+
+  private enum PreparationFailure: Error { case injected }
+
+  private struct NoAgePrompt: AgeRegulatoryChecking {
+    func preflight() async -> PlatformAgeSignal { .none }
+    func requestAgeBand(from viewController: UIViewController) async throws -> AgeBand? { nil }
+  }
+
+  @MainActor
+  private func makePreparationModel(
+    gate: PreparationGate? = nil, fetch: FetchType = .timeline, failPreparation: Bool = false
+  ) async -> FeedModel {
+    let client = await ATProtoClient(baseURL: URL(string: "https://cache-publication.invalid")!)
+    let appState = AppState(userDID: "did:plc:cachepublicationfixture", client: client, regulatoryChecker: NoAgePrompt())
+    let manager = FeedManager(client: nil, fetchType: fetch)
+    return FeedModel(feedManager: manager, appState: appState, prepareSlices: { slices in
+      if let gate { await gate.holdFirstPreparation() }
+      if failPreparation { throw PreparationFailure.injected }
+      return try await PreparedFeedSlice.prepare(slices)
+    })
+  }
+
+  private actor PreparationGate {
+    private var started = false
+    private(set) var preparationCount = 0
+    private var startWaiter: CheckedContinuation<Void, Never>?
+    private var releaseWaiter: CheckedContinuation<Void, Never>?
+
+    func holdFirstPreparation() async {
+      preparationCount += 1
+      guard !started else { return }
+      started = true
+      startWaiter?.resume()
+      startWaiter = nil
+      await withCheckedContinuation { releaseWaiter = $0 }
+    }
+
+    func waitUntilStarted() async {
+      if started { return }
+      await withCheckedContinuation { startWaiter = $0 }
+    }
+
+    func release() {
+      releaseWaiter?.resume()
+      releaseWaiter = nil
+    }
+  }
+
   @Test("A reused feed view model accepts enriched thread context with the same payload")
   @MainActor
   func viewModelAcceptsThreadEnrichment() throws {
@@ -493,7 +905,7 @@ struct CachedFeedViewPostIdentityTests {
     let enhanced = EnhancedFeedPost(feedViewPost: rawPost, path: .constant(NavigationPath()))
     let client = await ATProtoClient(baseURL: ATProtoClient.defaultBaseURL)
     let appState = AppState(userDID: "did:plc:testuser", client: client)
-    let renderer = ImageRenderer(content: enhanced.environment(appState).frame(width: 402))
+    let renderer = ImageRenderer(content: enhanced.environment(appState).environment(SceneNavigationContext(appState: appState, sceneID: UUID())).frame(width: 402))
 
     #expect(enhanced.id == rawPost.id)
     #expect(enhanced.feedViewPost == rawPost)
@@ -516,7 +928,7 @@ struct CachedFeedViewPostIdentityTests {
       #expect(slice.items.count == count)
       let cached = try #require(CachedFeedViewPost(from: slice, feedType: "timeline"))
       let content = EnhancedFeedPost(cachedPost: cached, path: .constant(NavigationPath()))
-        .applyAppStateEnvironment(appState)
+        .applyAppStateEnvironment(appState).environment(SceneNavigationContext(appState: appState, sceneID: UUID()))
         .environment(\.fontManager, appState.fontManager)
         .environment(\.horizontalSizeClass, .compact)
         .environment(\.dynamicTypeSize, .medium)
@@ -638,7 +1050,8 @@ struct CachedFeedViewPostIdentityTests {
   private func makeFeedViewPost(
     rkey: String,
     repostedBy reposterDID: String? = nil,
-    repostIndexedAt: Date? = nil
+    repostIndexedAt: Date? = nil,
+    debug: ATProtocolValueContainer? = nil
   ) throws -> AppBskyFeedDefs.FeedViewPost {
     let record = AppBskyFeedPost(
       text: "Post \(rkey)",
@@ -667,7 +1080,7 @@ struct CachedFeedViewPostIdentityTests {
       viewer: nil,
       labels: nil,
       threadgate: nil,
-      debug: nil
+      debug: debug
     )
 
     let reason: AppBskyFeedDefs.FeedViewPostReasonUnion?

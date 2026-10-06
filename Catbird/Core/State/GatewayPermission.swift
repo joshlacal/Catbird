@@ -50,26 +50,26 @@ public enum GatewayPermissionError: LocalizedError, Equatable, Sendable {
   /// The returned callback URL was invalid.
   case invalidCallbackURL
 
+  /// Plain-language text shown to users. The underlying detail (scope names, server
+  /// messages) is logged where the error is thrown.
   public var errorDescription: String? {
     switch self {
     case .unauthenticated:
-      return "Cannot request permission without an active authenticated session."
+      return "Sign in again to continue."
     case .clientUnavailable:
-      return "Authentication client is not available."
+      return "Something went wrong. Please try again."
     case .stateChanged:
-      return "The active account or authentication state changed during permission upgrade."
-    case .permissionDenied:
-      return "The requested permission was not granted."
-    case .missingGrantedScope(let permission):
-      return "The required scope '\(permission.rawValue)' was not granted by the server."
+      return "Your account changed while this was in progress. Please try again."
+    case .permissionDenied, .missingGrantedScope:
+      return "Catbird needs your permission to make this change. Try again and tap Allow when asked."
     case .cancelled:
-      return "Permission request was cancelled."
+      return "The permission request was cancelled."
     case .alreadyInProgress:
-      return "A permission upgrade flow is already in progress."
-    case .upgradeFailed(let message):
-      return "Permission upgrade failed: \(message)"
+      return "Finish the open permission request first."
+    case .upgradeFailed:
+      return "Couldn’t get permission from your server. Please try again."
     case .invalidCallbackURL:
-      return "The permission callback URL was invalid or malformed."
+      return "The permission request didn’t finish. Please try again."
     }
   }
 }

@@ -120,10 +120,16 @@ actor PersistentFeedStateManager {
                     isStoredInMemoryOnly: true,
                     cloudKitDatabase: .none
                 )
-                let container = try! ModelContainer(for: minSchema, configurations: [minConfig])
-                let instance = PersistentFeedStateManager(modelContainer: container)
-                _shared = instance
-                return instance
+                do {
+                    let container = try ModelContainer(for: minSchema, configurations: [minConfig])
+                    let instance = PersistentFeedStateManager(modelContainer: container)
+                    _shared = instance
+                    return instance
+                } catch let minimalError {
+                    // Even an in-memory store for three models failed; there is no
+                    // usable state manager to return. Fail with the actual causes.
+                    fatalError("PersistentFeedStateManager: in-memory fallback failed (\(minimalError)) after full schema failed (\(error))")
+                }
             }
         }
     }
@@ -355,7 +361,17 @@ actor PersistentFeedStateManager {
 
       let cachedPosts = try modelContext.fetch(postsDescriptor)
 
-      return (cachedPosts, feedState.cursor)
+      // Restore the feed's own order (reposts and algorithmic feeds aren't
+      // chronological). Posts missing from the saved order keep date order after it.
+      let positions = Dictionary(
+        feedState.postIds.enumerated().map { ($0.element, $0.offset) }, uniquingKeysWith: { first, _ in first })
+      let orderedPosts = cachedPosts.enumerated().sorted { lhs, rhs in
+        let lhsPosition = positions[lhs.element.id] ?? Int.max
+        let rhsPosition = positions[rhs.element.id] ?? Int.max
+        return lhsPosition == rhsPosition ? lhs.offset < rhs.offset : lhsPosition < rhsPosition
+      }.map(\.element)
+
+      return (orderedPosts, feedState.cursor)
     } catch {
       logger.error("Failed to load feed data: \(error)")
       return nil

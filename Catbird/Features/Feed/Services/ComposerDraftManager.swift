@@ -2,7 +2,7 @@
 //  ComposerDraftManager.swift
 //  Catbird
 //
-//  Created by Claude Code on 8/9/25.
+//  Account-owned saved library. Active editing belongs to a scene session.
 //
 
 import Foundation
@@ -17,412 +17,306 @@ enum SavedDraftMediaCleanupPolicy {
   }
 }
 
-/// Manager for handling post composer drafts across the app
-/// 
-/// Two types of drafts:
-/// - currentDraft: Temporary in-memory draft when user is actively working on a post
-/// - savedDrafts: Persistent drafts saved to SwiftData for later retrieval
+@MainActor
 @Observable
 final class ComposerDraftManager {
-  /// Current working draft with full state (persisted in UserDefaults while composing)
-  var currentDraft: PostComposerDraft?
-  
-  /// ID of the saved draft that was restored (if any)
-  /// This tracks which saved draft should be deleted when discarding or posting
-  var restoredSavedDraftId: UUID?
-  
-  /// Saved drafts for current account (loaded from SwiftData)
-  var savedDrafts: [DraftPostViewModel] = []
-  
-  /// Whether drafts have been loaded (to distinguish from "no drafts" vs "not loaded yet")
+  private(set) var savedDrafts: [DraftPostViewModel] = []
   private(set) var draftsLoaded = false
-  
-  /// AppState reference for getting current account
-  private weak var appState: AppState?
-  
-  /// DraftPersistence actor for SwiftData operations
-  private var draftPersistence: DraftPersistence?
+  var draftSyncIssue: String?
 
-  /// Remote draft sync service (AppView-stored drafts; gated by ExperimentalSettings.draftSyncEnabled)
-  @ObservationIgnored
-  private var draftSyncService: DraftSyncService?
-
-  private let draftKey = "composerMinimizedDraft"
+  @ObservationIgnored private weak var appState: AppState?
+  @ObservationIgnored private var draftPersistence: DraftPersistence?
+  @ObservationIgnored private var modelContext: ModelContext?
+  @ObservationIgnored private var draftSyncService: DraftSyncService?
+  @ObservationIgnored private var accountObservation: Task<Void, Never>?
+  private struct SavedDraftClaimKey: Hashable {
+    let accountDID: String
+    let id: UUID
+  }
+  // AppState instances can be replaced during authentication while another
+  // window still owns the same account. Claims span those manager instances.
+  private static var savedDraftClaims: [SavedDraftClaimKey: ComposerDraftClaim] = [:]
+  @ObservationIgnored private var testingAccountDID: String?
   private var hasMigratedLegacyDrafts = false
+  private let logger = Logger(subsystem: "blue.catbird", category: "ComposerDraftManager")
 
-  /// Debounce timer for UserDefaults writes to avoid blocking main thread
-  @ObservationIgnored
-  private var persistDebounceTask: Task<Void, Never>?
-  private let persistDebounceInterval: TimeInterval = 0.5  // 500ms debounce
-
-  /// Generation counter to invalidate in-flight debounced writes after clearDraft()
-  @ObservationIgnored
-  private var clearGeneration: Int = 0
-
-  @ObservationIgnored
-  private var accountObservation: Task<Void, Never>?
-  
   init(appState: AppState? = nil) {
-    logger.info("🚀 ComposerDraftManager initializing - Has appState: \(appState != nil)")
     self.appState = appState
-    loadPersistedDraft()
-    logger.debug("✅ ComposerDraftManager initialized - Current draft loaded: \(self.currentDraft != nil)")
+    // The legacy minimized blob has no account or scene owner. Only a scene's
+    // explicit recovery action may read, claim, or remove it.
   }
-  
-  /// Set the model context (called after SwiftData is initialized)
-  @MainActor
+
+  #if DEBUG
+  init(accountDID: String, modelContext: ModelContext, defaults: UserDefaults) {
+    self.testingAccountDID = accountDID
+    configureForTesting(modelContext: modelContext)
+  }
+
+  func configureForTesting(modelContext: ModelContext) {
+    accountObservation?.cancel()
+    accountObservation = nil
+    draftSyncService?.cancelPendingWork()
+    draftSyncService = nil
+    draftSyncIssue = nil
+    self.modelContext = modelContext
+    draftPersistence = DraftPersistence(modelContext: modelContext)
+    reloadSavedDrafts()
+  }
+  #endif
+
   func setModelContext(_ context: ModelContext) {
-    logger.info("🗄️ Setting model context for draft persistence")
+    modelContext = context
     let persistence = DraftPersistence(modelContext: context)
-    self.draftPersistence = persistence
-    self.draftSyncService = DraftSyncService(persistence: persistence) { [weak self] in
-      self?.appState?.atProtoClient
-    }
-
-    // Now that we have persistence, perform migration and load drafts
-    Task {
-      logger.debug("📂 Starting migration and draft loading tasks")
-      await migrateLegacyDraftsIfNeeded()
-      await loadSavedDrafts()
+    draftPersistence = persistence
+    draftSyncService = DraftSyncService(
+      persistence: persistence,
+      clientProvider: { [weak self] in self?.appState?.atProtoClient },
+      accountProvider: { [weak self] in
+        guard let ownedDID = self?.currentAccountDID,
+              AppStateManager.shared.lifecycle.userDID == ownedDID else { return nil }
+        return ownedDID
+      }
+    )
+    Task { [weak self] in
+      guard let self else { return }
+      await self.migrateLegacyDraftsIfNeeded()
+      await self.loadSavedDrafts()
     }
   }
-  
-  /// Update the appState reference (called after AppState initialization)
+
   func updateAppState(_ appState: AppState?) {
-    logger.info("🔄 Updating appState reference - Has appState: \(appState != nil)")
     self.appState = appState
-    
-    // Cancel previous account observation
-    if accountObservation != nil {
-      logger.debug("🚫 Cancelling previous account observation")
-      accountObservation?.cancel()
-    }
-    
-    // Set up account change observation using AuthenticationManager.stateChanges
-    if let appState = appState {
-      logger.debug("👀 Setting up account change observation")
-      accountObservation = Task { [weak self] in
-        guard let self = self else { return }
-        var lastDID: String? = nil
-        for await state in await AppStateManager.shared.authentication.stateChanges {
-          let currentDID = state.userDID
-          // Reload drafts whenever the active DID changes, including logout/login
-          if currentDID != lastDID {
-            logger.info("🔄 Account DID changed - Old: \(lastDID ?? "nil"), New: \(currentDID ?? "nil")")
-            lastDID = currentDID
-            // Clear current draft from previous account so it doesn't bleed over
-            await MainActor.run {
-              self.persistDebounceTask?.cancel()
-              self.persistDebounceTask = nil
-              self.clearGeneration += 1
-              self.currentDraft = nil
-              self.restoredSavedDraftId = nil
-              UserDefaults.standard.removeObject(forKey: self.draftKey)
-            }
-            await self.loadSavedDrafts()
-            await self.performRemoteSync()
-          }
-        }
+    accountObservation?.cancel()
+    accountObservation = nil
+    #if DEBUG
+    if ProcessInfo.processInfo.arguments.contains("--social-actions-ui-fixture") { return }
+    #endif
+    guard appState != nil else { return }
+    accountObservation = Task { [weak self] in
+      var lastDID: String?
+      for await state in await AppStateManager.shared.authentication.stateChanges {
+        guard !Task.isCancelled, let self else { return }
+        guard state.userDID != lastDID else { continue }
+        lastDID = state.userDID
+        self.draftSyncService?.cancelPendingWork()
+        // Saved rows and scene recovery retain their immutable account owner.
+        await self.loadSavedDrafts()
+        await self.performRemoteSync()
       }
     }
-    
-    // If we already have persistence, reload drafts with new account context
-    if draftPersistence != nil {
-      logger.debug("📂 Reloading drafts with new account context")
-      Task {
-        await loadSavedDrafts()
+    reloadSavedDrafts()
+  }
+
+  private var currentAccountDID: String? { appState?.userDID ?? testingAccountDID }
+
+  // MARK: - Exclusive saved-row ownership
+
+  func claimSavedDraft(id: UUID, claim: ComposerDraftClaim) throws -> PostComposerDraft {
+    try validateAccount(claim.accountDID)
+    guard let persistence = draftPersistence else { throw ComposerEditingError.persistenceUnavailable }
+    let key = SavedDraftClaimKey(accountDID: claim.accountDID, id: id)
+    if let owner = Self.savedDraftClaims[key], owner != claim {
+      throw ComposerEditingError.alreadyClaimed(owner)
+    }
+    guard let model = try persistence.fetchDraftModel(id: id),
+          model.accountDID == claim.accountDID,
+          try persistence.syncState(for: model).deletedAt == nil else {
+      throw ComposerEditingError.draftUnavailable
+    }
+    let draft = try model.decodeDraft()
+    Self.savedDraftClaims[key] = claim
+    return draft
+  }
+
+  func releaseSavedDraft(id: UUID?, claim: ComposerDraftClaim) {
+    guard let id else { return }
+    let key = SavedDraftClaimKey(accountDID: claim.accountDID, id: id)
+    guard Self.savedDraftClaims[key] == claim else { return }
+    Self.savedDraftClaims.removeValue(forKey: key)
+  }
+
+  /// Every local write is synchronous on the main actor, including the final
+  /// owner check. No await can rotate a claim between validation and commit.
+  func saveEditingSnapshot(
+    _ snapshot: ComposerEditingSnapshot,
+    expectedSavedDraft: PostComposerDraft? = nil
+  ) throws -> UUID {
+    try validateAccount(snapshot.claim.accountDID)
+    guard let persistence = draftPersistence, let context = modelContext else {
+      throw ComposerEditingError.persistenceUnavailable
+    }
+    let id: UUID
+    if let savedID = snapshot.savedDraftID {
+      let key = SavedDraftClaimKey(accountDID: snapshot.claim.accountDID, id: savedID)
+      guard Self.savedDraftClaims[key] == snapshot.claim else { throw ComposerEditingError.staleClaim }
+      guard let model = try persistence.fetchDraftModel(id: savedID),
+            model.accountDID == snapshot.claim.accountDID,
+            try persistence.syncState(for: model).deletedAt == nil else {
+        throw ComposerEditingError.draftUnavailable
       }
-    }
-  }
-  
-  // MARK: - Saved Drafts (SwiftData)
-  
-  /// Save current draft to SwiftData for later retrieval
-  @MainActor func saveCurrentDraftToDisk() {
-      logger.info("💾 saveCurrentDraftToDisk called - Has current draft: \(self.currentDraft != nil), Restored draft ID: \(self.restoredSavedDraftId?.uuidString ?? "nil")")
-    
-    guard let draft = currentDraft else {
-      logger.debug("⚠️ No current draft to save")
-      return
-    }
-    guard let accountDID = currentAccountDID else {
-      logger.warning("❌ Cannot save draft - no account DID available")
-      return
-    }
-    guard let persistence = draftPersistence else {
-      logger.warning("❌ Cannot save draft - persistence not initialized")
-      return
-    }
-    
-    logger.info("💾 Saving current draft to disk - Account: \(accountDID), Post text length: \(draft.postText.count)")
-    
-    Task {
-      do {
-        let savedDraftId: UUID
-        // If this draft was restored from a saved draft, update it instead of creating a new one
-        if let restoredId = restoredSavedDraftId {
-          logger.info("♻️ Updating existing saved draft: \(restoredId.uuidString)")
-          try await persistence.updateDraft(id: restoredId, draft: draft, accountDID: accountDID)
-          logger.info("✅ Successfully updated draft in SwiftData - ID: \(restoredId.uuidString)")
-          savedDraftId = restoredId
-        } else {
-          let draftId = try await persistence.saveDraft(draft, accountDID: accountDID)
-          logger.info("✅ Successfully saved new draft to SwiftData - ID: \(draftId.uuidString)")
-          savedDraftId = draftId
-        }
-
-        await MainActor.run {
-          currentDraft = nil
-          restoredSavedDraftId = nil
-          logger.debug("🧹 Cleared current draft")
-        }
-        // Remove UserDefaults entry on background thread
-        let key = draftKey
-        Task.detached(priority: .utility) {
-          UserDefaults.standard.removeObject(forKey: key)
-        }
-        await loadSavedDrafts()
-        scheduleRemotePush(draftId: savedDraftId)
-      } catch {
-        logger.error("❌ Failed to save draft to SwiftData: \(error.localizedDescription)")
+      guard try model.decodeDraft() == expectedSavedDraft else {
+        throw ComposerEditingError.savedDraftChanged
       }
+      try model.apply(snapshot.draft)
+      model.touch()
+      try context.save()
+      id = savedID
+    } else {
+      id = try persistence.saveDraft(snapshot.draft, accountDID: snapshot.claim.accountDID)
+      Self.savedDraftClaims[SavedDraftClaimKey(accountDID: snapshot.claim.accountDID, id: id)] = snapshot.claim
     }
-  }
-  
-  /// Save a new draft directly to SwiftData
-  @MainActor func createSavedDraft(_ draft: PostComposerDraft) {
-    logger.info("📝 createSavedDraft called - Post text length: \(draft.postText.count), Media items: \(draft.mediaItems.count)")
-    
-    guard let accountDID = currentAccountDID else {
-      logger.warning("❌ Cannot create draft - no account DID available")
-      return
-    }
-    guard let persistence = draftPersistence else {
-      logger.warning("❌ Cannot create draft - persistence not initialized")
-      return
-    }
-    
-    logger.info("💾 Creating new saved draft - Account: \(accountDID)")
-    
-    Task { @MainActor in
-      do {
-        let draftId = try persistence.saveDraft(draft, accountDID: accountDID)
-        logger.info("✅ Successfully created saved draft - ID: \(draftId.uuidString)")
-        await loadSavedDrafts()
-        scheduleRemotePush(draftId: draftId)
-      } catch {
-        logger.error("❌ Failed to create saved draft: \(error.localizedDescription)")
-      }
-    }
-  }
-  
-  /// Save a new draft directly to SwiftData and wait for completion
-  @MainActor
-  func createSavedDraftAndWait(_ draft: PostComposerDraft) async -> Bool {
-    logger.info("📝 createSavedDraftAndWait called - Post text length: \(draft.postText.count), Media items: \(draft.mediaItems.count)")
-    
-    guard let accountDID = currentAccountDID else {
-      logger.warning("❌ Cannot create draft - no account DID available")
-      return false
-    }
-    guard let persistence = draftPersistence else {
-      logger.warning("❌ Cannot create draft - persistence not initialized")
-      return false
-    }
-    
-    logger.info("💾 Creating new saved draft - Account: \(accountDID)")
-    
-    do {
-      let draftId: UUID
-      if let restoredId = restoredSavedDraftId {
-        try await persistence.updateDraft(id: restoredId, draft: draft, accountDID: accountDID)
-        draftId = restoredId
-      } else {
-        draftId = try await persistence.saveDraftAsync(draft, accountDID: accountDID)
-      }
-      logger.info("✅ Successfully created saved draft - ID: \(draftId.uuidString)")
-      await loadSavedDrafts()
-      logger.info("✅ Draft saved and drafts reloaded - Total drafts: \(self.savedDrafts.count)")
-      scheduleRemotePush(draftId: draftId)
-      return true
-    } catch {
-      logger.error("❌ Failed to create saved draft: \(error.localizedDescription)")
-      return false
-    }
+    reloadSavedDrafts()
+    scheduleRemotePush(draftId: id, accountDID: snapshot.claim.accountDID)
+    return id
   }
 
-  /// Detach a working draft after its durable saved-draft write succeeds.
-  /// Unlike `clearDraft()`, this intentionally preserves managed media files
-  /// and the saved record that now owns them.
-  @MainActor
-  func clearWorkingDraftAfterStash() {
-    persistDebounceTask?.cancel()
-    persistDebounceTask = nil
-    clearGeneration += 1
-    currentDraft = nil
-    restoredSavedDraftId = nil
-    UserDefaults.standard.removeObject(forKey: draftKey)
-  }
-  
-  /// Load a saved draft (returns the draft for restoration)
-  @MainActor
-  func loadSavedDraft(_ draftViewModel: DraftPostViewModel) -> PostComposerDraft? {
-    guard let accountDID = currentAccountDID else {
-      logger.warning("Cannot select saved draft without an active account")
-      return nil
+  /// Recovery is visible in the existing library. Reusing a durable identical
+  /// row avoids duplicates; changed/unsaved content becomes a local recovery
+  /// copy and cannot overwrite or upload through the source row's identity.
+  @discardableResult
+  func preserveEditingRecovery(_ snapshot: ComposerEditingSnapshot) throws -> UUID? {
+    try validateAccount(snapshot.claim.accountDID)
+    guard let persistence = draftPersistence, let context = modelContext else {
+      throw ComposerEditingError.persistenceUnavailable
     }
-    return loadSavedDraft(draftViewModel, accountDID: accountDID)
+    if let id = snapshot.savedDraftID,
+       let existing = try persistence.fetchDraftModel(id: id),
+       existing.accountDID == snapshot.claim.accountDID,
+       try persistence.syncState(for: existing).deletedAt == nil,
+       try existing.decodeDraft() == snapshot.draft {
+      return id
+    }
+    // An untouched empty composer has no content that needs a library copy.
+    guard snapshot.draft.hasRecoverableContent else { return nil }
+    let model = try DraftPost.create(from: snapshot.draft, accountDID: snapshot.claim.accountDID)
+    var state = DraftSyncState()
+    state.recoveryReason = "Recovered from an earlier composer session."
+    model.syncMetadata = try JSONEncoder().encode(state)
+    context.insert(model)
+    try context.save()
+    reloadSavedDrafts()
+    return model.id
   }
 
-  /// Account-scoped selection boundary used by the drafts sheet and tests.
-  @MainActor
-  func loadSavedDraft(
-    _ draftViewModel: DraftPostViewModel,
-    accountDID: String
-  ) -> PostComposerDraft? {
-    logger.info("📖 Loading saved draft - ID: \(draftViewModel.id.uuidString), Preview: '\(draftViewModel.previewText.prefix(30))...'")
-
-    guard draftViewModel.accountDID == accountDID else {
-      logger.warning("Refusing to load draft \(draftViewModel.id.uuidString) from another account")
-      return nil
+  func deleteClaimedDraft(
+    id: UUID,
+    claim: ComposerDraftClaim,
+    expectedSavedDraft: PostComposerDraft?
+  ) throws {
+    try validateAccount(claim.accountDID)
+    let key = SavedDraftClaimKey(accountDID: claim.accountDID, id: id)
+    guard Self.savedDraftClaims[key] == claim else { throw ComposerEditingError.staleClaim }
+    guard let persistence = draftPersistence else { throw ComposerEditingError.persistenceUnavailable }
+    guard let model = try persistence.fetchDraftModel(id: id),
+          model.accountDID == claim.accountDID,
+          try persistence.syncState(for: model).deletedAt == nil else {
+      throw ComposerEditingError.draftUnavailable
     }
-    
-    do {
-      let draft = try draftViewModel.decodeDraft()
-      logger.info("✅ Successfully loaded draft - ID: \(draftViewModel.id.uuidString), Post text length: \(draft.postText.count), Media items: \(draft.mediaItems.count)")
-      
-      // Track which saved draft was restored
-      restoredSavedDraftId = draftViewModel.id
-      logger.debug("  Tracking restored draft ID: \(draftViewModel.id.uuidString)")
-
-      // Preserve the selection immediately. The composer autosave loop may
-      // not run before sheet dismissal or another presentation transition.
-      storeDraft(draft)
-      
-      return draft
-    } catch {
-      logger.error("❌ Failed to decode draft - ID: \(draftViewModel.id.uuidString), Error: \(error.localizedDescription)")
-      return nil
+    guard try model.decodeDraft() == expectedSavedDraft else {
+      throw ComposerEditingError.savedDraftChanged
     }
+    try persistence.markDeleted(id: id, accountDID: claim.accountDID)
+    Self.savedDraftClaims.removeValue(forKey: key)
+    reloadSavedDrafts()
+    scheduleRemoteSync(accountDID: claim.accountDID)
   }
-  
-  /// Delete a saved draft
+
+  private func validateAccount(_ accountDID: String) throws {
+    guard currentAccountDID == accountDID else { throw ComposerEditingError.wrongAccount }
+  }
+
+  // MARK: - Saved library
+
+  /// Creates an independent library row; never infers an active editor.
+  func createSavedDraft(_ draft: PostComposerDraft) {
+    guard let accountDID = currentAccountDID else { return }
+    do { _ = try createSavedDraft(draft, accountDID: accountDID) }
+    catch { draftSyncIssue = error.localizedDescription }
+  }
+
+  @discardableResult
+  func createSavedDraft(_ draft: PostComposerDraft, accountDID: String) throws -> UUID {
+    try validateAccount(accountDID)
+    guard let persistence = draftPersistence else { throw ComposerEditingError.persistenceUnavailable }
+    let id = try persistence.saveDraft(draft, accountDID: accountDID)
+    reloadSavedDrafts()
+    scheduleRemotePush(draftId: id, accountDID: accountDID)
+    return id
+  }
+
   func deleteSavedDraft(_ draftId: UUID) {
-    logger.info("🗑️ Deleting saved draft - ID: \(draftId.uuidString)")
-
-    guard let persistence = draftPersistence else {
-      logger.warning("❌ Cannot delete draft - persistence not initialized")
+    guard let accountDID = currentAccountDID, let persistence = draftPersistence else { return }
+    guard Self.savedDraftClaims[SavedDraftClaimKey(accountDID: accountDID, id: draftId)] == nil else {
+      draftSyncIssue = "This draft is open in another composer. Close that editor before deleting it."
       return
     }
+    do {
+      try persistence.markDeleted(id: draftId, accountDID: accountDID)
+      reloadSavedDrafts()
+      scheduleRemoteSync(accountDID: accountDID)
+    } catch { draftSyncIssue = error.localizedDescription }
+  }
 
-    Task { @MainActor in
-      // Capture remote identity before the local row is deleted so the
-      // deletion can propagate to the AppView
-      let remoteId = try? persistence.remoteId(for: draftId)
-      do {
-        try await persistence.deleteDraft(id: draftId)
-        logger.info("✅ Successfully deleted draft - ID: \(draftId.uuidString)")
-        if let remoteId, let syncService = self.draftSyncService {
-          await syncService.deleteRemoteDraft(remoteId: remoteId)
-        }
-        await loadSavedDrafts()
-      } catch {
-        logger.error("❌ Failed to delete saved draft - ID: \(draftId.uuidString), Error: \(error.localizedDescription)")
-      }
+  func enableDraftSync() async {
+    ExperimentalSettings.shared.draftSyncEnabled = true
+    await performRemoteSync()
+  }
+
+  func saveRecoveryCopyToBluesky(_ draft: DraftPostViewModel) async {
+    guard let account = currentAccountDID, account == draft.accountDID,
+          let content = try? draft.decodeDraft() else { return }
+    do {
+      _ = try createSavedDraft(content, accountDID: account)
+      await performRemoteSync()
+    } catch { draftSyncIssue = error.localizedDescription }
+  }
+
+  var isDraftSyncEnabled: Bool { draftSyncService?.isEnabled ?? false }
+
+  func performRemoteSync() async {
+    guard let syncService = draftSyncService, syncService.isEnabled,
+          let accountDID = currentAccountDID else { return }
+    await syncService.syncDrafts(accountDID: accountDID)
+    guard currentAccountDID == accountDID else { return }
+    draftSyncIssue = syncService.lastIssue
+    reloadSavedDrafts()
+  }
+
+  private func scheduleRemotePush(draftId: UUID, accountDID: String) {
+    draftSyncService?.schedulePush(draftId: draftId, accountDID: accountDID)
+  }
+
+  private func scheduleRemoteSync(accountDID: String) {
+    Task { [weak self] in
+      guard let self, self.currentAccountDID == accountDID else { return }
+      await self.performRemoteSync()
     }
   }
 
-  /// Whether AppView draft sync is active (drives the drafts sheet disclosure).
-  @MainActor
-  var isDraftSyncEnabled: Bool {
-    draftSyncService?.isEnabled ?? false
-  }
+  func loadSavedDrafts() async { reloadSavedDrafts() }
 
-  /// Two-way sync of saved drafts with the AppView, then reload the local
-  /// list. No-op while the draftSyncEnabled feature flag is off.
-  @MainActor
-  func performRemoteSync() async {
-    guard let syncService = draftSyncService, syncService.isEnabled else { return }
-    guard let accountDID = currentAccountDID else { return }
-    await syncService.syncDrafts(accountDID: accountDID)
-    await loadSavedDrafts()
-  }
-
-  /// Debounced remote write-through of the in-memory working draft while
-  /// composing, when the draft was restored from a saved draft.
-  @MainActor
-  func scheduleWorkingDraftSync(_ draft: PostComposerDraft) {
-    guard let syncService = draftSyncService, syncService.isEnabled else { return }
-    guard let restoredId = restoredSavedDraftId, let accountDID = currentAccountDID else { return }
-    syncService.scheduleWorkingDraftPush(draftId: restoredId, draft: draft, accountDID: accountDID)
-  }
-
-  /// Schedule a debounced push of a saved draft to the AppView
-  @MainActor
-  private func scheduleRemotePush(draftId: UUID) {
-    guard let syncService = draftSyncService else { return }
-    guard let accountDID = currentAccountDID else { return }
-    syncService.schedulePush(draftId: draftId, accountDID: accountDID)
-  }
-  
-  /// Reload all saved drafts for current account from SwiftData
-  @MainActor
-  func loadSavedDrafts() async {
-      logger.info("📂 loadSavedDrafts called - Has persistence: \(self.draftPersistence != nil), Account DID: \(self.currentAccountDID ?? "nil")")
-
+  private func reloadSavedDrafts() {
     guard let persistence = draftPersistence else {
-      logger.warning("⚠️ No persistence available - cannot load drafts")
       savedDrafts = []
       draftsLoaded = false
       return
     }
-
     guard let accountDID = currentAccountDID else {
-      logger.info("ℹ️ No account DID - clearing drafts list")
       savedDrafts = []
       draftsLoaded = true
       return
     }
-
     do {
-      logger.debug("🔍 Fetching drafts for account: \(accountDID)")
-
-      let drafts = try persistence.fetchDrafts(for: accountDID)
-      logger.info("📥 Fetched \(drafts.count) drafts from persistence")
-
-      let viewModels = drafts.map { DraftPostViewModel(draftPost: $0) }
-      savedDrafts = viewModels
+      savedDrafts = try persistence.fetchDrafts(for: accountDID).map(DraftPostViewModel.init)
       draftsLoaded = true
-      logger.info("✅ Loaded \(self.savedDrafts.count) saved drafts for account \(accountDID)")
-
-      if !savedDrafts.isEmpty {
-        logger.debug("📋 Draft summaries:")
-        for vm in savedDrafts.prefix(5) {
-          logger.debug("  - ID: \(vm.id.uuidString), Preview: '\(vm.previewText.prefix(30))...', Modified: \(vm.modifiedDate)")
-        }
-        if savedDrafts.count > 5 {
-            logger.debug("  ... and \(self.savedDrafts.count - 5) more")
-        }
-      }
     } catch {
-      logger.error("❌ Failed to load saved drafts for account \(accountDID): \(error.localizedDescription)")
-      savedDrafts = []
+      draftSyncIssue = error.localizedDescription
       draftsLoaded = true
     }
   }
-  
-  /// Check if there are any drafts for the current account
-  var hasDraftsForCurrentAccount: Bool {
-    draftsLoaded && !savedDrafts.isEmpty
-  }
-  
-  // MARK: - Current Account DID
 
-  @MainActor
-  private var currentAccountDID: String? {
-      appState?.userDID
-  }
-  
+  var hasDraftsForCurrentAccount: Bool { draftsLoaded && !savedDrafts.isEmpty }
+
   // MARK: - Legacy Migration
   
   private let fileManager = FileManager.default
@@ -545,246 +439,6 @@ final class ComposerDraftManager {
     }
   }
   
-  // MARK: - Current Draft (In-Memory)
-  
-  /// Store a minimized composer draft with full state
-  func storeDraft(_ draft: PostComposerDraft) {
-    logger.info("💾 Storing draft - Post text length: \(draft.postText.count), Media items: \(draft.mediaItems.count), Is thread: \(draft.isThreadMode)")
-    currentDraft = draft
-    persistDraft()
-    logger.debug("✅ Draft stored and persisted to UserDefaults")
-  }
-  
-  /// Store from view model
-  @MainActor
-  func storeDraft(from viewModel: PostComposerViewModel) {
-    logger.info("💾 Storing draft from view model")
-    let draft = viewModel.saveDraftState()
-    storeDraft(draft)
-  }
-  
-  /// Clear the current draft and delete associated saved draft if applicable
-  func clearDraft() {
-      logger.info("🧹 Clearing current draft - Has draft: \(self.currentDraft != nil), Restored draft ID: \(self.restoredSavedDraftId?.uuidString ?? "nil")")
-
-    // Cancel any pending debounced write FIRST to prevent it from resurrecting the draft
-    persistDebounceTask?.cancel()
-    persistDebounceTask = nil
-
-    // Increment generation so any in-flight writes are invalidated
-    clearGeneration += 1
-
-    // Clean up any files referenced by the draft (videos/images saved by Share Extension)
-    if let draft = currentDraft,
-       SavedDraftMediaCleanupPolicy.allowsImmediateCleanup(
-         hasPersistedRow: restoredSavedDraftId != nil
-       ) {
-      logger.debug("🗑️ Cleaning up files for draft")
-      cleanUpFiles(for: draft)
-    }
-
-    // Delete the saved draft that was restored (if any)
-    if let restoredId = restoredSavedDraftId {
-      logger.info("🗑️ Deleting restored saved draft: \(restoredId.uuidString)")
-      deleteSavedDraft(restoredId)
-      restoredSavedDraftId = nil
-    }
-
-    currentDraft = nil
-    UserDefaults.standard.removeObject(forKey: draftKey)
-    logger.info("✅ Current draft cleared")
-  }
-
-  // MARK: - Cleanup of Shared Draft Files
-  private func appGroupContainerURL() -> URL? {
-    FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.blue.catbird.shared")
-  }
-
-  private func sharedDraftsDirectory() -> URL? {
-    appGroupContainerURL()?.appendingPathComponent("SharedDrafts", isDirectory: true)
-  }
-
-  private func cleanUpFiles(for draft: PostComposerDraft) {
-    logger.debug("🗑️ Cleaning up draft files")
-    let fm = FileManager.default
-    var cleanedCount = 0
-    
-    // Video
-    if let rawVideo = draft.videoItem?.rawVideoURLString, let url = URL(string: rawVideo) {
-      if isInSharedDrafts(url) {
-        logger.debug("  Deleting video: \(url.lastPathComponent)")
-        try? fm.removeItem(at: url)
-        cleanedCount += 1
-      }
-    }
-    
-    // Images (main composer + thread entries)
-    let allMediaItems = draft.mediaItems + draft.threadEntries.flatMap(\.mediaItems)
-    for item in allMediaItems {
-      if let rawImage = item.rawImageURLString, let url = URL(string: rawImage) {
-        if isInSharedDrafts(url) {
-          logger.debug("  Deleting image: \(url.lastPathComponent)")
-          try? fm.removeItem(at: url)
-          cleanedCount += 1
-        }
-      }
-    }
-
-    logger.info("🧹 Cleaned up \(cleanedCount) draft file(s)")
-  }
-
-  private func isInSharedDrafts(_ url: URL) -> Bool {
-    guard let dir = sharedDraftsDirectory() else { return false }
-    return url.standardizedFileURL.path.hasPrefix(dir.standardizedFileURL.path)
-  }
-  
-  /// Check if there's a conflicting draft for a specific context
-  func hasConflictingDraft(parentPostURI: String?, quotedPostURI: String?) -> Bool {
-    logger.debug("🔍 Checking for conflicting draft - Parent URI: \(parentPostURI ?? "nil"), Quoted URI: \(quotedPostURI ?? "nil")")
-    
-    guard let draft = currentDraft else {
-      logger.debug("  No current draft - no conflict")
-      return false
-    }
-    
-    let draftParentURI = draft.threadEntries.first?.parentPostURI
-    let draftQuotedURI = draft.threadEntries.first?.quotedPostURI
-    
-    logger.debug("  Draft Parent URI: \(draftParentURI ?? "nil"), Draft Quoted URI: \(draftQuotedURI ?? "nil")")
-    
-    // If trying to create a reply but there's a different reply draft
-    if let parentURI = parentPostURI, draftParentURI != parentURI {
-      logger.info("⚠️ Conflict detected: Different reply context")
-      return true
-    }
-    
-    // If trying to create a quote but there's a different quote draft
-    if let quotedURI = quotedPostURI, draftQuotedURI != quotedURI {
-      logger.info("⚠️ Conflict detected: Different quote context")
-      return true
-    }
-    
-    // If trying to create a new post but there's a reply/quote draft
-    if parentPostURI == nil && quotedPostURI == nil && 
-       (draftParentURI != nil || draftQuotedURI != nil) {
-      logger.info("⚠️ Conflict detected: New post vs reply/quote draft")
-      return true
-    }
-    
-    logger.debug("  ✅ No conflict detected")
-    return false
-  }
-  
-  /// Check if current draft matches the given context (for auto-restoration)
-  func currentDraftMatchesContext(parentPostURI: String?, quotedPostURI: String?) -> Bool {
-    logger.debug("🔍 Checking if draft matches context - Parent URI: \(parentPostURI ?? "nil"), Quoted URI: \(quotedPostURI ?? "nil")")
-    
-    guard let draft = currentDraft else {
-      logger.debug("  No current draft")
-      return false
-    }
-    
-    let draftParentURI = draft.threadEntries.first?.parentPostURI
-    let draftQuotedURI = draft.threadEntries.first?.quotedPostURI
-    
-    let matches = draftParentURI == parentPostURI && draftQuotedURI == quotedPostURI
-    logger.info("  Draft context match: \(matches) - Draft Parent: \(draftParentURI ?? "nil"), Draft Quoted: \(draftQuotedURI ?? "nil")")
-    
-    return matches
-  }
-  
-  /// Restore draft state to a view model
-  @MainActor
-  func restoreDraft(to viewModel: PostComposerViewModel) {
-    logger.info("🔄 Restoring draft to view model")
-    
-    guard let draft = currentDraft else {
-      logger.warning("⚠️ No current draft to restore")
-      return
-    }
-    
-    logger.debug("📥 Restoring draft - Post text length: \(draft.postText.count), Media items: \(draft.mediaItems.count)")
-    viewModel.restoreDraftState(draft)
-    logger.info("✅ Draft restored to view model")
-  }
-  
-  // MARK: - Persistence
-  
-  private func persistDraft() {
-    // Cancel any pending debounced write
-    persistDebounceTask?.cancel()
-
-    // Debounce writes to avoid excessive disk I/O on every keystroke
-    persistDebounceTask = Task { [weak self] in
-      do {
-        try await Task.sleep(for: .milliseconds(500))
-      } catch {
-        return  // Task was cancelled
-      }
-
-      guard let self = self else { return }
-
-      // Perform UserDefaults write on background thread
-      await self.performPersistDraft()
-    }
-  }
-
-  private func performPersistDraft() async {
-    logger.debug("💾 Persisting draft to UserDefaults (background)")
-
-    // Capture generation before doing any work; abort if clearDraft() was called
-    let expectedGeneration = clearGeneration
-
-    guard let draft = currentDraft else {
-      logger.debug("  No draft - removing UserDefaults entry")
-      await Task.detached(priority: .utility) {
-        UserDefaults.standard.removeObject(forKey: self.draftKey)
-      }.value
-      return
-    }
-
-    do {
-      let encoder = JSONEncoder()
-      let data = try encoder.encode(draft)
-
-      // Check generation hasn't changed (i.e. clearDraft wasn't called while encoding)
-      guard clearGeneration == expectedGeneration else {
-        logger.debug("  ⚠️ Draft persist aborted - clearDraft() was called during encode")
-        return
-      }
-
-      let key = draftKey
-      await Task.detached(priority: .utility) {
-        UserDefaults.standard.set(data, forKey: key)
-      }.value
-      logger.debug("  ✅ Draft persisted - Size: \(data.count) bytes")
-    } catch {
-      logger.error("  ❌ Failed to persist composer draft: \(error.localizedDescription)")
-    }
-  }
-  
-  private func loadPersistedDraft() {
-    logger.debug("📖 Loading persisted draft from UserDefaults")
-    
-    guard let data = UserDefaults.standard.data(forKey: draftKey) else {
-      logger.debug("  No persisted draft found in UserDefaults")
-      return
-    }
-    
-    logger.debug("  Found persisted draft data - Size: \(data.count) bytes")
-    
-    do {
-      let decoder = JSONDecoder()
-      currentDraft = try decoder.decode(PostComposerDraft.self, from: data)
-        logger.info("✅ Loaded persisted draft - Post text length: \(self.currentDraft?.postText.count ?? 0), Media items: \(self.currentDraft?.mediaItems.count ?? 0)")
-    } catch {
-      logger.error("❌ Failed to load persisted composer draft: \(error.localizedDescription)")
-      UserDefaults.standard.removeObject(forKey: draftKey) // Clear invalid data
-      logger.debug("  Cleared invalid draft data from UserDefaults")
-    }
-  }
-  
-  private let logger = Logger(subsystem: "blue.catbird", category: "ComposerDraftManager")
 }
 
 // MARK: - DraftPostViewModel
@@ -801,6 +455,9 @@ struct DraftPostViewModel: Identifiable {
   let isQuote: Bool
   let isThread: Bool
   let isSynced: Bool
+  let syncIssue: String?
+  let recoveryReason: String?
+  let remoteId: String?
   let remoteMediaDeviceName: String?
   let postCount: Int
   let thumbnailURLs: [URL]
@@ -819,7 +476,13 @@ struct DraftPostViewModel: Identifiable {
     self.isReply = draftPost.isReply
     self.isQuote = draftPost.isQuote
     self.isThread = draftPost.isThread
-    self.isSynced = draftPost.remoteId != nil
+    let syncState = draftPost.syncMetadata.flatMap { try? JSONDecoder().decode(DraftSyncState.self, from: $0) }
+    let content = try? draftPost.decodeDraft()
+    self.isSynced = draftPost.remoteId != nil && syncState?.baselineLocal == content
+      && syncState?.issue == nil && syncState?.recoveryReason == nil
+    self.syncIssue = syncState?.issue
+    self.recoveryReason = syncState?.recoveryReason
+    self.remoteId = draftPost.remoteId
     self.remoteMediaDeviceName = draftPost.remoteMediaDeviceName
     self.draftData = draftPost.draftData
     if let draft = try? JSONDecoder().decode(PostComposerDraft.self, from: draftData) {

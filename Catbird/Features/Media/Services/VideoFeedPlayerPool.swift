@@ -8,65 +8,81 @@
 import AVFoundation
 import Foundation
 import Observation
-import os
 
-/// Fixed pool of 3 reusable AVPlayer instances for seamless vertical video feed playback.
+/// Three players retain only the active video and its immediate neighbours.
 @MainActor
 @Observable
 public final class VideoFeedPlayerPool {
-  public static let poolSize = 3
-
-  public private(set) var players: [AVPlayer]
-  private var loadedURLs: [URL?]
-  private var loopObservers: [NSObjectProtocol?]
-
-  public var isMuted: Bool = false {
-    didSet {
-      for player in players {
-        player.isMuted = isMuted
-      }
-    }
+  public enum PlaybackState: Equatable {
+    case idle, loading, playing, paused, failed
   }
 
-  public private(set) var activeFeedIndex: Int = 0
-  public private(set) var isPlaying: Bool = false
+  public static let poolSize = 3
+  public private(set) var players: [AVPlayer]
+  public private(set) var activeFeedIndex = 0
+  public private(set) var playbackState: PlaybackState = .idle
+  public private(set) var wantsPlayback = false
   public private(set) var currentTime: Double = 0
   public private(set) var duration: Double = 0
   public private(set) var bufferedTime: Double = 0
 
-  private var timeObserverPlayer: AVPlayer?
-  private var timeObserverToken: Any?
-  private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "Catbird", category: "VideoFeedPlayerPool")
+  public var isPlaying: Bool { playbackState == .playing }
+  public var canSeek: Bool { duration > 0 && playbackState != .failed && playbackState != .idle }
 
-  public init() {
-    var initialPlayers: [AVPlayer] = []
-    var initialURLs: [URL?] = []
-    var initialObservers: [NSObjectProtocol?] = []
+  public var isMuted = false {
+    didSet {
+      players.forEach { $0.isMuted = isMuted }
+      updateAudioSessionOwnership()
+    }
+  }
 
-    for _ in 0..<Self.poolSize {
-      let player = AVPlayer()
+  @ObservationIgnored private var loadedURLs: [URL?]
+  @ObservationIgnored private var feedIndices: [Int?]
+  @ObservationIgnored private var generations = Array(repeating: UUID(), count: poolSize)
+  @ObservationIgnored private var failedSlots: Set<Int> = []
+  @ObservationIgnored private var loopObservers: [NSObjectProtocol?]
+  @ObservationIgnored private var failureObservers: [NSObjectProtocol?]
+  @ObservationIgnored private var activeObservations: [NSKeyValueObservation] = []
+  @ObservationIgnored private var timeObserverPlayer: AVPlayer?
+  @ObservationIgnored private var timeObserverToken: Any?
+  @ObservationIgnored private var observationID = UUID()
+  @ObservationIgnored private var seekID = UUID()
+  @ObservationIgnored private let makeItem: (URL) -> AVPlayerItem
+  @ObservationIgnored private let audioSession: any VideoPlaybackAudioSession
+  @ObservationIgnored private let audioOwner = UUID()
+  @ObservationIgnored private var ownsAudioSession = false
+
+  public convenience init() {
+    self.init(players: (0..<Self.poolSize).map { _ in AVPlayer() }, audioSession: AudioSessionManager.shared) {
+      AVPlayerItem(asset: AVURLAsset(url: $0))
+    }
+  }
+
+  /// Injection keeps lifecycle tests local and independent of streaming services.
+  init(
+    players: [AVPlayer], audioSession: any VideoPlaybackAudioSession,
+    makeItem: @escaping (URL) -> AVPlayerItem
+  ) {
+    precondition(players.count == Self.poolSize)
+    self.players = players
+    self.makeItem = makeItem
+    self.audioSession = audioSession
+    loadedURLs = Array(repeating: nil, count: Self.poolSize)
+    feedIndices = Array(repeating: nil, count: Self.poolSize)
+    loopObservers = Array(repeating: nil, count: Self.poolSize)
+    failureObservers = Array(repeating: nil, count: Self.poolSize)
+    for player in players {
       player.automaticallyWaitsToMinimizeStalling = true
       player.actionAtItemEnd = .none
-      initialPlayers.append(player)
-      initialURLs.append(nil)
-      initialObservers.append(nil)
     }
-
-    self.players = initialPlayers
-    self.loadedURLs = initialURLs
-    self.loopObservers = initialObservers
-
-    logger.info("VideoFeedPlayerPool: Initialized fixed pool of \(Self.poolSize) AVPlayers")
   }
 
-  deinit {
-    // Teardown observers if called on dealloc
+  isolated deinit {
+    cleanup()
   }
 
-  /// Returns the pool player assigned to the specified feed item index (modulo 3).
   public func player(for feedIndex: Int) -> AVPlayer {
-    let slot = slotIndex(for: feedIndex)
-    return players[slot]
+    players[slotIndex(for: feedIndex)]
   }
 
   public func slotIndex(for feedIndex: Int) -> Int {
@@ -74,207 +90,275 @@ public final class VideoFeedPlayerPool {
     return raw >= 0 ? raw : raw + Self.poolSize
   }
 
-  /// Prewarms the active item, previous item (if any), and next item (if any).
   public func prewarm(activeIndex: Int, items: [(index: Int, url: URL)]) {
-    self.activeFeedIndex = activeIndex
-
-    let activeSlot = slotIndex(for: activeIndex)
-
-    // Prepare current item
-    if let current = items.first(where: { $0.index == activeIndex }) {
-      prepareSlot(activeSlot, url: current.url)
-    } else {
-      clearSlot(activeSlot)
+    if activeFeedIndex != activeIndex {
+      pauseAll()
+      resetProgress()
+      activeFeedIndex = activeIndex
     }
-
-    // Prepare previous item
-    if activeIndex > 0 {
-      let prevSlot = slotIndex(for: activeIndex - 1)
-      if prevSlot != activeSlot {
-        if let previous = items.first(where: { $0.index == activeIndex - 1 }) {
-          prepareSlot(prevSlot, url: previous.url)
-        } else {
-          clearSlot(prevSlot)
-        }
-      }
-    }
-
-    // Prepare next item
-    let nextSlot = slotIndex(for: activeIndex + 1)
-    if nextSlot != activeSlot {
-      if let next = items.first(where: { $0.index == activeIndex + 1 }) {
-        prepareSlot(nextSlot, url: next.url)
+    let neighbours = items.filter { $0.index >= 0 && abs($0.index - activeIndex) <= 1 }
+    for slot in 0..<Self.poolSize {
+      if let item = neighbours.first(where: { slotIndex(for: $0.index) == slot }) {
+        prepareSlot(slot, feedIndex: item.index, url: item.url)
       } else {
-        clearSlot(nextSlot)
+        clearSlot(slot)
       }
     }
+    refreshPlaybackState()
   }
 
   public func clearSlot(_ slot: Int) {
-    guard slot >= 0, slot < Self.poolSize else { return }
-
-    if let oldObserver = loopObservers[slot] {
-      NotificationCenter.default.removeObserver(oldObserver)
-      loopObservers[slot] = nil
+    guard players.indices.contains(slot) else { return }
+    generations[slot] = UUID()
+    if let observer = loopObservers[slot] { NotificationCenter.default.removeObserver(observer) }
+    if let observer = failureObservers[slot] { NotificationCenter.default.removeObserver(observer) }
+    loopObservers[slot] = nil
+    failureObservers[slot] = nil
+    if slot == slotIndex(for: activeFeedIndex) {
+      removeActiveObservers()
+      wantsPlayback = false
+      playbackState = .idle
+      resetProgress()
     }
-
-    if players[slot] === timeObserverPlayer {
-      removeTimeObserver()
-    }
-
     players[slot].pause()
+    players[slot].currentItem?.cancelPendingSeeks()
     players[slot].replaceCurrentItem(with: nil)
     loadedURLs[slot] = nil
+    feedIndices[slot] = nil
+    failedSlots.remove(slot)
+    updateAudioSessionOwnership()
   }
-  private func prepareSlot(_ slot: Int, url: URL) {
-    guard slot >= 0, slot < Self.poolSize else { return }
 
-    if loadedURLs[slot] == url, players[slot].currentItem != nil {
-      // Already prepared with this URL
+  private func prepareSlot(_ slot: Int, feedIndex: Int, url: URL) {
+    if feedIndices[slot] == feedIndex, loadedURLs[slot] == url,
+       let item = players[slot].currentItem, item.status != .failed,
+       !failedSlots.contains(slot) {
       return
     }
-
-    // Remove old loop observer
-    if let oldObserver = loopObservers[slot] {
-      NotificationCenter.default.removeObserver(oldObserver)
-      loopObservers[slot] = nil
-    }
-
-    let asset = AVURLAsset(url: url)
-    let playerItem = AVPlayerItem(asset: asset)
+    clearSlot(slot)
     let player = players[slot]
+    let item = makeItem(url)
+    item.preferredForwardBufferDuration = 2
     player.isMuted = isMuted
-    player.replaceCurrentItem(with: playerItem)
+    player.replaceCurrentItem(with: item)
     loadedURLs[slot] = url
+    feedIndices[slot] = feedIndex
+    let generation = generations[slot]
 
-    // Setup looping observer
-    let observer = NotificationCenter.default.addObserver(
-      forName: .AVPlayerItemDidPlayToEndTime,
-      object: playerItem,
-      queue: .main
-    ) { [weak player] _ in
-      player?.seek(to: .zero)
-      player?.play()
+    loopObservers[slot] = NotificationCenter.default.addObserver(
+      forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main
+    ) { [weak self, weak item] _ in
+      Task { @MainActor [weak self, weak item] in
+        guard let self, let item,
+              self.isCurrent(slot: slot, feedIndex: feedIndex, generation: generation, item: item),
+              self.wantsPlayback else { return }
+        self.seek(to: 0, at: feedIndex)
+      }
     }
-    loopObservers[slot] = observer
-    logger.debug("VideoFeedPlayerPool: Slot \(slot) prepared for URL \(url.lastPathComponent)")
-  }
-
-  /// Starts playback of the active feed item, pausing all other slots.
-  public func play(feedIndex: Int) {
-    self.activeFeedIndex = feedIndex
-    let activeSlot = slotIndex(for: feedIndex)
-
-    for i in 0..<Self.poolSize {
-      if i == activeSlot {
-        if players[i].currentItem != nil {
-          players[i].isMuted = isMuted
-          players[i].play()
-          self.isPlaying = true
-          setupTimeObserver(for: players[i])
-          logger.debug("VideoFeedPlayerPool: Playing active slot \(i) for feed index \(feedIndex)")
-        } else {
-          players[i].pause()
-          self.isPlaying = false
-          removeTimeObserver()
+    failureObservers[slot] = NotificationCenter.default.addObserver(
+      forName: .AVPlayerItemFailedToPlayToEndTime, object: item, queue: .main
+    ) { [weak self, weak item] _ in
+      Task { @MainActor [weak self, weak item] in
+        guard let self, let item, self.generations[slot] == generation,
+              self.players[slot].currentItem === item else { return }
+        self.failedSlots.insert(slot)
+        if self.activeFeedIndex == feedIndex {
+          self.players[slot].pause()
+          self.refreshPlaybackState()
         }
-      } else {
-        players[i].pause()
       }
     }
   }
 
-  /// Pauses playback on all pool players.
+  public func play(feedIndex: Int) {
+    guard feedIndex == activeFeedIndex else { return }
+    let slot = slotIndex(for: feedIndex)
+    guard feedIndices[slot] == feedIndex, let item = players[slot].currentItem else {
+      pauseAll()
+      playbackState = .idle
+      return
+    }
+    for index in players.indices where index != slot { players[index].pause() }
+    wantsPlayback = true
+    setupActiveObservers(for: players[slot], item: item)
+    if item.status != .failed && !failedSlots.contains(slot) {
+      updateAudioSessionOwnership()
+      players[slot].play()
+    }
+    refreshPlaybackState()
+  }
+
   public func pauseAll() {
-    removeTimeObserver()
-    for player in players {
-      player.pause()
-    }
-    self.isPlaying = false
+    wantsPlayback = false
+    seekID = UUID()
+    players.forEach { $0.pause() }
+    refreshPlaybackState()
   }
 
-  /// Toggles playback on the active player.
   public func togglePlayPause() {
-    let activeSlot = slotIndex(for: activeFeedIndex)
-    let player = players[activeSlot]
-
-    if isPlaying {
-      player.pause()
-      isPlaying = false
+    if wantsPlayback {
+      pauseAll()
+    } else if playbackState == .failed {
+      retry(feedIndex: activeFeedIndex)
     } else {
-      player.play()
-      isPlaying = true
+      play(feedIndex: activeFeedIndex)
     }
   }
 
-  /// Toggles global mute state across all players in the pool.
-  public func toggleMute() {
-    isMuted.toggle()
+  public func toggleMute() { isMuted.toggle() }
+
+  public func retry(feedIndex: Int) {
+    let slot = slotIndex(for: feedIndex)
+    guard feedIndex == activeFeedIndex, feedIndices[slot] == feedIndex,
+          let url = loadedURLs[slot] else { return }
+    clearSlot(slot)
+    prepareSlot(slot, feedIndex: feedIndex, url: url)
+    play(feedIndex: feedIndex)
   }
 
-  /// Seeks the active player to a specific second and resumes playback if currently playing.
   public func seek(to seconds: Double, at feedIndex: Int) {
     let slot = slotIndex(for: feedIndex)
+    guard feedIndex == activeFeedIndex, feedIndices[slot] == feedIndex, seconds.isFinite,
+          let item = players[slot].currentItem, item.status == .readyToPlay,
+          let target = VideoPlaybackTimeline.seekTime(seconds, duration: item.duration.seconds),
+          !failedSlots.contains(slot) else { return }
     let player = players[slot]
-    let targetTime = CMTime(seconds: seconds, preferredTimescale: 600)
-
-    player.seek(to: targetTime, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
-      guard let self = self else { return }
-      self.currentTime = seconds
-      if self.isPlaying {
-        player.play()
+    let generation = generations[slot]
+    let requestID = UUID()
+    seekID = requestID
+    player.seek(
+      to: CMTime(seconds: target, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero
+    ) { [weak self, weak item] finished in
+      Task { @MainActor [weak self, weak item] in
+        guard finished, let self, let item, self.seekID == requestID,
+              self.isCurrent(slot: slot, feedIndex: feedIndex, generation: generation, item: item) else { return }
+        self.currentTime = target
+        if self.wantsPlayback { player.play() }
+        self.refreshPlaybackState()
       }
     }
   }
 
-  private func setupTimeObserver(for player: AVPlayer) {
-    removeTimeObserver()
+  private func isCurrent(slot: Int, feedIndex: Int, generation: UUID, item: AVPlayerItem) -> Bool {
+    activeFeedIndex == feedIndex && feedIndices[slot] == feedIndex &&
+      generations[slot] == generation && players[slot].currentItem === item
+  }
 
-    let interval = CMTime(seconds: 0.1, preferredTimescale: 600)
+  public func cleanup() {
+    removeActiveObservers()
+    for slot in players.indices { clearSlot(slot) }
+    wantsPlayback = false
+    playbackState = .idle
+    resetProgress()
+    updateAudioSessionOwnership()
+  }
+
+  private func updateAudioSessionOwnership() {
+    let slot = slotIndex(for: activeFeedIndex)
+    let shouldOwnAudio = wantsPlayback && !isMuted && feedIndices[slot] == activeFeedIndex &&
+      players[slot].currentItem != nil && players[slot].currentItem?.status != .failed &&
+      !failedSlots.contains(slot)
+    guard shouldOwnAudio != ownsAudioSession else { return }
+    ownsAudioSession = shouldOwnAudio
+    if shouldOwnAudio {
+      audioSession.acquireVideoPlayback(owner: audioOwner)
+    } else {
+      audioSession.releaseVideoPlayback(owner: audioOwner)
+    }
+  }
+}
+
+extension VideoFeedPlayerPool {
+  private func setupActiveObservers(for player: AVPlayer, item: AVPlayerItem) {
+    guard timeObserverPlayer !== player || activeObservations.isEmpty else { return }
+    removeActiveObservers()
     timeObserverPlayer = player
-    timeObserverToken = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self, weak player] time in
-      guard let self = self, let player = player else { return }
-
-      self.currentTime = time.seconds.isFinite ? time.seconds : 0
-
-      if let currentItem = player.currentItem {
-        let dur = currentItem.duration.seconds
-        self.duration = dur.isFinite ? dur : 0
-
-        if let timeRange = currentItem.loadedTimeRanges.first?.timeRangeValue {
-          let buffered = (timeRange.start + timeRange.duration).seconds
-          self.bufferedTime = buffered.isFinite ? buffered : 0
-        }
+    let identifier = observationID
+    let refresh: @Sendable () -> Void = { [weak self] in
+      Task { @MainActor [weak self] in
+        guard let self, self.observationID == identifier else { return }
+        self.refreshPlaybackState()
+      }
+    }
+    activeObservations = [
+      item.observe(\.status, options: [.initial, .new]) { _, _ in refresh() },
+      item.observe(\.duration, options: [.new]) { _, _ in refresh() },
+      item.observe(\.loadedTimeRanges, options: [.new]) { _, _ in refresh() },
+      player.observe(\.timeControlStatus, options: [.new]) { _, _ in refresh() }
+    ]
+    timeObserverToken = player.addPeriodicTimeObserver(
+      forInterval: CMTime(seconds: 0.1, preferredTimescale: 600), queue: .main
+    ) { [weak self] _ in
+      Task { @MainActor [weak self] in
+        guard let self, self.observationID == identifier else { return }
+        self.refreshPlaybackState()
       }
     }
   }
 
-  private func removeTimeObserver() {
+  private func refreshPlaybackState() {
+    defer { updateAudioSessionOwnership() }
+    let slot = slotIndex(for: activeFeedIndex)
+    guard feedIndices[slot] == activeFeedIndex, let item = players[slot].currentItem else {
+      playbackState = .idle
+      resetProgress()
+      return
+    }
+    duration = VideoPlaybackTimeline.duration(item.duration.seconds)
+    currentTime = VideoPlaybackTimeline.time(players[slot].currentTime().seconds, duration: duration)
+    bufferedTime = item.loadedTimeRanges.reduce(0) { result, value in
+      let end = CMTimeRangeGetEnd(value.timeRangeValue).seconds
+      return max(result, VideoPlaybackTimeline.time(end, duration: duration))
+    }
+    if item.status == .failed || failedSlots.contains(slot) {
+      wantsPlayback = false
+      players[slot].pause()
+      playbackState = .failed
+    } else if !wantsPlayback {
+      playbackState = .paused
+    } else if item.status != .readyToPlay || players[slot].timeControlStatus != .playing {
+      playbackState = .loading
+    } else {
+      playbackState = .playing
+    }
+  }
+
+  private func resetProgress() {
+    currentTime = 0
+    duration = 0
+    bufferedTime = 0
+  }
+
+  private func removeActiveObservers() {
+    observationID = UUID()
+    seekID = UUID()
+    activeObservations.removeAll()
     if let token = timeObserverToken, let player = timeObserverPlayer {
       player.removeTimeObserver(token)
-      timeObserverToken = nil
-      timeObserverPlayer = nil
     }
+    timeObserverToken = nil
+    timeObserverPlayer = nil
+  }
+}
+
+/// Bounds every value used by playback controls before creating times or frames.
+enum VideoPlaybackTimeline {
+  static func duration(_ value: Double) -> Double {
+    value.isFinite && value > 0 ? value : 0
   }
 
-  /// Cleans up observers, pauses all players, and releases player items.
-  public func cleanup() {
-    removeTimeObserver()
+  static func time(_ value: Double, duration: Double) -> Double {
+    guard value.isFinite else { return 0 }
+    return min(max(0, value), self.duration(duration))
+  }
 
-    for i in 0..<Self.poolSize {
-      if let observer = loopObservers[i] {
-        NotificationCenter.default.removeObserver(observer)
-        loopObservers[i] = nil
-      }
-      players[i].pause()
-      players[i].replaceCurrentItem(with: nil)
-      loadedURLs[i] = nil
-    }
+  static func progress(_ time: Double, duration: Double) -> Double {
+    let total = self.duration(duration)
+    return total > 0 ? self.time(time, duration: total) / total : 0
+  }
 
-    self.isPlaying = false
-    self.currentTime = 0
-    self.duration = 0
-    self.bufferedTime = 0
-    logger.info("VideoFeedPlayerPool: Released all 3 players, observers, and player items")
+  static func seekTime(_ value: Double, duration: Double) -> Double? {
+    guard value.isFinite, self.duration(duration) > 0 else { return nil }
+    return time(value, duration: duration)
   }
 }

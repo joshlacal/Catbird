@@ -153,12 +153,12 @@ public struct StarterPackShareView: View {
             
             HStack(spacing: 16) {
                 let profileCount = starterPack.list?.listItemCount ?? 0
-                Label("\(profileCount) people", systemImage: "person.2")
+                Label("^[\(profileCount) person](inflect: true)", systemImage: "person.2")
                     .appFont(AppTextRole.caption)
                     .foregroundColor(.secondary)
                 
                 if let feedsCount = starterPack.feeds?.count, feedsCount > 0 {
-                    Label("\(feedsCount) feeds", systemImage: "rectangle.grid.1x2")
+                    Label("^[\(feedsCount) feed](inflect: true)", systemImage: "rectangle.grid.1x2")
                         .appFont(AppTextRole.caption)
                         .foregroundColor(.secondary)
                 }

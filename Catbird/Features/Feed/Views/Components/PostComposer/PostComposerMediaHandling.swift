@@ -30,12 +30,13 @@ extension PostComposerViewModel {
 
         guard isVideo else {
             logger.debug("DEBUG: Selected item is not a video")
-            alertItem = AlertItem(title: "Selection Error", message: "The selected file is not a video.")
+            alertItem = AlertItem(title: "Not a Video", message: "Choose a video to attach.")
             return
         }
 
-        // Clear existing media
+        // A post has one kind of media, so the video replaces images and GIFs
         mediaItems.removeAll()
+        selectedGif = nil
 
         // Create video media item
         let newVideoItem = MediaItem(pickerItem: item)
@@ -73,15 +74,13 @@ extension PostComposerViewModel {
             }
         }
         
-        // Clear any existing video
+        // Clear any existing video or GIF
         videoItem = nil
+        selectedGif = nil
 
         // Handle image limit
-        if !mediaItems.isEmpty && mediaItems.count + items.count > maxImagesAllowed {
-            alertItem = AlertItem(
-                title: "Image Limit",
-                message: "You can add up to \(maxImagesAllowed) images. Only the first \(maxImagesAllowed - mediaItems.count) will be used."
-            )
+        if mediaItems.count + items.count > maxImagesAllowed {
+            alertItem = imageLimitAlert()
         }
 
         // Add images up to the limit
@@ -101,6 +100,7 @@ extension PostComposerViewModel {
             // Use only the first video
             let videoPickerItem = videoItems[0]
             mediaItems.removeAll()
+            selectedGif = nil
             
             let newVideoItem = MediaItem(pickerItem: videoPickerItem)
             self.videoItem = newVideoItem
@@ -108,25 +108,33 @@ extension PostComposerViewModel {
 
             if videoItems.count > 1 {
                 alertItem = AlertItem(
-                    title: "Video Selected",
-                    message: "Only the first video was used. Videos can't be combined with other media."
+                    title: "One Video per Post",
+                    message: "Only the first video was added. Videos can’t be combined with other media."
                 )
             }
         } else {
             // Process as images
             videoItem = nil
+            selectedGif = nil
 
-            if !mediaItems.isEmpty && mediaItems.count + items.count > maxImagesAllowed {
-                alertItem = AlertItem(
-                    title: "Image Limit",
-                    message: "You can add up to \(maxImagesAllowed) images. Only the first \(maxImagesAllowed - mediaItems.count) will be used."
-                )
+            if mediaItems.count + items.count > maxImagesAllowed {
+                alertItem = imageLimitAlert()
             }
 
             await addMediaItems(Array(items.prefix(maxImagesAllowed - mediaItems.count)))
         }
     }
     
+    /// Explains that only some of the chosen images were added.
+    func imageLimitAlert() -> AlertItem {
+        let remaining = max(0, maxImagesAllowed - mediaItems.count)
+        let added = remaining == 1 ? "Only 1 more was added." : "Only \(remaining) more were added."
+        return AlertItem(
+            title: "Image Limit Reached",
+            message: "A post can have up to \(maxImagesAllowed) images. \(remaining == 0 ? "No more images were added." : added)"
+        )
+    }
+
     // MARK: - GIF to Video Conversion
     
     func isDataAnimatedGIF(_ data: Data) -> Bool {
@@ -149,6 +157,7 @@ extension PostComposerViewModel {
         logger.debug("DEBUG: Processing GIF from data, size: \(gifData.count) bytes")
         
         mediaItems.removeAll()
+        selectedGif = nil
         
         do {
             let videoURL = try await convertGIFToVideo(gifData)
@@ -164,8 +173,8 @@ extension PostComposerViewModel {
         } catch {
             logger.error("ERROR: Failed to process GIF as video: \(error)")
             alertItem = AlertItem(
-                title: "GIF Conversion Error",
-                message: "Could not convert GIF to video: \(error.localizedDescription)"
+                title: "Couldn’t Add GIF",
+                message: "This GIF couldn’t be converted to a video. Try a different GIF."
             )
         }
     }
@@ -176,7 +185,7 @@ extension PostComposerViewModel {
         
         guard let data = try? await item.loadTransferable(type: Data.self) else {
             logger.error("ERROR: Could not load GIF data")
-            alertItem = AlertItem(title: "Error", message: "Could not load GIF data")
+            alertItem = AlertItem(title: "Couldn’t Load GIF", message: "This GIF couldn’t be loaded. Try again.")
             return
         }
         
@@ -309,6 +318,54 @@ extension PostComposerViewModel {
         return buffer
     }
     
+    // Staged media owns only its new copy. Rejected work must never unlink a saved recording.
+    struct PreparedPendingAudioVideo {
+        let item: MediaItem
+        var blockedReason: String?
+        var blockedCode: String?
+
+        func discard() {
+            if let url = item.rawVideoURL { try? FileManager.default.removeItem(at: url) }
+        }
+    }
+
+    func preparePendingAudioVideo(_ videoURL: URL) async throws -> PreparedPendingAudioVideo {
+        try Task.checkCancellation()
+        guard let container = FileManager.default.containerURL(
+            forSecurityApplicationGroupIdentifier: "group.blue.catbird.shared"
+        ) else { throw ComposerEditingError.persistenceUnavailable }
+        let directory = container.appendingPathComponent("SharedDrafts", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let copyURL = directory.appendingPathComponent(UUID().uuidString).appendingPathExtension("mp4")
+        try FileManager.default.copyItem(at: videoURL, to: copyURL)
+        var prepared = PreparedPendingAudioVideo(item: MediaItem(url: copyURL, isAudioVisualizerVideo: true))
+        var completed = false
+        defer { if !completed { prepared.discard() } }
+        var item = prepared.item
+        let generator = AVAssetImageGenerator(asset: AVURLAsset(url: copyURL))
+        generator.appliesPreferredTrackTransform = true
+        let cgImage = try await generator.image(at: .zero).image
+        try Task.checkCancellation()
+        #if os(iOS)
+        item.image = Image(uiImage: UIImage(cgImage: cgImage))
+        #elseif os(macOS)
+        item.image = Image(nsImage: NSImage(cgImage: cgImage, size: CGSize(width: cgImage.width, height: cgImage.height)))
+        #endif
+        item.aspectRatio = CGSize(width: cgImage.width, height: cgImage.height)
+        item.isLoading = false
+        prepared = PreparedPendingAudioVideo(item: item)
+        if let manager = mediaUploadManager {
+            let permission = await manager.preflightUploadPermission(force: true)
+            try Task.checkCancellation()
+            if !permission.allowed {
+                prepared.blockedReason = permission.message ?? "Video uploads are currently unavailable"
+                prepared.blockedCode = permission.code
+            }
+        }
+        completed = true
+        return prepared
+    }
+
     // MARK: - Audio Visualizer Video Processing
     
     @MainActor

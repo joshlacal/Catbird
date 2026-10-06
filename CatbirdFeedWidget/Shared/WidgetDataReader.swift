@@ -16,31 +16,20 @@ struct WidgetDataReader {
     return d
   }()
 
-  static func feedData(accountDID: String, configKey: String) -> [WidgetPost]? {
-    // Try DID-scoped key first
+  /// Returns the posts the app saved for `configKey` under `accountDID`, or nil
+  /// when that feed hasn't been loaded in the app for this account. There is
+  /// deliberately no fallback to another feed, so the widget never shows one
+  /// feed's posts under another feed's name.
+  static func feedData(accountDID: String, configKey: String) -> WidgetFeedSnapshot? {
+    guard !accountDID.isEmpty else { return nil }
+
     let scopedKey = "\(configKey).\(accountDID)"
-    if let data = defaults?.data(forKey: scopedKey),
-       let decoded = decodeFeedData(data) {
-      logger.debug("Loaded from scoped key: \(scopedKey)")
-      return decoded
+    guard let data = defaults?.data(forKey: scopedKey),
+          let decoded = decodeFeedData(data) else {
+      return nil
     }
-
-    // Fallback to general feed data for this account
-    let fallbackKey = "\(FeedWidgetConstants.feedDataKey).\(accountDID)"
-    if let data = defaults?.data(forKey: fallbackKey),
-       let decoded = decodeFeedData(data) {
-      logger.debug("Loaded from fallback key: \(fallbackKey)")
-      return decoded
-    }
-
-    // Legacy fallback: unscoped key
-    if let data = defaults?.data(forKey: configKey),
-       let decoded = decodeFeedData(data) {
-      logger.debug("Loaded from legacy key: \(configKey)")
-      return decoded
-    }
-
-    return nil
+    logger.debug("Loaded from scoped key: \(scopedKey)")
+    return decoded
   }
 
   static func activeAccountDID() -> String? {
@@ -55,12 +44,12 @@ struct WidgetDataReader {
     return accounts
   }
 
-  private static func decodeFeedData(_ data: Data) -> [WidgetPost]? {
+  private static func decodeFeedData(_ data: Data) -> WidgetFeedSnapshot? {
     if let enhanced = try? decoder.decode(FeedWidgetDataEnhanced.self, from: data) {
-      return enhanced.posts
+      return WidgetFeedSnapshot(posts: enhanced.posts, lastUpdated: enhanced.lastUpdated)
     }
     if let basic = try? decoder.decode(FeedWidgetData.self, from: data) {
-      return basic.posts
+      return WidgetFeedSnapshot(posts: basic.posts, lastUpdated: basic.lastUpdated)
     }
     return nil
   }

@@ -6,6 +6,7 @@ import Observation
 /// A screen wrapper for viewing a specific feed URI outside the main feeds interface.
 /// Shows feed details and shared library actions, retaining metadata during refresh.
 struct FeedScreen: View {
+  @Environment(SceneNavigationContext.self) private var sceneContext
   @Environment(AppState.self) private var appState
   @Binding var path: NavigationPath
 
@@ -34,18 +35,21 @@ struct FeedScreen: View {
     .modifier(FeedHeaderInjector(
       header: headerAnyView
     ))
+    .navigationTitle(metadata.generator?.displayName ?? "Feed")
+    .toolbarTitleDisplayMode(.inline)
     .toolbar {
-      ToolbarItem(placement: .primaryAction) {
-        Menu {
-          if metadata.generator != nil {
+      if metadata.generator != nil {
+        ToolbarItem(placement: .primaryAction) {
+          Menu {
             Button(role: .destructive) {
               isShowingReportSheet = true
             } label: {
               Label("Report Feed", systemImage: "exclamationmark.circle")
             }
+          } label: {
+            Image(systemName: "ellipsis")
+              .accessibilityLabel("Feed Options")
           }
-        } label: {
-          Image(systemName: "ellipsis")
         }
       }
     }
@@ -83,7 +87,7 @@ struct FeedScreen: View {
       if wasShowing && !isShowing, let proposal = pendingDedicatedProposal {
         pendingDedicatedProposal = nil
         if case .preparePostDraft(let text) = proposal {
-          appState.presentPostComposer(initialText: text)
+          sceneContext.presentPostComposer(initialText: text)
         }
       }
     }
@@ -101,7 +105,7 @@ struct FeedScreen: View {
       onLikedByTap: { feed in
         path.append(NavigationDestination.postLikes(feed.uri.uriString()))
       },
-      onAskCatbird: { isShowingCopilot = true },
+      onAskCatbird: CopilotAvailability.isAvailable ? { isShowingCopilot = true } : nil,
       onReportTap: { isShowingReportSheet = true },
       onRetry: { Task { await loadGenerator() } }
     ))
@@ -117,19 +121,19 @@ struct FeedScreen: View {
 
     do {
       guard let client = appState.atProtoClient else {
-        metadata.error = "Feed details are unavailable. Please try again."
+        metadata.error = "Couldn’t load this feed’s details. Sign in again and try again."
         return
       }
       let response = try await client.app.bsky.feed.getFeedGenerator(input: .init(feed: uri))
       try Task.checkCancellation()
       guard response.responseCode == 200, let data = response.data else {
-        metadata.error = "Feed details could not be loaded. Please try again."
+        metadata.error = "Couldn’t load this feed’s details. Try again."
         return
       }
       metadata.generator = data.view
     } catch {
       guard !Task.isCancelled, !(error is CancellationError) else { return }
-      metadata.error = "Feed details could not be loaded. Please try again."
+      metadata.error = UserFacingError.message(for: error, action: "load this feed’s details")
       logger.error("Failed to load generator for uri=\(self.uri.uriString()): \(error.localizedDescription)")
     }
   }
@@ -152,7 +156,7 @@ private final class FeedScreenMetadata {
 private struct FeedScreenMetadataHeader: View {
   let metadata: FeedScreenMetadata
   let onLikedByTap: (AppBskyFeedDefs.GeneratorView) -> Void
-  let onAskCatbird: () -> Void
+  let onAskCatbird: (() -> Void)?
   let onReportTap: () -> Void
   let onRetry: () -> Void
 
@@ -168,10 +172,10 @@ private struct FeedScreenMetadataHeader: View {
       }
       if let error = metadata.error {
         Text(error)
-          .font(.caption)
+          .appFont(AppTextRole.caption)
           .foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
-        Button("Retry feed details", action: onRetry)
+        Button("Try Again", action: onRetry)
           .disabled(metadata.isLoading)
           .frame(minHeight: 44)
       } else if metadata.isLoading && metadata.generator == nil {

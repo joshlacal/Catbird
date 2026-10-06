@@ -8,6 +8,7 @@ struct VerificationSettingsView: View {
     @State private var showBadges: Bool = true
     @State private var isLoading: Bool = true
     @State private var isSaving: Bool = false
+    @State private var loadFailed: Bool = false
     @State private var errorMessage: String? = nil
     @State private var showingErrorAlert: Bool = false
     
@@ -16,15 +17,24 @@ struct VerificationSettingsView: View {
     }
     
     var body: some View {
-        Form {
+        SettingsFocusedForm(initialFocus: nil, isReady: !isLoading) {
+            SettingsScopeSection()
             if isLoading {
                 Section {
                     ProgressView()
                         .frame(maxWidth: .infinity, alignment: .center)
                 }
+            } else if loadFailed {
+                Section {
+                    Text("Couldn’t load your badge setting.")
+                        .foregroundStyle(.secondary)
+                    Button("Try Again") {
+                        Task { await loadPreference() }
+                    }
+                }
             } else {
                 Section(header: Text("Verification Badges"), footer: Text("When enabled, verification badges appear on profiles, posts, search, and conversations to verify trusted identities. Turning this off hides all verification badges.")) {
-                    Toggle("Show verification badges", isOn: Binding(
+                    Toggle("Show Verification Badges", isOn: Binding(
                         get: { showBadges },
                         set: { newValue in
                             guard newValue != showBadges else { return }
@@ -34,7 +44,6 @@ struct VerificationSettingsView: View {
                             }
                         }
                     ))
-                    .tint(.blue)
                     .disabled(isSaving)
                 }
                 
@@ -43,8 +52,8 @@ struct VerificationSettingsView: View {
                         HStack {
                             ProgressView()
                                 .padding(.trailing, 8)
-                            Text("Saving preference...")
-                                .font(.subheadline)
+                            Text("Saving…")
+                                .appFont(AppTextRole.subheadline)
                                 .foregroundStyle(.secondary)
                         }
                     }
@@ -55,7 +64,7 @@ struct VerificationSettingsView: View {
         #if os(iOS)
         .toolbarTitleDisplayMode(.inline)
         #endif
-        .alert("Error Updating Setting", isPresented: $showingErrorAlert) {
+        .alert("Couldn’t Save Setting", isPresented: $showingErrorAlert) {
             Button("OK") { showingErrorAlert = false }
         } message: {
             if let error = errorMessage {
@@ -73,8 +82,9 @@ struct VerificationSettingsView: View {
             let pref = try await preferencesManager.getVerificationPrefs()
             // nil or false means badges are shown, true means hideBadges
             showBadges = !(pref?.hideBadges ?? false)
+            loadFailed = false
         } catch {
-            errorMessage = error.localizedDescription
+            loadFailed = true
         }
         isLoading = false
     }
@@ -88,8 +98,8 @@ struct VerificationSettingsView: View {
         do {
             try await preferencesManager.setVerificationPrefs(newPref)
         } catch {
-            errorMessage = error.localizedDescription
-            showingErrorAlert = true
+            errorMessage = UserFacingError.message(for: error, action: "save your badge setting")
+            showingErrorAlert = errorMessage != nil
             // Revert local toggle state on error
             showBadges = !show
         }

@@ -1,5 +1,6 @@
 import Foundation
 import OrderedCollections
+import os
 import Petrel
 import SwiftData
 
@@ -19,6 +20,22 @@ enum SystemFeedTypes {
       || uri.contains("following")
   }
 }
+
+/// Feed and trending rows read these JSON-backed preferences per render; decode only when the stored JSON changes.
+private final class PreferenceDecodeCache<Value: Sendable>: Sendable {
+  private let state = OSAllocatedUnfairLock<(raw: String, value: Value)?>(initialState: nil)
+
+  func value(for raw: String, decode: (String) -> Value) -> Value {
+    if let cached = state.withLock({ $0 }), cached.raw == raw { return cached.value }
+    let value = decode(raw)
+    state.withLock { $0 = (raw, value) }
+    return value
+  }
+}
+
+private let feedViewPrefCache = PreferenceDecodeCache<FeedViewPreference?>()
+private let mutedWordsCache = PreferenceDecodeCache<[MutedWord]>()
+private let labelersCache = PreferenceDecodeCache<[LabelerPreference]>()
 
 @Model
 final class Preferences {
@@ -43,6 +60,7 @@ final class Preferences {
   private var verificationPrefsData: String = "{}"
 
   // Simple properties
+  var hasConfirmedServerPreferences: Bool = false
   var adultContentEnabled: Bool = false
   var hideVerificationBadges: Bool = false
   var activeProgressGuide: String?
@@ -89,6 +107,7 @@ final class Preferences {
 
   var threadViewPref: ThreadViewPreference? {
     get {
+      guard threadViewPrefData != "{}" else { return nil }
       return try? JSONDecoder().decode(
         ThreadViewPreference.self, from: Data(threadViewPrefData.utf8))
     }
@@ -103,7 +122,10 @@ final class Preferences {
 
   var feedViewPref: FeedViewPreference? {
     get {
-      return try? JSONDecoder().decode(FeedViewPreference.self, from: Data(feedViewPrefData.utf8))
+      feedViewPrefCache.value(for: feedViewPrefData) { raw in
+        guard raw != "{}" else { return nil }
+        return try? JSONDecoder().decode(FeedViewPreference.self, from: Data(raw.utf8))
+      }
     }
     set {
       if let value = newValue, let data = try? JSONEncoder().encode(value) {
@@ -116,7 +138,9 @@ final class Preferences {
 
   var mutedWords: [MutedWord] {
     get {
-      return (try? JSONDecoder().decode([MutedWord].self, from: Data(mutedWordsData.utf8))) ?? []
+      mutedWordsCache.value(for: mutedWordsData) { raw in
+        (try? JSONDecoder().decode([MutedWord].self, from: Data(raw.utf8))) ?? []
+      }
     }
     set {
       if let data = try? JSONEncoder().encode(newValue) {
@@ -138,8 +162,9 @@ final class Preferences {
 
   var labelers: [LabelerPreference] {
     get {
-      return (try? JSONDecoder().decode([LabelerPreference].self, from: Data(labelersData.utf8)))
-        ?? []
+      labelersCache.value(for: labelersData) { raw in
+        (try? JSONDecoder().decode([LabelerPreference].self, from: Data(raw.utf8))) ?? []
+      }
     }
     set {
       if let data = try? JSONEncoder().encode(newValue) {
@@ -220,6 +245,35 @@ final class Preferences {
   }
 
   // Initialize with all the preferences
+  /// A detached value copy for restoring an in-memory managed row after save failure.
+  func detachedSnapshot() -> Preferences {
+    let copy = Preferences(accountDID: accountDID)
+    copy.restoreValues(from: self)
+    return copy
+  }
+
+  func restoreValues(from value: Preferences) {
+    hasConfirmedServerPreferences = value.hasConfirmedServerPreferences
+    pinnedFeeds = value.pinnedFeeds
+    savedFeeds = value.savedFeeds
+    contentLabelPrefs = value.contentLabelPrefs
+    threadViewPref = value.threadViewPref
+    feedViewPref = value.feedViewPref
+    adultContentEnabled = value.adultContentEnabled
+    mutedWords = value.mutedWords
+    hiddenPosts = value.hiddenPosts
+    labelers = value.labelers
+    activeProgressGuide = value.activeProgressGuide
+    queuedNudges = value.queuedNudges
+    nuxStates = value.nuxStates
+    interests = value.interests
+    postInteractionSettingsPref = value.postInteractionSettingsPref
+    verificationPrefs = value.verificationPrefs
+    hideVerificationBadges = value.hideVerificationBadges
+    primaryLanguage = value.primaryLanguage
+    contentLanguages = value.contentLanguages
+  }
+
   init(
     accountDID: String = "",
     savedFeeds: [String] = [],
@@ -420,19 +474,27 @@ final class Preferences {
   }
 
   // New helper methods for content label preferences
-  func setContentLabelVisibility(for label: String, visibility: String, labelerDid: DID? = nil) {
-    // Remove existing preference if any
-    contentLabelPrefs.removeAll {
-      $0.label == label && $0.labelerDid?.didString() == labelerDid?.didString()
+  /// Apply only the addressed (label, service) keys. Other services and custom labels survive.
+  static func mergingContentLabelPreferences(
+    _ updates: [ContentLabelPreference], into existing: [ContentLabelPreference]
+  ) -> [ContentLabelPreference] {
+    var result = existing
+    for update in updates {
+      result.removeAll {
+        $0.label == update.label && $0.labelerDid?.didString() == update.labelerDid?.didString()
+      }
+      result.append(update)
     }
+    return result
+  }
 
-    // Add new preference
-    contentLabelPrefs.append(
+  func setContentLabelVisibility(for label: String, visibility: String, labelerDid: DID? = nil) {
+    contentLabelPrefs = Self.mergingContentLabelPreferences([
       ContentLabelPreference(
         labelerDid: labelerDid,
         label: label,
         visibility: visibility
-      ))
+      )], into: contentLabelPrefs)
   }
 
   // Helper for muted words

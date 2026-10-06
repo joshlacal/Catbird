@@ -15,10 +15,16 @@ enum UnifiedConversation: Identifiable {
   var lastActivityDate: Date {
     switch self {
     case .bluesky(let convo):
-      if case .chatBskyConvoDefsMessageView(let msg) = convo.lastMessage {
-        return msg.sentAt.date
+      switch convo.lastMessage {
+      case .chatBskyConvoDefsMessageView(let message):
+        return message.sentAt.date
+      case .chatBskyConvoDefsDeletedMessageView(let message):
+        return message.sentAt.date
+      case .chatBskyConvoDefsSystemMessageView(let message):
+        return message.sentAt.date
+      case .unexpected, .none:
+        return .distantPast
       }
-      return .distantPast
     }
   }
 

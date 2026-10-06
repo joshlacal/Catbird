@@ -17,6 +17,7 @@ import os
 /// SwiftUI wrapper for the integrated feed collection view controller
 @available(iOS 16.0, *)
 struct FeedCollectionViewIntegrated: UIViewControllerRepresentable {
+    @Environment(SceneNavigationContext.self) private var sceneContext
     @Bindable var stateManager: FeedStateManager
     @Binding var navigationPath: NavigationPath
     var onScrollOffsetChanged: ((CGFloat) -> Void)?
@@ -36,6 +37,10 @@ struct FeedCollectionViewIntegrated: UIViewControllerRepresentable {
         
         let controller = FeedCollectionViewControllerIntegrated(
             stateManager: stateManager,
+            viewportState: sceneContext.feedViewportStore.state(
+                accountDID: sceneContext.accountDID,
+                feedIdentifier: stateManager.currentFeedType.identifier),
+            sceneContext: sceneContext,
             navigationPath: $navigationPath,
             onScrollOffsetChanged: onScrollOffsetChanged
         )
@@ -45,11 +50,13 @@ struct FeedCollectionViewIntegrated: UIViewControllerRepresentable {
     }
     
     func updateUIViewController(_ controller: FeedCollectionViewControllerIntegrated, context: Context) {
-        // Only update if state manager has changed
-        if controller.stateManager !== stateManager {
-            logger.debug("🔄 Updating controller with new state manager")
-            controller.updateStateManager(stateManager)
-        }
+        controller.updateSceneContext(sceneContext)
+        // Account data and scene viewport must be rebound together so outgoing
+        // geometry is never saved into a different window or feed.
+        let viewport = sceneContext.feedViewportStore.state(
+            accountDID: sceneContext.accountDID,
+            feedIdentifier: stateManager.currentFeedType.identifier)
+        controller.updateStateManager(stateManager, viewportState: viewport)
         // Update header only when presence changes
         let present = (headerView != nil)
         if present != context.coordinator.lastHeaderPresent {
@@ -67,6 +74,7 @@ struct FeedCollectionViewIntegrated: UIViewControllerRepresentable {
 /// macOS stub for FeedCollectionViewIntegrated
 @available(macOS 13.0, *)
 struct FeedCollectionViewIntegrated: View {
+    @Environment(SceneNavigationContext.self) private var sceneContext
     @Bindable var stateManager: FeedStateManager
     @Binding var navigationPath: NavigationPath
     var onScrollOffsetChanged: ((CGFloat) -> Void)?
@@ -106,6 +114,7 @@ struct FeedControllerConfiguration {
 /// Drop-in replacement for existing FeedCollectionView usage
 @available(iOS 16.0, *)
 struct FeedCollectionViewWrapper: View {
+    @Environment(SceneNavigationContext.self) private var sceneContext
     @Bindable var stateManager: FeedStateManager
     @Binding var navigationPath: NavigationPath
     var onScrollOffsetChanged: ((CGFloat) -> Void)?
@@ -128,10 +137,12 @@ struct FeedCollectionViewWrapper: View {
         .task(id: trendingRequestID) {
             let feed = stateManager.currentFeedType
             guard feed == .timeline || feed.identifier.contains("discover") || feed.identifier == "timeline" else {
+                stateManager.appState.cancelTopicPreviewPrefetch(owner: .timeline)
                 return
             }
             await stateManager.loadTrendingIfNeeded(requestID: trendingRequestID)
         }
+        .onDisappear { stateManager.appState.cancelTopicPreviewPrefetch(owner: .timeline) }
     }
 }
 #else
@@ -140,6 +151,7 @@ struct FeedCollectionViewWrapper: View {
 /// macOS implementation using native SwiftUI List
 @available(macOS 13.0, *)
 struct FeedCollectionViewWrapper: View {
+    @Environment(SceneNavigationContext.self) private var sceneContext
     @Bindable var stateManager: FeedStateManager
     @Binding var navigationPath: NavigationPath
     var onScrollOffsetChanged: ((CGFloat) -> Void)?
@@ -150,16 +162,14 @@ struct FeedCollectionViewWrapper: View {
             if stateManager.posts.isEmpty && stateManager.isLoading {
                 // Initial loading state
                 LoadingStateView(
-                    message: stateManager.currentFeedType == .timeline ?
-                        "Loading your timeline..." :
-                        "Loading \(stateManager.currentFeedType.displayName.lowercased())..."
+                    message: "Loading feed…"
                 )
             } else if stateManager.posts.isEmpty && !stateManager.isLoading {
                 // Empty state
                 if stateManager.currentFeedType == .timeline {
                     ContentUnavailableStateView.emptyFollowingFeed {
                         // Switch to the Search tab to discover people
-                        stateManager.appState.navigationManager.tabSelection?(1)
+                        sceneContext.navigationManager.tabSelection?(1)
                     }
                 } else {
                     ContentUnavailableStateView.emptyFeed(
@@ -178,6 +188,7 @@ struct FeedCollectionViewWrapper: View {
                             navigationPath: $navigationPath,
                             feedTypeIdentifier: stateManager.currentFeedType.identifier
                         )
+                        .environment(\.feedInteractionTarget, stateManager.feedInteractionTarget)
                         .frame(maxWidth: 700)
                         .frame(maxWidth: .infinity, alignment: .center)
                         .listRowSeparator(.hidden)
@@ -197,7 +208,7 @@ struct FeedCollectionViewWrapper: View {
                     if stateManager.isLoading {
                         HStack {
                             Spacer()
-                            ProgressView("Loading more...")
+                            ProgressView("Loading more…")
                                 .foregroundStyle(.secondary)
                             Spacer()
                         }
@@ -242,6 +253,7 @@ struct FeedCollectionViewWrapper: View {
 /// Legacy fallback - uses the integrated controller for all iOS versions
 @available(iOS 16.0, *)
 struct FeedCollectionViewLegacy: UIViewControllerRepresentable {
+    @Environment(SceneNavigationContext.self) private var sceneContext
     @Bindable var stateManager: FeedStateManager
     @Binding var navigationPath: NavigationPath
     var onScrollOffsetChanged: ((CGFloat) -> Void)?
@@ -250,21 +262,27 @@ struct FeedCollectionViewLegacy: UIViewControllerRepresentable {
         // Use integrated controller as the only implementation
         FeedCollectionViewControllerIntegrated(
             stateManager: stateManager,
+            viewportState: sceneContext.feedViewportStore.state(
+                accountDID: sceneContext.accountDID,
+                feedIdentifier: stateManager.currentFeedType.identifier),
+            sceneContext: sceneContext,
             navigationPath: $navigationPath,
             onScrollOffsetChanged: onScrollOffsetChanged
         )
     }
     
     func updateUIViewController(_ controller: FeedCollectionViewControllerIntegrated, context: Context) {
-        if controller.stateManager !== stateManager {
-            controller.updateStateManager(stateManager)
-        }
+        controller.updateSceneContext(sceneContext)
+        controller.updateStateManager(stateManager, viewportState: sceneContext.feedViewportStore.state(
+            accountDID: sceneContext.accountDID,
+            feedIdentifier: stateManager.currentFeedType.identifier))
     }
 }
 #else
 /// macOS stub for FeedCollectionViewLegacy
 @available(macOS 13.0, *)
 struct FeedCollectionViewLegacy: View {
+    @Environment(SceneNavigationContext.self) private var sceneContext
     @Bindable var stateManager: FeedStateManager
     @Binding var navigationPath: NavigationPath
     var onScrollOffsetChanged: ((CGFloat) -> Void)?

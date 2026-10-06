@@ -14,10 +14,6 @@ extension PostComposerViewUIKit {
   @ViewBuilder
   func metadataSection(vm: PostComposerViewModel) -> some View {
     VStack(spacing: 12) {
-      if let parent = vm.parentPost {
-        replyContextView(parent: parent)
-      }
-      
       if let quoted = vm.quotedPost {
         quotedPostView(quoted: quoted, vm: vm)
       }
@@ -75,31 +71,6 @@ extension PostComposerViewUIKit {
     }
   }
 
-  @ViewBuilder
-  private func replyContextView(parent: AppBskyFeedDefs.PostView) -> some View {
-    HStack(spacing: 8) {
-      Image(systemName: "arrowshape.turn.up.left")
-        .foregroundColor(.secondary)
-        .appFont(AppTextRole.subheadline)
-
-      Text("Replying to")
-        .appFont(AppTextRole.caption)
-        .foregroundColor(.secondary)
-
-      Text("@\(parent.author.handle.description)")
-        .appFont(AppTextRole.caption)
-        .fontWeight(.semibold)
-        .foregroundColor(.accentColor)
-        .lineLimit(1)
-
-      Spacer(minLength: 0)
-    }
-    .padding(.horizontal, 12)
-    .padding(.vertical, 8)
-    .background(Color.secondary.opacity(0.08))
-    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-  }
-  
   // MARK: - Compact Outline Tags View
   
   @ViewBuilder
@@ -227,13 +198,13 @@ extension PostComposerViewUIKit {
   }
   
   @ViewBuilder
-  private func quotedPostView(quoted: AppBskyFeedDefs.PostView, vm: PostComposerViewModel) -> some View {
+  func quotedPostView(quoted: AppBskyFeedDefs.PostView, vm: PostComposerViewModel) -> some View {
     VStack(alignment: .leading, spacing: 8) {
       HStack(spacing: 8) {
         Image(systemName: "quote.bubble")
           .foregroundColor(.secondary)
           .appFont(AppTextRole.subheadline)
-        Text("Quoting post")
+        Text("Quoting Post")
           .appFont(AppTextRole.caption)
           .foregroundColor(.secondary)
         Spacer(minLength: 0)
@@ -251,7 +222,7 @@ extension PostComposerViewUIKit {
             .contentShape(Rectangle())
         }
         .buttonStyle(PlainButtonStyle())
-        .accessibilityLabel("Remove quoted post")
+        .accessibilityLabel("Remove Quoted Post")
       }
 
       VStack(alignment: .leading, spacing: 4) {

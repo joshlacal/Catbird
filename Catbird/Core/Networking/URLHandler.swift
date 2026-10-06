@@ -16,17 +16,22 @@ import Observation
 final class URLHandler {
     // MARK: - Properties
     
-    var targetTabIndex: Int?
-
     private let logger = Logger(subsystem: "blue.catbird", category: "URLHandler")
     private weak var appState: AppState?
+    private weak var navigationManager: AppNavigationManager?
+    private var configurationID = UUID()
+    private var isInvalidated = false
+    @ObservationIgnored private var settingsObservation: URLHandlerSettingsObservation?
     
     #if os(iOS)
-    private weak var topViewController: UIViewController?
+    @ObservationIgnored private let presentationAnchor = SceneBrowserPresentationAnchor()
+    private var browserPresentationID = UUID()
     #endif
     
     var navigateAction: ((NavigationDestination, Int?) -> Void)?
     var useInAppBrowser = true
+    /// Replaces the system browser hand-off (used by tests); `nil` opens the default browser.
+    @ObservationIgnored var systemBrowserOpener: (@MainActor (URL) async -> Bool)?
     
     // External intent presenter
     let externalIntentPresenter = ExternalURLIntentPresenter()
@@ -37,26 +42,67 @@ final class URLHandler {
         logger.debug("URLHandler initialized")
     }
     
-    /// Configure the handler with a reference to app state
-    func configure(with appState: AppState) {
+    /// Bind URL delivery to the navigation manager owned by the receiving scene.
+    func configure(with appState: AppState, navigationManager: AppNavigationManager) {
+        resetPresentationState()
+        self.configurationID = UUID()
+        self.isInvalidated = false
         self.appState = appState
-        self.useInAppBrowser = appState.appSettings.useInAppBrowser
-        NotificationCenter.default.addObserver(
-            forName: NSNotification.Name("AppSettingsChanged"),
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            guard let self = self else { return }
-            let newValue = appState.appSettings.useInAppBrowser
-            self.logger.info("📲 URLHandler updating useInAppBrowser from \(self.useInAppBrowser) to \(newValue)")
-                        self.useInAppBrowser = newValue
+        self.navigationManager = navigationManager
+        let boundConfigurationID = self.configurationID
+        self.navigateAction = { [weak self, weak navigationManager] destination, tabIndex in
+            guard let self, !self.isInvalidated,
+                  self.configurationID == boundConfigurationID else { return }
+            navigationManager?.navigate(to: destination, in: tabIndex)
         }
+        self.useInAppBrowser = appState.appSettings.useInAppBrowser
+        self.settingsObservation = URLHandlerSettingsObservation(
+            NotificationCenter.default.addObserver(
+                forName: NSNotification.Name("AppSettingsChanged"),
+                object: nil,
+                queue: .main
+            ) { [weak self, weak appState] _ in
+                Task { @MainActor [weak self, weak appState] in
+                    guard let self, let appState,
+                          self.appState === appState, !self.isInvalidated else { return }
+                    self.useInAppBrowser = appState.appSettings.useInAppBrowser
+                }
+            }
+        )
     }
-    
+
+    /// Prevent suspended URL work from reaching a disconnected or replaced scene.
+    func invalidate() {
+        configurationID = UUID()
+        isInvalidated = true
+        navigateAction = nil
+        navigationManager = nil
+        appState = nil
+        settingsObservation = nil
+        resetPresentationState()
+    }
+
+    private func resetPresentationState() {
+        externalIntentPresenter.clearActiveIntent()
+        externalIntentPresenter.pendingIntent = nil
+        externalIntentPresenter.lastDeliveredURL = nil
+        #if os(iOS)
+        presentationAnchor.clear()
+        browserPresentationID = UUID()
+        #endif
+    }
+
     #if os(iOS)
     func registerTopViewController(_ controller: UIViewController) {
-        self.topViewController = controller
-        logger.debug("URLHandler registered top view controller: \(type(of: controller))")
+        guard !isInvalidated else { return }
+        presentationAnchor.register(controller: controller)
+        logger.debug("URLHandler registered local presentation controller: \(type(of: controller))")
+    }
+
+    /// The scene host registers its exact window after attaching to UIKit.
+    func registerPresentationWindow(_ window: UIWindow) {
+        guard !isInvalidated else { return }
+        presentationAnchor.register(window: window)
     }
     #endif
     
@@ -66,7 +112,10 @@ final class URLHandler {
     /// Returns an OpenURLAction.Result to indicate if the URL was handled
     @MainActor
     func handle(_ url: URL, tabIndex: Int? = nil) -> OpenURLAction.Result {
-        targetTabIndex = tabIndex ?? appState?.navigationManager.currentTabIndex
+        guard !isInvalidated else { return .discarded }
+        let requestConfigurationID = configurationID
+        // Keep this request's tab stable across asynchronous resolution.
+        let effectiveTabIndex = tabIndex ?? navigationManager?.currentTabIndex
         logger.info("📲 URLHandler processing URL: \(url.absoluteString, privacy: .private)")
 
         // OAuth callbacks, external intents, and custom schemes are handled
@@ -85,15 +134,15 @@ final class URLHandler {
 
         let urlString = url.absoluteString
         if urlString.starts(with: "mention://") {
-            return handleMention(urlString)
+            return handleMention(urlString, tabIndex: effectiveTabIndex)
         }
         if urlString.starts(with: "tag://") {
-            return handleHashtag(urlString)
+            return handleHashtag(urlString, tabIndex: effectiveTabIndex)
         }
 
         if isBlueskyOrBskyAppURL(url) {
             Task {
-                let handled = await routeResolvedURL(url)
+                let handled = await routeResolvedURL(url, tabIndex: effectiveTabIndex, configurationID: requestConfigurationID)
                 if !handled {
                     logger.warning("❓ URL not recognized: \(url.absoluteString, privacy: .private)")
                 }
@@ -118,7 +167,10 @@ final class URLHandler {
 
     @MainActor
     func handleURL(_ url: URL, tabIndex: Int? = nil) async -> Bool {
-        targetTabIndex = tabIndex ?? appState?.navigationManager.currentTabIndex
+        guard !isInvalidated else { return false }
+        let requestConfigurationID = configurationID
+        // Keep this request's tab stable across asynchronous resolution.
+        let effectiveTabIndex = tabIndex ?? navigationManager?.currentTabIndex
         logger.info("📲 URLHandler handleURL: \(url.absoluteString, privacy: .private)")
 
         if isOAuthCallbackURL(url) {
@@ -133,29 +185,39 @@ final class URLHandler {
 
         let urlString = url.absoluteString
         if urlString.starts(with: "mention://") {
-            _ = handleMention(urlString)
+            _ = handleMention(urlString, tabIndex: effectiveTabIndex)
             return true
         }
         if urlString.starts(with: "tag://") {
-            _ = handleHashtag(urlString)
+            _ = handleHashtag(urlString, tabIndex: effectiveTabIndex)
             return true
         }
 
-        return await routeResolvedURL(url)
+        return await routeResolvedURL(url, tabIndex: effectiveTabIndex, configurationID: requestConfigurationID)
     }
 
     /// Routes a non-callback, non-intent URL to a navigation destination or the
     /// in-app browser. Returns whether the URL was handled.
     @MainActor
-    private func routeResolvedURL(_ url: URL) async -> Bool {
+    private func routeResolvedURL(_ url: URL, tabIndex: Int?, configurationID: UUID) async -> Bool {
+        guard !isInvalidated, self.configurationID == configurationID else { return false }
         if isBlueskyOrBskyAppURL(url) {
-            if let destination = await parseDestination(from: url) {
+            let destination = await parseDestination(from: url)
+            guard !isInvalidated, self.configurationID == configurationID else { return false }
+            if let destination {
                 logger.info("🔗 Parsed URL to navigation destination: \(String(describing: destination))")
-                navigateAction?(destination, targetTabIndex)
+                navigateAction?(destination, tabIndex)
                 return true
             }
-            if useInAppBrowser && URLSchemePolicy.isWeb(url) {
-                return openInAppBrowser(url)
+            if selectTabForTabRootURL(url) {
+                return true
+            }
+            // No native screen: show the page instead of silently doing nothing.
+            if URLSchemePolicy.isWeb(url) {
+                if useInAppBrowser && openInAppBrowser(url) {
+                    return true
+                }
+                return await openInSystemBrowser(url)
             }
             return false
         }
@@ -172,6 +234,54 @@ final class URLHandler {
 
     private func isBlueskyOrBskyAppURL(_ url: URL) -> Bool {
         URLSchemePolicy.isBluesky(url)
+    }
+
+    /// Bluesky links to a top-level screen (Home, Search, Notifications, Messages) select that tab.
+    private func selectTabForTabRootURL(_ url: URL) -> Bool {
+        guard let navigationManager,
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: true),
+              (components.host ?? "").lowercased() != "go.bsky.app" else { return false }
+        var path = components.path
+        if (components.scheme ?? "").lowercased() == "bluesky", let host = components.host, !host.isEmpty {
+            path = "/\(host)\(path)"
+        }
+        let segments = path.split(separator: "/").map(String.init)
+        let hasQuery = !(components.queryItems ?? []).isEmpty
+        let tab: Int
+        switch segments.first {
+        case nil:
+            tab = 0
+        case "search" where segments.count == 1 && !hasQuery:
+            tab = 1
+        case "notifications" where segments.count == 1:
+            tab = 2
+        case "messages" where segments.count == 1 || (segments.count == 2 && segments[1] != "settings"):
+            tab = AppNavigationManager.chatTabIndex
+        default:
+            return false
+        }
+        navigationManager.updateCurrentTab(tab)
+        navigationManager.tabSelection?(tab)
+        #if os(iOS)
+        if segments.first == "messages", segments.count == 2 {
+            navigationManager.navigate(to: .conversation(segments[1]), in: tab)
+        }
+        #endif
+        return true
+    }
+
+    /// Opens a link in the default browser when the in-app browser is off or unavailable.
+    private func openInSystemBrowser(_ url: URL) async -> Bool {
+        if let systemBrowserOpener {
+            return await systemBrowserOpener(url)
+        }
+        #if os(iOS)
+        return await UIApplication.shared.open(url, options: [:])
+        #elseif os(macOS)
+        return NSWorkspace.shared.open(url)
+        #else
+        return false
+        #endif
     }
     
     // MARK: - URL Parsing
@@ -281,10 +391,10 @@ final class URLHandler {
         // Route: /settings/{subpath}
         if segments.count >= 1 && segments[0] == "settings" {
             let subpath = segments.dropFirst().joined(separator: "/")
-            if let route = SettingsRoute(routePath: subpath.isEmpty ? "account" : subpath) {
+            if let route = SettingsRoute(routePath: subpath) {
                 return .settings(route)
             }
-            return .settings(.account)
+            return .settings(.home)
         }
 
         // Route: /profile/{actor}/...
@@ -509,17 +619,17 @@ final class URLHandler {
     
     // MARK: - URL Type Handlers
     
-    private func handleMention(_ urlString: String) -> OpenURLAction.Result {
+    private func handleMention(_ urlString: String, tabIndex: Int?) -> OpenURLAction.Result {
         let encodedDID = String(urlString.dropFirst("mention://".count))
         let did = encodedDID.removingPercentEncoding ?? encodedDID
-        navigateAction?(.profile(did), targetTabIndex)
+        navigateAction?(.profile(did), tabIndex)
         return .handled
     }
     
-    private func handleHashtag(_ urlString: String) -> OpenURLAction.Result {
+    private func handleHashtag(_ urlString: String, tabIndex: Int?) -> OpenURLAction.Result {
         let tag = String(urlString.dropFirst("tag://".count))
         let decodedTag = tag.removingPercentEncoding ?? tag
-        navigateAction?(.hashtag(decodedTag), targetTabIndex)
+        navigateAction?(.hashtag(decodedTag), tabIndex)
         return .handled
     }
     
@@ -570,23 +680,163 @@ final class URLHandler {
     @MainActor
     private func openInAppBrowser(_ url: URL) -> Bool {
         #if os(iOS)
-        guard let topVC = self.topViewController else {
-            logger.warning("⚠️ Cannot open in-app browser - no top view controller registered")
+        guard let window = presentationAnchor.attachedWindow else {
+            logger.warning("Cannot open in-app browser without an attached originating window")
             return false
         }
-        
-        let configuration = SFSafariViewController.Configuration()
-        configuration.entersReaderIfAvailable = false
-        
-        let safariVC = SFSafariViewController(url: url, configuration: configuration)
-        safariVC.preferredControlTintColor = UIColor(named: "AccentColor")
-        safariVC.dismissButtonStyle = .close
-        safariVC.modalPresentationStyle = .fullScreen
-        topVC.present(safariVC, animated: true)
+        let requestID = UUID()
+        browserPresentationID = requestID
+        presentBrowser(
+            url, in: window, requestID: requestID,
+            configurationID: configurationID, remainingTransitions: 2
+        )
+        // An attached scene owns this request even while its presenter is busy.
+        // Do not redirect a local presentation race into another application.
         return true
         #else
         NSWorkspace.shared.open(url)
         return true
         #endif
     }
+
+    #if os(iOS)
+    private func presentBrowser(
+        _ url: URL, in window: UIWindow, requestID: UUID,
+        configurationID: UUID, remainingTransitions: Int
+    ) {
+        guard !isInvalidated, self.configurationID == configurationID,
+              browserPresentationID == requestID,
+              presentationAnchor.attachedWindow === window else { return }
+        switch SceneBrowserPresentationAnchor.resolvePresenter(in: window) {
+        case .ready(let controller):
+            let configuration = SFSafariViewController.Configuration()
+            configuration.entersReaderIfAvailable = false
+            let safariVC = SFSafariViewController(url: url, configuration: configuration)
+            safariVC.preferredControlTintColor = UIColor(named: "AccentColor")
+            safariVC.dismissButtonStyle = .close
+            safariVC.modalPresentationStyle = .fullScreen
+            controller.present(safariVC, animated: true)
+        case .transitioning(let coordinator):
+            guard remainingTransitions > 0, let coordinator else {
+                logger.warning("Originating window has no stable browser presenter")
+                return
+            }
+            coordinator.animate(alongsideTransition: nil) { [weak self, weak window] _ in
+                Task { @MainActor [weak self, weak window] in
+                    guard let self, let window else { return }
+                    self.presentBrowser(
+                        url, in: window, requestID: requestID,
+                        configurationID: configurationID,
+                        remainingTransitions: remainingTransitions - 1
+                    )
+                }
+            }
+        case .unavailable:
+            logger.warning("Originating window cannot currently present a browser")
+        }
+    }
+    #endif
+
 }
+
+/// The immutable notification token may be released on any thread; the
+/// notification center supports removing its observer from that thread.
+private final class URLHandlerSettingsObservation: @unchecked Sendable {
+    private let token: NSObjectProtocol
+
+    init(_ token: NSObjectProtocol) {
+        self.token = token
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(token)
+    }
+}
+
+#if os(iOS)
+/// Keeps a scene's browser origin alive by identity, without retaining UIKit.
+@MainActor
+final class SceneBrowserPresentationAnchor {
+    enum PresenterResolution {
+        case ready(UIViewController)
+        case transitioning(UIViewControllerTransitionCoordinator?)
+        case unavailable
+    }
+
+    private weak var window: UIWindow?
+    private weak var controller: UIViewController?
+    private var capturedWindow = false
+
+    func register(controller: UIViewController) {
+        self.controller = controller
+        if let window = controller.viewIfLoaded?.window {
+            register(window: window)
+        }
+    }
+
+    func register(window: UIWindow) {
+        self.window = window
+        capturedWindow = true
+    }
+
+    func clear() {
+        window = nil
+        controller = nil
+        capturedWindow = false
+    }
+
+    var attachedWindow: UIWindow? {
+        // A controller may register during viewDidLoad, before window attachment.
+        // Once an origin was captured, never follow that controller to a new scene.
+        if !capturedWindow, let attached = controller?.viewIfLoaded?.window {
+            register(window: attached)
+        }
+        guard let window else { return nil }
+        var visible = window.rootViewController
+        while let controller = visible {
+            if controller.viewIfLoaded?.window === window { return window }
+            visible = controller.presentedViewController
+        }
+        return nil
+    }
+
+    static func resolvePresenter(in window: UIWindow) -> PresenterResolution {
+        guard !window.isHidden, let root = window.rootViewController else { return .unavailable }
+        var current = root
+        var visited = Set<ObjectIdentifier>()
+        while visited.insert(ObjectIdentifier(current)).inserted {
+            if current.isBeingPresented || current.isBeingDismissed {
+                return .transitioning(current.transitionCoordinator)
+            }
+            if let presented = current.presentedViewController {
+                guard !presented.isBeingDismissed,
+                      presented.viewIfLoaded?.window === window else {
+                    return .transitioning(presented.transitionCoordinator ?? current.transitionCoordinator)
+                }
+                current = presented
+                continue
+            }
+            let visibleChild: UIViewController?
+            if let navigation = current as? UINavigationController {
+                visibleChild = navigation.visibleViewController
+            } else if let tabs = current as? UITabBarController {
+                visibleChild = tabs.selectedViewController
+            } else if let split = current as? UISplitViewController {
+                visibleChild = split.viewControllers.last {
+                    $0.viewIfLoaded?.window === window && $0.viewIfLoaded?.isHidden == false
+                }
+            } else {
+                visibleChild = nil
+            }
+            if let child = visibleChild, child.viewIfLoaded?.window === window {
+                current = child
+                continue
+            }
+            guard let view = current.viewIfLoaded, view.window === window,
+                  !view.isHidden, view.alpha > 0 else { return .unavailable }
+            return .ready(current)
+        }
+        return .unavailable
+    }
+}
+#endif

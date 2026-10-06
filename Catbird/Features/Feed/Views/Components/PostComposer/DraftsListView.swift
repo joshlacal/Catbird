@@ -10,6 +10,9 @@ struct DraftsListView: View {
   @State private var isLoading = true
   @State private var isSyncing = false
   @State private var draftToDelete: DraftPostViewModel?
+  @State private var draftWithUnavailableMedia: DraftPostViewModel?
+  @State private var confirmsSync = false
+  @State private var draftToCopy: DraftPostViewModel?
 
   var onSelectDraft: ((DraftPostViewModel) -> Void)?
 
@@ -60,14 +63,50 @@ struct DraftsListView: View {
           deleteDraft(draft)
         }
         Button("Cancel", role: .cancel) {}
-      } message: { _ in
-        if appState.composerDraftManager.isDraftSyncEnabled {
+      } message: { draft in
+        if draft.remoteId != nil {
           Text("This draft will be removed from all your devices.")
         } else {
           Text("This draft will be removed from this device.")
         }
       }
-      .task {
+      .confirmationDialog(
+        "Save a new copy to Bluesky?",
+        isPresented: Binding(get: { draftToCopy != nil }, set: { if !$0 { draftToCopy = nil } }),
+        titleVisibility: .visible,
+        presenting: draftToCopy
+      ) { draft in
+        Button("Save New Copy") {
+          Task { await appState.composerDraftManager.saveRecoveryCopyToBluesky(draft) }
+        }
+        Button("Cancel", role: .cancel) {}
+      } message: { _ in
+        Text("The original will stay on this device. If a previous save reached Bluesky, this may create a duplicate. Media from another app cannot be included in the new copy.")
+      }
+      .confirmationDialog("Sync saved drafts with Bluesky?", isPresented: $confirmsSync, titleVisibility: .visible) {
+        Button("Sync with Bluesky") {
+          Task {
+            isSyncing = true
+            await appState.composerDraftManager.enableDraftSync()
+            isSyncing = false
+          }
+        }
+        Button("Cancel", role: .cancel) {}
+      } message: {
+        Text("Catbird will first download your Bluesky drafts, then sync supported saved drafts for the active account. Existing drafts stay recoverable on this device. Photos and videos remain in the app where they were added.")
+      }
+      .confirmationDialog(
+        "Media Unavailable in Catbird",
+        isPresented: Binding(get: { draftWithUnavailableMedia != nil }, set: { if !$0 { draftWithUnavailableMedia = nil } }),
+        titleVisibility: .visible,
+        presenting: draftWithUnavailableMedia
+      ) { draft in
+        Button("Open Without Media") { onSelectDraft?(draft) }
+        Button("Cancel", role: .cancel) {}
+      } message: { _ in
+        Text("You can edit the text here. The original photos and videos stay attached to the Bluesky draft, but cannot be included if you publish from Catbird. Open the originating app to publish with that media.")
+      }
+      .task(id: appState.userDID) {
         await loadDrafts()
       }
       .refreshable {
@@ -77,19 +116,24 @@ struct DraftsListView: View {
   }
 
   private var emptyState: some View {
-    ContentUnavailableView {
-      Label("No Drafts", systemImage: "square.and.pencil")
-    } description: {
-      Text("When you save a post for later, it will appear here.")
+    VStack(spacing: 16) {
+      ContentUnavailableView {
+        Label("No Drafts", systemImage: "square.and.pencil")
+      } description: {
+        Text("When you save a post for later, it will appear here.")
+      }
+      syncStatus
+        .padding()
     }
   }
 
   private var draftsList: some View {
     List {
+      Section { syncStatus }
       Section {
         ForEach(drafts) { draft in
           Button {
-            onSelectDraft?(draft)
+            selectDraft(draft)
           } label: {
             DraftRow(draft: draft)
           }
@@ -102,8 +146,14 @@ struct DraftsListView: View {
             }
           }
           .contextMenu {
+            if draft.recoveryReason != nil || draft.syncIssue != nil {
+              Button("Save New Copy to Bluesky", systemImage: "icloud.and.arrow.up") {
+                draftToCopy = draft
+              }
+              .disabled(!appState.composerDraftManager.isDraftSyncEnabled)
+            }
             Button {
-              onSelectDraft?(draft)
+              selectDraft(draft)
             } label: {
               Label("Open in Composer", systemImage: "square.and.pencil")
             }
@@ -116,11 +166,36 @@ struct DraftsListView: View {
         }
       } footer: {
         if appState.composerDraftManager.isDraftSyncEnabled {
-          Text("Drafts sync with your Bluesky account. Photos and videos stay on the device where they were added.")
+          Text("Drafts sync with your Bluesky account. Photos and videos stay in the app and installation where they were added, even on the same phone.")
         }
       }
     }
     .modifier(DraftsListStyleModifier())
+  }
+
+  @ViewBuilder
+  private var syncStatus: some View {
+    if appState.composerDraftManager.isDraftSyncEnabled {
+      if let issue = appState.composerDraftManager.draftSyncIssue {
+        Label(issue, systemImage: "icloud.slash")
+          .font(.footnote)
+          .foregroundStyle(.secondary)
+      } else {
+        Label("Bluesky draft sync is on", systemImage: "icloud")
+          .font(.footnote)
+          .foregroundStyle(.secondary)
+      }
+    } else {
+      Button("Sync with Bluesky", systemImage: "icloud.and.arrow.up") { confirmsSync = true }
+    }
+  }
+
+  private func selectDraft(_ draft: DraftPostViewModel) {
+    if draft.remoteMediaDeviceName != nil {
+      draftWithUnavailableMedia = draft
+    } else {
+      onSelectDraft?(draft)
+    }
   }
 
   @MainActor
@@ -169,6 +244,15 @@ private struct DraftRow: View {
           badgeRow
         }
 
+        if let reason = draft.recoveryReason {
+          Label(reason, systemImage: "externaldrive")
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+        } else if let issue = draft.syncIssue {
+          Text(issue)
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+        }
         footerRow
       }
       .frame(maxWidth: .infinity, alignment: .leading)
