@@ -222,6 +222,11 @@ struct MainContentView: View {
   // Side drawer state for home tab
   @State private var isDrawerOpen = false
   @State private var isRootView = true
+  /// Trailing edge (global) of the usable tab content and of the tab container.
+  /// When the system docks the tab bar on the trailing side (e.g. iPhone Duo),
+  /// the difference is the bar's width, which the compose FAB must clear.
+  @State private var tabContentTrailingEdge: CGFloat = 0
+  @State private var tabContainerTrailingEdge: CGFloat = 0
   @State private var selectedFeed: FetchType = .timeline
   @State private var currentFeedName: String = ""
 
@@ -394,6 +399,11 @@ struct MainContentView: View {
                 isRootView: $isRootView
               )
               .id(appState.userDID)
+              // The content frame already stops at a trailing tab bar (which it
+              // also reports as a safe-area inset), so only the frame edge counts.
+              .onGeometryChange(for: CGFloat.self) { proxy in
+                proxy.frame(in: .global).maxX
+              } action: { tabContentTrailingEdge = $0 }
             }
             .accessibilityIdentifier("tab_home")
 
@@ -463,16 +473,22 @@ struct MainContentView: View {
           #if os(iOS)
           .tabViewStyle(.sidebarAdaptable)
           #endif
+          .onGeometryChange(for: CGFloat.self) { proxy in
+            proxy.frame(in: .global).maxX - proxy.safeAreaInsets.trailing
+          } action: { tabContainerTrailingEdge = $0 }
 
           #if !targetEnvironment(macCatalyst)
           if (selectedTab == 0 && isRootView) || (selectedTab == 3 && !PlatformDeviceInfo.isPhone) {
-            if #available(iOS 26.0, *) {
-              GlassEffectContainer(spacing: 20) {
+            Group {
+              if #available(iOS 26.0, *) {
+                GlassEffectContainer(spacing: 20) {
+                  fabView
+                }
+              } else {
                 fabView
               }
-            } else {
-              fabView
             }
+            .padding(.trailing, trailingTabBarWidth)
           }
           #endif
         }
@@ -1049,6 +1065,12 @@ extension MainContentView {
     pendingCameraCapture = mode
   }
   #endif
+
+  /// Width of a tab bar docked on the trailing edge; zero for bottom and leading bars.
+  private var trailingTabBarWidth: CGFloat {
+    guard tabContentTrailingEdge > 0, tabContainerTrailingEdge > 0 else { return 0 }
+    return max(0, tabContainerTrailingEdge - tabContentTrailingEdge)
+  }
 
   @ViewBuilder
   private var fabView: some View {
