@@ -13,6 +13,28 @@ import Vision
 /// distinguish organic and repost variants, and must remain scoped to its feed.
 @Suite("CachedFeedViewPost identity")
 struct CachedFeedViewPostIdentityTests {
+  @Test("Generator request context survives tuning, preparation and cache reconstruction",
+    arguments: [nil, "context|segment"] as [String?])
+  @MainActor
+  func feedbackContextSurvivesFeedPreparation(feedContext: String?) async throws {
+    let requestID = "request|with|pipes"
+    let entry = try makeFeedViewPost(rkey: "feedback-context",
+      feedContext: feedContext, reqId: requestID)
+    let slices = await FeedTuner().tune([entry])
+    let slice = try #require(slices.first)
+    #expect(slice.feedContext == feedContext)
+    #expect(slice.reqId == requestID)
+    let prepared = try #require(PreparedFeedSlice(slice: slice))
+    let serialized = try JSONDecoder().decode(AppBskyFeedDefs.FeedViewPost.self,
+      from: prepared.serializedPost)
+    #expect(serialized.feedContext == feedContext)
+    #expect(serialized.reqId == requestID)
+    let cached = CachedFeedViewPost(prepared: prepared, feedType: "feed:feedback-context")
+    #expect(try cached.feedViewPost.reqId == requestID)
+    #expect(cached.threadSlice?.reqId == requestID)
+    #expect(cached.threadSlice?.feedContext == feedContext)
+  }
+
   @Test("Freshly cached posts reuse the already decoded API value")
   @MainActor
   func freshPostAvoidsJSONRoundTrip() throws {
@@ -1051,7 +1073,9 @@ struct CachedFeedViewPostIdentityTests {
     rkey: String,
     repostedBy reposterDID: String? = nil,
     repostIndexedAt: Date? = nil,
-    debug: ATProtocolValueContainer? = nil
+    debug: ATProtocolValueContainer? = nil,
+    feedContext: String? = nil,
+    reqId: String? = nil
   ) throws -> AppBskyFeedDefs.FeedViewPost {
     let record = AppBskyFeedPost(
       text: "Post \(rkey)",
@@ -1103,8 +1127,8 @@ struct CachedFeedViewPostIdentityTests {
       post: post,
       reply: nil,
       reason: reason,
-      feedContext: nil,
-      reqId: nil
+      feedContext: feedContext,
+      reqId: reqId
     )
   }
 

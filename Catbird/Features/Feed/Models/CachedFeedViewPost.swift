@@ -394,7 +394,8 @@ final class CachedFeedViewPost: Identifiable {
             rootUri: rootUri,
             feedPostUri: fvp.post.uri.uriString(),
             reason: fvp.reason,
-            feedContext: fvp.feedContext
+            feedContext: fvp.feedContext,
+            reqId: fvp.reqId
         )
     }
     
@@ -508,7 +509,7 @@ struct PreparedFeedSlice: Sendable {
             reply: slice.originalReply ?? Self.createReplyRefFromSlice(slice),
             reason: slice.reason,
             feedContext: slice.feedContext,
-            reqId: nil
+            reqId: slice.reqId
         )
         do {
             self.serializedPost = try JSONEncoder().encode(feedViewPost)

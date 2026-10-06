@@ -214,7 +214,10 @@ final class AppState {
     @MainActor @ObservationIgnored lazy var feedLibraryActions = FeedLibraryActions(appState: self)
 
     /// Feed feedback manager for custom feed interactions
+    /// Scoped to this account: suspension for a switch or sign-out discards what it queued.
     @MainActor @ObservationIgnored lazy var feedFeedbackManager = FeedFeedbackManager(
+        accountDID: userDID,
+        accountServiceWork: accountServiceWork,
         clientProvider: { [weak self] in self?.atProtoClient }
     )
 
@@ -477,6 +480,7 @@ final class AppState {
             throw AccountServiceWork.BarrierError.accountChanged
         }
         accountServiceWork.suspend()
+        feedFeedbackManager.discardPending()
         trendingTopicMediaStore.invalidateForGraphChange()
         settingsUpdateDebounceTimer?.invalidate()
         settingsUpdateDebounceTimer = nil
@@ -601,6 +605,7 @@ final class AppState {
         logger.info("🧹 Cleaning up AppState for user: \(self.userDID)")
         _ = appSettings.suspendLocalChanges(for: userDID)
         accountServiceWork.suspend()
+        feedFeedbackManager.discardPending()
         trendingTopicMediaStore.invalidateForGraphChange()
         settingsUpdateDebounceTimer?.invalidate()
         settingsUpdateDebounceTimer = nil

@@ -68,6 +68,7 @@ struct FeedSlice: Identifiable, Sendable {
   let feedPostUri: String
   let reason: AppBskyFeedDefs.FeedViewPostReasonUnion?
   let feedContext: String?
+  let reqId: String?
   let originalReply: AppBskyFeedDefs.ReplyRef?  // Preserve original reply context for reposts
   
   init(
@@ -79,6 +80,7 @@ struct FeedSlice: Identifiable, Sendable {
     feedPostUri: String,
     reason: AppBskyFeedDefs.FeedViewPostReasonUnion? = nil,
     feedContext: String? = nil,
+    reqId: String? = nil,
     originalReply: AppBskyFeedDefs.ReplyRef? = nil
   ) {
     self.id = feedPostUri
@@ -90,6 +92,7 @@ struct FeedSlice: Identifiable, Sendable {
     self.feedPostUri = feedPostUri
     self.reason = reason
     self.feedContext = feedContext
+    self.reqId = reqId
     self.originalReply = originalReply
   }
   
@@ -352,6 +355,7 @@ actor FeedTuner {
         feedPostUri: slice.feedPostUri,
         reason: slice.reason,
         feedContext: slice.feedContext,
+        reqId: slice.reqId,
         originalReply: slice.originalReply
       )
     }
@@ -426,7 +430,8 @@ actor FeedTuner {
         rootUri: rootUri,
         feedPostUri: feedPostUri,
         reason: feedPost.reason,
-        feedContext: feedPost.feedContext
+        feedContext: feedPost.feedContext,
+        reqId: feedPost.reqId
       )
     }
     
@@ -438,6 +443,7 @@ actor FeedTuner {
         feedPostUri: feedPostUri,
         reason: feedPost.reason,
         feedContext: feedPost.feedContext,
+        reqId: feedPost.reqId,
         originalReply: feedPost.reply  // Preserve reply context for reposts
       )
     }
@@ -492,7 +498,8 @@ actor FeedTuner {
       rootUri: rootUri,
       feedPostUri: feedPostUri,
       reason: feedPost.reason,
-      feedContext: feedPost.feedContext
+      feedContext: feedPost.feedContext,
+      reqId: feedPost.reqId
     )
     
     // Debug logging

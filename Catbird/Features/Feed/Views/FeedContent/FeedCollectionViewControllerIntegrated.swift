@@ -490,8 +490,10 @@ import os
             return
           }
 
-          if let postURI = try? post.feedViewPost.post.uri {
-            self.stateManager.appState.feedFeedbackManager.sendShowMore(postURI: postURI, target: target)
+          if let item = try? post.feedViewPost {
+            let postURI = item.post.uri
+            self.stateManager.appState.feedFeedbackManager.sendShowMore(
+              postURI: postURI, target: target, feedContext: item.feedContext, reqId: item.reqId)
             self.controllerLogger.debug("Sent 'show more' feedback for post: \(postURI)")
 
             // Show confirmation toast
@@ -517,8 +519,10 @@ import os
             return
           }
 
-          if let postURI = try? post.feedViewPost.post.uri {
-            self.stateManager.appState.feedFeedbackManager.sendShowLess(postURI: postURI, target: target)
+          if let item = try? post.feedViewPost {
+            let postURI = item.post.uri
+            self.stateManager.appState.feedFeedbackManager.sendShowLess(
+              postURI: postURI, target: target, feedContext: item.feedContext, reqId: item.reqId)
             self.controllerLogger.debug("Sent 'show less' feedback for post: \(postURI)")
 
             // Show confirmation toast
@@ -1074,11 +1078,10 @@ import os
         recentlySeenPostTimestamps = recentlySeenPostTimestamps.filter { $0.value >= cutoff }
       }
       
-      if let postURI = try? ATProtocolURI(
-        uriString: postViewModel.feedViewPost.post.uri.uriString())
-      {
+      if let item = try? postViewModel.feedViewPost {
         stateManager.appState.feedFeedbackManager.trackPostSeen(
-          postURI: postURI, target: stateManager.feedInteractionTarget)
+          postURI: item.post.uri, target: stateManager.feedInteractionTarget,
+          feedContext: item.feedContext, reqId: item.reqId)
       }
     }
     
